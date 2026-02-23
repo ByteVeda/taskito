@@ -127,3 +127,182 @@ quickq configures SQLite for optimal performance:
 | `journal_size_limit` | 64MB | Prevent unbounded WAL growth |
 
 The connection pool uses up to 8 connections via `r2d2`.
+
+## FastAPI Integration
+
+quickq provides a first-class FastAPI integration via `quickq.contrib.fastapi`. It gives you a pre-built `APIRouter` with endpoints for job status, progress streaming via SSE, and dead letter queue management.
+
+### Installation
+
+```bash
+pip install quickq[fastapi]
+```
+
+This installs `fastapi` and `pydantic` as extras.
+
+### Quick Setup
+
+```python
+from fastapi import FastAPI
+from quickq import Queue
+from quickq.contrib.fastapi import QuickQRouter
+
+queue = Queue(db_path="myapp.db")
+
+@queue.task()
+def process_data(payload: dict) -> str:
+    return "done"
+
+app = FastAPI()
+app.include_router(QuickQRouter(queue), prefix="/tasks")
+```
+
+Run with:
+
+```bash
+uvicorn myapp:app --reload
+```
+
+All quickq endpoints are now available under `/tasks/`.
+
+### Endpoints
+
+The `QuickQRouter` exposes the following endpoints:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/stats` | Queue statistics (pending, running, completed, etc.) |
+| `GET` | `/jobs/{job_id}` | Job status, progress, and metadata |
+| `GET` | `/jobs/{job_id}/errors` | Error history for a job |
+| `GET` | `/jobs/{job_id}/result` | Job result (optional blocking with `?timeout=N`) |
+| `GET` | `/jobs/{job_id}/progress` | SSE stream of progress updates |
+| `POST` | `/jobs/{job_id}/cancel` | Cancel a pending job |
+| `GET` | `/dead-letters` | List dead letter entries (paginated) |
+| `POST` | `/dead-letters/{dead_id}/retry` | Re-enqueue a dead letter |
+
+### Blocking Result Fetch
+
+The `/jobs/{job_id}/result` endpoint supports an optional `timeout` query parameter (0–300 seconds). When `timeout > 0`, the request blocks until the job completes or the timeout elapses:
+
+```bash
+# Non-blocking (default)
+curl http://localhost:8000/tasks/jobs/01H5K6X.../result
+
+# Block up to 30 seconds for the result
+curl http://localhost:8000/tasks/jobs/01H5K6X.../result?timeout=30
+```
+
+### SSE Progress Streaming
+
+Stream real-time progress for a running job using Server-Sent Events:
+
+```python
+import httpx
+
+with httpx.stream("GET", "http://localhost:8000/tasks/jobs/01H5K6X.../progress") as r:
+    for line in r.iter_lines():
+        print(line)
+        # data: {"progress": 25, "status": "running"}
+        # data: {"progress": 50, "status": "running"}
+        # data: {"progress": 100, "status": "completed"}
+```
+
+From the browser:
+
+```javascript
+const source = new EventSource("/tasks/jobs/01H5K6X.../progress");
+source.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`Progress: ${data.progress}%`);
+  if (data.status === "completed" || data.status === "failed") {
+    source.close();
+  }
+};
+```
+
+The stream sends a JSON event every 0.5 seconds while the job is active, then a final event when the job reaches a terminal state.
+
+### Pydantic Response Models
+
+All endpoints return validated Pydantic models with clean OpenAPI docs. You can import them for type-safe client code:
+
+```python
+from quickq.contrib.fastapi import (
+    StatsResponse,
+    JobResponse,
+    JobErrorResponse,
+    JobResultResponse,
+    CancelResponse,
+    DeadLetterResponse,
+    RetryResponse,
+)
+```
+
+### Custom Tags and Dependencies
+
+Customize the router with FastAPI tags and dependency injection:
+
+```python
+from fastapi import Depends, FastAPI, Header, HTTPException
+from quickq.contrib.fastapi import QuickQRouter
+
+async def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key != "secret":
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+app = FastAPI()
+
+router = QuickQRouter(
+    queue,
+    tags=["task-queue"],              # OpenAPI tags
+    dependencies=[Depends(verify_api_key)],  # Applied to all endpoints
+)
+
+app.include_router(router, prefix="/tasks")
+```
+
+### Full Example
+
+```python
+from fastapi import FastAPI, Header, HTTPException, Depends
+from quickq import Queue, current_job
+from quickq.contrib.fastapi import QuickQRouter
+
+queue = Queue(db_path="myapp.db")
+
+@queue.task()
+def resize_image(image_url: str, sizes: list[int]) -> dict:
+    results = {}
+    for i, size in enumerate(sizes):
+        results[size] = do_resize(image_url, size)
+        current_job.update_progress(int((i + 1) / len(sizes) * 100))
+    return results
+
+async def require_auth(authorization: str = Header(...)):
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401)
+
+app = FastAPI(title="Image Service")
+app.include_router(
+    QuickQRouter(queue, dependencies=[Depends(require_auth)]),
+    prefix="/tasks",
+    tags=["tasks"],
+)
+
+# Start worker in a separate process:
+#   quickq worker --app myapp:queue
+```
+
+```bash
+# Check job status
+curl http://localhost:8000/tasks/jobs/01H5K6X... \
+  -H "Authorization: Bearer mytoken"
+
+# Stream progress
+curl -N http://localhost:8000/tasks/jobs/01H5K6X.../progress \
+  -H "Authorization: Bearer mytoken"
+
+# Block for result (up to 60s)
+curl http://localhost:8000/tasks/jobs/01H5K6X.../result?timeout=60 \
+  -H "Authorization: Bearer mytoken"
+```

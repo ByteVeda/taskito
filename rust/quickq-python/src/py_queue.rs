@@ -71,7 +71,7 @@ impl PyQueue {
     }
 
     /// Enqueue a job.
-    #[pyo3(signature = (task_name, payload, queue="default", priority=None, delay_seconds=None, max_retries=None, timeout=None, unique_key=None, metadata=None))]
+    #[pyo3(signature = (task_name, payload, queue="default", priority=None, delay_seconds=None, max_retries=None, timeout=None, unique_key=None, metadata=None, depends_on=None))]
     pub fn enqueue(
         &self,
         task_name: &str,
@@ -83,6 +83,7 @@ impl PyQueue {
         timeout: Option<i64>,
         unique_key: Option<String>,
         metadata: Option<String>,
+        depends_on: Option<Vec<String>>,
     ) -> PyResult<PyJob> {
         let now = now_millis();
         let scheduled_at = match delay_seconds {
@@ -100,6 +101,7 @@ impl PyQueue {
             timeout_ms: timeout.unwrap_or(self.default_timeout) * 1000,
             unique_key: unique_key.clone(),
             metadata,
+            depends_on: depends_on.unwrap_or_default(),
         };
 
         let job = if unique_key.is_some() {
@@ -152,12 +154,48 @@ impl PyQueue {
                 }),
                 unique_key: None,
                 metadata: None,
+                depends_on: vec![],
             });
         }
 
         let jobs = self
             .storage
             .enqueue_batch(new_jobs)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Ok(jobs.into_iter().map(PyJob::from).collect())
+    }
+
+    /// List jobs with optional filters and pagination.
+    #[pyo3(signature = (status=None, queue=None, task_name=None, limit=50, offset=0))]
+    pub fn list_jobs(
+        &self,
+        status: Option<&str>,
+        queue: Option<&str>,
+        task_name: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> PyResult<Vec<PyJob>> {
+        let status_int = match status {
+            Some(s) => Some(match s {
+                "pending" => 0,
+                "running" => 1,
+                "complete" | "completed" => 2,
+                "failed" => 3,
+                "dead" => 4,
+                "cancelled" => 5,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid status: {s}. Use: pending, running, complete, failed, dead, cancelled"
+                    )))
+                }
+            }),
+            None => None,
+        };
+
+        let jobs = self
+            .storage
+            .list_jobs(status_int, queue, task_name, limit, offset)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         Ok(jobs.into_iter().map(PyJob::from).collect())
@@ -176,6 +214,20 @@ impl PyQueue {
     pub fn cancel_job(&self, job_id: &str) -> PyResult<bool> {
         self.storage
             .cancel_job(job_id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Get the IDs of jobs that a given job depends on.
+    pub fn get_dependencies(&self, job_id: &str) -> PyResult<Vec<String>> {
+        self.storage
+            .get_dependencies(job_id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Get the IDs of jobs that depend on a given job.
+    pub fn get_dependents(&self, job_id: &str) -> PyResult<Vec<String>> {
+        self.storage
+            .get_dependents(job_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 

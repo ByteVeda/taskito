@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use super::schema::{dead_letter, job_errors, jobs, periodic_tasks, rate_limits};
+use super::schema::{dead_letter, job_dependencies, job_errors, jobs, periodic_tasks, rate_limits};
 
 /// A row in the `jobs` table (for SELECT queries).
 #[derive(Queryable, Selectable, Debug, Clone)]
@@ -135,4 +135,22 @@ pub struct NewJobErrorRow<'a> {
     pub attempt: i32,
     pub error: &'a str,
     pub failed_at: i64,
+}
+
+/// A row in the `job_dependencies` table.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = job_dependencies)]
+pub struct JobDependencyRow {
+    pub id: String,
+    pub job_id: String,
+    pub depends_on_job_id: String,
+}
+
+/// Insertable struct for job dependency entries.
+#[derive(Insertable, Debug)]
+#[diesel(table_name = job_dependencies)]
+pub struct NewJobDependencyRow<'a> {
+    pub id: &'a str,
+    pub job_id: &'a str,
+    pub depends_on_job_id: &'a str,
 }

@@ -46,6 +46,7 @@ task.apply_async(
     timeout: int | None = None,
     unique_key: str | None = None,
     metadata: str | None = None,
+    depends_on: str | list[str] | None = None,
 ) -> JobResult
 ```
 
@@ -62,6 +63,7 @@ Enqueue with full control over submission options. Any parameter not provided fa
 | `timeout` | `int \| None` | `None` | Override timeout in seconds |
 | `unique_key` | `str \| None` | `None` | Deduplicate active jobs with same key |
 | `metadata` | `str \| None` | `None` | Arbitrary JSON metadata to attach |
+| `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](../guide/dependencies.md). |
 
 ```python
 job = send_email.apply_async(

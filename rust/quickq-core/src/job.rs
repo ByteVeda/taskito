@@ -99,6 +99,7 @@ pub struct NewJob {
     pub timeout_ms: i64,
     pub unique_key: Option<String>,
     pub metadata: Option<String>,
+    pub depends_on: Vec<String>,
 }
 
 impl NewJob {

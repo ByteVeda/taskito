@@ -66,6 +66,16 @@ class JobResult:
         """Error history for this job (one entry per failed attempt)."""
         return self._queue.job_errors(self.id)
 
+    @property
+    def dependencies(self) -> list[str]:
+        """IDs of jobs this job depends on."""
+        return self._queue._inner.get_dependencies(self.id)
+
+    @property
+    def dependents(self) -> list[str]:
+        """IDs of jobs that depend on this job."""
+        return self._queue._inner.get_dependents(self.id)
+
     def result(
         self,
         timeout: float = 30.0,
@@ -158,6 +168,35 @@ class JobResult:
             f"Job {self.id} did not complete within {timeout}s "
             f"(current status: {self._py_job.status})"
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a plain dictionary for JSON serialization.
+
+        Refreshes the job status from the database before building the dict.
+        Does not include ``result_bytes`` (use :meth:`result` for that).
+        """
+        refreshed = self._queue._inner.get_job(self._py_job.id)
+        if refreshed is not None:
+            self._py_job = refreshed
+
+        return {
+            "id": self._py_job.id,
+            "queue": self._py_job.queue,
+            "task_name": self._py_job.task_name,
+            "status": self._py_job.status,
+            "priority": self._py_job.priority,
+            "progress": self._py_job.progress,
+            "retry_count": self._py_job.retry_count,
+            "max_retries": self._py_job.max_retries,
+            "created_at": self._py_job.created_at,
+            "scheduled_at": self._py_job.scheduled_at,
+            "started_at": self._py_job.started_at,
+            "completed_at": self._py_job.completed_at,
+            "error": self._py_job.error,
+            "timeout_ms": self._py_job.timeout_ms,
+            "unique_key": self._py_job.unique_key,
+            "metadata": self._py_job.metadata,
+        }
 
     def __repr__(self) -> str:
         """Return a developer-friendly string representation."""

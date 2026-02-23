@@ -33,6 +33,20 @@ def main() -> None:
         help="Comma-separated list of queues to process (default: all registered)",
     )
 
+    # dashboard subcommand
+    dash_parser = subparsers.add_parser("dashboard", help="Start the web dashboard")
+    dash_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
+    )
+    dash_parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)"
+    )
+    dash_parser.add_argument(
+        "--port", type=int, default=8080, help="Bind port (default: 8080)"
+    )
+
     # info subcommand
     info_parser = subparsers.add_parser("info", help="Show queue statistics")
     info_parser.add_argument(
@@ -51,6 +65,8 @@ def main() -> None:
 
     if args.command == "worker":
         run_worker(args)
+    elif args.command == "dashboard":
+        run_dashboard(args)
     elif args.command == "info":
         run_info(args)
     else:
@@ -101,6 +117,14 @@ def run_worker(args: argparse.Namespace) -> None:
     queue = _load_queue(args.app)
     queues = args.queues.split(",") if args.queues else None
     queue.run_worker(queues=queues)
+
+
+def run_dashboard(args: argparse.Namespace) -> None:
+    """Start the web dashboard."""
+    queue = _load_queue(args.app)
+    from quickq.dashboard import serve_dashboard
+
+    serve_dashboard(queue, host=args.host, port=args.port)
 
 
 def run_info(args: argparse.Namespace) -> None:

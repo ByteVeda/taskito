@@ -254,9 +254,20 @@ class Queue:
         timeout: int | None = None,
         unique_key: str | None = None,
         metadata: str | None = None,
+        depends_on: str | list[str] | None = None,
     ) -> JobResult:
-        """Enqueue a task for execution."""
+        """Enqueue a task for execution.
+
+        Args:
+            depends_on: Job ID or list of job IDs that must complete
+                before this job can run. If any dependency fails or is
+                cancelled, this job will be cascade-cancelled.
+        """
         payload = cloudpickle.dumps((args, kwargs or {}))
+
+        dep_ids = None
+        if depends_on is not None:
+            dep_ids = [depends_on] if isinstance(depends_on, str) else list(depends_on)
 
         py_job = self._inner.enqueue(
             task_name=task_name,
@@ -268,6 +279,7 @@ class Queue:
             timeout=timeout,
             unique_key=unique_key,
             metadata=metadata,
+            depends_on=dep_ids,
         )
 
         return JobResult(py_job=py_job, queue=self)
@@ -323,6 +335,36 @@ class Queue:
         if py_job is None:
             return None
         return JobResult(py_job=py_job, queue=self)
+
+    def list_jobs(
+        self,
+        status: str | None = None,
+        queue: str | None = None,
+        task_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[JobResult]:
+        """List jobs with optional filters and pagination.
+
+        Args:
+            status: Filter by status ("pending", "running", "complete",
+                "failed", "dead", "cancelled"). None returns all.
+            queue: Filter by queue name. None returns all queues.
+            task_name: Filter by task name. None returns all tasks.
+            limit: Maximum number of jobs to return.
+            offset: Number of jobs to skip (for pagination).
+
+        Returns:
+            List of JobResult handles, ordered by creation time (newest first).
+        """
+        py_jobs = self._inner.list_jobs(
+            status=status,
+            queue=queue,
+            task_name=task_name,
+            limit=limit,
+            offset=offset,
+        )
+        return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
 
     # -- Sync inspection methods --
 

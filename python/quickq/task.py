@@ -81,6 +81,7 @@ class TaskWrapper:
         timeout: int | None = None,
         unique_key: str | None = None,
         metadata: str | None = None,
+        depends_on: str | list[str] | None = None,
     ) -> JobResult:
         """
         Enqueue with full control over submission options.
@@ -95,6 +96,7 @@ class TaskWrapper:
             timeout: Override the default timeout in seconds.
             unique_key: Deduplicate active jobs with the same key.
             metadata: Arbitrary JSON metadata to attach to the job.
+            depends_on: Job ID or list of job IDs that must complete first.
         """
         return self._queue.enqueue(
             task_name=self._task_name,
@@ -107,6 +109,7 @@ class TaskWrapper:
             timeout=timeout if timeout is not None else self._default_timeout,
             unique_key=unique_key,
             metadata=metadata,
+            depends_on=depends_on,
         )
 
     def map(self, iterable: list[tuple]) -> list[JobResult]:

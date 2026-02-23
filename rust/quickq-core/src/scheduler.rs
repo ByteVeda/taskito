@@ -262,6 +262,7 @@ impl Scheduler {
                 timeout_ms: 300_000,
                 unique_key: None,
                 metadata: None,
+                depends_on: vec![],
             };
 
             if let Err(e) = self.storage.enqueue(new_job) {

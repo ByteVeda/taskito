@@ -32,6 +32,9 @@ pub enum QueueError {
     #[error("config error: {0}")]
     Config(String),
 
+    #[error("dependency not found: {0}")]
+    DependencyNotFound(String),
+
     #[error("{0}")]
     Other(String),
 }

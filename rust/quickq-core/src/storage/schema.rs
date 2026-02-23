@@ -68,3 +68,13 @@ diesel::table! {
         failed_at -> BigInt,
     }
 }
+
+diesel::table! {
+    job_dependencies (id) {
+        id -> Text,
+        job_id -> Text,
+        depends_on_job_id -> Text,
+    }
+}
+
+diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies);

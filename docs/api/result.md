@@ -72,7 +72,31 @@ for err in job.errors:
     print(f"Attempt {err['attempt']}: {err['error']}")
 ```
 
+### `job.dependencies`
+
+```python
+job.dependencies -> list[str]
+```
+
+List of job IDs this job depends on. Returns an empty list if the job has no dependencies. See [Dependencies](../guide/dependencies.md).
+
+### `job.dependents`
+
+```python
+job.dependents -> list[str]
+```
+
+List of job IDs that depend on this job. Returns an empty list if no other jobs depend on this one.
+
 ## Methods
+
+### `job.to_dict()`
+
+```python
+job.to_dict() -> dict
+```
+
+Return all job fields as a plain dictionary. Useful for JSON serialization (e.g. in the [dashboard](../guide/dashboard.md) or [FastAPI integration](../guide/advanced.md#fastapi-integration)).
 
 ### `job.result()`
 

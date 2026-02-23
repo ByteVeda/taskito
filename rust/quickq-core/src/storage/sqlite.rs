@@ -5,7 +5,7 @@ use diesel::sqlite::SqliteConnection;
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus, NewJob, now_millis};
 use super::models::*;
-use super::schema::{dead_letter, job_errors, jobs, periodic_tasks, rate_limits};
+use super::schema::{dead_letter, job_dependencies, job_errors, jobs, periodic_tasks, rate_limits};
 
 type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -147,6 +147,22 @@ impl SqliteStorage {
             "CREATE INDEX IF NOT EXISTS idx_job_errors_job_id ON job_errors(job_id)"
         ).execute(&mut conn)?;
 
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS job_dependencies (
+                id                TEXT PRIMARY KEY,
+                job_id            TEXT NOT NULL,
+                depends_on_job_id TEXT NOT NULL
+            )"
+        ).execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_job_deps_job_id ON job_dependencies(job_id)"
+        ).execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_job_deps_depends_on ON job_dependencies(depends_on_job_id)"
+        ).execute(&mut conn)?;
+
         Ok(())
     }
 
@@ -154,28 +170,69 @@ impl SqliteStorage {
 
     /// Insert a new job into the queue. Returns the job.
     pub fn enqueue(&self, new_job: NewJob) -> Result<Job> {
+        let depends_on = new_job.depends_on.clone();
         let job = new_job.into_job();
         let mut conn = self.conn()?;
 
-        let row = NewJobRow {
-            id: &job.id,
-            queue: &job.queue,
-            task_name: &job.task_name,
-            payload: &job.payload,
-            status: job.status as i32,
-            priority: job.priority,
-            created_at: job.created_at,
-            scheduled_at: job.scheduled_at,
-            retry_count: job.retry_count,
-            max_retries: job.max_retries,
-            timeout_ms: job.timeout_ms,
-            unique_key: job.unique_key.as_deref(),
-            metadata: job.metadata.as_deref(),
-        };
+        conn.transaction(|conn| {
+            // Validate dependencies exist and aren't dead/cancelled
+            for dep_id in &depends_on {
+                let dep: Option<JobRow> = jobs::table
+                    .find(dep_id)
+                    .select(JobRow::as_select())
+                    .first(conn)
+                    .optional()?;
 
-        diesel::insert_into(jobs::table)
-            .values(&row)
-            .execute(&mut conn)?;
+                match dep {
+                    None => return Err(diesel::result::Error::RollbackTransaction),
+                    Some(d) if d.status == JobStatus::Dead as i32
+                        || d.status == JobStatus::Cancelled as i32 =>
+                    {
+                        return Err(diesel::result::Error::RollbackTransaction);
+                    }
+                    _ => {}
+                }
+            }
+
+            let row = NewJobRow {
+                id: &job.id,
+                queue: &job.queue,
+                task_name: &job.task_name,
+                payload: &job.payload,
+                status: job.status as i32,
+                priority: job.priority,
+                created_at: job.created_at,
+                scheduled_at: job.scheduled_at,
+                retry_count: job.retry_count,
+                max_retries: job.max_retries,
+                timeout_ms: job.timeout_ms,
+                unique_key: job.unique_key.as_deref(),
+                metadata: job.metadata.as_deref(),
+            };
+
+            diesel::insert_into(jobs::table)
+                .values(&row)
+                .execute(conn)?;
+
+            // Insert dependency rows
+            for dep_id in &depends_on {
+                let dep_row = NewJobDependencyRow {
+                    id: &uuid::Uuid::now_v7().to_string(),
+                    job_id: &job.id,
+                    depends_on_job_id: dep_id,
+                };
+                diesel::insert_into(job_dependencies::table)
+                    .values(&dep_row)
+                    .execute(conn)?;
+            }
+
+            Ok(())
+        }).map_err(|e| match e {
+            diesel::result::Error::RollbackTransaction => {
+                QueueError::DependencyNotFound("dependency not found or already dead/cancelled".to_string())
+            }
+            other => QueueError::Storage(other),
+        })?;
 
         Ok(job)
     }
@@ -213,6 +270,7 @@ impl SqliteStorage {
 
     /// Enqueue with unique_key deduplication. Returns existing job if duplicate.
     pub fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
+        let depends_on = new_job.depends_on.clone();
         let job = new_job.into_job();
         let mut conn = self.conn()?;
 
@@ -253,7 +311,39 @@ impl SqliteStorage {
             .values(&row)
             .execute(&mut conn)?;
 
+        // Insert dependency rows
+        for dep_id in &depends_on {
+            let dep_row = NewJobDependencyRow {
+                id: &uuid::Uuid::now_v7().to_string(),
+                job_id: &job.id,
+                depends_on_job_id: dep_id,
+            };
+            diesel::insert_into(job_dependencies::table)
+                .values(&dep_row)
+                .execute(&mut conn)?;
+        }
+
         Ok(job)
+    }
+
+    /// Check if all dependencies for a job are complete.
+    fn deps_satisfied(conn: &mut SqliteConnection, job_id: &str) -> diesel::result::QueryResult<bool> {
+        let dep_job_ids: Vec<String> = job_dependencies::table
+            .filter(job_dependencies::job_id.eq(job_id))
+            .select(job_dependencies::depends_on_job_id)
+            .load(conn)?;
+
+        if dep_job_ids.is_empty() {
+            return Ok(true);
+        }
+
+        let incomplete: i64 = jobs::table
+            .filter(jobs::id.eq_any(&dep_job_ids))
+            .filter(jobs::status.ne(JobStatus::Complete as i32))
+            .count()
+            .get_result(conn)?;
+
+        Ok(incomplete == 0)
     }
 
     /// Atomically dequeue the highest-priority ready job from the given queue.
@@ -261,38 +351,42 @@ impl SqliteStorage {
         let mut conn = self.conn()?;
 
         conn.transaction(|conn| {
-            // Find the next ready job
-            let candidate: Option<JobRow> = jobs::table
+            // Find candidate jobs (check a few in case some have unmet deps)
+            let candidates: Vec<JobRow> = jobs::table
                 .filter(jobs::queue.eq(queue_name))
                 .filter(jobs::status.eq(JobStatus::Pending as i32))
                 .filter(jobs::scheduled_at.le(now))
                 .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+                .limit(10)
                 .select(JobRow::as_select())
-                .first(conn)
-                .optional()?;
+                .load(conn)?;
 
-            let row = match candidate {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+            for row in candidates {
+                // Check if all dependencies are satisfied
+                if !Self::deps_satisfied(conn, &row.id)? {
+                    continue;
+                }
 
-            // Atomically claim it
-            diesel::update(jobs::table)
-                .filter(jobs::id.eq(&row.id))
-                .filter(jobs::status.eq(JobStatus::Pending as i32))
-                .set((
-                    jobs::status.eq(JobStatus::Running as i32),
-                    jobs::started_at.eq(now),
-                ))
-                .execute(conn)?;
+                // Atomically claim it
+                diesel::update(jobs::table)
+                    .filter(jobs::id.eq(&row.id))
+                    .filter(jobs::status.eq(JobStatus::Pending as i32))
+                    .set((
+                        jobs::status.eq(JobStatus::Running as i32),
+                        jobs::started_at.eq(now),
+                    ))
+                    .execute(conn)?;
 
-            // Re-read the updated row
-            let updated: JobRow = jobs::table
-                .find(&row.id)
-                .select(JobRow::as_select())
-                .first(conn)?;
+                // Re-read the updated row
+                let updated: JobRow = jobs::table
+                    .find(&row.id)
+                    .select(JobRow::as_select())
+                    .first(conn)?;
 
-            Ok(Some(Job::from(updated)))
+                return Ok(Some(Job::from(updated)));
+            }
+
+            Ok(None)
         })
     }
 
@@ -370,7 +464,8 @@ impl SqliteStorage {
         Ok(())
     }
 
-    /// Cancel a pending job. Returns true if cancelled, false if not pending.
+    /// Cancel a pending job and cascade-cancel its dependents.
+    /// Returns true if cancelled, false if not pending.
     pub fn cancel_job(&self, id: &str) -> Result<bool> {
         let now = now_millis();
         let mut conn = self.conn()?;
@@ -384,7 +479,78 @@ impl SqliteStorage {
             ))
             .execute(&mut conn)?;
 
+        drop(conn);
+        if affected > 0 {
+            self.cascade_cancel(id, "dependency cancelled")?;
+        }
+
         Ok(affected > 0)
+    }
+
+    /// Cascade-cancel all pending jobs that depend (directly or transitively)
+    /// on the given job. Uses BFS to handle deep chains.
+    pub fn cascade_cancel(&self, failed_job_id: &str, reason: &str) -> Result<()> {
+        let mut conn = self.conn()?;
+        let now = now_millis();
+
+        let mut queue: Vec<String> = vec![failed_job_id.to_string()];
+        let mut idx = 0;
+
+        while idx < queue.len() {
+            let current_id = queue[idx].clone();
+            idx += 1;
+
+            let dependents: Vec<String> = job_dependencies::table
+                .filter(job_dependencies::depends_on_job_id.eq(&current_id))
+                .select(job_dependencies::job_id)
+                .load(&mut conn)?;
+
+            for dep_id in dependents {
+                if !queue.contains(&dep_id) {
+                    queue.push(dep_id);
+                }
+            }
+        }
+
+        // Remove the original job from the list (only cancel dependents)
+        if !queue.is_empty() {
+            queue.remove(0);
+        }
+
+        if !queue.is_empty() {
+            let error_msg = format!("{reason}: {failed_job_id}");
+            diesel::update(jobs::table)
+                .filter(jobs::id.eq_any(&queue))
+                .filter(jobs::status.eq(JobStatus::Pending as i32))
+                .set((
+                    jobs::status.eq(JobStatus::Cancelled as i32),
+                    jobs::completed_at.eq(now),
+                    jobs::error.eq(&error_msg),
+                ))
+                .execute(&mut conn)?;
+        }
+
+        Ok(())
+    }
+
+    /// Get the IDs of jobs that a given job depends on.
+    pub fn get_dependencies(&self, job_id: &str) -> Result<Vec<String>> {
+        let mut conn = self.conn()?;
+        let ids: Vec<String> = job_dependencies::table
+            .filter(job_dependencies::job_id.eq(job_id))
+            .select(job_dependencies::depends_on_job_id)
+            .load(&mut conn)?;
+        Ok(ids)
+    }
+
+    /// Get the IDs of jobs that depend on a given job.
+    pub fn get_dependents(&self, job_id: &str) -> Result<Vec<String>> {
+        let mut conn = self.conn()?;
+        let ids: Vec<String> = job_dependencies::table
+            .filter(job_dependencies::depends_on_job_id.eq(job_id))
+            .select(job_dependencies::job_id)
+            .load(&mut conn)?;
+        Ok(ids)
     }
 
     /// Update progress for a running job (0-100).
@@ -402,11 +568,12 @@ impl SqliteStorage {
         Ok(())
     }
 
-    /// Move a job to the dead letter queue.
+    /// Move a job to the dead letter queue and cascade-cancel dependents.
     pub fn move_to_dlq(&self, job: &Job, error: &str, metadata: Option<&str>) -> Result<()> {
         let now = now_millis();
         let dlq_id = uuid::Uuid::now_v7().to_string();
         let mut conn = self.conn()?;
+        let job_id = job.id.clone();
 
         conn.transaction(|conn| {
             let dlq_row = NewDeadLetterRow {
@@ -434,8 +601,50 @@ impl SqliteStorage {
                 ))
                 .execute(conn)?;
 
-            Ok(())
-        })
+            Ok::<(), diesel::result::Error>(())
+        })?;
+
+        // Drop connection before cascade (needed for single-connection pools)
+        drop(conn);
+
+        // Cascade cancel dependents
+        self.cascade_cancel(&job_id, "dependency failed")?;
+
+        Ok(())
+    }
+
+    /// List jobs with optional filters and pagination.
+    pub fn list_jobs(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Job>> {
+        let mut conn = self.conn()?;
+
+        let mut query = jobs::table
+            .into_boxed()
+            .order(jobs::created_at.desc());
+
+        if let Some(s) = status {
+            query = query.filter(jobs::status.eq(s));
+        }
+        if let Some(q) = queue_name {
+            query = query.filter(jobs::queue.eq(q));
+        }
+        if let Some(t) = task_name {
+            query = query.filter(jobs::task_name.eq(t));
+        }
+
+        let rows: Vec<JobRow> = query
+            .limit(limit)
+            .offset(offset)
+            .select(JobRow::as_select())
+            .load(&mut conn)?;
+
+        Ok(rows.into_iter().map(Job::from).collect())
     }
 
     /// Get a job by ID.
@@ -515,6 +724,7 @@ impl SqliteStorage {
             timeout_ms: 300_000,
             unique_key: None,
             metadata: None,
+            depends_on: vec![],
         };
 
         let job = self.enqueue(new_job)?;
@@ -757,6 +967,7 @@ mod tests {
             timeout_ms: 300_000,
             unique_key: None,
             metadata: None,
+            depends_on: vec![],
         }
     }
 
@@ -1003,5 +1214,103 @@ mod tests {
         storage.update_progress(&job.id, 100).unwrap();
         let fetched = storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(fetched.progress, Some(100));
+    }
+
+    // ── Dependency tests ────────────────────────────────────
+
+    #[test]
+    fn test_enqueue_with_dependency() {
+        let storage = test_storage();
+        let job_a = storage.enqueue(make_job("task_a")).unwrap();
+
+        let mut dep_job = make_job("task_b");
+        dep_job.depends_on = vec![job_a.id.clone()];
+        let job_b = storage.enqueue(dep_job).unwrap();
+
+        let deps = storage.get_dependencies(&job_b.id).unwrap();
+        assert_eq!(deps, vec![job_a.id.clone()]);
+
+        let dependents = storage.get_dependents(&job_a.id).unwrap();
+        assert_eq!(dependents, vec![job_b.id]);
+    }
+
+    #[test]
+    fn test_dequeue_blocks_on_unmet_dependency() {
+        let storage = test_storage();
+        let job_a = storage.enqueue(make_job("dep_task")).unwrap();
+
+        let mut dep_job = make_job("dependent_task");
+        dep_job.depends_on = vec![job_a.id.clone()];
+        storage.enqueue(dep_job).unwrap();
+
+        let now = now_millis() + 1000;
+
+        // Dequeue should return job_a first (job_b has unmet dep)
+        let dequeued = storage.dequeue("default", now).unwrap().unwrap();
+        assert_eq!(dequeued.id, job_a.id);
+
+        // job_b should NOT be dequeueable yet (dep not complete)
+        let none = storage.dequeue("default", now).unwrap();
+        assert!(none.is_none());
+
+        // Complete job_a
+        storage.complete(&job_a.id, None).unwrap();
+
+        // Now job_b should be dequeueable
+        let dequeued = storage.dequeue("default", now).unwrap().unwrap();
+        assert_eq!(dequeued.task_name, "dependent_task");
+    }
+
+    #[test]
+    fn test_cascade_cancel_on_job_cancel() {
+        let storage = test_storage();
+        let job_a = storage.enqueue(make_job("root")).unwrap();
+
+        let mut dep_b = make_job("child");
+        dep_b.depends_on = vec![job_a.id.clone()];
+        let job_b = storage.enqueue(dep_b).unwrap();
+
+        let mut dep_c = make_job("grandchild");
+        dep_c.depends_on = vec![job_b.id.clone()];
+        let job_c = storage.enqueue(dep_c).unwrap();
+
+        // Cancel root — should cascade to child and grandchild
+        storage.cancel_job(&job_a.id).unwrap();
+
+        let b = storage.get_job(&job_b.id).unwrap().unwrap();
+        assert_eq!(b.status, JobStatus::Cancelled);
+
+        let c = storage.get_job(&job_c.id).unwrap().unwrap();
+        assert_eq!(c.status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_cascade_cancel_on_dlq() {
+        let storage = test_storage();
+        let job_a = storage.enqueue(make_job("parent")).unwrap();
+
+        let mut dep_b = make_job("child_of_dead");
+        dep_b.depends_on = vec![job_a.id.clone()];
+        let job_b = storage.enqueue(dep_b).unwrap();
+
+        // Dequeue and fail job_a to DLQ
+        let now = now_millis() + 1000;
+        storage.dequeue("default", now).unwrap();
+        let running = storage.get_job(&job_a.id).unwrap().unwrap();
+        storage.move_to_dlq(&running, "fatal error", None).unwrap();
+
+        let b = storage.get_job(&job_b.id).unwrap().unwrap();
+        assert_eq!(b.status, JobStatus::Cancelled);
+        assert!(b.error.unwrap().contains("dependency failed"));
+    }
+
+    #[test]
+    fn test_enqueue_rejects_missing_dependency() {
+        let storage = test_storage();
+
+        let mut dep_job = make_job("orphan");
+        dep_job.depends_on = vec!["nonexistent-id".to_string()];
+        let result = storage.enqueue(dep_job);
+        assert!(result.is_err());
     }
 }

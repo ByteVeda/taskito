@@ -89,8 +89,10 @@ nav:
     - Retries & Dead Letters: guide/retries.md
     - Rate Limiting: guide/rate-limiting.md
     - Workflows: guide/workflows.md
+    - Dependencies: guide/dependencies.md
     - Scheduling: guide/scheduling.md
     - Monitoring & Hooks: guide/monitoring.md
+    - Web Dashboard: guide/dashboard.md
     - Advanced: guide/advanced.md
   - Architecture: architecture.md
   - API Reference:

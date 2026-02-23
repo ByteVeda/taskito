@@ -74,10 +74,15 @@ queue.enqueue(
     timeout: int | None = None,
     unique_key: str | None = None,
     metadata: str | None = None,
+    depends_on: str | list[str] | None = None,
 ) -> JobResult
 ```
 
 Enqueue a task for execution. Returns a [`JobResult`](result.md) handle.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](../guide/dependencies.md). |
 
 ### `queue.enqueue_many()`
 
@@ -105,13 +110,35 @@ queue.get_job(job_id: str) -> JobResult | None
 
 Retrieve a job by ID. Returns `None` if not found.
 
+### `queue.list_jobs()`
+
+```python
+queue.list_jobs(
+    status: str | None = None,
+    queue: str | None = None,
+    task_name: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[JobResult]
+```
+
+List jobs with optional filters. Returns a list of [`JobResult`](result.md) handles ordered by creation time (newest first).
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `status` | `str \| None` | `None` | Filter by status: `pending`, `running`, `completed`, `failed`, `dead`, `cancelled` |
+| `queue` | `str \| None` | `None` | Filter by queue name |
+| `task_name` | `str \| None` | `None` | Filter by task name |
+| `limit` | `int` | `50` | Maximum results to return |
+| `offset` | `int` | `0` | Pagination offset |
+
 ### `queue.cancel_job()`
 
 ```python
 queue.cancel_job(job_id: str) -> bool
 ```
 
-Cancel a pending job. Returns `True` if cancelled, `False` if not pending.
+Cancel a pending job. Returns `True` if cancelled, `False` if not pending. If the job has dependents, they are cascade-cancelled.
 
 ### `queue.update_progress()`
 
