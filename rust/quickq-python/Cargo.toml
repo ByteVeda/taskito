@@ -1,0 +1,14 @@
+[package]
+name = "quickq-python"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "_quickq"
+crate-type = ["cdylib"]
+
+[dependencies]
+quickq-core = { path = "../quickq-core" }
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }

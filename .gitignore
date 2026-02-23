@@ -1,0 +1,43 @@
+# Rust
+target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.so
+*.dylib
+*.pyd
+.eggs/
+.mypy_cache/
+.pytest_cache
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# quickq data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

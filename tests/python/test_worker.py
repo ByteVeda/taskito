@@ -1,0 +1,117 @@
+"""Tests for worker behavior."""
+
+import threading
+import time
+
+import pytest
+
+from quickq import Queue
+
+
+@pytest.fixture
+def queue(tmp_path):
+    db_path = str(tmp_path / "test_worker.db")
+    return Queue(db_path=db_path, workers=2)
+
+
+def test_multiple_tasks(queue):
+    """Worker handles multiple different task types."""
+
+    @queue.task()
+    def task_a(x):
+        return x * 2
+
+    @queue.task()
+    def task_b(x):
+        return x + 10
+
+    job_a = task_a.delay(5)
+    job_b = task_b.delay(5)
+
+    worker_thread = threading.Thread(
+        target=queue.run_worker,
+        daemon=True,
+    )
+    worker_thread.start()
+
+    assert job_a.result(timeout=10) == 10
+    assert job_b.result(timeout=10) == 15
+
+
+def test_get_job(queue):
+    """Can retrieve a job by ID."""
+
+    @queue.task()
+    def simple():
+        return 42
+
+    job = simple.delay()
+    fetched = queue.get_job(job.id)
+    assert fetched is not None
+    assert fetched.id == job.id
+
+
+def test_job_status_progression(queue):
+    """Job status progresses from pending through complete."""
+
+    @queue.task()
+    def slow():
+        time.sleep(0.5)
+        return "done"
+
+    job = slow.delay()
+
+    # Initially pending
+    fetched = queue.get_job(job.id)
+    assert fetched.status == "pending"
+
+    worker_thread = threading.Thread(
+        target=queue.run_worker,
+        daemon=True,
+    )
+    worker_thread.start()
+
+    result = job.result(timeout=10)
+    assert result == "done"
+
+    # After completion
+    fetched = queue.get_job(job.id)
+    assert fetched.status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_async_result(tmp_path):
+    """Async result retrieval works."""
+    db_path = str(tmp_path / "test_async.db")
+    queue = Queue(db_path=db_path, workers=2)
+
+    @queue.task()
+    def add(a, b):
+        return a + b
+
+    job = add.delay(10, 20)
+
+    worker_thread = threading.Thread(
+        target=queue.run_worker,
+        daemon=True,
+    )
+    worker_thread.start()
+
+    result = await job.aresult(timeout=10)
+    assert result == 30
+
+
+@pytest.mark.asyncio
+async def test_async_stats(tmp_path):
+    """Async stats work."""
+    db_path = str(tmp_path / "test_async_stats.db")
+    queue = Queue(db_path=db_path, workers=2)
+
+    @queue.task()
+    def noop():
+        pass
+
+    noop.delay()
+
+    stats = await queue.astats()
+    assert stats["pending"] == 1
