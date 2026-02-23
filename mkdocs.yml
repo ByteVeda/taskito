@@ -1,6 +1,6 @@
 site_name: quickq
 site_description: "Rust-powered task queue for Python. No broker required."
-site_url: https://pratyush618.github.io/quickq
+site_url: https://quickq-sepia.vercel.app
 repo_url: https://github.com/pratyush618/quickq
 repo_name: pratyush618/quickq
 

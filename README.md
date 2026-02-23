@@ -56,7 +56,7 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 
 Full documentation with guides, API reference, architecture diagrams, and examples:
 
-**[Read the docs →](https://pratyush618.github.io/quickq)**
+**[Read the docs →](https://quickq-sepia.vercel.app)**
 
 ## Comparison
 
