@@ -1,14 +1,14 @@
 [package]
-name = "quickq-python"
+name = "taskito-python"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "_quickq"
+name = "_taskito"
 crate-type = ["cdylib"]
 
 [dependencies]
-quickq-core = { path = "../quickq-core" }
+taskito-core = { path = "../taskito-core" }
 pyo3 = { workspace = true }
 tokio = { workspace = true }
 crossbeam-channel = { workspace = true }

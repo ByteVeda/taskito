@@ -1,6 +1,6 @@
 # JobResult
 
-::: quickq.result.JobResult
+::: taskito.result.JobResult
 
 Handle to an enqueued job. Provides methods to check status and retrieve results, both synchronously and asynchronously.
 

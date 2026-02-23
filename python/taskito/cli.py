@@ -1,4 +1,4 @@
-"""CLI entry point for quickq worker and info commands."""
+"""CLI entry point for taskito worker and info commands."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from quickq.app import Queue
+    from taskito.app import Queue
 
 
 def main() -> None:
     """Parse CLI arguments and dispatch to the appropriate subcommand."""
     parser = argparse.ArgumentParser(
-        prog="quickq",
-        description="quickq — Rust-powered task queue for Python",
+        prog="taskito",
+        description="taskito — Rust-powered task queue for Python",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -98,7 +98,7 @@ def _load_queue(app_path: str) -> Queue:
         )
         sys.exit(1)
 
-    from quickq.app import Queue
+    from taskito.app import Queue
 
     if not isinstance(queue, Queue):
         print(
@@ -120,7 +120,7 @@ def run_worker(args: argparse.Namespace) -> None:
 def run_dashboard(args: argparse.Namespace) -> None:
     """Start the web dashboard."""
     queue = _load_queue(args.app)
-    from quickq.dashboard import serve_dashboard
+    from taskito.dashboard import serve_dashboard
 
     serve_dashboard(queue, host=args.host, port=args.port)
 
@@ -138,7 +138,7 @@ def run_info(args: argparse.Namespace) -> None:
 def _print_stats(queue: Queue) -> None:
     """Print stats once."""
     stats = queue.stats()
-    print("quickq queue statistics")
+    print("taskito queue statistics")
     print("-" * 30)
     for key in ("pending", "running", "completed", "failed", "dead", "cancelled"):
         print(f"  {key:<12} {stats.get(key, 0)}")

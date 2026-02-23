@@ -10,7 +10,7 @@ use py_job::PyJob;
 use py_config::PyTaskConfig;
 
 #[pymodule]
-fn _quickq(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _taskito(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQueue>()?;
     m.add_class::<PyJob>()?;
     m.add_class::<PyTaskConfig>()?;

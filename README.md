@@ -1,16 +1,16 @@
-# quickq
+# taskito
 
 A Rust-powered task queue for Python. No broker required — just SQLite.
 
 ```
-pip install quickq
+pip install taskito
 ```
 
 ## Quickstart
 
 ```python
 import threading
-from quickq import Queue
+from taskito import Queue
 
 queue = Queue(db_path="tasks.db")
 
@@ -26,9 +26,9 @@ t.start()
 print(job.result(timeout=10))  # 5
 ```
 
-## Why quickq?
+## Why taskito?
 
-Most Python task queues require a separate broker (Redis, RabbitMQ) even for single-machine workloads. quickq embeds everything — storage, scheduling, and worker management — into a single `pip install` with no external dependencies beyond Python itself.
+Most Python task queues require a separate broker (Redis, RabbitMQ) even for single-machine workloads. taskito embeds everything — storage, scheduling, and worker management — into a single `pip install` with no external dependencies beyond Python itself.
 
 The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool with crossbeam channels, and Diesel ORM over SQLite in WAL mode. Python's GIL is only held during task execution.
 
@@ -48,19 +48,19 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 - **Named queues** — route tasks to isolated queues
 - **Hooks** — before/after/success/failure middleware
 - **Async support** — `await job.aresult()`, `await queue.astats()`
-- **Web dashboard** — `quickq dashboard --app myapp:queue` serves a built-in monitoring UI
-- **FastAPI integration** — `QuickQRouter` for instant REST API over the queue
-- **CLI** — `quickq worker`, `quickq info --watch`, `quickq dashboard`
+- **Web dashboard** — `taskito dashboard --app myapp:queue` serves a built-in monitoring UI
+- **FastAPI integration** — `TaskitoRouter` for instant REST API over the queue
+- **CLI** — `taskito worker`, `taskito info --watch`, `taskito dashboard`
 
 ## Documentation
 
 Full documentation with guides, API reference, architecture diagrams, and examples:
 
-**[Read the docs →](https://quickq-sepia.vercel.app)**
+**[Read the docs →](https://taskito-sepia.vercel.app)**
 
 ## Comparison
 
-| Feature | quickq | Celery | RQ | Dramatiq | Huey |
+| Feature | taskito | Celery | RQ | Dramatiq | Huey |
 |---|---|---|---|---|---|
 | Broker required | **No** | Yes | Yes | Yes | Yes |
 | Core language | **Rust + Python** | Python | Python | Python | Python |

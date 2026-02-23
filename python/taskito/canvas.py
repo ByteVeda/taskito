@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from quickq.app import Queue
-    from quickq.result import JobResult
-    from quickq.task import TaskWrapper
+    from taskito.app import Queue
+    from taskito.result import JobResult
+    from taskito.task import TaskWrapper
 
 
 @dataclass(frozen=True)

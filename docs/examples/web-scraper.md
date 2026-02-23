@@ -16,7 +16,7 @@ scraper/
 ```python
 import json
 import time
-from quickq import Queue, current_job, chain, group, chord
+from taskito import Queue, current_job, chain, group, chord
 
 queue = Queue(
     db_path="scraper.db",
@@ -110,7 +110,7 @@ def hourly_cleanup():
 ```python
 """Enqueue scraping jobs."""
 from tasks import queue, scrape_page, summarize, store_results
-from quickq import group, chord
+from taskito import group, chord
 
 urls = [
     "https://example.com",
@@ -182,7 +182,7 @@ if __name__ == "__main__":
 === "Terminal 3 — Monitor"
 
     ```bash
-    quickq info --app tasks:queue --watch
+    taskito info --app tasks:queue --watch
     ```
 
 ## Key Patterns Demonstrated

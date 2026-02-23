@@ -5,8 +5,8 @@ use crossbeam_channel::{Receiver, Sender};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
 
-use quickq_core::job::Job;
-use quickq_core::scheduler::JobResult;
+use taskito_core::job::Job;
+use taskito_core::scheduler::JobResult;
 
 /// Manages a pool of std::threads that execute Python task functions.
 /// Each thread acquires the GIL only when running a task, so the scheduler
@@ -108,7 +108,7 @@ fn execute_task(
         })?;
 
     // Set job context before execution
-    let context_mod = py.import_bound("quickq.context")?;
+    let context_mod = py.import_bound("taskito.context")?;
     context_mod.call_method1(
         "_set_context",
         (&job.id, &job.task_name, job.retry_count, &job.queue),

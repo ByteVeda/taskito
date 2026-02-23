@@ -1,13 +1,13 @@
 # Workflows
 
-quickq provides three composition primitives for building complex task pipelines: **chain**, **group**, and **chord**.
+taskito provides three composition primitives for building complex task pipelines: **chain**, **group**, and **chord**.
 
 ## Signatures
 
 A `Signature` wraps a task call for deferred execution. Create them with `.s()` or `.si()`:
 
 ```python
-from quickq import chain, group, chord
+from taskito import chain, group, chord
 
 # Mutable signature — receives previous result as first argument
 sig = add.s(1, 2)

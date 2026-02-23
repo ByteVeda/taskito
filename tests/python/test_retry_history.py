@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from quickq import Queue
+from taskito import Queue
 
 
 @pytest.fixture

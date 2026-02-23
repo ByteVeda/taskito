@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from quickq import Queue
+from taskito import Queue
 
 # Skip entire module if fastapi is not installed
 fastapi = pytest.importorskip("fastapi")
@@ -12,7 +12,7 @@ httpx = pytest.importorskip("httpx")
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from quickq.contrib.fastapi import QuickQRouter
+from taskito.contrib.fastapi import TaskitoRouter
 
 
 @pytest.fixture
@@ -24,9 +24,9 @@ def queue(tmp_path):
 
 @pytest.fixture
 def app(queue):
-    """Create a FastAPI app with QuickQRouter."""
+    """Create a FastAPI app with TaskitoRouter."""
     app = FastAPI()
-    app.include_router(QuickQRouter(queue), prefix="/tasks")
+    app.include_router(TaskitoRouter(queue), prefix="/tasks")
     return app
 
 
@@ -180,15 +180,15 @@ def test_progress_stream_not_found(client):
 
 
 def test_router_custom_tags(queue):
-    """QuickQRouter accepts standard APIRouter kwargs."""
-    router = QuickQRouter(queue, tags=["my-tasks"])
+    """TaskitoRouter accepts standard APIRouter kwargs."""
+    router = TaskitoRouter(queue, tags=["my-tasks"])
     assert "my-tasks" in router.tags
 
 
 def test_router_custom_prefix(queue):
     """Router can be mounted with a custom prefix."""
     app = FastAPI()
-    app.include_router(QuickQRouter(queue), prefix="/api/v1/queue")
+    app.include_router(TaskitoRouter(queue), prefix="/api/v1/queue")
     client = TestClient(app)
 
     resp = client.get("/api/v1/queue/stats")

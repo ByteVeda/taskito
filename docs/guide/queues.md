@@ -24,13 +24,13 @@ Workers can listen to specific queues:
 
 ```bash
 # Process only email tasks
-quickq worker --app myapp:queue --queues emails
+taskito worker --app myapp:queue --queues emails
 
 # Process multiple queues
-quickq worker --app myapp:queue --queues emails,reports
+taskito worker --app myapp:queue --queues emails,reports
 
 # Process all registered queues (default)
-quickq worker --app myapp:queue
+taskito worker --app myapp:queue
 ```
 
 Or programmatically:

@@ -1,11 +1,11 @@
 # Example: Benchmark
 
-Measure quickq's throughput by enqueuing and processing a large batch of tasks.
+Measure taskito's throughput by enqueuing and processing a large batch of tasks.
 
 ## benchmark.py
 
 ```python
-"""quickq throughput benchmark.
+"""taskito throughput benchmark.
 
 Measures:
 1. Enqueue throughput (jobs/sec) using batch insert
@@ -17,7 +17,7 @@ import os
 import threading
 import time
 
-from quickq import Queue
+from taskito import Queue
 
 # ── Configuration ────────────────────────────────────────
 
@@ -87,7 +87,7 @@ def bench_latency(task, samples=100):
 # ── Main ─────────────────────────────────────────────────
 
 def main():
-    print(f"quickq benchmark")
+    print(f"taskito benchmark")
     print(f"  Workers: {NUM_WORKERS}")
     print(f"  Jobs:    {NUM_JOBS:,}")
     print(f"  DB:      {DB_PATH}")
@@ -132,7 +132,7 @@ python benchmark.py
 ## Sample Output
 
 ```
-quickq benchmark
+taskito benchmark
   Workers: 8
   Jobs:    10,000
   DB:      :memory:
@@ -154,7 +154,7 @@ Final stats: {'pending': 0, 'running': 0, 'completed': 20100, 'failed': 0, 'dead
 !!! note
     Actual numbers depend on your hardware, Python version, and SQLite configuration. The numbers above are from an 8-core machine with Python 3.12.
 
-## What Makes quickq Fast
+## What Makes taskito Fast
 
 | Component | How it helps |
 |---|---|

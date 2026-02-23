@@ -49,7 +49,7 @@ class PyJob:
 class PyQueue:
     def __init__(
         self,
-        db_path: str = "quickq.db",
+        db_path: str = "taskito.db",
         workers: int = 0,
         default_retry: int = 3,
         default_timeout: int = 300,

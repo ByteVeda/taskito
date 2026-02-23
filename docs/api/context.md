@@ -1,16 +1,16 @@
 # Job Context
 
-::: quickq.context
+::: taskito.context
 
 Thread-local context for the currently executing job. Provides access to job metadata and controls from inside a running task.
 
 ## Usage
 
 ```python
-from quickq.context import current_job
+from taskito.context import current_job
 
 # or directly:
-from quickq import current_job
+from taskito import current_job
 ```
 
 `current_job` is a module-level singleton. It uses thread-local storage internally, so each worker thread sees its own job context.

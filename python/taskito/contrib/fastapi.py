@@ -1,4 +1,4 @@
-"""FastAPI integration for quickq.
+"""FastAPI integration for taskito.
 
 Provides a plug-and-play APIRouter with job status, progress SSE streaming,
 and dead letter queue management.
@@ -6,16 +6,16 @@ and dead letter queue management.
 Usage::
 
     from fastapi import FastAPI
-    from quickq import Queue
-    from quickq.contrib.fastapi import QuickQRouter
+    from taskito import Queue
+    from taskito.contrib.fastapi import TaskitoRouter
 
     queue = Queue()
     app = FastAPI()
-    app.include_router(QuickQRouter(queue), prefix="/tasks")
+    app.include_router(TaskitoRouter(queue), prefix="/tasks")
 
 Requires the ``fastapi`` optional dependency::
 
-    pip install quickq[fastapi]
+    pip install taskito[fastapi]
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ try:
 except ImportError as e:
     raise ImportError(
         "FastAPI integration requires 'fastapi' and 'pydantic'. "
-        "Install with: pip install quickq[fastapi]"
+        "Install with: pip install taskito[fastapi]"
     ) from e
 
 if TYPE_CHECKING:
-    from quickq.app import Queue
+    from taskito.app import Queue
 
 
 # ── Pydantic response models ────────────────────────────
@@ -122,24 +122,24 @@ class JobResultResponse(BaseModel):
 # ── Router factory ───────────────────────────────────────
 
 
-class QuickQRouter(APIRouter):
-    """FastAPI APIRouter pre-configured with quickq endpoints.
+class TaskitoRouter(APIRouter):
+    """FastAPI APIRouter pre-configured with taskito endpoints.
 
     Args:
-        queue: The quickq Queue instance to expose.
+        queue: The taskito Queue instance to expose.
         **kwargs: Passed to ``APIRouter.__init__()`` (e.g. ``prefix``,
             ``tags``, ``dependencies``).
 
     Example::
 
         app.include_router(
-            QuickQRouter(queue, tags=["tasks"]),
+            TaskitoRouter(queue, tags=["tasks"]),
             prefix="/tasks",
         )
     """
 
     def __init__(self, queue: Queue, **kwargs: Any) -> None:
-        kwargs.setdefault("tags", ["quickq"])
+        kwargs.setdefault("tags", ["taskito"])
         super().__init__(**kwargs)
         self._queue = queue
         self._register_routes()

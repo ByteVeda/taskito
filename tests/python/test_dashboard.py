@@ -8,7 +8,7 @@ import urllib.error
 
 import pytest
 
-from quickq import Queue
+from taskito import Queue
 
 
 @pytest.fixture
@@ -153,9 +153,9 @@ def test_to_dict_is_json_serializable(queue):
 def dashboard_server(populated_queue):
     """Start a dashboard server on a random port."""
     queue, jobs = populated_queue
-    from quickq.dashboard import serve_dashboard
+    from taskito.dashboard import serve_dashboard
     from http.server import ThreadingHTTPServer
-    from quickq.dashboard import _make_handler
+    from taskito.dashboard import _make_handler
 
     handler = _make_handler(queue)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -261,5 +261,5 @@ def test_spa_html_served(dashboard_server):
     base, queue, jobs = dashboard_server
     with urllib.request.urlopen(base) as resp:
         html = resp.read().decode()
-        assert "quickq dashboard" in html
+        assert "taskito dashboard" in html
         assert "<!DOCTYPE html>" in html

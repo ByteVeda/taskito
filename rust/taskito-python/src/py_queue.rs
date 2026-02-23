@@ -5,13 +5,13 @@ use crossbeam_channel;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use quickq_core::job::{NewJob, now_millis};
-use quickq_core::periodic::next_cron_time;
-use quickq_core::rate_limiter::RateLimitConfig;
-use quickq_core::retry::RetryPolicy;
-use quickq_core::scheduler::{Scheduler, TaskConfig};
-use quickq_core::storage::models::NewPeriodicTaskRow;
-use quickq_core::storage::sqlite::SqliteStorage;
+use taskito_core::job::{NewJob, now_millis};
+use taskito_core::periodic::next_cron_time;
+use taskito_core::rate_limiter::RateLimitConfig;
+use taskito_core::retry::RetryPolicy;
+use taskito_core::scheduler::{Scheduler, TaskConfig};
+use taskito_core::storage::models::NewPeriodicTaskRow;
+use taskito_core::storage::sqlite::SqliteStorage;
 
 use crate::py_config::PyTaskConfig;
 use crate::py_job::PyJob;
@@ -33,7 +33,7 @@ pub struct PyQueue {
 #[pymethods]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path="quickq.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None))]
+    #[pyo3(signature = (db_path="taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None))]
     pub fn new(
         db_path: &str,
         workers: usize,
@@ -429,7 +429,7 @@ impl PyQueue {
                         match result_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                             Ok(result) => {
                                 if let Err(e) = scheduler_for_results.handle_result(result) {
-                                    eprintln!("[quickq] result handling error: {e}");
+                                    eprintln!("[taskito] result handling error: {e}");
                                 }
                             }
                             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
@@ -447,7 +447,7 @@ impl PyQueue {
                 match result_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                     Ok(result) => {
                         if let Err(e) = scheduler_for_results.handle_result(result) {
-                            eprintln!("[quickq] result handling error: {e}");
+                            eprintln!("[taskito] result handling error: {e}");
                         }
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {

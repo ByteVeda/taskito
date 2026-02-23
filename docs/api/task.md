@@ -1,6 +1,6 @@
 # TaskWrapper
 
-::: quickq.task.TaskWrapper
+::: taskito.task.TaskWrapper
 
 Created by `@queue.task()` — not instantiated directly. Wraps a decorated function to provide task submission methods.
 

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to quickq are documented here.
+All notable changes to taskito are documented here.
 
 ## 0.1.0
 
@@ -25,7 +25,7 @@ All notable changes to quickq are documented here.
 - **Job context** — `current_job.id`, `.task_name`, `.retry_count`, `.queue_name`
 - **Error history** — per-attempt error tracking via `job.errors`
 - **Result TTL** — automatic cleanup of completed/dead jobs
-- **CLI** — `quickq worker` and `quickq info --watch`
+- **CLI** — `taskito worker` and `taskito info --watch`
 - **Metadata** — attach arbitrary JSON to jobs
 
 ### Architecture

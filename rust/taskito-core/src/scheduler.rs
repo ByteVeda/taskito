@@ -101,7 +101,7 @@ impl Scheduler {
                     }
                 }
                 Err(e) => {
-                    eprintln!("[quickq] scheduler error: {e}");
+                    eprintln!("[taskito] scheduler error: {e}");
                 }
             }
 
@@ -112,21 +112,21 @@ impl Scheduler {
             // Periodically reap stale jobs (every ~100 iterations = ~5s)
             if reap_counter % 100 == 0 {
                 if let Err(e) = self.reap_stale() {
-                    eprintln!("[quickq] reap error: {e}");
+                    eprintln!("[taskito] reap error: {e}");
                 }
             }
 
             // Check periodic tasks (every ~60 iterations = ~3s)
             if periodic_counter % 60 == 0 {
                 if let Err(e) = self.check_periodic() {
-                    eprintln!("[quickq] periodic check error: {e}");
+                    eprintln!("[taskito] periodic check error: {e}");
                 }
             }
 
             // Auto-cleanup old completed/dead jobs (every ~1200 iterations = ~60s)
             if cleanup_counter % 1200 == 0 {
                 if let Err(e) = self.auto_cleanup() {
-                    eprintln!("[quickq] auto-cleanup error: {e}");
+                    eprintln!("[taskito] auto-cleanup error: {e}");
                 }
             }
         }
@@ -153,7 +153,7 @@ impl Scheduler {
 
         // Dispatch to worker pool
         if job_tx.send(job).is_err() {
-            eprintln!("[quickq] worker channel closed");
+            eprintln!("[taskito] worker channel closed");
         }
 
         Ok(true)
@@ -174,7 +174,7 @@ impl Scheduler {
             } => {
                 // Record the error for this attempt
                 if let Err(e) = self.storage.record_error(&job_id, retry_count, &error) {
-                    eprintln!("[quickq] failed to record error for job {job_id}: {e}");
+                    eprintln!("[taskito] failed to record error for job {job_id}: {e}");
                 }
 
                 let policy = self
@@ -238,7 +238,7 @@ impl Scheduler {
 
         if completed + dead + errors > 0 {
             eprintln!(
-                "[quickq] auto-cleanup: purged {completed} completed, {dead} dead, {errors} error records"
+                "[taskito] auto-cleanup: purged {completed} completed, {dead} dead, {errors} error records"
             );
         }
 
@@ -266,7 +266,7 @@ impl Scheduler {
             };
 
             if let Err(e) = self.storage.enqueue(new_job) {
-                eprintln!("[quickq] failed to enqueue periodic task '{}': {e}", task.name);
+                eprintln!("[taskito] failed to enqueue periodic task '{}': {e}", task.name);
                 continue;
             }
 
@@ -275,7 +275,7 @@ impl Scheduler {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!(
-                        "[quickq] failed to compute next run for '{}': {e}",
+                        "[taskito] failed to compute next run for '{}': {e}",
                         task.name
                     );
                     continue;
@@ -284,7 +284,7 @@ impl Scheduler {
 
             if let Err(e) = self.storage.update_periodic_schedule(&task.name, now, next_run) {
                 eprintln!(
-                    "[quickq] failed to update schedule for '{}': {e}",
+                    "[taskito] failed to update schedule for '{}': {e}",
                     task.name
                 );
             }

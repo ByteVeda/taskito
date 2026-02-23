@@ -1,10 +1,10 @@
 # Comparison
 
-How quickq compares to other Python task queues.
+How taskito compares to other Python task queues.
 
 ## Feature Matrix
 
-| Feature | quickq | Celery | RQ | Dramatiq | Huey |
+| Feature | taskito | Celery | RQ | Dramatiq | Huey |
 |---|---|---|---|---|---|
 | Broker required | **No** | Redis / RabbitMQ | Redis | Redis / RabbitMQ | Redis |
 | Core language | **Rust + Python** | Python | Python | Python | Python |
@@ -23,9 +23,9 @@ How quickq compares to other Python task queues.
 | Result backend | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite |
 | Setup complexity | **`pip install`** | Broker + backend | Redis server | Broker | Redis server |
 
-## When to Use quickq
+## When to Use taskito
 
-quickq is ideal when:
+taskito is ideal when:
 
 - **Single-machine deployments** — no need for distributed workers across multiple servers
 - **Zero infrastructure** — you don't want to install, configure, or manage Redis or RabbitMQ
@@ -33,7 +33,7 @@ quickq is ideal when:
 - **Prototyping** — get a task queue running in 5 lines, iterate fast
 - **Low-to-medium throughput** — hundreds to thousands of jobs per second is plenty
 
-## When NOT to Use quickq
+## When NOT to Use taskito
 
 Consider alternatives when:
 
@@ -48,23 +48,23 @@ Consider alternatives when:
 
 Celery is the most popular Python task queue — battle-tested, feature-rich, and widely adopted.
 
-| | quickq | Celery |
+| | taskito | Celery |
 |---|---|---|
-| **Setup** | `pip install quickq` | Install broker (Redis/RabbitMQ), result backend, Celery itself |
+| **Setup** | `pip install taskito` | Install broker (Redis/RabbitMQ), result backend, Celery itself |
 | **Dependencies** | 1 (cloudpickle) | 10+ (kombu, billiard, vine, etc.) |
 | **Configuration** | Constructor params | Settings module or app config |
 | **Worker model** | Rust OS threads | prefork/eventlet/gevent pools |
 | **Distributed** | No (single process) | Yes (multi-server) |
 | **Canvas** | chain, group, chord | chain, group, chord, starmap, chunks, and more |
 
-**Choose quickq** if you want zero-infrastructure simplicity on a single machine.
+**Choose taskito** if you want zero-infrastructure simplicity on a single machine.
 **Choose Celery** if you need distributed workers, complex routing, or enterprise features.
 
 ### vs RQ (Redis Queue)
 
 RQ focuses on simplicity — a minimal task queue built on Redis.
 
-| | quickq | RQ |
+| | taskito | RQ |
 |---|---|---|
 | **Broker** | None (SQLite) | Redis required |
 | **Priority** | Yes (integer levels) | Separate queues for priority |
@@ -72,14 +72,14 @@ RQ focuses on simplicity — a minimal task queue built on Redis.
 | **Chaining** | Yes | No |
 | **Monitoring** | CLI + progress | rq-dashboard (web) |
 
-**Choose quickq** if you want similar simplicity without requiring Redis.
+**Choose taskito** if you want similar simplicity without requiring Redis.
 **Choose RQ** if you already run Redis and want a web dashboard.
 
 ### vs Dramatiq
 
 Dramatiq is a reliable, performance-focused alternative to Celery.
 
-| | quickq | Dramatiq |
+| | taskito | Dramatiq |
 |---|---|---|
 | **Broker** | None (SQLite) | Redis or RabbitMQ |
 | **Priority** | Yes | No (FIFO only) |
@@ -87,14 +87,14 @@ Dramatiq is a reliable, performance-focused alternative to Celery.
 | **DLQ** | Built-in | No |
 | **Middleware** | Hooks (before/after/success/failure) | Full middleware stack |
 
-**Choose quickq** if you want built-in DLQ and priority without a broker.
+**Choose taskito** if you want built-in DLQ and priority without a broker.
 **Choose Dramatiq** if you need a middleware ecosystem and distributed workers.
 
 ### vs Huey
 
 Huey is a lightweight task queue with Redis or SQLite backends.
 
-| | quickq | Huey |
+| | taskito | Huey |
 |---|---|---|
 | **Backend** | SQLite (Rust-native) | Redis or SQLite (Python) |
 | **Performance** | Rust scheduler + OS threads | Python threads |
@@ -103,5 +103,5 @@ Huey is a lightweight task queue with Redis or SQLite backends.
 | **DLQ** | Built-in | No |
 | **Progress** | Built-in | No |
 
-**Choose quickq** if you want higher performance and more features with SQLite.
+**Choose taskito** if you want higher performance and more features with SQLite.
 **Choose Huey** if you need a mature, well-documented SQLite-backed queue.

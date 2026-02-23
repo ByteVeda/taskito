@@ -7,7 +7,7 @@ Build your first task queue in 5 minutes.
 Create a file called `tasks.py`:
 
 ```python
-from quickq import Queue
+from taskito import Queue
 
 # Create a queue backed by SQLite
 queue = Queue(db_path="tasks.db")
@@ -39,7 +39,7 @@ print(f"Status: {job.status}")    # Status: pending
 === "CLI (Recommended)"
 
     ```bash
-    quickq worker --app tasks:queue
+    taskito worker --app tasks:queue
     ```
 
 === "Threading"
@@ -93,10 +93,10 @@ Or use the CLI:
 
 ```bash
 # One-shot stats
-quickq info --app tasks:queue
+taskito info --app tasks:queue
 
 # Live dashboard (refreshes every 2s)
-quickq info --app tasks:queue --watch
+taskito info --app tasks:queue --watch
 ```
 
 ## Next Steps

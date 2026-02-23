@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use quickq_core::job::{Job, JobStatus};
+use taskito_core::job::{Job, JobStatus};
 
 /// Python-visible handle to a queued job.
 #[pyclass]

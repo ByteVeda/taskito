@@ -1,9 +1,9 @@
-# quickq
+# taskito
 
 **Rust-powered task queue for Python. No broker required — just SQLite.**
 
 ```bash
-pip install quickq
+pip install taskito
 ```
 
 ---
@@ -11,7 +11,7 @@ pip install quickq
 ## 5-Minute Quickstart
 
 ```python
-from quickq import Queue
+from taskito import Queue
 
 queue = Queue(db_path="tasks.db")
 
@@ -33,9 +33,9 @@ print(job.result(timeout=10))  # 5
 
 ---
 
-## Why quickq?
+## Why taskito?
 
-Most Python task queues require a separate broker (Redis, RabbitMQ) that you need to install, configure, monitor, and keep running. **quickq** embeds everything into a single SQLite file — the queue, the results, the rate limits, the schedules. Just `pip install` and go.
+Most Python task queues require a separate broker (Redis, RabbitMQ) that you need to install, configure, monitor, and keep running. **taskito** embeds everything into a single SQLite file — the queue, the results, the rate limits, the schedules. Just `pip install` and go.
 
 The core engine is written in **Rust** for performance: job dispatch, retry scheduling, rate limiting, and storage all happen in compiled native code. Python only runs during actual task execution.
 
@@ -136,7 +136,7 @@ graph TB
 
 ## Comparison
 
-| Feature | quickq | Celery | RQ | Dramatiq | Huey |
+| Feature | taskito | Celery | RQ | Dramatiq | Huey |
 |---|---|---|---|---|---|
 | Broker required | **No** | Redis/RabbitMQ | Redis | Redis/RabbitMQ | Redis |
 | Core language | Rust + Python | Python | Python | Python | Python |

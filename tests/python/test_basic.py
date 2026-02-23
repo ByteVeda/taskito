@@ -1,10 +1,10 @@
-"""Basic tests for quickq — enqueue, dequeue, result retrieval."""
+"""Basic tests for taskito — enqueue, dequeue, result retrieval."""
 
 import threading
 
 import pytest
 
-from quickq import Queue
+from taskito import Queue
 
 
 @pytest.fixture

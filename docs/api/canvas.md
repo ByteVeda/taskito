@@ -1,11 +1,11 @@
 # Canvas (Workflows)
 
-::: quickq.canvas
+::: taskito.canvas
 
 Canvas primitives for composing task workflows. Import directly from the package:
 
 ```python
-from quickq import chain, group, chord
+from taskito import chain, group, chord
 ```
 
 ---
@@ -200,7 +200,7 @@ graph LR
 An ETL pipeline using all three primitives:
 
 ```python
-from quickq import Queue, chain, group, chord
+from taskito import Queue, chain, group, chord
 
 queue = Queue()
 

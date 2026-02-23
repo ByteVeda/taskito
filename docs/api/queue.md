@@ -1,6 +1,6 @@
 # Queue
 
-::: quickq.app.Queue
+::: taskito.app.Queue
 
 The central class for creating and managing a task queue.
 
@@ -8,7 +8,7 @@ The central class for creating and managing a task queue.
 
 ```python
 Queue(
-    db_path: str = "quickq.db",
+    db_path: str = "taskito.db",
     workers: int = 0,
     default_retry: int = 3,
     default_timeout: int = 300,
@@ -19,7 +19,7 @@ Queue(
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `db_path` | `str` | `"quickq.db"` | Path to SQLite database file |
+| `db_path` | `str` | `"taskito.db"` | Path to SQLite database file |
 | `workers` | `int` | `0` | Number of worker threads (`0` = auto-detect CPU count) |
 | `default_retry` | `int` | `3` | Default max retry attempts for tasks |
 | `default_timeout` | `int` | `300` | Default task timeout in seconds |

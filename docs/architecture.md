@@ -1,6 +1,6 @@
 # Architecture
 
-quickq is a hybrid Python/Rust system. Python provides the user-facing API. Rust handles all the heavy lifting: storage, scheduling, dispatch, rate limiting, and worker management.
+taskito is a hybrid Python/Rust system. Python provides the user-facing API. Rust handles all the heavy lifting: storage, scheduling, dispatch, rate limiting, and worker management.
 
 ## Overview
 
@@ -187,7 +187,7 @@ loop {
 ## Rust Crate Structure
 
 ```
-quickq-core/          # Pure Rust, no Python dependency
+taskito-core/          # Pure Rust, no Python dependency
   job.rs              # Job, JobStatus, NewJob structs
   scheduler.rs        # Central async scheduler
   retry.rs            # Retry policy with exponential backoff
@@ -200,7 +200,7 @@ quickq-core/          # Pure Rust, no Python dependency
     schema.rs         # Diesel table! macros
     models.rs         # Queryable/Insertable structs
 
-quickq-python/        # PyO3 bindings
+taskito-python/        # PyO3 bindings
   py_queue.rs         # PyQueue class
   py_job.rs           # PyJob class
   py_worker.rs        # WorkerPool + task execution

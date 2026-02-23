@@ -1,5 +1,5 @@
 [workspace]
-members = ["rust/quickq-core", "rust/quickq-python"]
+members = ["rust/taskito-core", "rust/taskito-python"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -1,25 +1,25 @@
 # CLI Reference
 
-quickq provides a command-line interface for running workers and inspecting queue state.
+taskito provides a command-line interface for running workers and inspecting queue state.
 
 ## Installation
 
 The CLI is installed automatically with the package:
 
 ```bash
-pip install quickq
+pip install taskito
 ```
 
-The `quickq` command becomes available in your `PATH`.
+The `taskito` command becomes available in your `PATH`.
 
 ## Commands
 
-### `quickq worker`
+### `taskito worker`
 
 Start a worker process that consumes and executes tasks.
 
 ```bash
-quickq worker --app <module:attribute> [--queues <queue1,queue2,...>]
+taskito worker --app <module:attribute> [--queues <queue1,queue2,...>]
 ```
 
 | Flag | Required | Description |
@@ -31,23 +31,23 @@ quickq worker --app <module:attribute> [--queues <queue1,queue2,...>]
 
 ```bash
 # Start a worker using the queue defined in myapp/tasks.py
-quickq worker --app myapp.tasks:queue
+taskito worker --app myapp.tasks:queue
 
 # Only process the "emails" and "reports" queues
-quickq worker --app myapp.tasks:queue --queues emails,reports
+taskito worker --app myapp.tasks:queue --queues emails,reports
 
 # Use a nested module path
-quickq worker --app myproject.workers.tasks:task_queue
+taskito worker --app myproject.workers.tasks:task_queue
 ```
 
 The worker blocks until interrupted with `Ctrl+C`. It performs a graceful shutdown — in-flight tasks are allowed to complete before the process exits.
 
-### `quickq info`
+### `taskito info`
 
 Display queue statistics.
 
 ```bash
-quickq info --app <module:attribute> [--watch]
+taskito info --app <module:attribute> [--watch]
 ```
 
 | Flag | Required | Description |
@@ -59,13 +59,13 @@ quickq info --app <module:attribute> [--watch]
 
 ```bash
 # Show stats once
-quickq info --app myapp.tasks:queue
+taskito info --app myapp.tasks:queue
 ```
 
 Output:
 
 ```
-quickq queue statistics
+taskito queue statistics
 ------------------------------
   pending      12
   running      4
@@ -79,13 +79,13 @@ quickq queue statistics
 
 ```bash
 # Live monitoring with throughput
-quickq info --app myapp.tasks:queue --watch
+taskito info --app myapp.tasks:queue --watch
 ```
 
 Output (refreshes every 2s):
 
 ```
-quickq queue statistics
+taskito queue statistics
 ------------------------------
   pending      3
   running      8

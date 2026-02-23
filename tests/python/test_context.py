@@ -4,8 +4,8 @@ import threading
 
 import pytest
 
-from quickq import Queue
-from quickq.context import current_job
+from taskito import Queue
+from taskito.context import current_job
 
 
 @pytest.fixture

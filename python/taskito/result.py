@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 import cloudpickle
 
 if TYPE_CHECKING:
-    from quickq._quickq import PyJob
-    from quickq.app import Queue
+    from taskito._taskito import PyJob
+    from taskito.app import Queue
 
 
 class JobResult:

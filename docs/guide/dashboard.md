@@ -1,13 +1,13 @@
 # Web Dashboard
 
-quickq ships with a built-in web dashboard for monitoring jobs, inspecting dead letters, and managing your task queue in real time. The dashboard is a single-page application served directly from the Rust core -- **zero extra dependencies required**.
+taskito ships with a built-in web dashboard for monitoring jobs, inspecting dead letters, and managing your task queue in real time. The dashboard is a single-page application served directly from the Rust core -- **zero extra dependencies required**.
 
 ## Launching the Dashboard
 
 === "CLI"
 
     ```bash
-    quickq dashboard --app myapp:queue
+    taskito dashboard --app myapp:queue
     ```
 
     The `--app` argument uses the same `module:attribute` format as the worker.
@@ -15,7 +15,7 @@ quickq ships with a built-in web dashboard for monitoring jobs, inspecting dead 
 === "Programmatic"
 
     ```python
-    from quickq.dashboard import serve_dashboard
+    from taskito.dashboard import serve_dashboard
     from myapp import queue
 
     serve_dashboard(queue, host="0.0.0.0", port=8000)
@@ -33,7 +33,7 @@ By default the dashboard starts on `http://localhost:8080`.
 
 ```bash
 # Bind to all interfaces on port 9000
-quickq dashboard --app myapp:queue --host 0.0.0.0 --port 9000
+taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
 ```
 
 !!! tip "Running alongside the worker"
@@ -41,10 +41,10 @@ quickq dashboard --app myapp:queue --host 0.0.0.0 --port 9000
 
     ```bash
     # Terminal 1
-    quickq worker --app myapp:queue
+    taskito worker --app myapp:queue
 
     # Terminal 2
-    quickq dashboard --app myapp:queue
+    taskito dashboard --app myapp:queue
     ```
 
 ## SPA Features
@@ -59,7 +59,7 @@ The dashboard is a self-contained single-page application with:
 - **Dead letter management** -- Inspect, retry, or purge dead letters directly from the UI.
 
 !!! info "Zero extra dependencies"
-    The SPA is embedded directly in the Python package. No Node.js, no npm, no CDN -- just `pip install quickq`.
+    The SPA is embedded directly in the Python package. No Node.js, no npm, no CDN -- just `pip install taskito`.
 
 ## REST API
 

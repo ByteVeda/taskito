@@ -5,7 +5,7 @@ Tasks are Python functions registered with a queue via the `@queue.task()` decor
 ## Defining a Task
 
 ```python
-from quickq import Queue
+from taskito import Queue
 
 queue = Queue(db_path="myapp.db")
 

@@ -1,6 +1,6 @@
 # Retries & Dead Letters
 
-quickq automatically retries failed tasks with exponential backoff and moves permanently failed jobs to a dead letter queue.
+taskito automatically retries failed tasks with exponential backoff and moves permanently failed jobs to a dead letter queue.
 
 ## Retry Policy
 

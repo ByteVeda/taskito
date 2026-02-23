@@ -6,7 +6,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from quickq.app import Queue
+    from taskito.app import Queue
 
 _local = threading.local()
 _queue_ref: Queue | None = None
@@ -17,7 +17,7 @@ class JobContext:
 
     Usage inside a task::
 
-        from quickq.context import current_job
+        from taskito.context import current_job
 
         @queue.task()
         def process(data):

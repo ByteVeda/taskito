@@ -1,6 +1,6 @@
 # Scheduling
 
-quickq supports both **delayed tasks** (run once in the future) and **periodic tasks** (run on a cron schedule).
+taskito supports both **delayed tasks** (run once in the future) and **periodic tasks** (run on a cron schedule).
 
 ## Delayed Tasks
 
@@ -42,7 +42,7 @@ def weekly_report(report_type):
 
 ### Cron Expression Format
 
-quickq uses **6-field cron expressions** (with seconds):
+taskito uses **6-field cron expressions** (with seconds):
 
 ```
 ┌─────────── second (0-59)

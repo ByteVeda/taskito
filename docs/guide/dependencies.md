@@ -1,6 +1,6 @@
 # Task Dependencies
 
-quickq supports declaring dependencies between jobs, allowing you to build DAG-style workflows where a job only runs after its upstream dependencies have completed successfully.
+taskito supports declaring dependencies between jobs, allowing you to build DAG-style workflows where a job only runs after its upstream dependencies have completed successfully.
 
 ## Basic Usage
 
@@ -227,7 +227,7 @@ job_success = on_valid.apply_async(
 
 ## Combining with Other Features
 
-Dependencies compose naturally with other quickq features:
+Dependencies compose naturally with other taskito features:
 
 ```python
 job = transform.apply_async(

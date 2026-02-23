@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "quickq"
+name = "taskito"
 version = "0.1.0"
 description = "Rust-powered task queue for Python. No broker required."
 requires-python = ">=3.9"
@@ -16,13 +16,13 @@ fastapi = ["fastapi>=0.100.0", "pydantic>=2.0"]
 docs = ["zensical"]
 
 [tool.maturin]
-manifest-path = "rust/quickq-python/Cargo.toml"
+manifest-path = "rust/taskito-python/Cargo.toml"
 python-source = "python"
-module-name = "quickq._quickq"
+module-name = "taskito._taskito"
 features = ["pyo3/extension-module"]
 
 [project.scripts]
-quickq = "quickq.cli:main"
+taskito = "taskito.cli:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -48,10 +48,10 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"python/quickq/dashboard.py" = ["E501"]  # embedded HTML/JS strings
+"python/taskito/dashboard.py" = ["E501"]  # embedded HTML/JS strings
 
 [tool.ruff.lint.isort]
-known-first-party = ["quickq"]
+known-first-party = ["taskito"]
 
 # -- Mypy --
 
@@ -67,7 +67,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = "quickq._quickq"
+module = "taskito._taskito"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

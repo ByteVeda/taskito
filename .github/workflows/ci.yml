@@ -26,7 +26,7 @@ jobs:
         run: ruff format --check python/
 
       - name: Mypy
-        run: mypy python/quickq/ --ignore-missing-imports
+        run: mypy python/taskito/ --ignore-missing-imports
 
   test:
     needs: lint

@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from quickq.app import Queue
-    from quickq.canvas import Signature
-    from quickq.result import JobResult
+    from taskito.app import Queue
+    from taskito.canvas import Signature
+    from taskito.result import JobResult
 
 
 class TaskWrapper:
@@ -132,13 +132,13 @@ class TaskWrapper:
 
     def s(self, *args: Any, **kwargs: Any) -> Signature:
         """Create a mutable Signature (receives previous result in chains)."""
-        from quickq.canvas import Signature
+        from taskito.canvas import Signature
 
         return Signature(task=self, args=args, kwargs=kwargs)
 
     def si(self, *args: Any, **kwargs: Any) -> Signature:
         """Create an immutable Signature (ignores previous result in chains)."""
-        from quickq.canvas import Signature
+        from taskito.canvas import Signature
 
         return Signature(task=self, args=args, kwargs=kwargs, immutable=True)
 

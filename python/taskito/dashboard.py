@@ -1,13 +1,13 @@
-"""Built-in web dashboard for quickq — zero extra dependencies.
+"""Built-in web dashboard for taskito — zero extra dependencies.
 
 Usage::
 
-    quickq dashboard --app myapp:queue
+    taskito dashboard --app myapp:queue
     # → http://127.0.0.1:8080
 
 Or programmatically::
 
-    from quickq.dashboard import serve_dashboard
+    from taskito.dashboard import serve_dashboard
     serve_dashboard(queue, host="0.0.0.0", port=8080)
 """
 
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
-    from quickq.app import Queue
+    from taskito.app import Queue
 
 
 def serve_dashboard(
@@ -37,7 +37,7 @@ def serve_dashboard(
 
     handler = _make_handler(queue)
     server = ThreadingHTTPServer((host, port), handler)
-    print(f"quickq dashboard → http://{host}:{port}")
+    print(f"taskito dashboard → http://{host}:{port}")
     print("Press Ctrl+C to stop")
 
     try:
@@ -146,7 +146,7 @@ _SPA_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>quickq dashboard</title>
+<title>taskito dashboard</title>
 <style>
 :root {
   --bg: #1a1a2e;
@@ -440,7 +440,7 @@ tbody tr:hover { background: rgba(124,77,255,0.06); }
 <body>
 
 <header>
-  <h1>quickq <span>dashboard</span></h1>
+  <h1>taskito <span>dashboard</span></h1>
   <nav>
     <a href="#/" id="nav-home">Overview</a>
     <a href="#/jobs" id="nav-jobs">Jobs</a>

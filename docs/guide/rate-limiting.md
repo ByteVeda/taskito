@@ -1,6 +1,6 @@
 # Rate Limiting
 
-quickq uses a **token bucket** algorithm to limit how fast tasks execute. Rate limits are per-task and persisted in SQLite.
+taskito uses a **token bucket** algorithm to limit how fast tasks execute. Rate limits are per-task and persisted in SQLite.
 
 ## Usage
 

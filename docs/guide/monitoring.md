@@ -20,11 +20,11 @@ stats = await queue.astats()
 ### One-Shot Stats
 
 ```bash
-quickq info --app myapp:queue
+taskito info --app myapp:queue
 ```
 
 ```
-quickq queue statistics
+taskito queue statistics
 ------------------------------
   pending      12
   running      3
@@ -39,7 +39,7 @@ quickq queue statistics
 ### Live Dashboard
 
 ```bash
-quickq info --app myapp:queue --watch
+taskito info --app myapp:queue --watch
 ```
 
 Refreshes every 2 seconds with throughput calculation (completed jobs per second).
@@ -49,7 +49,7 @@ Refreshes every 2 seconds with throughput calculation (completed jobs per second
 Report progress from inside tasks using `current_job`:
 
 ```python
-from quickq import current_job
+from taskito import current_job
 
 @queue.task()
 def process_batch(items):
@@ -82,7 +82,7 @@ Inside a running task, `current_job` provides:
 | `current_job.queue_name` | `str` | The queue this job is running on |
 
 ```python
-from quickq import current_job
+from taskito import current_job
 
 @queue.task()
 def my_task():

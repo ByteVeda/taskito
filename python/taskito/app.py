@@ -12,11 +12,11 @@ from typing import Any, Callable
 
 import cloudpickle
 
-from quickq._quickq import PyQueue, PyTaskConfig
-from quickq.result import JobResult
-from quickq.task import TaskWrapper
+from taskito._taskito import PyQueue, PyTaskConfig
+from taskito.result import JobResult
+from taskito.task import TaskWrapper
 
-logger = logging.getLogger("quickq")
+logger = logging.getLogger("taskito")
 
 
 class Queue:
@@ -37,7 +37,7 @@ class Queue:
 
     def __init__(
         self,
-        db_path: str = "quickq.db",
+        db_path: str = "taskito.db",
         workers: int = 0,
         default_retry: int = 3,
         default_timeout: int = 300,
@@ -213,7 +213,7 @@ class Queue:
 
     def _wrap_task(self, fn: Callable, task_name: str) -> Callable:
         """Wrap a task function with hooks and job context."""
-        from quickq.context import _clear_context
+        from taskito.context import _clear_context
 
         hooks = self._hooks
 
@@ -434,7 +434,7 @@ class Queue:
         queue_list = list(queues) if queues else None
 
         # Make queue accessible from job context (for current_job.update_progress())
-        from quickq.context import _set_queue_ref
+        from taskito.context import _set_queue_ref
 
         _set_queue_ref(self)
 

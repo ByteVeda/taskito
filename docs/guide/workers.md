@@ -1,13 +1,13 @@
 # Workers
 
-Workers process queued jobs. quickq runs workers as OS threads within a single process, managed by a Rust scheduler.
+Workers process queued jobs. taskito runs workers as OS threads within a single process, managed by a Rust scheduler.
 
 ## Starting a Worker
 
 === "CLI (Recommended)"
 
     ```bash
-    quickq worker --app myapp.tasks:queue
+    taskito worker --app myapp.tasks:queue
     ```
 
     | Flag | Description |
@@ -50,7 +50,7 @@ Workers process queued jobs. quickq runs workers as OS threads within a single p
 
 ## Worker Count
 
-By default, quickq auto-detects the number of CPU cores:
+By default, taskito auto-detects the number of CPU cores:
 
 ```python
 queue = Queue(db_path="myapp.db", workers=0)  # Auto-detect (default)
@@ -62,19 +62,19 @@ queue = Queue(db_path="myapp.db", workers=8)  # Explicit count
 
 ## Graceful Shutdown
 
-quickq supports graceful shutdown via `Ctrl+C`:
+taskito supports graceful shutdown via `Ctrl+C`:
 
 1. **First `Ctrl+C`**: Stops accepting new jobs, waits up to 30 seconds for in-flight tasks to complete
 2. **Second `Ctrl+C`**: Force-kills immediately
 
 ```
-$ quickq worker --app myapp:queue
-[quickq] Starting worker...
-[quickq] Registered tasks: 3
-[quickq] Queues: default, emails
+$ taskito worker --app myapp:queue
+[taskito] Starting worker...
+[taskito] Registered tasks: 3
+[taskito] Queues: default, emails
 ^C
-[quickq] Shutting down gracefully (waiting for in-flight jobs)...
-[quickq] Worker stopped.
+[taskito] Shutting down gracefully (waiting for in-flight jobs)...
+[taskito] Worker stopped.
 ```
 
 ### Programmatic Shutdown

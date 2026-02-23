@@ -1,8 +1,8 @@
-site_name: quickq
+site_name: taskito
 site_description: "Rust-powered task queue for Python. No broker required."
-site_url: https://quickq-sepia.vercel.app
-repo_url: https://github.com/pratyush618/quickq
-repo_name: pratyush618/quickq
+site_url: https://taskito-sepia.vercel.app
+repo_url: https://github.com/pratyush618/taskito
+repo_name: pratyush618/taskito
 
 theme:
   name: material
@@ -73,9 +73,9 @@ plugins:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/pratyush618/quickq
+      link: https://github.com/pratyush618/taskito
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/quickq/
+      link: https://pypi.org/project/taskito/
 
 nav:
   - Home: index.md

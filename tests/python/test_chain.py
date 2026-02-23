@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from quickq import Queue, chain, chord, group
+from taskito import Queue, chain, chord, group
 
 
 @pytest.fixture

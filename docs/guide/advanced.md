@@ -117,7 +117,7 @@ jobs = queue.enqueue_many(
 
 ## SQLite Configuration
 
-quickq configures SQLite for optimal performance:
+taskito configures SQLite for optimal performance:
 
 | Pragma | Value | Purpose |
 |---|---|---|
@@ -130,12 +130,12 @@ The connection pool uses up to 8 connections via `r2d2`.
 
 ## FastAPI Integration
 
-quickq provides a first-class FastAPI integration via `quickq.contrib.fastapi`. It gives you a pre-built `APIRouter` with endpoints for job status, progress streaming via SSE, and dead letter queue management.
+taskito provides a first-class FastAPI integration via `taskito.contrib.fastapi`. It gives you a pre-built `APIRouter` with endpoints for job status, progress streaming via SSE, and dead letter queue management.
 
 ### Installation
 
 ```bash
-pip install quickq[fastapi]
+pip install taskito[fastapi]
 ```
 
 This installs `fastapi` and `pydantic` as extras.
@@ -144,8 +144,8 @@ This installs `fastapi` and `pydantic` as extras.
 
 ```python
 from fastapi import FastAPI
-from quickq import Queue
-from quickq.contrib.fastapi import QuickQRouter
+from taskito import Queue
+from taskito.contrib.fastapi import TaskitoRouter
 
 queue = Queue(db_path="myapp.db")
 
@@ -154,7 +154,7 @@ def process_data(payload: dict) -> str:
     return "done"
 
 app = FastAPI()
-app.include_router(QuickQRouter(queue), prefix="/tasks")
+app.include_router(TaskitoRouter(queue), prefix="/tasks")
 ```
 
 Run with:
@@ -163,11 +163,11 @@ Run with:
 uvicorn myapp:app --reload
 ```
 
-All quickq endpoints are now available under `/tasks/`.
+All taskito endpoints are now available under `/tasks/`.
 
 ### Endpoints
 
-The `QuickQRouter` exposes the following endpoints:
+The `TaskitoRouter` exposes the following endpoints:
 
 | Method | Path | Description |
 |---|---|---|
@@ -227,7 +227,7 @@ The stream sends a JSON event every 0.5 seconds while the job is active, then a 
 All endpoints return validated Pydantic models with clean OpenAPI docs. You can import them for type-safe client code:
 
 ```python
-from quickq.contrib.fastapi import (
+from taskito.contrib.fastapi import (
     StatsResponse,
     JobResponse,
     JobErrorResponse,
@@ -244,7 +244,7 @@ Customize the router with FastAPI tags and dependency injection:
 
 ```python
 from fastapi import Depends, FastAPI, Header, HTTPException
-from quickq.contrib.fastapi import QuickQRouter
+from taskito.contrib.fastapi import TaskitoRouter
 
 async def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key != "secret":
@@ -252,7 +252,7 @@ async def verify_api_key(x_api_key: str = Header(...)):
 
 app = FastAPI()
 
-router = QuickQRouter(
+router = TaskitoRouter(
     queue,
     tags=["task-queue"],              # OpenAPI tags
     dependencies=[Depends(verify_api_key)],  # Applied to all endpoints
@@ -265,8 +265,8 @@ app.include_router(router, prefix="/tasks")
 
 ```python
 from fastapi import FastAPI, Header, HTTPException, Depends
-from quickq import Queue, current_job
-from quickq.contrib.fastapi import QuickQRouter
+from taskito import Queue, current_job
+from taskito.contrib.fastapi import TaskitoRouter
 
 queue = Queue(db_path="myapp.db")
 
@@ -284,13 +284,13 @@ async def require_auth(authorization: str = Header(...)):
 
 app = FastAPI(title="Image Service")
 app.include_router(
-    QuickQRouter(queue, dependencies=[Depends(require_auth)]),
+    TaskitoRouter(queue, dependencies=[Depends(require_auth)]),
     prefix="/tasks",
     tags=["tasks"],
 )
 
 # Start worker in a separate process:
-#   quickq worker --app myapp:queue
+#   taskito worker --app myapp:queue
 ```
 
 ```bash
