@@ -60,10 +60,9 @@ fn worker_loop(
         let task_name = job.task_name.clone();
         let retry_count = job.retry_count;
         let max_retries = job.max_retries;
-        let payload = job.payload.clone();
 
         let result = Python::with_gil(|py| -> PyResult<Option<Vec<u8>>> {
-            execute_task(py, &task_registry, &task_name, &payload)
+            execute_task(py, &task_registry, &job)
         });
 
         let job_result = match result {
@@ -92,8 +91,7 @@ fn worker_loop(
 fn execute_task(
     py: Python<'_>,
     task_registry: &PyObject,
-    task_name: &str,
-    payload: &[u8],
+    job: &Job,
 ) -> PyResult<Option<Vec<u8>>> {
     let cloudpickle = py.import_bound("cloudpickle")?;
     let registry = task_registry.bind(py);
@@ -101,16 +99,23 @@ fn execute_task(
     // Look up the task function
     let registry_dict: &Bound<'_, PyDict> = registry.downcast()?;
     let task_fn = registry_dict
-        .get_item(task_name)?
+        .get_item(&job.task_name)?
         .ok_or_else(|| {
             pyo3::exceptions::PyKeyError::new_err(format!(
                 "task '{}' not registered",
-                task_name
+                job.task_name
             ))
         })?;
 
+    // Set job context before execution
+    let context_mod = py.import_bound("quickq.context")?;
+    context_mod.call_method1(
+        "_set_context",
+        (&job.id, &job.task_name, job.retry_count, &job.queue),
+    )?;
+
     // Deserialize arguments: (args, kwargs)
-    let payload_bytes = PyBytes::new_bound(py, payload);
+    let payload_bytes = PyBytes::new_bound(py, &job.payload);
     let unpickled = cloudpickle.call_method1("loads", (payload_bytes,))?;
     let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
 
@@ -120,12 +125,17 @@ fn execute_task(
     // Call the task function
     let result = if kwargs.is_none() {
         let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
-        task_fn.call(args_tuple_inner, None)?
+        task_fn.call(args_tuple_inner, None)
     } else {
         let kwargs_dict: Bound<'_, PyDict> = kwargs.downcast_into()?;
         let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
-        task_fn.call(args_tuple_inner, Some(&kwargs_dict))?
+        task_fn.call(args_tuple_inner, Some(&kwargs_dict))
     };
+
+    // Clear context after execution (whether success or failure)
+    let _ = context_mod.call_method0("_clear_context");
+
+    let result = result?;
 
     // Serialize result
     if result.is_none() {

@@ -12,6 +12,8 @@ dependencies = ["cloudpickle>=3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "ruff>=0.8", "mypy>=1.13"]
+fastapi = ["fastapi>=0.100.0", "pydantic>=2.0"]
+docs = ["zensical"]
 
 [tool.maturin]
 manifest-path = "rust/quickq-python/Cargo.toml"

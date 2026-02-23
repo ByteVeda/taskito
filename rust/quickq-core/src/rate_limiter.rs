@@ -1,6 +1,7 @@
 use crate::error::Result;
 use crate::job::now_millis;
-use crate::storage::sqlite::{RateLimitRow, SqliteStorage};
+use crate::storage::models::RateLimitRow;
+use crate::storage::sqlite::SqliteStorage;
 
 /// Token bucket rate limiter backed by SQLite for persistence.
 pub struct RateLimiter {

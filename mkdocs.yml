@@ -1,0 +1,109 @@
+site_name: quickq
+site_description: "Rust-powered task queue for Python. No broker required."
+site_url: https://pratyush618.github.io/quickq
+repo_url: https://github.com/pratyush618/quickq
+repo_name: pratyush618/quickq
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.mark
+  - pymdownx.keys
+  - pymdownx.emoji:
+      emoji_index: !!python/name:zensical.extensions.emoji.twemoji
+      emoji_generator: !!python/name:zensical.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pratyush618/quickq
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/quickq/
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quickstart: getting-started/quickstart.md
+  - User Guide:
+    - Tasks: guide/tasks.md
+    - Queues & Priority: guide/queues.md
+    - Workers: guide/workers.md
+    - Retries & Dead Letters: guide/retries.md
+    - Rate Limiting: guide/rate-limiting.md
+    - Workflows: guide/workflows.md
+    - Dependencies: guide/dependencies.md
+    - Scheduling: guide/scheduling.md
+    - Monitoring & Hooks: guide/monitoring.md
+    - Web Dashboard: guide/dashboard.md
+    - Advanced: guide/advanced.md
+  - Architecture: architecture.md
+  - API Reference:
+    - Queue: api/queue.md
+    - TaskWrapper: api/task.md
+    - JobResult: api/result.md
+    - Canvas: api/canvas.md
+    - JobContext: api/context.md
+    - CLI: api/cli.md
+  - Examples:
+    - Web Scraper Pipeline: examples/web-scraper.md
+    - Benchmark: examples/benchmark.md
+  - Comparison: comparison.md
+  - Changelog: changelog.md

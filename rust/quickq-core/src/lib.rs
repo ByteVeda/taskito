@@ -5,6 +5,7 @@ pub mod scheduler;
 pub mod retry;
 pub mod dlq;
 pub mod rate_limiter;
+pub mod periodic;
 
 pub use job::{Job, JobStatus, NewJob};
 pub use error::QueueError;

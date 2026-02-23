@@ -1,0 +1,107 @@
+# Comparison
+
+How quickq compares to other Python task queues.
+
+## Feature Matrix
+
+| Feature | quickq | Celery | RQ | Dramatiq | Huey |
+|---|---|---|---|---|---|
+| Broker required | **No** | Redis / RabbitMQ | Redis | Redis / RabbitMQ | Redis |
+| Core language | **Rust + Python** | Python | Python | Python | Python |
+| Priority queues | **Yes** | Yes | No | No | Yes |
+| Rate limiting | **Yes** | Yes | No | Yes | No |
+| Dead letter queue | **Yes** | No | Yes | No | No |
+| Task chaining | **Yes** (chain/group/chord) | Yes (canvas) | No | Yes (pipelines) | No |
+| Job cancellation | **Yes** | Yes (revoke) | No | No | Yes |
+| Progress tracking | **Yes** | Yes (custom) | No | No | No |
+| Unique tasks | **Yes** | No (manual) | No | No | Yes |
+| Batch enqueue | **Yes** | No | No | No | No |
+| Retry with backoff | **Yes** (exponential + jitter) | Yes | Yes | Yes | Yes |
+| Periodic/cron tasks | **Yes** (6-field with seconds) | Yes (celery-beat) | Yes (rq-scheduler) | Yes (APScheduler) | Yes |
+| Async support | **Yes** | Yes | No | No | No |
+| CLI | **Yes** | Yes | Yes | Yes | Yes |
+| Result backend | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite |
+| Setup complexity | **`pip install`** | Broker + backend | Redis server | Broker | Redis server |
+
+## When to Use quickq
+
+quickq is ideal when:
+
+- **Single-machine deployments** — no need for distributed workers across multiple servers
+- **Zero infrastructure** — you don't want to install, configure, or manage Redis or RabbitMQ
+- **Embedded applications** — CLI tools, desktop apps, or services where simplicity matters
+- **Prototyping** — get a task queue running in 5 lines, iterate fast
+- **Low-to-medium throughput** — hundreds to thousands of jobs per second is plenty
+
+## When NOT to Use quickq
+
+Consider alternatives when:
+
+- **Multi-server workers** — you need workers on separate machines (use Celery or Dramatiq)
+- **Very high throughput** — millions of jobs/sec across a cluster (use Celery + RabbitMQ)
+- **Existing Redis infrastructure** — if Redis is already in your stack, RQ or Huey are simple choices
+- **Complex routing** — you need topic exchanges, message filtering, or pub/sub patterns (use Celery + RabbitMQ)
+
+## Detailed Comparison
+
+### vs Celery
+
+Celery is the most popular Python task queue — battle-tested, feature-rich, and widely adopted.
+
+| | quickq | Celery |
+|---|---|---|
+| **Setup** | `pip install quickq` | Install broker (Redis/RabbitMQ), result backend, Celery itself |
+| **Dependencies** | 1 (cloudpickle) | 10+ (kombu, billiard, vine, etc.) |
+| **Configuration** | Constructor params | Settings module or app config |
+| **Worker model** | Rust OS threads | prefork/eventlet/gevent pools |
+| **Distributed** | No (single process) | Yes (multi-server) |
+| **Canvas** | chain, group, chord | chain, group, chord, starmap, chunks, and more |
+
+**Choose quickq** if you want zero-infrastructure simplicity on a single machine.
+**Choose Celery** if you need distributed workers, complex routing, or enterprise features.
+
+### vs RQ (Redis Queue)
+
+RQ focuses on simplicity — a minimal task queue built on Redis.
+
+| | quickq | RQ |
+|---|---|---|
+| **Broker** | None (SQLite) | Redis required |
+| **Priority** | Yes (integer levels) | Separate queues for priority |
+| **Rate limiting** | Built-in | No |
+| **Chaining** | Yes | No |
+| **Monitoring** | CLI + progress | rq-dashboard (web) |
+
+**Choose quickq** if you want similar simplicity without requiring Redis.
+**Choose RQ** if you already run Redis and want a web dashboard.
+
+### vs Dramatiq
+
+Dramatiq is a reliable, performance-focused alternative to Celery.
+
+| | quickq | Dramatiq |
+|---|---|---|
+| **Broker** | None (SQLite) | Redis or RabbitMQ |
+| **Priority** | Yes | No (FIFO only) |
+| **Rate limiting** | Built-in | Middleware |
+| **DLQ** | Built-in | No |
+| **Middleware** | Hooks (before/after/success/failure) | Full middleware stack |
+
+**Choose quickq** if you want built-in DLQ and priority without a broker.
+**Choose Dramatiq** if you need a middleware ecosystem and distributed workers.
+
+### vs Huey
+
+Huey is a lightweight task queue with Redis or SQLite backends.
+
+| | quickq | Huey |
+|---|---|---|
+| **Backend** | SQLite (Rust-native) | Redis or SQLite (Python) |
+| **Performance** | Rust scheduler + OS threads | Python threads |
+| **Chaining** | chain, group, chord | Pipeline (limited) |
+| **Rate limiting** | Built-in token bucket | No |
+| **DLQ** | Built-in | No |
+| **Progress** | Built-in | No |
+
+**Choose quickq** if you want higher performance and more features with SQLite.
+**Choose Huey** if you need a mature, well-documented SQLite-backed queue.

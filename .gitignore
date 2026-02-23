@@ -43,3 +43,6 @@ Thumbs.db
 .coverage
 htmlcov/
 junk/
+
+# Docs
+site/
