@@ -37,6 +37,9 @@ class PyJob:
     completed_at: int | None
     error: str | None
     timeout_ms: int
+    unique_key: str | None
+    progress: int | None
+    metadata: str | None
 
     @property
     def status(self) -> str: ...
@@ -51,7 +54,9 @@ class PyQueue:
         default_retry: int = 3,
         default_timeout: int = 300,
         default_priority: int = 0,
+        result_ttl: int | None = None,
     ) -> None: ...
+    def request_shutdown(self) -> None: ...
     def enqueue(
         self,
         task_name: str,
@@ -61,12 +66,36 @@ class PyQueue:
         delay_seconds: float | None = None,
         max_retries: int | None = None,
         timeout: int | None = None,
+        unique_key: str | None = None,
+        metadata: str | None = None,
     ) -> PyJob: ...
+    def enqueue_batch(
+        self,
+        task_names: list[str],
+        payloads: list[bytes],
+        queues: list[str] | None = None,
+        priorities: list[int] | None = None,
+        max_retries_list: list[int] | None = None,
+        timeouts: list[int] | None = None,
+    ) -> list[PyJob]: ...
     def get_job(self, job_id: str) -> PyJob | None: ...
+    def get_job_errors(self, job_id: str) -> list[dict[str, Any]]: ...
+    def cancel_job(self, job_id: str) -> bool: ...
+    def update_progress(self, job_id: str, progress: int) -> None: ...
+    def purge_completed(self, older_than_seconds: int) -> int: ...
     def stats(self) -> dict[str, int]: ...
     def dead_letters(self, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]: ...
     def retry_dead(self, dead_id: str) -> str: ...
     def purge_dead(self, older_than_seconds: int) -> int: ...
+    def register_periodic(
+        self,
+        name: str,
+        task_name: str,
+        cron_expr: str,
+        args: bytes | None = None,
+        kwargs: bytes | None = None,
+        queue: str = "default",
+    ) -> None: ...
     def run_worker(
         self,
         task_registry: dict[str, Any],

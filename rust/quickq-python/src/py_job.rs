@@ -30,6 +30,12 @@ pub struct PyJob {
     pub error: Option<String>,
     #[pyo3(get)]
     pub timeout_ms: i64,
+    #[pyo3(get)]
+    pub unique_key: Option<String>,
+    #[pyo3(get)]
+    pub progress: Option<i32>,
+    #[pyo3(get)]
+    pub metadata: Option<String>,
 
     status_val: i32,
     result_bytes: Option<Vec<u8>>,
@@ -75,6 +81,9 @@ impl From<Job> for PyJob {
             completed_at: job.completed_at,
             error: job.error,
             timeout_ms: job.timeout_ms,
+            unique_key: job.unique_key,
+            progress: job.progress,
+            metadata: job.metadata,
             status_val: job.status as i32,
             result_bytes: job.result,
         }

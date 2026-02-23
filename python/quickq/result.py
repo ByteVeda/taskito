@@ -38,12 +38,20 @@ class JobResult:
     def status(self) -> str:
         """
         Current job status. Fetches fresh from the database.
-        Returns one of: "pending", "running", "complete", "failed", "dead".
+        Returns one of: "pending", "running", "complete", "failed", "dead", "cancelled".
         """
         refreshed = self._queue._inner.get_job(self._py_job.id)
         if refreshed is not None:
             self._py_job = refreshed
         return self._py_job.status
+
+    @property
+    def progress(self) -> int | None:
+        """Current progress (0-100) if reported by the task."""
+        refreshed = self._queue._inner.get_job(self._py_job.id)
+        if refreshed is not None:
+            self._py_job = refreshed
+        return self._py_job.progress
 
     @property
     def error(self) -> str | None:
@@ -53,13 +61,27 @@ class JobResult:
             self._py_job = refreshed
         return self._py_job.error
 
-    def result(self, timeout: float = 30.0, poll_interval: float = 0.1) -> Any:
+    @property
+    def errors(self) -> list[dict]:
+        """Error history for this job (one entry per failed attempt)."""
+        return self._queue.job_errors(self.id)
+
+    def result(
+        self,
+        timeout: float = 30.0,
+        poll_interval: float = 0.05,
+        max_poll_interval: float = 0.5,
+    ) -> Any:
         """
         Block until the job completes and return the result.
 
+        Uses exponential backoff: starts polling at ``poll_interval`` and
+        gradually increases to ``max_poll_interval``.
+
         Args:
             timeout: Maximum seconds to wait.
-            poll_interval: Seconds between status checks.
+            poll_interval: Initial seconds between status checks.
+            max_poll_interval: Maximum seconds between status checks.
 
         Returns:
             The deserialized return value of the task function.
@@ -69,6 +91,7 @@ class JobResult:
             RuntimeError: If the job failed or was moved to DLQ.
         """
         deadline = time.monotonic() + timeout
+        current_interval = poll_interval
 
         while time.monotonic() < deadline:
             refreshed = self._queue._inner.get_job(self._py_job.id)
@@ -86,22 +109,31 @@ class JobResult:
                     f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}"
                 )
 
-            time.sleep(poll_interval)
+            time.sleep(current_interval)
+            current_interval = min(current_interval * 1.5, max_poll_interval)
 
         raise TimeoutError(
             f"Job {self.id} did not complete within {timeout}s "
             f"(current status: {self._py_job.status})"
         )
 
-    async def aresult(self, timeout: float = 30.0, poll_interval: float = 0.1) -> Any:
+    async def aresult(
+        self,
+        timeout: float = 30.0,
+        poll_interval: float = 0.05,
+        max_poll_interval: float = 0.5,
+    ) -> Any:
         """
         Async version of result(). Awaitable, non-blocking.
+
+        Uses exponential backoff like :meth:`result`.
 
         Usage::
 
             result = await job.aresult(timeout=30)
         """
         deadline = time.monotonic() + timeout
+        current_interval = poll_interval
 
         while time.monotonic() < deadline:
             refreshed = self._queue._inner.get_job(self._py_job.id)
@@ -119,7 +151,8 @@ class JobResult:
                     f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}"
                 )
 
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(current_interval)
+            current_interval = min(current_interval * 1.5, max_poll_interval)
 
         raise TimeoutError(
             f"Job {self.id} did not complete within {timeout}s "

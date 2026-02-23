@@ -1,54 +1,64 @@
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use diesel::prelude::*;
+use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::sqlite::SqliteConnection;
 
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus, NewJob, now_millis};
+use super::models::*;
+use super::schema::{dead_letter, job_errors, jobs, periodic_tasks, rate_limits};
 
-/// SQLite-backed storage for the task queue.
+type DbPool = Pool<ConnectionManager<SqliteConnection>>;
+
+/// SQLite-backed storage for the task queue, using Diesel ORM.
 #[derive(Clone)]
 pub struct SqliteStorage {
-    pool: Pool<SqliteConnectionManager>,
+    pool: DbPool,
 }
 
 impl SqliteStorage {
     /// Open (or create) a SQLite database at the given path.
     pub fn new(db_path: &str) -> Result<Self> {
-        let manager = SqliteConnectionManager::file(db_path);
+        let manager = ConnectionManager::<SqliteConnection>::new(db_path);
         let pool = Pool::builder()
             .max_size(8)
-            .build(manager)
-            .map_err(QueueError::Pool)?;
+            .build(manager)?;
 
         let storage = Self { pool };
-        storage.init_tables()?;
+        storage.run_pragmas()?;
+        storage.run_migrations()?;
         Ok(storage)
     }
 
     /// Create an in-memory storage (useful for tests).
     pub fn in_memory() -> Result<Self> {
-        let manager = SqliteConnectionManager::memory();
+        let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
         let pool = Pool::builder()
             .max_size(1)
-            .build(manager)
-            .map_err(QueueError::Pool)?;
+            .build(manager)?;
 
         let storage = Self { pool };
-        storage.init_tables()?;
+        storage.run_pragmas()?;
+        storage.run_migrations()?;
         Ok(storage)
     }
 
-    fn init_tables(&self) -> Result<()> {
-        let conn = self.pool.get()?;
+    fn conn(&self) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<SqliteConnection>>> {
+        Ok(self.pool.get()?)
+    }
 
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;
-             PRAGMA journal_size_limit = 67108864;
-             PRAGMA synchronous = NORMAL;",
-        )?;
+    fn run_pragmas(&self) -> Result<()> {
+        let mut conn = self.conn()?;
+        diesel::sql_query("PRAGMA journal_mode = WAL").execute(&mut conn)?;
+        diesel::sql_query("PRAGMA busy_timeout = 5000").execute(&mut conn)?;
+        diesel::sql_query("PRAGMA journal_size_limit = 67108864").execute(&mut conn)?;
+        diesel::sql_query("PRAGMA synchronous = NORMAL").execute(&mut conn)?;
+        Ok(())
+    }
 
-        conn.execute_batch(
+    fn run_migrations(&self) -> Result<()> {
+        let mut conn = self.conn()?;
+
+        diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS jobs (
                 id           TEXT PRIMARY KEY,
                 queue        TEXT NOT NULL DEFAULT 'default',
@@ -64,15 +74,29 @@ impl SqliteStorage {
                 max_retries  INTEGER NOT NULL DEFAULT 3,
                 result       BLOB,
                 error        TEXT,
-                timeout_ms   INTEGER NOT NULL DEFAULT 300000
-            );
+                timeout_ms   INTEGER NOT NULL DEFAULT 300000,
+                unique_key   TEXT,
+                progress     INTEGER,
+                metadata     TEXT
+            )"
+        ).execute(&mut conn)?;
 
-            CREATE INDEX IF NOT EXISTS idx_jobs_dequeue
-                ON jobs(queue, status, priority DESC, scheduled_at);
-            CREATE INDEX IF NOT EXISTS idx_jobs_status
-                ON jobs(status);
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_dequeue
+                ON jobs(queue, status, priority DESC, scheduled_at)"
+        ).execute(&mut conn)?;
 
-            CREATE TABLE IF NOT EXISTS dead_letter (
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)"
+        ).execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_unique_key
+                ON jobs(unique_key) WHERE unique_key IS NOT NULL AND status IN (0, 1)"
+        ).execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS dead_letter (
                 id              TEXT PRIMARY KEY,
                 original_job_id TEXT NOT NULL,
                 queue           TEXT NOT NULL,
@@ -82,79 +106,200 @@ impl SqliteStorage {
                 retry_count     INTEGER NOT NULL,
                 failed_at       INTEGER NOT NULL,
                 metadata        TEXT
-            );
+            )"
+        ).execute(&mut conn)?;
 
-            CREATE TABLE IF NOT EXISTS rate_limits (
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS rate_limits (
                 key         TEXT PRIMARY KEY,
                 tokens      REAL NOT NULL,
                 max_tokens  REAL NOT NULL,
                 refill_rate REAL NOT NULL,
                 last_refill INTEGER NOT NULL
-            );",
-        )?;
+            )"
+        ).execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS periodic_tasks (
+                name        TEXT PRIMARY KEY,
+                task_name   TEXT NOT NULL,
+                cron_expr   TEXT NOT NULL,
+                args        BLOB,
+                kwargs      BLOB,
+                queue       TEXT NOT NULL DEFAULT 'default',
+                enabled     INTEGER NOT NULL DEFAULT 1,
+                last_run    INTEGER,
+                next_run    INTEGER NOT NULL
+            )"
+        ).execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS job_errors (
+                id        TEXT PRIMARY KEY,
+                job_id    TEXT NOT NULL,
+                attempt   INTEGER NOT NULL,
+                error     TEXT NOT NULL,
+                failed_at INTEGER NOT NULL
+            )"
+        ).execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_job_errors_job_id ON job_errors(job_id)"
+        ).execute(&mut conn)?;
 
         Ok(())
     }
 
-    /// Insert a new job into the queue. Returns the job ID.
+    // ── Job operations ─────────────────────────────────────────────────
+
+    /// Insert a new job into the queue. Returns the job.
     pub fn enqueue(&self, new_job: NewJob) -> Result<Job> {
         let job = new_job.into_job();
-        let conn = self.pool.get()?;
+        let mut conn = self.conn()?;
 
-        conn.execute(
-            "INSERT INTO jobs (id, queue, task_name, payload, status, priority,
-                              created_at, scheduled_at, retry_count, max_retries, timeout_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                job.id,
-                job.queue,
-                job.task_name,
-                job.payload,
-                job.status as i32,
-                job.priority,
-                job.created_at,
-                job.scheduled_at,
-                job.retry_count,
-                job.max_retries,
-                job.timeout_ms,
-            ],
-        )?;
+        let row = NewJobRow {
+            id: &job.id,
+            queue: &job.queue,
+            task_name: &job.task_name,
+            payload: &job.payload,
+            status: job.status as i32,
+            priority: job.priority,
+            created_at: job.created_at,
+            scheduled_at: job.scheduled_at,
+            retry_count: job.retry_count,
+            max_retries: job.max_retries,
+            timeout_ms: job.timeout_ms,
+            unique_key: job.unique_key.as_deref(),
+            metadata: job.metadata.as_deref(),
+        };
+
+        diesel::insert_into(jobs::table)
+            .values(&row)
+            .execute(&mut conn)?;
+
+        Ok(job)
+    }
+
+    /// Enqueue multiple jobs in a single transaction.
+    pub fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
+        let mut conn = self.conn()?;
+        let jobs: Vec<Job> = new_jobs.into_iter().map(|nj| nj.into_job()).collect();
+
+        conn.transaction(|conn| {
+            for job in &jobs {
+                let row = NewJobRow {
+                    id: &job.id,
+                    queue: &job.queue,
+                    task_name: &job.task_name,
+                    payload: &job.payload,
+                    status: job.status as i32,
+                    priority: job.priority,
+                    created_at: job.created_at,
+                    scheduled_at: job.scheduled_at,
+                    retry_count: job.retry_count,
+                    max_retries: job.max_retries,
+                    timeout_ms: job.timeout_ms,
+                    unique_key: job.unique_key.as_deref(),
+                    metadata: job.metadata.as_deref(),
+                };
+
+                diesel::insert_into(jobs::table)
+                    .values(&row)
+                    .execute(conn)?;
+            }
+            Ok(jobs)
+        })
+    }
+
+    /// Enqueue with unique_key deduplication. Returns existing job if duplicate.
+    pub fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
+        let job = new_job.into_job();
+        let mut conn = self.conn()?;
+
+        // Check for existing active job with same unique_key
+        if let Some(ref uk) = job.unique_key {
+            let existing: Option<JobRow> = jobs::table
+                .filter(jobs::unique_key.eq(uk))
+                .filter(jobs::status.eq_any([
+                    JobStatus::Pending as i32,
+                    JobStatus::Running as i32,
+                ]))
+                .select(JobRow::as_select())
+                .first(&mut conn)
+                .optional()?;
+
+            if let Some(row) = existing {
+                return Ok(Job::from(row));
+            }
+        }
+
+        let row = NewJobRow {
+            id: &job.id,
+            queue: &job.queue,
+            task_name: &job.task_name,
+            payload: &job.payload,
+            status: job.status as i32,
+            priority: job.priority,
+            created_at: job.created_at,
+            scheduled_at: job.scheduled_at,
+            retry_count: job.retry_count,
+            max_retries: job.max_retries,
+            timeout_ms: job.timeout_ms,
+            unique_key: job.unique_key.as_deref(),
+            metadata: job.metadata.as_deref(),
+        };
+
+        diesel::insert_into(jobs::table)
+            .values(&row)
+            .execute(&mut conn)?;
 
         Ok(job)
     }
 
     /// Atomically dequeue the highest-priority ready job from the given queue.
-    /// Returns `None` if no jobs are ready.
-    pub fn dequeue(&self, queue: &str, now: i64) -> Result<Option<Job>> {
-        let conn = self.pool.get()?;
+    pub fn dequeue(&self, queue_name: &str, now: i64) -> Result<Option<Job>> {
+        let mut conn = self.conn()?;
 
-        let mut stmt = conn.prepare(
-            "UPDATE jobs SET status = ?1, started_at = ?2
-             WHERE id = (
-                 SELECT id FROM jobs
-                 WHERE queue = ?3 AND status = 0 AND scheduled_at <= ?4
-                 ORDER BY priority DESC, scheduled_at ASC
-                 LIMIT 1
-             )
-             RETURNING id, queue, task_name, payload, status, priority,
-                       created_at, scheduled_at, started_at, completed_at,
-                       retry_count, max_retries, result, error, timeout_ms",
-        )?;
+        conn.transaction(|conn| {
+            // Find the next ready job
+            let candidate: Option<JobRow> = jobs::table
+                .filter(jobs::queue.eq(queue_name))
+                .filter(jobs::status.eq(JobStatus::Pending as i32))
+                .filter(jobs::scheduled_at.le(now))
+                .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+                .select(JobRow::as_select())
+                .first(conn)
+                .optional()?;
 
-        let result = stmt
-            .query_row(
-                params![JobStatus::Running as i32, now, queue, now],
-                |row| row_to_job(row),
-            )
-            .optional()?;
+            let row = match candidate {
+                Some(r) => r,
+                None => return Ok(None),
+            };
 
-        Ok(result)
+            // Atomically claim it
+            diesel::update(jobs::table)
+                .filter(jobs::id.eq(&row.id))
+                .filter(jobs::status.eq(JobStatus::Pending as i32))
+                .set((
+                    jobs::status.eq(JobStatus::Running as i32),
+                    jobs::started_at.eq(now),
+                ))
+                .execute(conn)?;
+
+            // Re-read the updated row
+            let updated: JobRow = jobs::table
+                .find(&row.id)
+                .select(JobRow::as_select())
+                .first(conn)?;
+
+            Ok(Some(Job::from(updated)))
+        })
     }
 
     /// Dequeue from multiple queues, checking each in order.
     pub fn dequeue_from(&self, queues: &[String], now: i64) -> Result<Option<Job>> {
-        for queue in queues {
-            if let Some(job) = self.dequeue(queue, now)? {
+        for queue_name in queues {
+            if let Some(job) = self.dequeue(queue_name, now)? {
                 return Ok(Some(job));
             }
         }
@@ -162,21 +307,19 @@ impl SqliteStorage {
     }
 
     /// Mark a job as complete with the given result.
-    pub fn complete(&self, id: &str, result: Option<Vec<u8>>) -> Result<()> {
-        let conn = self.pool.get()?;
+    pub fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
         let now = now_millis();
+        let mut conn = self.conn()?;
 
-        let affected = conn.execute(
-            "UPDATE jobs SET status = ?1, completed_at = ?2, result = ?3
-             WHERE id = ?4 AND status = ?5",
-            params![
-                JobStatus::Complete as i32,
-                now,
-                result,
-                id,
-                JobStatus::Running as i32,
-            ],
-        )?;
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::id.eq(id))
+            .filter(jobs::status.eq(JobStatus::Running as i32))
+            .set((
+                jobs::status.eq(JobStatus::Complete as i32),
+                jobs::completed_at.eq(now),
+                jobs::result.eq(result_bytes),
+            ))
+            .execute(&mut conn)?;
 
         if affected == 0 {
             return Err(QueueError::JobNotFound(id.to_string()));
@@ -186,20 +329,18 @@ impl SqliteStorage {
 
     /// Mark a job as failed with the given error message.
     pub fn fail(&self, id: &str, error: &str) -> Result<()> {
-        let conn = self.pool.get()?;
         let now = now_millis();
+        let mut conn = self.conn()?;
 
-        let affected = conn.execute(
-            "UPDATE jobs SET status = ?1, completed_at = ?2, error = ?3
-             WHERE id = ?4 AND status = ?5",
-            params![
-                JobStatus::Failed as i32,
-                now,
-                error,
-                id,
-                JobStatus::Running as i32,
-            ],
-        )?;
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::id.eq(id))
+            .filter(jobs::status.eq(JobStatus::Running as i32))
+            .set((
+                jobs::status.eq(JobStatus::Failed as i32),
+                jobs::completed_at.eq(now),
+                jobs::error.eq(error),
+            ))
+            .execute(&mut conn)?;
 
         if affected == 0 {
             return Err(QueueError::JobNotFound(id.to_string()));
@@ -207,18 +348,53 @@ impl SqliteStorage {
         Ok(())
     }
 
-    /// Re-schedule a job for retry (set status back to pending with new scheduled_at).
+    /// Re-schedule a job for retry.
     pub fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()> {
-        let conn = self.pool.get()?;
+        let mut conn = self.conn()?;
 
-        let affected = conn.execute(
-            "UPDATE jobs SET status = ?1, scheduled_at = ?2,
-                            retry_count = retry_count + 1,
-                            started_at = NULL, completed_at = NULL,
-                            error = NULL
-             WHERE id = ?3",
-            params![JobStatus::Pending as i32, next_scheduled_at, id],
-        )?;
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::id.eq(id))
+            .set((
+                jobs::status.eq(JobStatus::Pending as i32),
+                jobs::scheduled_at.eq(next_scheduled_at),
+                jobs::retry_count.eq(jobs::retry_count + 1),
+                jobs::started_at.eq(None::<i64>),
+                jobs::completed_at.eq(None::<i64>),
+                jobs::error.eq(None::<String>),
+            ))
+            .execute(&mut conn)?;
+
+        if affected == 0 {
+            return Err(QueueError::JobNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Cancel a pending job. Returns true if cancelled, false if not pending.
+    pub fn cancel_job(&self, id: &str) -> Result<bool> {
+        let now = now_millis();
+        let mut conn = self.conn()?;
+
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::id.eq(id))
+            .filter(jobs::status.eq(JobStatus::Pending as i32))
+            .set((
+                jobs::status.eq(JobStatus::Cancelled as i32),
+                jobs::completed_at.eq(now),
+            ))
+            .execute(&mut conn)?;
+
+        Ok(affected > 0)
+    }
+
+    /// Update progress for a running job (0-100).
+    pub fn update_progress(&self, id: &str, progress: i32) -> Result<()> {
+        let mut conn = self.conn()?;
+
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::id.eq(id))
+            .set(jobs::progress.eq(progress))
+            .execute(&mut conn)?;
 
         if affected == 0 {
             return Err(QueueError::JobNotFound(id.to_string()));
@@ -228,72 +404,71 @@ impl SqliteStorage {
 
     /// Move a job to the dead letter queue.
     pub fn move_to_dlq(&self, job: &Job, error: &str, metadata: Option<&str>) -> Result<()> {
-        let conn = self.pool.get()?;
         let now = now_millis();
         let dlq_id = uuid::Uuid::now_v7().to_string();
+        let mut conn = self.conn()?;
 
-        conn.execute(
-            "INSERT INTO dead_letter (id, original_job_id, queue, task_name, payload,
-                                      error, retry_count, failed_at, metadata)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                dlq_id,
-                job.id,
-                job.queue,
-                job.task_name,
-                job.payload,
-                error,
-                job.retry_count,
-                now,
+        conn.transaction(|conn| {
+            let dlq_row = NewDeadLetterRow {
+                id: &dlq_id,
+                original_job_id: &job.id,
+                queue: &job.queue,
+                task_name: &job.task_name,
+                payload: &job.payload,
+                error: Some(error),
+                retry_count: job.retry_count,
+                failed_at: now,
                 metadata,
-            ],
-        )?;
+            };
 
-        // Mark the original job as dead
-        conn.execute(
-            "UPDATE jobs SET status = ?1, error = ?2, completed_at = ?3 WHERE id = ?4",
-            params![JobStatus::Dead as i32, error, now, job.id],
-        )?;
+            diesel::insert_into(dead_letter::table)
+                .values(&dlq_row)
+                .execute(conn)?;
 
-        Ok(())
+            diesel::update(jobs::table)
+                .filter(jobs::id.eq(&job.id))
+                .set((
+                    jobs::status.eq(JobStatus::Dead as i32),
+                    jobs::error.eq(error),
+                    jobs::completed_at.eq(now),
+                ))
+                .execute(conn)?;
+
+            Ok(())
+        })
     }
 
     /// Get a job by ID.
     pub fn get_job(&self, id: &str) -> Result<Option<Job>> {
-        let conn = self.pool.get()?;
+        let mut conn = self.conn()?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, queue, task_name, payload, status, priority,
-                    created_at, scheduled_at, started_at, completed_at,
-                    retry_count, max_retries, result, error, timeout_ms
-             FROM jobs WHERE id = ?1",
-        )?;
+        let row: Option<JobRow> = jobs::table
+            .find(id)
+            .select(JobRow::as_select())
+            .first(&mut conn)
+            .optional()?;
 
-        let result = stmt.query_row(params![id], |row| row_to_job(row)).optional()?;
-        Ok(result)
+        Ok(row.map(Job::from))
     }
 
     /// Get queue statistics.
     pub fn stats(&self) -> Result<QueueStats> {
-        let conn = self.pool.get()?;
+        let mut conn = self.conn()?;
 
-        let mut stmt = conn.prepare(
-            "SELECT status, COUNT(*) FROM jobs GROUP BY status",
-        )?;
+        let rows: Vec<(i32, i64)> = jobs::table
+            .group_by(jobs::status)
+            .select((jobs::status, diesel::dsl::count(jobs::id)))
+            .load(&mut conn)?;
 
         let mut stats = QueueStats::default();
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, i32>(0)?, row.get::<_, i64>(1)?))
-        })?;
-
-        for row in rows {
-            let (status, count) = row?;
+        for (status, count) in rows {
             match JobStatus::from_i32(status) {
                 Some(JobStatus::Pending) => stats.pending = count,
                 Some(JobStatus::Running) => stats.running = count,
                 Some(JobStatus::Complete) => stats.completed = count,
                 Some(JobStatus::Failed) => stats.failed = count,
                 Some(JobStatus::Dead) => stats.dead = count,
+                Some(JobStatus::Cancelled) => stats.cancelled = count,
                 None => {}
             }
         }
@@ -301,198 +476,228 @@ impl SqliteStorage {
         Ok(stats)
     }
 
+    // ── Dead letter operations ─────────────────────────────────────────
+
     /// List dead letter entries.
     pub fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
-        let conn = self.pool.get()?;
+        let mut conn = self.conn()?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, original_job_id, queue, task_name, payload,
-                    error, retry_count, failed_at, metadata
-             FROM dead_letter ORDER BY failed_at DESC LIMIT ?1 OFFSET ?2",
-        )?;
+        let rows: Vec<DeadLetterRow> = dead_letter::table
+            .order(dead_letter::failed_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .select(DeadLetterRow::as_select())
+            .load(&mut conn)?;
 
-        let rows = stmt.query_map(params![limit, offset], |row| {
-            Ok(DeadJob {
-                id: row.get(0)?,
-                original_job_id: row.get(1)?,
-                queue: row.get(2)?,
-                task_name: row.get(3)?,
-                payload: row.get(4)?,
-                error: row.get(5)?,
-                retry_count: row.get(6)?,
-                failed_at: row.get(7)?,
-                metadata: row.get(8)?,
-            })
-        })?;
-
-        let mut dead_jobs = Vec::new();
-        for row in rows {
-            dead_jobs.push(row?);
-        }
-        Ok(dead_jobs)
+        Ok(rows.into_iter().map(DeadJob::from).collect())
     }
 
     /// Re-enqueue a dead letter job. Returns the new job ID.
     pub fn retry_dead(&self, dead_id: &str) -> Result<String> {
-        // Fetch dead letter entry (connection is dropped after this block)
-        let dead: DeadJob = {
-            let conn = self.pool.get()?;
-            let mut stmt = conn.prepare(
-                "SELECT id, original_job_id, queue, task_name, payload,
-                        error, retry_count, failed_at, metadata
-                 FROM dead_letter WHERE id = ?1",
-            )?;
-            let result = stmt
-                .query_row(params![dead_id], |row| {
-                    Ok(DeadJob {
-                        id: row.get(0)?,
-                        original_job_id: row.get(1)?,
-                        queue: row.get(2)?,
-                        task_name: row.get(3)?,
-                        payload: row.get(4)?,
-                        error: row.get(5)?,
-                        retry_count: row.get(6)?,
-                        failed_at: row.get(7)?,
-                        metadata: row.get(8)?,
-                    })
-                })
-                .map_err(|_| QueueError::JobNotFound(dead_id.to_string()))?;
-            result
-        };
+        let mut conn = self.conn()?;
 
-        // Create new job from dead letter (gets its own connection)
+        let dead_row: DeadLetterRow = dead_letter::table
+            .find(dead_id)
+            .select(DeadLetterRow::as_select())
+            .first(&mut conn)
+            .map_err(|_| QueueError::JobNotFound(dead_id.to_string()))?;
+
+        // Drop conn before calling enqueue (which gets its own conn)
+        drop(conn);
+
         let new_job = NewJob {
-            queue: dead.queue,
-            task_name: dead.task_name,
-            payload: dead.payload,
+            queue: dead_row.queue,
+            task_name: dead_row.task_name,
+            payload: dead_row.payload,
             priority: 0,
             scheduled_at: now_millis(),
             max_retries: 3,
             timeout_ms: 300_000,
+            unique_key: None,
+            metadata: None,
         };
 
         let job = self.enqueue(new_job)?;
 
-        // Remove from dead letter queue (gets its own connection)
-        let conn = self.pool.get()?;
-        conn.execute("DELETE FROM dead_letter WHERE id = ?1", params![dead_id])?;
+        let mut conn = self.conn()?;
+        diesel::delete(dead_letter::table.find(dead_id))
+            .execute(&mut conn)?;
 
         Ok(job.id)
     }
 
     /// Purge dead letter entries older than the given timestamp.
     pub fn purge_dead(&self, older_than_ms: i64) -> Result<u64> {
-        let conn = self.pool.get()?;
-        let affected = conn.execute(
-            "DELETE FROM dead_letter WHERE failed_at < ?1",
-            params![older_than_ms],
-        )?;
+        let mut conn = self.conn()?;
+
+        let affected = diesel::delete(
+            dead_letter::table.filter(dead_letter::failed_at.lt(older_than_ms))
+        ).execute(&mut conn)?;
+
         Ok(affected as u64)
     }
 
     /// Purge completed jobs older than the given timestamp.
     pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
-        let conn = self.pool.get()?;
-        let affected = conn.execute(
-            "DELETE FROM jobs WHERE status = ?1 AND completed_at < ?2",
-            params![JobStatus::Complete as i32, older_than_ms],
-        )?;
+        let mut conn = self.conn()?;
+
+        let affected = diesel::delete(
+            jobs::table
+                .filter(jobs::status.eq(JobStatus::Complete as i32))
+                .filter(jobs::completed_at.lt(older_than_ms))
+        ).execute(&mut conn)?;
+
         Ok(affected as u64)
     }
 
-    /// Find stale running jobs (started but exceeded timeout) and mark them as failed.
+    /// Find stale running jobs that exceeded their timeout.
     pub fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>> {
-        let conn = self.pool.get()?;
+        let mut conn = self.conn()?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, queue, task_name, payload, status, priority,
-                    created_at, scheduled_at, started_at, completed_at,
-                    retry_count, max_retries, result, error, timeout_ms
-             FROM jobs
-             WHERE status = ?1 AND started_at IS NOT NULL
-                   AND (started_at + timeout_ms) < ?2",
-        )?;
+        // SQLite doesn't support column arithmetic in Diesel DSL easily,
+        // so we use sql_query for the timeout comparison.
+        let rows: Vec<JobRow> = jobs::table
+            .filter(jobs::status.eq(JobStatus::Running as i32))
+            .filter(jobs::started_at.is_not_null())
+            .select(JobRow::as_select())
+            .load(&mut conn)?;
 
-        let rows = stmt.query_map(params![JobStatus::Running as i32, now], |row| {
-            row_to_job(row)
-        })?;
+        // Filter in Rust for the timeout condition
+        let stale: Vec<Job> = rows
+            .into_iter()
+            .filter(|r| {
+                if let Some(started) = r.started_at {
+                    (started + r.timeout_ms) < now
+                } else {
+                    false
+                }
+            })
+            .map(Job::from)
+            .collect();
 
-        let mut stale = Vec::new();
-        for row in rows {
-            stale.push(row?);
-        }
         Ok(stale)
     }
 
-    // -- Rate limit storage methods --
+    // ── Rate limit operations ──────────────────────────────────────────
 
     pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitRow>> {
-        let conn = self.pool.get()?;
-        let mut stmt = conn.prepare(
-            "SELECT key, tokens, max_tokens, refill_rate, last_refill
-             FROM rate_limits WHERE key = ?1",
-        )?;
+        let mut conn = self.conn()?;
 
-        let result = stmt
-            .query_row(params![key], |row| {
-                Ok(RateLimitRow {
-                    key: row.get(0)?,
-                    tokens: row.get(1)?,
-                    max_tokens: row.get(2)?,
-                    refill_rate: row.get(3)?,
-                    last_refill: row.get(4)?,
-                })
-            })
+        let row: Option<RateLimitRow> = rate_limits::table
+            .find(key)
+            .select(RateLimitRow::as_select())
+            .first(&mut conn)
             .optional()?;
-        Ok(result)
+
+        Ok(row)
     }
 
     pub fn upsert_rate_limit(&self, row: &RateLimitRow) -> Result<()> {
-        let conn = self.pool.get()?;
-        conn.execute(
-            "INSERT INTO rate_limits (key, tokens, max_tokens, refill_rate, last_refill)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(key) DO UPDATE SET tokens = ?2, last_refill = ?5",
-            params![row.key, row.tokens, row.max_tokens, row.refill_rate, row.last_refill],
-        )?;
+        let mut conn = self.conn()?;
+
+        diesel::replace_into(rate_limits::table)
+            .values(row)
+            .execute(&mut conn)?;
+
+        Ok(())
+    }
+
+    // ── Periodic task operations ───────────────────────────────────────
+
+    /// Register or update a periodic task.
+    pub fn register_periodic(&self, task: &NewPeriodicTaskRow) -> Result<()> {
+        let mut conn = self.conn()?;
+
+        diesel::replace_into(periodic_tasks::table)
+            .values(task)
+            .execute(&mut conn)?;
+
+        Ok(())
+    }
+
+    /// Get all periodic tasks that are due to run.
+    pub fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTaskRow>> {
+        let mut conn = self.conn()?;
+
+        let rows = periodic_tasks::table
+            .filter(periodic_tasks::enabled.eq(true))
+            .filter(periodic_tasks::next_run.le(now))
+            .select(PeriodicTaskRow::as_select())
+            .load(&mut conn)?;
+
+        Ok(rows)
+    }
+
+    // ── Job error operations ──────────────────────────────────────────
+
+    /// Record an error for a job attempt.
+    pub fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()> {
+        let mut conn = self.conn()?;
+        let id = uuid::Uuid::now_v7().to_string();
+        let now = now_millis();
+
+        let row = NewJobErrorRow {
+            id: &id,
+            job_id,
+            attempt,
+            error,
+            failed_at: now,
+        };
+
+        diesel::insert_into(job_errors::table)
+            .values(&row)
+            .execute(&mut conn)?;
+
+        Ok(())
+    }
+
+    /// Get all errors for a job, ordered by attempt.
+    pub fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobErrorRow>> {
+        let mut conn = self.conn()?;
+
+        let rows = job_errors::table
+            .filter(job_errors::job_id.eq(job_id))
+            .order(job_errors::attempt.asc())
+            .select(JobErrorRow::as_select())
+            .load(&mut conn)?;
+
+        Ok(rows)
+    }
+
+    /// Purge job errors older than the given timestamp.
+    pub fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+
+        let affected = diesel::delete(
+            job_errors::table.filter(job_errors::failed_at.lt(older_than_ms))
+        ).execute(&mut conn)?;
+
+        Ok(affected as u64)
+    }
+
+    // ── Periodic task operations ───────────────────────────────────────
+
+    /// Update a periodic task's schedule after execution.
+    pub fn update_periodic_schedule(
+        &self,
+        name: &str,
+        last_run: i64,
+        next_run: i64,
+    ) -> Result<()> {
+        let mut conn = self.conn()?;
+
+        diesel::update(periodic_tasks::table.find(name))
+            .set((
+                periodic_tasks::last_run.eq(last_run),
+                periodic_tasks::next_run.eq(next_run),
+            ))
+            .execute(&mut conn)?;
+
         Ok(())
     }
 }
 
-/// Use rusqlite's optional extension for query_row returning Option.
-trait OptionalExt<T> {
-    fn optional(self) -> std::result::Result<Option<T>, rusqlite::Error>;
-}
-
-impl<T> OptionalExt<T> for std::result::Result<T, rusqlite::Error> {
-    fn optional(self) -> std::result::Result<Option<T>, rusqlite::Error> {
-        match self {
-            Ok(v) => Ok(Some(v)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-}
-
-fn row_to_job(row: &rusqlite::Row) -> rusqlite::Result<Job> {
-    Ok(Job {
-        id: row.get(0)?,
-        queue: row.get(1)?,
-        task_name: row.get(2)?,
-        payload: row.get(3)?,
-        status: JobStatus::from_i32(row.get(4)?).unwrap_or(JobStatus::Pending),
-        priority: row.get(5)?,
-        created_at: row.get(6)?,
-        scheduled_at: row.get(7)?,
-        started_at: row.get(8)?,
-        completed_at: row.get(9)?,
-        retry_count: row.get(10)?,
-        max_retries: row.get(11)?,
-        result: row.get(12)?,
-        error: row.get(13)?,
-        timeout_ms: row.get(14)?,
-    })
-}
+// ── Helper types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueStats {
@@ -501,6 +706,7 @@ pub struct QueueStats {
     pub completed: i64,
     pub failed: i64,
     pub dead: i64,
+    pub cancelled: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -516,13 +722,20 @@ pub struct DeadJob {
     pub metadata: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct RateLimitRow {
-    pub key: String,
-    pub tokens: f64,
-    pub max_tokens: f64,
-    pub refill_rate: f64,
-    pub last_refill: i64,
+impl From<DeadLetterRow> for DeadJob {
+    fn from(row: DeadLetterRow) -> Self {
+        Self {
+            id: row.id,
+            original_job_id: row.original_job_id,
+            queue: row.queue,
+            task_name: row.task_name,
+            payload: row.payload,
+            error: row.error,
+            retry_count: row.retry_count,
+            failed_at: row.failed_at,
+            metadata: row.metadata,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -542,6 +755,8 @@ mod tests {
             scheduled_at: now_millis(),
             max_retries: 3,
             timeout_ms: 300_000,
+            unique_key: None,
+            metadata: None,
         }
     }
 
@@ -577,11 +792,9 @@ mod tests {
         new_job.scheduled_at = future;
         storage.enqueue(new_job).unwrap();
 
-        // Should not dequeue before scheduled_at
         let none = storage.dequeue("default", now_millis()).unwrap();
         assert!(none.is_none());
 
-        // Should dequeue after scheduled_at
         let some = storage.dequeue("default", future + 1).unwrap();
         assert!(some.is_some());
     }
@@ -674,12 +887,10 @@ mod tests {
         let dead = storage.list_dead(10, 0).unwrap();
         let new_id = storage.retry_dead(&dead[0].id).unwrap();
 
-        // New job exists and is pending
         let new_job = storage.get_job(&new_id).unwrap().unwrap();
         assert_eq!(new_job.status, JobStatus::Pending);
         assert_eq!(new_job.task_name, "retry_dead_task");
 
-        // Dead letter entry removed
         let dead = storage.list_dead(10, 0).unwrap();
         assert!(dead.is_empty());
     }
@@ -693,5 +904,104 @@ mod tests {
         let stats = storage.stats().unwrap();
         assert_eq!(stats.pending, 2);
         assert_eq!(stats.running, 0);
+    }
+
+    #[test]
+    fn test_cancel_job() {
+        let storage = test_storage();
+        let job = storage.enqueue(make_job("cancel_me")).unwrap();
+
+        assert!(storage.cancel_job(&job.id).unwrap());
+
+        let fetched = storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(fetched.status, JobStatus::Cancelled);
+
+        // Cancelling again should return false
+        assert!(!storage.cancel_job(&job.id).unwrap());
+    }
+
+    #[test]
+    fn test_unique_key_dedup() {
+        let storage = test_storage();
+
+        let mut job1 = make_job("unique_task");
+        job1.unique_key = Some("my-key".to_string());
+        let j1 = storage.enqueue_unique(job1).unwrap();
+
+        let mut job2 = make_job("unique_task");
+        job2.unique_key = Some("my-key".to_string());
+        let j2 = storage.enqueue_unique(job2).unwrap();
+
+        // Should return the same job
+        assert_eq!(j1.id, j2.id);
+    }
+
+    #[test]
+    fn test_enqueue_batch() {
+        let storage = test_storage();
+        let jobs: Vec<NewJob> = (0..5).map(|i| {
+            let mut j = make_job(&format!("batch_task_{i}"));
+            j.priority = i;
+            j
+        }).collect();
+
+        let result = storage.enqueue_batch(jobs).unwrap();
+        assert_eq!(result.len(), 5);
+
+        let stats = storage.stats().unwrap();
+        assert_eq!(stats.pending, 5);
+    }
+
+    #[test]
+    fn test_record_and_get_job_errors() {
+        let storage = test_storage();
+        let job = storage.enqueue(make_job("error_task")).unwrap();
+
+        storage.record_error(&job.id, 0, "first failure").unwrap();
+        storage.record_error(&job.id, 1, "second failure").unwrap();
+
+        let errors = storage.get_job_errors(&job.id).unwrap();
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].attempt, 0);
+        assert_eq!(errors[0].error, "first failure");
+        assert_eq!(errors[1].attempt, 1);
+        assert_eq!(errors[1].error, "second failure");
+    }
+
+    #[test]
+    fn test_job_errors_empty_for_success() {
+        let storage = test_storage();
+        let job = storage.enqueue(make_job("ok_task")).unwrap();
+
+        let errors = storage.get_job_errors(&job.id).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_purge_job_errors() {
+        let storage = test_storage();
+        let job = storage.enqueue(make_job("purge_err_task")).unwrap();
+
+        storage.record_error(&job.id, 0, "old error").unwrap();
+        // All errors are recorded at now_millis(), so purging with a future cutoff should remove them
+        let purged = storage.purge_job_errors(now_millis() + 10_000).unwrap();
+        assert_eq!(purged, 1);
+
+        let errors = storage.get_job_errors(&job.id).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_progress_tracking() {
+        let storage = test_storage();
+        let job = storage.enqueue(make_job("progress_task")).unwrap();
+
+        storage.update_progress(&job.id, 50).unwrap();
+        let fetched = storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(fetched.progress, Some(50));
+
+        storage.update_progress(&job.id, 100).unwrap();
+        let fetched = storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(fetched.progress, Some(100));
     }
 }

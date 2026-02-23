@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::job::Job;
-use crate::storage::sqlite::{DeadJob, SqliteStorage};
+use crate::storage::sqlite::{SqliteStorage, DeadJob};
 
 /// Dead letter queue manager.
 pub struct DeadLetterQueue {

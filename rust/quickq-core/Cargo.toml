@@ -4,9 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rusqlite = { workspace = true }
-r2d2 = { workspace = true }
-r2d2_sqlite = { workspace = true }
+diesel = { workspace = true }
+libsqlite3-sys = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -15,6 +14,7 @@ rand = { workspace = true }
 crossbeam-channel = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
+cron = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

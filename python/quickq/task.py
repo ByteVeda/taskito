@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from quickq.app import Queue
+    from quickq.canvas import Signature
     from quickq.result import JobResult
 
 
@@ -78,6 +79,8 @@ class TaskWrapper:
         queue: str | None = None,
         max_retries: int | None = None,
         timeout: int | None = None,
+        unique_key: str | None = None,
+        metadata: str | None = None,
     ) -> JobResult:
         """
         Enqueue with full control over submission options.
@@ -90,6 +93,8 @@ class TaskWrapper:
             queue: Override the default queue name.
             max_retries: Override the default max retry count.
             timeout: Override the default timeout in seconds.
+            unique_key: Deduplicate active jobs with the same key.
+            metadata: Arbitrary JSON metadata to attach to the job.
         """
         return self._queue.enqueue(
             task_name=self._task_name,
@@ -100,7 +105,39 @@ class TaskWrapper:
             queue=queue or self._default_queue,
             max_retries=max_retries if max_retries is not None else self._default_max_retries,
             timeout=timeout if timeout is not None else self._default_timeout,
+            unique_key=unique_key,
+            metadata=metadata,
         )
+
+    def map(self, iterable: list[tuple]) -> list[JobResult]:
+        """Enqueue one job per item in a single batch transaction.
+
+        Args:
+            iterable: List of argument tuples, one per job.
+
+        Returns:
+            List of JobResult handles.
+        """
+        return self._queue.enqueue_many(
+            task_name=self._task_name,
+            args_list=iterable,
+            priority=self._default_priority,
+            queue=self._default_queue,
+            max_retries=self._default_max_retries,
+            timeout=self._default_timeout,
+        )
+
+    def s(self, *args: Any, **kwargs: Any) -> Signature:
+        """Create a mutable Signature (receives previous result in chains)."""
+        from quickq.canvas import Signature
+
+        return Signature(task=self, args=args, kwargs=kwargs)
+
+    def si(self, *args: Any, **kwargs: Any) -> Signature:
+        """Create an immutable Signature (ignores previous result in chains)."""
+        from quickq.canvas import Signature
+
+        return Signature(task=self, args=args, kwargs=kwargs, immutable=True)
 
     def __repr__(self) -> str:
         """Return a developer-friendly string representation."""

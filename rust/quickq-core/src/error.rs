@@ -3,10 +3,10 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum QueueError {
     #[error("storage error: {0}")]
-    Storage(#[from] rusqlite::Error),
+    Storage(#[from] diesel::result::Error),
 
     #[error("connection pool error: {0}")]
-    Pool(#[from] r2d2::Error),
+    Pool(#[from] diesel::r2d2::PoolError),
 
     #[error("job not found: {0}")]
     JobNotFound(String),
@@ -28,6 +28,9 @@ pub enum QueueError {
 
     #[error("job timed out: {0}")]
     Timeout(String),
+
+    #[error("config error: {0}")]
+    Config(String),
 
     #[error("{0}")]
     Other(String),

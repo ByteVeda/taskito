@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+use crate::storage::models::JobRow;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(i32)]
 pub enum JobStatus {
@@ -10,6 +12,7 @@ pub enum JobStatus {
     Complete = 2,
     Failed = 3,
     Dead = 4,
+    Cancelled = 5,
 }
 
 impl JobStatus {
@@ -20,6 +23,7 @@ impl JobStatus {
             2 => Some(Self::Complete),
             3 => Some(Self::Failed),
             4 => Some(Self::Dead),
+            5 => Some(Self::Cancelled),
             _ => None,
         }
     }
@@ -31,6 +35,7 @@ impl JobStatus {
             Self::Complete => "complete",
             Self::Failed => "failed",
             Self::Dead => "dead",
+            Self::Cancelled => "cancelled",
         }
     }
 }
@@ -53,6 +58,34 @@ pub struct Job {
     pub result: Option<Vec<u8>>,
     pub error: Option<String>,
     pub timeout_ms: i64,
+    pub unique_key: Option<String>,
+    pub progress: Option<i32>,
+    pub metadata: Option<String>,
+}
+
+impl From<JobRow> for Job {
+    fn from(row: JobRow) -> Self {
+        Self {
+            id: row.id,
+            queue: row.queue,
+            task_name: row.task_name,
+            payload: row.payload,
+            status: JobStatus::from_i32(row.status).unwrap_or(JobStatus::Pending),
+            priority: row.priority,
+            created_at: row.created_at,
+            scheduled_at: row.scheduled_at,
+            started_at: row.started_at,
+            completed_at: row.completed_at,
+            retry_count: row.retry_count,
+            max_retries: row.max_retries,
+            result: row.result,
+            error: row.error,
+            timeout_ms: row.timeout_ms,
+            unique_key: row.unique_key,
+            progress: row.progress,
+            metadata: row.metadata,
+        }
+    }
 }
 
 /// Parameters for creating a new job.
@@ -64,6 +97,8 @@ pub struct NewJob {
     pub scheduled_at: i64,
     pub max_retries: i32,
     pub timeout_ms: i64,
+    pub unique_key: Option<String>,
+    pub metadata: Option<String>,
 }
 
 impl NewJob {
@@ -85,6 +120,9 @@ impl NewJob {
             result: None,
             error: None,
             timeout_ms: self.timeout_ms,
+            unique_key: self.unique_key,
+            progress: None,
+            metadata: self.metadata,
         }
     }
 }
