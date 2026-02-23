@@ -38,6 +38,7 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 - **Retry with exponential backoff** — automatic retries with jitter
 - **Dead letter queue** — inspect and replay failed jobs
 - **Rate limiting** — token bucket with `"100/m"` syntax
+- **Task dependencies** — `depends_on` for DAG workflows with cascade cancel
 - **Task workflows** — `chain`, `group`, `chord` primitives
 - **Periodic tasks** — cron scheduling with seconds granularity
 - **Progress tracking** — report and read progress from inside tasks
@@ -47,13 +48,15 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 - **Named queues** — route tasks to isolated queues
 - **Hooks** — before/after/success/failure middleware
 - **Async support** — `await job.aresult()`, `await queue.astats()`
-- **CLI** — `quickq worker --app myapp:queue` and `quickq info --watch`
+- **Web dashboard** — `quickq dashboard --app myapp:queue` serves a built-in monitoring UI
+- **FastAPI integration** — `QuickQRouter` for instant REST API over the queue
+- **CLI** — `quickq worker`, `quickq info --watch`, `quickq dashboard`
 
 ## Documentation
 
 Full documentation with guides, API reference, architecture diagrams, and examples:
 
-**[Read the docs →](https://quickq.dev)** *(coming soon)*
+**[Read the docs →](https://pratyush618.github.io/quickq)**
 
 ## Comparison
 
@@ -64,7 +67,10 @@ Full documentation with guides, API reference, architecture diagrams, and exampl
 | Priority queues | **Yes** | Yes | No | No | Yes |
 | Rate limiting | **Yes** | Yes | No | Yes | No |
 | Dead letter queue | **Yes** | No | Yes | No | No |
+| Task dependencies | **Yes** | No | No | No | No |
 | Task chaining | **Yes** | Yes | No | Yes | No |
+| Built-in dashboard | **Yes** | No | No | No | No |
+| FastAPI integration | **Yes** | No | No | No | No |
 | Setup | **`pip install`** | Broker + backend | Redis | Broker | Redis |
 
 ## License

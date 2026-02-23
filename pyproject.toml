@@ -47,6 +47,9 @@ select = [
     "RUF",  # ruff-specific rules
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"python/quickq/dashboard.py" = ["E501"]  # embedded HTML/JS strings
+
 [tool.ruff.lint.isort]
 known-first-party = ["quickq"]
 

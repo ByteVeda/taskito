@@ -43,9 +43,7 @@ def main() -> None:
     dash_parser.add_argument(
         "--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)"
     )
-    dash_parser.add_argument(
-        "--port", type=int, default=8080, help="Bind port (default: 8080)"
-    )
+    dash_parser.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
 
     # info subcommand
     info_parser = subparsers.add_parser("info", help="Show queue statistics")

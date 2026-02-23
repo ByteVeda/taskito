@@ -14,7 +14,6 @@ Or programmatically::
 from __future__ import annotations
 
 import json
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
@@ -53,7 +52,6 @@ def _make_handler(queue: Queue) -> type:
     """Create a request handler class bound to the given queue."""
 
     class DashboardHandler(BaseHTTPRequestHandler):
-
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
@@ -64,10 +62,10 @@ def _make_handler(queue: Queue) -> type:
             elif path == "/api/jobs":
                 self._handle_list_jobs(qs)
             elif path.startswith("/api/jobs/") and path.endswith("/errors"):
-                job_id = path[len("/api/jobs/"):-len("/errors")]
+                job_id = path[len("/api/jobs/") : -len("/errors")]
                 self._json_response(queue.job_errors(job_id))
             elif path.startswith("/api/jobs/"):
-                job_id = path[len("/api/jobs/"):]
+                job_id = path[len("/api/jobs/") :]
                 job = queue.get_job(job_id)
                 if job is None:
                     self._json_response({"error": "Job not found"}, status=404)
@@ -85,11 +83,11 @@ def _make_handler(queue: Queue) -> type:
             path = parsed.path
 
             if path.startswith("/api/jobs/") and path.endswith("/cancel"):
-                job_id = path[len("/api/jobs/"):-len("/cancel")]
+                job_id = path[len("/api/jobs/") : -len("/cancel")]
                 ok = queue.cancel_job(job_id)
                 self._json_response({"cancelled": ok})
             elif path.startswith("/api/dead-letters/") and path.endswith("/retry"):
-                dead_id = path[len("/api/dead-letters/"):-len("/retry")]
+                dead_id = path[len("/api/dead-letters/") : -len("/retry")]
                 new_id = queue.retry_dead(dead_id)
                 self._json_response({"new_job_id": new_id})
             elif path == "/api/dead-letters/purge":
@@ -106,8 +104,11 @@ def _make_handler(queue: Queue) -> type:
             offset = int(qs.get("offset", ["0"])[0])
 
             jobs = queue.list_jobs(
-                status=status, queue=q, task_name=task,
-                limit=limit, offset=offset,
+                status=status,
+                queue=q,
+                task_name=task,
+                limit=limit,
+                offset=offset,
             )
             self._json_response([j.to_dict() for j in jobs])
 

@@ -226,9 +226,7 @@ class QuickQRouter(APIRouter):
                         return
 
                     d = refreshed.to_dict()
-                    payload = json.dumps(
-                        {"status": d["status"], "progress": d["progress"]}
-                    )
+                    payload = json.dumps({"status": d["status"], "progress": d["progress"]})
                     yield f"data: {payload}\n\n"
 
                     if d["status"] in terminal:
