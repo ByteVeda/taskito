@@ -22,7 +22,7 @@ import time
 from taskito import Queue, current_job
 
 queue = Queue(
-    db_path="pipeline.db",
+    db_path=".taskito/pipeline.db",
     workers=6,
     default_retry=3,
     default_timeout=120,

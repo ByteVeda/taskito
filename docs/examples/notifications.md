@@ -20,7 +20,7 @@ import time
 from taskito import Queue
 
 queue = Queue(
-    db_path="notifications.db",
+    db_path=".taskito/notifications.db",
     workers=4,
     default_retry=3,
     default_timeout=30,

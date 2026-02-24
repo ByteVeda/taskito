@@ -33,7 +33,7 @@ pub struct PyQueue {
 #[pymethods]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path="taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None))]
     pub fn new(
         db_path: &str,
         workers: usize,

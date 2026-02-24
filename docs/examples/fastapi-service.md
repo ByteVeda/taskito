@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from taskito import Queue, current_job
 from taskito.contrib.fastapi import TaskitoRouter
 
-queue = Queue(db_path="images.db", workers=4, result_ttl=3600)
+queue = Queue(db_path=".taskito/images.db", workers=4, result_ttl=3600)
 
 # ── Tasks ────────────────────────────────────────────────
 

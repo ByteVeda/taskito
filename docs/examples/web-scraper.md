@@ -19,7 +19,7 @@ import time
 from taskito import Queue, current_job, chain, group, chord
 
 queue = Queue(
-    db_path="scraper.db",
+    db_path=".taskito/scraper.db",
     workers=4,
     default_retry=3,
     default_timeout=60,

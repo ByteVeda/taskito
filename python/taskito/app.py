@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import logging
+import os
 import signal
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -37,7 +39,7 @@ class Queue:
 
     def __init__(
         self,
-        db_path: str = "taskito.db",
+        db_path: str = ".taskito/taskito.db",
         workers: int = 0,
         default_retry: int = 3,
         default_timeout: int = 300,
@@ -47,7 +49,9 @@ class Queue:
         """Initialize a new task queue backed by SQLite.
 
         Args:
-            db_path: Path to the SQLite database file.
+            db_path: Path to the SQLite database file. Defaults to
+                ``.taskito/taskito.db``. Parent directories are created
+                automatically.
             workers: Number of worker threads (0 = auto-detect CPU count).
             default_retry: Default max retry attempts for tasks.
             default_timeout: Default task timeout in seconds.
@@ -55,6 +59,11 @@ class Queue:
             result_ttl: Auto-cleanup completed/dead jobs older than this many
                 seconds. None disables auto-cleanup.
         """
+        # Ensure parent directory exists
+        db_dir = os.path.dirname(db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+
         self._inner = PyQueue(
             db_path=db_path,
             workers=workers,
@@ -63,6 +72,8 @@ class Queue:
             default_priority=default_priority,
             result_ttl=result_ttl,
         )
+        self._db_path = db_path
+        self._workers = workers or os.cpu_count() or 1
         self._task_registry: dict[str, Callable] = {}
         self._task_configs: list[PyTaskConfig] = []
         self._executor = ThreadPoolExecutor(max_workers=2)
@@ -273,7 +284,10 @@ class Queue:
             error = None
             result = None
             try:
-                result = fn(*args, **kwargs)
+                ret = fn(*args, **kwargs)
+                if asyncio.iscoroutine(ret):
+                    ret = asyncio.run(ret)
+                result = ret
             except Exception as exc:
                 error = exc
                 for hook in hooks["on_failure"]:
@@ -601,6 +615,38 @@ class Queue:
 
     # -- Worker startup --
 
+    def _print_banner(self, queues: list[str]) -> None:
+        """Print a Celery-style ASCII startup banner."""
+        from taskito import __version__
+
+        banner = rf"""
+ _            _    _ _
+| |_ __ _ ___| | _(_) |_ ___
+| __/ _` / __| |/ / | __/ _ \
+| || (_| \__ \   <| | || (_) |
+ \__\__,_|___/_|\_\_|\__\___/  v{__version__}
+"""
+        lines = [banner]
+        lines.append(f"> DB:          {self._db_path}")
+        lines.append(f"> Concurrency: {self._workers} (threads)")
+        lines.append(f"> Queues:      {', '.join(queues)}")
+        lines.append("")
+
+        task_names = sorted(self._task_registry.keys())
+        if task_names:
+            lines.append("[tasks]")
+            for name in task_names:
+                lines.append(f"  . {name}")
+            lines.append("")
+
+        if self._periodic_configs:
+            lines.append("[periodic]")
+            for pc in self._periodic_configs:
+                lines.append(f"  . {pc['name']}  ({pc['cron_expr']})")
+            lines.append("")
+
+        print("\n".join(lines))
+
     def run_worker(self, queues: Sequence[str] | None = None) -> None:
         """Start the worker loop. Blocks until interrupted.
 
@@ -635,15 +681,8 @@ class Queue:
                 queue=pc["queue"],
             )
 
-        # Print startup info
-        num_tasks = len(self._task_registry)
-        num_periodic = len(self._periodic_configs)
         worker_queues = queue_list or ["default"]
-        logger.info("Starting worker...")
-        logger.info("Registered tasks: %d", num_tasks)
-        if num_periodic:
-            logger.info("Periodic tasks: %d", num_periodic)
-        logger.info("Queues: %s", ", ".join(worker_queues))
+        self._print_banner(worker_queues)
 
         # Set up signal handler for graceful shutdown (only in main thread)
         import threading
@@ -686,4 +725,23 @@ class Queue:
                 from all queues.
         """
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: self.run_worker(queues=queues))
+
+        # Install SIGINT handler on the event loop so Ctrl+C triggers
+        # graceful shutdown instead of crashing the asyncio runner.
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        def _shutdown_once() -> None:
+            logger.info("Shutting down gracefully (waiting for in-flight jobs)...")
+            self._inner.request_shutdown()
+            # Restore original handler so a second Ctrl+C force-kills
+            loop.remove_signal_handler(signal.SIGINT)
+            signal.signal(signal.SIGINT, original_handler)
+
+        loop.add_signal_handler(signal.SIGINT, _shutdown_once)
+
+        try:
+            await loop.run_in_executor(None, lambda: self.run_worker(queues=queues))
+        finally:
+            with contextlib.suppress(NotImplementedError):
+                loop.remove_signal_handler(signal.SIGINT)
+            signal.signal(signal.SIGINT, original_handler)
