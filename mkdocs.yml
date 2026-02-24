@@ -104,6 +104,9 @@ nav:
     - CLI: api/cli.md
   - Examples:
     - Web Scraper Pipeline: examples/web-scraper.md
+    - FastAPI Service: examples/fastapi-service.md
+    - Data Pipeline: examples/data-pipeline.md
+    - Notification Service: examples/notifications.md
     - Benchmark: examples/benchmark.md
   - Comparison: comparison.md
   - Changelog: changelog.md
