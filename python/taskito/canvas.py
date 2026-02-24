@@ -28,7 +28,15 @@ class Signature:
     immutable: bool = False
 
     def apply(self, queue: Queue | None = None) -> JobResult:
-        """Enqueue this signature immediately."""
+        """Enqueue this signature for execution.
+
+        Args:
+            queue: Queue instance to enqueue on. ``None`` uses the
+                queue from the wrapped task.
+
+        Returns:
+            A :class:`~taskito.result.JobResult` handle.
+        """
         q = queue or self.task._queue
         return q.enqueue(
             task_name=self.task.name,
@@ -48,12 +56,37 @@ class chain:
     """
 
     def __init__(self, *signatures: Signature):
+        """Create a chain from one or more signatures.
+
+        Args:
+            *signatures: Signatures to execute in order. Each mutable
+                signature receives the previous task's return value as
+                its first argument.
+
+        Raises:
+            ValueError: If no signatures are provided.
+        """
         if len(signatures) < 1:
             raise ValueError("chain requires at least one signature")
         self.signatures = list(signatures)
 
     def apply(self, queue: Queue | None = None) -> JobResult:
-        """Execute the chain synchronously by polling for results."""
+        """Execute the chain, blocking until all steps complete.
+
+        Each signature is enqueued and waited on sequentially. For mutable
+        signatures, the previous result is prepended to the arguments.
+
+        Args:
+            queue: Queue instance to enqueue on. ``None`` uses the
+                queue from the first signature's task.
+
+        Returns:
+            The :class:`~taskito.result.JobResult` of the **last** step.
+
+        Raises:
+            RuntimeError: If any step in the chain fails.
+            TimeoutError: If any step exceeds the 300-second internal timeout.
+        """
         q = queue or self.signatures[0].task._queue
 
         prev_result: Any = None
@@ -85,12 +118,31 @@ class group:
     """
 
     def __init__(self, *signatures: Signature):
+        """Create a group from one or more signatures.
+
+        Args:
+            *signatures: Signatures to execute in parallel.
+
+        Raises:
+            ValueError: If no signatures are provided.
+        """
         if len(signatures) < 1:
             raise ValueError("group requires at least one signature")
         self.signatures = list(signatures)
 
     def apply(self, queue: Queue | None = None) -> list[JobResult]:
-        """Enqueue all signatures and return a list of JobResult handles."""
+        """Enqueue all signatures for parallel execution.
+
+        All jobs are enqueued immediately and execute concurrently.
+
+        Args:
+            queue: Queue instance to enqueue on. ``None`` uses the
+                queue from the first signature's task.
+
+        Returns:
+            List of :class:`~taskito.result.JobResult` handles, one per
+            signature, in the same order.
+        """
         q = queue or self.signatures[0].task._queue
 
         jobs: list[JobResult] = []
@@ -119,11 +171,34 @@ class chord:
     """
 
     def __init__(self, group_: group, callback: Signature):
+        """Create a chord from a group and a callback signature.
+
+        Args:
+            group_: A :class:`group` whose results are collected.
+            callback: A :class:`Signature` invoked with the collected
+                results as its first argument (unless immutable).
+        """
         self.group = group_
         self.callback = callback
 
     def apply(self, queue: Queue | None = None) -> JobResult:
-        """Execute the group, collect results, then run callback."""
+        """Execute the group, wait for all results, then run the callback.
+
+        The callback receives a list of all group results as its first
+        positional argument (for mutable signatures).
+
+        Args:
+            queue: Queue instance to enqueue on. ``None`` uses the
+                queue from the callback's task.
+
+        Returns:
+            The :class:`~taskito.result.JobResult` of the callback task.
+
+        Raises:
+            RuntimeError: If any job in the group fails.
+            TimeoutError: If any group job exceeds the 300-second internal
+                timeout.
+        """
         q = queue or self.callback.task._queue
 
         # Run group and wait for all results

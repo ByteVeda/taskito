@@ -133,12 +133,24 @@ class JobResult:
         poll_interval: float = 0.05,
         max_poll_interval: float = 0.5,
     ) -> Any:
-        """
-        Async version of result(). Awaitable, non-blocking.
+        """Async version of :meth:`result`. Awaitable, non-blocking.
 
-        Uses exponential backoff like :meth:`result`.
+        Uses exponential backoff: starts polling at *poll_interval* and
+        gradually increases to *max_poll_interval*.
 
-        Usage::
+        Args:
+            timeout: Maximum seconds to wait.
+            poll_interval: Initial seconds between status checks.
+            max_poll_interval: Maximum seconds between status checks.
+
+        Returns:
+            The deserialized return value of the task function.
+
+        Raises:
+            TimeoutError: If the job doesn't complete within *timeout*.
+            RuntimeError: If the job failed or was moved to DLQ.
+
+        Example::
 
             result = await job.aresult(timeout=30)
         """

@@ -56,9 +56,22 @@ class TaskWrapper:
         return self._fn(*args, **kwargs)
 
     def delay(self, *args: Any, **kwargs: Any) -> JobResult:
-        """
-        Enqueue this task for background execution with the given arguments.
-        Returns a JobResult handle.
+        """Enqueue this task for background execution.
+
+        Shorthand for :meth:`apply_async` using the task's default options.
+        Pass arguments exactly as you would call the function directly.
+
+        Args:
+            *args: Positional arguments forwarded to the task function.
+            **kwargs: Keyword arguments forwarded to the task function.
+
+        Returns:
+            A :class:`~taskito.result.JobResult` handle for tracking the job.
+
+        Example::
+
+            job = send_email.delay("user@example.com", subject="Hello")
+            print(job.result(timeout=30))
         """
         return self._queue.enqueue(
             task_name=self._task_name,
@@ -83,20 +96,41 @@ class TaskWrapper:
         metadata: str | None = None,
         depends_on: str | list[str] | None = None,
     ) -> JobResult:
-        """
-        Enqueue with full control over submission options.
+        """Enqueue with full control over submission options.
+
+        Use this instead of :meth:`delay` when you need to override
+        priority, set a delay, attach metadata, or declare dependencies.
 
         Args:
             args: Positional arguments to pass to the task.
             kwargs: Keyword arguments to pass to the task.
             priority: Override default priority (higher = more urgent).
-            delay: Delay in seconds before the task becomes eligible to run.
+            delay: Delay in seconds before the job becomes eligible to run.
             queue: Override the default queue name.
             max_retries: Override the default max retry count.
             timeout: Override the default timeout in seconds.
-            unique_key: Deduplicate active jobs with the same key.
-            metadata: Arbitrary JSON metadata to attach to the job.
-            depends_on: Job ID or list of job IDs that must complete first.
+            unique_key: Deduplication key. If a pending or running job with
+                the same key exists, returns that job instead.
+            metadata: Arbitrary JSON string to attach to the job.
+            depends_on: Job ID or list of job IDs that must complete before
+                this job runs. If any dependency fails, this job is
+                cascade-cancelled.
+
+        Returns:
+            A :class:`~taskito.result.JobResult` handle for the created
+            (or deduplicated) job.
+
+        Raises:
+            ValueError: If *depends_on* references a non-existent job ID.
+
+        Example::
+
+            job = send_email.apply_async(
+                args=("user@example.com",),
+                priority=10,
+                delay=60,
+                unique_key="welcome:user_123",
+            )
         """
         return self._queue.enqueue(
             task_name=self._task_name,
@@ -131,13 +165,40 @@ class TaskWrapper:
         )
 
     def s(self, *args: Any, **kwargs: Any) -> Signature:
-        """Create a mutable Signature (receives previous result in chains)."""
+        """Create a mutable :class:`~taskito.canvas.Signature`.
+
+        In a :class:`~taskito.canvas.chain`, the previous task's return
+        value is prepended to *args* automatically.
+
+        Args:
+            *args: Positional arguments for the task.
+            **kwargs: Keyword arguments for the task.
+
+        Returns:
+            A :class:`~taskito.canvas.Signature` instance.
+
+        Example::
+
+            chain(fetch.s(url), parse.s(), store.s()).apply()
+        """
         from taskito.canvas import Signature
 
         return Signature(task=self, args=args, kwargs=kwargs)
 
     def si(self, *args: Any, **kwargs: Any) -> Signature:
-        """Create an immutable Signature (ignores previous result in chains)."""
+        """Create an immutable :class:`~taskito.canvas.Signature`.
+
+        Unlike :meth:`s`, the previous task's return value is **not**
+        prepended — the signature always runs with exactly the given args.
+
+        Args:
+            *args: Positional arguments for the task.
+            **kwargs: Keyword arguments for the task.
+
+        Returns:
+            A :class:`~taskito.canvas.Signature` instance with
+            ``immutable=True``.
+        """
         from taskito.canvas import Signature
 
         return Signature(task=self, args=args, kwargs=kwargs, immutable=True)
