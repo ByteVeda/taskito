@@ -20,13 +20,13 @@ jobs:
       - run: pip install ruff mypy
 
       - name: Ruff check
-        run: ruff check python/
+        run: ruff check py_src/
 
       - name: Ruff format check
-        run: ruff format --check python/
+        run: ruff format --check py_src/
 
       - name: Mypy
-        run: mypy python/taskito/ --ignore-missing-imports
+        run: mypy py_src/taskito/ --ignore-missing-imports
 
   test:
     needs: lint

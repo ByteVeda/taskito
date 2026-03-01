@@ -16,8 +16,8 @@ fastapi = ["fastapi>=0.100.0", "pydantic>=2.0"]
 docs = ["zensical"]
 
 [tool.maturin]
-manifest-path = "rust/taskito-python/Cargo.toml"
-python-source = "python"
+manifest-path = "crates/taskito-python/Cargo.toml"
+python-source = "py_src"
 module-name = "taskito._taskito"
 features = ["pyo3/extension-module"]
 
@@ -48,7 +48,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"python/taskito/dashboard.py" = ["E501"]  # embedded HTML/JS strings
+"py_src/taskito/dashboard.py" = ["E501"]  # embedded HTML/JS strings
 
 [tool.ruff.lint.isort]
 known-first-party = ["taskito"]
