@@ -1,6 +1,4 @@
 use crate::error::Result;
-use crate::job::now_millis;
-use crate::storage::models::RateLimitRow;
 use crate::storage::sqlite::SqliteStorage;
 
 /// Token bucket rate limiter backed by SQLite for persistence.
@@ -45,39 +43,10 @@ impl RateLimiter {
 
     /// Try to acquire a token for the given key.
     /// Returns `true` if the token was acquired, `false` if rate limited.
+    /// Uses an atomic transaction to prevent race conditions.
     pub fn try_acquire(&self, key: &str, config: &RateLimitConfig) -> Result<bool> {
-        let now = now_millis();
-
-        let mut row = match self.storage.get_rate_limit(key)? {
-            Some(row) => row,
-            None => {
-                // First time: initialize with full bucket
-                RateLimitRow {
-                    key: key.to_string(),
-                    tokens: config.max_tokens,
-                    max_tokens: config.max_tokens,
-                    refill_rate: config.refill_rate,
-                    last_refill: now,
-                }
-            }
-        };
-
-        // Refill tokens based on elapsed time
-        let elapsed_ms = (now - row.last_refill).max(0) as f64;
-        let elapsed_sec = elapsed_ms / 1000.0;
-        let refilled = row.tokens + elapsed_sec * config.refill_rate;
-        row.tokens = refilled.min(config.max_tokens);
-        row.last_refill = now;
-
-        // Try to consume one token
-        if row.tokens >= 1.0 {
-            row.tokens -= 1.0;
-            self.storage.upsert_rate_limit(&row)?;
-            Ok(true)
-        } else {
-            self.storage.upsert_rate_limit(&row)?;
-            Ok(false)
-        }
+        self.storage
+            .try_acquire_token(key, config.max_tokens, config.refill_rate)
     }
 }
 
@@ -116,5 +85,57 @@ mod tests {
 
         // 4th should be denied
         assert!(!limiter.try_acquire("test", &config).unwrap());
+    }
+
+    #[test]
+    fn test_concurrent_token_acquisition() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Barrier;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("rate_limit_test.db");
+        let storage = SqliteStorage::new(db_path.to_str().unwrap()).unwrap();
+        let limiter = Arc::new(RateLimiter::new(storage));
+        let config = RateLimitConfig {
+            max_tokens: 10.0,
+            refill_rate: 0.0, // no refill so we can count exactly
+        };
+
+        let num_threads = 20;
+        let acquired = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let mut handles = vec![];
+
+        for _ in 0..num_threads {
+            let limiter = limiter.clone();
+            let config = config.clone();
+            let acquired = acquired.clone();
+            let barrier = barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                // Retry on lock contention (SQLite busy)
+                for _ in 0..10 {
+                    match limiter.try_acquire("concurrent_test", &config) {
+                        Ok(true) => {
+                            acquired.fetch_add(1, Ordering::Relaxed);
+                            return;
+                        }
+                        Ok(false) => return,
+                        Err(_) => {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                            continue;
+                        }
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // With 10 tokens and no refill, exactly 10 should succeed
+        assert_eq!(acquired.load(Ordering::Relaxed), 10);
     }
 }

@@ -254,6 +254,34 @@ queue = Queue(
 
 If you need distributed workers across multiple machines, consider [Celery or Dramatiq](../comparison.md) instead.
 
+## SQLite Scaling Limits
+
+taskito uses SQLite as its storage backend. Understanding its limitations helps you plan for production:
+
+**Single-writer constraint.** SQLite allows only one write transaction at a time. WAL mode lets reads proceed concurrently with writes, but all writes are serialized. This is the primary throughput ceiling.
+
+**Expected throughput.** On modern hardware with an SSD, expect:
+
+- **1,000–5,000 jobs/second** for enqueue + dequeue cycles (small payloads)
+- Throughput decreases with larger payloads, complex queries, or spinning disks
+- The connection pool size (default: 8) controls read concurrency — tune it based on your read/write ratio
+
+**When to consider alternatives:**
+
+- You need multi-machine distributed workers
+- You consistently exceed ~5,000 jobs/second sustained throughput
+- Multiple processes contend heavily for writes (high lock wait times)
+- You need sub-millisecond dequeue latency under high load
+
+**Connection pool tuning.** The default pool size of 8 connections works well for most workloads. If you're running many concurrent readers (e.g., a dashboard alongside workers), you can increase it:
+
+```python
+# In Rust: SqliteStorage::with_pool_size("path.db", 16)
+# Pool size is set at the Rust layer; the Python API uses the default (8)
+```
+
+Increasing the pool beyond ~16 typically doesn't help, since SQLite write serialization is the bottleneck.
+
 ## Checklist
 
 - [ ] Use an absolute path for `db_path`

@@ -9,7 +9,7 @@ use taskito_core::periodic::next_cron_time;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
-use taskito_core::scheduler::{Scheduler, TaskConfig};
+use taskito_core::scheduler::{Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
 use taskito_core::storage::sqlite::SqliteStorage;
 
@@ -397,7 +397,11 @@ impl PyQueue {
         let queues = queues.unwrap_or_else(|| vec!["default".to_string()]);
         let queues_str = queues.join(",");
 
-        let mut scheduler = Scheduler::new(self.storage.clone(), queues, self.result_ttl_ms);
+        let scheduler_config = SchedulerConfig {
+            result_ttl_ms: self.result_ttl_ms,
+            ..SchedulerConfig::default()
+        };
+        let mut scheduler = Scheduler::new(self.storage.clone(), queues, scheduler_config);
 
         // Build retry filters dict from the Queue's _task_retry_filters
         let retry_filters = py.eval_bound("{}", None, None)?;

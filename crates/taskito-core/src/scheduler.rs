@@ -15,18 +15,6 @@ use crate::resilience::rate_limiter::{RateLimitConfig, RateLimiter};
 use crate::resilience::retry::RetryPolicy;
 use crate::storage::sqlite::SqliteStorage;
 
-/// Default interval between scheduler poll cycles.
-const POLL_INTERVAL: Duration = Duration::from_millis(50);
-
-/// Reap stale jobs every ~100 iterations (~5s at default poll interval).
-const REAP_INTERVAL: u32 = 100;
-
-/// Check periodic tasks every ~60 iterations (~3s at default poll interval).
-const PERIODIC_CHECK_INTERVAL: u32 = 60;
-
-/// Auto-cleanup old jobs every ~1200 iterations (~60s at default poll interval).
-const CLEANUP_INTERVAL: u32 = 1200;
-
 /// Delay before re-scheduling a circuit-broken job (ms).
 const CIRCUIT_BREAKER_RETRY_DELAY_MS: i64 = 5000;
 
@@ -38,6 +26,33 @@ const PERIODIC_DEFAULT_MAX_RETRIES: i32 = 3;
 
 /// Default timeout for periodic tasks (ms).
 const PERIODIC_DEFAULT_TIMEOUT_MS: i64 = 300_000;
+
+/// Configuration for the scheduler's timing and behavior.
+#[derive(Debug, Clone)]
+pub struct SchedulerConfig {
+    /// Interval between scheduler poll cycles.
+    pub poll_interval: Duration,
+    /// Reap stale jobs every N iterations.
+    pub reap_interval: u32,
+    /// Check periodic tasks every N iterations.
+    pub periodic_check_interval: u32,
+    /// Auto-cleanup old jobs every N iterations.
+    pub cleanup_interval: u32,
+    /// TTL for job results in milliseconds. None means no auto-cleanup.
+    pub result_ttl_ms: Option<i64>,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_millis(50),
+            reap_interval: 100,
+            periodic_check_interval: 60,
+            cleanup_interval: 1200,
+            result_ttl_ms: None,
+        }
+    }
+}
 
 /// Result of executing a job (sent back from worker threads).
 pub enum JobResult {
@@ -79,13 +94,20 @@ pub struct Scheduler {
     circuit_breaker: CircuitBreaker,
     task_configs: HashMap<String, TaskConfig>,
     queues: Vec<String>,
-    poll_interval: Duration,
+    config: SchedulerConfig,
     shutdown: Arc<Notify>,
-    result_ttl_ms: Option<i64>,
+}
+
+/// Counters for tick-based scheduling of periodic maintenance tasks.
+#[derive(Default)]
+struct TickCounters {
+    reap: u32,
+    periodic: u32,
+    cleanup: u32,
 }
 
 impl Scheduler {
-    pub fn new(storage: SqliteStorage, queues: Vec<String>, result_ttl_ms: Option<i64>) -> Self {
+    pub fn new(storage: SqliteStorage, queues: Vec<String>, config: SchedulerConfig) -> Self {
         let rate_limiter = RateLimiter::new(storage.clone());
         let dlq = DeadLetterQueue::new(storage.clone());
         let circuit_breaker = CircuitBreaker::new(storage.clone());
@@ -97,9 +119,8 @@ impl Scheduler {
             circuit_breaker,
             task_configs: HashMap::new(),
             queues,
-            poll_interval: POLL_INTERVAL,
+            config,
             shutdown: Arc::new(Notify::new()),
-            result_ttl_ms,
         }
     }
 
@@ -127,47 +148,43 @@ impl Scheduler {
     /// Run the scheduler loop. Polls for ready jobs and dispatches them
     /// to the worker pool via the provided channel.
     pub async fn run(&self, job_tx: Sender<Job>) {
-        let mut reap_counter = 0u32;
-        let mut periodic_counter = 0u32;
-        let mut cleanup_counter = 0u32;
+        let mut counters = TickCounters::default();
 
         loop {
-            // Check for shutdown
             tokio::select! {
-                _ = self.shutdown.notified() => {
-                    break;
-                }
-                _ = tokio::time::sleep(self.poll_interval) => {}
+                _ = self.shutdown.notified() => break,
+                _ = tokio::time::sleep(self.config.poll_interval) => {}
             }
 
-            // Try to dequeue and dispatch a job
-            match self.try_dispatch(&job_tx) {
-                Ok(_dispatched) => {}
-                Err(e) => {
-                    error!("scheduler error: {e}");
-                }
+            self.tick(&job_tx, &mut counters);
+        }
+    }
+
+    /// Execute one iteration of the scheduler loop.
+    fn tick(&self, job_tx: &Sender<Job>, counters: &mut TickCounters) {
+        if let Err(e) = self.try_dispatch(job_tx) {
+            error!("scheduler error: {e}");
+        }
+
+        counters.reap += 1;
+        counters.periodic += 1;
+        counters.cleanup += 1;
+
+        if counters.reap.is_multiple_of(self.config.reap_interval) {
+            if let Err(e) = self.reap_stale() {
+                error!("reap error: {e}");
             }
+        }
 
-            reap_counter += 1;
-            periodic_counter += 1;
-            cleanup_counter += 1;
-
-            if reap_counter.is_multiple_of(REAP_INTERVAL) {
-                if let Err(e) = self.reap_stale() {
-                    error!("reap error: {e}");
-                }
+        if counters.periodic.is_multiple_of(self.config.periodic_check_interval) {
+            if let Err(e) = self.check_periodic() {
+                error!("periodic check error: {e}");
             }
+        }
 
-            if periodic_counter.is_multiple_of(PERIODIC_CHECK_INTERVAL) {
-                if let Err(e) = self.check_periodic() {
-                    error!("periodic check error: {e}");
-                }
-            }
-
-            if cleanup_counter.is_multiple_of(CLEANUP_INTERVAL) {
-                if let Err(e) = self.auto_cleanup() {
-                    error!("auto-cleanup error: {e}");
-                }
+        if counters.cleanup.is_multiple_of(self.config.cleanup_interval) {
+            if let Err(e) = self.auto_cleanup() {
+                error!("auto-cleanup error: {e}");
             }
         }
     }
@@ -306,7 +323,7 @@ impl Scheduler {
 
     /// Purge old completed/dead jobs and their errors if result_ttl_ms is set.
     fn auto_cleanup(&self) -> Result<()> {
-        let ttl = match self.result_ttl_ms {
+        let ttl = match self.config.result_ttl_ms {
             Some(t) => t,
             None => return Ok(()),
         };
@@ -383,5 +400,329 @@ impl Scheduler {
             Some(blob) => blob.clone(),
             None => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::job::JobStatus;
+    use crate::storage::models::NewPeriodicTaskRow;
+
+    fn test_scheduler() -> Scheduler {
+        let storage = SqliteStorage::in_memory().unwrap();
+        Scheduler::new(
+            storage,
+            vec!["default".to_string()],
+            SchedulerConfig::default(),
+        )
+    }
+
+    fn make_job(task_name: &str) -> NewJob {
+        NewJob {
+            queue: "default".to_string(),
+            task_name: task_name.to_string(),
+            payload: vec![1, 2, 3],
+            priority: 0,
+            scheduled_at: now_millis(),
+            max_retries: 3,
+            timeout_ms: 300_000,
+            unique_key: None,
+            metadata: None,
+            depends_on: vec![],
+            expires_at: None,
+            result_ttl_ms: None,
+        }
+    }
+
+    /// Enqueue a job and dequeue it so it's in Running state.
+    fn enqueue_and_run(scheduler: &Scheduler, task_name: &str) -> Job {
+        let job = scheduler.storage.enqueue(make_job(task_name)).unwrap();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+        scheduler.storage.get_job(&job.id).unwrap().unwrap()
+    }
+
+    #[test]
+    fn test_handle_success() {
+        let scheduler = test_scheduler();
+        let job = enqueue_and_run(&scheduler, "success_task");
+        assert_eq!(job.status, JobStatus::Running);
+
+        scheduler.handle_result(JobResult::Success {
+            job_id: job.id.clone(),
+            result: Some(vec![42]),
+            task_name: "success_task".to_string(),
+            wall_time_ns: 1_000_000,
+        }).unwrap();
+
+        let completed = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(completed.status, JobStatus::Complete);
+        assert_eq!(completed.result, Some(vec![42]));
+    }
+
+    #[test]
+    fn test_handle_failure_with_retry() {
+        let mut scheduler = test_scheduler();
+        scheduler.register_task("retry_task".to_string(), TaskConfig {
+            retry_policy: RetryPolicy {
+                max_retries: 3,
+                base_delay_ms: 100,
+                max_delay_ms: 1000,
+            },
+            rate_limit: None,
+            circuit_breaker: None,
+        });
+
+        let job = enqueue_and_run(&scheduler, "retry_task");
+
+        scheduler.handle_result(JobResult::Failure {
+            job_id: job.id.clone(),
+            error: "transient error".to_string(),
+            retry_count: 0,
+            max_retries: 3,
+            task_name: "retry_task".to_string(),
+            wall_time_ns: 500_000,
+            should_retry: true,
+        }).unwrap();
+
+        let retried = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(retried.status, JobStatus::Pending);
+        assert_eq!(retried.retry_count, 1);
+    }
+
+    #[test]
+    fn test_handle_failure_exhausted() {
+        let scheduler = test_scheduler();
+        let job = enqueue_and_run(&scheduler, "exhausted_task");
+
+        scheduler.handle_result(JobResult::Failure {
+            job_id: job.id.clone(),
+            error: "fatal".to_string(),
+            retry_count: 3,
+            max_retries: 3,
+            task_name: "exhausted_task".to_string(),
+            wall_time_ns: 100,
+            should_retry: true,
+        }).unwrap();
+
+        let dead = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(dead.status, JobStatus::Dead);
+
+        let dlq = scheduler.storage.list_dead(10, 0).unwrap();
+        assert_eq!(dlq.len(), 1);
+        assert_eq!(dlq[0].original_job_id, job.id);
+    }
+
+    #[test]
+    fn test_handle_failure_no_retry() {
+        let scheduler = test_scheduler();
+        let job = enqueue_and_run(&scheduler, "no_retry_task");
+
+        scheduler.handle_result(JobResult::Failure {
+            job_id: job.id.clone(),
+            error: "non-retryable".to_string(),
+            retry_count: 0,
+            max_retries: 3,
+            task_name: "no_retry_task".to_string(),
+            wall_time_ns: 100,
+            should_retry: false,
+        }).unwrap();
+
+        let dead = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(dead.status, JobStatus::Dead);
+    }
+
+    #[test]
+    fn test_handle_cancelled() {
+        let scheduler = test_scheduler();
+        let job = enqueue_and_run(&scheduler, "cancel_task");
+
+        scheduler.handle_result(JobResult::Cancelled {
+            job_id: job.id.clone(),
+            task_name: "cancel_task".to_string(),
+            wall_time_ns: 100,
+        }).unwrap();
+
+        let cancelled = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(cancelled.status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_try_dispatch_rate_limited() {
+        let mut scheduler = test_scheduler();
+        scheduler.register_task("rl_task".to_string(), TaskConfig {
+            retry_policy: RetryPolicy::default(),
+            rate_limit: Some(RateLimitConfig { max_tokens: 1.0, refill_rate: 0.0 }),
+            circuit_breaker: None,
+        });
+
+        // Enqueue two jobs
+        scheduler.storage.enqueue(make_job("rl_task")).unwrap();
+        scheduler.storage.enqueue(make_job("rl_task")).unwrap();
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut counters = TickCounters::default();
+
+        // First tick should dispatch (consumes the one token)
+        scheduler.tick(&tx, &mut counters);
+        assert_eq!(rx.len(), 1);
+
+        // Second tick: job dequeued but rate limited, rescheduled
+        scheduler.tick(&tx, &mut counters);
+        assert_eq!(rx.len(), 1); // still just 1 dispatched
+
+        // The second job should be back in pending with a future scheduled_at
+        let jobs = scheduler.storage.list_jobs(
+            Some(JobStatus::Pending as i32), None, None, 10, 0
+        ).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].scheduled_at > now_millis());
+    }
+
+    #[test]
+    fn test_try_dispatch_circuit_broken() {
+        let mut scheduler = test_scheduler();
+        let cb_config = CircuitBreakerConfig {
+            threshold: 1,
+            window_ms: 60_000,
+            cooldown_ms: 300_000,
+        };
+        scheduler.register_task("cb_task".to_string(), TaskConfig {
+            retry_policy: RetryPolicy::default(),
+            rate_limit: None,
+            circuit_breaker: Some(cb_config),
+        });
+
+        // Trip the circuit breaker
+        scheduler.circuit_breaker.record_failure("cb_task").unwrap();
+
+        scheduler.storage.enqueue(make_job("cb_task")).unwrap();
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+
+        // Job should not be dispatched (circuit is open)
+        assert_eq!(rx.len(), 0);
+
+        // Job should be rescheduled
+        let jobs = scheduler.storage.list_jobs(
+            Some(JobStatus::Pending as i32), None, None, 10, 0
+        ).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].scheduled_at > now_millis());
+    }
+
+    #[test]
+    fn test_reap_stale_jobs() {
+        let mut scheduler = test_scheduler();
+        scheduler.register_task("stale_task".to_string(), TaskConfig {
+            retry_policy: RetryPolicy { max_retries: 3, base_delay_ms: 100, max_delay_ms: 1000 },
+            rate_limit: None,
+            circuit_breaker: None,
+        });
+
+        // Create a job with a very short timeout
+        let mut new_job = make_job("stale_task");
+        new_job.timeout_ms = 1; // 1ms timeout
+        let job = scheduler.storage.enqueue(new_job).unwrap();
+
+        // Dequeue it (sets it to Running with started_at)
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+
+        // Wait for it to "time out"
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Reap should find and handle it
+        scheduler.reap_stale().unwrap();
+
+        let reaped = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        // It should be rescheduled for retry (retry_count < max_retries)
+        assert_eq!(reaped.status, JobStatus::Pending);
+        assert_eq!(reaped.retry_count, 1);
+    }
+
+    #[test]
+    fn test_check_periodic() {
+        let scheduler = test_scheduler();
+
+        // Register a periodic task that's due now
+        let now = now_millis();
+        let row = NewPeriodicTaskRow {
+            name: "every_minute",
+            task_name: "periodic_task",
+            cron_expr: "* * * * * *", // every second
+            args: None,
+            kwargs: None,
+            queue: "default",
+            enabled: true,
+            next_run: now - 1000, // due 1 second ago
+        };
+        scheduler.storage.register_periodic(&row).unwrap();
+
+        scheduler.check_periodic().unwrap();
+
+        // A job should have been enqueued
+        let jobs = scheduler.storage.list_jobs(
+            Some(JobStatus::Pending as i32), None, Some("periodic_task"), 10, 0
+        ).unwrap();
+        assert_eq!(jobs.len(), 1);
+    }
+
+    #[test]
+    fn test_auto_cleanup() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(1), // 1ms TTL
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(
+            storage, vec!["default".to_string()], config,
+        );
+
+        // Enqueue, dequeue, and complete a job
+        let job = scheduler.storage.enqueue(make_job("cleanup_task")).unwrap();
+        scheduler.storage.dequeue("default", now_millis() + 1000).unwrap();
+        scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
+
+        // Wait for the TTL to expire
+        std::thread::sleep(Duration::from_millis(10));
+
+        scheduler.auto_cleanup().unwrap();
+
+        // Job should be purged
+        let fetched = scheduler.storage.get_job(&job.id).unwrap();
+        assert!(fetched.is_none());
+    }
+
+    #[test]
+    fn test_tick_dispatches_and_maintains() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        let config = SchedulerConfig {
+            reap_interval: 1,
+            periodic_check_interval: 1,
+            cleanup_interval: 1,
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(
+            storage, vec!["default".to_string()], config,
+        );
+
+        scheduler.storage.enqueue(make_job("tick_task")).unwrap();
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+
+        // Job should be dispatched
+        assert_eq!(rx.len(), 1);
+        // Counters should be incremented
+        assert_eq!(counters.reap, 1);
+        assert_eq!(counters.periodic, 1);
+        assert_eq!(counters.cleanup, 1);
     }
 }

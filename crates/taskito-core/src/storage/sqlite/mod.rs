@@ -9,12 +9,34 @@ mod trait_impl;
 mod workers;
 
 use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool};
 use diesel::sqlite::SqliteConnection;
 
 use crate::error::Result;
 
 type DbPool = Pool<ConnectionManager<SqliteConnection>>;
+
+/// Sets SQLite pragmas on every new connection from the pool.
+#[derive(Debug)]
+struct SqlitePragmaCustomizer;
+
+impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqlitePragmaCustomizer {
+    fn on_acquire(&self, conn: &mut SqliteConnection) -> std::result::Result<(), diesel::r2d2::Error> {
+        diesel::sql_query("PRAGMA journal_mode = WAL")
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        diesel::sql_query("PRAGMA busy_timeout = 5000")
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        diesel::sql_query("PRAGMA journal_size_limit = 67108864")
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        diesel::sql_query("PRAGMA synchronous = NORMAL")
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        Ok(())
+    }
+}
 
 /// SQLite-backed storage for the task queue, using Diesel ORM.
 #[derive(Clone)]
@@ -25,13 +47,18 @@ pub struct SqliteStorage {
 impl SqliteStorage {
     /// Open (or create) a SQLite database at the given path.
     pub fn new(db_path: &str) -> Result<Self> {
+        Self::with_pool_size(db_path, 8)
+    }
+
+    /// Open (or create) a SQLite database with a custom connection pool size.
+    pub fn with_pool_size(db_path: &str, pool_size: u32) -> Result<Self> {
         let manager = ConnectionManager::<SqliteConnection>::new(db_path);
         let pool = Pool::builder()
-            .max_size(8)
+            .max_size(pool_size)
+            .connection_customizer(Box::new(SqlitePragmaCustomizer))
             .build(manager)?;
 
         let storage = Self { pool };
-        storage.run_pragmas()?;
         storage.run_migrations()?;
         Ok(storage)
     }
@@ -41,25 +68,16 @@ impl SqliteStorage {
         let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
         let pool = Pool::builder()
             .max_size(1)
+            .connection_customizer(Box::new(SqlitePragmaCustomizer))
             .build(manager)?;
 
         let storage = Self { pool };
-        storage.run_pragmas()?;
         storage.run_migrations()?;
         Ok(storage)
     }
 
     pub(crate) fn conn(&self) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<SqliteConnection>>> {
         Ok(self.pool.get()?)
-    }
-
-    fn run_pragmas(&self) -> Result<()> {
-        let mut conn = self.conn()?;
-        diesel::sql_query("PRAGMA journal_mode = WAL").execute(&mut conn)?;
-        diesel::sql_query("PRAGMA busy_timeout = 5000").execute(&mut conn)?;
-        diesel::sql_query("PRAGMA journal_size_limit = 67108864").execute(&mut conn)?;
-        diesel::sql_query("PRAGMA synchronous = NORMAL").execute(&mut conn)?;
-        Ok(())
     }
 
     fn run_migrations(&self) -> Result<()> {

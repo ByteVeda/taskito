@@ -8,6 +8,6 @@ pub mod resilience;
 // Primary public API — the types most consumers need.
 pub use error::QueueError;
 pub use job::{Job, JobStatus, NewJob};
-pub use scheduler::Scheduler;
+pub use scheduler::{Scheduler, SchedulerConfig};
 pub use storage::sqlite::SqliteStorage;
 pub use storage::Storage;
