@@ -2,6 +2,12 @@
 
 All notable changes to taskito are documented here.
 
+## 0.2.1
+
+Re-release of 0.2.0 — PyPI does not allow re-uploads of deleted versions.
+
+---
+
 ## 0.2.0
 
 ### Core Reliability
