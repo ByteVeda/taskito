@@ -95,6 +95,8 @@ def test_cascade_cancel_on_job_cancel(queue):
 
     queue.cancel_job(job_a.id)
 
+    job_b.refresh()
+    job_c.refresh()
     assert job_b.status == "cancelled"
     assert job_c.status == "cancelled"
 
