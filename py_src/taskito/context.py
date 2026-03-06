@@ -75,9 +75,7 @@ class JobContext:
         if _queue_ref is None:
             raise RuntimeError("Queue reference not set. Cannot write log.")
         extra_str = json.dumps(extra) if extra else None
-        _queue_ref._inner.write_task_log(
-            ctx.job_id, ctx.task_name, level, message, extra_str
-        )
+        _queue_ref._inner.write_task_log(ctx.job_id, ctx.task_name, level, message, extra_str)
 
     def check_cancelled(self) -> None:
         """Check if cancellation has been requested for this job.

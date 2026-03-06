@@ -79,9 +79,7 @@ class group:
             concurrently. Members are dispatched in waves.
     """
 
-    def __init__(
-        self, *signatures: Signature, max_concurrency: int | None = None
-    ):
+    def __init__(self, *signatures: Signature, max_concurrency: int | None = None):
         if len(signatures) < 1:
             raise ValueError("group requires at least one signature")
         self.signatures = list(signatures)
@@ -154,9 +152,7 @@ class chord:
         )
 
 
-def chunks(
-    task: TaskWrapper, items: list[Any], chunk_size: int
-) -> group:
+def chunks(task: TaskWrapper, items: list[Any], chunk_size: int) -> group:
     """Split items into chunks and create a group of tasks processing each chunk.
 
     Args:
@@ -179,9 +175,7 @@ def chunks(
     return group(*sigs)
 
 
-def starmap(
-    task: TaskWrapper, args_list: list[tuple[Any, ...]]
-) -> group:
+def starmap(task: TaskWrapper, args_list: list[tuple[Any, ...]]) -> group:
     """Create a group with one task per args tuple.
 
     Args:

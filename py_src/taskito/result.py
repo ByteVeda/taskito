@@ -90,9 +90,7 @@ class JobResult:
             return status, cloudpickle.loads(result_bytes)
 
         if status in ("failed", "dead"):
-            raise RuntimeError(
-                f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}"
-            )
+            raise RuntimeError(f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}")
 
         return status, None
 
