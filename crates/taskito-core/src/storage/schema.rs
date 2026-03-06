@@ -18,6 +18,9 @@ diesel::table! {
         unique_key -> Nullable<Text>,
         progress -> Nullable<Integer>,
         metadata -> Nullable<Text>,
+        cancel_requested -> Integer,
+        expires_at -> Nullable<BigInt>,
+        result_ttl_ms -> Nullable<BigInt>,
     }
 }
 
@@ -74,6 +77,66 @@ diesel::table! {
         id -> Text,
         job_id -> Text,
         depends_on_job_id -> Text,
+    }
+}
+
+diesel::table! {
+    task_metrics (id) {
+        id -> Text,
+        task_name -> Text,
+        job_id -> Text,
+        wall_time_ns -> BigInt,
+        memory_bytes -> BigInt,
+        succeeded -> Bool,
+        recorded_at -> BigInt,
+    }
+}
+
+diesel::table! {
+    replay_history (id) {
+        id -> Text,
+        original_job_id -> Text,
+        replay_job_id -> Text,
+        replayed_at -> BigInt,
+        original_result -> Nullable<Binary>,
+        replay_result -> Nullable<Binary>,
+        original_error -> Nullable<Text>,
+        replay_error -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    task_logs (id) {
+        id -> Text,
+        job_id -> Text,
+        task_name -> Text,
+        level -> Text,
+        message -> Text,
+        extra -> Nullable<Text>,
+        logged_at -> BigInt,
+    }
+}
+
+diesel::table! {
+    circuit_breakers (task_name) {
+        task_name -> Text,
+        state -> Integer,
+        failure_count -> Integer,
+        last_failure_at -> Nullable<BigInt>,
+        opened_at -> Nullable<BigInt>,
+        half_open_at -> Nullable<BigInt>,
+        threshold -> Integer,
+        window_ms -> BigInt,
+        cooldown_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    workers (worker_id) {
+        worker_id -> Text,
+        last_heartbeat -> BigInt,
+        queues -> Text,
+        status -> Text,
     }
 }
 

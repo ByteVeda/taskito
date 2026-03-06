@@ -129,6 +129,60 @@ result = chord(
 print(result.result(timeout=60))
 ```
 
+## chunks
+
+Split a list of items into batched groups, creating one task per chunk:
+
+```python
+from taskito import chunks
+
+@queue.task()
+def process_batch(items):
+    return [transform(item) for item in items]
+
+# Split 1000 items into groups of 100
+results = chunks(process_batch, items, chunk_size=100).apply(queue)
+```
+
+`chunks()` returns a `group`, so you can combine it with `chord` for a map-reduce pattern:
+
+```python
+result = chord(
+    chunks(process_batch, items, chunk_size=100),
+    merge_results.s(),
+).apply(queue)
+```
+
+## starmap
+
+Create one task per args tuple — similar to Python's `itertools.starmap`:
+
+```python
+from taskito import starmap
+
+@queue.task()
+def add(a, b):
+    return a + b
+
+results = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply(queue)
+```
+
+`starmap()` also returns a `group`, so all tasks execute in parallel.
+
+## Group Concurrency Limits
+
+Limit how many group members run concurrently with `max_concurrency`:
+
+```python
+# Only 5 tasks run at a time; the rest wait in waves
+jobs = group(
+    *[fetch.s(url) for url in urls],
+    max_concurrency=5,
+).apply(queue)
+```
+
+Without `max_concurrency`, all group members are enqueued immediately. With it, members are dispatched in waves — each wave waits for completion before the next starts.
+
 ## Real-World Example: ETL Pipeline
 
 ```python

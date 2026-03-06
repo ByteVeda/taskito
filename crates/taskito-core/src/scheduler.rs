@@ -3,21 +3,49 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
+use log::{error, info, warn};
 use tokio::sync::Notify;
 
-use crate::dlq::DeadLetterQueue;
+use crate::resilience::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use crate::resilience::dlq::DeadLetterQueue;
 use crate::error::Result;
 use crate::job::{Job, NewJob, now_millis};
 use crate::periodic::next_cron_time;
-use crate::rate_limiter::{RateLimitConfig, RateLimiter};
-use crate::retry::RetryPolicy;
+use crate::resilience::rate_limiter::{RateLimitConfig, RateLimiter};
+use crate::resilience::retry::RetryPolicy;
 use crate::storage::sqlite::SqliteStorage;
+
+/// Default interval between scheduler poll cycles.
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Reap stale jobs every ~100 iterations (~5s at default poll interval).
+const REAP_INTERVAL: u32 = 100;
+
+/// Check periodic tasks every ~60 iterations (~3s at default poll interval).
+const PERIODIC_CHECK_INTERVAL: u32 = 60;
+
+/// Auto-cleanup old jobs every ~1200 iterations (~60s at default poll interval).
+const CLEANUP_INTERVAL: u32 = 1200;
+
+/// Delay before re-scheduling a circuit-broken job (ms).
+const CIRCUIT_BREAKER_RETRY_DELAY_MS: i64 = 5000;
+
+/// Delay before re-scheduling a rate-limited job (ms).
+const RATE_LIMIT_RETRY_DELAY_MS: i64 = 1000;
+
+/// Default max retries for periodic tasks.
+const PERIODIC_DEFAULT_MAX_RETRIES: i32 = 3;
+
+/// Default timeout for periodic tasks (ms).
+const PERIODIC_DEFAULT_TIMEOUT_MS: i64 = 300_000;
 
 /// Result of executing a job (sent back from worker threads).
 pub enum JobResult {
     Success {
         job_id: String,
         result: Option<Vec<u8>>,
+        task_name: String,
+        wall_time_ns: i64,
     },
     Failure {
         job_id: String,
@@ -25,21 +53,30 @@ pub enum JobResult {
         retry_count: i32,
         max_retries: i32,
         task_name: String,
+        wall_time_ns: i64,
+        should_retry: bool,
+    },
+    Cancelled {
+        job_id: String,
+        task_name: String,
+        wall_time_ns: i64,
     },
 }
 
-/// Per-task configuration for retry and rate limiting.
+/// Per-task configuration for retry, rate limiting, and circuit breaker.
 #[derive(Debug, Clone)]
 pub struct TaskConfig {
     pub retry_policy: RetryPolicy,
     pub rate_limit: Option<RateLimitConfig>,
+    pub circuit_breaker: Option<CircuitBreakerConfig>,
 }
 
-/// The central scheduler that coordinates job dispatch, retries, and rate limiting.
+/// The central scheduler that coordinates job dispatch, retries, rate limiting, and circuit breakers.
 pub struct Scheduler {
     storage: SqliteStorage,
     rate_limiter: RateLimiter,
     dlq: DeadLetterQueue,
+    circuit_breaker: CircuitBreaker,
     task_configs: HashMap<String, TaskConfig>,
     queues: Vec<String>,
     poll_interval: Duration,
@@ -51,14 +88,16 @@ impl Scheduler {
     pub fn new(storage: SqliteStorage, queues: Vec<String>, result_ttl_ms: Option<i64>) -> Self {
         let rate_limiter = RateLimiter::new(storage.clone());
         let dlq = DeadLetterQueue::new(storage.clone());
+        let circuit_breaker = CircuitBreaker::new(storage.clone());
 
         Self {
             storage,
             rate_limiter,
             dlq,
+            circuit_breaker,
             task_configs: HashMap::new(),
             queues,
-            poll_interval: Duration::from_millis(50),
+            poll_interval: POLL_INTERVAL,
             shutdown: Arc::new(Notify::new()),
             result_ttl_ms,
         }
@@ -73,7 +112,16 @@ impl Scheduler {
     }
 
     pub fn register_task(&mut self, task_name: String, config: TaskConfig) {
+        if let Some(ref cb_config) = config.circuit_breaker {
+            if let Err(e) = self.circuit_breaker.register(&task_name, cb_config) {
+                error!("failed to register circuit breaker for {task_name}: {e}");
+            }
+        }
         self.task_configs.insert(task_name, config);
+    }
+
+    pub fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.circuit_breaker
     }
 
     /// Run the scheduler loop. Polls for ready jobs and dispatches them
@@ -94,14 +142,9 @@ impl Scheduler {
 
             // Try to dequeue and dispatch a job
             match self.try_dispatch(&job_tx) {
-                Ok(dispatched) => {
-                    if !dispatched {
-                        // No jobs ready — sleep a bit longer next iteration
-                        // (poll_interval handles this)
-                    }
-                }
+                Ok(_dispatched) => {}
                 Err(e) => {
-                    eprintln!("[taskito] scheduler error: {e}");
+                    error!("scheduler error: {e}");
                 }
             }
 
@@ -109,24 +152,21 @@ impl Scheduler {
             periodic_counter += 1;
             cleanup_counter += 1;
 
-            // Periodically reap stale jobs (every ~100 iterations = ~5s)
-            if reap_counter % 100 == 0 {
+            if reap_counter.is_multiple_of(REAP_INTERVAL) {
                 if let Err(e) = self.reap_stale() {
-                    eprintln!("[taskito] reap error: {e}");
+                    error!("reap error: {e}");
                 }
             }
 
-            // Check periodic tasks (every ~60 iterations = ~3s)
-            if periodic_counter % 60 == 0 {
+            if periodic_counter.is_multiple_of(PERIODIC_CHECK_INTERVAL) {
                 if let Err(e) = self.check_periodic() {
-                    eprintln!("[taskito] periodic check error: {e}");
+                    error!("periodic check error: {e}");
                 }
             }
 
-            // Auto-cleanup old completed/dead jobs (every ~1200 iterations = ~60s)
-            if cleanup_counter % 1200 == 0 {
+            if cleanup_counter.is_multiple_of(CLEANUP_INTERVAL) {
                 if let Err(e) = self.auto_cleanup() {
-                    eprintln!("[taskito] auto-cleanup error: {e}");
+                    error!("auto-cleanup error: {e}");
                 }
             }
         }
@@ -140,12 +180,18 @@ impl Scheduler {
             None => return Ok(false),
         };
 
-        // Check rate limit for this task
+        // Check circuit breaker for this task
         if let Some(config) = self.task_configs.get(&job.task_name) {
+            if config.circuit_breaker.is_some()
+                && !self.circuit_breaker.allow(&job.task_name)?
+            {
+                self.storage.retry(&job.id, now + CIRCUIT_BREAKER_RETRY_DELAY_MS)?;
+                return Ok(false);
+            }
+
             if let Some(ref rl_config) = config.rate_limit {
                 if !self.rate_limiter.try_acquire(&job.task_name, rl_config)? {
-                    // Rate limited — re-schedule for shortly in the future
-                    self.storage.retry(&job.id, now + 1000)?;
+                    self.storage.retry(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
                     return Ok(false);
                 }
             }
@@ -153,7 +199,7 @@ impl Scheduler {
 
         // Dispatch to worker pool
         if job_tx.send(job).is_err() {
-            eprintln!("[taskito] worker channel closed");
+            warn!("worker channel closed");
         }
 
         Ok(true)
@@ -162,8 +208,16 @@ impl Scheduler {
     /// Handle a completed or failed job result from a worker.
     pub fn handle_result(&self, result: JobResult) -> Result<()> {
         match result {
-            JobResult::Success { job_id, result } => {
+            JobResult::Success { job_id, result, ref task_name, wall_time_ns } => {
                 self.storage.complete(&job_id, result)?;
+
+                if let Err(e) = self.storage.record_metric(task_name, &job_id, wall_time_ns, 0, true) {
+                    error!("failed to record metric for job {job_id}: {e}");
+                }
+
+                if let Err(e) = self.circuit_breaker.record_success(task_name) {
+                    error!("circuit breaker error for {task_name}: {e}");
+                }
             }
             JobResult::Failure {
                 job_id,
@@ -171,10 +225,27 @@ impl Scheduler {
                 retry_count,
                 max_retries,
                 task_name,
+                wall_time_ns,
+                should_retry,
             } => {
-                // Record the error for this attempt
                 if let Err(e) = self.storage.record_error(&job_id, retry_count, &error) {
-                    eprintln!("[taskito] failed to record error for job {job_id}: {e}");
+                    log::error!("failed to record error for job {job_id}: {e}");
+                }
+
+                if let Err(e) = self.storage.record_metric(&task_name, &job_id, wall_time_ns, 0, false) {
+                    log::error!("failed to record metric for job {job_id}: {e}");
+                }
+
+                if let Err(e) = self.circuit_breaker.record_failure(&task_name) {
+                    log::error!("circuit breaker error for {task_name}: {e}");
+                }
+
+                // If should_retry is false (exception filtering), skip straight to DLQ
+                if !should_retry {
+                    if let Some(job) = self.storage.get_job(&job_id)? {
+                        self.dlq.move_to_dlq(&job, &error, None)?;
+                    }
+                    return Ok(());
                 }
 
                 let policy = self
@@ -199,6 +270,15 @@ impl Scheduler {
                     }
                 }
             }
+            JobResult::Cancelled { job_id, task_name, wall_time_ns } => {
+                // Mark as cancelled, no retry
+                if let Err(e) = self.storage.mark_cancelled(&job_id) {
+                    error!("failed to mark job {job_id} as cancelled: {e}");
+                }
+                if let Err(e) = self.storage.record_metric(&task_name, &job_id, wall_time_ns, 0, false) {
+                    error!("failed to record metric for cancelled job {job_id}: {e}");
+                }
+            }
         }
         Ok(())
     }
@@ -209,15 +289,15 @@ impl Scheduler {
 
         for job in stale_jobs {
             let error = format!("job timed out after {}ms", job.timeout_ms);
-            // Mark as failed first
             let _ = self.storage.fail(&job.id, &error);
-            // Then handle retry/DLQ logic
             self.handle_result(JobResult::Failure {
                 job_id: job.id.clone(),
                 error,
                 retry_count: job.retry_count,
                 max_retries: job.max_retries,
                 task_name: job.task_name.clone(),
+                wall_time_ns: 0,
+                should_retry: true,
             })?;
         }
 
@@ -232,13 +312,17 @@ impl Scheduler {
         };
 
         let cutoff = now_millis() - ttl;
-        let completed = self.storage.purge_completed(cutoff)?;
+
+        // Use per-job TTL aware cleanup
+        let completed = self.storage.purge_completed_with_ttl(cutoff)?;
         let dead = self.storage.purge_dead(cutoff)?;
         let errors = self.storage.purge_job_errors(cutoff)?;
+        let metrics = self.storage.purge_metrics(cutoff).unwrap_or(0);
+        let logs = self.storage.purge_task_logs(cutoff).unwrap_or(0);
 
-        if completed + dead + errors > 0 {
-            eprintln!(
-                "[taskito] auto-cleanup: purged {completed} completed, {dead} dead, {errors} error records"
+        if completed + dead + errors + metrics + logs > 0 {
+            info!(
+                "auto-cleanup: purged {completed} completed, {dead} dead, {errors} errors, {metrics} metrics, {logs} logs"
             );
         }
 
@@ -251,31 +335,31 @@ impl Scheduler {
         let due_tasks = self.storage.get_due_periodic(now)?;
 
         for task in due_tasks {
-            // Enqueue a job for this periodic task
             let new_job = NewJob {
                 queue: task.queue.clone(),
                 task_name: task.task_name.clone(),
                 payload: Self::build_periodic_payload(&task.args, &task.kwargs),
                 priority: 0,
                 scheduled_at: now,
-                max_retries: 3,
-                timeout_ms: 300_000,
+                max_retries: PERIODIC_DEFAULT_MAX_RETRIES,
+                timeout_ms: PERIODIC_DEFAULT_TIMEOUT_MS,
                 unique_key: None,
                 metadata: None,
                 depends_on: vec![],
+                expires_at: None,
+                result_ttl_ms: None,
             };
 
             if let Err(e) = self.storage.enqueue(new_job) {
-                eprintln!("[taskito] failed to enqueue periodic task '{}': {e}", task.name);
+                error!("failed to enqueue periodic task '{}': {e}", task.name);
                 continue;
             }
 
-            // Compute next run time
             let next_run = match next_cron_time(&task.cron_expr, now) {
                 Ok(t) => t,
                 Err(e) => {
-                    eprintln!(
-                        "[taskito] failed to compute next run for '{}': {e}",
+                    error!(
+                        "failed to compute next run for '{}': {e}",
                         task.name
                     );
                     continue;
@@ -283,8 +367,8 @@ impl Scheduler {
             };
 
             if let Err(e) = self.storage.update_periodic_schedule(&task.name, now, next_run) {
-                eprintln!(
-                    "[taskito] failed to update schedule for '{}': {e}",
+                error!(
+                    "failed to update schedule for '{}': {e}",
                     task.name
                 );
             }
@@ -294,22 +378,10 @@ impl Scheduler {
     }
 
     /// Build a cloudpickle-compatible payload from stored args/kwargs.
-    /// If both are None, returns an empty tuple payload.
     fn build_periodic_payload(args: &Option<Vec<u8>>, _kwargs: &Option<Vec<u8>>) -> Vec<u8> {
-        // The args and kwargs are stored as pre-pickled blobs from Python.
-        // We need to combine them into the (args, kwargs) tuple format.
-        // If they were stored as None, we use empty tuple/dict from cloudpickle.
-        // Since we can't easily construct Python pickle in Rust, the Python
-        // layer stores the full (args, kwargs) tuple as the args blob.
-        // So if args blob exists, use it directly as the payload.
         match args {
             Some(blob) => blob.clone(),
-            None => {
-                // Empty payload: cloudpickle.dumps(((), {}))
-                // This is a well-known pickle byte sequence for ((), {})
-                // We'll store the full payload in the `args` column from Python.
-                Vec::new()
-            }
+            None => Vec::new(),
         }
     }
 }

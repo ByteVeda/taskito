@@ -47,6 +47,13 @@ taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
     taskito dashboard --app myapp:queue
     ```
 
+## Dashboard Preview
+
+<!-- TODO: Add screenshot of the dashboard UI -->
+<!-- ![taskito dashboard](../assets/dashboard.png) -->
+
+*The dashboard is a self-contained SPA served directly from the Rust core. No external dependencies required.*
+
 ## SPA Features
 
 The dashboard is a self-contained single-page application with:
@@ -154,6 +161,32 @@ Delete a single dead letter entry.
 ### `POST /api/jobs/{id}/cancel`
 
 Cancel a pending job. Returns `204 No Content` on success or `409 Conflict` if the job is not in a cancellable state.
+
+### `GET /api/workers`
+
+List registered workers with heartbeat status.
+
+```bash
+curl http://localhost:8080/api/workers
+```
+
+```json
+[
+  {
+    "worker_id": "worker-abc123",
+    "last_heartbeat": 1700000010000,
+    "queues": ["default", "emails"],
+    "status": "active"
+  }
+]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `worker_id` | `string` | Unique worker identifier |
+| `last_heartbeat` | `int` | Last heartbeat timestamp (ms) |
+| `queues` | `list[string]` | Queues this worker consumes from |
+| `status` | `string` | `"active"` or `"stale"` |
 
 ## Using the API Programmatically
 

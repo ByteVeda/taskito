@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crossbeam_channel;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use taskito_core::job::{NewJob, now_millis};
 use taskito_core::periodic::next_cron_time;
-use taskito_core::rate_limiter::RateLimitConfig;
-use taskito_core::retry::RetryPolicy;
+use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
+use taskito_core::resilience::rate_limiter::RateLimitConfig;
+use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{Scheduler, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
 use taskito_core::storage::sqlite::SqliteStorage;
@@ -71,7 +71,7 @@ impl PyQueue {
     }
 
     /// Enqueue a job.
-    #[pyo3(signature = (task_name, payload, queue="default", priority=None, delay_seconds=None, max_retries=None, timeout=None, unique_key=None, metadata=None, depends_on=None))]
+    #[pyo3(signature = (task_name, payload, queue="default", priority=None, delay_seconds=None, max_retries=None, timeout=None, unique_key=None, metadata=None, depends_on=None, expires=None, result_ttl=None))]
     pub fn enqueue(
         &self,
         task_name: &str,
@@ -84,12 +84,17 @@ impl PyQueue {
         unique_key: Option<String>,
         metadata: Option<String>,
         depends_on: Option<Vec<String>>,
+        expires: Option<f64>,
+        result_ttl: Option<i64>,
     ) -> PyResult<PyJob> {
         let now = now_millis();
         let scheduled_at = match delay_seconds {
             Some(d) => now + (d * 1000.0) as i64,
             None => now,
         };
+
+        let expires_at = expires.map(|e| now + (e * 1000.0) as i64);
+        let result_ttl_ms = result_ttl.map(|s| s * 1000);
 
         let new_job = NewJob {
             queue: queue.to_string(),
@@ -102,6 +107,8 @@ impl PyQueue {
             unique_key: unique_key.clone(),
             metadata,
             depends_on: depends_on.unwrap_or_default(),
+            expires_at,
+            result_ttl_ms,
         };
 
         let job = if unique_key.is_some() {
@@ -155,6 +162,8 @@ impl PyQueue {
                 unique_key: None,
                 metadata: None,
                 depends_on: vec![],
+                expires_at: None,
+                result_ttl_ms: None,
             });
         }
 
@@ -214,6 +223,20 @@ impl PyQueue {
     pub fn cancel_job(&self, job_id: &str) -> PyResult<bool> {
         self.storage
             .cancel_job(job_id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Request cancellation of a running job. Returns True if cancel was requested.
+    pub fn request_cancel(&self, job_id: &str) -> PyResult<bool> {
+        self.storage
+            .request_cancel(job_id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Check if cancellation has been requested for a job.
+    pub fn is_cancel_requested(&self, job_id: &str) -> PyResult<bool> {
+        self.storage
+            .is_cancel_requested(job_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
@@ -372,8 +395,26 @@ impl PyQueue {
         self.shutdown_flag.store(false, Ordering::SeqCst);
 
         let queues = queues.unwrap_or_else(|| vec!["default".to_string()]);
+        let queues_str = queues.join(",");
 
         let mut scheduler = Scheduler::new(self.storage.clone(), queues, self.result_ttl_ms);
+
+        // Build retry filters dict from the Queue's _task_retry_filters
+        let retry_filters = py.eval_bound("{}", None, None)?;
+        // Get the Queue's retry filters from the app module
+        let app_queue_ref = {
+            let context_mod = py.import_bound("taskito.context")?;
+            context_mod.getattr("_queue_ref")?
+        };
+        if !app_queue_ref.is_none() {
+            if let Ok(filters) = app_queue_ref.getattr("_task_retry_filters") {
+                let filters_dict: &Bound<'_, PyDict> = filters.downcast()?;
+                let out_dict: &Bound<'_, PyDict> = retry_filters.downcast()?;
+                for (key, val) in filters_dict.iter() {
+                    out_dict.set_item(key, val)?;
+                }
+            }
+        }
 
         for tc in &task_configs {
             let retry_policy = RetryPolicy {
@@ -382,11 +423,19 @@ impl PyQueue {
                 max_delay_ms: 300_000,
             };
             let rate_limit = tc.rate_limit.as_ref().and_then(|s| RateLimitConfig::parse(s));
+            let circuit_breaker = tc.circuit_breaker_threshold.map(|threshold| {
+                CircuitBreakerConfig {
+                    threshold,
+                    window_ms: tc.circuit_breaker_window.unwrap_or(60) * 1000,
+                    cooldown_ms: tc.circuit_breaker_cooldown.unwrap_or(300) * 1000,
+                }
+            });
             scheduler.register_task(
                 tc.name.clone(),
                 TaskConfig {
                     retry_policy,
                     rate_limit,
+                    circuit_breaker,
                 },
             );
         }
@@ -397,11 +446,28 @@ impl PyQueue {
         let (result_tx, result_rx) = crossbeam_channel::bounded(self.num_workers * 2);
 
         let registry_arc = Arc::new(task_registry);
+        let filters_arc = Arc::new(retry_filters.into());
         let worker_pool =
-            WorkerPool::start(self.num_workers, job_rx, result_tx, registry_arc);
+            WorkerPool::start(self.num_workers, job_rx, result_tx, registry_arc, filters_arc);
 
         let scheduler_arc = Arc::new(scheduler);
         let scheduler_for_dispatch = scheduler_arc.clone();
+
+        // Generate a unique worker ID and register
+        let worker_id = uuid::Uuid::now_v7().to_string();
+        let _ = self.storage.register_worker(&worker_id, &queues_str);
+
+        // Start heartbeat thread
+        let heartbeat_storage = self.storage.clone();
+        let heartbeat_worker_id = worker_id.clone();
+        let heartbeat_flag = self.shutdown_flag.clone();
+        let heartbeat_handle = std::thread::spawn(move || {
+            while !heartbeat_flag.load(Ordering::SeqCst) {
+                let _ = heartbeat_storage.heartbeat(&heartbeat_worker_id);
+                let _ = heartbeat_storage.reap_dead_workers();
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+        });
 
         let scheduler_handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -433,7 +499,6 @@ impl PyQueue {
                                 }
                             }
                             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                                // Check if all workers are done (channel disconnected)
                                 continue;
                             }
                             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -461,9 +526,234 @@ impl PyQueue {
         });
 
         let _ = scheduler_handle.join();
+        let _ = heartbeat_handle.join();
         worker_pool.join();
 
+        // Unregister worker on shutdown
+        let _ = self.storage.unregister_worker(&worker_id);
+
         Ok(())
+    }
+
+    // ── Metrics API ────────────────────────────────────────────────
+
+    /// Get raw metric records for a task (or all tasks).
+    #[pyo3(signature = (task_name=None, since_seconds=3600))]
+    pub fn get_metrics(&self, task_name: Option<&str>, since_seconds: i64) -> PyResult<Vec<PyObject>> {
+        let since_ms = now_millis() - (since_seconds * 1000);
+        let rows = self
+            .storage
+            .get_metrics(task_name, since_ms)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Python::with_gil(|py| {
+            let mut result = Vec::with_capacity(rows.len());
+            for r in rows {
+                let dict = PyDict::new_bound(py);
+                dict.set_item("id", r.id)?;
+                dict.set_item("task_name", r.task_name)?;
+                dict.set_item("job_id", r.job_id)?;
+                dict.set_item("wall_time_ns", r.wall_time_ns)?;
+                dict.set_item("memory_bytes", r.memory_bytes)?;
+                dict.set_item("succeeded", r.succeeded)?;
+                dict.set_item("recorded_at", r.recorded_at)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
+    }
+
+    // ── Replay API ───────────────────────────────────────────────
+
+    /// Create a replay of an existing job (re-enqueue with same payload).
+    pub fn replay_job(&self, job_id: &str) -> PyResult<String> {
+        let original = self
+            .storage
+            .get_job(job_id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("Job not found: {job_id}")))?;
+
+        let new_job = NewJob {
+            queue: original.queue,
+            task_name: original.task_name,
+            payload: original.payload,
+            priority: original.priority,
+            scheduled_at: now_millis(),
+            max_retries: original.max_retries,
+            timeout_ms: original.timeout_ms,
+            unique_key: None,
+            metadata: Some(format!("{{\"replayed_from\":\"{job_id}\"}}")),
+            depends_on: vec![],
+            expires_at: None,
+            result_ttl_ms: original.result_ttl_ms,
+        };
+
+        let job = self
+            .storage
+            .enqueue(new_job)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        let _ = self.storage.record_replay(
+            job_id,
+            &job.id,
+            original.result.as_deref(),
+            None,
+            original.error.as_deref(),
+            None,
+        );
+
+        Ok(job.id)
+    }
+
+    /// Get replay history for a job.
+    pub fn get_replay_history(&self, job_id: &str) -> PyResult<Vec<PyObject>> {
+        let rows = self
+            .storage
+            .get_replay_history(job_id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Python::with_gil(|py| {
+            let mut result = Vec::with_capacity(rows.len());
+            for r in rows {
+                let dict = PyDict::new_bound(py);
+                dict.set_item("id", r.id)?;
+                dict.set_item("original_job_id", r.original_job_id)?;
+                dict.set_item("replay_job_id", r.replay_job_id)?;
+                dict.set_item("replayed_at", r.replayed_at)?;
+                dict.set_item("original_error", r.original_error)?;
+                dict.set_item("replay_error", r.replay_error)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
+    }
+
+    // ── Task Logs API ────────────────────────────────────────────
+
+    /// Write a structured log entry for a task.
+    #[pyo3(signature = (job_id, task_name, level, message, extra=None))]
+    pub fn write_task_log(
+        &self,
+        job_id: &str,
+        task_name: &str,
+        level: &str,
+        message: &str,
+        extra: Option<&str>,
+    ) -> PyResult<()> {
+        self.storage
+            .write_task_log(job_id, task_name, level, message, extra)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Get logs for a specific job.
+    pub fn get_task_logs(&self, job_id: &str) -> PyResult<Vec<PyObject>> {
+        let rows = self
+            .storage
+            .get_task_logs(job_id)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Python::with_gil(|py| {
+            let mut result = Vec::with_capacity(rows.len());
+            for r in rows {
+                let dict = PyDict::new_bound(py);
+                dict.set_item("id", r.id)?;
+                dict.set_item("job_id", r.job_id)?;
+                dict.set_item("task_name", r.task_name)?;
+                dict.set_item("level", r.level)?;
+                dict.set_item("message", r.message)?;
+                dict.set_item("extra", r.extra)?;
+                dict.set_item("logged_at", r.logged_at)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
+    }
+
+    /// Query logs with filters.
+    #[pyo3(signature = (task_name=None, level=None, since_seconds=3600, limit=100))]
+    pub fn query_task_logs(
+        &self,
+        task_name: Option<&str>,
+        level: Option<&str>,
+        since_seconds: i64,
+        limit: i64,
+    ) -> PyResult<Vec<PyObject>> {
+        let since_ms = now_millis() - (since_seconds * 1000);
+        let rows = self
+            .storage
+            .query_task_logs(task_name, level, since_ms, limit)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Python::with_gil(|py| {
+            let mut result = Vec::with_capacity(rows.len());
+            for r in rows {
+                let dict = PyDict::new_bound(py);
+                dict.set_item("id", r.id)?;
+                dict.set_item("job_id", r.job_id)?;
+                dict.set_item("task_name", r.task_name)?;
+                dict.set_item("level", r.level)?;
+                dict.set_item("message", r.message)?;
+                dict.set_item("extra", r.extra)?;
+                dict.set_item("logged_at", r.logged_at)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
+    }
+
+    // ── Circuit Breaker API ──────────────────────────────────────
+
+    /// List all circuit breaker states.
+    pub fn list_circuit_breakers(&self) -> PyResult<Vec<PyObject>> {
+        let rows = self
+            .storage
+            .list_circuit_breakers()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Python::with_gil(|py| {
+            let mut result = Vec::with_capacity(rows.len());
+            for r in rows {
+                let dict = PyDict::new_bound(py);
+                let state_str = match r.state {
+                    1 => "open",
+                    2 => "half_open",
+                    _ => "closed",
+                };
+                dict.set_item("task_name", r.task_name)?;
+                dict.set_item("state", state_str)?;
+                dict.set_item("failure_count", r.failure_count)?;
+                dict.set_item("last_failure_at", r.last_failure_at)?;
+                dict.set_item("opened_at", r.opened_at)?;
+                dict.set_item("threshold", r.threshold)?;
+                dict.set_item("window_ms", r.window_ms)?;
+                dict.set_item("cooldown_ms", r.cooldown_ms)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
+    }
+
+    // ── Worker API ───────────────────────────────────────────────
+
+    /// List all registered workers.
+    pub fn list_workers(&self) -> PyResult<Vec<PyObject>> {
+        let rows = self
+            .storage
+            .list_workers()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Python::with_gil(|py| {
+            let mut result = Vec::with_capacity(rows.len());
+            for r in rows {
+                let dict = PyDict::new_bound(py);
+                dict.set_item("worker_id", r.worker_id)?;
+                dict.set_item("last_heartbeat", r.last_heartbeat)?;
+                dict.set_item("queues", r.queues)?;
+                dict.set_item("status", r.status)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
     }
 
     pub fn __repr__(&self) -> String {

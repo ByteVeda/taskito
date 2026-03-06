@@ -10,18 +10,36 @@ import os
 import signal
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
-import cloudpickle
+if TYPE_CHECKING:
+    from taskito.testing import TestMode
 
 from taskito._taskito import PyQueue, PyTaskConfig
+from taskito.middleware import TaskMiddleware
+from taskito.mixins import (
+    QueueCircuitBreakersMixin,
+    QueueDeadLettersMixin,
+    QueueLogsMixin,
+    QueueMetricsMixin,
+    QueueReplayMixin,
+    QueueWorkersMixin,
+)
 from taskito.result import JobResult
+from taskito.serializers import CloudpickleSerializer, Serializer
 from taskito.task import TaskWrapper
 
 logger = logging.getLogger("taskito")
 
 
-class Queue:
+class Queue(
+    QueueMetricsMixin,
+    QueueDeadLettersMixin,
+    QueueReplayMixin,
+    QueueCircuitBreakersMixin,
+    QueueLogsMixin,
+    QueueWorkersMixin,
+):
     """
     Rust-powered task queue with embedded SQLite storage.
 
@@ -45,6 +63,8 @@ class Queue:
         default_timeout: int = 300,
         default_priority: int = 0,
         result_ttl: int | None = None,
+        serializer: Serializer | None = None,
+        middleware: list[TaskMiddleware] | None = None,
     ):
         """Initialize a new task queue backed by SQLite.
 
@@ -58,6 +78,8 @@ class Queue:
             default_priority: Default task priority (higher = more urgent).
             result_ttl: Auto-cleanup completed/dead jobs older than this many
                 seconds. None disables auto-cleanup.
+            serializer: Serializer for task payloads. Defaults to CloudpickleSerializer.
+            middleware: List of global middleware instances applied to all tasks.
         """
         # Ensure parent directory exists
         db_dir = os.path.dirname(db_path)
@@ -84,6 +106,10 @@ class Queue:
             "on_success": [],
             "on_failure": [],
         }
+        self._serializer: Serializer = serializer or CloudpickleSerializer()
+        self._global_middleware: list[TaskMiddleware] = middleware or []
+        self._task_middleware: dict[str, list[TaskMiddleware]] = {}
+        self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
 
     def task(
         self,
@@ -94,6 +120,11 @@ class Queue:
         priority: int = 0,
         rate_limit: str | None = None,
         queue: str = "default",
+        circuit_breaker: dict | None = None,
+        retry_on: list[type[Exception]] | None = None,
+        dont_retry_on: list[type[Exception]] | None = None,
+        soft_timeout: float | None = None,
+        middleware: list[TaskMiddleware] | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -105,22 +136,40 @@ class Queue:
             priority: Priority level (higher = more urgent).
             rate_limit: Rate limit string, e.g. ``"100/m"``, ``"10/s"``, ``"3600/h"``.
             queue: Named queue to submit to.
-
-        Example::
-
-            @queue.task(max_retries=5, rate_limit="100/m", queue="emails")
-            def send_email(to: str, subject: str, body: str):
-                ...
-
-            send_email.delay("user@example.com", "Hello", "World")
+            circuit_breaker: Optional dict with ``threshold``, ``window`` (seconds),
+                and ``cooldown`` (seconds) keys.
+            retry_on: List of exception classes that should trigger retries.
+                If set, only these exceptions are retried.
+            dont_retry_on: List of exception classes that should never be retried.
+            soft_timeout: Soft timeout in seconds. Checked via ``current_job.check_timeout()``.
+            middleware: Per-task middleware instances (in addition to global middleware).
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
             task_name = name or f"{fn.__module__}.{fn.__qualname__}"
 
-            # Wrap the function with hooks and context
-            wrapped = self._wrap_task(fn, task_name)
+            # Store retry filters
+            if retry_on or dont_retry_on:
+                self._task_retry_filters[task_name] = {
+                    "retry_on": retry_on or [],
+                    "dont_retry_on": dont_retry_on or [],
+                }
+
+            # Store per-task middleware
+            if middleware:
+                self._task_middleware[task_name] = middleware
+
+            # Wrap the function with hooks, middleware, and context
+            wrapped = self._wrap_task(fn, task_name, soft_timeout)
             self._task_registry[task_name] = wrapped
+
+            cb_threshold = None
+            cb_window = None
+            cb_cooldown = None
+            if circuit_breaker:
+                cb_threshold = circuit_breaker.get("threshold", 5)
+                cb_window = circuit_breaker.get("window", 60)
+                cb_cooldown = circuit_breaker.get("cooldown", 300)
 
             # Store config for worker startup
             config = PyTaskConfig(
@@ -131,6 +180,9 @@ class Queue:
                 priority=priority,
                 rate_limit=rate_limit,
                 queue=queue,
+                circuit_breaker_threshold=cb_threshold,
+                circuit_breaker_window=cb_window,
+                circuit_breaker_cooldown=cb_cooldown,
             )
             self._task_configs.append(config)
 
@@ -169,12 +221,6 @@ class Queue:
             args: Positional arguments to pass to the task on each run.
             kwargs: Keyword arguments to pass to the task on each run.
             queue: Named queue to submit to.
-
-        Example::
-
-            @queue.periodic(cron="0 */5 * * * *")
-            def cleanup():
-                ...
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
@@ -182,7 +228,7 @@ class Queue:
             wrapper = self.task(name=name, queue=queue)(fn)
 
             # Store periodic config for registration at worker startup
-            payload = cloudpickle.dumps((args, kwargs or {}))
+            payload = self._serializer.dumps((args, kwargs or {}))
             self._periodic_configs.append(
                 {
                     "name": name or f"{fn.__module__}.{fn.__qualname__}",
@@ -204,12 +250,6 @@ class Queue:
 
         Args:
             fn: Callback with signature ``fn(task_name, args, kwargs)``.
-
-        Example::
-
-            @queue.before_task
-            def log_start(task_name, args, kwargs):
-                print(f"Starting {task_name}")
         """
         self._hooks["before_task"].append(fn)
         return fn
@@ -217,21 +257,9 @@ class Queue:
     def after_task(self, fn: Callable) -> Callable:
         """Register a hook called after each task completes or fails.
 
-        Always called regardless of outcome, similar to a ``finally`` block.
-        Runs after :meth:`on_success` or :meth:`on_failure`.
-
         Args:
             fn: Callback with signature
                 ``fn(task_name, args, kwargs, result, error)``.
-                *result* is the return value on success (``None`` on failure).
-                *error* is the exception on failure (``None`` on success).
-
-        Example::
-
-            @queue.after_task
-            def log_end(task_name, args, kwargs, result, error):
-                status = "OK" if error is None else f"FAILED: {error}"
-                print(f"Finished {task_name}: {status}")
         """
         self._hooks["after_task"].append(fn)
         return fn
@@ -242,12 +270,6 @@ class Queue:
         Args:
             fn: Callback with signature
                 ``fn(task_name, args, kwargs, result)``.
-
-        Example::
-
-            @queue.on_success
-            def track_success(task_name, args, kwargs, result):
-                metrics.increment(f"task.{task_name}.success")
         """
         self._hooks["on_success"].append(fn)
         return fn
@@ -255,29 +277,42 @@ class Queue:
     def on_failure(self, fn: Callable) -> Callable:
         """Register a hook called when a task raises an exception.
 
-        Called before the exception propagates to the retry/DLQ logic.
-
         Args:
             fn: Callback with signature
                 ``fn(task_name, args, kwargs, error)``.
-
-        Example::
-
-            @queue.on_failure
-            def alert(task_name, args, kwargs, error):
-                slack.post(f"Task {task_name} failed: {error}")
         """
         self._hooks["on_failure"].append(fn)
         return fn
 
-    def _wrap_task(self, fn: Callable, task_name: str) -> Callable:
-        """Wrap a task function with hooks and job context."""
-        from taskito.context import _clear_context
+    def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
+        """Get the combined global + per-task middleware list."""
+        per_task = self._task_middleware.get(task_name, [])
+        return self._global_middleware + per_task
+
+    def _wrap_task(
+        self, fn: Callable, task_name: str, soft_timeout: float | None = None
+    ) -> Callable:
+        """Wrap a task function with hooks, middleware, and job context."""
+        from taskito.context import _clear_context, current_job
 
         hooks = self._hooks
+        queue_ref = self
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            middleware_chain = queue_ref._get_middleware_chain(task_name)
+
+            # Set soft timeout on context if configured
+            if soft_timeout is not None:
+                current_job._set_soft_timeout(soft_timeout)
+
+            # Run middleware before hooks
+            for mw in middleware_chain:
+                try:
+                    mw.before(current_job)
+                except Exception:
+                    logger.exception("middleware before() error")
+
             for hook in hooks["before_task"]:
                 hook(task_name, args, kwargs)
 
@@ -300,6 +335,12 @@ class Queue:
             finally:
                 for hook in hooks["after_task"]:
                     hook(task_name, args, kwargs, result, error)
+                # Run middleware after hooks
+                for mw in middleware_chain:
+                    try:
+                        mw.after(current_job, result, error)
+                    except Exception:
+                        logger.exception("middleware after() error")
                 _clear_context()
 
         return wrapper
@@ -317,40 +358,27 @@ class Queue:
         unique_key: str | None = None,
         metadata: str | None = None,
         depends_on: str | list[str] | None = None,
+        expires: float | None = None,
+        result_ttl: int | None = None,
     ) -> JobResult:
         """Enqueue a task for background execution.
 
-        This is the low-level enqueue method. For most use cases, prefer
-        :meth:`TaskWrapper.delay` or :meth:`TaskWrapper.apply_async`.
-
         Args:
-            task_name: Registered task name (e.g. ``"myapp.tasks.send_email"``).
+            task_name: Registered task name.
             args: Positional arguments to pass to the task function.
             kwargs: Keyword arguments to pass to the task function.
-            priority: Job priority (higher = more urgent). ``None`` uses
-                the queue's ``default_priority``.
+            priority: Job priority (higher = more urgent).
             delay: Delay in seconds before the job becomes eligible to run.
-            queue: Target queue name. ``None`` uses ``"default"``.
-            max_retries: Max retry attempts. ``None`` uses the queue's
-                ``default_retry``.
-            timeout: Timeout in seconds. ``None`` uses the queue's
-                ``default_timeout``.
-            unique_key: Deduplication key. If a pending or running job with
-                the same key exists, returns that job instead of creating
-                a new one.
+            queue: Target queue name.
+            max_retries: Max retry attempts.
+            timeout: Timeout in seconds.
+            unique_key: Deduplication key.
             metadata: Arbitrary JSON string to attach to the job.
-            depends_on: Job ID or list of job IDs that must complete
-                before this job can run. If any dependency fails or is
-                cancelled, this job is cascade-cancelled.
-
-        Returns:
-            A :class:`~taskito.result.JobResult` handle for the created
-            (or deduplicated) job.
-
-        Raises:
-            ValueError: If *depends_on* references a non-existent job ID.
+            depends_on: Job ID or list of job IDs that must complete first.
+            expires: Seconds until the job expires (skipped if not started by then).
+            result_ttl: Per-job result TTL in seconds. Overrides global result_ttl.
         """
-        payload = cloudpickle.dumps((args, kwargs or {}))
+        payload = self._serializer.dumps((args, kwargs or {}))
 
         dep_ids = None
         if depends_on is not None:
@@ -367,6 +395,8 @@ class Queue:
             unique_key=unique_key,
             metadata=metadata,
             depends_on=dep_ids,
+            expires=expires,
+            result_ttl=result_ttl,
         )
 
         return JobResult(py_job=py_job, queue=self)
@@ -397,7 +427,7 @@ class Queue:
         """
         count = len(args_list)
         kw_list = kwargs_list or [{}] * count
-        payloads = [cloudpickle.dumps((args, kw)) for args, kw in zip(args_list, kw_list)]
+        payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
         task_names = [task_name] * count
 
         queues_list = [queue or "default"] * count if queue else None
@@ -417,14 +447,7 @@ class Queue:
         return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
 
     def get_job(self, job_id: str) -> JobResult | None:
-        """Retrieve a job by its unique ID.
-
-        Args:
-            job_id: The job's ULID string.
-
-        Returns:
-            A :class:`~taskito.result.JobResult` if found, or ``None``.
-        """
+        """Retrieve a job by its unique ID."""
         py_job = self._inner.get_job(job_id)
         if py_job is None:
             return None
@@ -438,19 +461,7 @@ class Queue:
         limit: int = 50,
         offset: int = 0,
     ) -> list[JobResult]:
-        """List jobs with optional filters and pagination.
-
-        Args:
-            status: Filter by status ("pending", "running", "complete",
-                "failed", "dead", "cancelled"). None returns all.
-            queue: Filter by queue name. None returns all queues.
-            task_name: Filter by task name. None returns all tasks.
-            limit: Maximum number of jobs to return.
-            offset: Number of jobs to skip (for pagination).
-
-        Returns:
-            List of JobResult handles, ordered by creation time (newest first).
-        """
+        """List jobs with optional filters and pagination."""
         py_jobs = self._inner.list_jobs(
             status=status,
             queue=queue,
@@ -463,155 +474,42 @@ class Queue:
     # -- Sync inspection methods --
 
     def stats(self) -> dict[str, int]:
-        """Get queue statistics as a dict of status counts.
-
-        Returns:
-            Dict with keys ``"pending"``, ``"running"``, ``"completed"``,
-            ``"failed"``, ``"dead"``, ``"cancelled"`` mapped to integer counts.
-        """
-        return self._inner.stats()
-
-    def dead_letters(self, limit: int = 10, offset: int = 0) -> list[dict]:
-        """List dead letter queue entries (jobs that exhausted all retries).
-
-        Args:
-            limit: Maximum number of entries to return.
-            offset: Number of entries to skip (for pagination).
-
-        Returns:
-            List of dicts, each containing ``"id"``, ``"task_name"``,
-            ``"error"``, ``"failed_at"``, and the original job fields.
-        """
-        return self._inner.dead_letters(limit=limit, offset=offset)
-
-    def retry_dead(self, dead_id: str) -> str:
-        """Re-enqueue a dead letter job, creating a fresh job with the same payload.
-
-        Args:
-            dead_id: The dead letter entry ID (not the original job ID).
-
-        Returns:
-            The new job ID.
-
-        Raises:
-            ValueError: If *dead_id* does not exist.
-        """
-        return self._inner.retry_dead(dead_id)
-
-    def purge_dead(self, older_than: int = 86400) -> int:
-        """Delete dead letter entries older than a given age.
-
-        Args:
-            older_than: Age threshold in seconds. Entries older than this
-                are deleted.
-
-        Returns:
-            Number of entries deleted.
-        """
-        return self._inner.purge_dead(older_than)
+        """Get queue statistics as a dict of status counts."""
+        return self._inner.stats()  # type: ignore[no-any-return]
 
     def cancel_job(self, job_id: str) -> bool:
-        """Cancel a pending job before it starts executing.
+        """Cancel a pending job before it starts executing."""
+        return self._inner.cancel_job(job_id)  # type: ignore[no-any-return]
 
-        Only jobs in ``"pending"`` status can be cancelled. Running or
-        completed jobs are unaffected.
+    def cancel_running_job(self, job_id: str) -> bool:
+        """Request cancellation of a running job.
 
-        Args:
-            job_id: The job ID to cancel.
-
-        Returns:
-            ``True`` if the job was pending and is now cancelled,
-            ``False`` otherwise.
+        The task must call ``current_job.check_cancelled()`` to observe
+        the cancellation. Returns True if the cancel was requested.
         """
-        return self._inner.cancel_job(job_id)
+        return self._inner.request_cancel(job_id)  # type: ignore[no-any-return]
 
     def update_progress(self, job_id: str, progress: int) -> None:
-        """Update the progress percentage for a running job.
-
-        Typically called from within a task via
-        :meth:`~taskito.context.JobContext.update_progress` rather than
-        directly.
-
-        Args:
-            job_id: The job ID to update.
-            progress: Progress value from 0 to 100.
-        """
+        """Update the progress percentage for a running job."""
         self._inner.update_progress(job_id, progress)
 
     def job_errors(self, job_id: str) -> list[dict]:
-        """Get the error history for a job (one entry per failed attempt).
-
-        Args:
-            job_id: The job ID to inspect.
-
-        Returns:
-            List of dicts, each containing ``"attempt"``, ``"error"``,
-            and ``"failed_at"`` keys.
-        """
-        return self._inner.get_job_errors(job_id)
+        """Get the error history for a job."""
+        return self._inner.get_job_errors(job_id)  # type: ignore[no-any-return]
 
     def purge_completed(self, older_than: int = 86400) -> int:
-        """Delete completed jobs older than a given age.
-
-        Args:
-            older_than: Age threshold in seconds. Completed jobs older
-                than this are deleted.
-
-        Returns:
-            Number of jobs deleted.
-        """
-        return self._inner.purge_completed(older_than)
+        """Delete completed jobs older than a given age."""
+        return self._inner.purge_completed(older_than)  # type: ignore[no-any-return]
 
     # -- Async inspection methods --
 
     async def astats(self) -> dict[str, int]:
-        """Async version of :meth:`stats`.
-
-        Returns:
-            Dict with keys ``"pending"``, ``"running"``, ``"completed"``,
-            ``"failed"``, ``"dead"``, ``"cancelled"`` mapped to integer counts.
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._executor, self.stats)
-
-    async def adead_letters(self, limit: int = 10, offset: int = 0) -> list[dict]:
-        """Async version of :meth:`dead_letters`.
-
-        Args:
-            limit: Maximum number of entries to return.
-            offset: Number of entries to skip (for pagination).
-
-        Returns:
-            List of dead letter entry dicts.
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._executor, lambda: self.dead_letters(limit=limit, offset=offset)
-        )
-
-    async def aretry_dead(self, dead_id: str) -> str:
-        """Async version of :meth:`retry_dead`.
-
-        Args:
-            dead_id: The dead letter entry ID.
-
-        Returns:
-            The new job ID.
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._executor, lambda: self.retry_dead(dead_id))
+        """Async version of :meth:`stats`."""
+        return await self._run_sync(self.stats)  # type: ignore[no-any-return]
 
     async def acancel_job(self, job_id: str) -> bool:
-        """Async version of :meth:`cancel_job`.
-
-        Args:
-            job_id: The job ID to cancel.
-
-        Returns:
-            ``True`` if cancelled, ``False`` otherwise.
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._executor, lambda: self.cancel_job(job_id))
+        """Async version of :meth:`cancel_job`."""
+        return await self._run_sync(self.cancel_job, job_id)  # type: ignore[no-any-return]
 
     # -- Worker startup --
 
@@ -650,19 +548,9 @@ class Queue:
     def run_worker(self, queues: Sequence[str] | None = None) -> None:
         """Start the worker loop. Blocks until interrupted.
 
-        Dispatches jobs from the queue to Rust worker threads for execution.
-        Call this in a separate process or thread from your main application.
-
-        On the main thread, installs a SIGINT handler for graceful shutdown:
-        the first ``Ctrl+C`` finishes in-flight jobs, the second force-kills.
-
         Args:
             queues: List of queue names to consume from. ``None`` consumes
                 from all queues.
-
-        Note:
-            Periodic tasks registered via :meth:`periodic` are activated
-            when the worker starts, not at registration time.
         """
         queue_list = list(queues) if queues else None
 
@@ -714,6 +602,21 @@ class Queue:
             if is_main and original_sigint is not None:
                 signal.signal(signal.SIGINT, original_sigint)
 
+    # -- Test Mode --
+
+    def test_mode(self, propagate_errors: bool = False) -> TestMode:
+        """Return a context manager that runs tasks synchronously (no worker needed).
+
+        Args:
+            propagate_errors: If True, re-raise task exceptions immediately.
+
+        Returns:
+            A :class:`~taskito.testing.TestMode` context manager.
+        """
+        from taskito.testing import TestMode
+
+        return TestMode(self, propagate_errors=propagate_errors)
+
     async def arun_worker(self, queues: Sequence[str] | None = None) -> None:
         """Async version of :meth:`run_worker`.
 
@@ -721,19 +624,15 @@ class Queue:
         block the asyncio event loop.
 
         Args:
-            queues: List of queue names to consume from. ``None`` consumes
-                from all queues.
+            queues: List of queue names to consume from.
         """
         loop = asyncio.get_event_loop()
 
-        # Install SIGINT handler on the event loop so Ctrl+C triggers
-        # graceful shutdown instead of crashing the asyncio runner.
         original_handler = signal.getsignal(signal.SIGINT)
 
         def _shutdown_once() -> None:
             logger.info("Shutting down gracefully (waiting for in-flight jobs)...")
             self._inner.request_shutdown()
-            # Restore original handler so a second Ctrl+C force-kills
             loop.remove_signal_handler(signal.SIGINT)
             signal.signal(signal.SIGINT, original_handler)
 

@@ -32,7 +32,7 @@ maturin develop --release
 
 ```bash
 pip install -e ".[dev]"     # Tests, linting, type checking
-pip install -e ".[docs]"    # Documentation (MkDocs Material)
+pip install -e ".[docs]"    # Documentation (Zensical)
 ```
 
 ## Verify Installation

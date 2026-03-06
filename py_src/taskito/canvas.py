@@ -1,7 +1,8 @@
-"""Task chaining primitives: Signature, chain, group, chord."""
+"""Task chaining primitives: Signature, chain, group, chord, chunks, starmap."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -28,15 +29,7 @@ class Signature:
     immutable: bool = False
 
     def apply(self, queue: Queue | None = None) -> JobResult:
-        """Enqueue this signature for execution.
-
-        Args:
-            queue: Queue instance to enqueue on. ``None`` uses the
-                queue from the wrapped task.
-
-        Returns:
-            A :class:`~taskito.result.JobResult` handle.
-        """
+        """Enqueue this signature for execution."""
         q = queue or self.task._queue
         return q.enqueue(
             task_name=self.task.name,
@@ -47,46 +40,15 @@ class Signature:
 
 
 class chain:
-    """Execute signatures sequentially, piping each result to the next.
-
-    Usage::
-
-        result = chain(add.s(2, 3), multiply.s(10)).apply(queue)
-        print(result.result(timeout=30))  # (2 + 3) * 10 = 50
-    """
+    """Execute signatures sequentially, piping each result to the next."""
 
     def __init__(self, *signatures: Signature):
-        """Create a chain from one or more signatures.
-
-        Args:
-            *signatures: Signatures to execute in order. Each mutable
-                signature receives the previous task's return value as
-                its first argument.
-
-        Raises:
-            ValueError: If no signatures are provided.
-        """
         if len(signatures) < 1:
             raise ValueError("chain requires at least one signature")
         self.signatures = list(signatures)
 
     def apply(self, queue: Queue | None = None) -> JobResult:
-        """Execute the chain, blocking until all steps complete.
-
-        Each signature is enqueued and waited on sequentially. For mutable
-        signatures, the previous result is prepended to the arguments.
-
-        Args:
-            queue: Queue instance to enqueue on. ``None`` uses the
-                queue from the first signature's task.
-
-        Returns:
-            The :class:`~taskito.result.JobResult` of the **last** step.
-
-        Raises:
-            RuntimeError: If any step in the chain fails.
-            TimeoutError: If any step exceeds the 300-second internal timeout.
-        """
+        """Execute the chain, blocking until all steps complete."""
         q = queue or self.signatures[0].task._queue
 
         prev_result: Any = None
@@ -111,94 +73,68 @@ class chain:
 class group:
     """Execute signatures in parallel and collect all results.
 
-    Usage::
-
-        results = group(add.s(1, 2), add.s(3, 4)).apply(queue)
-        print([r.result(timeout=30) for r in results])  # [3, 7]
+    Args:
+        *signatures: Signatures to execute in parallel.
+        max_concurrency: If set, limits how many group members run
+            concurrently. Members are dispatched in waves.
     """
 
-    def __init__(self, *signatures: Signature):
-        """Create a group from one or more signatures.
-
-        Args:
-            *signatures: Signatures to execute in parallel.
-
-        Raises:
-            ValueError: If no signatures are provided.
-        """
+    def __init__(
+        self, *signatures: Signature, max_concurrency: int | None = None
+    ):
         if len(signatures) < 1:
             raise ValueError("group requires at least one signature")
         self.signatures = list(signatures)
+        self.max_concurrency = max_concurrency
 
     def apply(self, queue: Queue | None = None) -> list[JobResult]:
-        """Enqueue all signatures for parallel execution.
-
-        All jobs are enqueued immediately and execute concurrently.
-
-        Args:
-            queue: Queue instance to enqueue on. ``None`` uses the
-                queue from the first signature's task.
-
-        Returns:
-            List of :class:`~taskito.result.JobResult` handles, one per
-            signature, in the same order.
-        """
+        """Enqueue all signatures for parallel execution."""
         q = queue or self.signatures[0].task._queue
 
-        jobs: list[JobResult] = []
-        for sig in self.signatures:
-            job = q.enqueue(
-                task_name=sig.task.name,
-                args=sig.args,
-                kwargs=sig.kwargs if sig.kwargs else None,
-                **sig.options,
-            )
-            jobs.append(job)
+        if self.max_concurrency is None:
+            # No concurrency limit — enqueue all at once
+            jobs: list[JobResult] = []
+            for sig in self.signatures:
+                job = q.enqueue(
+                    task_name=sig.task.name,
+                    args=sig.args,
+                    kwargs=sig.kwargs if sig.kwargs else None,
+                    **sig.options,
+                )
+                jobs.append(job)
+            return jobs
 
-        return jobs
+        # With concurrency limit — dispatch in waves
+        all_jobs: list[JobResult] = []
+        mc = self.max_concurrency
+        for i in range(0, len(self.signatures), mc):
+            wave = self.signatures[i : i + mc]
+            wave_jobs: list[JobResult] = []
+            for sig in wave:
+                job = q.enqueue(
+                    task_name=sig.task.name,
+                    args=sig.args,
+                    kwargs=sig.kwargs if sig.kwargs else None,
+                    **sig.options,
+                )
+                wave_jobs.append(job)
+            # Wait for this wave to complete before starting next
+            for job in wave_jobs:
+                job.result(timeout=300)
+            all_jobs.extend(wave_jobs)
+
+        return all_jobs
 
 
 class chord:
-    """Run a group in parallel, then a callback with all results.
-
-    Usage::
-
-        result = chord(
-            group(add.s(1, 2), add.s(3, 4)),
-            total.s()
-        ).apply(queue)
-        print(result.result(timeout=30))  # sum([3, 7]) = 10
-    """
+    """Run a group in parallel, then a callback with all results."""
 
     def __init__(self, group_: group, callback: Signature):
-        """Create a chord from a group and a callback signature.
-
-        Args:
-            group_: A :class:`group` whose results are collected.
-            callback: A :class:`Signature` invoked with the collected
-                results as its first argument (unless immutable).
-        """
         self.group = group_
         self.callback = callback
 
     def apply(self, queue: Queue | None = None) -> JobResult:
-        """Execute the group, wait for all results, then run the callback.
-
-        The callback receives a list of all group results as its first
-        positional argument (for mutable signatures).
-
-        Args:
-            queue: Queue instance to enqueue on. ``None`` uses the
-                queue from the callback's task.
-
-        Returns:
-            The :class:`~taskito.result.JobResult` of the callback task.
-
-        Raises:
-            RuntimeError: If any job in the group fails.
-            TimeoutError: If any group job exceeds the 300-second internal
-                timeout.
-        """
+        """Execute the group, wait for all results, then run the callback."""
         q = queue or self.callback.task._queue
 
         # Run group and wait for all results
@@ -216,3 +152,48 @@ class chord:
             kwargs=self.callback.kwargs if self.callback.kwargs else None,
             **self.callback.options,
         )
+
+
+def chunks(
+    task: TaskWrapper, items: list[Any], chunk_size: int
+) -> group:
+    """Split items into chunks and create a group of tasks processing each chunk.
+
+    Args:
+        task: The task to call for each chunk.
+        items: List of items to split.
+        chunk_size: Number of items per chunk.
+
+    Returns:
+        A :class:`group` of signatures, one per chunk.
+
+    Example::
+
+        result = chunks(process_batch, items, 100).apply(queue)
+    """
+    n_chunks = math.ceil(len(items) / chunk_size)
+    sigs = []
+    for i in range(n_chunks):
+        chunk = items[i * chunk_size : (i + 1) * chunk_size]
+        sigs.append(task.s(chunk))
+    return group(*sigs)
+
+
+def starmap(
+    task: TaskWrapper, args_list: list[tuple[Any, ...]]
+) -> group:
+    """Create a group with one task per args tuple.
+
+    Args:
+        task: The task to call for each args tuple.
+        args_list: List of argument tuples.
+
+    Returns:
+        A :class:`group` of signatures, one per args tuple.
+
+    Example::
+
+        result = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply(queue)
+    """
+    sigs = [task.s(*args) for args in args_list]
+    return group(*sigs)

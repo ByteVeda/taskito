@@ -1,0 +1,46 @@
+.copy-markdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.25rem;
+  background: var(--md-code-bg-color);
+  color: var(--md-default-fg-color--light);
+  font-size: 0.7rem;
+  font-family: var(--md-text-font-family);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.copy-markdown-btn:hover {
+  background: var(--md-accent-fg-color--transparent);
+  border-color: var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+}
+
+.copy-markdown-btn.copied {
+  background: var(--md-typeset-ins-color);
+  border-color: transparent;
+  color: #fff;
+}
+
+.copy-markdown-btn.error {
+  background: var(--md-typeset-del-color);
+  border-color: transparent;
+  color: #fff;
+}
+
+.copy-markdown-btn.loading {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.copy-markdown-btn:disabled {
+  cursor: not-allowed;
+}
+
+.copy-markdown-btn svg {
+  flex-shrink: 0;
+}

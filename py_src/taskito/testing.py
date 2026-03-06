@@ -1,0 +1,201 @@
+"""Test mode for taskito — run tasks synchronously without a worker.
+
+Usage::
+
+    with queue.test_mode() as results:
+        my_task.delay(42)
+        assert len(results) == 1
+        assert results[0].return_value == expected
+
+    # Or use the context manager directly:
+    from taskito.testing import TestMode
+
+    with TestMode(queue) as results:
+        my_task.delay("hello")
+        assert results[0].task_name == "mymodule.my_task"
+"""
+
+from __future__ import annotations
+
+import traceback
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from taskito.app import Queue
+
+
+@dataclass
+class TestResult:
+    """Result of a task executed in test mode."""
+
+    job_id: str
+    task_name: str
+    args: tuple
+    kwargs: dict
+    return_value: Any = None
+    error: Exception | None = None
+    traceback: str | None = None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.error is None
+
+    @property
+    def failed(self) -> bool:
+        return self.error is not None
+
+
+class TestResults(list):
+    """List of TestResult with convenience query methods."""
+
+    def filter(self, task_name: str | None = None, succeeded: bool | None = None) -> TestResults:
+        out = TestResults()
+        for r in self:
+            if task_name is not None and r.task_name != task_name:
+                continue
+            if succeeded is not None and r.succeeded != succeeded:
+                continue
+            out.append(r)
+        return out
+
+    @property
+    def succeeded(self) -> TestResults:
+        return self.filter(succeeded=True)
+
+    @property
+    def failed(self) -> TestResults:
+        return self.filter(succeeded=False)
+
+
+class TestMode:
+    """Context manager that intercepts enqueue() to run tasks synchronously.
+
+    Tasks execute eagerly in the calling thread — no worker, no Rust, no SQLite.
+    Chain, group, and chord work correctly because they call enqueue() internally.
+    """
+
+    def __init__(self, queue: Queue, propagate_errors: bool = False):
+        """
+        Args:
+            queue: The Queue instance to put into test mode.
+            propagate_errors: If True, re-raise task exceptions immediately
+                instead of capturing them in TestResult.error.
+        """
+        self._queue = queue
+        self._propagate = propagate_errors
+        self._results = TestResults()
+        self._patches: list[Any] = []
+        self._job_counter = 0
+
+    def __enter__(self) -> TestResults:
+        def test_enqueue(
+            task_name: str,
+            args: tuple = (),
+            kwargs: dict | None = None,
+            **enqueue_kwargs: Any,
+        ) -> Any:
+            return self._execute_task(task_name, args, kwargs or {}, enqueue_kwargs)
+
+        p = patch.object(self._queue, "enqueue", side_effect=test_enqueue)
+        self._patches.append(p)
+        p.start()
+        return self._results
+
+    def __exit__(self, *exc_info: Any) -> None:
+        for p in self._patches:
+            p.stop()
+        self._patches.clear()
+
+    def _execute_task(
+        self,
+        task_name: str,
+        args: tuple,
+        kwargs: dict,
+        enqueue_kwargs: dict,
+    ) -> Any:
+        self._job_counter += 1
+        job_id = f"test-{self._job_counter:06d}"
+
+        fn = self._queue._task_registry.get(task_name)
+        if fn is None:
+            raise KeyError(f"Task '{task_name}' not found in registry")
+
+        # Set up context so current_job works inside tasks
+        from taskito.context import _clear_context, _set_context
+
+        queue_name = enqueue_kwargs.get("queue", "default")
+        _set_context(
+            job_id=job_id,
+            task_name=task_name,
+            retry_count=0,
+            queue_name=queue_name if queue_name else "default",
+        )
+
+        result = TestResult(
+            job_id=job_id,
+            task_name=task_name,
+            args=args,
+            kwargs=kwargs,
+        )
+
+        try:
+            ret = fn(*args, **kwargs)
+            result.return_value = ret
+        except Exception as exc:
+            result.error = exc
+            result.traceback = traceback.format_exc()
+            if self._propagate:
+                raise
+        finally:
+            _clear_context()
+
+        self._results.append(result)
+
+        # Return a fake JobResult-like object so chains/groups work
+        return _FakeJobResult(result)
+
+
+class _FakeJobResult:
+    """Minimal stand-in for JobResult during test mode."""
+
+    def __init__(self, test_result: TestResult):
+        self._tr = test_result
+
+    @property
+    def id(self) -> str:
+        return self._tr.job_id
+
+    @property
+    def status(self) -> str:
+        return "complete" if self._tr.succeeded else "failed"
+
+    @property
+    def error(self) -> str | None:
+        return str(self._tr.error) if self._tr.error else None
+
+    @property
+    def progress(self) -> int | None:
+        return 100 if self._tr.succeeded else None
+
+    def result(self, timeout: float = 30.0, **kwargs: Any) -> Any:
+        if self._tr.error:
+            raise RuntimeError(
+                f"Job {self._tr.job_id} failed: {self._tr.error}"
+            )
+        return self._tr.return_value
+
+    async def aresult(self, timeout: float = 30.0, **kwargs: Any) -> Any:
+        return self.result(timeout=timeout)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self._tr.job_id,
+            "task_name": self._tr.task_name,
+            "status": self.status,
+            "error": self.error,
+        }
+
+    def __repr__(self) -> str:
+        return f"<_FakeJobResult id={self._tr.job_id} status={self.status}>"

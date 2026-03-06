@@ -1,5 +1,9 @@
 # taskito
 
+[![PyPI version](https://img.shields.io/pypi/v/taskito.svg)](https://pypi.org/project/taskito/)
+[![Python versions](https://img.shields.io/pypi/pyversions/taskito.svg)](https://pypi.org/project/taskito/)
+[![License](https://img.shields.io/pypi/l/taskito.svg)](https://github.com/pratyush618/taskito/blob/master/LICENSE)
+
 A Rust-powered task queue for Python. No broker required — just SQLite.
 
 ```
@@ -8,8 +12,9 @@ pip install taskito
 
 ## Quickstart
 
+**1. Define tasks** in `tasks.py`:
+
 ```python
-import threading
 from taskito import Queue
 
 queue = Queue(db_path="tasks.db")
@@ -17,12 +22,20 @@ queue = Queue(db_path="tasks.db")
 @queue.task()
 def add(a: int, b: int) -> int:
     return a + b
+```
+
+**2. Start a worker** in one terminal:
+
+```bash
+taskito worker --app tasks:queue
+```
+
+**3. Enqueue jobs** from another terminal or script:
+
+```python
+from tasks import add
 
 job = add.delay(2, 3)
-
-t = threading.Thread(target=queue.run_worker, daemon=True)
-t.start()
-
 print(job.result(timeout=10))  # 5
 ```
 
@@ -42,11 +55,19 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 - **Task workflows** — `chain`, `group`, `chord` primitives
 - **Periodic tasks** — cron scheduling with seconds granularity
 - **Progress tracking** — report and read progress from inside tasks
-- **Job cancellation** — cancel pending jobs before execution
+- **Job cancellation** — cancel pending or running jobs
 - **Unique tasks** — deduplicate active jobs by key
 - **Batch enqueue** — `task.map()` for high-throughput bulk inserts
 - **Named queues** — route tasks to isolated queues
 - **Hooks** — before/after/success/failure middleware
+- **Per-task middleware** — `TaskMiddleware` with `before`/`after`/`on_retry` hooks
+- **Pluggable serializers** — `CloudpickleSerializer` (default), `JsonSerializer`, or custom
+- **Cancel running tasks** — cooperative cancellation with `check_cancelled()`
+- **Soft timeouts** — `check_timeout()` inside tasks
+- **Worker heartbeat** — monitor worker health via `queue.workers()`
+- **Job expiration** — `expires` parameter for time-sensitive jobs
+- **Exception filtering** — `retry_on` / `dont_retry_on` for selective retries
+- **OpenTelemetry** — optional tracing integration via `pip install taskito[otel]`
 - **Async support** — `await job.aresult()`, `await queue.astats()`
 - **Web dashboard** — `taskito dashboard --app myapp:queue` serves a built-in monitoring UI
 - **FastAPI integration** — `TaskitoRouter` for instant REST API over the queue
@@ -131,6 +152,36 @@ def alert_on_failure(task_name, args, kwargs, error):
     slack.post(f"Task {task_name} failed: {error}")
 ```
 
+### Exception Filtering
+
+```python
+@queue.task(
+    max_retries=5,
+    retry_on=[ConnectionError, TimeoutError],
+    dont_retry_on=[ValueError],
+)
+def fetch_data(url: str) -> dict:
+    return requests.get(url).json()
+```
+
+### Per-Task Middleware
+
+```python
+from taskito import TaskMiddleware
+
+class TimingMiddleware(TaskMiddleware):
+    def before(self, ctx):
+        ctx._start = time.time()
+
+    def after(self, ctx, result, error):
+        elapsed = time.time() - ctx._start
+        print(f"{ctx.task_name} took {elapsed:.2f}s")
+
+@queue.task(middleware=[TimingMiddleware()])
+def process(data):
+    ...
+```
+
 ### Delayed Scheduling
 
 ```python
@@ -170,11 +221,24 @@ result = await job.aresult(timeout=30)
 stats = await queue.astats()
 ```
 
+## Testing
+
+taskito includes a built-in test mode — no worker needed:
+
+```python
+def test_add():
+    with queue.test_mode() as results:
+        add.delay(2, 3)
+        assert results[0].return_value == 5
+```
+
 ## Documentation
 
 Full documentation with guides, API reference, architecture diagrams, and examples:
 
 **[Read the docs →](https://taskito-sepia.vercel.app)**
+
+Coming from Celery? See the **[Migration Guide](https://taskito-sepia.vercel.app/guide/migration/)**.
 
 ## Comparison
 
@@ -189,6 +253,9 @@ Full documentation with guides, API reference, architecture diagrams, and exampl
 | Task chaining | **Yes** | Yes | No | Yes | No |
 | Built-in dashboard | **Yes** | No | No | No | No |
 | FastAPI integration | **Yes** | No | No | No | No |
+| Per-task middleware | **Yes** | No | No | Yes | No |
+| Cancel running tasks | **Yes** | Yes | No | No | No |
+| Custom serializers | **Yes** | Yes | No | No | No |
 | Setup | **`pip install`** | Broker + backend | Redis | Broker | Redis |
 
 ## License

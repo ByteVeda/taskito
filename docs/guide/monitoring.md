@@ -95,6 +95,24 @@ def my_task():
 !!! warning
     `current_job` properties raise `RuntimeError` when accessed outside of a running task.
 
+## Worker Heartbeat
+
+Monitor active workers and their health:
+
+```python
+workers = queue.workers()
+for w in workers:
+    print(f"Worker {w['worker_id']}: {w['status']} (last seen: {w['last_heartbeat']})")
+```
+
+Async variant:
+
+```python
+workers = await queue.aworkers()
+```
+
+The worker heartbeat is also available via the dashboard REST API at `GET /api/workers`. See the [Dashboard](dashboard.md) guide for details.
+
 ## Hooks
 
 Run code before/after every task, or on success/failure.
