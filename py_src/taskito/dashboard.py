@@ -25,7 +25,9 @@ if TYPE_CHECKING:
 
 def _load_spa_html() -> str:
     """Load the dashboard SPA HTML from the bundled template file."""
-    return resources.files("taskito").joinpath("templates/dashboard.html").read_text(encoding="utf-8")
+    return (
+        resources.files("taskito").joinpath("templates/dashboard.html").read_text(encoding="utf-8")
+    )
 
 
 _SPA_HTML: str | None = None
@@ -106,7 +108,9 @@ def _make_handler(queue: Queue) -> type:
                 level = qs.get("level", [None])[0]
                 since = int(qs.get("since", ["3600"])[0])
                 limit = int(qs.get("limit", ["100"])[0])
-                self._json_response(queue.query_logs(task_name=task, level=level, since=since, limit=limit))
+                self._json_response(
+                    queue.query_logs(task_name=task, level=level, since=since, limit=limit)
+                )
             elif path == "/api/circuit-breakers":
                 self._json_response(queue.circuit_breakers())
             elif path == "/api/workers":

@@ -181,9 +181,7 @@ class _FakeJobResult:
 
     def result(self, timeout: float = 30.0, **kwargs: Any) -> Any:
         if self._tr.error:
-            raise RuntimeError(
-                f"Job {self._tr.job_id} failed: {self._tr.error}"
-            )
+            raise RuntimeError(f"Job {self._tr.job_id} failed: {self._tr.error}")
         return self._tr.return_value
 
     async def aresult(self, timeout: float = 30.0, **kwargs: Any) -> Any:

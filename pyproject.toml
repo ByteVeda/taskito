@@ -23,7 +23,7 @@ module-name = "taskito._taskito"
 features = ["pyo3/extension-module"]
 
 [project.scripts]
-taskito = "taskito.cli:main"
+taskito = "taskito.cli:main"    
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
