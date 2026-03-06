@@ -1,0 +1,120 @@
+[project]
+site_name = "taskito"
+site_description = "Rust-powered task queue for Python. No broker required."
+site_url = "https://taskito-sepia.vercel.app"
+repo_url = "https://github.com/pratyush618/taskito"
+repo_name = "pratyush618/taskito"
+
+extra_javascript = ["assets/js/copy-markdown.js"]
+extra_css = ["assets/css/custom.css"]
+
+nav = [
+    { "Home" = "index.md" },
+    { "Getting Started" = [
+        { "Installation" = "getting-started/installation.md" },
+        { "Quickstart" = "getting-started/quickstart.md" },
+    ] },
+    { "User Guide" = [
+        { "Tasks" = "guide/tasks.md" },
+        { "Queues & Priority" = "guide/queues.md" },
+        { "Workers" = "guide/workers.md" },
+        { "Retries & Dead Letters" = "guide/retries.md" },
+        { "Rate Limiting" = "guide/rate-limiting.md" },
+        { "Workflows" = "guide/workflows.md" },
+        { "Dependencies" = "guide/dependencies.md" },
+        { "Scheduling" = "guide/scheduling.md" },
+        { "Monitoring & Hooks" = "guide/monitoring.md" },
+        { "Web Dashboard" = "guide/dashboard.md" },
+        { "Testing" = "guide/testing.md" },
+        { "Error Handling" = "guide/error-handling.md" },
+        { "Deployment" = "guide/deployment.md" },
+        { "Migrating from Celery" = "guide/migration.md" },
+        { "Advanced" = "guide/advanced.md" },
+    ] },
+    { "Architecture" = "architecture.md" },
+    { "API Reference" = [
+        { "Queue" = "api/queue.md" },
+        { "TaskWrapper" = "api/task.md" },
+        { "JobResult" = "api/result.md" },
+        { "Canvas" = "api/canvas.md" },
+        { "JobContext" = "api/context.md" },
+        { "Testing" = "api/testing.md" },
+        { "CLI" = "api/cli.md" },
+    ] },
+    { "Examples" = [
+        { "Web Scraper Pipeline" = "examples/web-scraper.md" },
+        { "FastAPI Service" = "examples/fastapi-service.md" },
+        { "Data Pipeline" = "examples/data-pipeline.md" },
+        { "Notification Service" = "examples/notifications.md" },
+        { "Benchmark" = "examples/benchmark.md" },
+    ] },
+    { "Comparison" = "comparison.md" },
+    { "FAQ" = "faq.md" },
+    { "Changelog" = "changelog.md" },
+]
+
+[project.theme]
+name = "material"
+features = [
+    "navigation.instant",
+    "navigation.tracking",
+    "navigation.sections",
+    "navigation.expand",
+    "navigation.top",
+    "content.code.copy",
+    "content.code.annotate",
+    "content.tabs.link",
+    "search.highlight",
+    "search.suggest",
+    "toc.follow",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "deep purple"
+accent = "amber"
+toggle = { icon = "material/brightness-7", name = "Switch to dark mode" }
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "deep purple"
+accent = "amber"
+toggle = { icon = "material/brightness-4", name = "Switch to light mode" }
+
+[project.theme.font]
+text = "Inter"
+code = "JetBrains Mono"
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[project.markdown_extensions]
+admonition = {}
+"pymdownx.details" = {}
+"pymdownx.superfences" = { custom_fences = [
+    { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+] }
+"pymdownx.tabbed" = { alternate_style = true }
+"pymdownx.highlight" = { anchor_linenums = true, line_spans = "__span", pygments_lang_class = true }
+"pymdownx.inlinehilite" = {}
+"pymdownx.snippets" = {}
+"pymdownx.mark" = {}
+"pymdownx.keys" = {}
+"pymdownx.emoji" = { emoji_index = "zensical.extensions.emoji.twemoji", emoji_generator = "zensical.extensions.emoji.to_svg" }
+attr_list = {}
+md_in_html = {}
+tables = {}
+toc = { permalink = true }
+def_list = {}
+"pymdownx.tasklist" = { custom_checkbox = true }
+
+[project.plugins]
+search = {}
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/pratyush618/taskito"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/python"
+link = "https://pypi.org/project/taskito/"
