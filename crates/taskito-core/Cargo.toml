@@ -15,6 +15,7 @@ crossbeam-channel = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 cron = { workspace = true }
+log = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -105,3 +105,5 @@ taskito info --app tasks:queue --watch
 - [Workers](../guide/workers.md) — CLI flags, graceful shutdown, worker count
 - [Retries](../guide/retries.md) — exponential backoff, dead letter queue
 - [Workflows](../guide/workflows.md) — chain, group, chord
+- [Testing](../guide/testing.md) — run tasks synchronously in tests with `queue.test_mode()`
+- [Migrating from Celery](../guide/migration.md) — concept mapping and side-by-side examples

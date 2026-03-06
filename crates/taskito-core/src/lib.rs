@@ -2,14 +2,12 @@ pub mod job;
 pub mod error;
 pub mod storage;
 pub mod scheduler;
-pub mod retry;
-pub mod dlq;
-pub mod rate_limiter;
 pub mod periodic;
+pub mod resilience;
 
-pub use job::{Job, JobStatus, NewJob};
+// Primary public API — the types most consumers need.
 pub use error::QueueError;
+pub use job::{Job, JobStatus, NewJob};
+pub use scheduler::{Scheduler, SchedulerConfig};
 pub use storage::sqlite::SqliteStorage;
-pub use scheduler::Scheduler;
-pub use retry::RetryPolicy;
-pub use rate_limiter::RateLimiter;
+pub use storage::Storage;

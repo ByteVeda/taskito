@@ -3,7 +3,7 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
@@ -22,7 +22,8 @@ impl WorkerPool {
         num_workers: usize,
         job_rx: Receiver<Job>,
         result_tx: Sender<JobResult>,
-        task_registry: Arc<PyObject>, // Python dict: {task_name: callable}
+        task_registry: Arc<PyObject>,
+        retry_filters: Arc<PyObject>,
     ) -> Self {
         let mut handles = Vec::with_capacity(num_workers);
 
@@ -30,9 +31,10 @@ impl WorkerPool {
             let rx = job_rx.clone();
             let tx = result_tx.clone();
             let registry = task_registry.clone();
+            let filters = retry_filters.clone();
 
             let handle = thread::spawn(move || {
-                worker_loop(worker_id, rx, tx, registry);
+                worker_loop(worker_id, rx, tx, registry, filters);
             });
 
             handles.push(handle);
@@ -54,6 +56,7 @@ fn worker_loop(
     job_rx: Receiver<Job>,
     result_tx: Sender<JobResult>,
     task_registry: Arc<PyObject>,
+    retry_filters: Arc<PyObject>,
 ) {
     while let Ok(job) = job_rx.recv() {
         let job_id = job.id.clone();
@@ -61,23 +64,50 @@ fn worker_loop(
         let retry_count = job.retry_count;
         let max_retries = job.max_retries;
 
+        let start = std::time::Instant::now();
+
         let result = Python::with_gil(|py| -> PyResult<Option<Vec<u8>>> {
             execute_task(py, &task_registry, &job)
         });
+
+        let wall_time_ns = start.elapsed().as_nanos() as i64;
 
         let job_result = match result {
             Ok(result_bytes) => JobResult::Success {
                 job_id,
                 result: result_bytes,
+                task_name: task_name.clone(),
+                wall_time_ns,
             },
             Err(e) => {
-                let error_msg = Python::with_gil(|py| format_python_error(py, &e));
-                JobResult::Failure {
-                    job_id,
-                    error: error_msg,
-                    retry_count,
-                    max_retries,
-                    task_name,
+                let (error_msg, is_cancelled, exc_class_name) = Python::with_gil(|py| {
+                    let msg = format_python_error(py, &e);
+                    let cancelled = is_cancelled_error(py, &e);
+                    let class_name = get_exception_class_name(py, &e);
+                    (msg, cancelled, class_name)
+                });
+
+                if is_cancelled {
+                    JobResult::Cancelled {
+                        job_id,
+                        task_name,
+                        wall_time_ns,
+                    }
+                } else {
+                    // Determine should_retry based on retry_on/dont_retry_on filters
+                    let should_retry = Python::with_gil(|py| {
+                        check_should_retry(py, &retry_filters, &task_name, &exc_class_name, &e)
+                    });
+
+                    JobResult::Failure {
+                        job_id,
+                        error: error_msg,
+                        retry_count,
+                        max_retries,
+                        task_name,
+                        wall_time_ns,
+                        should_retry,
+                    }
                 }
             }
         };
@@ -164,4 +194,84 @@ fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
         }
     }
     format!("{e}")
+}
+
+/// Check if the Python exception is a TaskCancelledError.
+fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
+    if let Ok(exceptions_mod) = py.import_bound("taskito.exceptions") {
+        if let Ok(cancelled_cls) = exceptions_mod.getattr("TaskCancelledError") {
+            return e.get_type_bound(py).is_subclass(&cancelled_cls).unwrap_or(false);
+        }
+    }
+    false
+}
+
+/// Get the fully-qualified class name of a Python exception.
+fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
+    let type_obj = e.get_type_bound(py);
+    let module = type_obj.getattr("__module__")
+        .and_then(|m| m.extract::<String>())
+        .unwrap_or_default();
+    let qualname = type_obj.getattr("__qualname__")
+        .and_then(|q| q.extract::<String>())
+        .unwrap_or_else(|_| "Exception".to_string());
+
+    if module.is_empty() || module == "builtins" {
+        qualname
+    } else {
+        format!("{module}.{qualname}")
+    }
+}
+
+/// Check the retry_filters dict to determine if an exception should be retried.
+/// Returns true by default (retry everything unless filtered).
+fn check_should_retry(
+    py: Python<'_>,
+    retry_filters: &PyObject,
+    task_name: &str,
+    _exc_class_name: &str,
+    exc: &PyErr,
+) -> bool {
+    let filters = retry_filters.bind(py);
+    let filters_dict: &Bound<'_, PyDict> = match filters.downcast() {
+        Ok(d) => d,
+        Err(_) => return true,
+    };
+
+    let task_filters = match filters_dict.get_item(task_name) {
+        Ok(Some(f)) => f,
+        _ => return true, // No filters for this task
+    };
+
+    let task_dict: &Bound<'_, PyDict> = match task_filters.downcast() {
+        Ok(d) => d,
+        Err(_) => return true,
+    };
+
+    // Check dont_retry_on first
+    if let Ok(Some(dont_retry)) = task_dict.get_item("dont_retry_on") {
+        if let Ok(list) = dont_retry.downcast::<PyList>() {
+            for cls in list.iter() {
+                if exc.get_type_bound(py).is_subclass(&cls).unwrap_or(false) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Check retry_on (if set, only retry for these exceptions)
+    if let Ok(Some(retry_on)) = task_dict.get_item("retry_on") {
+        if let Ok(list) = retry_on.downcast::<PyList>() {
+            if !list.is_empty() {
+                for cls in list.iter() {
+                    if exc.get_type_bound(py).is_subclass(&cls).unwrap_or(false) {
+                        return true;
+                    }
+                }
+                return false; // retry_on specified but exception doesn't match
+            }
+        }
+    }
+
+    true // Default: retry
 }

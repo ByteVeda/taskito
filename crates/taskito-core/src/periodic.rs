@@ -13,7 +13,7 @@ pub fn next_cron_time(cron_expr: &str, after_ms: i64) -> Result<i64> {
     })?;
 
     let after_dt = chrono::DateTime::from_timestamp_millis(after_ms)
-        .unwrap_or_else(|| Utc::now());
+        .unwrap_or_else(Utc::now);
 
     let next = schedule
         .after(&after_dt)

@@ -27,17 +27,6 @@ class TaskWrapper:
         default_max_retries: int,
         default_timeout: int,
     ):
-        """Initialize a task wrapper around a decorated function.
-
-        Args:
-            fn: The original decorated function.
-            queue_ref: The parent Queue instance.
-            task_name: Registered name for this task.
-            default_priority: Default priority level.
-            default_queue: Default queue name.
-            default_max_retries: Default max retry attempts.
-            default_timeout: Default timeout in seconds.
-        """
         self._fn = fn
         self._queue = queue_ref
         self._task_name = task_name
@@ -59,19 +48,6 @@ class TaskWrapper:
         """Enqueue this task for background execution.
 
         Shorthand for :meth:`apply_async` using the task's default options.
-        Pass arguments exactly as you would call the function directly.
-
-        Args:
-            *args: Positional arguments forwarded to the task function.
-            **kwargs: Keyword arguments forwarded to the task function.
-
-        Returns:
-            A :class:`~taskito.result.JobResult` handle for tracking the job.
-
-        Example::
-
-            job = send_email.delay("user@example.com", subject="Hello")
-            print(job.result(timeout=30))
         """
         return self._queue.enqueue(
             task_name=self._task_name,
@@ -95,11 +71,10 @@ class TaskWrapper:
         unique_key: str | None = None,
         metadata: str | None = None,
         depends_on: str | list[str] | None = None,
+        expires: float | None = None,
+        result_ttl: int | None = None,
     ) -> JobResult:
         """Enqueue with full control over submission options.
-
-        Use this instead of :meth:`delay` when you need to override
-        priority, set a delay, attach metadata, or declare dependencies.
 
         Args:
             args: Positional arguments to pass to the task.
@@ -109,28 +84,11 @@ class TaskWrapper:
             queue: Override the default queue name.
             max_retries: Override the default max retry count.
             timeout: Override the default timeout in seconds.
-            unique_key: Deduplication key. If a pending or running job with
-                the same key exists, returns that job instead.
+            unique_key: Deduplication key.
             metadata: Arbitrary JSON string to attach to the job.
-            depends_on: Job ID or list of job IDs that must complete before
-                this job runs. If any dependency fails, this job is
-                cascade-cancelled.
-
-        Returns:
-            A :class:`~taskito.result.JobResult` handle for the created
-            (or deduplicated) job.
-
-        Raises:
-            ValueError: If *depends_on* references a non-existent job ID.
-
-        Example::
-
-            job = send_email.apply_async(
-                args=("user@example.com",),
-                priority=10,
-                delay=60,
-                unique_key="welcome:user_123",
-            )
+            depends_on: Job ID or list of job IDs that must complete first.
+            expires: Seconds until the job expires (skipped if not started by then).
+            result_ttl: Per-job result TTL in seconds.
         """
         return self._queue.enqueue(
             task_name=self._task_name,
@@ -144,17 +102,12 @@ class TaskWrapper:
             unique_key=unique_key,
             metadata=metadata,
             depends_on=depends_on,
+            expires=expires,
+            result_ttl=result_ttl,
         )
 
     def map(self, iterable: list[tuple]) -> list[JobResult]:
-        """Enqueue one job per item in a single batch transaction.
-
-        Args:
-            iterable: List of argument tuples, one per job.
-
-        Returns:
-            List of JobResult handles.
-        """
+        """Enqueue one job per item in a single batch transaction."""
         return self._queue.enqueue_many(
             task_name=self._task_name,
             args_list=iterable,
@@ -165,44 +118,16 @@ class TaskWrapper:
         )
 
     def s(self, *args: Any, **kwargs: Any) -> Signature:
-        """Create a mutable :class:`~taskito.canvas.Signature`.
-
-        In a :class:`~taskito.canvas.chain`, the previous task's return
-        value is prepended to *args* automatically.
-
-        Args:
-            *args: Positional arguments for the task.
-            **kwargs: Keyword arguments for the task.
-
-        Returns:
-            A :class:`~taskito.canvas.Signature` instance.
-
-        Example::
-
-            chain(fetch.s(url), parse.s(), store.s()).apply()
-        """
+        """Create a mutable :class:`~taskito.canvas.Signature`."""
         from taskito.canvas import Signature
 
         return Signature(task=self, args=args, kwargs=kwargs)
 
     def si(self, *args: Any, **kwargs: Any) -> Signature:
-        """Create an immutable :class:`~taskito.canvas.Signature`.
-
-        Unlike :meth:`s`, the previous task's return value is **not**
-        prepended — the signature always runs with exactly the given args.
-
-        Args:
-            *args: Positional arguments for the task.
-            **kwargs: Keyword arguments for the task.
-
-        Returns:
-            A :class:`~taskito.canvas.Signature` instance with
-            ``immutable=True``.
-        """
+        """Create an immutable :class:`~taskito.canvas.Signature`."""
         from taskito.canvas import Signature
 
         return Signature(task=self, args=args, kwargs=kwargs, immutable=True)
 
     def __repr__(self) -> str:
-        """Return a developer-friendly string representation."""
         return f"<TaskWrapper '{self._task_name}'>"

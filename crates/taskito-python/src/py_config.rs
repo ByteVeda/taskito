@@ -18,12 +18,18 @@ pub struct PyTaskConfig {
     pub rate_limit: Option<String>,
     #[pyo3(get, set)]
     pub queue: String,
+    #[pyo3(get, set)]
+    pub circuit_breaker_threshold: Option<i32>,
+    #[pyo3(get, set)]
+    pub circuit_breaker_window: Option<i64>,
+    #[pyo3(get, set)]
+    pub circuit_breaker_cooldown: Option<i64>,
 }
 
 #[pymethods]
 impl PyTaskConfig {
     #[new]
-    #[pyo3(signature = (name, max_retries=3, retry_backoff=1.0, timeout=300, priority=0, rate_limit=None, queue="default".to_string()))]
+    #[pyo3(signature = (name, max_retries=3, retry_backoff=1.0, timeout=300, priority=0, rate_limit=None, queue="default".to_string(), circuit_breaker_threshold=None, circuit_breaker_window=None, circuit_breaker_cooldown=None))]
     pub fn new(
         name: String,
         max_retries: i32,
@@ -32,6 +38,9 @@ impl PyTaskConfig {
         priority: i32,
         rate_limit: Option<String>,
         queue: String,
+        circuit_breaker_threshold: Option<i32>,
+        circuit_breaker_window: Option<i64>,
+        circuit_breaker_cooldown: Option<i64>,
     ) -> Self {
         Self {
             name,
@@ -41,6 +50,9 @@ impl PyTaskConfig {
             priority,
             rate_limit,
             queue,
+            circuit_breaker_threshold,
+            circuit_breaker_window,
+            circuit_breaker_cooldown,
         }
     }
 }

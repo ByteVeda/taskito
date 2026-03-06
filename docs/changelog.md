@@ -2,6 +2,49 @@
 
 All notable changes to taskito are documented here.
 
+## 0.2.0
+
+### Core Reliability
+
+- **Exception hierarchy** (F8) — `TaskitoError` base class with `TaskTimeoutError`, `SoftTimeoutError`, `TaskCancelledError`, `MaxRetriesExceededError`, `SerializationError`, `CircuitBreakerOpenError`, `RateLimitExceededError`, `JobNotFoundError`, `QueueError`
+- **Pluggable serializers** (F2) — `CloudpickleSerializer` (default), `JsonSerializer`, or custom `Serializer` protocol
+- **Exception filtering** (F1) — `retry_on` and `dont_retry_on` parameters for selective retries
+- **Cancel running tasks** (F3) — cooperative cancellation with `queue.cancel_running_job()` and `current_job.check_cancelled()`
+- **Soft timeouts** (F4) — `soft_timeout` parameter with `current_job.check_timeout()` for cooperative time limits
+
+### Developer Experience
+
+- **Per-task middleware** (F5) — `TaskMiddleware` base class with `before()`, `after()`, `on_retry()` hooks; queue-level and per-task registration
+- **Worker heartbeat** (F6) — `queue.workers()` / `await queue.aworkers()` to monitor worker health; `GET /api/workers` dashboard endpoint; `workers` table in schema
+- **Job expiration** (F7) — `expires` parameter on `apply_async()` to skip time-sensitive jobs that weren't started in time
+- **Result TTL per job** (F11) — `result_ttl` parameter on `apply_async()` to override global cleanup policy per job
+
+### Power Features
+
+- **chunks / starmap** (F9) — `chunks(task, items, chunk_size)` and `starmap(task, args_list)` canvas primitives
+- **Group concurrency** (F10) — `max_concurrency` parameter on `group()` to limit parallel execution
+- **OpenTelemetry** (F12) — `OpenTelemetryMiddleware` for distributed tracing; install with `pip install taskito[otel]`
+
+---
+
+## 0.1.1
+
+### Features
+
+- **Web dashboard** -- `taskito dashboard --app myapp:queue` serves a built-in monitoring UI with dark mode, auto-refresh, job detail views, and dead letter management
+- **FastAPI integration** -- `TaskitoRouter` provides a pre-built `APIRouter` with endpoints for stats, job status, progress streaming (SSE), and dead letter management
+- **Testing utilities** -- `queue.test_mode()` context manager for running tasks synchronously without a worker; includes `TestResult`, `TestResults` with filtering
+- **CLI dashboard command** -- `taskito dashboard` command with `--host` and `--port` options
+- **Celery-style worker banner** -- Worker startup now displays registered tasks, queues, and configuration
+- **Async result awaiting** -- `await job.aresult()` for non-blocking result fetching
+
+### Changes
+
+- Renamed `python/` to `py_src/` and `rust/` to `crates/` for clearer project structure
+- Default `db_path` now uses `.taskito/` directory, with automatic directory creation
+
+---
+
 ## 0.1.0
 
 *Initial release*

@@ -14,4 +14,5 @@ crossbeam-channel = "0.5"
 thiserror = "1"
 chrono = "0.4"
 cron = "0.13"
+log = "0.4"
 pyo3 = { version = "0.22", features = ["extension-module"] }

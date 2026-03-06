@@ -61,6 +61,9 @@ pub struct Job {
     pub unique_key: Option<String>,
     pub progress: Option<i32>,
     pub metadata: Option<String>,
+    pub cancel_requested: bool,
+    pub expires_at: Option<i64>,
+    pub result_ttl_ms: Option<i64>,
 }
 
 impl From<JobRow> for Job {
@@ -84,6 +87,9 @@ impl From<JobRow> for Job {
             unique_key: row.unique_key,
             progress: row.progress,
             metadata: row.metadata,
+            cancel_requested: row.cancel_requested != 0,
+            expires_at: row.expires_at,
+            result_ttl_ms: row.result_ttl_ms,
         }
     }
 }
@@ -100,6 +106,8 @@ pub struct NewJob {
     pub unique_key: Option<String>,
     pub metadata: Option<String>,
     pub depends_on: Vec<String>,
+    pub expires_at: Option<i64>,
+    pub result_ttl_ms: Option<i64>,
 }
 
 impl NewJob {
@@ -124,6 +132,9 @@ impl NewJob {
             unique_key: self.unique_key,
             progress: None,
             metadata: self.metadata,
+            cancel_requested: false,
+            expires_at: self.expires_at,
+            result_ttl_ms: self.result_ttl_ms,
         }
     }
 }

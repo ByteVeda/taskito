@@ -34,31 +34,33 @@ class JobResult:
         """The unique job ID."""
         return self._py_job.id
 
-    @property
-    def status(self) -> str:
-        """
-        Current job status. Fetches fresh from the database.
-        Returns one of: "pending", "running", "complete", "failed", "dead", "cancelled".
+    def refresh(self) -> None:
+        """Refresh job state from the database.
+
+        Call this before reading ``status``, ``progress``, or ``error``
+        to get the latest values. Properties return the last-fetched
+        state and do **not** hit the database automatically.
         """
         refreshed = self._queue._inner.get_job(self._py_job.id)
         if refreshed is not None:
             self._py_job = refreshed
+
+    @property
+    def status(self) -> str:
+        """
+        Last-fetched job status. Call :meth:`refresh` first for the latest value.
+        Returns one of: "pending", "running", "complete", "failed", "dead", "cancelled".
+        """
         return self._py_job.status
 
     @property
     def progress(self) -> int | None:
-        """Current progress (0-100) if reported by the task."""
-        refreshed = self._queue._inner.get_job(self._py_job.id)
-        if refreshed is not None:
-            self._py_job = refreshed
+        """Last-fetched progress (0-100). Call :meth:`refresh` for the latest value."""
         return self._py_job.progress
 
     @property
     def error(self) -> str | None:
-        """Error message if the job failed."""
-        refreshed = self._queue._inner.get_job(self._py_job.id)
-        if refreshed is not None:
-            self._py_job = refreshed
+        """Last-fetched error message. Call :meth:`refresh` for the latest value."""
         return self._py_job.error
 
     @property
@@ -69,12 +71,30 @@ class JobResult:
     @property
     def dependencies(self) -> list[str]:
         """IDs of jobs this job depends on."""
-        return self._queue._inner.get_dependencies(self.id)
+        return self._queue._inner.get_dependencies(self.id)  # type: ignore[no-any-return]
 
     @property
     def dependents(self) -> list[str]:
         """IDs of jobs that depend on this job."""
-        return self._queue._inner.get_dependents(self.id)
+        return self._queue._inner.get_dependents(self.id)  # type: ignore[no-any-return]
+
+    def _poll_once(self) -> tuple[str, Any]:
+        """Refresh and return (status, deserialized result or None)."""
+        self.refresh()
+        status = self._py_job.status
+
+        if status == "complete":
+            result_bytes = self._py_job.result_bytes
+            if result_bytes is None:
+                return status, None
+            return status, cloudpickle.loads(result_bytes)
+
+        if status in ("failed", "dead"):
+            raise RuntimeError(
+                f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}"
+            )
+
+        return status, None
 
     def result(
         self,
@@ -104,20 +124,9 @@ class JobResult:
         current_interval = poll_interval
 
         while time.monotonic() < deadline:
-            refreshed = self._queue._inner.get_job(self._py_job.id)
-            if refreshed is not None:
-                self._py_job = refreshed
-
-            status = self._py_job.status
+            status, value = self._poll_once()
             if status == "complete":
-                result_bytes = self._py_job.result_bytes
-                if result_bytes is None:
-                    return None
-                return cloudpickle.loads(result_bytes)
-            elif status in ("failed", "dead"):
-                raise RuntimeError(
-                    f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}"
-                )
+                return value
 
             time.sleep(current_interval)
             current_interval = min(current_interval * 1.5, max_poll_interval)
@@ -158,20 +167,9 @@ class JobResult:
         current_interval = poll_interval
 
         while time.monotonic() < deadline:
-            refreshed = self._queue._inner.get_job(self._py_job.id)
-            if refreshed is not None:
-                self._py_job = refreshed
-
-            status = self._py_job.status
+            status, value = self._poll_once()
             if status == "complete":
-                result_bytes = self._py_job.result_bytes
-                if result_bytes is None:
-                    return None
-                return cloudpickle.loads(result_bytes)
-            elif status in ("failed", "dead"):
-                raise RuntimeError(
-                    f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}"
-                )
+                return value
 
             await asyncio.sleep(current_interval)
             current_interval = min(current_interval * 1.5, max_poll_interval)
@@ -187,9 +185,7 @@ class JobResult:
         Refreshes the job status from the database before building the dict.
         Does not include ``result_bytes`` (use :meth:`result` for that).
         """
-        refreshed = self._queue._inner.get_job(self._py_job.id)
-        if refreshed is not None:
-            self._py_job = refreshed
+        self.refresh()
 
         return {
             "id": self._py_job.id,

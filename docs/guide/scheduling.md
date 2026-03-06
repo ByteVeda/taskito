@@ -57,12 +57,18 @@ taskito uses **6-field cron expressions** (with seconds):
 
 | Expression | Schedule |
 |---|---|
+| `*/30 * * * * *` | Every 30 seconds |
 | `0 */5 * * * *` | Every 5 minutes |
 | `0 0 * * * *` | Every hour |
-| `0 0 0 * * *` | Every day at midnight |
-| `0 30 9 * * 1-5` | Weekdays at 9:30 AM |
+| `0 30 * * * *` | Every hour at :30 |
 | `0 0 */2 * * *` | Every 2 hours |
-| `*/30 * * * * *` | Every 30 seconds |
+| `0 0 0 * * *` | Every day at midnight |
+| `0 0 9 * * *` | Every day at 9:00 AM |
+| `0 0 9 * * 1-5` | Weekdays at 9:00 AM |
+| `0 30 9 * * 1-5` | Weekdays at 9:30 AM |
+| `0 0 0 1 * *` | First day of every month at midnight |
+| `0 0 0 * * 0` | Every Sunday at midnight |
+| `0 0 0 1 1 *` | January 1st at midnight (yearly) |
 
 ### Decorator Options
 

@@ -19,6 +19,11 @@ How taskito compares to other Python task queues.
 | Retry with backoff | **Yes** (exponential + jitter) | Yes | Yes | Yes | Yes |
 | Periodic/cron tasks | **Yes** (6-field with seconds) | Yes (celery-beat) | Yes (rq-scheduler) | Yes (APScheduler) | Yes |
 | Async support | **Yes** | Yes | No | No | No |
+| Cancel running tasks | **Yes** (cooperative) | Yes (revoke) | No | No | No |
+| Soft timeouts | **Yes** | No | No | No | No |
+| Custom serializers | **Yes** | Yes | No | No | No |
+| Per-task middleware | **Yes** | No | No | Yes | No |
+| OpenTelemetry | **Yes** (optional) | Yes (contrib) | No | No | No |
 | CLI | **Yes** | Yes | Yes | Yes | Yes |
 | Result backend | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite |
 | Setup complexity | **`pip install`** | Broker + backend | Redis server | Broker | Redis server |
@@ -55,10 +60,12 @@ Celery is the most popular Python task queue — battle-tested, feature-rich, an
 | **Configuration** | Constructor params | Settings module or app config |
 | **Worker model** | Rust OS threads | prefork/eventlet/gevent pools |
 | **Distributed** | No (single process) | Yes (multi-server) |
-| **Canvas** | chain, group, chord | chain, group, chord, starmap, chunks, and more |
+| **Canvas** | chain, group, chord, starmap, chunks | chain, group, chord, starmap, chunks, and more |
 
 **Choose taskito** if you want zero-infrastructure simplicity on a single machine.
 **Choose Celery** if you need distributed workers, complex routing, or enterprise features.
+
+Looking to switch? See the [Migrating from Celery](guide/migration.md) guide for a step-by-step walkthrough with side-by-side code examples.
 
 ### vs RQ (Redis Queue)
 
@@ -85,7 +92,7 @@ Dramatiq is a reliable, performance-focused alternative to Celery.
 | **Priority** | Yes | No (FIFO only) |
 | **Rate limiting** | Built-in | Middleware |
 | **DLQ** | Built-in | No |
-| **Middleware** | Hooks (before/after/success/failure) | Full middleware stack |
+| **Middleware** | Hooks + per-task `TaskMiddleware` | Full middleware stack |
 
 **Choose taskito** if you want built-in DLQ and priority without a broker.
 **Choose Dramatiq** if you need a middleware ecosystem and distributed workers.

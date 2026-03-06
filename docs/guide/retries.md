@@ -39,6 +39,32 @@ delay = min(max_delay, base_delay * 2^retry_count) + jitter
 | 4th retry | ~16s |
 | 5th retry | ~32s |
 
+## Exception Filtering
+
+Control which exceptions trigger retries with `retry_on` and `dont_retry_on`:
+
+```python
+@queue.task(
+    max_retries=5,
+    retry_on=[ConnectionError, TimeoutError],
+    dont_retry_on=[ValueError],
+)
+def fetch_data(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+```
+
+| Parameter | Description |
+|---|---|
+| `retry_on` | Whitelist — only retry on these exception types. All others skip straight to DLQ. |
+| `dont_retry_on` | Blacklist — never retry on these exception types, even if retries remain. |
+
+If neither is set, all exceptions trigger retries (default behavior).
+
+!!! note
+    `retry_on` and `dont_retry_on` are mutually exclusive in practice — if `retry_on` is set, only those exceptions are retried regardless of `dont_retry_on`.
+
 ## Retry Flow
 
 ```mermaid
@@ -46,12 +72,14 @@ flowchart TD
     A["Task Execution"] --> B{Success?}
     B -->|Yes| C["Status: Complete<br/>Store result"]
     B -->|No| D["Record error in<br/>job_errors table"]
-    D --> E{"retry_count < max_retries?"}
+    D --> SR{"Exception passes<br/>retry_on / dont_retry_on?"}
+    SR -->|No| I["Move to Dead Letter Queue<br/>Status: Dead"]
+    SR -->|Yes| E{"retry_count < max_retries?"}
     E -->|Yes| F["Calculate backoff delay"]
     F --> G["Status: Pending<br/>retry_count += 1"]
     G --> H["Wait for scheduled time"]
     H --> A
-    E -->|No| I["Move to Dead Letter Queue<br/>Status: Dead"]
+    E -->|No| I
 ```
 
 ## Dead Letter Queue

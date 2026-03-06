@@ -113,14 +113,15 @@ graph LR
 
 ### Database Schema
 
-**5 tables:**
+**6 tables:**
 
 ```sql
 -- Core job storage
 jobs (id, queue, task_name, payload, status, priority,
       created_at, scheduled_at, started_at, completed_at,
       retry_count, max_retries, result, error, timeout_ms,
-      unique_key, progress, metadata)
+      unique_key, progress, metadata,
+      cancel_requested, expires_at, result_ttl_ms)
 
 -- Dead letter queue
 dead_letter (id, original_job_id, queue, task_name,
@@ -135,6 +136,9 @@ periodic_tasks (name, task_name, cron_expr, args, kwargs,
 
 -- Per-attempt error tracking
 job_errors (id, job_id, attempt, error, failed_at)
+
+-- Worker heartbeat tracking
+workers (worker_id, last_heartbeat, queues, status)
 ```
 
 **Key indexes:**
@@ -180,29 +184,25 @@ loop {
 
 ## Serialization
 
-- **Arguments**: `cloudpickle.dumps((args, kwargs))` — supports lambdas, closures, and complex objects
-- **Results**: `cloudpickle.dumps(return_value)` — stored as BLOB in the `result` column
-- **Periodic task args**: Pre-pickled at registration time, stored as BLOBs in `periodic_tasks.args`
+taskito uses a pluggable serializer for task arguments and results. The default is `CloudpickleSerializer`, which supports lambdas, closures, and complex Python objects.
 
-## Rust Crate Structure
+```python
+from taskito import Queue, JsonSerializer
 
+# Use JSON for simpler, cross-language payloads
+queue = Queue(serializer=JsonSerializer())
 ```
-taskito-core/          # Pure Rust, no Python dependency
-  job.rs              # Job, JobStatus, NewJob structs
-  scheduler.rs        # Central async scheduler
-  retry.rs            # Retry policy with exponential backoff
-  rate_limiter.rs     # Token bucket rate limiting
-  dlq.rs              # Dead letter queue operations
-  periodic.rs         # Cron expression parsing
-  error.rs            # Error types
-  storage/
-    sqlite.rs         # Diesel-based SQLite driver
-    schema.rs         # Diesel table! macros
-    models.rs         # Queryable/Insertable structs
 
-taskito-python/        # PyO3 bindings
-  py_queue.rs         # PyQueue class
-  py_job.rs           # PyJob class
-  py_worker.rs        # WorkerPool + task execution
-  py_config.rs        # PyTaskConfig
-```
+**Built-in serializers:**
+
+| Serializer | Format | Best for |
+|---|---|---|
+| `CloudpickleSerializer` (default) | Binary (pickle) | Complex Python objects, lambdas, closures |
+| `JsonSerializer` | JSON | Simple types, cross-language interop, debugging |
+
+**Custom serializers** implement the `Serializer` protocol (`dumps(obj) -> bytes`, `loads(data) -> Any`).
+
+- **Arguments**: `serializer.dumps((args, kwargs))` — stored as BLOB in `payload`
+- **Results**: `serializer.dumps(return_value)` — stored as BLOB in `result`
+- **Periodic task args**: Serialized at registration time, stored as BLOBs in `periodic_tasks.args`
+
