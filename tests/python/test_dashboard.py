@@ -2,9 +2,8 @@
 
 import json
 import threading
-import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 import pytest
 
@@ -33,7 +32,7 @@ def populated_queue(queue):
     """Queue with several jobs enqueued."""
     task_a = None
     task_b = None
-    for name, fn in queue._task_registry.items():
+    for name, _fn in queue._task_registry.items():
         if "task_a" in name:
             task_a = name
         elif "task_b" in name:
@@ -52,14 +51,14 @@ def populated_queue(queue):
 
 def test_list_jobs_returns_all(populated_queue):
     """list_jobs() with no filters returns all jobs."""
-    queue, jobs = populated_queue
+    queue, _ = populated_queue
     result = queue.list_jobs()
     assert len(result) == 8
 
 
 def test_list_jobs_filter_by_queue(populated_queue):
     """list_jobs() can filter by queue name."""
-    queue, jobs = populated_queue
+    queue, _ = populated_queue
     result = queue.list_jobs(queue="email")
     assert len(result) == 3
     for j in result:
@@ -69,7 +68,7 @@ def test_list_jobs_filter_by_queue(populated_queue):
 
 def test_list_jobs_filter_by_status(populated_queue):
     """list_jobs() can filter by status."""
-    queue, jobs = populated_queue
+    queue, _ = populated_queue
     result = queue.list_jobs(status="pending")
     assert len(result) == 8  # all are pending
 
@@ -79,7 +78,7 @@ def test_list_jobs_filter_by_status(populated_queue):
 
 def test_list_jobs_filter_by_task_name(populated_queue):
     """list_jobs() can filter by task name."""
-    queue, jobs = populated_queue
+    queue, _ = populated_queue
     # Find the task_a name
     task_a_name = None
     for name in queue._task_registry:
@@ -93,7 +92,7 @@ def test_list_jobs_filter_by_task_name(populated_queue):
 
 def test_list_jobs_pagination(populated_queue):
     """list_jobs() respects limit and offset."""
-    queue, jobs = populated_queue
+    queue, _ = populated_queue
     page1 = queue.list_jobs(limit=3, offset=0)
     page2 = queue.list_jobs(limit=3, offset=3)
 
@@ -153,8 +152,8 @@ def test_to_dict_is_json_serializable(queue):
 def dashboard_server(populated_queue):
     """Start a dashboard server on a random port."""
     queue, jobs = populated_queue
-    from taskito.dashboard import serve_dashboard
     from http.server import ThreadingHTTPServer
+
     from taskito.dashboard import _make_handler
 
     handler = _make_handler(queue)
@@ -184,7 +183,7 @@ def _post(url):
 
 def test_api_stats(dashboard_server):
     """GET /api/stats returns valid stats dict."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     data = _get(f"{base}/api/stats")
     assert "pending" in data
     assert data["pending"] == 8
@@ -192,7 +191,7 @@ def test_api_stats(dashboard_server):
 
 def test_api_jobs_list(dashboard_server):
     """GET /api/jobs returns job list."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     data = _get(f"{base}/api/jobs")
     assert isinstance(data, list)
     assert len(data) == 8
@@ -200,7 +199,7 @@ def test_api_jobs_list(dashboard_server):
 
 def test_api_jobs_filter_status(dashboard_server):
     """GET /api/jobs?status=pending filters correctly."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     data = _get(f"{base}/api/jobs?status=pending")
     assert len(data) == 8
 
@@ -210,21 +209,21 @@ def test_api_jobs_filter_status(dashboard_server):
 
 def test_api_jobs_filter_queue(dashboard_server):
     """GET /api/jobs?queue=email filters correctly."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     data = _get(f"{base}/api/jobs?queue=email")
     assert len(data) == 3
 
 
 def test_api_jobs_pagination(dashboard_server):
     """GET /api/jobs?limit=3&offset=0 paginates."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     data = _get(f"{base}/api/jobs?limit=3&offset=0")
     assert len(data) == 3
 
 
 def test_api_job_detail(dashboard_server):
     """GET /api/jobs/{id} returns job dict."""
-    base, queue, jobs = dashboard_server
+    base, _, jobs = dashboard_server
     job_id = jobs[0].id
     data = _get(f"{base}/api/jobs/{job_id}")
     assert data["id"] == job_id
@@ -233,17 +232,17 @@ def test_api_job_detail(dashboard_server):
 
 def test_api_job_not_found(dashboard_server):
     """GET /api/jobs/nonexistent returns 404."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     try:
         _get(f"{base}/api/jobs/nonexistent-id")
-        assert False, "Expected 404"
+        raise AssertionError("Expected 404")
     except urllib.error.HTTPError as e:
         assert e.code == 404
 
 
 def test_api_cancel_job(dashboard_server):
     """POST /api/jobs/{id}/cancel cancels a pending job."""
-    base, queue, jobs = dashboard_server
+    base, _, jobs = dashboard_server
     job_id = jobs[0].id
     data = _post(f"{base}/api/jobs/{job_id}/cancel")
     assert data["cancelled"] is True
@@ -251,14 +250,14 @@ def test_api_cancel_job(dashboard_server):
 
 def test_api_dead_letters_empty(dashboard_server):
     """GET /api/dead-letters returns empty list initially."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     data = _get(f"{base}/api/dead-letters")
     assert data == []
 
 
 def test_spa_html_served(dashboard_server):
     """GET / returns the SPA HTML."""
-    base, queue, jobs = dashboard_server
+    base, _, __ = dashboard_server
     with urllib.request.urlopen(base) as resp:
         html = resp.read().decode()
         assert "taskito dashboard" in html

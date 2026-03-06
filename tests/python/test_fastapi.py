@@ -10,9 +10,10 @@ from taskito import Queue
 fastapi = pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from taskito.contrib.fastapi import TaskitoRouter
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from taskito.contrib.fastapi import TaskitoRouter  # noqa: E402
 
 
 @pytest.fixture
@@ -52,7 +53,7 @@ def populated(queue, client):
 
 
 def test_stats(populated):
-    queue, client, jobs, add = populated
+    _queue, client, _jobs, _add = populated
     resp = client.get("/tasks/stats")
     assert resp.status_code == 200
     data = resp.json()
@@ -64,7 +65,7 @@ def test_stats(populated):
 
 
 def test_get_job(populated):
-    queue, client, jobs, add = populated
+    _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.get(f"/tasks/jobs/{job_id}")
     assert resp.status_code == 200
@@ -82,7 +83,7 @@ def test_get_job_not_found(client):
 
 
 def test_get_job_errors_empty(populated):
-    queue, client, jobs, add = populated
+    _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.get(f"/tasks/jobs/{job_id}/errors")
     assert resp.status_code == 200
@@ -93,7 +94,7 @@ def test_get_job_errors_empty(populated):
 
 
 def test_get_job_result_pending(populated):
-    queue, client, jobs, add = populated
+    _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.get(f"/tasks/jobs/{job_id}/result")
     assert resp.status_code == 200
@@ -103,7 +104,7 @@ def test_get_job_result_pending(populated):
 
 
 def test_get_job_result_completed(populated):
-    queue, client, jobs, add = populated
+    queue, client, jobs, _add = populated
 
     worker = threading.Thread(target=queue.run_worker, daemon=True)
     worker.start()
@@ -122,7 +123,7 @@ def test_get_job_result_completed(populated):
 
 
 def test_cancel_job(populated):
-    queue, client, jobs, add = populated
+    _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.post(f"/tasks/jobs/{job_id}/cancel")
     assert resp.status_code == 200
@@ -146,7 +147,7 @@ def test_dead_letters_empty(client):
 
 
 def test_progress_stream(populated):
-    queue, client, jobs, add = populated
+    queue, client, jobs, _add = populated
 
     # Start worker so the job completes
     worker = threading.Thread(target=queue.run_worker, daemon=True)
