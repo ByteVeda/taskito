@@ -25,6 +25,21 @@ All notable changes to taskito are documented here.
 - **Group concurrency** (F10) — `max_concurrency` parameter on `group()` to limit parallel execution
 - **OpenTelemetry** (F12) — `OpenTelemetryMiddleware` for distributed tracing; install with `pip install taskito[otel]`
 
+### Build & Tooling
+
+- Zensical site configuration (`zensical.toml`)
+- Makefile for `docs` / `docs-serve` commands
+- Lock file (`uv.lock`) for reproducible builds
+
+### Bug Fixes
+
+- Fixed "Copy as Markdown" table cells rendering empty for SVG/img emoji icons
+
+### Internal
+
+- Hardened core scheduler and rate limiter
+- Reorganized resilience modules and storage layer
+
 ---
 
 ## 0.1.1
