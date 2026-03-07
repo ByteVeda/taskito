@@ -2,7 +2,7 @@
 
 All notable changes to taskito are documented here.
 
-## 0.2.4
+## 0.2.3
 
 ### Critical Fixes
 
@@ -27,6 +27,7 @@ All notable changes to taskito are documented here.
 - **SQLite `purge_completed_with_ttl` no transaction** — Wrapped in transaction for consistency
 - **Django admin status validation** — Added try/except around `queue.list_jobs()` to handle connection errors gracefully
 - **Silent job loss on `get_job` None** — Added `warn!` logging when a dequeued job ID returns None
+- **Cascade cleanup on job purge** — `purge_completed()` and `purge_completed_with_ttl()` now automatically delete orphaned child records (`job_errors`, `task_logs`, `task_metrics`, `job_dependencies`, `replay_history`) when removing completed jobs
 
 ### Minor Fixes
 
@@ -35,14 +36,6 @@ All notable changes to taskito are documented here.
 - **`_FakeJobResult` missing `refresh()`** — Added no-op method for test mode compatibility
 - **Storage trait doc outdated** — Updated to mention both SQLite and Postgres backends
 - **`wall_time_ns` truncation** — Uses `.try_into().unwrap_or(i64::MAX)` to prevent silent overflow
-
----
-
-## 0.2.3
-
-### Improvements
-
-- **Cascade cleanup on job purge** — `purge_completed()` and `purge_completed_with_ttl()` now automatically delete orphaned child records (`job_errors`, `task_logs`, `task_metrics`, `job_dependencies`, `replay_history`) when removing completed jobs. Previously, child records could outlive their parent job if they were newer than the timestamp-based cleanup cutoff.
 
 ---
 
