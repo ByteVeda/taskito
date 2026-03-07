@@ -67,6 +67,10 @@ pub struct DeadLetterRow {
     pub retry_count: i32,
     pub failed_at: i64,
     pub metadata: Option<String>,
+    pub priority: i32,
+    pub max_retries: i32,
+    pub timeout_ms: i64,
+    pub result_ttl_ms: Option<i64>,
 }
 
 /// Insertable struct for dead letter entries.
@@ -82,6 +86,10 @@ pub struct NewDeadLetterRow<'a> {
     pub retry_count: i32,
     pub failed_at: i64,
     pub metadata: Option<&'a str>,
+    pub priority: i32,
+    pub max_retries: i32,
+    pub timeout_ms: i64,
+    pub result_ttl_ms: Option<i64>,
 }
 
 /// A row in the `rate_limits` table.

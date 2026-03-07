@@ -27,6 +27,7 @@ pub struct PyTaskConfig {
 }
 
 #[pymethods]
+#[allow(clippy::too_many_arguments)]
 impl PyTaskConfig {
     #[new]
     #[pyo3(signature = (name, max_retries=3, retry_backoff=1.0, timeout=300, priority=0, rate_limit=None, queue="default".to_string(), circuit_breaker_threshold=None, circuit_breaker_window=None, circuit_breaker_cooldown=None))]

@@ -77,4 +77,7 @@ queue = Queue(middleware=[
 ])
 ```
 
+!!! note "Thread safety"
+    `OpenTelemetryMiddleware` is thread-safe and can be used with multi-worker configurations. Internal span tracking is protected by a lock.
+
 See the [Middleware guide](middleware.md) for more on combining middleware.

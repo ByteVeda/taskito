@@ -168,6 +168,7 @@ def test_progress_stream(populated):
     assert len(lines) >= 1
     # The first (and only) event should show complete status
     import json
+
     data = json.loads(lines[0].replace("data: ", ""))
     assert data["status"] == "complete"
 

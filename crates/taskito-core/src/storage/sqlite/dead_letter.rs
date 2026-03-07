@@ -1,10 +1,11 @@
 use diesel::prelude::*;
 
-use crate::error::{QueueError, Result};
-use crate::job::{NewJob, now_millis, Job, JobStatus};
 use super::super::models::*;
 use super::super::schema::{dead_letter, jobs};
-use super::{DeadJob, SqliteStorage};
+use super::SqliteStorage;
+use crate::error::{QueueError, Result};
+use crate::job::{now_millis, Job, JobStatus, NewJob};
+use crate::storage::DeadJob;
 
 impl SqliteStorage {
     /// Move a job to the dead letter queue and cascade-cancel dependents.
@@ -25,6 +26,10 @@ impl SqliteStorage {
                 retry_count: job.retry_count,
                 failed_at: now,
                 metadata,
+                priority: job.priority,
+                max_retries: job.max_retries,
+                timeout_ms: job.timeout_ms,
+                result_ttl_ms: job.result_ttl_ms,
             };
 
             diesel::insert_into(dead_letter::table)
@@ -76,29 +81,51 @@ impl SqliteStorage {
             .first(&mut conn)
             .map_err(|_| QueueError::JobNotFound(dead_id.to_string()))?;
 
-        // Drop conn before calling enqueue (which gets its own conn)
-        drop(conn);
-
         let new_job = NewJob {
             queue: dead_row.queue,
             task_name: dead_row.task_name,
             payload: dead_row.payload,
-            priority: 0,
+            priority: dead_row.priority,
             scheduled_at: now_millis(),
-            max_retries: 3,
-            timeout_ms: 300_000,
+            max_retries: dead_row.max_retries,
+            timeout_ms: dead_row.timeout_ms,
             unique_key: None,
-            metadata: None,
+            metadata: dead_row.metadata,
             depends_on: vec![],
             expires_at: None,
-            result_ttl_ms: None,
+            result_ttl_ms: dead_row.result_ttl_ms,
         };
 
-        let job = self.enqueue(new_job)?;
+        let job = new_job.into_job();
 
-        let mut conn = self.conn()?;
-        diesel::delete(dead_letter::table.find(dead_id))
-            .execute(&mut conn)?;
+        conn.transaction(|conn| {
+            let row = super::super::models::NewJobRow {
+                id: &job.id,
+                queue: &job.queue,
+                task_name: &job.task_name,
+                payload: &job.payload,
+                status: job.status as i32,
+                priority: job.priority,
+                created_at: job.created_at,
+                scheduled_at: job.scheduled_at,
+                retry_count: job.retry_count,
+                max_retries: job.max_retries,
+                timeout_ms: job.timeout_ms,
+                unique_key: job.unique_key.as_deref(),
+                metadata: job.metadata.as_deref(),
+                cancel_requested: 0,
+                expires_at: job.expires_at,
+                result_ttl_ms: job.result_ttl_ms,
+            };
+
+            diesel::insert_into(jobs::table)
+                .values(&row)
+                .execute(conn)?;
+
+            diesel::delete(dead_letter::table.find(dead_id)).execute(conn)?;
+
+            Ok::<(), diesel::result::Error>(())
+        })?;
 
         Ok(job.id)
     }
@@ -107,9 +134,9 @@ impl SqliteStorage {
     pub fn purge_dead(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
 
-        let affected = diesel::delete(
-            dead_letter::table.filter(dead_letter::failed_at.lt(older_than_ms))
-        ).execute(&mut conn)?;
+        let affected =
+            diesel::delete(dead_letter::table.filter(dead_letter::failed_at.lt(older_than_ms)))
+                .execute(&mut conn)?;
 
         Ok(affected as u64)
     }

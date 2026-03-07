@@ -3,6 +3,10 @@ name = "taskito-python"
 version = "0.2.2"
 edition = "2021"
 
+[features]
+default = []
+postgres = ["taskito-core/postgres"]
+
 [lib]
 name = "_taskito"
 crate-type = ["cdylib"]

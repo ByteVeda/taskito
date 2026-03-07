@@ -3,9 +3,14 @@ name = "taskito-core"
 version = "0.2.2"
 edition = "2021"
 
+[features]
+default = []
+postgres = ["diesel/postgres", "pq-sys"]
+
 [dependencies]
 diesel = { workspace = true }
 libsqlite3-sys = { workspace = true }
+pq-sys = { workspace = true, optional = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

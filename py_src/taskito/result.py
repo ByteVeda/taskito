@@ -6,8 +6,6 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
-import cloudpickle
-
 if TYPE_CHECKING:
     from taskito._taskito import PyJob
     from taskito.app import Queue
@@ -87,7 +85,7 @@ class JobResult:
             result_bytes = self._py_job.result_bytes
             if result_bytes is None:
                 return status, None
-            return status, cloudpickle.loads(result_bytes)
+            return status, self._queue._serializer.loads(result_bytes)
 
         if status in ("failed", "dead"):
             raise RuntimeError(f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}")

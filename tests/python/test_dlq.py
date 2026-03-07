@@ -35,9 +35,11 @@ def test_purge_dead(queue):
     )
     worker_thread.start()
 
-    time.sleep(2)
-
-    dead = queue.dead_letters()
+    for _ in range(20):
+        time.sleep(0.5)
+        dead = queue.dead_letters()
+        if len(dead) >= 1:
+            break
     assert len(dead) >= 1
 
     # Purge entries older than 0 seconds (purge everything)

@@ -1,12 +1,12 @@
 use crate::error::Result;
 use crate::job::{Job, NewJob};
 use crate::storage::models::*;
-use crate::storage::sqlite::{DeadJob, QueueStats};
+use crate::storage::{DeadJob, QueueStats};
 
 /// Trait abstracting the storage backend for the task queue.
 ///
-/// `SqliteStorage` is the primary implementation. This trait enables
-/// alternative backends and simplifies testing with mock storage.
+/// Implementations include `SqliteStorage` and `PostgresStorage`. This trait
+/// enables alternative backends and simplifies testing with mock storage.
 pub trait Storage: Send + Sync + Clone {
     // ── Job operations ──────────────────────────────────────────────
 
@@ -37,6 +37,7 @@ pub trait Storage: Send + Sync + Clone {
     fn get_job(&self, id: &str) -> Result<Option<Job>>;
     fn stats(&self) -> Result<QueueStats>;
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64>;
+    fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64>;
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>>;
     fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()>;
     fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobErrorRow>>;
@@ -53,6 +54,7 @@ pub trait Storage: Send + Sync + Clone {
 
     fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitRow>>;
     fn upsert_rate_limit(&self, row: &RateLimitRow) -> Result<()>;
+    fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool>;
 
     // ── Periodic task operations ────────────────────────────────────
 

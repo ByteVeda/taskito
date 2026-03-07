@@ -65,7 +65,7 @@ class chain:
                 kwargs=sig.kwargs if sig.kwargs else None,
                 **sig.options,
             )
-            prev_result = last_job.result(timeout=300)
+            prev_result = last_job.result(timeout=sig.options.get("timeout", 300))
 
         return last_job  # type: ignore[return-value]
 

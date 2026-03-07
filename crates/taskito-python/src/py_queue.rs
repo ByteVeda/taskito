@@ -1,17 +1,23 @@
-use std::sync::Arc;
+// pyo3's #[pymethods] macro generates Into<PyErr> conversions that trigger this lint
+#![allow(clippy::useless_conversion)]
+
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use taskito_core::job::{NewJob, now_millis};
+use taskito_core::job::{now_millis, NewJob};
 use taskito_core::periodic::next_cron_time;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
+#[cfg(feature = "postgres")]
+use taskito_core::storage::postgres::PostgresStorage;
 use taskito_core::storage::sqlite::SqliteStorage;
+use taskito_core::storage::{Storage, StorageBackend};
 
 use crate::py_config::PyTaskConfig;
 use crate::py_job::PyJob;
@@ -20,7 +26,7 @@ use crate::py_worker::WorkerPool;
 /// The core queue engine exposed to Python.
 #[pyclass]
 pub struct PyQueue {
-    storage: SqliteStorage,
+    storage: StorageBackend,
     db_path: String,
     num_workers: usize,
     default_retry: i32,
@@ -31,9 +37,14 @@ pub struct PyQueue {
 }
 
 #[pymethods]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::useless_conversion,
+    unused_variables
+)]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito"))]
     pub fn new(
         db_path: &str,
         workers: usize,
@@ -41,9 +52,33 @@ impl PyQueue {
         default_timeout: i64,
         default_priority: i32,
         result_ttl: Option<i64>,
+        backend: &str,
+        db_url: Option<&str>,
+        schema: &str,
     ) -> PyResult<Self> {
-        let storage = SqliteStorage::new(db_path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let storage = match backend {
+            "sqlite" => {
+                let s = SqliteStorage::new(db_path)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                StorageBackend::Sqlite(s)
+            }
+            #[cfg(feature = "postgres")]
+            "postgres" | "postgresql" => {
+                let url = db_url.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "db_url is required for postgres backend",
+                    )
+                })?;
+                let s = PostgresStorage::with_schema(url, schema)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                StorageBackend::Postgres(s)
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unknown backend: '{backend}'. Use 'sqlite' or 'postgres'."
+                )));
+            }
+        };
 
         let num_workers = if workers == 0 {
             std::thread::available_parallelism()
@@ -195,8 +230,8 @@ impl PyQueue {
                 "cancelled" => 5,
                 _ => {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Invalid status: {s}. Use: pending, running, complete, failed, dead, cancelled"
-                    )))
+                    "Invalid status: {s}. Use: pending, running, complete, failed, dead, cancelled"
+                )))
                 }
             }),
             None => None,
@@ -426,14 +461,17 @@ impl PyQueue {
                 base_delay_ms: (tc.retry_backoff * 1000.0) as i64,
                 max_delay_ms: 300_000,
             };
-            let rate_limit = tc.rate_limit.as_ref().and_then(|s| RateLimitConfig::parse(s));
-            let circuit_breaker = tc.circuit_breaker_threshold.map(|threshold| {
-                CircuitBreakerConfig {
-                    threshold,
-                    window_ms: tc.circuit_breaker_window.unwrap_or(60) * 1000,
-                    cooldown_ms: tc.circuit_breaker_cooldown.unwrap_or(300) * 1000,
-                }
-            });
+            let rate_limit = tc
+                .rate_limit
+                .as_ref()
+                .and_then(|s| RateLimitConfig::parse(s));
+            let circuit_breaker =
+                tc.circuit_breaker_threshold
+                    .map(|threshold| CircuitBreakerConfig {
+                        threshold,
+                        window_ms: tc.circuit_breaker_window.unwrap_or(60) * 1000,
+                        cooldown_ms: tc.circuit_breaker_cooldown.unwrap_or(300) * 1000,
+                    });
             scheduler.register_task(
                 tc.name.clone(),
                 TaskConfig {
@@ -451,8 +489,13 @@ impl PyQueue {
 
         let registry_arc = Arc::new(task_registry);
         let filters_arc = Arc::new(retry_filters.into());
-        let worker_pool =
-            WorkerPool::start(self.num_workers, job_rx, result_tx, registry_arc, filters_arc);
+        let worker_pool = WorkerPool::start(
+            self.num_workers,
+            job_rx,
+            result_tx,
+            registry_arc,
+            filters_arc,
+        );
 
         let scheduler_arc = Arc::new(scheduler);
         let scheduler_for_dispatch = scheduler_arc.clone();
@@ -474,10 +517,16 @@ impl PyQueue {
         });
 
         let scheduler_handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .expect("failed to build tokio runtime");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("taskito: failed to build tokio runtime: {e}");
+                    return;
+                }
+            };
             rt.block_on(scheduler_for_dispatch.run(job_tx));
         });
 
@@ -543,7 +592,11 @@ impl PyQueue {
 
     /// Get raw metric records for a task (or all tasks).
     #[pyo3(signature = (task_name=None, since_seconds=3600))]
-    pub fn get_metrics(&self, task_name: Option<&str>, since_seconds: i64) -> PyResult<Vec<PyObject>> {
+    pub fn get_metrics(
+        &self,
+        task_name: Option<&str>,
+        since_seconds: i64,
+    ) -> PyResult<Vec<PyObject>> {
         let since_ms = now_millis() - (since_seconds * 1000);
         let rows = self
             .storage
@@ -575,7 +628,9 @@ impl PyQueue {
             .storage
             .get_job(job_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("Job not found: {job_id}")))?;
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("Job not found: {job_id}"))
+            })?;
 
         let new_job = NewJob {
             queue: original.queue,

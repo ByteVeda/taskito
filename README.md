@@ -127,7 +127,7 @@ chord([download.s(u) for u in urls], merge.s()).apply()
 ### Periodic Tasks
 
 ```python
-@queue.periodic(cron="0 */6 * * *")
+@queue.periodic(cron="0 0 */6 * * *")
 def cleanup_temp_files():
     ...
 ```

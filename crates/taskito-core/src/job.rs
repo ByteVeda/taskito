@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::storage::models::JobRow;
@@ -142,6 +142,6 @@ impl NewJob {
 pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time went backwards")
+        .unwrap_or(Duration::ZERO)
         .as_millis() as i64
 }

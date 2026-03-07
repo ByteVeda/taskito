@@ -125,7 +125,8 @@ jobs (id, queue, task_name, payload, status, priority,
 
 -- Dead letter queue
 dead_letter (id, original_job_id, queue, task_name,
-             payload, error, retry_count, failed_at, metadata)
+             payload, error, retry_count, failed_at, metadata,
+             priority, max_retries, timeout_ms, result_ttl_ms)
 
 -- Token bucket rate limiting
 rate_limits (key, tokens, max_tokens, refill_rate, last_refill)

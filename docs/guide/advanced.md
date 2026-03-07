@@ -13,7 +13,7 @@ assert job1.id == job2.id  # Same job, not duplicated
 Once the original job completes (or fails to DLQ), the key is released and a new job can be created with the same key.
 
 !!! info "Implementation"
-    Deduplication uses a partial unique index: `CREATE UNIQUE INDEX ... ON jobs(unique_key) WHERE unique_key IS NOT NULL AND status IN (0, 1)`. Only pending and running jobs participate.
+    Deduplication uses a partial unique index: `CREATE UNIQUE INDEX ... ON jobs(unique_key) WHERE unique_key IS NOT NULL AND status IN (0, 1)`. Only pending and running jobs participate. The check-and-insert is atomic (transaction-protected), so concurrent calls with the same `unique_key` are handled gracefully without race conditions.
 
 ## Job Cancellation
 
@@ -58,6 +58,35 @@ The scheduler checks every ~60 seconds and purges:
 - Error history records older than `result_ttl`
 
 Set to `None` (default) to disable auto-cleanup.
+
+### Cascade Cleanup
+
+When jobs are purged — either manually via `purge_completed()` or automatically via `result_ttl` — their related child records are also deleted:
+
+- Error history (`job_errors`)
+- Task logs (`task_logs`)
+- Task metrics (`task_metrics`)
+- Job dependencies (`job_dependencies`)
+- Replay history (`replay_history`)
+
+This prevents orphaned records from accumulating when parent jobs are removed.
+
+```python
+# Manual purge — child records are cleaned up automatically
+deleted = queue.purge_completed(older_than=3600)
+print(f"Purged {deleted} jobs and their related records")
+
+# With per-job TTL — cascade cleanup still applies
+job = resize_image.apply_async(
+    args=("photo.jpg",),
+    result_ttl=600,  # This job's results expire after 10 minutes
+)
+# When this job is purged (after 10 min), its errors, logs,
+# metrics, dependencies, and replay history are also removed.
+```
+
+!!! note
+    Dead letter entries are **not** cascade-deleted — they have their own lifecycle managed by `purge_dead()`. Timestamp-based cleanup (`result_ttl`) of error history, logs, and metrics also continues to run independently, catching old records regardless of whether the parent job still exists.
 
 ## Async Support
 

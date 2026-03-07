@@ -162,6 +162,51 @@ Delete a single dead letter entry.
 
 Cancel a pending job. Returns `204 No Content` on success or `409 Conflict` if the job is not in a cancellable state.
 
+### `GET /api/jobs/{id}/logs`
+
+Task execution logs for a specific job.
+
+```bash
+curl http://localhost:8080/api/jobs/01H5K6X.../logs
+```
+
+### `GET /api/jobs/{id}/replay-history`
+
+Replay history for a job that has been retried from the DLQ.
+
+```bash
+curl http://localhost:8080/api/jobs/01H5K6X.../replay-history
+```
+
+### `GET /api/logs`
+
+Query task execution logs across all jobs.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `limit` | `int` | `50` | Page size |
+| `offset` | `int` | `0` | Pagination offset |
+
+```bash
+curl http://localhost:8080/api/logs?limit=20
+```
+
+### `GET /api/metrics`
+
+Task execution metrics (timing, throughput).
+
+```bash
+curl http://localhost:8080/api/metrics
+```
+
+### `GET /api/circuit-breakers`
+
+Current state of all circuit breakers.
+
+```bash
+curl http://localhost:8080/api/circuit-breakers
+```
+
 ### `GET /api/workers`
 
 List registered workers with heartbeat status.

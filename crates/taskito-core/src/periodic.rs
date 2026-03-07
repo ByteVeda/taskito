@@ -8,12 +8,10 @@ use crate::error::{QueueError, Result};
 /// Compute the next run time (in UNIX milliseconds) for a cron expression,
 /// starting from `after_ms` (also UNIX milliseconds).
 pub fn next_cron_time(cron_expr: &str, after_ms: i64) -> Result<i64> {
-    let schedule = Schedule::from_str(cron_expr).map_err(|e| {
-        QueueError::Config(format!("invalid cron expression '{cron_expr}': {e}"))
-    })?;
+    let schedule = Schedule::from_str(cron_expr)
+        .map_err(|e| QueueError::Config(format!("invalid cron expression '{cron_expr}': {e}")))?;
 
-    let after_dt = chrono::DateTime::from_timestamp_millis(after_ms)
-        .unwrap_or_else(Utc::now);
+    let after_dt = chrono::DateTime::from_timestamp_millis(after_ms).unwrap_or_else(Utc::now);
 
     let next = schedule
         .after(&after_dt)

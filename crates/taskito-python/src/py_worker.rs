@@ -70,7 +70,7 @@ fn worker_loop(
             execute_task(py, &task_registry, &job)
         });
 
-        let wall_time_ns = start.elapsed().as_nanos() as i64;
+        let wall_time_ns: i64 = start.elapsed().as_nanos().try_into().unwrap_or(i64::MAX);
 
         let job_result = match result {
             Ok(result_bytes) => JobResult::Success {
@@ -118,24 +118,15 @@ fn worker_loop(
     }
 }
 
-fn execute_task(
-    py: Python<'_>,
-    task_registry: &PyObject,
-    job: &Job,
-) -> PyResult<Option<Vec<u8>>> {
+fn execute_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Option<Vec<u8>>> {
     let cloudpickle = py.import_bound("cloudpickle")?;
     let registry = task_registry.bind(py);
 
     // Look up the task function
     let registry_dict: &Bound<'_, PyDict> = registry.downcast()?;
-    let task_fn = registry_dict
-        .get_item(&job.task_name)?
-        .ok_or_else(|| {
-            pyo3::exceptions::PyKeyError::new_err(format!(
-                "task '{}' not registered",
-                job.task_name
-            ))
-        })?;
+    let task_fn = registry_dict.get_item(&job.task_name)?.ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err(format!("task '{}' not registered", job.task_name))
+    })?;
 
     // Set job context before execution
     let context_mod = py.import_bound("taskito.context")?;
@@ -144,23 +135,26 @@ fn execute_task(
         (&job.id, &job.task_name, job.retry_count, &job.queue),
     )?;
 
-    // Deserialize arguments: (args, kwargs)
-    let payload_bytes = PyBytes::new_bound(py, &job.payload);
-    let unpickled = cloudpickle.call_method1("loads", (payload_bytes,))?;
-    let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
+    // Wrap deserialization + call so _clear_context is always called
+    let result = (|| -> PyResult<Bound<'_, pyo3::PyAny>> {
+        // Deserialize arguments: (args, kwargs)
+        let payload_bytes = PyBytes::new_bound(py, &job.payload);
+        let unpickled = cloudpickle.call_method1("loads", (payload_bytes,))?;
+        let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
 
-    let args = args_tuple.get_item(0)?;
-    let kwargs = args_tuple.get_item(1)?;
+        let args = args_tuple.get_item(0)?;
+        let kwargs = args_tuple.get_item(1)?;
 
-    // Call the task function
-    let result = if kwargs.is_none() {
-        let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
-        task_fn.call(args_tuple_inner, None)
-    } else {
-        let kwargs_dict: Bound<'_, PyDict> = kwargs.downcast_into()?;
-        let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
-        task_fn.call(args_tuple_inner, Some(&kwargs_dict))
-    };
+        // Call the task function
+        if kwargs.is_none() {
+            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            task_fn.call(args_tuple_inner, None)
+        } else {
+            let kwargs_dict: Bound<'_, PyDict> = kwargs.downcast_into()?;
+            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            task_fn.call(args_tuple_inner, Some(&kwargs_dict))
+        }
+    })();
 
     // Clear context after execution (whether success or failure)
     let _ = context_mod.call_method0("_clear_context");
@@ -200,7 +194,10 @@ fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
 fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
     if let Ok(exceptions_mod) = py.import_bound("taskito.exceptions") {
         if let Ok(cancelled_cls) = exceptions_mod.getattr("TaskCancelledError") {
-            return e.get_type_bound(py).is_subclass(&cancelled_cls).unwrap_or(false);
+            return e
+                .get_type_bound(py)
+                .is_subclass(&cancelled_cls)
+                .unwrap_or(false);
         }
     }
     false
@@ -209,10 +206,12 @@ fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
 /// Get the fully-qualified class name of a Python exception.
 fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
     let type_obj = e.get_type_bound(py);
-    let module = type_obj.getattr("__module__")
+    let module = type_obj
+        .getattr("__module__")
         .and_then(|m| m.extract::<String>())
         .unwrap_or_default();
-    let qualname = type_obj.getattr("__qualname__")
+    let qualname = type_obj
+        .getattr("__qualname__")
         .and_then(|q| q.extract::<String>())
         .unwrap_or_else(|_| "Exception".to_string());
 

@@ -8,6 +8,7 @@ import functools
 import logging
 import os
 import signal
+import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable
@@ -65,13 +66,16 @@ class Queue(
         result_ttl: int | None = None,
         serializer: Serializer | None = None,
         middleware: list[TaskMiddleware] | None = None,
+        backend: str = "sqlite",
+        db_url: str | None = None,
+        schema: str = "taskito",
     ):
-        """Initialize a new task queue backed by SQLite.
+        """Initialize a new task queue.
 
         Args:
             db_path: Path to the SQLite database file. Defaults to
                 ``.taskito/taskito.db``. Parent directories are created
-                automatically.
+                automatically. Ignored when backend is ``"postgres"``.
             workers: Number of worker threads (0 = auto-detect CPU count).
             default_retry: Default max retry attempts for tasks.
             default_timeout: Default task timeout in seconds.
@@ -80,11 +84,17 @@ class Queue(
                 seconds. None disables auto-cleanup.
             serializer: Serializer for task payloads. Defaults to CloudpickleSerializer.
             middleware: List of global middleware instances applied to all tasks.
+            backend: Storage backend — ``"sqlite"`` (default) or ``"postgres"``.
+            db_url: PostgreSQL connection URL (required when backend is ``"postgres"``).
+                Example: ``"postgresql://user:pass@localhost/taskito"``.
+            schema: PostgreSQL schema name for all taskito tables. Defaults to
+                ``"taskito"``. Ignored when backend is ``"sqlite"``.
         """
-        # Ensure parent directory exists
-        db_dir = os.path.dirname(db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        if backend == "sqlite":
+            # Ensure parent directory exists for SQLite
+            db_dir = os.path.dirname(db_path)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
 
         self._inner = PyQueue(
             db_path=db_path,
@@ -93,7 +103,13 @@ class Queue(
             default_timeout=default_timeout,
             default_priority=default_priority,
             result_ttl=result_ttl,
+            backend=backend,
+            db_url=db_url,
+            schema=schema,
         )
+        self._backend = backend
+        self._db_url = db_url
+        self._schema = schema
         self._db_path = db_path
         self._workers = workers or os.cpu_count() or 1
         self._task_registry: dict[str, Callable] = {}
@@ -321,7 +337,12 @@ class Queue(
             try:
                 ret = fn(*args, **kwargs)
                 if asyncio.iscoroutine(ret):
-                    ret = asyncio.run(ret)
+                    loop = getattr(queue_ref, "_async_loop", None)
+                    if loop is not None and loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(ret, loop)
+                        ret = future.result()
+                    else:
+                        ret = asyncio.run(ret)
                 result = ret
             except Exception as exc:
                 error = exc
@@ -525,7 +546,19 @@ class Queue(
  \__\__,_|___/_|\_\_|\__\___/  v{__version__}
 """
         lines = [banner]
-        lines.append(f"> DB:          {self._db_path}")
+        lines.append(f"> Backend:     {self._backend}")
+        if self._backend == "sqlite":
+            lines.append(f"> DB:          {self._db_path}")
+        else:
+            # Mask password in connection URL for display
+            url = self._db_url or ""
+            if "@" in url:
+                pre, post = url.split("@", 1)
+                if ":" in pre:
+                    scheme_user = pre.rsplit(":", 1)[0]
+                    url = f"{scheme_user}:****@{post}"
+            lines.append(f"> DB:          {url}")
+            lines.append(f"> Schema:      {self._schema}")
         lines.append(f"> Concurrency: {self._workers} (threads)")
         lines.append(f"> Queues:      {', '.join(queues)}")
         lines.append("")
@@ -544,6 +577,23 @@ class Queue(
             lines.append("")
 
         print("\n".join(lines))
+
+    def _start_async_loop(self) -> None:
+        """Start a shared event loop in a background thread for async tasks."""
+        self._async_loop = asyncio.new_event_loop()
+        self._async_thread = threading.Thread(
+            target=self._async_loop.run_forever,
+            daemon=True,
+            name="taskito-async-loop",
+        )
+        self._async_thread.start()
+
+    def _stop_async_loop(self) -> None:
+        """Stop the shared async event loop."""
+        loop = getattr(self, "_async_loop", None)
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+            self._async_thread.join(timeout=5)
 
     def run_worker(self, queues: Sequence[str] | None = None) -> None:
         """Start the worker loop. Blocks until interrupted.
@@ -572,9 +622,10 @@ class Queue(
         worker_queues = queue_list or ["default"]
         self._print_banner(worker_queues)
 
-        # Set up signal handler for graceful shutdown (only in main thread)
-        import threading
+        # Start shared async event loop for async tasks
+        self._start_async_loop()
 
+        # Set up signal handler for graceful shutdown (only in main thread)
         is_main = threading.current_thread() is threading.main_thread()
         original_sigint = None
 
@@ -598,6 +649,7 @@ class Queue(
         except KeyboardInterrupt:
             logger.info("Worker force-stopped.")
         finally:
+            self._stop_async_loop()
             logger.info("Worker stopped.")
             if is_main and original_sigint is not None:
                 signal.signal(signal.SIGINT, original_sigint)

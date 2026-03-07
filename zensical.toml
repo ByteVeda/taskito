@@ -1,7 +1,7 @@
 [project]
 site_name = "taskito"
 site_description = "Rust-powered task queue for Python. No broker required."
-site_url = "https://taskito-sepia.vercel.app"
+site_url = "https://taskito.grigori.in"
 repo_url = "https://github.com/pratyush618/taskito"
 repo_name = "pratyush618/taskito"
 

@@ -35,6 +35,10 @@ diesel::table! {
         retry_count -> Integer,
         failed_at -> BigInt,
         metadata -> Nullable<Text>,
+        priority -> Integer,
+        max_retries -> Integer,
+        timeout_ms -> BigInt,
+        result_ttl_ms -> Nullable<BigInt>,
     }
 }
 

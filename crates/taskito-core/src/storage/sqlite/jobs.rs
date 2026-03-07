@@ -1,11 +1,40 @@
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 
-use crate::error::{QueueError, Result};
-use crate::job::{Job, JobStatus, NewJob, now_millis};
 use super::super::models::*;
-use super::super::schema::{job_dependencies, jobs};
-use super::{QueueStats, SqliteStorage};
+use super::super::schema::{
+    job_dependencies, job_errors, jobs, replay_history, task_logs, task_metrics,
+};
+use super::SqliteStorage;
+use crate::error::{QueueError, Result};
+use crate::job::{now_millis, Job, JobStatus, NewJob};
+use crate::storage::QueueStats;
+
+fn delete_job_children(
+    conn: &mut SqliteConnection,
+    job_ids: &[String],
+) -> diesel::result::QueryResult<()> {
+    if job_ids.is_empty() {
+        return Ok(());
+    }
+
+    diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(job_ids))).execute(conn)?;
+    diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(job_ids))).execute(conn)?;
+    diesel::delete(task_metrics::table.filter(task_metrics::job_id.eq_any(job_ids)))
+        .execute(conn)?;
+    diesel::delete(
+        job_dependencies::table.filter(
+            job_dependencies::job_id
+                .eq_any(job_ids)
+                .or(job_dependencies::depends_on_job_id.eq_any(job_ids)),
+        ),
+    )
+    .execute(conn)?;
+    diesel::delete(replay_history::table.filter(replay_history::original_job_id.eq_any(job_ids)))
+        .execute(conn)?;
+
+    Ok(())
+}
 
 impl SqliteStorage {
     /// Insert a new job into the queue. Returns the job.
@@ -25,8 +54,9 @@ impl SqliteStorage {
 
                 match dep {
                     None => return Err(diesel::result::Error::RollbackTransaction),
-                    Some(d) if d.status == JobStatus::Dead as i32
-                        || d.status == JobStatus::Cancelled as i32 =>
+                    Some(d)
+                        if d.status == JobStatus::Dead as i32
+                            || d.status == JobStatus::Cancelled as i32 =>
                     {
                         return Err(diesel::result::Error::RollbackTransaction);
                     }
@@ -70,10 +100,11 @@ impl SqliteStorage {
             }
 
             Ok(())
-        }).map_err(|e| match e {
-            diesel::result::Error::RollbackTransaction => {
-                QueueError::DependencyNotFound("dependency not found or already dead/cancelled".to_string())
-            }
+        })
+        .map_err(|e| match e {
+            diesel::result::Error::RollbackTransaction => QueueError::DependencyNotFound(
+                "dependency not found or already dead/cancelled".to_string(),
+            ),
             other => QueueError::Storage(other),
         })?;
 
@@ -120,63 +151,94 @@ impl SqliteStorage {
         let job = new_job.into_job();
         let mut conn = self.conn()?;
 
-        // Check for existing active job with same unique_key
-        if let Some(ref uk) = job.unique_key {
-            let existing: Option<JobRow> = jobs::table
-                .filter(jobs::unique_key.eq(uk))
-                .filter(jobs::status.eq_any([
-                    JobStatus::Pending as i32,
-                    JobStatus::Running as i32,
-                ]))
-                .select(JobRow::as_select())
-                .first(&mut conn)
-                .optional()?;
+        let result = conn.transaction(|conn| {
+            // Check for existing active job with same unique_key
+            if let Some(ref uk) = job.unique_key {
+                let existing: Option<JobRow> = jobs::table
+                    .filter(jobs::unique_key.eq(uk))
+                    .filter(
+                        jobs::status.eq_any([JobStatus::Pending as i32, JobStatus::Running as i32]),
+                    )
+                    .select(JobRow::as_select())
+                    .first(conn)
+                    .optional()?;
 
-            if let Some(row) = existing {
-                return Ok(Job::from(row));
+                if let Some(row) = existing {
+                    return Ok(Job::from(row));
+                }
             }
-        }
 
-        let row = NewJobRow {
-            id: &job.id,
-            queue: &job.queue,
-            task_name: &job.task_name,
-            payload: &job.payload,
-            status: job.status as i32,
-            priority: job.priority,
-            created_at: job.created_at,
-            scheduled_at: job.scheduled_at,
-            retry_count: job.retry_count,
-            max_retries: job.max_retries,
-            timeout_ms: job.timeout_ms,
-            unique_key: job.unique_key.as_deref(),
-            metadata: job.metadata.as_deref(),
-            cancel_requested: 0,
-            expires_at: job.expires_at,
-            result_ttl_ms: job.result_ttl_ms,
-        };
-
-        diesel::insert_into(jobs::table)
-            .values(&row)
-            .execute(&mut conn)?;
-
-        // Insert dependency rows
-        for dep_id in &depends_on {
-            let dep_row = NewJobDependencyRow {
-                id: &uuid::Uuid::now_v7().to_string(),
-                job_id: &job.id,
-                depends_on_job_id: dep_id,
+            let row = NewJobRow {
+                id: &job.id,
+                queue: &job.queue,
+                task_name: &job.task_name,
+                payload: &job.payload,
+                status: job.status as i32,
+                priority: job.priority,
+                created_at: job.created_at,
+                scheduled_at: job.scheduled_at,
+                retry_count: job.retry_count,
+                max_retries: job.max_retries,
+                timeout_ms: job.timeout_ms,
+                unique_key: job.unique_key.as_deref(),
+                metadata: job.metadata.as_deref(),
+                cancel_requested: 0,
+                expires_at: job.expires_at,
+                result_ttl_ms: job.result_ttl_ms,
             };
-            diesel::insert_into(job_dependencies::table)
-                .values(&dep_row)
-                .execute(&mut conn)?;
-        }
 
-        Ok(job)
+            diesel::insert_into(jobs::table)
+                .values(&row)
+                .execute(conn)?;
+
+            // Insert dependency rows
+            for dep_id in &depends_on {
+                let dep_row = NewJobDependencyRow {
+                    id: &uuid::Uuid::now_v7().to_string(),
+                    job_id: &job.id,
+                    depends_on_job_id: dep_id,
+                };
+                diesel::insert_into(job_dependencies::table)
+                    .values(&dep_row)
+                    .execute(conn)?;
+            }
+
+            Ok(job.clone())
+        });
+
+        // Handle unique constraint violation by returning existing job
+        match result {
+            Ok(j) => Ok(j),
+            Err(diesel::result::Error::DatabaseError(
+                diesel::result::DatabaseErrorKind::UniqueViolation,
+                _,
+            )) => {
+                if let Some(ref uk) = job.unique_key {
+                    let mut conn = self.conn()?;
+                    let existing: Option<JobRow> = jobs::table
+                        .filter(jobs::unique_key.eq(uk))
+                        .filter(
+                            jobs::status
+                                .eq_any([JobStatus::Pending as i32, JobStatus::Running as i32]),
+                        )
+                        .select(JobRow::as_select())
+                        .first(&mut conn)
+                        .optional()?;
+                    if let Some(row) = existing {
+                        return Ok(Job::from(row));
+                    }
+                }
+                Ok(job)
+            }
+            Err(e) => Err(QueueError::Storage(e)),
+        }
     }
 
     /// Check if all dependencies for a job are complete.
-    fn deps_satisfied(conn: &mut SqliteConnection, job_id: &str) -> diesel::result::QueryResult<bool> {
+    fn deps_satisfied(
+        conn: &mut SqliteConnection,
+        job_id: &str,
+    ) -> diesel::result::QueryResult<bool> {
         let dep_job_ids: Vec<String> = job_dependencies::table
             .filter(job_dependencies::job_id.eq(job_id))
             .select(job_dependencies::depends_on_job_id)
@@ -206,7 +268,7 @@ impl SqliteStorage {
                 .filter(jobs::status.eq(JobStatus::Pending as i32))
                 .filter(jobs::scheduled_at.le(now))
                 .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
-                .limit(10)
+                .limit(100)
                 .select(JobRow::as_select())
                 .load(conn)?;
 
@@ -398,6 +460,8 @@ impl SqliteStorage {
         let now = now_millis();
 
         let mut queue: Vec<String> = vec![failed_job_id.to_string()];
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(failed_job_id.to_string());
         let mut idx = 0;
 
         while idx < queue.len() {
@@ -410,7 +474,7 @@ impl SqliteStorage {
                 .load(&mut conn)?;
 
             for dep_id in dependents {
-                if !queue.contains(&dep_id) {
+                if visited.insert(dep_id.clone()) {
                     queue.push(dep_id);
                 }
             }
@@ -483,9 +547,7 @@ impl SqliteStorage {
     ) -> Result<Vec<Job>> {
         let mut conn = self.conn()?;
 
-        let mut query = jobs::table
-            .into_boxed()
-            .order(jobs::created_at.desc());
+        let mut query = jobs::table.into_boxed().order(jobs::created_at.desc());
 
         if let Some(s) = status {
             query = query.filter(jobs::status.eq(s));
@@ -548,11 +610,16 @@ impl SqliteStorage {
     pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
 
-        let affected = diesel::delete(
-            jobs::table
-                .filter(jobs::status.eq(JobStatus::Complete as i32))
-                .filter(jobs::completed_at.lt(older_than_ms))
-        ).execute(&mut conn)?;
+        let job_ids: Vec<String> = jobs::table
+            .filter(jobs::status.eq(JobStatus::Complete as i32))
+            .filter(jobs::completed_at.lt(older_than_ms))
+            .select(jobs::id)
+            .load(&mut conn)?;
+
+        delete_job_children(&mut conn, &job_ids)?;
+
+        let affected =
+            diesel::delete(jobs::table.filter(jobs::id.eq_any(&job_ids))).execute(&mut conn)?;
 
         Ok(affected as u64)
     }
@@ -563,33 +630,40 @@ impl SqliteStorage {
         let now = now_millis();
         let mut conn = self.conn()?;
 
-        // For global TTL: delete completed jobs without per-job TTL
-        let global = diesel::delete(
-            jobs::table
+        conn.transaction(|conn| {
+            // For global TTL: collect IDs of completed jobs without per-job TTL
+            let global_ids: Vec<String> = jobs::table
                 .filter(jobs::status.eq(JobStatus::Complete as i32))
                 .filter(jobs::result_ttl_ms.is_null())
                 .filter(jobs::completed_at.lt(global_cutoff_ms))
-        ).execute(&mut conn)?;
+                .select(jobs::id)
+                .load(conn)?;
 
-        // For per-job TTL: fetch candidates and delete expired ones
-        let rows_with_ttl: Vec<JobRow> = jobs::table
-            .filter(jobs::status.eq(JobStatus::Complete as i32))
-            .filter(jobs::result_ttl_ms.is_not_null())
-            .select(JobRow::as_select())
-            .load(&mut conn)?;
+            // For per-job TTL: fetch candidates and collect expired IDs
+            let rows_with_ttl: Vec<JobRow> = jobs::table
+                .filter(jobs::status.eq(JobStatus::Complete as i32))
+                .filter(jobs::result_ttl_ms.is_not_null())
+                .select(JobRow::as_select())
+                .load(conn)?;
 
-        let mut per_job_count = 0u64;
-        for row in rows_with_ttl {
-            if let (Some(completed), Some(ttl)) = (row.completed_at, row.result_ttl_ms) {
-                if completed + ttl < now {
-                    diesel::delete(jobs::table.filter(jobs::id.eq(&row.id)))
-                        .execute(&mut conn)?;
-                    per_job_count += 1;
-                }
-            }
-        }
+            let per_job_ids: Vec<String> = rows_with_ttl
+                .into_iter()
+                .filter(|row| {
+                    matches!((row.completed_at, row.result_ttl_ms), (Some(completed), Some(ttl)) if completed + ttl < now)
+                })
+                .map(|row| row.id)
+                .collect();
 
-        Ok(global as u64 + per_job_count)
+            let all_ids: Vec<String> = global_ids.into_iter().chain(per_job_ids).collect();
+
+            delete_job_children(conn, &all_ids)?;
+
+            let affected = diesel::delete(
+                jobs::table.filter(jobs::id.eq_any(&all_ids))
+            ).execute(conn)?;
+
+            Ok(affected as u64)
+        })
     }
 
     /// Find stale running jobs that exceeded their timeout.
@@ -657,9 +731,9 @@ impl SqliteStorage {
         use super::super::schema::job_errors;
         let mut conn = self.conn()?;
 
-        let affected = diesel::delete(
-            job_errors::table.filter(job_errors::failed_at.lt(older_than_ms))
-        ).execute(&mut conn)?;
+        let affected =
+            diesel::delete(job_errors::table.filter(job_errors::failed_at.lt(older_than_ms)))
+                .execute(&mut conn)?;
 
         Ok(affected as u64)
     }
