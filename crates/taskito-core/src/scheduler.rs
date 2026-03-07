@@ -13,7 +13,7 @@ use crate::job::{Job, NewJob, now_millis};
 use crate::periodic::next_cron_time;
 use crate::resilience::rate_limiter::{RateLimitConfig, RateLimiter};
 use crate::resilience::retry::RetryPolicy;
-use crate::storage::sqlite::SqliteStorage;
+use crate::storage::{Storage, StorageBackend};
 
 /// Delay before re-scheduling a circuit-broken job (ms).
 const CIRCUIT_BREAKER_RETRY_DELAY_MS: i64 = 5000;
@@ -88,7 +88,7 @@ pub struct TaskConfig {
 
 /// The central scheduler that coordinates job dispatch, retries, rate limiting, and circuit breakers.
 pub struct Scheduler {
-    storage: SqliteStorage,
+    storage: StorageBackend,
     rate_limiter: RateLimiter,
     dlq: DeadLetterQueue,
     circuit_breaker: CircuitBreaker,
@@ -107,7 +107,7 @@ struct TickCounters {
 }
 
 impl Scheduler {
-    pub fn new(storage: SqliteStorage, queues: Vec<String>, config: SchedulerConfig) -> Self {
+    pub fn new(storage: StorageBackend, queues: Vec<String>, config: SchedulerConfig) -> Self {
         let rate_limiter = RateLimiter::new(storage.clone());
         let dlq = DeadLetterQueue::new(storage.clone());
         let circuit_breaker = CircuitBreaker::new(storage.clone());
@@ -124,7 +124,7 @@ impl Scheduler {
         }
     }
 
-    pub fn storage(&self) -> &SqliteStorage {
+    pub fn storage(&self) -> &StorageBackend {
         &self.storage
     }
 
@@ -259,8 +259,9 @@ impl Scheduler {
 
                 // If should_retry is false (exception filtering), skip straight to DLQ
                 if !should_retry {
-                    if let Some(job) = self.storage.get_job(&job_id)? {
-                        self.dlq.move_to_dlq(&job, &error, None)?;
+                    match self.storage.get_job(&job_id)? {
+                        Some(job) => self.dlq.move_to_dlq(&job, &error, None)?,
+                        None => warn!("job {job_id} disappeared before DLQ move"),
                     }
                     return Ok(());
                 }
@@ -282,8 +283,9 @@ impl Scheduler {
                     self.storage.retry(&job_id, next_at)?;
                 } else {
                     // Move to DLQ
-                    if let Some(job) = self.storage.get_job(&job_id)? {
-                        self.dlq.move_to_dlq(&job, &error, None)?;
+                    match self.storage.get_job(&job_id)? {
+                        Some(job) => self.dlq.move_to_dlq(&job, &error, None)?,
+                        None => warn!("job {job_id} disappeared before DLQ move"),
                     }
                 }
             }
@@ -306,7 +308,6 @@ impl Scheduler {
 
         for job in stale_jobs {
             let error = format!("job timed out after {}ms", job.timeout_ms);
-            let _ = self.storage.fail(&job.id, &error);
             self.handle_result(JobResult::Failure {
                 job_id: job.id.clone(),
                 error,
@@ -352,22 +353,23 @@ impl Scheduler {
         let due_tasks = self.storage.get_due_periodic(now)?;
 
         for task in due_tasks {
+            let unique_key = Some(format!("periodic:{}:{}", task.name, now));
             let new_job = NewJob {
                 queue: task.queue.clone(),
                 task_name: task.task_name.clone(),
-                payload: Self::build_periodic_payload(&task.args, &task.kwargs),
+                payload: Self::build_periodic_payload(&task.args),
                 priority: 0,
                 scheduled_at: now,
                 max_retries: PERIODIC_DEFAULT_MAX_RETRIES,
                 timeout_ms: PERIODIC_DEFAULT_TIMEOUT_MS,
-                unique_key: None,
+                unique_key,
                 metadata: None,
                 depends_on: vec![],
                 expires_at: None,
                 result_ttl_ms: None,
             };
 
-            if let Err(e) = self.storage.enqueue(new_job) {
+            if let Err(e) = self.storage.enqueue_unique(new_job) {
                 error!("failed to enqueue periodic task '{}': {e}", task.name);
                 continue;
             }
@@ -394,8 +396,9 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Build a cloudpickle-compatible payload from stored args/kwargs.
-    fn build_periodic_payload(args: &Option<Vec<u8>>, _kwargs: &Option<Vec<u8>>) -> Vec<u8> {
+    /// Build a cloudpickle-compatible payload from stored args.
+    /// kwargs are embedded in the args blob by the Python side.
+    fn build_periodic_payload(args: &Option<Vec<u8>>) -> Vec<u8> {
         match args {
             Some(blob) => blob.clone(),
             None => Vec::new(),
@@ -410,7 +413,7 @@ mod tests {
     use crate::storage::models::NewPeriodicTaskRow;
 
     fn test_scheduler() -> Scheduler {
-        let storage = SqliteStorage::in_memory().unwrap();
+        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         Scheduler::new(
             storage,
             vec!["default".to_string()],
@@ -675,7 +678,7 @@ mod tests {
 
     #[test]
     fn test_auto_cleanup() {
-        let storage = SqliteStorage::in_memory().unwrap();
+        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         let config = SchedulerConfig {
             result_ttl_ms: Some(1), // 1ms TTL
             ..SchedulerConfig::default()
@@ -701,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_tick_dispatches_and_maintains() {
-        let storage = SqliteStorage::in_memory().unwrap();
+        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         let config = SchedulerConfig {
             reap_interval: 1,
             periodic_check_interval: 1,

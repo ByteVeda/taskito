@@ -2,7 +2,8 @@ use crate::error::Result;
 use crate::job::{Job, NewJob};
 use crate::storage::models::*;
 use crate::storage::traits::Storage;
-use super::{DeadJob, QueueStats, SqliteStorage};
+use crate::storage::{DeadJob, QueueStats};
+use super::SqliteStorage;
 
 impl Storage for SqliteStorage {
     fn enqueue(&self, new_job: NewJob) -> Result<Job> { self.enqueue(new_job) }
@@ -24,6 +25,7 @@ impl Storage for SqliteStorage {
     fn get_job(&self, id: &str) -> Result<Option<Job>> { self.get_job(id) }
     fn stats(&self) -> Result<QueueStats> { self.stats() }
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64> { self.purge_completed(older_than_ms) }
+    fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> { self.purge_completed_with_ttl(global_cutoff_ms) }
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>> { self.reap_stale_jobs(now) }
     fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()> { self.record_error(job_id, attempt, error) }
     fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobErrorRow>> { self.get_job_errors(job_id) }
@@ -34,6 +36,7 @@ impl Storage for SqliteStorage {
     fn purge_dead(&self, older_than_ms: i64) -> Result<u64> { self.purge_dead(older_than_ms) }
     fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitRow>> { self.get_rate_limit(key) }
     fn upsert_rate_limit(&self, row: &RateLimitRow) -> Result<()> { self.upsert_rate_limit(row) }
+    fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> { self.try_acquire_token(key, max_tokens, refill_rate) }
     fn register_periodic(&self, task: &NewPeriodicTaskRow) -> Result<()> { self.register_periodic(task) }
     fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTaskRow>> { self.get_due_periodic(now) }
     fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()> { self.update_periodic_schedule(name, last_run, next_run) }

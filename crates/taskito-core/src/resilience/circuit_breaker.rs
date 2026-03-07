@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::job::now_millis;
 use crate::storage::models::CircuitBreakerRow;
-use crate::storage::sqlite::SqliteStorage;
+use crate::storage::{Storage, StorageBackend};
 
 /// Circuit breaker states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,11 +40,11 @@ pub struct CircuitBreakerConfig {
 
 /// Circuit breaker manager backed by SQLite.
 pub struct CircuitBreaker {
-    storage: SqliteStorage,
+    storage: StorageBackend,
 }
 
 impl CircuitBreaker {
-    pub fn new(storage: SqliteStorage) -> Self {
+    pub fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }
 

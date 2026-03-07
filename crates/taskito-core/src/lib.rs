@@ -10,4 +10,6 @@ pub use error::QueueError;
 pub use job::{Job, JobStatus, NewJob};
 pub use scheduler::{Scheduler, SchedulerConfig};
 pub use storage::sqlite::SqliteStorage;
+pub use storage::postgres::PostgresStorage;
+pub use storage::StorageBackend;
 pub use storage::Storage;

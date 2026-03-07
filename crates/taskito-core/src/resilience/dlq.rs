@@ -1,14 +1,14 @@
 use crate::error::Result;
 use crate::job::Job;
-use crate::storage::sqlite::{SqliteStorage, DeadJob};
+use crate::storage::{DeadJob, Storage, StorageBackend};
 
 /// Dead letter queue manager.
 pub struct DeadLetterQueue {
-    storage: SqliteStorage,
+    storage: StorageBackend,
 }
 
 impl DeadLetterQueue {
-    pub fn new(storage: SqliteStorage) -> Self {
+    pub fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }
 

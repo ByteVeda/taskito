@@ -144,9 +144,23 @@ impl SqliteStorage {
                 error           TEXT,
                 retry_count     INTEGER NOT NULL,
                 failed_at       INTEGER NOT NULL,
-                metadata        TEXT
+                metadata        TEXT,
+                priority        INTEGER NOT NULL DEFAULT 0,
+                max_retries     INTEGER NOT NULL DEFAULT 3,
+                timeout_ms      INTEGER NOT NULL DEFAULT 300000,
+                result_ttl_ms   INTEGER
             )"
         ).execute(&mut conn)?;
+
+        // Migration: add columns if they don't exist (for existing databases)
+        for col in &[
+            "ALTER TABLE dead_letter ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE dead_letter ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3",
+            "ALTER TABLE dead_letter ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 300000",
+            "ALTER TABLE dead_letter ADD COLUMN result_ttl_ms INTEGER",
+        ] {
+            let _ = diesel::sql_query(*col).execute(&mut conn);
+        }
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS rate_limits (
@@ -291,46 +305,7 @@ impl SqliteStorage {
     }
 }
 
-// ── Helper types ───────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Default)]
-pub struct QueueStats {
-    pub pending: i64,
-    pub running: i64,
-    pub completed: i64,
-    pub failed: i64,
-    pub dead: i64,
-    pub cancelled: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct DeadJob {
-    pub id: String,
-    pub original_job_id: String,
-    pub queue: String,
-    pub task_name: String,
-    pub payload: Vec<u8>,
-    pub error: Option<String>,
-    pub retry_count: i32,
-    pub failed_at: i64,
-    pub metadata: Option<String>,
-}
-
-impl From<super::models::DeadLetterRow> for DeadJob {
-    fn from(row: super::models::DeadLetterRow) -> Self {
-        Self {
-            id: row.id,
-            original_job_id: row.original_job_id,
-            queue: row.queue,
-            task_name: row.task_name,
-            payload: row.payload,
-            error: row.error,
-            retry_count: row.retry_count,
-            failed_at: row.failed_at,
-            metadata: row.metadata,
-        }
-    }
-}
+pub use crate::storage::{QueueStats, DeadJob};
 
 #[cfg(test)]
 mod tests;

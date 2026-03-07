@@ -1,9 +1,9 @@
 use crate::error::Result;
-use crate::storage::sqlite::SqliteStorage;
+use crate::storage::{Storage, StorageBackend};
 
 /// Token bucket rate limiter backed by SQLite for persistence.
 pub struct RateLimiter {
-    storage: SqliteStorage,
+    storage: StorageBackend,
 }
 
 /// Parsed rate limit configuration (e.g., "100/m" → 100 tokens, refill 1.667/s).
@@ -37,7 +37,7 @@ impl RateLimitConfig {
 }
 
 impl RateLimiter {
-    pub fn new(storage: SqliteStorage) -> Self {
+    pub fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }
 
@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn test_token_bucket() {
-        let storage = SqliteStorage::in_memory().unwrap();
+        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         let limiter = RateLimiter::new(storage);
         let config = RateLimitConfig {
             max_tokens: 3.0,
@@ -95,7 +95,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("rate_limit_test.db");
-        let storage = SqliteStorage::new(db_path.to_str().unwrap()).unwrap();
+        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::new(db_path.to_str().unwrap()).unwrap());
         let limiter = Arc::new(RateLimiter::new(storage));
         let config = RateLimitConfig {
             max_tokens: 10.0,
