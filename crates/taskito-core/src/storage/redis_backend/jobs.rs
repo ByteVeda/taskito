@@ -643,7 +643,13 @@ impl RedisStorage {
             // All jobs sorted by created_at desc
             let all_key = self.key(&["jobs", "all"]);
             let ids: Vec<String> = conn
-                .zrangebyscore_limit(&all_key, "-inf", "+inf", offset as isize, limit as isize)
+                .zrangebyscore_limit(
+                    &all_key,
+                    "-inf",
+                    "+inf",
+                    offset.max(0) as isize,
+                    limit.max(0) as isize,
+                )
                 .map_err(map_err)?;
             // Load and return directly since already paginated
             let mut jobs = Vec::new();
@@ -683,11 +689,8 @@ impl RedisStorage {
         jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         // Apply pagination
-        let start = offset as usize;
-        let end = (start + limit as usize).min(jobs.len());
-        if start >= jobs.len() {
-            return Ok(Vec::new());
-        }
+        let start = (offset.max(0) as usize).min(jobs.len());
+        let end = start.saturating_add(limit.max(0) as usize).min(jobs.len());
         Ok(jobs[start..end].to_vec())
     }
 

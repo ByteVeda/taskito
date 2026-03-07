@@ -40,5 +40,6 @@ def get_queue() -> Queue:
             backend=_get_setting("TASKITO_BACKEND", "sqlite"),
             db_url=_get_setting("TASKITO_DB_URL", None),
             schema=_get_setting("TASKITO_SCHEMA", "taskito"),
+            drain_timeout=_get_setting("TASKITO_DRAIN_TIMEOUT", 30),
         )
         return _queue_instance

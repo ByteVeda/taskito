@@ -100,6 +100,8 @@ class EncryptedSerializer:
         return bytes(nonce + self._aesgcm.encrypt(nonce, plaintext, None))
 
     def loads(self, data: bytes) -> Any:
+        if len(data) < 13:
+            raise ValueError("Encrypted data too short")
         nonce, ciphertext = data[:12], data[12:]
         plaintext = self._aesgcm.decrypt(nonce, ciphertext, None)
         return self._inner.loads(plaintext)

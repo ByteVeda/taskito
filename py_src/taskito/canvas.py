@@ -172,6 +172,8 @@ def chunks(task: TaskWrapper, items: list[Any], chunk_size: int) -> group:
     """
     if chunk_size <= 0:
         raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+    if not items:
+        raise ValueError("items must not be empty")
     n_chunks = math.ceil(len(items) / chunk_size)
     sigs = []
     for i in range(n_chunks):

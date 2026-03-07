@@ -141,6 +141,11 @@ impl PyQueue {
                         "delay_seconds must be a finite non-negative number",
                     ));
                 }
+                if d > i64::MAX as f64 / 1000.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "delay_seconds too large",
+                    ));
+                }
                 let delay_ms = (d * 1000.0) as i64;
                 now.checked_add(delay_ms).ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err(
@@ -157,6 +162,9 @@ impl PyQueue {
                     return Err(pyo3::exceptions::PyValueError::new_err(
                         "expires must be a finite non-negative number",
                     ));
+                }
+                if e > i64::MAX as f64 / 1000.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err("expires too large"));
                 }
                 let expires_ms = (e * 1000.0) as i64;
                 Some(now.checked_add(expires_ms).ok_or_else(|| {
@@ -601,7 +609,7 @@ impl PyQueue {
                         if !d.is_finite() || *d < 0.0 {
                             0i64
                         } else {
-                            (d * 1000.0) as i64
+                            (d.min(i64::MAX as f64 / 1000.0) * 1000.0) as i64
                         }
                     })
                     .collect()
@@ -609,7 +617,7 @@ impl PyQueue {
             let base_delay_ms = if !tc.retry_backoff.is_finite() || tc.retry_backoff < 0.0 {
                 0i64
             } else {
-                (tc.retry_backoff * 1000.0) as i64
+                (tc.retry_backoff.min(i64::MAX as f64 / 1000.0) * 1000.0) as i64
             };
             let retry_policy = RetryPolicy {
                 max_retries: tc.max_retries,

@@ -95,7 +95,13 @@ impl RedisStorage {
         let dlq_all = self.key(&["dlq", "all"]);
 
         let ids: Vec<String> = conn
-            .zrevrangebyscore_limit(&dlq_all, "+inf", "-inf", offset as isize, limit as isize)
+            .zrevrangebyscore_limit(
+                &dlq_all,
+                "+inf",
+                "-inf",
+                offset.max(0) as isize,
+                limit.max(0) as isize,
+            )
             .map_err(map_err)?;
 
         let mut results = Vec::new();

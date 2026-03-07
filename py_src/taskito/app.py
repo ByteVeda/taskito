@@ -636,7 +636,7 @@ class Queue(
     # -- Worker startup --
 
     def _print_banner(self, queues: list[str]) -> None:
-        """Print a Celery-style ASCII startup banner."""
+        """Print ASCII startup banner."""
         from taskito import __version__
 
         banner = rf"""
@@ -699,6 +699,8 @@ class Queue(
             self._async_thread.join(timeout=5)
             if self._async_thread.is_alive():
                 logger.warning("Async event loop thread did not stop within 5s timeout")
+            else:
+                loop.close()
 
     def run_worker(
         self,

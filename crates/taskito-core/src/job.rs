@@ -147,5 +147,6 @@ pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
-        .as_millis() as i64
+        .as_millis()
+        .min(i64::MAX as u128) as i64
 }

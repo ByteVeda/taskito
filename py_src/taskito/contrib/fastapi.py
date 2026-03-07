@@ -21,10 +21,12 @@ Requires the ``fastapi`` optional dependency::
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
+import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 try:
     from fastapi import APIRouter, HTTPException, Query
@@ -154,7 +156,7 @@ class TaskitoRouter(APIRouter):
             return StatsResponse(**stats)
 
         @self.get("/jobs/{job_id}", response_model=JobResponse)
-        async def get_job(job_id: str) -> JobResponse:
+        def get_job(job_id: str) -> JobResponse:
             """Get a job by ID."""
             job = queue.get_job(job_id)
             if job is None:
@@ -162,7 +164,7 @@ class TaskitoRouter(APIRouter):
             return JobResponse(**job.to_dict())
 
         @self.get("/jobs/{job_id}/errors", response_model=list[JobErrorResponse])
-        async def get_job_errors(job_id: str) -> list[JobErrorResponse]:
+        def get_job_errors(job_id: str) -> list[JobErrorResponse]:
             """Get error history for a job."""
             errors = queue.job_errors(job_id)
             return [JobErrorResponse(**e) for e in errors]
@@ -202,8 +204,10 @@ class TaskitoRouter(APIRouter):
             d = job.to_dict()
             result = None
             if d["status"] == "complete":
-                with contextlib.suppress(Exception):
+                try:
                     result = _safe_serialize(job.result(timeout=1))
+                except Exception:
+                    logger.exception("Failed to deserialize result for job %s", job_id)
 
             return JobResultResponse(
                 id=job_id,
