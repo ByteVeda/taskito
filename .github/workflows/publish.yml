@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-13, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +24,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Set OpenSSL dir (macOS)
         if: runner.os == 'macOS'
         run: echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
@@ -32,12 +35,13 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           choco install openssl -y --no-progress
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+          $opensslDir = (Get-Item "C:\Program Files\OpenSSL*").FullName
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          args: --release --out dist --features postgres
+          args: --release --out dist --features postgres,redis
           manylinux: 2_28
           before-script-linux: dnf install -y openssl-devel perl-IPC-Cmd
 
