@@ -46,8 +46,11 @@ class OpenTelemetryMiddleware(TaskMiddleware):
                 "opentelemetry-api is required for OpenTelemetryMiddleware. "
                 "Install it with: pip install taskito[otel]"
             )
+        import threading
+
         self._tracer = trace.get_tracer(tracer_name)
         self._spans: dict[str, Any] = {}
+        self._lock = threading.Lock()
 
     def before(self, ctx: JobContext) -> None:
         span = self._tracer.start_span(
@@ -59,10 +62,12 @@ class OpenTelemetryMiddleware(TaskMiddleware):
                 "taskito.retry_count": ctx.retry_count,
             },
         )
-        self._spans[ctx.id] = span
+        with self._lock:
+            self._spans[ctx.id] = span
 
     def after(self, ctx: JobContext, result: Any, error: Exception | None) -> None:
-        span = self._spans.pop(ctx.id, None)
+        with self._lock:
+            span = self._spans.pop(ctx.id, None)
         if span is None:
             return
 
@@ -75,7 +80,8 @@ class OpenTelemetryMiddleware(TaskMiddleware):
         span.end()
 
     def on_retry(self, ctx: JobContext, error: Exception, retry_count: int) -> None:
-        span = self._spans.get(ctx.id)
+        with self._lock:
+            span = self._spans.get(ctx.id)
         if span is not None:
             span.add_event(
                 "retry",

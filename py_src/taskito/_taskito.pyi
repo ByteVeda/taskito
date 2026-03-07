@@ -68,6 +68,9 @@ class PyQueue:
         default_timeout: int = 300,
         default_priority: int = 0,
         result_ttl: int | None = None,
+        backend: str = "sqlite",
+        db_url: str | None = None,
+        schema: str = "taskito",
     ) -> None: ...
     def request_shutdown(self) -> None: ...
     def enqueue(

@@ -70,7 +70,7 @@ fn worker_loop(
             execute_task(py, &task_registry, &job)
         });
 
-        let wall_time_ns = start.elapsed().as_nanos() as i64;
+        let wall_time_ns: i64 = start.elapsed().as_nanos().try_into().unwrap_or(i64::MAX);
 
         let job_result = match result {
             Ok(result_bytes) => JobResult::Success {
@@ -144,23 +144,26 @@ fn execute_task(
         (&job.id, &job.task_name, job.retry_count, &job.queue),
     )?;
 
-    // Deserialize arguments: (args, kwargs)
-    let payload_bytes = PyBytes::new_bound(py, &job.payload);
-    let unpickled = cloudpickle.call_method1("loads", (payload_bytes,))?;
-    let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
+    // Wrap deserialization + call so _clear_context is always called
+    let result = (|| -> PyResult<Bound<'_, pyo3::PyAny>> {
+        // Deserialize arguments: (args, kwargs)
+        let payload_bytes = PyBytes::new_bound(py, &job.payload);
+        let unpickled = cloudpickle.call_method1("loads", (payload_bytes,))?;
+        let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
 
-    let args = args_tuple.get_item(0)?;
-    let kwargs = args_tuple.get_item(1)?;
+        let args = args_tuple.get_item(0)?;
+        let kwargs = args_tuple.get_item(1)?;
 
-    // Call the task function
-    let result = if kwargs.is_none() {
-        let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
-        task_fn.call(args_tuple_inner, None)
-    } else {
-        let kwargs_dict: Bound<'_, PyDict> = kwargs.downcast_into()?;
-        let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
-        task_fn.call(args_tuple_inner, Some(&kwargs_dict))
-    };
+        // Call the task function
+        if kwargs.is_none() {
+            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            task_fn.call(args_tuple_inner, None)
+        } else {
+            let kwargs_dict: Bound<'_, PyDict> = kwargs.downcast_into()?;
+            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            task_fn.call(args_tuple_inner, Some(&kwargs_dict))
+        }
+    })();
 
     // Clear context after execution (whether success or failure)
     let _ = context_mod.call_method0("_clear_context");

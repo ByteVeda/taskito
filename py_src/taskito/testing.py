@@ -187,6 +187,9 @@ class _FakeJobResult:
     async def aresult(self, timeout: float = 30.0, **kwargs: Any) -> Any:
         return self.result(timeout=timeout)
 
+    def refresh(self) -> None:
+        pass
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self._tr.job_id,

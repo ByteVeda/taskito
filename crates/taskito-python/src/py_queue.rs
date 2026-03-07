@@ -12,6 +12,8 @@ use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
 use taskito_core::storage::sqlite::SqliteStorage;
+use taskito_core::storage::postgres::PostgresStorage;
+use taskito_core::storage::{Storage, StorageBackend};
 
 use crate::py_config::PyTaskConfig;
 use crate::py_job::PyJob;
@@ -20,7 +22,7 @@ use crate::py_worker::WorkerPool;
 /// The core queue engine exposed to Python.
 #[pyclass]
 pub struct PyQueue {
-    storage: SqliteStorage,
+    storage: StorageBackend,
     db_path: String,
     num_workers: usize,
     default_retry: i32,
@@ -33,7 +35,7 @@ pub struct PyQueue {
 #[pymethods]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito"))]
     pub fn new(
         db_path: &str,
         workers: usize,
@@ -41,9 +43,32 @@ impl PyQueue {
         default_timeout: i64,
         default_priority: i32,
         result_ttl: Option<i64>,
+        backend: &str,
+        db_url: Option<&str>,
+        schema: &str,
     ) -> PyResult<Self> {
-        let storage = SqliteStorage::new(db_path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let storage = match backend {
+            "sqlite" => {
+                let s = SqliteStorage::new(db_path)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                StorageBackend::Sqlite(s)
+            }
+            "postgres" | "postgresql" => {
+                let url = db_url.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "db_url is required for postgres backend"
+                    )
+                })?;
+                let s = PostgresStorage::with_schema(url, schema)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                StorageBackend::Postgres(s)
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    format!("Unknown backend: '{backend}'. Use 'sqlite' or 'postgres'.")
+                ));
+            }
+        };
 
         let num_workers = if workers == 0 {
             std::thread::available_parallelism()
@@ -474,10 +499,16 @@ impl PyQueue {
         });
 
         let scheduler_handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .expect("failed to build tokio runtime");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("taskito: failed to build tokio runtime: {e}");
+                    return;
+                }
+            };
             rt.block_on(scheduler_for_dispatch.run(job_tx));
         });
 

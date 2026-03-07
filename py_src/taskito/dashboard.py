@@ -82,6 +82,12 @@ def _make_handler(queue: Queue) -> type:
             elif path.startswith("/api/jobs/") and path.endswith("/errors"):
                 job_id = path[len("/api/jobs/") : -len("/errors")]
                 self._json_response(queue.job_errors(job_id))
+            elif path.startswith("/api/jobs/") and path.endswith("/logs"):
+                job_id = path[len("/api/jobs/") : -len("/logs")]
+                self._json_response(queue.task_logs(job_id))
+            elif path.startswith("/api/jobs/") and path.endswith("/replay-history"):
+                job_id = path[len("/api/jobs/") : -len("/replay-history")]
+                self._json_response(queue.replay_history(job_id))
             elif path.startswith("/api/jobs/"):
                 job_id = path[len("/api/jobs/") :]
                 job = queue.get_job(job_id)
@@ -97,12 +103,6 @@ def _make_handler(queue: Queue) -> type:
                 task = qs.get("task", [None])[0]
                 since = int(qs.get("since", ["3600"])[0])
                 self._json_response(queue.metrics(task_name=task, since=since))
-            elif path.startswith("/api/jobs/") and path.endswith("/logs"):
-                job_id = path[len("/api/jobs/") : -len("/logs")]
-                self._json_response(queue.task_logs(job_id))
-            elif path.startswith("/api/jobs/") and path.endswith("/replay-history"):
-                job_id = path[len("/api/jobs/") : -len("/replay-history")]
-                self._json_response(queue.replay_history(job_id))
             elif path == "/api/logs":
                 task = qs.get("task", [None])[0]
                 level = qs.get("level", [None])[0]
