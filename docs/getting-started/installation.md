@@ -49,7 +49,7 @@ pip install -e ".[docs]"    # Documentation (Zensical)
 
 ```python
 import taskito
-print(taskito.__version__)  # 0.2.3
+print(taskito.__version__)  # 0.3.0
 ```
 
 ## Requirements

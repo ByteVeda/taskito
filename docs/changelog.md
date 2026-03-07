@@ -2,6 +2,47 @@
 
 All notable changes to taskito are documented here.
 
+## 0.3.0
+
+### Features
+
+- **Redis storage backend** — optional Redis backend for distributed workloads (`pip install taskito[redis]`); Lua scripts for atomic operations, sorted sets for indexing
+- **Events & webhooks** — event system with webhook delivery support
+- **Flask integration** — contrib integration for Flask applications
+- **Prometheus integration** — contrib stats collector with `PrometheusStatsCollector`
+- **Sentry integration** — contrib middleware for Sentry error tracking
+
+### Build & CI
+
+- Add `openssl-sys` dependency, refactor GitHub Actions for wheel building/publishing
+- Enable postgres feature for macOS and Windows wheel builds
+- Add Rust linting/caching, optimize test matrix, reduce redundant CI jobs
+- Add redis feature to wheel builds
+
+### Fixes
+
+- Guard arithmetic overflow across timeout detection, worker reaping, scheduler cleanup, circuit breaker timing, and Redis TTL purging
+- Treat cancelled jobs as terminal in `_poll_once` so `result()` raises immediately
+- Cap float-to-i64 casts to prevent silent overflow in delay_seconds, expires, retry_delays, retry_backoff
+- Reject negative pagination in list_jobs, dead_letters, list_archived, query_task_logs
+- Fix async/sync misuse in FastAPI handlers
+- Replace deprecated `asyncio.get_event_loop()` with `get_running_loop()`
+- Replace Redis `KEYS` with `SCAN` in purge operations
+- Fix Redis `enqueue_unique()` race condition with atomic Lua scripts
+- Only call middleware `after()` for those whose `before()` succeeded
+- Recover from poisoned mutex in scheduler instead of panicking
+- Validate `EncryptedSerializer` key type and size before use
+- Thread-safe double-checked locking for Prometheus metrics init and dashboard SPA cache
+- Skip webhook retries on 4xx client errors
+- Clamp percentile index in task_metrics to prevent IndexError
+- Fix dashboard formatting
+
+### Docs
+
+- Add circuit breakers, events/webhooks, and logging guides
+- Add integration docs for Django, FastAPI, Flask, OTel, Prometheus, Sentry
+- Remove Linux-only warnings from postgres and installation docs
+
 ## 0.2.3
 
 ### Features
