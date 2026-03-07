@@ -102,6 +102,7 @@ jobs:
         with:
           args: --release --out dist --features postgres
           manylinux: auto
+          before-script-linux: yum install -y openssl-devel perl-IPC-Cmd
 
       - name: Build wheels
         if: runner.os != 'Linux'
