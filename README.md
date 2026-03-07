@@ -4,10 +4,11 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/taskito.svg)](https://pypi.org/project/taskito/)
 [![License](https://img.shields.io/pypi/l/taskito.svg)](https://github.com/pratyush618/taskito/blob/master/LICENSE)
 
-A Rust-powered task queue for Python. No broker required — just SQLite.
+A Rust-powered task queue for Python. No broker required — just SQLite or Postgres.
 
 ```
-pip install taskito
+pip install taskito                # SQLite (default)
+pip install taskito[postgres]      # with Postgres backend
 ```
 
 ## Quickstart
@@ -41,7 +42,7 @@ print(job.result(timeout=10))  # 5
 
 ## Why taskito?
 
-Most Python task queues require a separate broker (Redis, RabbitMQ) even for single-machine workloads. taskito embeds everything — storage, scheduling, and worker management — into a single `pip install` with no external dependencies beyond Python itself.
+Most Python task queues require a separate broker (Redis, RabbitMQ) even for single-machine workloads. taskito embeds everything — storage, scheduling, and worker management — into a single `pip install` with no external dependencies beyond Python itself. For distributed setups, an optional Postgres backend enables multi-machine workers with the same API.
 
 The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool with crossbeam channels, and Diesel ORM over SQLite in WAL mode. Python's GIL is only held during task execution.
 
@@ -71,6 +72,7 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 - **Async support** — `await job.aresult()`, `await queue.astats()`
 - **Web dashboard** — `taskito dashboard --app myapp:queue` serves a built-in monitoring UI
 - **FastAPI integration** — `TaskitoRouter` for instant REST API over the queue
+- **Postgres backend** — optional multi-machine storage via PostgreSQL
 - **CLI** — `taskito worker`, `taskito info --watch`, `taskito dashboard`
 
 ## Examples
@@ -256,6 +258,7 @@ Coming from Celery? See the **[Migration Guide](https://taskito-sepia.vercel.app
 | Per-task middleware | **Yes** | No | No | Yes | No |
 | Cancel running tasks | **Yes** | Yes | No | No | No |
 | Custom serializers | **Yes** | Yes | No | No | No |
+| Postgres backend | **Yes** | Yes | No | No | No |
 | Setup | **`pip install`** | Broker + backend | Redis | Broker | Redis |
 
 ## License

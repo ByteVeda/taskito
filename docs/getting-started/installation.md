@@ -11,6 +11,19 @@ taskito has a single runtime dependency: [`cloudpickle`](https://github.com/clou
 !!! note "SQLite is bundled"
     taskito ships with SQLite compiled in via Rust's `libsqlite3-sys` crate. You do **not** need a system SQLite installation.
 
+## Postgres Backend
+
+To use PostgreSQL as the storage backend instead of SQLite:
+
+```bash
+pip install taskito[postgres]
+```
+
+!!! warning "Linux only"
+    The `postgres` extra currently requires Linux. macOS and Windows are not yet supported.
+
+See the [Postgres Backend guide](../guide/postgres.md) for configuration details.
+
 ## From Source
 
 Building from source requires a Rust toolchain (1.70+).
@@ -46,4 +59,5 @@ print(taskito.__version__)  # 0.1.0
 
 - Python 3.9+
 - Any OS with SQLite support (Linux, macOS, Windows)
+- PostgreSQL 12+ (optional, for `taskito[postgres]` — Linux only)
 - Rust toolchain only needed for building from source
