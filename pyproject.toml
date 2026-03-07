@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "taskito"
-version = "0.2.2"
+version = "0.2.3"
 description = "Rust-powered task queue for Python. No broker required."
 requires-python = ">=3.9"
 license = { file = "LICENSE" }

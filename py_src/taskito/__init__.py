@@ -55,4 +55,4 @@ try:
 
     __version__ = _get_version("taskito")
 except Exception:
-    __version__ = "0.2.2"
+    __version__ = "0.2.3"
