@@ -16,6 +16,8 @@ use taskito_core::scheduler::{Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
 #[cfg(feature = "postgres")]
 use taskito_core::storage::postgres::PostgresStorage;
+#[cfg(feature = "redis")]
+use taskito_core::storage::redis_backend::RedisStorage;
 use taskito_core::storage::sqlite::SqliteStorage;
 use taskito_core::storage::{Storage, StorageBackend};
 
@@ -73,9 +75,18 @@ impl PyQueue {
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
                 StorageBackend::Postgres(s)
             }
+            #[cfg(feature = "redis")]
+            "redis" => {
+                let url = db_url.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("db_url is required for redis backend")
+                })?;
+                let s = RedisStorage::new(url)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                StorageBackend::Redis(s)
+            }
             _ => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Unknown backend: '{backend}'. Use 'sqlite' or 'postgres'."
+                    "Unknown backend: '{backend}'. Use 'sqlite', 'postgres', or 'redis'."
                 )));
             }
         };
@@ -144,6 +155,7 @@ impl PyQueue {
             depends_on: depends_on.unwrap_or_default(),
             expires_at,
             result_ttl_ms,
+            namespace: None,
         };
 
         let job = if unique_key.is_some() {
@@ -199,6 +211,7 @@ impl PyQueue {
                 depends_on: vec![],
                 expires_at: None,
                 result_ttl_ms: None,
+                namespace: None,
             });
         }
 
@@ -387,7 +400,7 @@ impl PyQueue {
     }
 
     /// Register a periodic task schedule.
-    #[pyo3(signature = (name, task_name, cron_expr, args=None, kwargs=None, queue="default"))]
+    #[pyo3(signature = (name, task_name, cron_expr, args=None, kwargs=None, queue="default", timezone=None))]
     pub fn register_periodic(
         &self,
         name: &str,
@@ -396,10 +409,17 @@ impl PyQueue {
         args: Option<Vec<u8>>,
         kwargs: Option<Vec<u8>>,
         queue: &str,
+        timezone: Option<&str>,
     ) -> PyResult<()> {
+        use taskito_core::periodic::next_cron_time_tz;
+
         let now = now_millis();
-        let next_run = next_cron_time(cron_expr, now)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let next_run = if let Some(tz) = timezone {
+            next_cron_time_tz(cron_expr, now, tz)
+        } else {
+            next_cron_time(cron_expr, now)
+        }
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let row = NewPeriodicTaskRow {
             name,
@@ -410,6 +430,7 @@ impl PyQueue {
             queue,
             enabled: true,
             next_run,
+            timezone,
         };
 
         self.storage
@@ -417,14 +438,69 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Pause a queue (no jobs will be dispatched from it).
+    pub fn pause_queue(&self, queue_name: &str) -> PyResult<()> {
+        self.storage
+            .pause_queue(queue_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Resume a paused queue.
+    pub fn resume_queue(&self, queue_name: &str) -> PyResult<()> {
+        self.storage
+            .resume_queue(queue_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// List paused queues.
+    pub fn list_paused_queues(&self) -> PyResult<Vec<String>> {
+        self.storage
+            .list_paused_queues()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Cancel all pending jobs in a queue. Returns count cancelled.
+    pub fn purge_queue(&self, queue_name: &str) -> PyResult<u64> {
+        self.storage
+            .cancel_pending_by_queue(queue_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Cancel all pending jobs for a task name. Returns count cancelled.
+    pub fn revoke_task(&self, task_name: &str) -> PyResult<u64> {
+        self.storage
+            .cancel_pending_by_task(task_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Archive completed/dead/cancelled jobs older than cutoff (seconds ago).
+    pub fn archive_old_jobs(&self, older_than_seconds: i64) -> PyResult<u64> {
+        let cutoff = now_millis() - (older_than_seconds * 1000);
+        self.storage
+            .archive_old_jobs(cutoff)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// List archived jobs with pagination.
+    #[pyo3(signature = (limit=50, offset=0))]
+    pub fn list_archived(&self, limit: i64, offset: i64) -> PyResult<Vec<PyJob>> {
+        let jobs = self
+            .storage
+            .list_archived(limit, offset)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(jobs.into_iter().map(PyJob::from).collect())
+    }
+
     /// Run the worker loop. This blocks until interrupted.
-    #[pyo3(signature = (task_registry, task_configs, queues=None))]
+    #[pyo3(signature = (task_registry, task_configs, queues=None, drain_timeout_secs=None, tags=None))]
     pub fn run_worker(
         &self,
         py: Python<'_>,
         task_registry: PyObject,
         task_configs: Vec<PyTaskConfig>,
         queues: Option<Vec<String>>,
+        drain_timeout_secs: Option<u64>,
+        tags: Option<String>,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -456,10 +532,15 @@ impl PyQueue {
         }
 
         for tc in &task_configs {
+            let custom_delays_ms = tc
+                .retry_delays
+                .as_ref()
+                .map(|delays| delays.iter().map(|d| (d * 1000.0) as i64).collect());
             let retry_policy = RetryPolicy {
                 max_retries: tc.max_retries,
                 base_delay_ms: (tc.retry_backoff * 1000.0) as i64,
                 max_delay_ms: 300_000,
+                custom_delays_ms,
             };
             let rate_limit = tc
                 .rate_limit
@@ -502,7 +583,9 @@ impl PyQueue {
 
         // Generate a unique worker ID and register
         let worker_id = uuid::Uuid::now_v7().to_string();
-        let _ = self.storage.register_worker(&worker_id, &queues_str);
+        let _ = self
+            .storage
+            .register_worker(&worker_id, &queues_str, tags.as_deref());
 
         // Start heartbeat thread
         let heartbeat_storage = self.storage.clone();
@@ -534,7 +617,7 @@ impl PyQueue {
         let flag = self.shutdown_flag.clone();
 
         py.allow_threads(move || {
-            let drain_timeout = std::time::Duration::from_secs(30);
+            let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs.unwrap_or(30));
 
             loop {
                 // Check if graceful shutdown was requested
@@ -645,6 +728,7 @@ impl PyQueue {
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: original.result_ttl_ms,
+            namespace: original.namespace,
         };
 
         let job = self
@@ -809,6 +893,7 @@ impl PyQueue {
                 dict.set_item("last_heartbeat", r.last_heartbeat)?;
                 dict.set_item("queues", r.queues)?;
                 dict.set_item("status", r.status)?;
+                dict.set_item("tags", r.tags)?;
                 result.push(dict.into());
             }
             Ok(result)

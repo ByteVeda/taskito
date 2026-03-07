@@ -81,6 +81,7 @@ impl SqliteStorage {
                 cancel_requested: 0,
                 expires_at: job.expires_at,
                 result_ttl_ms: job.result_ttl_ms,
+                namespace: job.namespace.as_deref(),
             };
 
             diesel::insert_into(jobs::table)
@@ -135,6 +136,7 @@ impl SqliteStorage {
                     cancel_requested: 0,
                     expires_at: job.expires_at,
                     result_ttl_ms: job.result_ttl_ms,
+                    namespace: job.namespace.as_deref(),
                 };
 
                 diesel::insert_into(jobs::table)
@@ -185,6 +187,7 @@ impl SqliteStorage {
                 cancel_requested: 0,
                 expires_at: job.expires_at,
                 result_ttl_ms: job.result_ttl_ms,
+                namespace: job.namespace.as_deref(),
             };
 
             diesel::insert_into(jobs::table)
@@ -724,6 +727,60 @@ impl SqliteStorage {
             .load(&mut conn)?;
 
         Ok(rows)
+    }
+
+    /// Expire pending jobs that have passed their expires_at.
+    pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::status.eq(JobStatus::Pending as i32))
+            .filter(jobs::expires_at.is_not_null())
+            .filter(jobs::expires_at.lt(now))
+            .set((
+                jobs::status.eq(JobStatus::Cancelled as i32),
+                jobs::completed_at.eq(now),
+                jobs::error.eq("expired"),
+            ))
+            .execute(&mut conn)?;
+
+        Ok(affected as u64)
+    }
+
+    /// Cancel all pending jobs in a specific queue.
+    pub fn cancel_pending_by_queue(&self, queue: &str) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let now = now_millis();
+
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::status.eq(JobStatus::Pending as i32))
+            .filter(jobs::queue.eq(queue))
+            .set((
+                jobs::status.eq(JobStatus::Cancelled as i32),
+                jobs::completed_at.eq(now),
+                jobs::error.eq("purged"),
+            ))
+            .execute(&mut conn)?;
+
+        Ok(affected as u64)
+    }
+
+    /// Cancel all pending jobs for a specific task name.
+    pub fn cancel_pending_by_task(&self, task_name: &str) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let now = now_millis();
+
+        let affected = diesel::update(jobs::table)
+            .filter(jobs::status.eq(JobStatus::Pending as i32))
+            .filter(jobs::task_name.eq(task_name))
+            .set((
+                jobs::status.eq(JobStatus::Cancelled as i32),
+                jobs::completed_at.eq(now),
+                jobs::error.eq("revoked"),
+            ))
+            .execute(&mut conn)?;
+
+        Ok(affected as u64)
     }
 
     /// Purge job errors older than the given timestamp.

@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = []
 postgres = ["diesel/postgres", "pq-sys"]
+redis = ["dep:redis"]
 
 [dependencies]
 diesel = { workspace = true }
@@ -20,7 +21,9 @@ crossbeam-channel = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 cron = { workspace = true }
+chrono-tz = { workspace = true }
 log = { workspace = true }
+redis = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

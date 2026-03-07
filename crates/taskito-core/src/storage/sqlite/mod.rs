@@ -1,9 +1,11 @@
+mod archival;
 mod circuit_breakers;
 mod dead_letter;
 mod jobs;
 mod logs;
 mod metrics;
 mod periodic;
+mod queue_state;
 mod rate_limits;
 mod trait_impl;
 mod workers;
@@ -319,6 +321,59 @@ impl SqliteStorage {
             )",
         )
         .execute(&mut conn)?;
+
+        // Migration: add tags column to workers
+        let _ = diesel::sql_query("ALTER TABLE workers ADD COLUMN tags TEXT").execute(&mut conn);
+
+        // ── Queue State ──────────────────────────────────
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS queue_state (
+                queue_name TEXT PRIMARY KEY,
+                paused     INTEGER NOT NULL DEFAULT 0,
+                paused_at  INTEGER
+            )",
+        )
+        .execute(&mut conn)?;
+
+        // ── Archived Jobs ────────────────────────────────
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS archived_jobs (
+                id           TEXT PRIMARY KEY,
+                queue        TEXT NOT NULL DEFAULT 'default',
+                task_name    TEXT NOT NULL,
+                payload      BLOB NOT NULL,
+                status       INTEGER NOT NULL DEFAULT 0,
+                priority     INTEGER NOT NULL DEFAULT 0,
+                created_at   INTEGER NOT NULL,
+                scheduled_at INTEGER NOT NULL,
+                started_at   INTEGER,
+                completed_at INTEGER,
+                retry_count  INTEGER NOT NULL DEFAULT 0,
+                max_retries  INTEGER NOT NULL DEFAULT 3,
+                result       BLOB,
+                error        TEXT,
+                timeout_ms   INTEGER NOT NULL DEFAULT 300000,
+                unique_key   TEXT,
+                progress     INTEGER,
+                metadata     TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                expires_at   INTEGER,
+                result_ttl_ms INTEGER
+            )",
+        )
+        .execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_archived_jobs_completed ON archived_jobs(completed_at)",
+        )
+        .execute(&mut conn)?;
+
+        // ── Periodic tasks timezone migration ────────────
+        let _ = diesel::sql_query("ALTER TABLE periodic_tasks ADD COLUMN timezone TEXT")
+            .execute(&mut conn);
+
+        // Migration: add namespace column to jobs
+        let _ = diesel::sql_query("ALTER TABLE jobs ADD COLUMN namespace TEXT").execute(&mut conn);
 
         Ok(())
     }

@@ -24,13 +24,15 @@ pub struct PyTaskConfig {
     pub circuit_breaker_window: Option<i64>,
     #[pyo3(get, set)]
     pub circuit_breaker_cooldown: Option<i64>,
+    #[pyo3(get, set)]
+    pub retry_delays: Option<Vec<f64>>,
 }
 
 #[pymethods]
 #[allow(clippy::too_many_arguments)]
 impl PyTaskConfig {
     #[new]
-    #[pyo3(signature = (name, max_retries=3, retry_backoff=1.0, timeout=300, priority=0, rate_limit=None, queue="default".to_string(), circuit_breaker_threshold=None, circuit_breaker_window=None, circuit_breaker_cooldown=None))]
+    #[pyo3(signature = (name, max_retries=3, retry_backoff=1.0, timeout=300, priority=0, rate_limit=None, queue="default".to_string(), circuit_breaker_threshold=None, circuit_breaker_window=None, circuit_breaker_cooldown=None, retry_delays=None))]
     pub fn new(
         name: String,
         max_retries: i32,
@@ -42,6 +44,7 @@ impl PyTaskConfig {
         circuit_breaker_threshold: Option<i32>,
         circuit_breaker_window: Option<i64>,
         circuit_breaker_cooldown: Option<i64>,
+        retry_delays: Option<Vec<f64>>,
     ) -> Self {
         Self {
             name,
@@ -54,6 +57,7 @@ impl PyTaskConfig {
             circuit_breaker_threshold,
             circuit_breaker_window,
             circuit_breaker_cooldown,
+            retry_delays,
         }
     }
 }

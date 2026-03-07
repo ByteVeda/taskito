@@ -11,7 +11,7 @@ const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
 impl SqliteStorage {
     /// Register a new worker or update an existing one.
-    pub fn register_worker(&self, worker_id: &str, queues: &str) -> Result<()> {
+    pub fn register_worker(&self, worker_id: &str, queues: &str, tags: Option<&str>) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
 
@@ -20,6 +20,7 @@ impl SqliteStorage {
             last_heartbeat: now,
             queues,
             status: "active",
+            tags,
         };
 
         diesel::replace_into(workers::table)

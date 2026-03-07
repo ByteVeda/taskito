@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = []
 postgres = ["taskito-core/postgres"]
+redis = ["taskito-core/redis"]
 
 [lib]
 name = "_taskito"

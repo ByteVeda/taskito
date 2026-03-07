@@ -113,9 +113,29 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Worker operations ───────────────────────────────────────────
 
-    fn register_worker(&self, worker_id: &str, queues: &str) -> Result<()>;
+    fn register_worker(&self, worker_id: &str, queues: &str, tags: Option<&str>) -> Result<()>;
     fn heartbeat(&self, worker_id: &str) -> Result<()>;
     fn list_workers(&self) -> Result<Vec<WorkerRow>>;
     fn reap_dead_workers(&self) -> Result<u64>;
     fn unregister_worker(&self, worker_id: &str) -> Result<()>;
+
+    // ── Queue pause/resume ───────────────────────────────────────
+
+    fn pause_queue(&self, queue_name: &str) -> Result<()>;
+    fn resume_queue(&self, queue_name: &str) -> Result<()>;
+    fn list_paused_queues(&self) -> Result<Vec<String>>;
+
+    // ── Job expiry ───────────────────────────────────────────────
+
+    fn expire_pending_jobs(&self, now: i64) -> Result<u64>;
+
+    // ── Job revocation ───────────────────────────────────────────
+
+    fn cancel_pending_by_queue(&self, queue: &str) -> Result<u64>;
+    fn cancel_pending_by_task(&self, task_name: &str) -> Result<u64>;
+
+    // ── Job archival ─────────────────────────────────────────────
+
+    fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64>;
+    fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>>;
 }

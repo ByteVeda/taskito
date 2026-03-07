@@ -19,6 +19,7 @@ fn make_job(task_name: &str) -> NewJob {
         depends_on: vec![],
         expires_at: None,
         result_ttl_ms: None,
+        namespace: None,
     }
 }
 
