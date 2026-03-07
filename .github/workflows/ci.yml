@@ -92,7 +92,15 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Build wheels (with postgres)
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist --features postgres
+          manylinux: auto
+
       - name: Build wheels
+        if: runner.os != 'Linux'
         uses: PyO3/maturin-action@v1
         with:
           args: --release --out dist

@@ -14,6 +14,7 @@ use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
+#[cfg(feature = "postgres")]
 use taskito_core::storage::postgres::PostgresStorage;
 use taskito_core::storage::sqlite::SqliteStorage;
 use taskito_core::storage::{Storage, StorageBackend};
@@ -36,7 +37,11 @@ pub struct PyQueue {
 }
 
 #[pymethods]
-#[allow(clippy::too_many_arguments, clippy::useless_conversion)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::useless_conversion,
+    unused_variables
+)]
 impl PyQueue {
     #[new]
     #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito"))]
@@ -57,6 +62,7 @@ impl PyQueue {
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
                 StorageBackend::Sqlite(s)
             }
+            #[cfg(feature = "postgres")]
             "postgres" | "postgresql" => {
                 let url = db_url.ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err(

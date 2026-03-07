@@ -1,4 +1,5 @@
 pub mod models;
+#[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod schema;
 pub mod sqlite;
@@ -64,6 +65,7 @@ impl From<models::DeadLetterRow> for DeadJob {
 #[derive(Clone)]
 pub enum StorageBackend {
     Sqlite(sqlite::SqliteStorage),
+    #[cfg(feature = "postgres")]
     Postgres(postgres::PostgresStorage),
 }
 
@@ -71,6 +73,7 @@ macro_rules! delegate {
     ($self:expr, $method:ident $(, $arg:expr)*) => {
         match $self {
             StorageBackend::Sqlite(s) => s.$method($($arg),*),
+            #[cfg(feature = "postgres")]
             StorageBackend::Postgres(s) => s.$method($($arg),*),
         }
     };
