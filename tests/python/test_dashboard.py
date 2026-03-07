@@ -115,6 +115,7 @@ def test_list_jobs_invalid_status(queue):
 
 def test_to_dict_fields(queue):
     """to_dict() returns all expected fields."""
+
     @queue.task()
     def dummy():
         pass
@@ -123,10 +124,22 @@ def test_to_dict_fields(queue):
     d = job.to_dict()
 
     expected_keys = {
-        "id", "queue", "task_name", "status", "priority", "progress",
-        "retry_count", "max_retries", "created_at", "scheduled_at",
-        "started_at", "completed_at", "error", "timeout_ms",
-        "unique_key", "metadata",
+        "id",
+        "queue",
+        "task_name",
+        "status",
+        "priority",
+        "progress",
+        "retry_count",
+        "max_retries",
+        "created_at",
+        "scheduled_at",
+        "started_at",
+        "completed_at",
+        "error",
+        "timeout_ms",
+        "unique_key",
+        "metadata",
     }
     assert set(d.keys()) == expected_keys
     assert d["status"] == "pending"
@@ -135,6 +148,7 @@ def test_to_dict_fields(queue):
 
 def test_to_dict_is_json_serializable(queue):
     """to_dict() output can be serialized to JSON."""
+
     @queue.task()
     def dummy():
         pass

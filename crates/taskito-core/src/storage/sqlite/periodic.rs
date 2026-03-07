@@ -1,9 +1,9 @@
 use diesel::prelude::*;
 
-use crate::error::Result;
 use super::super::models::*;
 use super::super::schema::periodic_tasks;
 use super::SqliteStorage;
+use crate::error::Result;
 
 impl SqliteStorage {
     /// Register or update a periodic task.
@@ -31,12 +31,7 @@ impl SqliteStorage {
     }
 
     /// Update a periodic task's schedule after execution.
-    pub fn update_periodic_schedule(
-        &self,
-        name: &str,
-        last_run: i64,
-        next_run: i64,
-    ) -> Result<()> {
+    pub fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()> {
         let mut conn = self.conn()?;
 
         diesel::update(periodic_tasks::table.find(name))

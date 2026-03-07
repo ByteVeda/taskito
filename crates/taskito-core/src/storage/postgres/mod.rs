@@ -1,16 +1,16 @@
-mod jobs;
-mod dead_letter;
-mod rate_limits;
-mod periodic;
-mod metrics;
-mod logs;
 mod circuit_breakers;
+mod dead_letter;
+mod jobs;
+mod logs;
+mod metrics;
+mod periodic;
+mod rate_limits;
 mod trait_impl;
 mod workers;
 
+use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager, Pool};
-use diesel::pg::PgConnection;
 
 use crate::error::Result;
 
@@ -23,7 +23,10 @@ fn validate_schema_name(schema: &str) -> Result<()> {
             "Schema name cannot be empty".into(),
         ));
     }
-    if !schema.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if !schema
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         return Err(crate::error::QueueError::Config(
             format!("Invalid schema name '{schema}': only alphanumeric characters and underscores are allowed"),
         ));
@@ -41,7 +44,7 @@ impl r2d2::CustomizeConnection<PgConnection, r2d2::Error> for SetSearchPath {
     fn on_acquire(&self, conn: &mut PgConnection) -> std::result::Result<(), r2d2::Error> {
         diesel::sql_query(format!("SET search_path TO {}", self.schema))
             .execute(conn)
-            .map_err(|e| r2d2::Error::QueryError(e))?;
+            .map_err(r2d2::Error::QueryError)?;
         Ok(())
     }
 }
@@ -90,7 +93,9 @@ impl PostgresStorage {
         Ok(storage)
     }
 
-    pub(crate) fn conn(&self) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
+    pub(crate) fn conn(
+        &self,
+    ) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
         Ok(self.pool.get()?)
     }
 
@@ -98,11 +103,8 @@ impl PostgresStorage {
         let mut conn = self.conn()?;
 
         // Ensure the schema exists before creating tables
-        diesel::sql_query(format!(
-            "CREATE SCHEMA IF NOT EXISTS {}",
-            self.schema
-        ))
-        .execute(&mut conn)?;
+        diesel::sql_query(format!("CREATE SCHEMA IF NOT EXISTS {}", self.schema))
+            .execute(&mut conn)?;
 
         // Use PG-native types: TEXT, BYTEA, BIGINT, INTEGER, BOOLEAN, DOUBLE PRECISION
         diesel::sql_query(
@@ -128,23 +130,25 @@ impl PostgresStorage {
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
                 expires_at   BIGINT,
                 result_ttl_ms BIGINT
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE INDEX IF NOT EXISTS idx_jobs_dequeue
-                ON jobs(queue, status, priority DESC, scheduled_at)"
-        ).execute(&mut conn)?;
+                ON jobs(queue, status, priority DESC, scheduled_at)",
+        )
+        .execute(&mut conn)?;
 
-        diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)"
-        ).execute(&mut conn)?;
+        diesel::sql_query("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+            .execute(&mut conn)?;
 
         // PG partial unique index
         diesel::sql_query(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_unique_key
-                ON jobs(unique_key) WHERE unique_key IS NOT NULL AND status IN (0, 1)"
-        ).execute(&mut conn)?;
+                ON jobs(unique_key) WHERE unique_key IS NOT NULL AND status IN (0, 1)",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS dead_letter (
@@ -161,8 +165,9 @@ impl PostgresStorage {
                 max_retries     INTEGER NOT NULL DEFAULT 3,
                 timeout_ms      BIGINT NOT NULL DEFAULT 300000,
                 result_ttl_ms   BIGINT
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         // Migration: add columns if they don't exist (for existing databases)
         for col in &[
@@ -181,8 +186,9 @@ impl PostgresStorage {
                 max_tokens  DOUBLE PRECISION NOT NULL,
                 refill_rate DOUBLE PRECISION NOT NULL,
                 last_refill BIGINT NOT NULL
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS periodic_tasks (
@@ -195,8 +201,9 @@ impl PostgresStorage {
                 enabled     BOOLEAN NOT NULL DEFAULT TRUE,
                 last_run    BIGINT,
                 next_run    BIGINT NOT NULL
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS job_errors (
@@ -205,24 +212,26 @@ impl PostgresStorage {
                 attempt   INTEGER NOT NULL,
                 error     TEXT NOT NULL,
                 failed_at BIGINT NOT NULL
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
-        diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_job_errors_job_id ON job_errors(job_id)"
-        ).execute(&mut conn)?;
+        diesel::sql_query("CREATE INDEX IF NOT EXISTS idx_job_errors_job_id ON job_errors(job_id)")
+            .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS job_dependencies (
                 id                TEXT PRIMARY KEY,
                 job_id            TEXT NOT NULL,
                 depends_on_job_id TEXT NOT NULL
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_job_deps_job_id ON job_dependencies(job_id)"
-        ).execute(&mut conn)?;
+            "CREATE INDEX IF NOT EXISTS idx_job_deps_job_id ON job_dependencies(job_id)",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE INDEX IF NOT EXISTS idx_job_deps_depends_on ON job_dependencies(depends_on_job_id)"
@@ -237,16 +246,19 @@ impl PostgresStorage {
                 memory_bytes BIGINT NOT NULL DEFAULT 0,
                 succeeded    BOOLEAN NOT NULL DEFAULT TRUE,
                 recorded_at  BIGINT NOT NULL
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_task_metrics_task_name ON task_metrics(task_name)"
-        ).execute(&mut conn)?;
+            "CREATE INDEX IF NOT EXISTS idx_task_metrics_task_name ON task_metrics(task_name)",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_task_metrics_recorded_at ON task_metrics(recorded_at)"
-        ).execute(&mut conn)?;
+            "CREATE INDEX IF NOT EXISTS idx_task_metrics_recorded_at ON task_metrics(recorded_at)",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS replay_history (
@@ -258,12 +270,14 @@ impl PostgresStorage {
                 replay_result    BYTEA,
                 original_error   TEXT,
                 replay_error     TEXT
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_replay_original ON replay_history(original_job_id)"
-        ).execute(&mut conn)?;
+            "CREATE INDEX IF NOT EXISTS idx_replay_original ON replay_history(original_job_id)",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS task_logs (
@@ -274,16 +288,17 @@ impl PostgresStorage {
                 message    TEXT NOT NULL,
                 extra      TEXT,
                 logged_at  BIGINT NOT NULL
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
+
+        diesel::sql_query("CREATE INDEX IF NOT EXISTS idx_task_logs_job_id ON task_logs(job_id)")
+            .execute(&mut conn)?;
 
         diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_task_logs_job_id ON task_logs(job_id)"
-        ).execute(&mut conn)?;
-
-        diesel::sql_query(
-            "CREATE INDEX IF NOT EXISTS idx_task_logs_recorded ON task_logs(logged_at)"
-        ).execute(&mut conn)?;
+            "CREATE INDEX IF NOT EXISTS idx_task_logs_recorded ON task_logs(logged_at)",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS circuit_breakers (
@@ -296,8 +311,9 @@ impl PostgresStorage {
                 threshold      INTEGER NOT NULL DEFAULT 5,
                 window_ms      BIGINT NOT NULL DEFAULT 60000,
                 cooldown_ms    BIGINT NOT NULL DEFAULT 300000
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS workers (
@@ -305,8 +321,9 @@ impl PostgresStorage {
                 last_heartbeat BIGINT NOT NULL,
                 queues         TEXT NOT NULL DEFAULT 'default',
                 status         TEXT NOT NULL DEFAULT 'active'
-            )"
-        ).execute(&mut conn)?;
+            )",
+        )
+        .execute(&mut conn)?;
 
         Ok(())
     }

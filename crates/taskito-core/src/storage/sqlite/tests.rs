@@ -1,5 +1,5 @@
 use super::*;
-use crate::job::{JobStatus, NewJob, now_millis};
+use crate::job::{now_millis, JobStatus, NewJob};
 
 fn test_storage() -> SqliteStorage {
     SqliteStorage::in_memory().unwrap()
@@ -37,7 +37,10 @@ fn test_dequeue() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("dequeue_task")).unwrap();
 
-    let dequeued = storage.dequeue("default", now_millis() + 1000).unwrap().unwrap();
+    let dequeued = storage
+        .dequeue("default", now_millis() + 1000)
+        .unwrap()
+        .unwrap();
     assert_eq!(dequeued.id, job.id);
     assert_eq!(dequeued.status, JobStatus::Running);
 
@@ -127,7 +130,13 @@ fn test_dead_letter_queue() {
     let job = storage.enqueue(make_job("dlq_task")).unwrap();
     storage.dequeue("default", now_millis() + 1000).unwrap();
 
-    storage.move_to_dlq(&storage.get_job(&job.id).unwrap().unwrap(), "max retries exceeded", None).unwrap();
+    storage
+        .move_to_dlq(
+            &storage.get_job(&job.id).unwrap().unwrap(),
+            "max retries exceeded",
+            None,
+        )
+        .unwrap();
 
     let fetched = storage.get_job(&job.id).unwrap().unwrap();
     assert_eq!(fetched.status, JobStatus::Dead);
@@ -144,7 +153,9 @@ fn test_retry_dead() {
     storage.dequeue("default", now_millis() + 1000).unwrap();
 
     let running_job = storage.get_job(&job.id).unwrap().unwrap();
-    storage.move_to_dlq(&running_job, "fatal error", None).unwrap();
+    storage
+        .move_to_dlq(&running_job, "fatal error", None)
+        .unwrap();
 
     let dead = storage.list_dead(10, 0).unwrap();
     let new_id = storage.retry_dead(&dead[0].id).unwrap();
@@ -201,11 +212,13 @@ fn test_unique_key_dedup() {
 #[test]
 fn test_enqueue_batch() {
     let storage = test_storage();
-    let jobs: Vec<NewJob> = (0..5).map(|i| {
-        let mut j = make_job(&format!("batch_task_{i}"));
-        j.priority = i;
-        j
-    }).collect();
+    let jobs: Vec<NewJob> = (0..5)
+        .map(|i| {
+            let mut j = make_job(&format!("batch_task_{i}"));
+            j.priority = i;
+            j
+        })
+        .collect();
 
     let result = storage.enqueue_batch(jobs).unwrap();
     assert_eq!(result.len(), 5);

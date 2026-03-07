@@ -1,10 +1,10 @@
 use diesel::prelude::*;
 
-use crate::error::Result;
-use crate::job::now_millis;
 use super::super::models::*;
 use super::super::schema::task_metrics;
 use super::PostgresStorage;
+use crate::error::Result;
+use crate::job::now_millis;
 
 impl PostgresStorage {
     /// Record a task execution metric.
@@ -60,9 +60,9 @@ impl PostgresStorage {
     /// Purge old metric records.
     pub fn purge_metrics(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
-        let affected = diesel::delete(
-            task_metrics::table.filter(task_metrics::recorded_at.lt(older_than_ms))
-        ).execute(&mut conn)?;
+        let affected =
+            diesel::delete(task_metrics::table.filter(task_metrics::recorded_at.lt(older_than_ms)))
+                .execute(&mut conn)?;
         Ok(affected as u64)
     }
 

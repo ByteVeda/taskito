@@ -6,11 +6,11 @@ use crossbeam_channel::Sender;
 use log::{error, info, warn};
 use tokio::sync::Notify;
 
+use crate::error::Result;
+use crate::job::{now_millis, Job, NewJob};
+use crate::periodic::next_cron_time;
 use crate::resilience::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use crate::resilience::dlq::DeadLetterQueue;
-use crate::error::Result;
-use crate::job::{Job, NewJob, now_millis};
-use crate::periodic::next_cron_time;
 use crate::resilience::rate_limiter::{RateLimitConfig, RateLimiter};
 use crate::resilience::retry::RetryPolicy;
 use crate::storage::{Storage, StorageBackend};
@@ -176,13 +176,19 @@ impl Scheduler {
             }
         }
 
-        if counters.periodic.is_multiple_of(self.config.periodic_check_interval) {
+        if counters
+            .periodic
+            .is_multiple_of(self.config.periodic_check_interval)
+        {
             if let Err(e) = self.check_periodic() {
                 error!("periodic check error: {e}");
             }
         }
 
-        if counters.cleanup.is_multiple_of(self.config.cleanup_interval) {
+        if counters
+            .cleanup
+            .is_multiple_of(self.config.cleanup_interval)
+        {
             if let Err(e) = self.auto_cleanup() {
                 error!("auto-cleanup error: {e}");
             }
@@ -199,16 +205,16 @@ impl Scheduler {
 
         // Check circuit breaker for this task
         if let Some(config) = self.task_configs.get(&job.task_name) {
-            if config.circuit_breaker.is_some()
-                && !self.circuit_breaker.allow(&job.task_name)?
-            {
-                self.storage.retry(&job.id, now + CIRCUIT_BREAKER_RETRY_DELAY_MS)?;
+            if config.circuit_breaker.is_some() && !self.circuit_breaker.allow(&job.task_name)? {
+                self.storage
+                    .retry(&job.id, now + CIRCUIT_BREAKER_RETRY_DELAY_MS)?;
                 return Ok(false);
             }
 
             if let Some(ref rl_config) = config.rate_limit {
                 if !self.rate_limiter.try_acquire(&job.task_name, rl_config)? {
-                    self.storage.retry(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
+                    self.storage
+                        .retry(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
                     return Ok(false);
                 }
             }
@@ -225,10 +231,18 @@ impl Scheduler {
     /// Handle a completed or failed job result from a worker.
     pub fn handle_result(&self, result: JobResult) -> Result<()> {
         match result {
-            JobResult::Success { job_id, result, ref task_name, wall_time_ns } => {
+            JobResult::Success {
+                job_id,
+                result,
+                ref task_name,
+                wall_time_ns,
+            } => {
                 self.storage.complete(&job_id, result)?;
 
-                if let Err(e) = self.storage.record_metric(task_name, &job_id, wall_time_ns, 0, true) {
+                if let Err(e) =
+                    self.storage
+                        .record_metric(task_name, &job_id, wall_time_ns, 0, true)
+                {
                     error!("failed to record metric for job {job_id}: {e}");
                 }
 
@@ -249,7 +263,10 @@ impl Scheduler {
                     log::error!("failed to record error for job {job_id}: {e}");
                 }
 
-                if let Err(e) = self.storage.record_metric(&task_name, &job_id, wall_time_ns, 0, false) {
+                if let Err(e) =
+                    self.storage
+                        .record_metric(&task_name, &job_id, wall_time_ns, 0, false)
+                {
                     log::error!("failed to record metric for job {job_id}: {e}");
                 }
 
@@ -289,12 +306,19 @@ impl Scheduler {
                     }
                 }
             }
-            JobResult::Cancelled { job_id, task_name, wall_time_ns } => {
+            JobResult::Cancelled {
+                job_id,
+                task_name,
+                wall_time_ns,
+            } => {
                 // Mark as cancelled, no retry
                 if let Err(e) = self.storage.mark_cancelled(&job_id) {
                     error!("failed to mark job {job_id} as cancelled: {e}");
                 }
-                if let Err(e) = self.storage.record_metric(&task_name, &job_id, wall_time_ns, 0, false) {
+                if let Err(e) =
+                    self.storage
+                        .record_metric(&task_name, &job_id, wall_time_ns, 0, false)
+                {
                     error!("failed to record metric for cancelled job {job_id}: {e}");
                 }
             }
@@ -377,19 +401,16 @@ impl Scheduler {
             let next_run = match next_cron_time(&task.cron_expr, now) {
                 Ok(t) => t,
                 Err(e) => {
-                    error!(
-                        "failed to compute next run for '{}': {e}",
-                        task.name
-                    );
+                    error!("failed to compute next run for '{}': {e}", task.name);
                     continue;
                 }
             };
 
-            if let Err(e) = self.storage.update_periodic_schedule(&task.name, now, next_run) {
-                error!(
-                    "failed to update schedule for '{}': {e}",
-                    task.name
-                );
+            if let Err(e) = self
+                .storage
+                .update_periodic_schedule(&task.name, now, next_run)
+            {
+                error!("failed to update schedule for '{}': {e}", task.name);
             }
         }
 
@@ -413,7 +434,8 @@ mod tests {
     use crate::storage::models::NewPeriodicTaskRow;
 
     fn test_scheduler() -> Scheduler {
-        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         Scheduler::new(
             storage,
             vec!["default".to_string()],
@@ -453,12 +475,14 @@ mod tests {
         let job = enqueue_and_run(&scheduler, "success_task");
         assert_eq!(job.status, JobStatus::Running);
 
-        scheduler.handle_result(JobResult::Success {
-            job_id: job.id.clone(),
-            result: Some(vec![42]),
-            task_name: "success_task".to_string(),
-            wall_time_ns: 1_000_000,
-        }).unwrap();
+        scheduler
+            .handle_result(JobResult::Success {
+                job_id: job.id.clone(),
+                result: Some(vec![42]),
+                task_name: "success_task".to_string(),
+                wall_time_ns: 1_000_000,
+            })
+            .unwrap();
 
         let completed = scheduler.storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(completed.status, JobStatus::Complete);
@@ -468,27 +492,32 @@ mod tests {
     #[test]
     fn test_handle_failure_with_retry() {
         let mut scheduler = test_scheduler();
-        scheduler.register_task("retry_task".to_string(), TaskConfig {
-            retry_policy: RetryPolicy {
-                max_retries: 3,
-                base_delay_ms: 100,
-                max_delay_ms: 1000,
+        scheduler.register_task(
+            "retry_task".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy {
+                    max_retries: 3,
+                    base_delay_ms: 100,
+                    max_delay_ms: 1000,
+                },
+                rate_limit: None,
+                circuit_breaker: None,
             },
-            rate_limit: None,
-            circuit_breaker: None,
-        });
+        );
 
         let job = enqueue_and_run(&scheduler, "retry_task");
 
-        scheduler.handle_result(JobResult::Failure {
-            job_id: job.id.clone(),
-            error: "transient error".to_string(),
-            retry_count: 0,
-            max_retries: 3,
-            task_name: "retry_task".to_string(),
-            wall_time_ns: 500_000,
-            should_retry: true,
-        }).unwrap();
+        scheduler
+            .handle_result(JobResult::Failure {
+                job_id: job.id.clone(),
+                error: "transient error".to_string(),
+                retry_count: 0,
+                max_retries: 3,
+                task_name: "retry_task".to_string(),
+                wall_time_ns: 500_000,
+                should_retry: true,
+            })
+            .unwrap();
 
         let retried = scheduler.storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(retried.status, JobStatus::Pending);
@@ -500,15 +529,17 @@ mod tests {
         let scheduler = test_scheduler();
         let job = enqueue_and_run(&scheduler, "exhausted_task");
 
-        scheduler.handle_result(JobResult::Failure {
-            job_id: job.id.clone(),
-            error: "fatal".to_string(),
-            retry_count: 3,
-            max_retries: 3,
-            task_name: "exhausted_task".to_string(),
-            wall_time_ns: 100,
-            should_retry: true,
-        }).unwrap();
+        scheduler
+            .handle_result(JobResult::Failure {
+                job_id: job.id.clone(),
+                error: "fatal".to_string(),
+                retry_count: 3,
+                max_retries: 3,
+                task_name: "exhausted_task".to_string(),
+                wall_time_ns: 100,
+                should_retry: true,
+            })
+            .unwrap();
 
         let dead = scheduler.storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(dead.status, JobStatus::Dead);
@@ -523,15 +554,17 @@ mod tests {
         let scheduler = test_scheduler();
         let job = enqueue_and_run(&scheduler, "no_retry_task");
 
-        scheduler.handle_result(JobResult::Failure {
-            job_id: job.id.clone(),
-            error: "non-retryable".to_string(),
-            retry_count: 0,
-            max_retries: 3,
-            task_name: "no_retry_task".to_string(),
-            wall_time_ns: 100,
-            should_retry: false,
-        }).unwrap();
+        scheduler
+            .handle_result(JobResult::Failure {
+                job_id: job.id.clone(),
+                error: "non-retryable".to_string(),
+                retry_count: 0,
+                max_retries: 3,
+                task_name: "no_retry_task".to_string(),
+                wall_time_ns: 100,
+                should_retry: false,
+            })
+            .unwrap();
 
         let dead = scheduler.storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(dead.status, JobStatus::Dead);
@@ -542,11 +575,13 @@ mod tests {
         let scheduler = test_scheduler();
         let job = enqueue_and_run(&scheduler, "cancel_task");
 
-        scheduler.handle_result(JobResult::Cancelled {
-            job_id: job.id.clone(),
-            task_name: "cancel_task".to_string(),
-            wall_time_ns: 100,
-        }).unwrap();
+        scheduler
+            .handle_result(JobResult::Cancelled {
+                job_id: job.id.clone(),
+                task_name: "cancel_task".to_string(),
+                wall_time_ns: 100,
+            })
+            .unwrap();
 
         let cancelled = scheduler.storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(cancelled.status, JobStatus::Cancelled);
@@ -555,11 +590,17 @@ mod tests {
     #[test]
     fn test_try_dispatch_rate_limited() {
         let mut scheduler = test_scheduler();
-        scheduler.register_task("rl_task".to_string(), TaskConfig {
-            retry_policy: RetryPolicy::default(),
-            rate_limit: Some(RateLimitConfig { max_tokens: 1.0, refill_rate: 0.0 }),
-            circuit_breaker: None,
-        });
+        scheduler.register_task(
+            "rl_task".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy::default(),
+                rate_limit: Some(RateLimitConfig {
+                    max_tokens: 1.0,
+                    refill_rate: 0.0,
+                }),
+                circuit_breaker: None,
+            },
+        );
 
         // Enqueue two jobs
         scheduler.storage.enqueue(make_job("rl_task")).unwrap();
@@ -577,9 +618,10 @@ mod tests {
         assert_eq!(rx.len(), 1); // still just 1 dispatched
 
         // The second job should be back in pending with a future scheduled_at
-        let jobs = scheduler.storage.list_jobs(
-            Some(JobStatus::Pending as i32), None, None, 10, 0
-        ).unwrap();
+        let jobs = scheduler
+            .storage
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0)
+            .unwrap();
         assert_eq!(jobs.len(), 1);
         assert!(jobs[0].scheduled_at > now_millis());
     }
@@ -592,11 +634,14 @@ mod tests {
             window_ms: 60_000,
             cooldown_ms: 300_000,
         };
-        scheduler.register_task("cb_task".to_string(), TaskConfig {
-            retry_policy: RetryPolicy::default(),
-            rate_limit: None,
-            circuit_breaker: Some(cb_config),
-        });
+        scheduler.register_task(
+            "cb_task".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy::default(),
+                rate_limit: None,
+                circuit_breaker: Some(cb_config),
+            },
+        );
 
         // Trip the circuit breaker
         scheduler.circuit_breaker.record_failure("cb_task").unwrap();
@@ -611,9 +656,10 @@ mod tests {
         assert_eq!(rx.len(), 0);
 
         // Job should be rescheduled
-        let jobs = scheduler.storage.list_jobs(
-            Some(JobStatus::Pending as i32), None, None, 10, 0
-        ).unwrap();
+        let jobs = scheduler
+            .storage
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0)
+            .unwrap();
         assert_eq!(jobs.len(), 1);
         assert!(jobs[0].scheduled_at > now_millis());
     }
@@ -621,11 +667,18 @@ mod tests {
     #[test]
     fn test_reap_stale_jobs() {
         let mut scheduler = test_scheduler();
-        scheduler.register_task("stale_task".to_string(), TaskConfig {
-            retry_policy: RetryPolicy { max_retries: 3, base_delay_ms: 100, max_delay_ms: 1000 },
-            rate_limit: None,
-            circuit_breaker: None,
-        });
+        scheduler.register_task(
+            "stale_task".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy {
+                    max_retries: 3,
+                    base_delay_ms: 100,
+                    max_delay_ms: 1000,
+                },
+                rate_limit: None,
+                circuit_breaker: None,
+            },
+        );
 
         // Create a job with a very short timeout
         let mut new_job = make_job("stale_task");
@@ -670,26 +723,35 @@ mod tests {
         scheduler.check_periodic().unwrap();
 
         // A job should have been enqueued
-        let jobs = scheduler.storage.list_jobs(
-            Some(JobStatus::Pending as i32), None, Some("periodic_task"), 10, 0
-        ).unwrap();
+        let jobs = scheduler
+            .storage
+            .list_jobs(
+                Some(JobStatus::Pending as i32),
+                None,
+                Some("periodic_task"),
+                10,
+                0,
+            )
+            .unwrap();
         assert_eq!(jobs.len(), 1);
     }
 
     #[test]
     fn test_auto_cleanup() {
-        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         let config = SchedulerConfig {
             result_ttl_ms: Some(1), // 1ms TTL
             ..SchedulerConfig::default()
         };
-        let scheduler = Scheduler::new(
-            storage, vec!["default".to_string()], config,
-        );
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config);
 
         // Enqueue, dequeue, and complete a job
         let job = scheduler.storage.enqueue(make_job("cleanup_task")).unwrap();
-        scheduler.storage.dequeue("default", now_millis() + 1000).unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000)
+            .unwrap();
         scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
 
         // Wait for the TTL to expire
@@ -704,16 +766,15 @@ mod tests {
 
     #[test]
     fn test_tick_dispatches_and_maintains() {
-        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         let config = SchedulerConfig {
             reap_interval: 1,
             periodic_check_interval: 1,
             cleanup_interval: 1,
             ..SchedulerConfig::default()
         };
-        let scheduler = Scheduler::new(
-            storage, vec!["default".to_string()], config,
-        );
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config);
 
         scheduler.storage.enqueue(make_job("tick_task")).unwrap();
 

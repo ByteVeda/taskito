@@ -71,7 +71,8 @@ mod tests {
 
     #[test]
     fn test_token_bucket() {
-        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
         let limiter = RateLimiter::new(storage);
         let config = RateLimitConfig {
             max_tokens: 3.0,
@@ -89,13 +90,15 @@ mod tests {
 
     #[test]
     fn test_concurrent_token_acquisition() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
         use std::sync::Barrier;
 
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("rate_limit_test.db");
-        let storage = StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::new(db_path.to_str().unwrap()).unwrap());
+        let storage = StorageBackend::Sqlite(
+            crate::storage::sqlite::SqliteStorage::new(db_path.to_str().unwrap()).unwrap(),
+        );
         let limiter = Arc::new(RateLimiter::new(storage));
         let config = RateLimitConfig {
             max_tokens: 10.0,

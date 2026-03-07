@@ -118,24 +118,15 @@ fn worker_loop(
     }
 }
 
-fn execute_task(
-    py: Python<'_>,
-    task_registry: &PyObject,
-    job: &Job,
-) -> PyResult<Option<Vec<u8>>> {
+fn execute_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Option<Vec<u8>>> {
     let cloudpickle = py.import_bound("cloudpickle")?;
     let registry = task_registry.bind(py);
 
     // Look up the task function
     let registry_dict: &Bound<'_, PyDict> = registry.downcast()?;
-    let task_fn = registry_dict
-        .get_item(&job.task_name)?
-        .ok_or_else(|| {
-            pyo3::exceptions::PyKeyError::new_err(format!(
-                "task '{}' not registered",
-                job.task_name
-            ))
-        })?;
+    let task_fn = registry_dict.get_item(&job.task_name)?.ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err(format!("task '{}' not registered", job.task_name))
+    })?;
 
     // Set job context before execution
     let context_mod = py.import_bound("taskito.context")?;
@@ -203,7 +194,10 @@ fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
 fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
     if let Ok(exceptions_mod) = py.import_bound("taskito.exceptions") {
         if let Ok(cancelled_cls) = exceptions_mod.getattr("TaskCancelledError") {
-            return e.get_type_bound(py).is_subclass(&cancelled_cls).unwrap_or(false);
+            return e
+                .get_type_bound(py)
+                .is_subclass(&cancelled_cls)
+                .unwrap_or(false);
         }
     }
     false
@@ -212,10 +206,12 @@ fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
 /// Get the fully-qualified class name of a Python exception.
 fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
     let type_obj = e.get_type_bound(py);
-    let module = type_obj.getattr("__module__")
+    let module = type_obj
+        .getattr("__module__")
         .and_then(|m| m.extract::<String>())
         .unwrap_or_default();
-    let qualname = type_obj.getattr("__qualname__")
+    let qualname = type_obj
+        .getattr("__qualname__")
         .and_then(|q| q.extract::<String>())
         .unwrap_or_else(|_| "Exception".to_string());
 

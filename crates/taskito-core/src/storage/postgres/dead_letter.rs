@@ -1,11 +1,11 @@
 use diesel::prelude::*;
 
-use crate::error::{QueueError, Result};
-use crate::job::{NewJob, now_millis, Job, JobStatus};
 use super::super::models::*;
 use super::super::schema::{dead_letter, jobs};
-use crate::storage::DeadJob;
 use super::PostgresStorage;
+use crate::error::{QueueError, Result};
+use crate::job::{now_millis, Job, JobStatus, NewJob};
+use crate::storage::DeadJob;
 
 impl PostgresStorage {
     /// Move a job to the dead letter queue and cascade-cancel dependents.
@@ -122,8 +122,7 @@ impl PostgresStorage {
                 .values(&row)
                 .execute(conn)?;
 
-            diesel::delete(dead_letter::table.find(dead_id))
-                .execute(conn)?;
+            diesel::delete(dead_letter::table.find(dead_id)).execute(conn)?;
 
             Ok::<(), diesel::result::Error>(())
         })?;
@@ -135,9 +134,9 @@ impl PostgresStorage {
     pub fn purge_dead(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
 
-        let affected = diesel::delete(
-            dead_letter::table.filter(dead_letter::failed_at.lt(older_than_ms))
-        ).execute(&mut conn)?;
+        let affected =
+            diesel::delete(dead_letter::table.filter(dead_letter::failed_at.lt(older_than_ms)))
+                .execute(&mut conn)?;
 
         Ok(affected as u64)
     }

@@ -15,8 +15,8 @@ impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
             max_retries: 3,
-            base_delay_ms: 1_000,    // 1 second
-            max_delay_ms: 300_000,   // 5 minutes
+            base_delay_ms: 1_000,  // 1 second
+            max_delay_ms: 300_000, // 5 minutes
         }
     }
 }

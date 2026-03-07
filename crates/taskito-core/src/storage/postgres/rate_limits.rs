@@ -1,10 +1,10 @@
 use diesel::prelude::*;
 
-use crate::error::Result;
-use crate::job::now_millis;
 use super::super::models::RateLimitRow;
 use super::super::schema::rate_limits;
 use super::PostgresStorage;
+use crate::error::Result;
+use crate::job::now_millis;
 
 impl PostgresStorage {
     pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitRow>> {
@@ -35,12 +35,7 @@ impl PostgresStorage {
     /// Atomically try to acquire a rate limit token.
     /// Does the read-refill-consume-write in a single transaction to prevent
     /// race conditions between concurrent workers.
-    pub fn try_acquire_token(
-        &self,
-        key: &str,
-        max_tokens: f64,
-        refill_rate: f64,
-    ) -> Result<bool> {
+    pub fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();
 

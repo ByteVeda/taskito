@@ -6,8 +6,7 @@ try:
     from django.core.management.base import BaseCommand
 except ImportError as e:
     raise ImportError(
-        "Django integration requires 'django'. "
-        "Install with: pip install taskito[django]"
+        "Django integration requires 'django'. Install with: pip install taskito[django]"
     ) from e
 
 

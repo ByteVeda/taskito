@@ -1,28 +1,35 @@
-use diesel::prelude::*;
 use diesel::pg::PgConnection;
+use diesel::prelude::*;
 
-use crate::error::{QueueError, Result};
-use crate::job::{Job, JobStatus, NewJob, now_millis};
 use super::super::models::*;
-use super::super::schema::{job_dependencies, job_errors, jobs, replay_history, task_logs, task_metrics};
-use crate::storage::QueueStats;
+use super::super::schema::{
+    job_dependencies, job_errors, jobs, replay_history, task_logs, task_metrics,
+};
 use super::PostgresStorage;
+use crate::error::{QueueError, Result};
+use crate::job::{now_millis, Job, JobStatus, NewJob};
+use crate::storage::QueueStats;
 
-fn delete_job_children(conn: &mut PgConnection, job_ids: &[String]) -> diesel::result::QueryResult<()> {
+fn delete_job_children(
+    conn: &mut PgConnection,
+    job_ids: &[String],
+) -> diesel::result::QueryResult<()> {
     if job_ids.is_empty() {
         return Ok(());
     }
 
-    diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(job_ids)))
-        .execute(conn)?;
-    diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(job_ids)))
-        .execute(conn)?;
+    diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(job_ids))).execute(conn)?;
+    diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(job_ids))).execute(conn)?;
     diesel::delete(task_metrics::table.filter(task_metrics::job_id.eq_any(job_ids)))
         .execute(conn)?;
-    diesel::delete(job_dependencies::table.filter(
-        job_dependencies::job_id.eq_any(job_ids)
-            .or(job_dependencies::depends_on_job_id.eq_any(job_ids))
-    )).execute(conn)?;
+    diesel::delete(
+        job_dependencies::table.filter(
+            job_dependencies::job_id
+                .eq_any(job_ids)
+                .or(job_dependencies::depends_on_job_id.eq_any(job_ids)),
+        ),
+    )
+    .execute(conn)?;
     diesel::delete(replay_history::table.filter(replay_history::original_job_id.eq_any(job_ids)))
         .execute(conn)?;
 
@@ -47,8 +54,9 @@ impl PostgresStorage {
 
                 match dep {
                     None => return Err(diesel::result::Error::RollbackTransaction),
-                    Some(d) if d.status == JobStatus::Dead as i32
-                        || d.status == JobStatus::Cancelled as i32 =>
+                    Some(d)
+                        if d.status == JobStatus::Dead as i32
+                            || d.status == JobStatus::Cancelled as i32 =>
                     {
                         return Err(diesel::result::Error::RollbackTransaction);
                     }
@@ -92,10 +100,11 @@ impl PostgresStorage {
             }
 
             Ok(())
-        }).map_err(|e| match e {
-            diesel::result::Error::RollbackTransaction => {
-                QueueError::DependencyNotFound("dependency not found or already dead/cancelled".to_string())
-            }
+        })
+        .map_err(|e| match e {
+            diesel::result::Error::RollbackTransaction => QueueError::DependencyNotFound(
+                "dependency not found or already dead/cancelled".to_string(),
+            ),
             other => QueueError::Storage(other),
         })?;
 
@@ -147,10 +156,9 @@ impl PostgresStorage {
             if let Some(ref uk) = job.unique_key {
                 let existing: Option<JobRow> = jobs::table
                     .filter(jobs::unique_key.eq(uk))
-                    .filter(jobs::status.eq_any([
-                        JobStatus::Pending as i32,
-                        JobStatus::Running as i32,
-                    ]))
+                    .filter(
+                        jobs::status.eq_any([JobStatus::Pending as i32, JobStatus::Running as i32]),
+                    )
                     .select(JobRow::as_select())
                     .first(conn)
                     .optional()?;
@@ -202,16 +210,17 @@ impl PostgresStorage {
         match result {
             Ok(j) => Ok(j),
             Err(diesel::result::Error::DatabaseError(
-                diesel::result::DatabaseErrorKind::UniqueViolation, _
+                diesel::result::DatabaseErrorKind::UniqueViolation,
+                _,
             )) => {
                 if let Some(ref uk) = job.unique_key {
                     let mut conn = self.conn()?;
                     let existing: Option<JobRow> = jobs::table
                         .filter(jobs::unique_key.eq(uk))
-                        .filter(jobs::status.eq_any([
-                            JobStatus::Pending as i32,
-                            JobStatus::Running as i32,
-                        ]))
+                        .filter(
+                            jobs::status
+                                .eq_any([JobStatus::Pending as i32, JobStatus::Running as i32]),
+                        )
                         .select(JobRow::as_select())
                         .first(&mut conn)
                         .optional()?;
@@ -535,9 +544,7 @@ impl PostgresStorage {
     ) -> Result<Vec<Job>> {
         let mut conn = self.conn()?;
 
-        let mut query = jobs::table
-            .into_boxed()
-            .order(jobs::created_at.desc());
+        let mut query = jobs::table.into_boxed().order(jobs::created_at.desc());
 
         if let Some(s) = status {
             query = query.filter(jobs::status.eq(s));
@@ -609,9 +616,8 @@ impl PostgresStorage {
 
             delete_job_children(conn, &job_ids)?;
 
-            let affected = diesel::delete(
-                jobs::table.filter(jobs::id.eq_any(&job_ids))
-            ).execute(conn)?;
+            let affected =
+                diesel::delete(jobs::table.filter(jobs::id.eq_any(&job_ids))).execute(conn)?;
 
             Ok(affected as u64)
         })
@@ -724,9 +730,9 @@ impl PostgresStorage {
         use super::super::schema::job_errors;
         let mut conn = self.conn()?;
 
-        let affected = diesel::delete(
-            job_errors::table.filter(job_errors::failed_at.lt(older_than_ms))
-        ).execute(&mut conn)?;
+        let affected =
+            diesel::delete(job_errors::table.filter(job_errors::failed_at.lt(older_than_ms)))
+                .execute(&mut conn)?;
 
         Ok(affected as u64)
     }

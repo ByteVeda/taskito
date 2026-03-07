@@ -1,9 +1,9 @@
 use diesel::prelude::*;
 
-use crate::error::Result;
 use super::super::models::CircuitBreakerRow;
 use super::super::schema::circuit_breakers;
 use super::SqliteStorage;
+use crate::error::Result;
 
 impl SqliteStorage {
     /// Get or create a circuit breaker state for a task.

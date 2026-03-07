@@ -1,10 +1,10 @@
 use diesel::prelude::*;
 
-use crate::error::Result;
-use crate::job::now_millis;
 use super::super::models::*;
 use super::super::schema::workers;
 use super::PostgresStorage;
+use crate::error::Result;
+use crate::job::now_millis;
 
 /// Dead worker threshold: 30 seconds without heartbeat.
 const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
@@ -61,9 +61,8 @@ impl PostgresStorage {
         let mut conn = self.conn()?;
         let cutoff = now_millis() - DEAD_WORKER_THRESHOLD_MS;
 
-        let affected = diesel::delete(
-            workers::table.filter(workers::last_heartbeat.lt(cutoff))
-        ).execute(&mut conn)?;
+        let affected = diesel::delete(workers::table.filter(workers::last_heartbeat.lt(cutoff)))
+            .execute(&mut conn)?;
 
         Ok(affected as u64)
     }

@@ -6,8 +6,7 @@ try:
     from django.apps import AppConfig
 except ImportError as e:
     raise ImportError(
-        "Django integration requires 'django'. "
-        "Install with: pip install taskito[django]"
+        "Django integration requires 'django'. Install with: pip install taskito[django]"
     ) from e
 
 

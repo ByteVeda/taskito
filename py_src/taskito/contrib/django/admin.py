@@ -15,8 +15,7 @@ try:
     from django.urls import path
 except ImportError as e:
     raise ImportError(
-        "Django integration requires 'django'. "
-        "Install with: pip install taskito[django]"
+        "Django integration requires 'django'. Install with: pip install taskito[django]"
     ) from e
 
 

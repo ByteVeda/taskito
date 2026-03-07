@@ -1,10 +1,10 @@
 use diesel::prelude::*;
 
-use crate::error::Result;
-use crate::job::now_millis;
 use super::super::models::*;
 use super::super::schema::task_logs;
 use super::PostgresStorage;
+use crate::error::Result;
+use crate::job::now_millis;
 
 impl PostgresStorage {
     /// Write a structured log entry for a task.
@@ -81,9 +81,9 @@ impl PostgresStorage {
     /// Purge old log records.
     pub fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
-        let affected = diesel::delete(
-            task_logs::table.filter(task_logs::logged_at.lt(older_than_ms))
-        ).execute(&mut conn)?;
+        let affected =
+            diesel::delete(task_logs::table.filter(task_logs::logged_at.lt(older_than_ms)))
+                .execute(&mut conn)?;
         Ok(affected as u64)
     }
 }
