@@ -1,6 +1,6 @@
 # taskito
 
-**Rust-powered task queue for Python. No broker required — just SQLite.**
+**Rust-powered task queue for Python. No broker required — just SQLite or Postgres.**
 
 ```bash
 pip install taskito
@@ -93,6 +93,82 @@ The core engine is written in **Rust** for performance: job dispatch, retry sche
 
     Scheduling, storage, and dispatch in native Rust. Python only runs your task code.
 
+-   :material-database:{ .lg .middle } **Postgres Backend**
+
+    ---
+
+    Optional PostgreSQL storage for multi-machine workers with the same API.
+
+-   :material-layers-outline:{ .lg .middle } **Per-task Middleware**
+
+    ---
+
+    `TaskMiddleware` with `before`/`after`/`on_retry` hooks for cross-cutting concerns.
+
+-   :material-bell-outline:{ .lg .middle } **Events & Webhooks**
+
+    ---
+
+    Subscribe to job lifecycle events in-process or deliver them as signed HTTP webhooks.
+
+</div>
+
+---
+
+## Integrations
+
+Install optional extras to unlock additional capabilities:
+
+<div class="grid cards" markdown>
+
+-   :material-language-python:{ .lg .middle } **Flask**
+
+    ---
+
+    `pip install taskito[flask]` — `Taskito(app)` extension with CLI commands
+
+-   :material-api:{ .lg .middle } **FastAPI**
+
+    ---
+
+    `pip install taskito[fastapi]` — `TaskitoRouter` for instant REST API
+
+-   :material-cube-outline:{ .lg .middle } **Django**
+
+    ---
+
+    `pip install taskito[django]` — Admin integration and management commands
+
+-   :material-chart-line:{ .lg .middle } **Prometheus**
+
+    ---
+
+    `pip install taskito[prometheus]` — Metrics middleware and `/metrics` endpoint
+
+-   :material-radar:{ .lg .middle } **Sentry**
+
+    ---
+
+    `pip install taskito[sentry]` — Auto error capture with task context tags
+
+-   :material-telescope:{ .lg .middle } **OpenTelemetry**
+
+    ---
+
+    `pip install taskito[otel]` — Distributed tracing with span-per-task
+
+-   :material-database:{ .lg .middle } **Postgres**
+
+    ---
+
+    `pip install taskito[postgres]` — Multi-machine workers via PostgreSQL
+
+-   :material-lock:{ .lg .middle } **Encryption**
+
+    ---
+
+    `pip install taskito[encryption]` — `EncryptedSerializer` for payload encryption
+
 </div>
 
 ---
@@ -113,8 +189,9 @@ graph TB
         I["Rate Limiter"]
     end
 
-    subgraph Storage ["Embedded Storage"]
+    subgraph Storage ["Storage Backend"]
         J[("SQLite · WAL mode<br/>Diesel ORM")]
+        K[("PostgreSQL<br/>Diesel ORM")]
     end
 
     A -->|enqueue| F
@@ -143,10 +220,15 @@ graph TB
 | Priority queues | :white_check_mark: | :white_check_mark: | :x: | :x: | :white_check_mark: |
 | Rate limiting | :white_check_mark: | :white_check_mark: | :x: | :white_check_mark: | :x: |
 | Dead letter queue | :white_check_mark: | :x: | :white_check_mark: | :x: | :x: |
+| Task dependencies | :white_check_mark: | :x: | :x: | :x: | :x: |
 | Task workflows | :white_check_mark: | :white_check_mark: | :x: | :white_check_mark: | :x: |
+| Per-task middleware | :white_check_mark: | :x: | :x: | :white_check_mark: | :x: |
 | Job cancellation | :white_check_mark: | :white_check_mark: | :x: | :x: | :white_check_mark: |
+| Cancel running tasks | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: |
 | Progress tracking | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: |
 | Unique tasks | :white_check_mark: | :x: | :x: | :x: | :white_check_mark: |
+| Custom serializers | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: |
+| Postgres backend | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: |
 | Setup complexity | `pip install` | Broker + backend | Redis server | Broker | Redis server |
 
 [:octicons-arrow-right-24: Full comparison](comparison.md)

@@ -1,0 +1,126 @@
+# Structured Task Logging
+
+taskito provides structured logging from within tasks via `current_job.log()`. Logs are stored in the database alongside job data, making them queryable and visible in the dashboard.
+
+## Writing Logs
+
+Use `current_job.log()` inside any task:
+
+```python
+from taskito import current_job
+
+@queue.task()
+def process_order(order_id: int):
+    current_job.log("Starting order processing", extra={"order_id": order_id})
+
+    items = fetch_items(order_id)
+    current_job.log(f"Found {len(items)} items", level="debug")
+
+    for item in items:
+        try:
+            process_item(item)
+        except ValueError as e:
+            current_job.log(f"Skipping invalid item: {e}", level="warning", extra={"item": item})
+
+    current_job.log("Order processing complete")
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `message` | `str` | *required* | The log message |
+| `level` | `str` | `"info"` | Log level: `"debug"`, `"info"`, `"warning"`, `"error"` |
+| `extra` | `dict | None` | `None` | Structured data to attach as JSON |
+
+## Querying Logs
+
+### Per-Job Logs
+
+```python
+logs = queue.task_logs(job_id)
+for log in logs:
+    print(f"[{log['level']}] {log['message']}")
+```
+
+### Cross-Job Log Query
+
+```python
+logs = queue.query_logs(
+    task_name="myapp.tasks.process_order",
+    level="error",
+    since=1700000000,
+    limit=50,
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_name` | `str | None` | Filter by task name |
+| `level` | `str | None` | Filter by log level |
+| `since` | `int | None` | Unix timestamp — only logs after this time |
+| `limit` | `int` | Maximum number of logs to return |
+
+## Dashboard
+
+Logs are accessible via the dashboard REST API:
+
+- **`GET /api/jobs/{id}/logs`** — logs for a specific job
+- **`GET /api/logs`** — query logs across all jobs (supports `limit` and `offset` parameters)
+
+```bash
+# Logs for a specific job
+curl http://localhost:8080/api/jobs/01H5K6X.../logs
+
+# Recent logs across all jobs
+curl http://localhost:8080/api/logs?limit=20
+```
+
+## Examples
+
+### ETL Pipeline with Progress Logging
+
+```python
+from taskito import current_job
+
+@queue.task()
+def etl_pipeline(source: str, destination: str):
+    current_job.log("Starting extraction", extra={"source": source})
+
+    records = extract(source)
+    current_job.log(f"Extracted {len(records)} records", level="info")
+    current_job.update_progress(33)
+
+    transformed = []
+    for i, record in enumerate(records):
+        try:
+            transformed.append(transform(record))
+        except Exception as e:
+            current_job.log(
+                f"Transform failed for record {i}",
+                level="warning",
+                extra={"record_id": record.get("id"), "error": str(e)},
+            )
+    current_job.update_progress(66)
+
+    loaded = load(destination, transformed)
+    current_job.log(
+        "Pipeline complete",
+        extra={"extracted": len(records), "loaded": loaded, "skipped": len(records) - loaded},
+    )
+    current_job.update_progress(100)
+```
+
+### Debugging Failed Jobs
+
+```python
+# After a job fails, inspect its logs to understand what happened
+job = queue.get_job(failed_job_id)
+logs = queue.task_logs(failed_job_id)
+
+print(f"Job {job.id} ({job.task_name}): {job.status}")
+for log in logs:
+    print(f"  [{log['level'].upper()}] {log['message']}")
+    if log.get("extra"):
+        print(f"    {log['extra']}")
+```

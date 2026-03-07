@@ -19,9 +19,6 @@ To use PostgreSQL as the storage backend instead of SQLite:
 pip install taskito[postgres]
 ```
 
-!!! warning "Linux only"
-    The `postgres` extra currently requires Linux. macOS and Windows are not yet supported.
-
 See the [Postgres Backend guide](../guide/postgres.md) for configuration details.
 
 ## From Source
@@ -52,12 +49,12 @@ pip install -e ".[docs]"    # Documentation (Zensical)
 
 ```python
 import taskito
-print(taskito.__version__)  # 0.1.0
+print(taskito.__version__)  # 0.2.3
 ```
 
 ## Requirements
 
 - Python 3.9+
 - Any OS with SQLite support (Linux, macOS, Windows)
-- PostgreSQL 12+ (optional, for `taskito[postgres]` — Linux only)
+- PostgreSQL 12+ (optional, for `taskito[postgres]`)
 - Rust toolchain only needed for building from source
