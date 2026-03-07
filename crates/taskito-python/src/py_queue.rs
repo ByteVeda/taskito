@@ -85,8 +85,14 @@ impl PyQueue {
                 StorageBackend::Redis(s)
             }
             _ => {
+                let mut available = vec!["sqlite"];
+                #[cfg(feature = "postgres")]
+                available.push("postgres");
+                #[cfg(feature = "redis")]
+                available.push("redis");
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Unknown backend: '{backend}'. Use 'sqlite', 'postgres', or 'redis'."
+                    "Unknown backend: '{backend}'. Available backends: {}.",
+                    available.join(", ")
                 )));
             }
         };
