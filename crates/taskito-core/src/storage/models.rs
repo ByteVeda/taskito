@@ -1,8 +1,9 @@
 use diesel::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::schema::{
-    circuit_breakers, dead_letter, job_dependencies, job_errors, jobs, periodic_tasks, rate_limits,
-    replay_history, task_logs, task_metrics, workers,
+    archived_jobs, circuit_breakers, dead_letter, job_dependencies, job_errors, jobs,
+    periodic_tasks, queue_state, rate_limits, replay_history, task_logs, task_metrics, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -30,6 +31,7 @@ pub struct JobRow {
     pub cancel_requested: i32,
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
 }
 
 /// Insertable struct for creating new jobs.
@@ -52,6 +54,7 @@ pub struct NewJobRow<'a> {
     pub cancel_requested: i32,
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<&'a str>,
 }
 
 /// A row in the `dead_letter` table.
@@ -93,7 +96,7 @@ pub struct NewDeadLetterRow<'a> {
 }
 
 /// A row in the `rate_limits` table.
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone, Serialize, Deserialize)]
 #[diesel(table_name = rate_limits)]
 pub struct RateLimitRow {
     pub key: String,
@@ -116,6 +119,7 @@ pub struct PeriodicTaskRow {
     pub enabled: bool,
     pub last_run: Option<i64>,
     pub next_run: i64,
+    pub timezone: Option<String>,
 }
 
 /// Insertable struct for periodic tasks.
@@ -130,10 +134,11 @@ pub struct NewPeriodicTaskRow<'a> {
     pub queue: &'a str,
     pub enabled: bool,
     pub next_run: i64,
+    pub timezone: Option<&'a str>,
 }
 
 /// A row in the `job_errors` table (for SELECT queries).
-#[derive(Queryable, Selectable, Debug, Clone)]
+#[derive(Queryable, Selectable, Debug, Clone, Serialize, Deserialize)]
 #[diesel(table_name = job_errors)]
 pub struct JobErrorRow {
     pub id: String,
@@ -254,7 +259,7 @@ pub struct NewTaskLogRow<'a> {
 
 // ── Circuit Breaker ──────────────────────────────────────────────
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone, Serialize, Deserialize)]
 #[diesel(table_name = circuit_breakers)]
 pub struct CircuitBreakerRow {
     pub task_name: String,
@@ -277,6 +282,7 @@ pub struct WorkerRow {
     pub last_heartbeat: i64,
     pub queues: String,
     pub status: String,
+    pub tags: Option<String>,
 }
 
 #[derive(Insertable, AsChangeset, Debug)]
@@ -286,4 +292,43 @@ pub struct NewWorkerRow<'a> {
     pub last_heartbeat: i64,
     pub queues: &'a str,
     pub status: &'a str,
+    pub tags: Option<&'a str>,
+}
+
+// ── Queue State ─────────────────────────────────────────────────
+
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
+#[diesel(table_name = queue_state)]
+pub struct QueueStateRow {
+    pub queue_name: String,
+    pub paused: bool,
+    pub paused_at: Option<i64>,
+}
+
+// ── Archived Jobs ───────────────────────────────────────────────
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = archived_jobs)]
+pub struct ArchivedJobRow {
+    pub id: String,
+    pub queue: String,
+    pub task_name: String,
+    pub payload: Vec<u8>,
+    pub status: i32,
+    pub priority: i32,
+    pub created_at: i64,
+    pub scheduled_at: i64,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub retry_count: i32,
+    pub max_retries: i32,
+    pub result: Option<Vec<u8>>,
+    pub error: Option<String>,
+    pub timeout_ms: i64,
+    pub unique_key: Option<String>,
+    pub progress: Option<i32>,
+    pub metadata: Option<String>,
+    pub cancel_requested: i32,
+    pub expires_at: Option<i64>,
+    pub result_ttl_ms: Option<i64>,
 }

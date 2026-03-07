@@ -49,9 +49,6 @@ taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
 
 ## Dashboard Preview
 
-<!-- TODO: Add screenshot of the dashboard UI -->
-<!-- ![taskito dashboard](../assets/dashboard.png) -->
-
 *The dashboard is a self-contained SPA served directly from the Rust core. No external dependencies required.*
 
 ## SPA Features

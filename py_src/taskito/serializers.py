@@ -40,4 +40,74 @@ class JsonSerializer:
         return json.dumps(obj).encode("utf-8")
 
     def loads(self, data: bytes) -> Any:
-        return json.loads(data.decode("utf-8"))
+        try:
+            return json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            raise ValueError(f"JSON deserialization failed: {exc}") from exc
+
+
+class MsgPackSerializer:
+    """MsgPack-based serializer for compact, cross-language payloads.
+
+    Requires the ``msgpack`` extra::
+
+        pip install taskito[msgpack]
+    """
+
+    def dumps(self, obj: Any) -> bytes:
+        import msgpack
+
+        return bytes(msgpack.packb(obj, use_bin_type=True))
+
+    def loads(self, data: bytes) -> Any:
+        import msgpack
+
+        return msgpack.unpackb(data, raw=False)
+
+
+class EncryptedSerializer:
+    """Wraps another serializer with AES-256-GCM encryption at rest.
+
+    Requires the ``encryption`` extra::
+
+        pip install taskito[encryption]
+
+    Usage::
+
+        from taskito import EncryptedSerializer, CloudpickleSerializer
+        key = os.urandom(32)  # 256-bit key
+        serializer = EncryptedSerializer(CloudpickleSerializer(), key)
+        queue = Queue(serializer=serializer)
+    """
+
+    def __init__(self, inner: Serializer, key: bytes):
+        if not isinstance(key, bytes):
+            raise TypeError(f"key must be bytes, got {type(key).__name__}")
+        if len(key) not in (16, 24, 32):
+            raise ValueError(
+                f"key must be 16, 24, or 32 bytes for AES-128/192/256, got {len(key)} bytes"
+            )
+
+        from cryptography.hazmat.primitives.ciphers.aead import (
+            AESGCM,
+        )
+
+        self._inner = inner
+        self._aesgcm = AESGCM(key)
+
+    def dumps(self, obj: Any) -> bytes:
+        import os
+
+        plaintext = self._inner.dumps(obj)
+        nonce = os.urandom(12)
+        return bytes(nonce + self._aesgcm.encrypt(nonce, plaintext, None))
+
+    def loads(self, data: bytes) -> Any:
+        if len(data) < 13:
+            raise ValueError("Encrypted data too short")
+        nonce, ciphertext = data[:12], data[12:]
+        try:
+            plaintext = self._aesgcm.decrypt(nonce, ciphertext, None)
+        except Exception as exc:
+            raise ValueError(f"Decryption failed: {exc}") from exc
+        return self._inner.loads(plaintext)

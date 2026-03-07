@@ -4,16 +4,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_progress.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_update_progress(queue):
     """Progress can be updated and read back."""

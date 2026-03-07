@@ -4,8 +4,6 @@ import threading
 
 import pytest
 
-from taskito import Queue
-
 # Skip entire module if fastapi is not installed
 fastapi = pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
@@ -14,13 +12,6 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from taskito.contrib.fastapi import TaskitoRouter  # noqa: E402
-
-
-@pytest.fixture
-def queue(tmp_path):
-    """Create a fresh queue."""
-    db_path = str(tmp_path / "test_fastapi.db")
-    return Queue(db_path=db_path, workers=2)
 
 
 @pytest.fixture

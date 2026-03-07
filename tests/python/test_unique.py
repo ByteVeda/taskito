@@ -4,16 +4,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_unique.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_unique_key_dedup(queue):
     """Two jobs with the same unique_key should return the same job ID."""

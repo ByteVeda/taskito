@@ -4,19 +4,45 @@ build-backend = "maturin"
 
 [project]
 name = "taskito"
-version = "0.2.3"
+version = "0.3.0"
 description = "Rust-powered task queue for Python. No broker required."
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
 dependencies = ["cloudpickle>=3.0"]
+[project.urls]
+Homepage = "https://github.com/pratyush618/taskito"
+Documentation = "https://taskito.grigori.in"
+Repository = "https://github.com/pratyush618/taskito"
+Changelog = "https://github.com/pratyush618/taskito/blob/master/docs/changelog.md"
+Issues = "https://github.com/pratyush618/taskito/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "ruff>=0.8", "mypy>=1.13"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-cov>=4.0", "ruff>=0.8", "mypy>=1.13"]
 fastapi = ["fastapi>=0.100.0", "pydantic>=2.0"]
 django = ["django>=3.2"]
 postgres = []  # PG driver is bundled in the Rust binary; extra exists for discoverability
+redis = []     # Redis driver is bundled in the Rust binary; extra exists for discoverability
 otel = ["opentelemetry-api", "opentelemetry-sdk"]
+prometheus = ["prometheus-client"]
+sentry = ["sentry-sdk"]
+msgpack = ["msgpack"]
+encryption = ["cryptography"]
+flask = ["flask>=2.0"]
 docs = ["zensical"]
 
 [tool.maturin]
@@ -79,25 +105,37 @@ module = "cloudpickle"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "opentelemetry"
+module = ["opentelemetry", "opentelemetry.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "opentelemetry.*"
+module = ["fastapi", "fastapi.*", "pydantic"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "fastapi"
+module = "django.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "fastapi.*"
+module = "prometheus_client"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "pydantic"
+module = "sentry_sdk"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["django", "django.*"]
+module = "msgpack"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "cryptography.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "flask"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "click"
 ignore_missing_imports = true

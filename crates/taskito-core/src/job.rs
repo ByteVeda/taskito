@@ -64,6 +64,7 @@ pub struct Job {
     pub cancel_requested: bool,
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
 }
 
 impl From<JobRow> for Job {
@@ -90,6 +91,7 @@ impl From<JobRow> for Job {
             cancel_requested: row.cancel_requested != 0,
             expires_at: row.expires_at,
             result_ttl_ms: row.result_ttl_ms,
+            namespace: row.namespace,
         }
     }
 }
@@ -108,6 +110,7 @@ pub struct NewJob {
     pub depends_on: Vec<String>,
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
 }
 
 impl NewJob {
@@ -135,6 +138,7 @@ impl NewJob {
             cancel_requested: false,
             expires_at: self.expires_at,
             result_ttl_ms: self.result_ttl_ms,
+            namespace: self.namespace,
         }
     }
 }
@@ -143,5 +147,6 @@ pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
-        .as_millis() as i64
+        .as_millis()
+        .min(i64::MAX as u128) as i64
 }

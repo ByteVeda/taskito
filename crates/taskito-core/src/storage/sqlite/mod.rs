@@ -1,9 +1,11 @@
+mod archival;
 mod circuit_breakers;
 mod dead_letter;
 mod jobs;
 mod logs;
 mod metrics;
 mod periodic;
+mod queue_state;
 mod rate_limits;
 mod trait_impl;
 mod workers;
@@ -13,6 +15,19 @@ use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool};
 use diesel::sqlite::SqliteConnection;
 
 use crate::error::Result;
+
+/// Run an ALTER TABLE migration, suppressing "duplicate column" errors (SQLite).
+fn migration_alter(conn: &mut SqliteConnection, sql: &str) {
+    match diesel::sql_query(sql).execute(conn) {
+        Ok(_) => {}
+        Err(e) => {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                log::warn!("migration failed for '{sql}': {e}");
+            }
+        }
+    }
+}
 
 type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -116,14 +131,15 @@ impl SqliteStorage {
         .execute(&mut conn)?;
 
         // Add new columns if they don't exist (migration for existing DBs)
-        let _ = diesel::sql_query(
+        migration_alter(
+            &mut conn,
             "ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0",
-        )
-        .execute(&mut conn);
-        let _ =
-            diesel::sql_query("ALTER TABLE jobs ADD COLUMN expires_at INTEGER").execute(&mut conn);
-        let _ = diesel::sql_query("ALTER TABLE jobs ADD COLUMN result_ttl_ms INTEGER")
-            .execute(&mut conn);
+        );
+        migration_alter(&mut conn, "ALTER TABLE jobs ADD COLUMN expires_at INTEGER");
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE jobs ADD COLUMN result_ttl_ms INTEGER",
+        );
 
         diesel::sql_query(
             "CREATE INDEX IF NOT EXISTS idx_jobs_dequeue
@@ -166,7 +182,7 @@ impl SqliteStorage {
             "ALTER TABLE dead_letter ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 300000",
             "ALTER TABLE dead_letter ADD COLUMN result_ttl_ms INTEGER",
         ] {
-            let _ = diesel::sql_query(*col).execute(&mut conn);
+            migration_alter(&mut conn, col);
         }
 
         diesel::sql_query(
@@ -319,6 +335,61 @@ impl SqliteStorage {
             )",
         )
         .execute(&mut conn)?;
+
+        // Migration: add tags column to workers
+        migration_alter(&mut conn, "ALTER TABLE workers ADD COLUMN tags TEXT");
+
+        // ── Queue State ──────────────────────────────────
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS queue_state (
+                queue_name TEXT PRIMARY KEY,
+                paused     INTEGER NOT NULL DEFAULT 0,
+                paused_at  INTEGER
+            )",
+        )
+        .execute(&mut conn)?;
+
+        // ── Archived Jobs ────────────────────────────────
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS archived_jobs (
+                id           TEXT PRIMARY KEY,
+                queue        TEXT NOT NULL DEFAULT 'default',
+                task_name    TEXT NOT NULL,
+                payload      BLOB NOT NULL,
+                status       INTEGER NOT NULL DEFAULT 0,
+                priority     INTEGER NOT NULL DEFAULT 0,
+                created_at   INTEGER NOT NULL,
+                scheduled_at INTEGER NOT NULL,
+                started_at   INTEGER,
+                completed_at INTEGER,
+                retry_count  INTEGER NOT NULL DEFAULT 0,
+                max_retries  INTEGER NOT NULL DEFAULT 3,
+                result       BLOB,
+                error        TEXT,
+                timeout_ms   INTEGER NOT NULL DEFAULT 300000,
+                unique_key   TEXT,
+                progress     INTEGER,
+                metadata     TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                expires_at   INTEGER,
+                result_ttl_ms INTEGER
+            )",
+        )
+        .execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_archived_jobs_completed ON archived_jobs(completed_at)",
+        )
+        .execute(&mut conn)?;
+
+        // ── Periodic tasks timezone migration ────────────
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE periodic_tasks ADD COLUMN timezone TEXT",
+        );
+
+        // Migration: add namespace column to jobs
+        migration_alter(&mut conn, "ALTER TABLE jobs ADD COLUMN namespace TEXT");
 
         Ok(())
     }

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
 use log::{error, info, warn};
@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 
 use crate::error::Result;
 use crate::job::{now_millis, Job, NewJob};
-use crate::periodic::next_cron_time;
+use crate::periodic::{next_cron_time, next_cron_time_tz};
 use crate::resilience::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use crate::resilience::dlq::DeadLetterQueue;
 use crate::resilience::rate_limiter::{RateLimitConfig, RateLimiter};
@@ -96,6 +96,7 @@ pub struct Scheduler {
     queues: Vec<String>,
     config: SchedulerConfig,
     shutdown: Arc<Notify>,
+    paused_cache: Mutex<(HashSet<String>, Instant)>,
 }
 
 /// Counters for tick-based scheduling of periodic maintenance tasks.
@@ -121,6 +122,7 @@ impl Scheduler {
             queues,
             config,
             shutdown: Arc::new(Notify::new()),
+            paused_cache: Mutex::new((HashSet::new(), Instant::now())),
         }
     }
 
@@ -198,7 +200,37 @@ impl Scheduler {
     fn try_dispatch(&self, job_tx: &Sender<Job>) -> Result<bool> {
         let now = now_millis();
 
-        let job = match self.storage.dequeue_from(&self.queues, now)? {
+        // Filter out paused queues (refresh cache every 1s)
+        let active_queues = {
+            let mut cache = self.paused_cache.lock().unwrap_or_else(|poisoned| {
+                warn!("paused_cache mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            if cache.1.elapsed() > Duration::from_secs(1) {
+                cache.0 = self
+                    .storage
+                    .list_paused_queues()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                cache.1 = Instant::now();
+            }
+            if cache.0.is_empty() {
+                self.queues.clone()
+            } else {
+                self.queues
+                    .iter()
+                    .filter(|q| !cache.0.contains(*q))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        if active_queues.is_empty() {
+            return Ok(false);
+        }
+
+        let job = match self.storage.dequeue_from(&active_queues, now)? {
             Some(j) => j,
             None => return Ok(false),
         };
@@ -328,6 +360,10 @@ impl Scheduler {
 
     fn reap_stale(&self) -> Result<()> {
         let now = now_millis();
+        // Expire pending jobs that passed their TTL
+        if let Err(e) = self.storage.expire_pending_jobs(now) {
+            warn!("expire_pending_jobs error: {e}");
+        }
         let stale_jobs = self.storage.reap_stale_jobs(now)?;
 
         for job in stale_jobs {
@@ -353,14 +389,20 @@ impl Scheduler {
             None => return Ok(()),
         };
 
-        let cutoff = now_millis() - ttl;
+        let cutoff = now_millis().saturating_sub(ttl);
 
         // Use per-job TTL aware cleanup
         let completed = self.storage.purge_completed_with_ttl(cutoff)?;
         let dead = self.storage.purge_dead(cutoff)?;
         let errors = self.storage.purge_job_errors(cutoff)?;
-        let metrics = self.storage.purge_metrics(cutoff).unwrap_or(0);
-        let logs = self.storage.purge_task_logs(cutoff).unwrap_or(0);
+        let metrics = self.storage.purge_metrics(cutoff).unwrap_or_else(|e| {
+            warn!("purge_metrics failed: {e}");
+            0
+        });
+        let logs = self.storage.purge_task_logs(cutoff).unwrap_or_else(|e| {
+            warn!("purge_task_logs failed: {e}");
+            0
+        });
 
         if completed + dead + errors + metrics + logs > 0 {
             info!(
@@ -391,6 +433,7 @@ impl Scheduler {
                 depends_on: vec![],
                 expires_at: None,
                 result_ttl_ms: None,
+                namespace: None,
             };
 
             if let Err(e) = self.storage.enqueue_unique(new_job) {
@@ -398,7 +441,11 @@ impl Scheduler {
                 continue;
             }
 
-            let next_run = match next_cron_time(&task.cron_expr, now) {
+            let next_run = match if let Some(ref tz) = task.timezone {
+                next_cron_time_tz(&task.cron_expr, now, tz)
+            } else {
+                next_cron_time(&task.cron_expr, now)
+            } {
                 Ok(t) => t,
                 Err(e) => {
                     error!("failed to compute next run for '{}': {e}", task.name);
@@ -457,6 +504,7 @@ mod tests {
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: None,
+            namespace: None,
         }
     }
 
@@ -499,6 +547,7 @@ mod tests {
                     max_retries: 3,
                     base_delay_ms: 100,
                     max_delay_ms: 1000,
+                    custom_delays_ms: None,
                 },
                 rate_limit: None,
                 circuit_breaker: None,
@@ -674,6 +723,7 @@ mod tests {
                     max_retries: 3,
                     base_delay_ms: 100,
                     max_delay_ms: 1000,
+                    custom_delays_ms: None,
                 },
                 rate_limit: None,
                 circuit_breaker: None,
@@ -717,6 +767,7 @@ mod tests {
             queue: "default",
             enabled: true,
             next_run: now - 1000, // due 1 second ago
+            timezone: None,
         };
         scheduler.storage.register_periodic(&row).unwrap();
 

@@ -113,6 +113,22 @@ workers = await queue.aworkers()
 
 The worker heartbeat is also available via the dashboard REST API at `GET /api/workers`. See the [Dashboard](dashboard.md) guide for details.
 
+## Events System
+
+taskito includes an in-process event bus for reacting to job lifecycle events (`JOB_ENQUEUED`, `JOB_COMPLETED`, `JOB_FAILED`, `JOB_RETRYING`, `JOB_DEAD`, `JOB_CANCELLED`). Events can also be delivered as signed HTTP webhooks to external systems.
+
+[:octicons-arrow-right-24: Events & Webhooks guide](events-webhooks.md)
+
+## Prometheus Metrics
+
+For production monitoring, the optional Prometheus integration provides counters, histograms, and gauges for task execution:
+
+```bash
+pip install taskito[prometheus]
+```
+
+[:octicons-arrow-right-24: Prometheus integration](../integrations/prometheus.md)
+
 ## Hooks
 
 Run code before/after every task, or on success/failure.

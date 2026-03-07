@@ -51,8 +51,14 @@ impl SqliteStorage {
         // Drop connection before cascade (needed for single-connection pools)
         drop(conn);
 
-        // Cascade cancel dependents
-        self.cascade_cancel(&job_id, "dependency failed")?;
+        // Cascade cancel dependents — log warning on failure since the DLQ
+        // transaction already committed and we can't roll it back.
+        if let Err(e) = self.cascade_cancel(&job_id, "dependency failed") {
+            eprintln!(
+                "[taskito] WARNING: cascade_cancel failed for job {}: {}. Dependent jobs may be left pending.",
+                job_id, e
+            );
+        }
 
         Ok(())
     }
@@ -94,6 +100,7 @@ impl SqliteStorage {
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: dead_row.result_ttl_ms,
+            namespace: None,
         };
 
         let job = new_job.into_job();
@@ -116,6 +123,7 @@ impl SqliteStorage {
                 cancel_requested: 0,
                 expires_at: job.expires_at,
                 result_ttl_ms: job.result_ttl_ms,
+                namespace: job.namespace.as_deref(),
             };
 
             diesel::insert_into(jobs::table)

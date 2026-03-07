@@ -82,6 +82,8 @@ class group:
     def __init__(self, *signatures: Signature, max_concurrency: int | None = None):
         if len(signatures) < 1:
             raise ValueError("group requires at least one signature")
+        if max_concurrency is not None and max_concurrency <= 0:
+            raise ValueError("max_concurrency must be a positive integer")
         self.signatures = list(signatures)
         self.max_concurrency = max_concurrency
 
@@ -117,8 +119,8 @@ class group:
                 )
                 wave_jobs.append(job)
             # Wait for this wave to complete before starting next
-            for job in wave_jobs:
-                job.result(timeout=300)
+            for wj, sig in zip(wave_jobs, wave):
+                wj.result(timeout=sig.options.get("timeout", 300))
             all_jobs.extend(wave_jobs)
 
         return all_jobs
@@ -137,7 +139,10 @@ class chord:
 
         # Run group and wait for all results
         jobs = self.group.apply(queue=q)
-        results = [job.result(timeout=300) for job in jobs]
+        max_timeout = max(
+            (sig.options.get("timeout", 300) for sig in self.group.signatures), default=300
+        )
+        results = [job.result(timeout=max_timeout) for job in jobs]
 
         # Run callback with collected results
         args = self.callback.args
@@ -167,6 +172,10 @@ def chunks(task: TaskWrapper, items: list[Any], chunk_size: int) -> group:
 
         result = chunks(process_batch, items, 100).apply(queue)
     """
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+    if not items:
+        raise ValueError("items must not be empty")
     n_chunks = math.ceil(len(items) / chunk_size)
     sigs = []
     for i in range(n_chunks):
@@ -189,5 +198,7 @@ def starmap(task: TaskWrapper, args_list: list[tuple[Any, ...]]) -> group:
 
         result = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply(queue)
     """
+    if not args_list:
+        raise ValueError("args_list must not be empty")
     sigs = [task.s(*args) for args in args_list]
     return group(*sigs)

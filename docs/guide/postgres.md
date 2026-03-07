@@ -18,9 +18,6 @@ For single-machine workloads, SQLite remains the simpler choice — no external 
 pip install taskito[postgres]
 ```
 
-!!! warning "Linux only"
-    The Postgres backend currently requires Linux. macOS and Windows are not yet supported for the `postgres` extra.
-
 ## Configuration
 
 ```python

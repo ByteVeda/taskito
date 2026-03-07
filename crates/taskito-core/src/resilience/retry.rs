@@ -9,6 +9,9 @@ pub struct RetryPolicy {
     pub base_delay_ms: i64,
     /// Maximum delay in milliseconds (cap).
     pub max_delay_ms: i64,
+    /// Custom per-attempt delays in milliseconds. If set, overrides
+    /// exponential backoff for the corresponding retry attempt.
+    pub custom_delays_ms: Option<Vec<i64>>,
 }
 
 impl Default for RetryPolicy {
@@ -17,6 +20,7 @@ impl Default for RetryPolicy {
             max_retries: 3,
             base_delay_ms: 1_000,  // 1 second
             max_delay_ms: 300_000, // 5 minutes
+            custom_delays_ms: None,
         }
     }
 }
@@ -27,10 +31,23 @@ impl RetryPolicy {
     ///   delay = min(max_delay, base_delay * 2^retry_count) + jitter
     /// where jitter is uniform in [0, base_delay).
     pub fn next_retry_at(&self, retry_count: i32) -> i64 {
-        let exp_delay = self
-            .base_delay_ms
-            .saturating_mul(1i64 << retry_count.min(30));
-        let capped = exp_delay.min(self.max_delay_ms);
+        // Use custom delay if available for this retry attempt
+        let delay = if let Some(ref delays) = self.custom_delays_ms {
+            if let Some(&custom) = delays.get(retry_count as usize) {
+                custom
+            } else {
+                // Fall back to exponential backoff if no custom delay for this attempt
+                let exp = self
+                    .base_delay_ms
+                    .saturating_mul(1i64 << retry_count.min(30));
+                exp.min(self.max_delay_ms)
+            }
+        } else {
+            let exp = self
+                .base_delay_ms
+                .saturating_mul(1i64 << retry_count.min(30));
+            exp.min(self.max_delay_ms)
+        };
 
         let jitter = if self.base_delay_ms > 0 {
             (rand::random::<u64>() % self.base_delay_ms as u64) as i64
@@ -38,7 +55,7 @@ impl RetryPolicy {
             0
         };
 
-        now_millis() + capped + jitter
+        now_millis() + delay + jitter
     }
 
     /// Whether the job should be retried (retry_count < max_retries).
@@ -69,6 +86,7 @@ mod tests {
             base_delay_ms: 1000,
             max_delay_ms: 60_000,
             max_retries: 5,
+            custom_delays_ms: None,
         };
 
         // Retry 0 should give ~1s, retry 3 should give ~8s
@@ -93,6 +111,7 @@ mod tests {
             base_delay_ms: 1000,
             max_delay_ms: 5_000,
             max_retries: 20,
+            custom_delays_ms: None,
         };
 
         let now = now_millis();

@@ -16,6 +16,8 @@ use taskito_core::scheduler::{Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
 #[cfg(feature = "postgres")]
 use taskito_core::storage::postgres::PostgresStorage;
+#[cfg(feature = "redis")]
+use taskito_core::storage::redis_backend::RedisStorage;
 use taskito_core::storage::sqlite::SqliteStorage;
 use taskito_core::storage::{Storage, StorageBackend};
 
@@ -73,9 +75,18 @@ impl PyQueue {
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
                 StorageBackend::Postgres(s)
             }
+            #[cfg(feature = "redis")]
+            "redis" => {
+                let url = db_url.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("db_url is required for redis backend")
+                })?;
+                let s = RedisStorage::new(url)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                StorageBackend::Redis(s)
+            }
             _ => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Unknown backend: '{backend}'. Use 'sqlite' or 'postgres'."
+                    "Unknown backend: '{backend}'. Use 'sqlite', 'postgres', or 'redis'."
                 )));
             }
         };
@@ -124,12 +135,57 @@ impl PyQueue {
     ) -> PyResult<PyJob> {
         let now = now_millis();
         let scheduled_at = match delay_seconds {
-            Some(d) => now + (d * 1000.0) as i64,
+            Some(d) => {
+                if !d.is_finite() || d < 0.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "delay_seconds must be a finite non-negative number",
+                    ));
+                }
+                if d > i64::MAX as f64 / 1000.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "delay_seconds too large",
+                    ));
+                }
+                let delay_ms = (d * 1000.0) as i64;
+                now.checked_add(delay_ms).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "delay_seconds too large, would overflow",
+                    )
+                })?
+            }
             None => now,
         };
 
-        let expires_at = expires.map(|e| now + (e * 1000.0) as i64);
-        let result_ttl_ms = result_ttl.map(|s| s * 1000);
+        let expires_at = match expires {
+            Some(e) => {
+                if !e.is_finite() || e < 0.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "expires must be a finite non-negative number",
+                    ));
+                }
+                if e > i64::MAX as f64 / 1000.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err("expires too large"));
+                }
+                let expires_ms = (e * 1000.0) as i64;
+                Some(now.checked_add(expires_ms).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("expires too large, would overflow")
+                })?)
+            }
+            None => None,
+        };
+        let result_ttl_ms = match result_ttl {
+            Some(s) => Some(s.checked_mul(1000).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("result_ttl too large, would overflow")
+            })?),
+            None => None,
+        };
+
+        let timeout_ms = timeout
+            .unwrap_or(self.default_timeout)
+            .checked_mul(1000)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("timeout too large, would overflow")
+            })?;
 
         let new_job = NewJob {
             queue: queue.to_string(),
@@ -138,12 +194,13 @@ impl PyQueue {
             priority: priority.unwrap_or(self.default_priority),
             scheduled_at,
             max_retries: max_retries.unwrap_or(self.default_retry),
-            timeout_ms: timeout.unwrap_or(self.default_timeout) * 1000,
+            timeout_ms,
             unique_key: unique_key.clone(),
             metadata,
             depends_on: depends_on.unwrap_or_default(),
             expires_at,
             result_ttl_ms,
+            namespace: None,
         };
 
         let job = if unique_key.is_some() {
@@ -191,14 +248,20 @@ impl PyQueue {
                 max_retries: max_retries_list.as_ref().map_or(self.default_retry, |r| {
                     r.get(i).copied().unwrap_or(self.default_retry)
                 }),
-                timeout_ms: timeouts.as_ref().map_or(self.default_timeout * 1000, |t| {
-                    t.get(i).copied().unwrap_or(self.default_timeout) * 1000
-                }),
+                timeout_ms: {
+                    let t = timeouts.as_ref().map_or(self.default_timeout, |t| {
+                        t.get(i).copied().unwrap_or(self.default_timeout)
+                    });
+                    t.checked_mul(1000).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("timeout too large, would overflow")
+                    })?
+                },
                 unique_key: None,
                 metadata: None,
                 depends_on: vec![],
                 expires_at: None,
                 result_ttl_ms: None,
+                namespace: None,
             });
         }
 
@@ -220,6 +283,11 @@ impl PyQueue {
         limit: i64,
         offset: i64,
     ) -> PyResult<Vec<PyJob>> {
+        if limit < 0 || offset < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit and offset must be non-negative",
+            ));
+        }
         let status_int = match status {
             Some(s) => Some(match s {
                 "pending" => 0,
@@ -291,6 +359,11 @@ impl PyQueue {
 
     /// Update progress for a running job (0-100).
     pub fn update_progress(&self, job_id: &str, progress: i32) -> PyResult<()> {
+        if !(0..=100).contains(&progress) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "progress must be between 0 and 100",
+            ));
+        }
         self.storage
             .update_progress(job_id, progress)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
@@ -298,7 +371,7 @@ impl PyQueue {
 
     /// Purge completed jobs older than given seconds ago. Returns count deleted.
     pub fn purge_completed(&self, older_than_seconds: i64) -> PyResult<u64> {
-        let cutoff = now_millis() - (older_than_seconds * 1000);
+        let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));
         self.storage
             .purge_completed(cutoff)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
@@ -326,6 +399,11 @@ impl PyQueue {
     /// List dead letter queue entries.
     #[pyo3(signature = (limit=10, offset=0))]
     pub fn dead_letters(&self, limit: i64, offset: i64) -> PyResult<Vec<PyObject>> {
+        if limit < 0 || offset < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit and offset must be non-negative",
+            ));
+        }
         let dead = self
             .storage
             .list_dead(limit, offset)
@@ -358,7 +436,7 @@ impl PyQueue {
 
     /// Purge dead letter entries older than given seconds ago.
     pub fn purge_dead(&self, older_than_seconds: i64) -> PyResult<u64> {
-        let cutoff = now_millis() - (older_than_seconds * 1000);
+        let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));
         self.storage
             .purge_dead(cutoff)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
@@ -387,7 +465,7 @@ impl PyQueue {
     }
 
     /// Register a periodic task schedule.
-    #[pyo3(signature = (name, task_name, cron_expr, args=None, kwargs=None, queue="default"))]
+    #[pyo3(signature = (name, task_name, cron_expr, args=None, kwargs=None, queue="default", timezone=None))]
     pub fn register_periodic(
         &self,
         name: &str,
@@ -396,10 +474,17 @@ impl PyQueue {
         args: Option<Vec<u8>>,
         kwargs: Option<Vec<u8>>,
         queue: &str,
+        timezone: Option<&str>,
     ) -> PyResult<()> {
+        use taskito_core::periodic::next_cron_time_tz;
+
         let now = now_millis();
-        let next_run = next_cron_time(cron_expr, now)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let next_run = if let Some(tz) = timezone {
+            next_cron_time_tz(cron_expr, now, tz)
+        } else {
+            next_cron_time(cron_expr, now)
+        }
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let row = NewPeriodicTaskRow {
             name,
@@ -410,6 +495,7 @@ impl PyQueue {
             queue,
             enabled: true,
             next_run,
+            timezone,
         };
 
         self.storage
@@ -417,14 +503,74 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Pause a queue (no jobs will be dispatched from it).
+    pub fn pause_queue(&self, queue_name: &str) -> PyResult<()> {
+        self.storage
+            .pause_queue(queue_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Resume a paused queue.
+    pub fn resume_queue(&self, queue_name: &str) -> PyResult<()> {
+        self.storage
+            .resume_queue(queue_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// List paused queues.
+    pub fn list_paused_queues(&self) -> PyResult<Vec<String>> {
+        self.storage
+            .list_paused_queues()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Cancel all pending jobs in a queue. Returns count cancelled.
+    pub fn purge_queue(&self, queue_name: &str) -> PyResult<u64> {
+        self.storage
+            .cancel_pending_by_queue(queue_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Cancel all pending jobs for a task name. Returns count cancelled.
+    pub fn revoke_task(&self, task_name: &str) -> PyResult<u64> {
+        self.storage
+            .cancel_pending_by_task(task_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Archive completed/dead/cancelled jobs older than cutoff (seconds ago).
+    pub fn archive_old_jobs(&self, older_than_seconds: i64) -> PyResult<u64> {
+        let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));
+        self.storage
+            .archive_old_jobs(cutoff)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// List archived jobs with pagination.
+    #[pyo3(signature = (limit=50, offset=0))]
+    pub fn list_archived(&self, limit: i64, offset: i64) -> PyResult<Vec<PyJob>> {
+        if limit < 0 || offset < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit and offset must be non-negative",
+            ));
+        }
+        let jobs = self
+            .storage
+            .list_archived(limit, offset)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(jobs.into_iter().map(PyJob::from).collect())
+    }
+
     /// Run the worker loop. This blocks until interrupted.
-    #[pyo3(signature = (task_registry, task_configs, queues=None))]
+    #[pyo3(signature = (task_registry, task_configs, queues=None, drain_timeout_secs=None, tags=None))]
     pub fn run_worker(
         &self,
         py: Python<'_>,
         task_registry: PyObject,
         task_configs: Vec<PyTaskConfig>,
         queues: Option<Vec<String>>,
+        drain_timeout_secs: Option<u64>,
+        tags: Option<String>,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -456,10 +602,28 @@ impl PyQueue {
         }
 
         for tc in &task_configs {
+            let custom_delays_ms = tc.retry_delays.as_ref().map(|delays| {
+                delays
+                    .iter()
+                    .map(|d| {
+                        if !d.is_finite() || *d < 0.0 {
+                            0i64
+                        } else {
+                            (d.min(i64::MAX as f64 / 1000.0) * 1000.0) as i64
+                        }
+                    })
+                    .collect()
+            });
+            let base_delay_ms = if !tc.retry_backoff.is_finite() || tc.retry_backoff < 0.0 {
+                0i64
+            } else {
+                (tc.retry_backoff.min(i64::MAX as f64 / 1000.0) * 1000.0) as i64
+            };
             let retry_policy = RetryPolicy {
                 max_retries: tc.max_retries,
-                base_delay_ms: (tc.retry_backoff * 1000.0) as i64,
+                base_delay_ms,
                 max_delay_ms: 300_000,
+                custom_delays_ms,
             };
             let rate_limit = tc
                 .rate_limit
@@ -502,7 +666,9 @@ impl PyQueue {
 
         // Generate a unique worker ID and register
         let worker_id = uuid::Uuid::now_v7().to_string();
-        let _ = self.storage.register_worker(&worker_id, &queues_str);
+        let _ = self
+            .storage
+            .register_worker(&worker_id, &queues_str, tags.as_deref());
 
         // Start heartbeat thread
         let heartbeat_storage = self.storage.clone();
@@ -534,7 +700,7 @@ impl PyQueue {
         let flag = self.shutdown_flag.clone();
 
         py.allow_threads(move || {
-            let drain_timeout = std::time::Duration::from_secs(30);
+            let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs.unwrap_or(30));
 
             loop {
                 // Check if graceful shutdown was requested
@@ -597,7 +763,7 @@ impl PyQueue {
         task_name: Option<&str>,
         since_seconds: i64,
     ) -> PyResult<Vec<PyObject>> {
-        let since_ms = now_millis() - (since_seconds * 1000);
+        let since_ms = now_millis().saturating_sub(since_seconds.saturating_mul(1000));
         let rows = self
             .storage
             .get_metrics(task_name, since_ms)
@@ -645,6 +811,7 @@ impl PyQueue {
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: original.result_ttl_ms,
+            namespace: original.namespace,
         };
 
         let job = self
@@ -737,7 +904,12 @@ impl PyQueue {
         since_seconds: i64,
         limit: i64,
     ) -> PyResult<Vec<PyObject>> {
-        let since_ms = now_millis() - (since_seconds * 1000);
+        if limit < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit must be non-negative",
+            ));
+        }
+        let since_ms = now_millis().saturating_sub(since_seconds.saturating_mul(1000));
         let rows = self
             .storage
             .query_task_logs(task_name, level, since_ms, limit)
@@ -809,6 +981,7 @@ impl PyQueue {
                 dict.set_item("last_heartbeat", r.last_heartbeat)?;
                 dict.set_item("queues", r.queues)?;
                 dict.set_item("status", r.status)?;
+                dict.set_item("tags", r.tags)?;
                 result.push(dict.into());
             }
             Ok(result)

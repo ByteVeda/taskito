@@ -11,7 +11,7 @@ const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
 impl SqliteStorage {
     /// Register a new worker or update an existing one.
-    pub fn register_worker(&self, worker_id: &str, queues: &str) -> Result<()> {
+    pub fn register_worker(&self, worker_id: &str, queues: &str, tags: Option<&str>) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
 
@@ -20,6 +20,7 @@ impl SqliteStorage {
             last_heartbeat: now,
             queues,
             status: "active",
+            tags,
         };
 
         diesel::replace_into(workers::table)
@@ -56,7 +57,7 @@ impl SqliteStorage {
     /// Remove workers that haven't sent a heartbeat within the threshold.
     pub fn reap_dead_workers(&self) -> Result<u64> {
         let mut conn = self.conn()?;
-        let cutoff = now_millis() - DEAD_WORKER_THRESHOLD_MS;
+        let cutoff = now_millis().saturating_sub(DEAD_WORKER_THRESHOLD_MS);
 
         let affected = diesel::delete(workers::table.filter(workers::last_heartbeat.lt(cutoff)))
             .execute(&mut conn)?;

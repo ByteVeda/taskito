@@ -96,7 +96,7 @@ class TaskWrapper:
             kwargs=kwargs,
             priority=priority if priority is not None else self._default_priority,
             delay=delay,
-            queue=queue or self._default_queue,
+            queue=queue if queue is not None else self._default_queue,
             max_retries=max_retries if max_retries is not None else self._default_max_retries,
             timeout=timeout if timeout is not None else self._default_timeout,
             unique_key=unique_key,

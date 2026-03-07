@@ -1,16 +1,18 @@
 [package]
 name = "taskito-core"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2021"
 
 [features]
 default = []
-postgres = ["diesel/postgres", "pq-sys"]
+postgres = ["diesel/postgres", "pq-sys", "openssl-sys"]
+redis = ["dep:redis"]
 
 [dependencies]
 diesel = { workspace = true }
 libsqlite3-sys = { workspace = true }
 pq-sys = { workspace = true, optional = true }
+openssl-sys = { workspace = true, optional = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -20,7 +22,9 @@ crossbeam-channel = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 cron = { workspace = true }
+chrono-tz = { workspace = true }
 log = { workspace = true }
+redis = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -3,16 +3,6 @@
 import threading
 import time
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_retry.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_failing_task_retries(queue):
     """A failing task should be retried up to max_retries times."""

@@ -17,7 +17,7 @@ class _AsyncMixin:
     _executor: Executor
 
     async def _run_sync(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         if kwargs:
             return await loop.run_in_executor(self._executor, lambda: fn(*args, **kwargs))
         return await loop.run_in_executor(self._executor, lambda: fn(*args))
@@ -161,8 +161,8 @@ def _aggregate_metrics(raw: list[dict]) -> dict[str, Any]:
             "failure_count": n - success,
             "avg_ms": round(sum(times) / n, 2) if n else 0,
             "p50_ms": round(times[n // 2], 2) if n else 0,
-            "p95_ms": round(times[int(n * 0.95)], 2) if n else 0,
-            "p99_ms": round(times[int(n * 0.99)], 2) if n else 0,
+            "p95_ms": round(times[min(int(n * 0.95), n - 1)], 2) if n else 0,
+            "p99_ms": round(times[min(int(n * 0.99), n - 1)], 2) if n else 0,
             "min_ms": round(times[0], 2) if n else 0,
             "max_ms": round(times[-1], 2) if n else 0,
         }

@@ -94,6 +94,7 @@ impl PostgresStorage {
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: dead_row.result_ttl_ms,
+            namespace: None,
         };
 
         let job = new_job.into_job();
@@ -116,6 +117,7 @@ impl PostgresStorage {
                 cancel_requested: 0,
                 expires_at: job.expires_at,
                 result_ttl_ms: job.result_ttl_ms,
+                namespace: job.namespace.as_deref(),
             };
 
             diesel::insert_into(jobs::table)

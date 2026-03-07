@@ -73,7 +73,30 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 - **Web dashboard** — `taskito dashboard --app myapp:queue` serves a built-in monitoring UI
 - **FastAPI integration** — `TaskitoRouter` for instant REST API over the queue
 - **Postgres backend** — optional multi-machine storage via PostgreSQL
+- **Events system** — subscribe to `JOB_COMPLETED`, `JOB_FAILED`, etc. with `queue.on_event()`
+- **Webhooks** — `queue.add_webhook(url, events, secret)` with HMAC-SHA256 signing
+- **Job archival** — `queue.archive(older_than=86400)`, `queue.list_archived()`
+- **Queue pause/resume** — `queue.pause()`, `queue.resume()`, `queue.paused_queues()`
+- **Circuit breakers** — `circuit_breaker={"threshold": 5, "window": 60, "cooldown": 300}`
+- **Structured logging** — `current_job.log("msg", level="info", extra={...})`
 - **CLI** — `taskito worker`, `taskito info --watch`, `taskito dashboard`
+
+## Integrations
+
+Install optional extras to unlock additional integrations:
+
+| Extra | Install | What you get |
+|-------|---------|--------------|
+| **Flask** | `pip install taskito[flask]` | `Taskito(app)` extension, `flask taskito worker` CLI |
+| **FastAPI** | `pip install taskito[fastapi]` | `TaskitoRouter` for instant REST API over the queue |
+| **Django** | `pip install taskito[django]` | Admin integration, management commands |
+| **OpenTelemetry** | `pip install taskito[otel]` | Distributed tracing with span-per-task |
+| **Prometheus** | `pip install taskito[prometheus]` | `PrometheusMiddleware`, queue depth gauges, `/metrics` server |
+| **Sentry** | `pip install taskito[sentry]` | `SentryMiddleware` with auto error capture and task tags |
+| **Encryption** | `pip install taskito[encryption]` | `EncryptedSerializer` for at-rest payload encryption |
+| **MsgPack** | `pip install taskito[msgpack]` | `MsgpackSerializer` for compact binary serialization |
+| **Postgres** | `pip install taskito[postgres]` | Multi-machine workers via PostgreSQL backend |
+| **Redis** | `pip install taskito[redis]` | Redis storage backend |
 
 ## Examples
 
@@ -238,9 +261,9 @@ def test_add():
 
 Full documentation with guides, API reference, architecture diagrams, and examples:
 
-**[Read the docs →](https://taskito-sepia.vercel.app)**
+**[Read the docs →](https://taskito.grigori.in)**
 
-Coming from Celery? See the **[Migration Guide](https://taskito-sepia.vercel.app/guide/migration/)**.
+Coming from Celery? See the **[Migration Guide](https://taskito.grigori.in/guide/migration/)**.
 
 ## Comparison
 

@@ -73,11 +73,33 @@ Without cleanup, expect ~1 KB per job. A million completed jobs ≈ 1 GB.
 
 No. SQLite requires local filesystem access for file locking. Network filesystems (NFS, SMB, CIFS) do not reliably support the locking primitives SQLite depends on. Always place the database on local storage.
 
+## When should I use Postgres instead of SQLite?
+
+Use the **Postgres backend** (`pip install taskito[postgres]`) when you need:
+
+- **Multi-machine workers** — run workers on separate servers sharing the same queue
+- **Higher write throughput** — Postgres handles concurrent writers better than SQLite
+- **Existing Postgres infrastructure** — leverage your existing database and backups
+
+For single-machine workloads, SQLite is simpler and requires zero setup. See the [Postgres Backend guide](guide/postgres.md).
+
 ## Is taskito production-ready?
 
-taskito is suitable for production **single-machine workloads** — background job processing, periodic tasks, data pipelines, and similar use cases where all workers run on one server.
+taskito is suitable for production workloads — background job processing, periodic tasks, data pipelines, and similar use cases.
 
-It is **not** designed for distributed, multi-server deployments. If you need workers on separate machines, use Celery or Dramatiq.
+For single-machine deployments, use the default SQLite backend. For multi-server setups, use the [Postgres backend](guide/postgres.md).
+
+## What observability options does taskito support?
+
+taskito offers three observability integrations, each suited to different needs:
+
+| Integration | Best for | Install |
+|-------------|----------|---------|
+| **[OpenTelemetry](integrations/otel.md)** | Distributed tracing, correlating tasks with HTTP requests | `pip install taskito[otel]` |
+| **[Prometheus](integrations/prometheus.md)** | Metrics dashboards, alerting on queue depth/error rates | `pip install taskito[prometheus]` |
+| **[Sentry](integrations/sentry.md)** | Error tracking with rich context and breadcrumbs | `pip install taskito[sentry]` |
+
+All three are implemented as `TaskMiddleware` and can be combined together.
 
 ## How does taskito compare to running Celery with SQLite?
 

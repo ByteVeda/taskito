@@ -2,16 +2,6 @@
 
 import threading
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_batch.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_enqueue_many(queue):
     """enqueue_many enqueues all items in a single batch."""

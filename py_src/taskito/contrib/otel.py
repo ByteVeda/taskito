@@ -71,13 +71,14 @@ class OpenTelemetryMiddleware(TaskMiddleware):
         if span is None:
             return
 
-        if error is not None:
-            span.set_status(StatusCode.ERROR, str(error))
-            span.record_exception(error)
-        else:
-            span.set_status(StatusCode.OK)
-
-        span.end()
+        try:
+            if error is not None:
+                span.set_status(StatusCode.ERROR, str(error))
+                span.record_exception(error)
+            else:
+                span.set_status(StatusCode.OK)
+        finally:
+            span.end()
 
     def on_retry(self, ctx: JobContext, error: Exception, retry_count: int) -> None:
         with self._lock:

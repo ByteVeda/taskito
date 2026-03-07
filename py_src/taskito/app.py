@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import threading
+import urllib.parse
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from taskito.testing import TestMode
 
 from taskito._taskito import PyQueue, PyTaskConfig
+from taskito.events import EventBus, EventType
 from taskito.middleware import TaskMiddleware
 from taskito.mixins import (
     QueueCircuitBreakersMixin,
@@ -29,6 +31,7 @@ from taskito.mixins import (
 from taskito.result import JobResult
 from taskito.serializers import CloudpickleSerializer, Serializer
 from taskito.task import TaskWrapper
+from taskito.webhooks import WebhookManager
 
 logger = logging.getLogger("taskito")
 
@@ -69,6 +72,7 @@ class Queue(
         backend: str = "sqlite",
         db_url: str | None = None,
         schema: str = "taskito",
+        drain_timeout: int = 30,
     ):
         """Initialize a new task queue.
 
@@ -89,6 +93,8 @@ class Queue(
                 Example: ``"postgresql://user:pass@localhost/taskito"``.
             schema: PostgreSQL schema name for all taskito tables. Defaults to
                 ``"taskito"``. Ignored when backend is ``"sqlite"``.
+            drain_timeout: Seconds to wait for in-flight jobs to finish during
+                graceful shutdown. Defaults to 30.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -126,6 +132,9 @@ class Queue(
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
+        self._drain_timeout = drain_timeout
+        self._event_bus = EventBus()
+        self._webhook_manager = WebhookManager()
 
     def task(
         self,
@@ -141,6 +150,7 @@ class Queue(
         dont_retry_on: list[type[Exception]] | None = None,
         soft_timeout: float | None = None,
         middleware: list[TaskMiddleware] | None = None,
+        retry_delays: list[float] | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -199,6 +209,7 @@ class Queue(
                 circuit_breaker_threshold=cb_threshold,
                 circuit_breaker_window=cb_window,
                 circuit_breaker_cooldown=cb_cooldown,
+                retry_delays=retry_delays,
             )
             self._task_configs.append(config)
 
@@ -227,6 +238,7 @@ class Queue(
         args: tuple = (),
         kwargs: dict | None = None,
         queue: str = "default",
+        timezone: str | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a periodic (cron-scheduled) task.
 
@@ -252,6 +264,7 @@ class Queue(
                     "cron_expr": cron,
                     "payload": payload,
                     "queue": queue,
+                    "timezone": timezone,
                 }
             )
 
@@ -323,9 +336,11 @@ class Queue(
                 current_job._set_soft_timeout(soft_timeout)
 
             # Run middleware before hooks
+            completed_mw: list[Any] = []
             for mw in middleware_chain:
                 try:
                     mw.before(current_job)
+                    completed_mw.append(mw)
                 except Exception:
                     logger.exception("middleware before() error")
 
@@ -356,12 +371,23 @@ class Queue(
             finally:
                 for hook in hooks["after_task"]:
                     hook(task_name, args, kwargs, result, error)
-                # Run middleware after hooks
-                for mw in middleware_chain:
+                # Run middleware after hooks (only those whose before() succeeded)
+                for mw in completed_mw:
                     try:
                         mw.after(current_job, result, error)
                     except Exception:
                         logger.exception("middleware after() error")
+                # Emit job lifecycle events
+                event_payload = {
+                    "task_name": task_name,
+                    "job_id": current_job.id,
+                    "queue": current_job.queue_name,
+                }
+                if error is not None:
+                    event_payload["error"] = str(error)
+                    queue_ref._emit_event(EventType.JOB_FAILED, event_payload)
+                else:
+                    queue_ref._emit_event(EventType.JOB_COMPLETED, event_payload)
                 _clear_context()
 
         return wrapper
@@ -420,6 +446,15 @@ class Queue(
             result_ttl=result_ttl,
         )
 
+        self._emit_event(
+            EventType.JOB_ENQUEUED,
+            {
+                "task_name": task_name,
+                "job_id": py_job.id,
+                "queue": queue or "default",
+            },
+        )
+
         return JobResult(py_job=py_job, queue=self)
 
     def enqueue_many(
@@ -447,6 +482,11 @@ class Queue(
             List of JobResult handles, one per enqueued job.
         """
         count = len(args_list)
+        if kwargs_list is not None and len(kwargs_list) != len(args_list):
+            raise ValueError(
+                f"kwargs_list length ({len(kwargs_list)}) must match "
+                f"args_list length ({len(args_list)})"
+            )
         kw_list = kwargs_list or [{}] * count
         payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
         task_names = [task_name] * count
@@ -522,6 +562,74 @@ class Queue(
         """Delete completed jobs older than a given age."""
         return self._inner.purge_completed(older_than)  # type: ignore[no-any-return]
 
+    # -- Queue Pause/Resume --
+
+    def pause(self, queue_name: str = "default") -> None:
+        """Pause a queue so no new jobs are dispatched from it."""
+        self._inner.pause_queue(queue_name)
+
+    def resume(self, queue_name: str = "default") -> None:
+        """Resume a paused queue."""
+        self._inner.resume_queue(queue_name)
+
+    def paused_queues(self) -> list[str]:
+        """List currently paused queues."""
+        return self._inner.list_paused_queues()  # type: ignore[no-any-return]
+
+    # -- Job Revocation --
+
+    def purge(self, queue_name: str) -> int:
+        """Cancel all pending jobs in a queue. Returns count cancelled."""
+        return self._inner.purge_queue(queue_name)  # type: ignore[no-any-return]
+
+    def revoke_task(self, task_name: str) -> int:
+        """Cancel all pending jobs for a task name. Returns count cancelled."""
+        return self._inner.revoke_task(task_name)  # type: ignore[no-any-return]
+
+    # -- Job Archival --
+
+    def archive(self, older_than: int = 86400) -> int:
+        """Archive completed/dead/cancelled jobs older than the given age (seconds)."""
+        return self._inner.archive_old_jobs(older_than)  # type: ignore[no-any-return]
+
+    def list_archived(self, limit: int = 50, offset: int = 0) -> list[JobResult]:
+        """List archived jobs with pagination."""
+        py_jobs = self._inner.list_archived(limit=limit, offset=offset)
+        return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
+
+    # -- Events & Webhooks --
+
+    def _emit_event(self, event_type: EventType, payload: dict[str, Any]) -> None:
+        """Emit an event to the event bus and webhook manager."""
+        self._event_bus.emit(event_type, payload)
+        self._webhook_manager.notify(event_type, payload)
+
+    def on_event(self, event_type: EventType, callback: Callable[..., Any]) -> None:
+        """Register a callback for a job lifecycle event.
+
+        Args:
+            event_type: The event type to listen for.
+            callback: Called with ``(event_type, payload_dict)``.
+        """
+        self._event_bus.on(event_type, callback)
+
+    def add_webhook(
+        self,
+        url: str,
+        events: list[EventType] | None = None,
+        headers: dict[str, str] | None = None,
+        secret: str | None = None,
+    ) -> None:
+        """Register a webhook endpoint for job events.
+
+        Args:
+            url: URL to POST event payloads to.
+            events: Event types to subscribe to (None = all).
+            headers: Extra HTTP headers.
+            secret: HMAC-SHA256 signing secret.
+        """
+        self._webhook_manager.add_webhook(url, events, headers, secret)
+
     # -- Async inspection methods --
 
     async def astats(self) -> dict[str, int]:
@@ -535,7 +643,7 @@ class Queue(
     # -- Worker startup --
 
     def _print_banner(self, queues: list[str]) -> None:
-        """Print a Celery-style ASCII startup banner."""
+        """Print ASCII startup banner."""
         from taskito import __version__
 
         banner = rf"""
@@ -552,11 +660,13 @@ class Queue(
         else:
             # Mask password in connection URL for display
             url = self._db_url or ""
-            if "@" in url:
-                pre, post = url.split("@", 1)
-                if ":" in pre:
-                    scheme_user = pre.rsplit(":", 1)[0]
-                    url = f"{scheme_user}:****@{post}"
+            parsed_url = urllib.parse.urlparse(url)
+            if parsed_url.password:
+                masked = parsed_url._replace(
+                    netloc=f"{parsed_url.username}:****@{parsed_url.hostname}"
+                    + (f":{parsed_url.port}" if parsed_url.port else "")
+                )
+                url = urllib.parse.urlunparse(masked)
             lines.append(f"> DB:          {url}")
             lines.append(f"> Schema:      {self._schema}")
         lines.append(f"> Concurrency: {self._workers} (threads)")
@@ -591,16 +701,28 @@ class Queue(
     def _stop_async_loop(self) -> None:
         """Stop the shared async event loop."""
         loop = getattr(self, "_async_loop", None)
-        if loop is not None and loop.is_running():
-            loop.call_soon_threadsafe(loop.stop)
-            self._async_thread.join(timeout=5)
+        thread = getattr(self, "_async_thread", None)
+        if loop is not None:
+            if loop.is_running():
+                loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    logger.warning("Async event loop thread did not stop within 5s timeout")
+            if not loop.is_running():
+                loop.close()
 
-    def run_worker(self, queues: Sequence[str] | None = None) -> None:
+    def run_worker(
+        self,
+        queues: Sequence[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> None:
         """Start the worker loop. Blocks until interrupted.
 
         Args:
             queues: List of queue names to consume from. ``None`` consumes
                 from all queues.
+            tags: Optional tags for worker specialization / routing.
         """
         queue_list = list(queues) if queues else None
 
@@ -617,6 +739,7 @@ class Queue(
                 cron_expr=pc["cron_expr"],
                 args=pc["payload"],
                 queue=pc["queue"],
+                timezone=pc.get("timezone"),
             )
 
         worker_queues = queue_list or ["default"]
@@ -625,34 +748,43 @@ class Queue(
         # Start shared async event loop for async tasks
         self._start_async_loop()
 
-        # Set up signal handler for graceful shutdown (only in main thread)
+        # Set up signal handlers for graceful shutdown (only in main thread)
         is_main = threading.current_thread() is threading.main_thread()
         original_sigint = None
+        original_sigterm = None
 
         if is_main:
             original_sigint = signal.getsignal(signal.SIGINT)
+            original_sigterm = signal.getsignal(signal.SIGTERM)
 
             def shutdown_handler(signum: int, frame: Any) -> None:
                 logger.info("Shutting down gracefully (waiting for in-flight jobs)...")
                 self._inner.request_shutdown()
-                # Restore original handler so a second Ctrl+C force-kills
+                # Restore original handlers so a second signal force-kills
                 signal.signal(signal.SIGINT, original_sigint)
+                signal.signal(signal.SIGTERM, original_sigterm)
 
             signal.signal(signal.SIGINT, shutdown_handler)
+            signal.signal(signal.SIGTERM, shutdown_handler)
 
         try:
             self._inner.run_worker(
                 task_registry=self._task_registry,
                 task_configs=self._task_configs,
                 queues=queue_list,
+                drain_timeout_secs=self._drain_timeout,
+                tags=",".join(tags) if tags else None,
             )
         except KeyboardInterrupt:
             logger.info("Worker force-stopped.")
         finally:
             self._stop_async_loop()
             logger.info("Worker stopped.")
-            if is_main and original_sigint is not None:
-                signal.signal(signal.SIGINT, original_sigint)
+            if is_main:
+                if original_sigint is not None:
+                    signal.signal(signal.SIGINT, original_sigint)
+                if original_sigterm is not None:
+                    signal.signal(signal.SIGTERM, original_sigterm)
 
     # -- Test Mode --
 
@@ -669,7 +801,11 @@ class Queue(
 
         return TestMode(self, propagate_errors=propagate_errors)
 
-    async def arun_worker(self, queues: Sequence[str] | None = None) -> None:
+    async def arun_worker(
+        self,
+        queues: Sequence[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> None:
         """Async version of :meth:`run_worker`.
 
         Runs the blocking worker loop in a thread executor so it does not
@@ -677,22 +813,30 @@ class Queue(
 
         Args:
             queues: List of queue names to consume from.
+            tags: Optional tags for worker specialization / routing.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        original_handler = signal.getsignal(signal.SIGINT)
+        original_sigint = signal.getsignal(signal.SIGINT)
+        original_sigterm = signal.getsignal(signal.SIGTERM)
 
         def _shutdown_once() -> None:
             logger.info("Shutting down gracefully (waiting for in-flight jobs)...")
             self._inner.request_shutdown()
-            loop.remove_signal_handler(signal.SIGINT)
-            signal.signal(signal.SIGINT, original_handler)
+            with contextlib.suppress(NotImplementedError):
+                loop.remove_signal_handler(signal.SIGINT)
+                loop.remove_signal_handler(signal.SIGTERM)
+            signal.signal(signal.SIGINT, original_sigint)
+            signal.signal(signal.SIGTERM, original_sigterm)
 
         loop.add_signal_handler(signal.SIGINT, _shutdown_once)
+        loop.add_signal_handler(signal.SIGTERM, _shutdown_once)
 
         try:
-            await loop.run_in_executor(None, lambda: self.run_worker(queues=queues))
+            await loop.run_in_executor(None, lambda: self.run_worker(queues=queues, tags=tags))
         finally:
             with contextlib.suppress(NotImplementedError):
                 loop.remove_signal_handler(signal.SIGINT)
-            signal.signal(signal.SIGINT, original_handler)
+                loop.remove_signal_handler(signal.SIGTERM)
+            signal.signal(signal.SIGINT, original_sigint)
+            signal.signal(signal.SIGTERM, original_sigterm)

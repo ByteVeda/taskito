@@ -19,6 +19,94 @@ except ImportError as e:
     ) from e
 
 
+def _dashboard_view(request: HttpRequest, site: Any) -> HttpResponse:
+    from taskito.contrib.django.settings import get_queue
+
+    queue = get_queue()
+    stats = queue.stats()
+    context = {**site.each_context(request), "stats": stats, "title": "Taskito Dashboard"}
+    return TemplateResponse(request, "taskito/admin/dashboard.html", context)
+
+
+def _jobs_view(request: HttpRequest, site: Any) -> HttpResponse:
+    from taskito.contrib.django.settings import get_queue
+
+    queue = get_queue()
+    status = request.GET.get("status")
+    queue_name = request.GET.get("queue")
+    task_name = request.GET.get("task_name")
+    try:
+        page = int(request.GET.get("page", "1"))
+    except (ValueError, TypeError):
+        page = 1
+    page = max(page, 1)
+    per_page = 50
+
+    try:
+        jobs = queue.list_jobs(
+            status=status,
+            queue=queue_name,
+            task_name=task_name,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Failed to list jobs")
+        jobs = []
+    context = {
+        **site.each_context(request),
+        "jobs": [j.to_dict() for j in jobs],
+        "filters": {"status": status, "queue": queue_name, "task_name": task_name},
+        "page": page,
+        "title": "Taskito Jobs",
+    }
+    return TemplateResponse(request, "taskito/admin/jobs.html", context)
+
+
+def _job_detail_view(request: HttpRequest, site: Any, job_id: str) -> HttpResponse:
+    from taskito.contrib.django.settings import get_queue
+
+    queue = get_queue()
+    job = queue.get_job(job_id)
+    errors = queue.job_errors(job_id) if job else []
+    context = {
+        **site.each_context(request),
+        "job": job.to_dict() if job else None,
+        "errors": errors,
+        "title": f"Job {job_id}",
+    }
+    return TemplateResponse(request, "taskito/admin/job_detail.html", context)
+
+
+def _dead_letters_view(request: HttpRequest, site: Any) -> HttpResponse:
+    from taskito.contrib.django.settings import get_queue
+
+    queue = get_queue()
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        dead_id = request.POST.get("dead_id")
+        if action == "retry" and dead_id:
+            queue.retry_dead(dead_id)
+
+    try:
+        page = int(request.GET.get("page", "1"))
+    except (ValueError, TypeError):
+        page = 1
+    page = max(page, 1)
+    per_page = 50
+    dead = queue.dead_letters(limit=per_page, offset=(page - 1) * per_page)
+    context = {
+        **site.each_context(request),
+        "dead_letters": dead,
+        "page": page,
+        "title": "Taskito Dead Letters",
+    }
+    return TemplateResponse(request, "taskito/admin/dead_letters.html", context)
+
+
 class TaskitoAdminSite(admin.AdminSite):
     """Custom admin site with taskito queue views."""
 
@@ -44,77 +132,16 @@ class TaskitoAdminSite(admin.AdminSite):
         return custom + urls  # type: ignore[no-any-return]
 
     def dashboard_view(self, request: HttpRequest) -> HttpResponse:
-        from taskito.contrib.django.settings import get_queue
-
-        queue = get_queue()
-        stats = queue.stats()
-        context = {**self.each_context(request), "stats": stats, "title": "Taskito Dashboard"}
-        return TemplateResponse(request, "taskito/admin/dashboard.html", context)
+        return _dashboard_view(request, self)
 
     def jobs_view(self, request: HttpRequest) -> HttpResponse:
-        from taskito.contrib.django.settings import get_queue
-
-        queue = get_queue()
-        status = request.GET.get("status")
-        queue_name = request.GET.get("queue")
-        task_name = request.GET.get("task_name")
-        page = int(request.GET.get("page", "1"))
-        per_page = 50
-
-        try:
-            jobs = queue.list_jobs(
-                status=status,
-                queue=queue_name,
-                task_name=task_name,
-                limit=per_page,
-                offset=(page - 1) * per_page,
-            )
-        except (ValueError, Exception):
-            jobs = []
-        context = {
-            **self.each_context(request),
-            "jobs": [j.to_dict() for j in jobs],
-            "filters": {"status": status, "queue": queue_name, "task_name": task_name},
-            "page": page,
-            "title": "Taskito Jobs",
-        }
-        return TemplateResponse(request, "taskito/admin/jobs.html", context)
+        return _jobs_view(request, self)
 
     def job_detail_view(self, request: HttpRequest, job_id: str) -> HttpResponse:
-        from taskito.contrib.django.settings import get_queue
-
-        queue = get_queue()
-        job = queue.get_job(job_id)
-        errors = queue.job_errors(job_id) if job else []
-        context = {
-            **self.each_context(request),
-            "job": job.to_dict() if job else None,
-            "errors": errors,
-            "title": f"Job {job_id}",
-        }
-        return TemplateResponse(request, "taskito/admin/job_detail.html", context)
+        return _job_detail_view(request, self, job_id)
 
     def dead_letters_view(self, request: HttpRequest) -> HttpResponse:
-        from taskito.contrib.django.settings import get_queue
-
-        queue = get_queue()
-
-        if request.method == "POST":
-            action = request.POST.get("action")
-            dead_id = request.POST.get("dead_id")
-            if action == "retry" and dead_id:
-                queue.retry_dead(dead_id)
-
-        page = int(request.GET.get("page", "1"))
-        per_page = 50
-        dead = queue.dead_letters(limit=per_page, offset=(page - 1) * per_page)
-        context = {
-            **self.each_context(request),
-            "dead_letters": dead,
-            "page": page,
-            "title": "Taskito Dead Letters",
-        }
-        return TemplateResponse(request, "taskito/admin/dead_letters.html", context)
+        return _dead_letters_view(request, self)
 
 
 def register_taskito_admin(site: Any = None) -> None:
@@ -128,40 +155,10 @@ def register_taskito_admin(site: Any = None) -> None:
     target = site or admin.site
 
     def dashboard_view(request: HttpRequest) -> HttpResponse:
-        from taskito.contrib.django.settings import get_queue
-
-        queue = get_queue()
-        stats = queue.stats()
-        context = {**target.each_context(request), "stats": stats, "title": "Taskito Dashboard"}
-        return TemplateResponse(request, "taskito/admin/dashboard.html", context)
+        return _dashboard_view(request, target)
 
     def jobs_view(request: HttpRequest) -> HttpResponse:
-        from taskito.contrib.django.settings import get_queue
-
-        queue = get_queue()
-        status = request.GET.get("status")
-        queue_name = request.GET.get("queue")
-        task_name = request.GET.get("task_name")
-        page = int(request.GET.get("page", "1"))
-        per_page = 50
-        try:
-            jobs = queue.list_jobs(
-                status=status,
-                queue=queue_name,
-                task_name=task_name,
-                limit=per_page,
-                offset=(page - 1) * per_page,
-            )
-        except (ValueError, Exception):
-            jobs = []
-        context = {
-            **target.each_context(request),
-            "jobs": [j.to_dict() for j in jobs],
-            "filters": {"status": status, "queue": queue_name, "task_name": task_name},
-            "page": page,
-            "title": "Taskito Jobs",
-        }
-        return TemplateResponse(request, "taskito/admin/jobs.html", context)
+        return _jobs_view(request, target)
 
     original_get_urls = target.get_urls
 

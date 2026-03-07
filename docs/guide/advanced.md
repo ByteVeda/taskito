@@ -144,6 +144,106 @@ jobs = queue.enqueue_many(
 )
 ```
 
+## Queue Pause/Resume
+
+Temporarily pause job processing on a queue without stopping the worker:
+
+```python
+# Pause the "emails" queue
+queue.pause("emails")
+
+# Check which queues are paused
+print(queue.paused_queues())  # ["emails"]
+
+# Resume processing
+queue.resume("emails")
+```
+
+Paused queues still accept new jobs — they just won't be dequeued until resumed.
+
+## Job Archival
+
+Move old completed jobs to an archive table to keep the main jobs table lean:
+
+```python
+# Archive completed jobs older than 24 hours
+archived_count = queue.archive(older_than=86400)
+print(f"Archived {archived_count} jobs")
+
+# Browse archived jobs
+archived = queue.list_archived(limit=50, offset=0)
+for job in archived:
+    print(f"{job.id}: {job.task_name} ({job.status})")
+```
+
+Archived jobs are no longer returned by `queue.stats()` or `queue.list_jobs()`, but remain queryable via `queue.list_archived()`.
+
+### Example: Maintenance Window
+
+```python
+# Before maintenance: pause all queues
+for q in ["default", "emails", "reports"]:
+    queue.pause(q)
+print(f"Paused: {queue.paused_queues()}")
+
+# ... perform maintenance ...
+
+# After maintenance: resume all queues
+for q in ["default", "emails", "reports"]:
+    queue.resume(q)
+```
+
+### Example: Scheduled Archival
+
+```python
+@queue.periodic(cron="0 0 2 * * *")  # Daily at 2 AM
+def nightly_archival():
+    archived = queue.archive(older_than=7 * 86400)  # Archive jobs older than 7 days
+    current_job.log(f"Archived {archived} jobs")
+```
+
+## Task Revocation
+
+Cancel all pending jobs for a specific task:
+
+```python
+# Revoke all pending "send_newsletter" jobs
+cancelled = queue.revoke_task("myapp.tasks.send_newsletter")
+print(f"Revoked {cancelled} jobs")
+```
+
+## Queue Purge
+
+Remove all pending jobs from a specific queue:
+
+```python
+purged = queue.purge("emails")
+print(f"Purged {purged} jobs from the emails queue")
+```
+
+## Job Replay
+
+Replay a completed or dead job with the same arguments:
+
+```python
+new_job = queue.replay(job_id)
+print(f"Replayed as {new_job.id}")
+
+# Check replay history
+history = queue.replay_history(job_id)
+```
+
+### Example: Retry from Dead Letter with Replay
+
+```python
+# List dead letters and replay them
+dead = queue.dead_letters()
+for entry in dead:
+    print(f"Replaying dead job {entry['original_job_id']}: {entry['task_name']}")
+    new_id = queue.retry_dead(entry["id"])
+    print(f"  -> New job: {new_id}")
+```
+
 ## SQLite Configuration
 
 taskito configures SQLite for optimal performance:

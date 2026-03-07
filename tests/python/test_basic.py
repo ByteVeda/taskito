@@ -2,17 +2,6 @@
 
 import threading
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    """Create a fresh queue with a temp database."""
-    db_path = str(tmp_path / "test.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_task_registration(queue):
     """Tasks can be registered with the decorator."""

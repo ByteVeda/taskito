@@ -21,6 +21,7 @@ diesel::table! {
         cancel_requested -> Integer,
         expires_at -> Nullable<BigInt>,
         result_ttl_ms -> Nullable<BigInt>,
+        namespace -> Nullable<Text>,
     }
 }
 
@@ -63,6 +64,7 @@ diesel::table! {
         enabled -> Bool,
         last_run -> Nullable<BigInt>,
         next_run -> BigInt,
+        timezone -> Nullable<Text>,
     }
 }
 
@@ -141,6 +143,41 @@ diesel::table! {
         last_heartbeat -> BigInt,
         queues -> Text,
         status -> Text,
+        tags -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    queue_state (queue_name) {
+        queue_name -> Text,
+        paused -> Bool,
+        paused_at -> Nullable<BigInt>,
+    }
+}
+
+diesel::table! {
+    archived_jobs (id) {
+        id -> Text,
+        queue -> Text,
+        task_name -> Text,
+        payload -> Binary,
+        status -> Integer,
+        priority -> Integer,
+        created_at -> BigInt,
+        scheduled_at -> BigInt,
+        started_at -> Nullable<BigInt>,
+        completed_at -> Nullable<BigInt>,
+        retry_count -> Integer,
+        max_retries -> Integer,
+        result -> Nullable<Binary>,
+        error -> Nullable<Text>,
+        timeout_ms -> BigInt,
+        unique_key -> Nullable<Text>,
+        progress -> Nullable<Integer>,
+        metadata -> Nullable<Text>,
+        cancel_requested -> Integer,
+        expires_at -> Nullable<BigInt>,
+        result_ttl_ms -> Nullable<BigInt>,
     }
 }
 

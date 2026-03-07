@@ -85,10 +85,16 @@ class JobResult:
             result_bytes = self._py_job.result_bytes
             if result_bytes is None:
                 return status, None
-            return status, self._queue._serializer.loads(result_bytes)
+            try:
+                return status, self._queue._serializer.loads(result_bytes)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to deserialize result for job {self.id}: {exc}"
+                ) from exc
 
-        if status in ("failed", "dead"):
-            raise RuntimeError(f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}")
+        if status in ("failed", "dead", "cancelled"):
+            error_msg = self._py_job.error or "job was cancelled"
+            raise RuntimeError(f"Job {self.id} {status}: {error_msg}")
 
         return status, None
 
@@ -116,21 +122,23 @@ class JobResult:
             TimeoutError: If the job doesn't complete within the timeout.
             RuntimeError: If the job failed or was moved to DLQ.
         """
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
         deadline = time.monotonic() + timeout
         current_interval = poll_interval
 
-        while time.monotonic() < deadline:
+        while True:
             status, value = self._poll_once()
             if status == "complete":
                 return value
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Job {self.id} did not complete within {timeout}s "
+                    f"(current status: {self._py_job.status})"
+                )
 
-            time.sleep(current_interval)
+            time.sleep(min(current_interval, max(0, deadline - time.monotonic())))
             current_interval = min(current_interval * 1.5, max_poll_interval)
-
-        raise TimeoutError(
-            f"Job {self.id} did not complete within {timeout}s "
-            f"(current status: {self._py_job.status})"
-        )
 
     async def aresult(
         self,
@@ -159,21 +167,23 @@ class JobResult:
 
             result = await job.aresult(timeout=30)
         """
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
         deadline = time.monotonic() + timeout
         current_interval = poll_interval
 
-        while time.monotonic() < deadline:
+        while True:
             status, value = self._poll_once()
             if status == "complete":
                 return value
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Job {self.id} did not complete within {timeout}s "
+                    f"(current status: {self._py_job.status})"
+                )
 
-            await asyncio.sleep(current_interval)
+            await asyncio.sleep(min(current_interval, max(0, deadline - time.monotonic())))
             current_interval = min(current_interval * 1.5, max_poll_interval)
-
-        raise TimeoutError(
-            f"Job {self.id} did not complete within {timeout}s "
-            f"(current status: {self._py_job.status})"
-        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a plain dictionary for JSON serialization.

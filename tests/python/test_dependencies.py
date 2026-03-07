@@ -4,15 +4,6 @@ import threading
 
 import pytest
 
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    """Create a fresh queue with a temp database."""
-    db_path = str(tmp_path / "test_deps.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_enqueue_with_depends_on(queue):
     """Jobs can declare dependencies on other jobs."""

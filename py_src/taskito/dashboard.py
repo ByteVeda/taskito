@@ -14,10 +14,14 @@ Or programmatically::
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
+
+logger = logging.getLogger("taskito.dashboard")
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -31,13 +35,32 @@ def _load_spa_html() -> str:
 
 
 _SPA_HTML: str | None = None
+_spa_lock = threading.Lock()
 
 
 def _get_spa_html() -> str:
     global _SPA_HTML
     if _SPA_HTML is None:
-        _SPA_HTML = _load_spa_html()
+        with _spa_lock:
+            if _SPA_HTML is None:
+                _SPA_HTML = _load_spa_html()
     return _SPA_HTML
+
+
+def _extract_path_segment(path: str, prefix: str, suffix: str = "") -> str:
+    """Extract the segment between prefix and suffix from a URL path."""
+    if suffix:
+        return path[len(prefix) : -len(suffix)]
+    return path[len(prefix) :]
+
+
+def _parse_int_qs(qs: dict, key: str, default: int) -> int | None:
+    """Parse an integer from query string, returning None on invalid input."""
+    try:
+        val = int(qs.get(key, [str(default)])[0])
+        return val if val >= 0 else None
+    except (ValueError, IndexError):
+        return None
 
 
 def serve_dashboard(
@@ -71,6 +94,13 @@ def _make_handler(queue: Queue) -> type:
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            try:
+                self._handle_get()
+            except Exception:
+                logger.exception("Error handling GET %s", self.path)
+                self._json_response({"error": "Internal server error"}, status=500)
+
+        def _handle_get(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
             qs = parse_qs(parsed.query)
@@ -80,34 +110,43 @@ def _make_handler(queue: Queue) -> type:
             elif path == "/api/jobs":
                 self._handle_list_jobs(qs)
             elif path.startswith("/api/jobs/") and path.endswith("/errors"):
-                job_id = path[len("/api/jobs/") : -len("/errors")]
+                job_id = _extract_path_segment(path, "/api/jobs/", "/errors")
                 self._json_response(queue.job_errors(job_id))
             elif path.startswith("/api/jobs/") and path.endswith("/logs"):
-                job_id = path[len("/api/jobs/") : -len("/logs")]
+                job_id = _extract_path_segment(path, "/api/jobs/", "/logs")
                 self._json_response(queue.task_logs(job_id))
             elif path.startswith("/api/jobs/") and path.endswith("/replay-history"):
-                job_id = path[len("/api/jobs/") : -len("/replay-history")]
+                job_id = _extract_path_segment(path, "/api/jobs/", "/replay-history")
                 self._json_response(queue.replay_history(job_id))
             elif path.startswith("/api/jobs/"):
-                job_id = path[len("/api/jobs/") :]
+                job_id = _extract_path_segment(path, "/api/jobs/")
                 job = queue.get_job(job_id)
                 if job is None:
                     self._json_response({"error": "Job not found"}, status=404)
                 else:
                     self._json_response(job.to_dict())
             elif path == "/api/dead-letters":
-                limit = int(qs.get("limit", ["20"])[0])
-                offset = int(qs.get("offset", ["0"])[0])
+                limit = _parse_int_qs(qs, "limit", 20)
+                offset = _parse_int_qs(qs, "offset", 0)
+                if limit is None or offset is None:
+                    self._json_response({"error": "limit and offset must be integers"}, status=400)
+                    return
                 self._json_response(queue.dead_letters(limit=limit, offset=offset))
             elif path == "/api/metrics":
                 task = qs.get("task", [None])[0]
-                since = int(qs.get("since", ["3600"])[0])
+                since = _parse_int_qs(qs, "since", 3600)
+                if since is None:
+                    self._json_response({"error": "since must be an integer"}, status=400)
+                    return
                 self._json_response(queue.metrics(task_name=task, since=since))
             elif path == "/api/logs":
                 task = qs.get("task", [None])[0]
                 level = qs.get("level", [None])[0]
-                since = int(qs.get("since", ["3600"])[0])
-                limit = int(qs.get("limit", ["100"])[0])
+                since = _parse_int_qs(qs, "since", 3600)
+                limit = _parse_int_qs(qs, "limit", 100)
+                if since is None or limit is None:
+                    self._json_response({"error": "since and limit must be integers"}, status=400)
+                    return
                 self._json_response(
                     queue.query_logs(task_name=task, level=level, since=since, limit=limit)
                 )
@@ -115,28 +154,57 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response(queue.circuit_breakers())
             elif path == "/api/workers":
                 self._json_response(queue.workers())
+            elif path == "/api/queues/paused":
+                self._json_response(queue.paused_queues())
+            elif path == "/metrics":
+                self._serve_prometheus_metrics()
+            elif path == "/api/scaler":
+                stats = queue.stats()
+                depth = stats.get("pending", 0)
+                self._json_response(
+                    {
+                        "metricName": "taskito_queue_depth",
+                        "metricValue": depth,
+                        "isActive": depth > 0,
+                    }
+                )
             else:
                 self._serve_spa()
 
         def do_POST(self) -> None:
+            try:
+                self._handle_post()
+            except Exception:
+                logger.exception("Error handling POST %s", self.path)
+                self._json_response({"error": "Internal server error"}, status=500)
+
+        def _handle_post(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
 
             if path.startswith("/api/jobs/") and path.endswith("/cancel"):
-                job_id = path[len("/api/jobs/") : -len("/cancel")]
+                job_id = _extract_path_segment(path, "/api/jobs/", "/cancel")
                 ok = queue.cancel_job(job_id)
                 self._json_response({"cancelled": ok})
             elif path.startswith("/api/dead-letters/") and path.endswith("/retry"):
-                dead_id = path[len("/api/dead-letters/") : -len("/retry")]
+                dead_id = _extract_path_segment(path, "/api/dead-letters/", "/retry")
                 new_id = queue.retry_dead(dead_id)
                 self._json_response({"new_job_id": new_id})
             elif path == "/api/dead-letters/purge":
                 count = queue.purge_dead(0)
                 self._json_response({"purged": count})
             elif path.startswith("/api/jobs/") and path.endswith("/replay"):
-                job_id = path[len("/api/jobs/") : -len("/replay")]
+                job_id = _extract_path_segment(path, "/api/jobs/", "/replay")
                 result = queue.replay(job_id)
                 self._json_response({"replay_job_id": result.id})
+            elif path.startswith("/api/queues/") and path.endswith("/pause"):
+                name = _extract_path_segment(path, "/api/queues/", "/pause")
+                queue.pause(name)
+                self._json_response({"paused": name})
+            elif path.startswith("/api/queues/") and path.endswith("/resume"):
+                name = _extract_path_segment(path, "/api/queues/", "/resume")
+                queue.resume(name)
+                self._json_response({"resumed": name})
             else:
                 self._json_response({"error": "Not found"}, status=404)
 
@@ -144,8 +212,11 @@ def _make_handler(queue: Queue) -> type:
             status = qs.get("status", [None])[0]
             q = qs.get("queue", [None])[0]
             task = qs.get("task", [None])[0]
-            limit = int(qs.get("limit", ["20"])[0])
-            offset = int(qs.get("offset", ["0"])[0])
+            limit = _parse_int_qs(qs, "limit", 20)
+            offset = _parse_int_qs(qs, "offset", 0)
+            if limit is None or offset is None:
+                self._json_response({"error": "limit and offset must be integers"}, status=400)
+                return
 
             jobs = queue.list_jobs(
                 status=status,
@@ -164,6 +235,19 @@ def _make_handler(queue: Queue) -> type:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+
+        def _serve_prometheus_metrics(self) -> None:
+            try:
+                from prometheus_client import generate_latest
+
+                body = generate_latest()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except ImportError:
+                self._json_response({"error": "prometheus-client not installed"}, status=501)
 
         def _serve_spa(self) -> None:
             body = _get_spa_html().encode()

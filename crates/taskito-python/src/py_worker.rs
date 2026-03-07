@@ -142,6 +142,13 @@ fn execute_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult
         let unpickled = cloudpickle.call_method1("loads", (payload_bytes,))?;
         let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
 
+        if args_tuple.len() != 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "expected payload to be a 2-tuple (args, kwargs), got {}-tuple",
+                args_tuple.len()
+            )));
+        }
+
         let args = args_tuple.get_item(0)?;
         let kwargs = args_tuple.get_item(1)?;
 
