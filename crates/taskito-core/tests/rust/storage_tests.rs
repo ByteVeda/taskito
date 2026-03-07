@@ -251,3 +251,27 @@ fn redis_storage_tests() {
 
     run_storage_tests(&storage);
 }
+
+#[cfg(feature = "postgres")]
+#[test]
+fn postgres_storage_tests() {
+    use taskito_core::PostgresStorage;
+
+    let url = match std::env::var("TASKITO_POSTGRES_TEST_URL") {
+        Ok(u) => u,
+        Err(_) => {
+            eprintln!("Skipping Postgres tests (TASKITO_POSTGRES_TEST_URL not set)");
+            return;
+        }
+    };
+
+    let storage = match PostgresStorage::new(&url) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Skipping Postgres tests (cannot connect): {e}");
+            return;
+        }
+    };
+
+    run_storage_tests(&storage);
+}

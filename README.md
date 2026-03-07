@@ -261,9 +261,9 @@ def test_add():
 
 Full documentation with guides, API reference, architecture diagrams, and examples:
 
-**[Read the docs →](https://taskito-sepia.vercel.app)**
+**[Read the docs →](https://taskito.grigori.in)**
 
-Coming from Celery? See the **[Migration Guide](https://taskito-sepia.vercel.app/guide/migration/)**.
+Coming from Celery? See the **[Migration Guide](https://taskito.grigori.in/guide/migration/)**.
 
 ## Comparison
 

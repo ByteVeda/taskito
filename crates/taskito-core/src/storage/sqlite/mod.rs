@@ -16,6 +16,19 @@ use diesel::sqlite::SqliteConnection;
 
 use crate::error::Result;
 
+/// Run an ALTER TABLE migration, suppressing "duplicate column" errors (SQLite).
+fn migration_alter(conn: &mut SqliteConnection, sql: &str) {
+    match diesel::sql_query(sql).execute(conn) {
+        Ok(_) => {}
+        Err(e) => {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                log::warn!("migration failed for '{sql}': {e}");
+            }
+        }
+    }
+}
+
 type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 
 /// Sets SQLite pragmas on every new connection from the pool.
@@ -118,14 +131,15 @@ impl SqliteStorage {
         .execute(&mut conn)?;
 
         // Add new columns if they don't exist (migration for existing DBs)
-        let _ = diesel::sql_query(
+        migration_alter(
+            &mut conn,
             "ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0",
-        )
-        .execute(&mut conn);
-        let _ =
-            diesel::sql_query("ALTER TABLE jobs ADD COLUMN expires_at INTEGER").execute(&mut conn);
-        let _ = diesel::sql_query("ALTER TABLE jobs ADD COLUMN result_ttl_ms INTEGER")
-            .execute(&mut conn);
+        );
+        migration_alter(&mut conn, "ALTER TABLE jobs ADD COLUMN expires_at INTEGER");
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE jobs ADD COLUMN result_ttl_ms INTEGER",
+        );
 
         diesel::sql_query(
             "CREATE INDEX IF NOT EXISTS idx_jobs_dequeue
@@ -168,7 +182,7 @@ impl SqliteStorage {
             "ALTER TABLE dead_letter ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 300000",
             "ALTER TABLE dead_letter ADD COLUMN result_ttl_ms INTEGER",
         ] {
-            let _ = diesel::sql_query(*col).execute(&mut conn);
+            migration_alter(&mut conn, col);
         }
 
         diesel::sql_query(
@@ -323,7 +337,7 @@ impl SqliteStorage {
         .execute(&mut conn)?;
 
         // Migration: add tags column to workers
-        let _ = diesel::sql_query("ALTER TABLE workers ADD COLUMN tags TEXT").execute(&mut conn);
+        migration_alter(&mut conn, "ALTER TABLE workers ADD COLUMN tags TEXT");
 
         // ── Queue State ──────────────────────────────────
         diesel::sql_query(
@@ -369,11 +383,13 @@ impl SqliteStorage {
         .execute(&mut conn)?;
 
         // ── Periodic tasks timezone migration ────────────
-        let _ = diesel::sql_query("ALTER TABLE periodic_tasks ADD COLUMN timezone TEXT")
-            .execute(&mut conn);
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE periodic_tasks ADD COLUMN timezone TEXT",
+        );
 
         // Migration: add namespace column to jobs
-        let _ = diesel::sql_query("ALTER TABLE jobs ADD COLUMN namespace TEXT").execute(&mut conn);
+        migration_alter(&mut conn, "ALTER TABLE jobs ADD COLUMN namespace TEXT");
 
         Ok(())
     }

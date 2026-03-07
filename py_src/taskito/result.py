@@ -85,7 +85,12 @@ class JobResult:
             result_bytes = self._py_job.result_bytes
             if result_bytes is None:
                 return status, None
-            return status, self._queue._serializer.loads(result_bytes)
+            try:
+                return status, self._queue._serializer.loads(result_bytes)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to deserialize result for job {self.id}: {exc}"
+                ) from exc
 
         if status in ("failed", "dead"):
             raise RuntimeError(f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}")

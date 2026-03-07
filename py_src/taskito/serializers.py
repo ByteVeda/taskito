@@ -78,6 +78,13 @@ class EncryptedSerializer:
     """
 
     def __init__(self, inner: Serializer, key: bytes):
+        if not isinstance(key, bytes):
+            raise TypeError(f"key must be bytes, got {type(key).__name__}")
+        if len(key) not in (16, 24, 32):
+            raise ValueError(
+                f"key must be 16, 24, or 32 bytes for AES-128/192/256, got {len(key)} bytes"
+            )
+
         from cryptography.hazmat.primitives.ciphers.aead import (
             AESGCM,
         )

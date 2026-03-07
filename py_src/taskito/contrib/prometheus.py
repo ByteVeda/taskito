@@ -147,13 +147,20 @@ class PrometheusStatsCollector:
         self._queue = queue
         self._interval = interval
         self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._poll, daemon=True, name="taskito-prom-stats")
         self._thread.start()
 
+    def stop(self) -> None:
+        """Signal the collector to stop and wait for the thread to finish."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
     def _poll(self) -> None:
-        while True:
+        while not self._stop_event.is_set():
             try:
                 stats = self._queue.stats()
                 _queue_depth.labels(queue="default").set(stats.get("pending", 0))
@@ -165,7 +172,7 @@ class PrometheusStatsCollector:
                     _worker_utilization.set(running / total_workers)
             except Exception:
                 logger.debug("Stats collection failed", exc_info=True)
-            time.sleep(self._interval)
+            self._stop_event.wait(self._interval)
 
 
 def start_metrics_server(port: int = 9090) -> None:

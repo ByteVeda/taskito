@@ -32,7 +32,7 @@ Changelog = "https://github.com/pratyush618/taskito/blob/master/docs/changelog.m
 Issues = "https://github.com/pratyush618/taskito/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "ruff>=0.8", "mypy>=1.13"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-cov>=4.0", "ruff>=0.8", "mypy>=1.13"]
 fastapi = ["fastapi>=0.100.0", "pydantic>=2.0"]
 django = ["django>=3.2"]
 postgres = []  # PG driver is bundled in the Rust binary; extra exists for discoverability

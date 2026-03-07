@@ -71,11 +71,46 @@ impl RedisStorage {
     }
 
     pub fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
+        // Collect dependency lists before consuming new_jobs
+        let dep_lists: Vec<Vec<String>> = new_jobs.iter().map(|nj| nj.depends_on.clone()).collect();
         let jobs: Vec<Job> = new_jobs.into_iter().map(|nj| nj.into_job()).collect();
         let mut conn = self.conn()?;
 
+        // Collect batch job IDs for intra-batch dependency resolution
+        let batch_ids: std::collections::HashSet<&str> =
+            jobs.iter().map(|j| j.id.as_str()).collect();
+
+        // Validate dependencies exist and aren't dead/cancelled
+        for depends_on in &dep_lists {
+            for dep_id in depends_on {
+                if batch_ids.contains(dep_id.as_str()) {
+                    continue; // intra-batch dependency
+                }
+                let dep_key = self.key(&["job", dep_id]);
+                let data: Option<String> = conn.get(&dep_key).map_err(map_err)?;
+                match data {
+                    None => {
+                        return Err(QueueError::DependencyNotFound(
+                            "dependency not found or already dead/cancelled".to_string(),
+                        ));
+                    }
+                    Some(d) => {
+                        let dep_job: Job = serde_json::from_str(&d)
+                            .map_err(|e| QueueError::Other(e.to_string()))?;
+                        if dep_job.status == JobStatus::Dead
+                            || dep_job.status == JobStatus::Cancelled
+                        {
+                            return Err(QueueError::DependencyNotFound(
+                                "dependency not found or already dead/cancelled".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         let pipe = &mut redis::pipe();
-        for job in &jobs {
+        for (i, job) in jobs.iter().enumerate() {
             let job_json =
                 serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
             let job_key = self.key(&["job", &job.id]);
@@ -92,6 +127,14 @@ impl RedisStorage {
             pipe.sadd(&by_queue_key, &job.id);
             pipe.sadd(&by_task_key, &job.id);
             pipe.zadd(&all_key, &job.id, -(job.created_at as f64));
+
+            // Store dependencies
+            for dep_id in &dep_lists[i] {
+                let depends_on_key = self.key(&["job", &job.id, "depends_on"]);
+                let dependents_key = self.key(&["job", dep_id, "dependents"]);
+                pipe.sadd(&depends_on_key, dep_id);
+                pipe.sadd(&dependents_key, &job.id);
+            }
         }
 
         pipe.query::<()>(&mut conn).map_err(map_err)?;
@@ -103,38 +146,179 @@ impl RedisStorage {
 
         if let Some(uk) = new_job.unique_key.clone() {
             let unique_key = self.key(&["jobs", "unique", &uk]);
-            // Try SET NX — if key already exists, return existing job
-            let set: bool = redis::cmd("SET")
-                .arg(&unique_key)
-                .arg("pending")
-                .arg("NX")
-                .query(&mut conn)
+
+            // Atomically: check unique key → validate referenced job → decide
+            let script = redis::Script::new(
+                r#"
+                local unique_key = KEYS[1]
+                local existing_id = redis.call('GET', unique_key)
+
+                if existing_id then
+                    -- Check if referenced job still exists and is active
+                    local job_key = ARGV[1] .. existing_id
+                    local job_data = redis.call('GET', job_key)
+                    if job_data then
+                        local job = cjson.decode(job_data)
+                        if job.status == 0 or job.status == 1 then
+                            -- Pending or Running — return existing job data
+                            return job_data
+                        end
+                    end
+                    -- Job not found or no longer active — delete stale unique key
+                    redis.call('DEL', unique_key)
+                end
+
+                return nil
+                "#,
+            );
+
+            let job_key_prefix = self.key(&["job", ""]);
+            let result: Option<String> = script
+                .key(&unique_key)
+                .arg(&job_key_prefix)
+                .invoke(&mut conn)
                 .map_err(map_err)?;
 
-            if !set {
-                // Key exists — find the existing job ID
-                let existing_id: Option<String> = conn.get(&unique_key).map_err(map_err)?;
-                if let Some(id) = existing_id {
-                    if id != "pending" {
-                        // The value is a job ID
-                        if let Some(job) = self.get_job(&id)? {
-                            if job.status == JobStatus::Pending || job.status == JobStatus::Running
-                            {
-                                return Ok(job);
-                            }
+            if let Some(job_data) = result {
+                let job: Job = serde_json::from_str(&job_data)
+                    .map_err(|e| QueueError::Other(e.to_string()))?;
+                return Ok(job);
+            }
+
+            // No active duplicate — enqueue normally
+            let depends_on = new_job.depends_on.clone();
+            let job = new_job.into_job();
+            let job_json =
+                serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
+
+            // Validate dependencies
+            for dep_id in &depends_on {
+                let dep_key = self.key(&["job", dep_id]);
+                let data: Option<String> = conn.get(&dep_key).map_err(map_err)?;
+                match data {
+                    None => {
+                        return Err(QueueError::DependencyNotFound(
+                            "dependency not found or already dead/cancelled".to_string(),
+                        ));
+                    }
+                    Some(d) => {
+                        let dep_job: Job = serde_json::from_str(&d)
+                            .map_err(|e| QueueError::Other(e.to_string()))?;
+                        if dep_job.status == JobStatus::Dead
+                            || dep_job.status == JobStatus::Cancelled
+                        {
+                            return Err(QueueError::DependencyNotFound(
+                                "dependency not found or already dead/cancelled".to_string(),
+                            ));
                         }
                     }
                 }
-                // If we can't find it or it's no longer active, allow re-enqueue
-                conn.del::<_, ()>(&unique_key).map_err(map_err)?;
             }
 
-            // Enqueue normally
-            let job = self.enqueue(new_job)?;
-            // Update the unique key to store the job ID
-            let unique_key = self.key(&["jobs", "unique", &uk]);
-            conn.set::<_, _, ()>(&unique_key, &job.id)
-                .map_err(map_err)?;
+            // Store everything atomically via Lua
+            let store_script = redis::Script::new(
+                r#"
+                local unique_key = KEYS[1]
+                local job_key = KEYS[2]
+                local status_key = KEYS[3]
+                local queue_key = KEYS[4]
+                local by_queue_key = KEYS[5]
+                local by_task_key = KEYS[6]
+                local all_key = KEYS[7]
+
+                local job_id = ARGV[1]
+                local job_json = ARGV[2]
+                local score = tonumber(ARGV[3])
+                local created_at = tonumber(ARGV[4])
+                local num_deps = tonumber(ARGV[5])
+
+                -- Re-check unique key (race guard)
+                local existing = redis.call('GET', unique_key)
+                if existing then
+                    local prefix = ARGV[6]
+                    local ej_data = redis.call('GET', prefix .. existing)
+                    if ej_data then
+                        local ej = cjson.decode(ej_data)
+                        if ej.status == 0 or ej.status == 1 then
+                            return ej_data
+                        end
+                    end
+                    redis.call('DEL', unique_key)
+                end
+
+                -- Store job
+                redis.call('SET', job_key, job_json)
+                redis.call('SADD', status_key, job_id)
+                redis.call('ZADD', queue_key, score, job_id)
+                redis.call('SADD', by_queue_key, job_id)
+                redis.call('SADD', by_task_key, job_id)
+                redis.call('ZADD', all_key, -created_at, job_id)
+                redis.call('SET', unique_key, job_id)
+
+                -- Store dependencies
+                local base = 7
+                for i = 1, num_deps do
+                    local dep_on_key = ARGV[base + (i-1)*3]
+                    local dep_id = ARGV[base + (i-1)*3 + 1]
+                    local dependents_key = ARGV[base + (i-1)*3 + 2]
+                    redis.call('SADD', dep_on_key, dep_id)
+                    redis.call('SADD', dependents_key, job_id)
+                end
+
+                return nil
+                "#,
+            );
+
+            let job_key = self.key(&["job", &job.id]);
+            let status_key = self.key(&["jobs", "status", &(job.status as i32).to_string()]);
+            let queue_key = self.key(&["queue", &job.queue, "pending"]);
+            let by_queue_key = self.key(&["jobs", "by_queue", &job.queue]);
+            let by_task_key = self.key(&["jobs", "by_task", &job.task_name]);
+            let all_key = self.key(&["jobs", "all"]);
+            let score = dequeue_score(job.priority, job.scheduled_at);
+            let job_key_prefix = self.key(&["job", ""]);
+
+            // Build keys and args vectors to avoid temporary lifetime issues
+            let keys = vec![
+                unique_key.clone(),
+                job_key,
+                status_key,
+                queue_key,
+                by_queue_key,
+                by_task_key,
+                all_key,
+            ];
+            let mut args: Vec<String> = vec![
+                job.id.clone(),
+                job_json.clone(),
+                score.to_string(),
+                job.created_at.to_string(),
+                depends_on.len().to_string(),
+                job_key_prefix,
+            ];
+
+            for dep_id in &depends_on {
+                args.push(self.key(&["job", &job.id, "depends_on"]));
+                args.push(dep_id.clone());
+                args.push(self.key(&["job", dep_id, "dependents"]));
+            }
+
+            let mut invocation = store_script.prepare_invoke();
+            for k in &keys {
+                invocation.key(k);
+            }
+            for a in &args {
+                invocation.arg(a);
+            }
+            let result: Option<String> = invocation.invoke(&mut conn).map_err(map_err)?;
+
+            if let Some(existing_data) = result {
+                // Lost the race — another caller created a job first
+                let existing_job: Job = serde_json::from_str(&existing_data)
+                    .map_err(|e| QueueError::Other(e.to_string()))?;
+                return Ok(existing_job);
+            }
+
             Ok(job)
         } else {
             self.enqueue(new_job)

@@ -167,6 +167,8 @@ def chunks(task: TaskWrapper, items: list[Any], chunk_size: int) -> group:
 
         result = chunks(process_batch, items, 100).apply(queue)
     """
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
     n_chunks = math.ceil(len(items) / chunk_size)
     sigs = []
     for i in range(n_chunks):
@@ -189,5 +191,7 @@ def starmap(task: TaskWrapper, args_list: list[tuple[Any, ...]]) -> group:
 
         result = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply(queue)
     """
+    if not args_list:
+        raise ValueError("args_list must not be empty")
     sigs = [task.s(*args) for args in args_list]
     return group(*sigs)

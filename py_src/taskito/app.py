@@ -694,6 +694,8 @@ class Queue(
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(loop.stop)
             self._async_thread.join(timeout=5)
+            if self._async_thread.is_alive():
+                logger.warning("Async event loop thread did not stop within 5s timeout")
 
     def run_worker(
         self,

@@ -202,7 +202,10 @@ impl Scheduler {
 
         // Filter out paused queues (refresh cache every 1s)
         let active_queues = {
-            let mut cache = self.paused_cache.lock().unwrap();
+            let mut cache = self.paused_cache.lock().unwrap_or_else(|poisoned| {
+                warn!("paused_cache mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
             if cache.1.elapsed() > Duration::from_secs(1) {
                 cache.0 = self
                     .storage

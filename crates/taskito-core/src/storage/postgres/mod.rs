@@ -16,6 +16,14 @@ use diesel::r2d2::{self, ConnectionManager, Pool};
 
 use crate::error::Result;
 
+/// Run an ALTER TABLE migration, logging a warning on any failure.
+/// Postgres migrations use IF NOT EXISTS, so any error is genuinely unexpected.
+fn migration_alter(conn: &mut PgConnection, sql: &str) {
+    if let Err(e) = diesel::sql_query(sql).execute(conn) {
+        log::warn!("migration failed for '{sql}': {e}");
+    }
+}
+
 type PgPool = Pool<ConnectionManager<PgConnection>>;
 
 /// Validate a PostgreSQL schema name (alphanumeric + underscores, non-empty).
@@ -178,7 +186,7 @@ impl PostgresStorage {
             "ALTER TABLE dead_letter ADD COLUMN IF NOT EXISTS timeout_ms BIGINT NOT NULL DEFAULT 300000",
             "ALTER TABLE dead_letter ADD COLUMN IF NOT EXISTS result_ttl_ms BIGINT",
         ] {
-            let _ = diesel::sql_query(*col).execute(&mut conn);
+            migration_alter(&mut conn, col);
         }
 
         diesel::sql_query(
@@ -328,8 +336,10 @@ impl PostgresStorage {
         .execute(&mut conn)?;
 
         // Migration: add tags column to workers
-        let _ = diesel::sql_query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS tags TEXT")
-            .execute(&mut conn);
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS tags TEXT",
+        );
 
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS queue_state (
@@ -373,13 +383,16 @@ impl PostgresStorage {
         .execute(&mut conn)?;
 
         // Periodic tasks timezone migration
-        let _ =
-            diesel::sql_query("ALTER TABLE periodic_tasks ADD COLUMN IF NOT EXISTS timezone TEXT")
-                .execute(&mut conn);
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE periodic_tasks ADD COLUMN IF NOT EXISTS timezone TEXT",
+        );
 
         // Migration: add namespace column to jobs
-        let _ = diesel::sql_query("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS namespace TEXT")
-            .execute(&mut conn);
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS namespace TEXT",
+        );
 
         Ok(())
     }
