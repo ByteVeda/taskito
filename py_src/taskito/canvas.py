@@ -117,8 +117,8 @@ class group:
                 )
                 wave_jobs.append(job)
             # Wait for this wave to complete before starting next
-            for job in wave_jobs:
-                job.result(timeout=300)
+            for wj, sig in zip(wave_jobs, wave):
+                wj.result(timeout=sig.options.get("timeout", 300))
             all_jobs.extend(wave_jobs)
 
         return all_jobs
@@ -137,7 +137,10 @@ class chord:
 
         # Run group and wait for all results
         jobs = self.group.apply(queue=q)
-        results = [job.result(timeout=300) for job in jobs]
+        max_timeout = max(
+            (sig.options.get("timeout", 300) for sig in self.group.signatures), default=300
+        )
+        results = [job.result(timeout=max_timeout) for job in jobs]
 
         # Run callback with collected results
         args = self.callback.args

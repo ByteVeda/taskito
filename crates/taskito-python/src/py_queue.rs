@@ -136,6 +136,11 @@ impl PyQueue {
         let now = now_millis();
         let scheduled_at = match delay_seconds {
             Some(d) => {
+                if !d.is_finite() || d < 0.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "delay_seconds must be a finite non-negative number",
+                    ));
+                }
                 let delay_ms = (d * 1000.0) as i64;
                 now.checked_add(delay_ms).ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err(
@@ -148,6 +153,11 @@ impl PyQueue {
 
         let expires_at = match expires {
             Some(e) => {
+                if !e.is_finite() || e < 0.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "expires must be a finite non-negative number",
+                    ));
+                }
                 let expires_ms = (e * 1000.0) as i64;
                 Some(now.checked_add(expires_ms).ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err("expires too large, would overflow")
@@ -336,6 +346,11 @@ impl PyQueue {
 
     /// Update progress for a running job (0-100).
     pub fn update_progress(&self, job_id: &str, progress: i32) -> PyResult<()> {
+        if !(0..=100).contains(&progress) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "progress must be between 0 and 100",
+            ));
+        }
         self.storage
             .update_progress(job_id, progress)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
@@ -564,13 +579,26 @@ impl PyQueue {
         }
 
         for tc in &task_configs {
-            let custom_delays_ms = tc
-                .retry_delays
-                .as_ref()
-                .map(|delays| delays.iter().map(|d| (d * 1000.0) as i64).collect());
+            let custom_delays_ms = tc.retry_delays.as_ref().map(|delays| {
+                delays
+                    .iter()
+                    .map(|d| {
+                        if !d.is_finite() || *d < 0.0 {
+                            0i64
+                        } else {
+                            (d * 1000.0) as i64
+                        }
+                    })
+                    .collect()
+            });
+            let base_delay_ms = if !tc.retry_backoff.is_finite() || tc.retry_backoff < 0.0 {
+                0i64
+            } else {
+                (tc.retry_backoff * 1000.0) as i64
+            };
             let retry_policy = RetryPolicy {
                 max_retries: tc.max_retries,
-                base_delay_ms: (tc.retry_backoff * 1000.0) as i64,
+                base_delay_ms,
                 max_delay_ms: 300_000,
                 custom_delays_ms,
             };

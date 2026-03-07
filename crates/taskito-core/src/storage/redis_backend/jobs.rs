@@ -9,7 +9,7 @@ use crate::storage::QueueStats;
 /// Compute dequeue score: higher priority → lower score → dequeued first.
 /// Within same priority, earlier scheduled_at wins.
 fn dequeue_score(priority: i32, scheduled_at: i64) -> f64 {
-    (1000 - priority) as f64 * 10_000_000_000_000.0 + scheduled_at as f64
+    (1000i64 - priority as i64) as f64 * 10_000_000_000_000.0 + scheduled_at as f64
 }
 
 impl RedisStorage {

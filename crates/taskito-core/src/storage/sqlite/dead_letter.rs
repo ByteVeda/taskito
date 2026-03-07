@@ -51,8 +51,14 @@ impl SqliteStorage {
         // Drop connection before cascade (needed for single-connection pools)
         drop(conn);
 
-        // Cascade cancel dependents
-        self.cascade_cancel(&job_id, "dependency failed")?;
+        // Cascade cancel dependents — log warning on failure since the DLQ
+        // transaction already committed and we can't roll it back.
+        if let Err(e) = self.cascade_cancel(&job_id, "dependency failed") {
+            eprintln!(
+                "[taskito] WARNING: cascade_cancel failed for job {}: {}. Dependent jobs may be left pending.",
+                job_id, e
+            );
+        }
 
         Ok(())
     }

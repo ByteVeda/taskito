@@ -35,7 +35,10 @@ def _jobs_view(request: HttpRequest, site: Any) -> HttpResponse:
     status = request.GET.get("status")
     queue_name = request.GET.get("queue")
     task_name = request.GET.get("task_name")
-    page = int(request.GET.get("page", "1"))
+    try:
+        page = int(request.GET.get("page", "1"))
+    except (ValueError, TypeError):
+        page = 1
     per_page = 50
 
     try:
@@ -46,7 +49,7 @@ def _jobs_view(request: HttpRequest, site: Any) -> HttpResponse:
             limit=per_page,
             offset=(page - 1) * per_page,
         )
-    except (ValueError, Exception):
+    except Exception:
         jobs = []
     context = {
         **site.each_context(request),
@@ -84,7 +87,10 @@ def _dead_letters_view(request: HttpRequest, site: Any) -> HttpResponse:
         if action == "retry" and dead_id:
             queue.retry_dead(dead_id)
 
-    page = int(request.GET.get("page", "1"))
+    try:
+        page = int(request.GET.get("page", "1"))
+    except (ValueError, TypeError):
+        page = 1
     per_page = 50
     dead = queue.dead_letters(limit=per_page, offset=(page - 1) * per_page)
     context = {

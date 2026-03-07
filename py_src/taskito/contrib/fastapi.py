@@ -186,11 +186,13 @@ class TaskitoRouter(APIRouter):
                         result=_safe_serialize(result),
                     )
                 except TimeoutError:
+                    job.refresh()
                     return JobResultResponse(
                         id=job_id,
                         status=job.status,
                     )
                 except RuntimeError as e:
+                    job.refresh()
                     return JobResultResponse(
                         id=job_id,
                         status=job.status,

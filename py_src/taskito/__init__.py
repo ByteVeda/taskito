@@ -61,8 +61,9 @@ __all__ = [
     "starmap",
 ]
 try:
+    from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as _get_version
 
     __version__ = _get_version("taskito")
-except Exception:
+except PackageNotFoundError:
     __version__ = "0.2.3"
