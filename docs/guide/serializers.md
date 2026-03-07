@@ -64,6 +64,9 @@ The protocol requires:
 
 The serializer is used for both task arguments (`(args, kwargs)` tuple) and return values.
 
+!!! note "Result deserialization"
+    `job.result()` uses the queue's configured serializer for deserialization. If you're using `JsonSerializer` or a custom serializer, results are correctly deserialized with that serializer — not hardcoded cloudpickle.
+
 ## Configuration
 
 Pass the serializer to the `Queue` constructor:

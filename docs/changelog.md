@@ -2,6 +2,50 @@
 
 All notable changes to taskito are documented here.
 
+## 0.2.4
+
+### Critical Fixes
+
+- **Dashboard dead routes** — Moved `/logs` and `/replay-history` handlers above the generic catch-all in `dashboard.py`, fixing 404s on these endpoints
+- **Stale `__version__`** — Replaced hardcoded version with `importlib.metadata.version()` with fallback
+- **`retry_dead` non-atomic** — Wrapped enqueue + delete in a single transaction (SQLite & Postgres), preventing ghost dead letters on partial failure
+- **`retry_dead` hardcoded defaults** — Added `priority`, `max_retries`, `timeout_ms`, `result_ttl_ms` columns to `dead_letter` table; replayed jobs now preserve their original configuration
+- **`enqueue_unique` race condition** — Wrapped check + insert in a transaction; catches unique constraint violations to return the existing job instead of erroring
+- **`now_millis()` panic** — Replaced `.expect()` with `.unwrap_or(Duration::ZERO)` to prevent scheduler panic on clock issues
+- **`reap_stale` double error records** — Removed redundant `storage.fail()` call; `handle_result` already records the failure
+- **README cron format** — Updated example to correct 6-field format: `"0 0 */6 * * *"`
+
+### Important Fixes
+
+- **`result.py` hardcoded cloudpickle** — `job.result()` now uses the queue's configured serializer for deserialization
+- **Context leak on deserialization failure** — Wrapped deserialization + call in closure; `_clear_context` always runs via `finally`
+- **OTel spans not thread-safe** — Added `threading.Lock` around all `_spans` dict access in `OpenTelemetryMiddleware`
+- **`build_periodic_payload` misleading `_kwargs` param** — Removed unused parameter, added explanatory comment
+- **Tokio runtime panic** — Replaced `.expect()` with graceful error handling on runtime creation
+- **`dequeue` LIMIT 10** — Increased to 100 for better throughput under load (both SQLite & Postgres)
+- **`check_periodic` not atomic** — Uses `enqueue_unique` with deterministic key to prevent duplicate periodic jobs
+- **SQLite `purge_completed_with_ttl` no transaction** — Wrapped in transaction for consistency
+- **Django admin status validation** — Added try/except around `queue.list_jobs()` to handle connection errors gracefully
+- **Silent job loss on `get_job` None** — Added `warn!` logging when a dequeued job ID returns None
+
+### Minor Fixes
+
+- **`cascade_cancel` O(n²)** — Replaced `Vec::contains` with `HashSet` for dependency lookups (both backends)
+- **`chain.apply()` hardcoded 300s timeout** — Now derives timeout from `sig.options.get("timeout", 300)`
+- **`_FakeJobResult` missing `refresh()`** — Added no-op method for test mode compatibility
+- **Storage trait doc outdated** — Updated to mention both SQLite and Postgres backends
+- **`wall_time_ns` truncation** — Uses `.try_into().unwrap_or(i64::MAX)` to prevent silent overflow
+
+---
+
+## 0.2.3
+
+### Improvements
+
+- **Cascade cleanup on job purge** — `purge_completed()` and `purge_completed_with_ttl()` now automatically delete orphaned child records (`job_errors`, `task_logs`, `task_metrics`, `job_dependencies`, `replay_history`) when removing completed jobs. Previously, child records could outlive their parent job if they were newer than the timestamp-based cleanup cutoff.
+
+---
+
 ## 0.2.2
 
 - Added `readme` field to `pyproject.toml` so PyPI displays the project description.

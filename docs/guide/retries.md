@@ -107,6 +107,9 @@ for d in dead:
 new_job_id = queue.retry_dead(dead[0]["id"])
 ```
 
+!!! note "Config preservation"
+    Replayed jobs preserve the original job's `priority`, `max_retries`, `timeout`, and `result_ttl` settings. You don't need to re-specify them — the DLQ stores the full configuration.
+
 ### Purge Old Dead Letters
 
 ```python

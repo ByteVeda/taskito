@@ -71,6 +71,9 @@ for d in dead:
     queue.retry_dead(d["id"])
 ```
 
+!!! note "Config preservation"
+    Replayed jobs preserve the original job's `priority`, `max_retries`, `timeout`, and `result_ttl` settings — no need to re-specify them.
+
 **Error message mentions serialization** — See [Serialization Errors](#serialization-errors) below.
 
 ## Common Error Scenarios
