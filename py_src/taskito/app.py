@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import threading
+import urllib.parse
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable
@@ -652,11 +653,13 @@ class Queue(
         else:
             # Mask password in connection URL for display
             url = self._db_url or ""
-            if "@" in url:
-                pre, post = url.split("@", 1)
-                if ":" in pre:
-                    scheme_user = pre.rsplit(":", 1)[0]
-                    url = f"{scheme_user}:****@{post}"
+            parsed_url = urllib.parse.urlparse(url)
+            if parsed_url.password:
+                masked = parsed_url._replace(
+                    netloc=f"{parsed_url.username}:****@{parsed_url.hostname}"
+                    + (f":{parsed_url.port}" if parsed_url.port else "")
+                )
+                url = urllib.parse.urlunparse(masked)
             lines.append(f"> DB:          {url}")
             lines.append(f"> Schema:      {self._schema}")
         lines.append(f"> Concurrency: {self._workers} (threads)")

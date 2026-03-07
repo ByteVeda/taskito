@@ -46,6 +46,9 @@ _worker_utilization: Any = None
 _metrics_initialized = False
 
 
+_init_lock = threading.Lock()
+
+
 def _init_metrics() -> None:
     global _jobs_total, _job_duration, _active_workers, _retries_total
     global _queue_depth, _dlq_size, _worker_utilization, _metrics_initialized
@@ -53,39 +56,43 @@ def _init_metrics() -> None:
     if _metrics_initialized:
         return
 
-    _jobs_total = Counter(
-        "taskito_jobs_total",
-        "Total number of jobs processed",
-        ["task", "status"],
-    )
-    _job_duration = Histogram(
-        "taskito_job_duration_seconds",
-        "Job execution duration in seconds",
-        ["task"],
-    )
-    _active_workers = Gauge(
-        "taskito_active_workers",
-        "Number of currently active workers",
-    )
-    _retries_total = Counter(
-        "taskito_retries_total",
-        "Total number of job retries",
-        ["task"],
-    )
-    _queue_depth = Gauge(
-        "taskito_queue_depth",
-        "Number of pending jobs per queue",
-        ["queue"],
-    )
-    _dlq_size = Gauge(
-        "taskito_dlq_size",
-        "Number of dead-letter jobs",
-    )
-    _worker_utilization = Gauge(
-        "taskito_worker_utilization",
-        "Worker utilization ratio (0.0-1.0)",
-    )
-    _metrics_initialized = True
+    with _init_lock:
+        if _metrics_initialized:
+            return
+
+        _jobs_total = Counter(
+            "taskito_jobs_total",
+            "Total number of jobs processed",
+            ["task", "status"],
+        )
+        _job_duration = Histogram(
+            "taskito_job_duration_seconds",
+            "Job execution duration in seconds",
+            ["task"],
+        )
+        _active_workers = Gauge(
+            "taskito_active_workers",
+            "Number of currently active workers",
+        )
+        _retries_total = Counter(
+            "taskito_retries_total",
+            "Total number of job retries",
+            ["task"],
+        )
+        _queue_depth = Gauge(
+            "taskito_queue_depth",
+            "Number of pending jobs per queue",
+            ["queue"],
+        )
+        _dlq_size = Gauge(
+            "taskito_dlq_size",
+            "Number of dead-letter jobs",
+        )
+        _worker_utilization = Gauge(
+            "taskito_worker_utilization",
+            "Worker utilization ratio (0.0-1.0)",
+        )
+        _metrics_initialized = True
 
 
 class PrometheusMiddleware(TaskMiddleware):

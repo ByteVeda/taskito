@@ -135,12 +135,39 @@ impl PyQueue {
     ) -> PyResult<PyJob> {
         let now = now_millis();
         let scheduled_at = match delay_seconds {
-            Some(d) => now + (d * 1000.0) as i64,
+            Some(d) => {
+                let delay_ms = (d * 1000.0) as i64;
+                now.checked_add(delay_ms).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "delay_seconds too large, would overflow",
+                    )
+                })?
+            }
             None => now,
         };
 
-        let expires_at = expires.map(|e| now + (e * 1000.0) as i64);
-        let result_ttl_ms = result_ttl.map(|s| s * 1000);
+        let expires_at = match expires {
+            Some(e) => {
+                let expires_ms = (e * 1000.0) as i64;
+                Some(now.checked_add(expires_ms).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("expires too large, would overflow")
+                })?)
+            }
+            None => None,
+        };
+        let result_ttl_ms = match result_ttl {
+            Some(s) => Some(s.checked_mul(1000).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("result_ttl too large, would overflow")
+            })?),
+            None => None,
+        };
+
+        let timeout_ms = timeout
+            .unwrap_or(self.default_timeout)
+            .checked_mul(1000)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("timeout too large, would overflow")
+            })?;
 
         let new_job = NewJob {
             queue: queue.to_string(),
@@ -149,7 +176,7 @@ impl PyQueue {
             priority: priority.unwrap_or(self.default_priority),
             scheduled_at,
             max_retries: max_retries.unwrap_or(self.default_retry),
-            timeout_ms: timeout.unwrap_or(self.default_timeout) * 1000,
+            timeout_ms,
             unique_key: unique_key.clone(),
             metadata,
             depends_on: depends_on.unwrap_or_default(),
@@ -203,9 +230,14 @@ impl PyQueue {
                 max_retries: max_retries_list.as_ref().map_or(self.default_retry, |r| {
                     r.get(i).copied().unwrap_or(self.default_retry)
                 }),
-                timeout_ms: timeouts.as_ref().map_or(self.default_timeout * 1000, |t| {
-                    t.get(i).copied().unwrap_or(self.default_timeout) * 1000
-                }),
+                timeout_ms: {
+                    let t = timeouts.as_ref().map_or(self.default_timeout, |t| {
+                        t.get(i).copied().unwrap_or(self.default_timeout)
+                    });
+                    t.checked_mul(1000).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("timeout too large, would overflow")
+                    })?
+                },
                 unique_key: None,
                 metadata: None,
                 depends_on: vec![],

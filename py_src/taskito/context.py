@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger("taskito.context")
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -74,7 +77,14 @@ class JobContext:
         ctx = self._require_context()
         if _queue_ref is None:
             raise RuntimeError("Queue reference not set. Cannot write log.")
-        extra_str = json.dumps(extra) if extra else None
+        if extra:
+            try:
+                extra_str = json.dumps(extra)
+            except (TypeError, ValueError):
+                logger.warning("Non-serializable extra dict in task log, falling back to str()")
+                extra_str = str(extra)
+        else:
+            extra_str = None
         _queue_ref._inner.write_task_log(ctx.job_id, ctx.task_name, level, message, extra_str)
 
     def check_cancelled(self) -> None:

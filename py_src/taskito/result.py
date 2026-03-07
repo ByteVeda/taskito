@@ -121,6 +121,8 @@ class JobResult:
             TimeoutError: If the job doesn't complete within the timeout.
             RuntimeError: If the job failed or was moved to DLQ.
         """
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
         deadline = time.monotonic() + timeout
         current_interval = poll_interval
 
@@ -164,6 +166,8 @@ class JobResult:
 
             result = await job.aresult(timeout=30)
         """
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
         deadline = time.monotonic() + timeout
         current_interval = poll_interval
 

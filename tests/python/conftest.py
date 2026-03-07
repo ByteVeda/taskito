@@ -20,3 +20,5 @@ def run_worker(queue):
     thread = threading.Thread(target=queue.run_worker, daemon=True)
     thread.start()
     yield thread
+    queue._inner.request_shutdown()
+    thread.join(timeout=5)

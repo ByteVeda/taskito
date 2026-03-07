@@ -101,8 +101,17 @@ class WebhookManager:
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     if resp.status < 400:
                         return
+                    if resp.status < 500:
+                        logger.warning(
+                            "Webhook %s returned client error %d, not retrying",
+                            wh["url"],
+                            resp.status,
+                        )
+                        return
+                    logger.warning("Webhook %s returned server error %d", wh["url"], resp.status)
             except Exception:
-                if attempt == 2:
-                    logger.warning("Webhook delivery failed after 3 attempts: %s", wh["url"])
-                else:
-                    time.sleep(2**attempt)
+                logger.debug("Webhook %s attempt %d failed", wh["url"], attempt + 1, exc_info=True)
+            if attempt == 2:
+                logger.warning("Webhook delivery failed after 3 attempts: %s", wh["url"])
+            else:
+                time.sleep(2**attempt)

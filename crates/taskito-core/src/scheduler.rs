@@ -393,8 +393,14 @@ impl Scheduler {
         let completed = self.storage.purge_completed_with_ttl(cutoff)?;
         let dead = self.storage.purge_dead(cutoff)?;
         let errors = self.storage.purge_job_errors(cutoff)?;
-        let metrics = self.storage.purge_metrics(cutoff).unwrap_or(0);
-        let logs = self.storage.purge_task_logs(cutoff).unwrap_or(0);
+        let metrics = self.storage.purge_metrics(cutoff).unwrap_or_else(|e| {
+            warn!("purge_metrics failed: {e}");
+            0
+        });
+        let logs = self.storage.purge_task_logs(cutoff).unwrap_or_else(|e| {
+            warn!("purge_task_logs failed: {e}");
+            0
+        });
 
         if completed + dead + errors + metrics + logs > 0 {
             info!(
