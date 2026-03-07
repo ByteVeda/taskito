@@ -4,6 +4,10 @@ All notable changes to taskito are documented here.
 
 ## 0.2.3
 
+### Build & Tooling
+
+- **Pre-commit hooks** — Added `.pre-commit-config.yaml` with local hooks for `cargo fmt`, `cargo clippy`, `ruff check`, `ruff format`, and `mypy`
+
 ### Critical Fixes
 
 - **Dashboard dead routes** — Moved `/logs` and `/replay-history` handlers above the generic catch-all in `dashboard.py`, fixing 404s on these endpoints
