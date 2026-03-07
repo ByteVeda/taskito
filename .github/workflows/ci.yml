@@ -101,8 +101,8 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           args: --release --out dist --features postgres
-          manylinux: auto
-          before-script-linux: yum install -y openssl-devel perl-IPC-Cmd
+          manylinux: 2_28
+          before-script-linux: dnf install -y openssl-devel perl-IPC-Cmd
 
       - name: Build wheels
         if: runner.os != 'Linux'
