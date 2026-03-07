@@ -2,7 +2,7 @@ name: Publish to PyPI
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["[0-9]*"]
 
 permissions:
   contents: read
@@ -22,6 +22,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --features postgres,redis
           manylinux: 2_28
+          before-script-linux: dnf install -y openssl-devel perl-IPC-Cmd
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -43,6 +44,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --features postgres,redis
           manylinux: musllinux_1_2
+          before-script-linux: apk add --no-cache openssl-dev perl make
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -55,7 +57,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -96,7 +98,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-macos-${{ matrix.os }}
+          name: wheels-macos-${{ matrix.target }}
           path: dist/*.whl
 
   build-wheels-windows:
