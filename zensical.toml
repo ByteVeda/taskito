@@ -28,6 +28,7 @@ nav = [
         { "Testing" = "guide/testing.md" },
         { "Error Handling" = "guide/error-handling.md" },
         { "Deployment" = "guide/deployment.md" },
+        { "Postgres Backend" = "guide/postgres.md" },
         { "Migrating from Celery" = "guide/migration.md" },
         { "Advanced" = "guide/advanced.md" },
     ] },

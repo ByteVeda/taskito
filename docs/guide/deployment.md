@@ -143,6 +143,53 @@ sqlite3 /var/lib/myapp/taskito.db "VACUUM INTO '/backups/taskito-$(date +%Y%m%d)
 
 Both methods are safe while the worker is running.
 
+## Postgres Deployment
+
+If you're using the [Postgres backend](postgres.md), deployment is simpler in several ways:
+
+- **No shared-file constraints** — workers connect over the network, no need for shared volumes or local storage
+- **Multi-machine workers** — run workers on separate hosts against the same database
+- **Standard backups** — use `pg_dump` instead of `sqlite3 .backup`
+
+### Docker Compose with Postgres
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: taskito
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  worker:
+    build: .
+    environment:
+      TASKITO_BACKEND: postgres
+      TASKITO_DB_URL: postgresql://taskito:secret@postgres:5432/myapp
+    depends_on:
+      - postgres
+    stop_signal: SIGINT
+    stop_grace_period: 35s
+
+volumes:
+  pgdata:
+```
+
+### Postgres Backups
+
+```bash
+# Dump the taskito schema
+pg_dump -h localhost -U taskito -d myapp -n taskito > backup.sql
+
+# Restore
+psql -h localhost -U taskito -d myapp < backup.sql
+```
+
+See the [Postgres Backend guide](postgres.md) for full configuration details.
+
 ## Database Maintenance
 
 ### Auto-Cleanup
@@ -237,7 +284,7 @@ app.include_router(TaskitoRouter(queue), prefix="/tasks")
 
 ## Multiple Workers
 
-taskito is designed as a **single-process** task queue. Running multiple worker processes against the same SQLite file is possible (WAL mode allows concurrent access), but:
+taskito is designed as a **single-process** task queue when using SQLite. Running multiple worker processes against the same SQLite file is possible (WAL mode allows concurrent access), but:
 
 - Only one process can write at a time — this limits throughput
 - SQLite lock contention increases with more writers
@@ -252,7 +299,7 @@ queue = Queue(
 )
 ```
 
-If you need distributed workers across multiple machines, consider [Celery or Dramatiq](../comparison.md) instead.
+If you need distributed workers across multiple machines, use the [Postgres backend](postgres.md) which removes the single-writer constraint and supports multi-machine deployments. Alternatively, consider [Celery or Dramatiq](../comparison.md).
 
 ## SQLite Scaling Limits
 
@@ -266,12 +313,14 @@ taskito uses SQLite as its storage backend. Understanding its limitations helps 
 - Throughput decreases with larger payloads, complex queries, or spinning disks
 - The connection pool size (default: 8) controls read concurrency — tune it based on your read/write ratio
 
-**When to consider alternatives:**
+**When to upgrade to Postgres:**
 
 - You need multi-machine distributed workers
 - You consistently exceed ~5,000 jobs/second sustained throughput
 - Multiple processes contend heavily for writes (high lock wait times)
 - You need sub-millisecond dequeue latency under high load
+
+taskito's [Postgres backend](postgres.md) addresses all of these limitations while keeping the same API. See the [Postgres Backend guide](postgres.md) for setup instructions.
 
 **Connection pool tuning.** The default pool size of 8 connections works well for most workloads. If you're running many concurrent readers (e.g., a dashboard alongside workers), you can increase it:
 
@@ -290,5 +339,5 @@ Increasing the pool beyond ~16 typically doesn't help, since SQLite write serial
 - [ ] Set `timeout` on tasks to recover from worker crashes
 - [ ] Configure `SIGINT` as the stop signal in your process manager
 - [ ] Set up failure hooks or monitoring for alerting
-- [ ] Back up the database using `sqlite3 .backup` (not file copy)
+- [ ] Back up the database using `sqlite3 .backup` (not file copy), or `pg_dump` for Postgres
 - [ ] Place the dashboard behind a reverse proxy with authentication

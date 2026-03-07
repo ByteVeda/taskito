@@ -21,12 +21,14 @@ graph TB
         I["Rate Limiter<br/>Token bucket"]
     end
 
-    subgraph Storage ["Embedded Storage"]
+    subgraph Storage ["Storage Backend"]
         J[("SQLite · WAL mode<br/>Diesel ORM · r2d2 pool")]
+        K[("PostgreSQL<br/>Diesel ORM · r2d2 pool")]
     end
 
     A -->|"enqueue()"| F
     F -->|INSERT| J
+    F -->|INSERT| K
     G -->|"dequeue (poll every 50ms)"| J
     G -->|"dispatch via crossbeam"| H
     H -->|"acquire GIL → run task"| B
@@ -55,7 +57,7 @@ stateDiagram-v2
     Dead --> [*]: purge_dead()
 ```
 
-**Status codes in SQLite:**
+**Status codes:**
 
 | Status | Integer | Description |
 |---|---|---|
@@ -151,7 +153,18 @@ workers (worker_id, last_heartbeat, queues, status)
 
 ### Connection Pooling
 
-Diesel's `r2d2` connection pool with up to 8 connections. In-memory databases use a single connection (SQLite `:memory:` is per-connection).
+Diesel's `r2d2` connection pool with up to 8 connections (SQLite) or 10 connections (Postgres). In-memory databases use a single connection (SQLite `:memory:` is per-connection).
+
+### Postgres Configuration
+
+taskito also supports PostgreSQL as an alternative storage backend. See the [Postgres Backend guide](guide/postgres.md) for full details.
+
+Key differences from the SQLite storage layer:
+
+- **Connection pooling**: `r2d2` pool with a default of 10 connections (vs. 8 for SQLite)
+- **Schema isolation**: All tables are created inside a configurable PostgreSQL schema (default: `taskito`), with `search_path` set on each connection
+- **Additional tables**: The Postgres backend creates 11 tables (vs. 6 for SQLite), adding `job_dependencies`, `task_metrics`, `replay_history`, `task_logs`, and `circuit_breakers`
+- **Concurrent writes**: No single-writer constraint — multiple workers can write simultaneously
 
 ## Scheduler Loop
 
