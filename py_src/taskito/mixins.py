@@ -17,7 +17,7 @@ class _AsyncMixin:
     _executor: Executor
 
     async def _run_sync(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         if kwargs:
             return await loop.run_in_executor(self._executor, lambda: fn(*args, **kwargs))
         return await loop.run_in_executor(self._executor, lambda: fn(*args))

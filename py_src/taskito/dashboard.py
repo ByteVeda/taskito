@@ -57,7 +57,8 @@ def _extract_path_segment(path: str, prefix: str, suffix: str = "") -> str:
 def _parse_int_qs(qs: dict, key: str, default: int) -> int | None:
     """Parse an integer from query string, returning None on invalid input."""
     try:
-        return int(qs.get(key, [str(default)])[0])
+        val = int(qs.get(key, [str(default)])[0])
+        return val if val >= 0 else None
     except (ValueError, IndexError):
         return None
 

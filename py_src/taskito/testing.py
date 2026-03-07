@@ -179,12 +179,22 @@ class _FakeJobResult:
     def progress(self) -> int | None:
         return 100 if self._tr.succeeded else None
 
-    def result(self, timeout: float = 30.0, **kwargs: Any) -> Any:
+    def result(
+        self,
+        timeout: float = 30.0,
+        poll_interval: float = 0.05,
+        max_poll_interval: float = 0.5,
+    ) -> Any:
         if self._tr.error:
             raise RuntimeError(f"Job {self._tr.job_id} failed: {self._tr.error}")
         return self._tr.return_value
 
-    async def aresult(self, timeout: float = 30.0, **kwargs: Any) -> Any:
+    async def aresult(
+        self,
+        timeout: float = 30.0,
+        poll_interval: float = 0.05,
+        max_poll_interval: float = 0.5,
+    ) -> Any:
         return self.result(timeout=timeout)
 
     def refresh(self) -> None:

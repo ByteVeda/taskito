@@ -39,6 +39,7 @@ def _jobs_view(request: HttpRequest, site: Any) -> HttpResponse:
         page = int(request.GET.get("page", "1"))
     except (ValueError, TypeError):
         page = 1
+    page = max(page, 1)
     per_page = 50
 
     try:
@@ -50,6 +51,9 @@ def _jobs_view(request: HttpRequest, site: Any) -> HttpResponse:
             offset=(page - 1) * per_page,
         )
     except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Failed to list jobs")
         jobs = []
     context = {
         **site.each_context(request),
@@ -91,6 +95,7 @@ def _dead_letters_view(request: HttpRequest, site: Any) -> HttpResponse:
         page = int(request.GET.get("page", "1"))
     except (ValueError, TypeError):
         page = 1
+    page = max(page, 1)
     per_page = 50
     dead = queue.dead_letters(limit=per_page, offset=(page - 1) * per_page)
     context = {

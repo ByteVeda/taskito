@@ -123,7 +123,7 @@ impl CircuitBreaker {
                 // Probe failed — go back to open
                 let updated = CircuitBreakerRow {
                     state: CircuitState::Open as i32,
-                    failure_count: row.failure_count + 1,
+                    failure_count: row.failure_count.saturating_add(1),
                     last_failure_at: Some(now),
                     opened_at: Some(now),
                     half_open_at: None,
@@ -137,7 +137,7 @@ impl CircuitBreaker {
                     if now - last > row.window_ms {
                         1 // Window expired, start fresh
                     } else {
-                        row.failure_count + 1
+                        row.failure_count.saturating_add(1)
                     }
                 } else {
                     1
@@ -166,7 +166,7 @@ impl CircuitBreaker {
             CircuitState::Open => {
                 // Already open, just update failure count
                 let updated = CircuitBreakerRow {
-                    failure_count: row.failure_count + 1,
+                    failure_count: row.failure_count.saturating_add(1),
                     last_failure_at: Some(now),
                     ..row
                 };

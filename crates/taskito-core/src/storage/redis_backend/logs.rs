@@ -132,7 +132,9 @@ impl RedisStorage {
 
         // Sort by logged_at desc
         rows.sort_by(|a, b| b.logged_at.cmp(&a.logged_at));
-        rows.truncate(limit as usize);
+        if limit >= 0 {
+            rows.truncate(limit as usize);
+        }
         Ok(rows)
     }
 

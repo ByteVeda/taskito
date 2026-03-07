@@ -275,6 +275,11 @@ impl PyQueue {
         limit: i64,
         offset: i64,
     ) -> PyResult<Vec<PyJob>> {
+        if limit < 0 || offset < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit and offset must be non-negative",
+            ));
+        }
         let status_int = match status {
             Some(s) => Some(match s {
                 "pending" => 0,
@@ -358,7 +363,7 @@ impl PyQueue {
 
     /// Purge completed jobs older than given seconds ago. Returns count deleted.
     pub fn purge_completed(&self, older_than_seconds: i64) -> PyResult<u64> {
-        let cutoff = now_millis() - (older_than_seconds * 1000);
+        let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));
         self.storage
             .purge_completed(cutoff)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
@@ -386,6 +391,11 @@ impl PyQueue {
     /// List dead letter queue entries.
     #[pyo3(signature = (limit=10, offset=0))]
     pub fn dead_letters(&self, limit: i64, offset: i64) -> PyResult<Vec<PyObject>> {
+        if limit < 0 || offset < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit and offset must be non-negative",
+            ));
+        }
         let dead = self
             .storage
             .list_dead(limit, offset)
@@ -418,7 +428,7 @@ impl PyQueue {
 
     /// Purge dead letter entries older than given seconds ago.
     pub fn purge_dead(&self, older_than_seconds: i64) -> PyResult<u64> {
-        let cutoff = now_millis() - (older_than_seconds * 1000);
+        let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));
         self.storage
             .purge_dead(cutoff)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
@@ -522,7 +532,7 @@ impl PyQueue {
 
     /// Archive completed/dead/cancelled jobs older than cutoff (seconds ago).
     pub fn archive_old_jobs(&self, older_than_seconds: i64) -> PyResult<u64> {
-        let cutoff = now_millis() - (older_than_seconds * 1000);
+        let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));
         self.storage
             .archive_old_jobs(cutoff)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
@@ -531,6 +541,11 @@ impl PyQueue {
     /// List archived jobs with pagination.
     #[pyo3(signature = (limit=50, offset=0))]
     pub fn list_archived(&self, limit: i64, offset: i64) -> PyResult<Vec<PyJob>> {
+        if limit < 0 || offset < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit and offset must be non-negative",
+            ));
+        }
         let jobs = self
             .storage
             .list_archived(limit, offset)
@@ -740,7 +755,7 @@ impl PyQueue {
         task_name: Option<&str>,
         since_seconds: i64,
     ) -> PyResult<Vec<PyObject>> {
-        let since_ms = now_millis() - (since_seconds * 1000);
+        let since_ms = now_millis().saturating_sub(since_seconds.saturating_mul(1000));
         let rows = self
             .storage
             .get_metrics(task_name, since_ms)
@@ -881,7 +896,12 @@ impl PyQueue {
         since_seconds: i64,
         limit: i64,
     ) -> PyResult<Vec<PyObject>> {
-        let since_ms = now_millis() - (since_seconds * 1000);
+        if limit < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit must be non-negative",
+            ));
+        }
+        let since_ms = now_millis().saturating_sub(since_seconds.saturating_mul(1000));
         let rows = self
             .storage
             .query_task_logs(task_name, level, since_ms, limit)
