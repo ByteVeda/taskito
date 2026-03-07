@@ -44,12 +44,16 @@ class SentryMiddleware(TaskMiddleware):
 
     def before(self, ctx: JobContext) -> None:
         sentry_sdk.push_scope()
-        scope = sentry_sdk.get_current_scope()
-        scope.set_tag("taskito.task_name", ctx.task_name)
-        scope.set_tag("taskito.job_id", ctx.id)
-        scope.set_tag("taskito.queue", ctx.queue_name)
-        scope.set_tag("taskito.retry_count", str(ctx.retry_count))
-        scope.set_transaction_name(f"taskito:{ctx.task_name}")
+        try:
+            scope = sentry_sdk.get_current_scope()
+            scope.set_tag("taskito.task_name", ctx.task_name)
+            scope.set_tag("taskito.job_id", ctx.id)
+            scope.set_tag("taskito.queue", ctx.queue_name)
+            scope.set_tag("taskito.retry_count", str(ctx.retry_count))
+            scope.set_transaction_name(f"taskito:{ctx.task_name}")
+        except Exception:
+            sentry_sdk.pop_scope_unsafe()
+            raise
 
     def after(self, ctx: JobContext, result: Any, error: Exception | None) -> None:
         if error is not None:

@@ -36,7 +36,7 @@ class TestJsonSerializer:
 
     def test_invalid_bytes_raises(self):
         s = JsonSerializer()
-        with pytest.raises((json.JSONDecodeError, UnicodeDecodeError)):
+        with pytest.raises((json.JSONDecodeError, UnicodeDecodeError, ValueError)):
             s.loads(b"\xff\xfe")
 
 

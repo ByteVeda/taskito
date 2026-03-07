@@ -81,7 +81,7 @@ impl RedisStorage {
 
     pub fn reap_dead_workers(&self) -> Result<u64> {
         let mut conn = self.conn()?;
-        let cutoff = now_millis() - DEAD_WORKER_THRESHOLD_MS;
+        let cutoff = now_millis().saturating_sub(DEAD_WORKER_THRESHOLD_MS);
         let wall = self.key(&["workers", "all"]);
 
         let worker_ids: Vec<String> = conn.smembers(&wall).map_err(map_err)?;

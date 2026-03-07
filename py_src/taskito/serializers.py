@@ -40,7 +40,10 @@ class JsonSerializer:
         return json.dumps(obj).encode("utf-8")
 
     def loads(self, data: bytes) -> Any:
-        return json.loads(data.decode("utf-8"))
+        try:
+            return json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            raise ValueError(f"JSON deserialization failed: {exc}") from exc
 
 
 class MsgPackSerializer:
@@ -103,5 +106,8 @@ class EncryptedSerializer:
         if len(data) < 13:
             raise ValueError("Encrypted data too short")
         nonce, ciphertext = data[:12], data[12:]
-        plaintext = self._aesgcm.decrypt(nonce, ciphertext, None)
+        try:
+            plaintext = self._aesgcm.decrypt(nonce, ciphertext, None)
+        except Exception as exc:
+            raise ValueError(f"Decryption failed: {exc}") from exc
         return self._inner.loads(plaintext)

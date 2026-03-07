@@ -60,7 +60,7 @@ impl PostgresStorage {
     /// Remove workers that haven't sent a heartbeat within the threshold.
     pub fn reap_dead_workers(&self) -> Result<u64> {
         let mut conn = self.conn()?;
-        let cutoff = now_millis() - DEAD_WORKER_THRESHOLD_MS;
+        let cutoff = now_millis().saturating_sub(DEAD_WORKER_THRESHOLD_MS);
 
         let affected = diesel::delete(workers::table.filter(workers::last_heartbeat.lt(cutoff)))
             .execute(&mut conn)?;

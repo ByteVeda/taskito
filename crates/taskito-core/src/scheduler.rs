@@ -389,7 +389,7 @@ impl Scheduler {
             None => return Ok(()),
         };
 
-        let cutoff = now_millis() - ttl;
+        let cutoff = now_millis().saturating_sub(ttl);
 
         // Use per-job TTL aware cleanup
         let completed = self.storage.purge_completed_with_ttl(cutoff)?;

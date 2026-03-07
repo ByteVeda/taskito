@@ -526,6 +526,11 @@ impl SqliteStorage {
 
     /// Update progress for a running job (0-100).
     pub fn update_progress(&self, id: &str, progress: i32) -> Result<()> {
+        if !(0..=100).contains(&progress) {
+            return Err(QueueError::Other(
+                "progress must be between 0 and 100".into(),
+            ));
+        }
         let mut conn = self.conn()?;
 
         let affected = diesel::update(jobs::table)
@@ -686,7 +691,10 @@ impl SqliteStorage {
             .into_iter()
             .filter(|r| {
                 if let Some(started) = r.started_at {
-                    (started + r.timeout_ms) < now
+                    match started.checked_add(r.timeout_ms) {
+                        Some(deadline) => deadline < now,
+                        None => true,
+                    }
                 } else {
                     false
                 }

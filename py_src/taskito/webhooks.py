@@ -49,19 +49,22 @@ class WebhookManager:
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https"):
             raise ValueError(f"Webhook URL must use http:// or https://, got {parsed.scheme!r}")
-        self._webhooks.append(
-            {
-                "url": url,
-                "events": {e.value for e in events} if events else None,
-                "headers": headers or {},
-                "secret": secret.encode() if secret else None,
-            }
-        )
+        with self._thread_lock:
+            self._webhooks.append(
+                {
+                    "url": url,
+                    "events": {e.value for e in events} if events else None,
+                    "headers": headers or {},
+                    "secret": secret.encode() if secret else None,
+                }
+            )
         self._ensure_thread()
 
     def notify(self, event_type: EventType, payload: dict[str, Any]) -> None:
         """Queue an event for delivery to matching webhooks."""
-        for wh in self._webhooks:
+        with self._thread_lock:
+            webhooks = list(self._webhooks)
+        for wh in webhooks:
             if wh["events"] is None or event_type.value in wh["events"]:
                 self._queue.put((wh, {"event": event_type.value, **payload}))
 

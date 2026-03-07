@@ -64,7 +64,7 @@ impl CircuitBreaker {
             CircuitState::Open => {
                 // Check if cooldown has elapsed
                 let opened = row.opened_at.unwrap_or(0);
-                if now - opened >= row.cooldown_ms {
+                if now.saturating_sub(opened) >= row.cooldown_ms {
                     // Transition to half-open: allow one probe
                     let updated = CircuitBreakerRow {
                         state: CircuitState::HalfOpen as i32,
@@ -134,7 +134,7 @@ impl CircuitBreaker {
             CircuitState::Closed => {
                 // Reset count if outside the window
                 let count = if let Some(last) = row.last_failure_at {
-                    if now - last > row.window_ms {
+                    if now.saturating_sub(last) > row.window_ms {
                         1 // Window expired, start fresh
                     } else {
                         row.failure_count.saturating_add(1)

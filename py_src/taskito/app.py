@@ -701,12 +701,15 @@ class Queue(
     def _stop_async_loop(self) -> None:
         """Stop the shared async event loop."""
         loop = getattr(self, "_async_loop", None)
-        if loop is not None and loop.is_running():
-            loop.call_soon_threadsafe(loop.stop)
-            self._async_thread.join(timeout=5)
-            if self._async_thread.is_alive():
-                logger.warning("Async event loop thread did not stop within 5s timeout")
-            else:
+        thread = getattr(self, "_async_thread", None)
+        if loop is not None:
+            if loop.is_running():
+                loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    logger.warning("Async event loop thread did not stop within 5s timeout")
+            if not loop.is_running():
                 loop.close()
 
     def run_worker(

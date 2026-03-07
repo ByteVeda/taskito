@@ -611,6 +611,11 @@ impl RedisStorage {
     }
 
     pub fn update_progress(&self, id: &str, progress: i32) -> Result<()> {
+        if !(0..=100).contains(&progress) {
+            return Err(QueueError::Other(
+                "progress must be between 0 and 100".into(),
+            ));
+        }
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;
         job.progress = Some(progress);
@@ -750,7 +755,9 @@ impl RedisStorage {
         for id in &job_ids {
             if let Some(job) = self.load_job(&mut conn, id)? {
                 let should_purge = match (job.completed_at, job.result_ttl_ms) {
-                    (Some(completed), Some(ttl)) => completed + ttl < now,
+                    (Some(completed), Some(ttl)) => completed
+                        .checked_add(ttl)
+                        .is_some_and(|expiry| expiry < now),
                     (Some(completed), None) => completed < global_cutoff_ms,
                     _ => false,
                 };
@@ -773,7 +780,11 @@ impl RedisStorage {
         for id in &job_ids {
             if let Some(job) = self.load_job(&mut conn, id)? {
                 if let Some(started) = job.started_at {
-                    if (started + job.timeout_ms) < now {
+                    let timed_out = match started.checked_add(job.timeout_ms) {
+                        Some(deadline) => deadline < now,
+                        None => true,
+                    };
+                    if timed_out {
                         stale.push(job);
                     }
                 }

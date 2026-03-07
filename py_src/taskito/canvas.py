@@ -82,6 +82,8 @@ class group:
     def __init__(self, *signatures: Signature, max_concurrency: int | None = None):
         if len(signatures) < 1:
             raise ValueError("group requires at least one signature")
+        if max_concurrency is not None and max_concurrency <= 0:
+            raise ValueError("max_concurrency must be a positive integer")
         self.signatures = list(signatures)
         self.max_concurrency = max_concurrency
 

@@ -127,18 +127,18 @@ class JobResult:
         deadline = time.monotonic() + timeout
         current_interval = poll_interval
 
-        while time.monotonic() < deadline:
+        while True:
             status, value = self._poll_once()
             if status == "complete":
                 return value
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Job {self.id} did not complete within {timeout}s "
+                    f"(current status: {self._py_job.status})"
+                )
 
-            time.sleep(current_interval)
+            time.sleep(min(current_interval, max(0, deadline - time.monotonic())))
             current_interval = min(current_interval * 1.5, max_poll_interval)
-
-        raise TimeoutError(
-            f"Job {self.id} did not complete within {timeout}s "
-            f"(current status: {self._py_job.status})"
-        )
 
     async def aresult(
         self,
@@ -172,18 +172,18 @@ class JobResult:
         deadline = time.monotonic() + timeout
         current_interval = poll_interval
 
-        while time.monotonic() < deadline:
+        while True:
             status, value = self._poll_once()
             if status == "complete":
                 return value
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Job {self.id} did not complete within {timeout}s "
+                    f"(current status: {self._py_job.status})"
+                )
 
-            await asyncio.sleep(current_interval)
+            await asyncio.sleep(min(current_interval, max(0, deadline - time.monotonic())))
             current_interval = min(current_interval * 1.5, max_poll_interval)
-
-        raise TimeoutError(
-            f"Job {self.id} did not complete within {timeout}s "
-            f"(current status: {self._py_job.status})"
-        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a plain dictionary for JSON serialization.
