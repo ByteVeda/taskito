@@ -4,6 +4,11 @@ All notable changes to taskito are documented here.
 
 ## 0.2.3
 
+### Features
+
+- **Postgres storage backend** — optional PostgreSQL backend for multi-machine workers and higher write throughput (`pip install taskito[postgres]`); full feature parity with SQLite including jobs, DLQ, rate limiting, periodic tasks, circuit breakers, workers, metrics, and logs
+- **Django integration** — `TASKITO_BACKEND`, `TASKITO_DB_URL`, `TASKITO_SCHEMA` settings for configuring the backend from Django projects
+
 ### Build & Tooling
 
 - **Pre-commit hooks** — Added `.pre-commit-config.yaml` with local hooks for `cargo fmt`, `cargo clippy`, `ruff check`, `ruff format`, and `mypy`
