@@ -651,7 +651,11 @@ impl PostgresStorage {
             let per_job_ids: Vec<String> = rows_with_ttl
                 .into_iter()
                 .filter(|row| {
-                    matches!((row.completed_at, row.result_ttl_ms), (Some(completed), Some(ttl)) if completed + ttl < now)
+                    matches!(
+                        (row.completed_at, row.result_ttl_ms),
+                        (Some(completed), Some(ttl))
+                            if completed.checked_add(ttl).is_some_and(|expiry| expiry < now)
+                    )
                 })
                 .map(|row| row.id)
                 .collect();
@@ -660,9 +664,8 @@ impl PostgresStorage {
 
             delete_job_children(conn, &all_ids)?;
 
-            let affected = diesel::delete(
-                jobs::table.filter(jobs::id.eq_any(&all_ids))
-            ).execute(conn)?;
+            let affected =
+                diesel::delete(jobs::table.filter(jobs::id.eq_any(&all_ids))).execute(conn)?;
 
             Ok(affected as u64)
         })

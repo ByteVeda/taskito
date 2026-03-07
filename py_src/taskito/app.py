@@ -336,9 +336,11 @@ class Queue(
                 current_job._set_soft_timeout(soft_timeout)
 
             # Run middleware before hooks
+            completed_mw: list[Any] = []
             for mw in middleware_chain:
                 try:
                     mw.before(current_job)
+                    completed_mw.append(mw)
                 except Exception:
                     logger.exception("middleware before() error")
 
@@ -369,8 +371,8 @@ class Queue(
             finally:
                 for hook in hooks["after_task"]:
                     hook(task_name, args, kwargs, result, error)
-                # Run middleware after hooks
-                for mw in middleware_chain:
+                # Run middleware after hooks (only those whose before() succeeded)
+                for mw in completed_mw:
                     try:
                         mw.after(current_job, result, error)
                     except Exception:
@@ -480,6 +482,11 @@ class Queue(
             List of JobResult handles, one per enqueued job.
         """
         count = len(args_list)
+        if kwargs_list is not None and len(kwargs_list) != len(args_list):
+            raise ValueError(
+                f"kwargs_list length ({len(kwargs_list)}) must match "
+                f"args_list length ({len(args_list)})"
+            )
         kw_list = kwargs_list or [{}] * count
         payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
         task_names = [task_name] * count
@@ -805,7 +812,7 @@ class Queue(
             queues: List of queue names to consume from.
             tags: Optional tags for worker specialization / routing.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         original_sigint = signal.getsignal(signal.SIGINT)
         original_sigterm = signal.getsignal(signal.SIGTERM)

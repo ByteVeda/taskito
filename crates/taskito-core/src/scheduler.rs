@@ -361,7 +361,9 @@ impl Scheduler {
     fn reap_stale(&self) -> Result<()> {
         let now = now_millis();
         // Expire pending jobs that passed their TTL
-        let _ = self.storage.expire_pending_jobs(now);
+        if let Err(e) = self.storage.expire_pending_jobs(now) {
+            warn!("expire_pending_jobs error: {e}");
+        }
         let stale_jobs = self.storage.reap_stale_jobs(now)?;
 
         for job in stale_jobs {

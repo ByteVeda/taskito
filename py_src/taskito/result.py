@@ -92,8 +92,9 @@ class JobResult:
                     f"Failed to deserialize result for job {self.id}: {exc}"
                 ) from exc
 
-        if status in ("failed", "dead"):
-            raise RuntimeError(f"Job {self.id} {status}: {self._py_job.error or 'unknown error'}")
+        if status in ("failed", "dead", "cancelled"):
+            error_msg = self._py_job.error or "job was cancelled"
+            raise RuntimeError(f"Job {self.id} {status}: {error_msg}")
 
         return status, None
 

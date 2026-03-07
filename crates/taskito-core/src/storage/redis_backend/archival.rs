@@ -50,8 +50,8 @@ impl RedisStorage {
                 &archived_all,
                 "+inf",
                 "-inf",
-                offset as isize,
-                limit as isize,
+                offset.max(0) as isize,
+                limit.max(0) as isize,
             )
             .map_err(map_err)?;
 

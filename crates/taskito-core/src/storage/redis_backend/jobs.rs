@@ -9,7 +9,8 @@ use crate::storage::QueueStats;
 /// Compute dequeue score: higher priority → lower score → dequeued first.
 /// Within same priority, earlier scheduled_at wins.
 fn dequeue_score(priority: i32, scheduled_at: i64) -> f64 {
-    (1000i64 - priority as i64) as f64 * 10_000_000_000_000.0 + scheduled_at as f64
+    let p = (priority as i64).clamp(0, 999);
+    ((1000i64 - p) * 10_000_000_000_000i64 + scheduled_at) as f64
 }
 
 impl RedisStorage {
@@ -458,7 +459,7 @@ impl RedisStorage {
 
         job.status = JobStatus::Pending;
         job.scheduled_at = next_scheduled_at;
-        job.retry_count += 1;
+        job.retry_count = job.retry_count.saturating_add(1);
         job.started_at = None;
         job.completed_at = None;
         job.error = None;
@@ -822,10 +823,23 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         // Scan for all job_errors keys
         let pattern = self.key(&["job_errors", "*"]);
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(&pattern)
-            .query(&mut conn)
-            .map_err(map_err)?;
+        let mut keys: Vec<String> = Vec::new();
+        let mut cursor = 0u64;
+        loop {
+            let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            keys.extend(batch);
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
+            }
+        }
 
         let mut count = 0u64;
         for key in keys {
