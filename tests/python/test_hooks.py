@@ -4,16 +4,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_hooks.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_before_and_after_hooks(queue):
     """before_task and after_task hooks fire around task execution."""

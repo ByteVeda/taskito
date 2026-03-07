@@ -3,6 +3,7 @@
 from taskito.app import Queue
 from taskito.canvas import Signature, chain, chord, chunks, group, starmap
 from taskito.context import current_job
+from taskito.events import EventType
 from taskito.exceptions import (
     CircuitBreakerOpenError,
     JobNotFoundError,
@@ -17,17 +18,26 @@ from taskito.exceptions import (
 )
 from taskito.middleware import TaskMiddleware
 from taskito.result import JobResult
-from taskito.serializers import CloudpickleSerializer, JsonSerializer, Serializer
+from taskito.serializers import (
+    CloudpickleSerializer,
+    EncryptedSerializer,
+    JsonSerializer,
+    MsgPackSerializer,
+    Serializer,
+)
 from taskito.task import TaskWrapper
 from taskito.testing import TestMode, TestResult, TestResults
 
 __all__ = [
     "CircuitBreakerOpenError",
     "CloudpickleSerializer",
+    "EncryptedSerializer",
+    "EventType",
     "JobNotFoundError",
     "JobResult",
     "JsonSerializer",
     "MaxRetriesExceededError",
+    "MsgPackSerializer",
     "Queue",
     "QueueError",
     "RateLimitExceededError",

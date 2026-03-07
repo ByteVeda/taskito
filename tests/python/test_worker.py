@@ -8,12 +8,6 @@ import pytest
 from taskito import Queue
 
 
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_worker.db")
-    return Queue(db_path=db_path, workers=2)
-
-
 def test_multiple_tasks(queue):
     """Worker handles multiple different task types."""
 

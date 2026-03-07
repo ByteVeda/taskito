@@ -12,7 +12,7 @@ from taskito import Queue
 
 @pytest.fixture
 def queue(tmp_path):
-    """Create a fresh queue with some test data."""
+    """Create a fresh queue with some test data pre-registered."""
     db_path = str(tmp_path / "test_dashboard.db")
     q = Queue(db_path=db_path, workers=2)
 

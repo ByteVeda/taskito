@@ -1,0 +1,181 @@
+"""Prometheus metrics integration for taskito.
+
+Requires the ``prometheus`` extra::
+
+    pip install taskito[prometheus]
+
+Usage::
+
+    from taskito.contrib.prometheus import PrometheusMiddleware, start_metrics_server
+
+    queue = Queue(middleware=[PrometheusMiddleware()])
+    start_metrics_server(port=9090)  # optional standalone metrics endpoint
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from typing import TYPE_CHECKING, Any
+
+from taskito.middleware import TaskMiddleware
+
+if TYPE_CHECKING:
+    from taskito.app import Queue
+    from taskito.context import JobContext
+
+logger = logging.getLogger("taskito.prometheus")
+
+try:
+    from prometheus_client import Counter, Gauge, Histogram, start_http_server
+except ImportError:
+    Counter = None
+    Gauge = None
+    Histogram = None
+    start_http_server = None
+
+# Module-level metric singletons (created once on first middleware init)
+_jobs_total: Any = None
+_job_duration: Any = None
+_active_workers: Any = None
+_retries_total: Any = None
+_queue_depth: Any = None
+_dlq_size: Any = None
+_worker_utilization: Any = None
+_metrics_initialized = False
+
+
+def _init_metrics() -> None:
+    global _jobs_total, _job_duration, _active_workers, _retries_total
+    global _queue_depth, _dlq_size, _worker_utilization, _metrics_initialized
+
+    if _metrics_initialized:
+        return
+
+    _jobs_total = Counter(
+        "taskito_jobs_total",
+        "Total number of jobs processed",
+        ["task", "status"],
+    )
+    _job_duration = Histogram(
+        "taskito_job_duration_seconds",
+        "Job execution duration in seconds",
+        ["task"],
+    )
+    _active_workers = Gauge(
+        "taskito_active_workers",
+        "Number of currently active workers",
+    )
+    _retries_total = Counter(
+        "taskito_retries_total",
+        "Total number of job retries",
+        ["task"],
+    )
+    _queue_depth = Gauge(
+        "taskito_queue_depth",
+        "Number of pending jobs per queue",
+        ["queue"],
+    )
+    _dlq_size = Gauge(
+        "taskito_dlq_size",
+        "Number of dead-letter jobs",
+    )
+    _worker_utilization = Gauge(
+        "taskito_worker_utilization",
+        "Worker utilization ratio (0.0-1.0)",
+    )
+    _metrics_initialized = True
+
+
+class PrometheusMiddleware(TaskMiddleware):
+    """Middleware that exports Prometheus metrics for task execution.
+
+    Tracks:
+    - ``taskito_jobs_total{task,status}`` — counter of completed/failed jobs
+    - ``taskito_job_duration_seconds{task}`` — histogram of execution times
+    - ``taskito_active_workers`` — gauge of currently executing workers
+    - ``taskito_retries_total{task}`` — counter of retry attempts
+    """
+
+    def __init__(self) -> None:
+        if Counter is None:
+            raise ImportError(
+                "prometheus-client is required for PrometheusMiddleware. "
+                "Install it with: pip install taskito[prometheus]"
+            )
+        _init_metrics()
+        self._start_times: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def before(self, ctx: JobContext) -> None:
+        with self._lock:
+            self._start_times[ctx.id] = time.monotonic()
+        _active_workers.inc()
+
+    def after(self, ctx: JobContext, result: Any, error: Exception | None) -> None:
+        _active_workers.dec()
+        status = "failed" if error is not None else "completed"
+        _jobs_total.labels(task=ctx.task_name, status=status).inc()
+
+        with self._lock:
+            start = self._start_times.pop(ctx.id, None)
+        if start is not None:
+            duration = time.monotonic() - start
+            _job_duration.labels(task=ctx.task_name).observe(duration)
+
+    def on_retry(self, ctx: JobContext, error: Exception, retry_count: int) -> None:
+        _retries_total.labels(task=ctx.task_name).inc()
+
+
+class PrometheusStatsCollector:
+    """Daemon thread that polls queue stats and updates Prometheus gauges.
+
+    Usage::
+
+        collector = PrometheusStatsCollector(queue, interval=10)
+        collector.start()
+    """
+
+    def __init__(self, queue: Queue, interval: float = 10.0):
+        if Counter is None:
+            raise ImportError(
+                "prometheus-client is required for PrometheusStatsCollector. "
+                "Install it with: pip install taskito[prometheus]"
+            )
+        _init_metrics()
+        self._queue = queue
+        self._interval = interval
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._poll, daemon=True, name="taskito-prom-stats")
+        self._thread.start()
+
+    def _poll(self) -> None:
+        while True:
+            try:
+                stats = self._queue.stats()
+                _queue_depth.labels(queue="default").set(stats.get("pending", 0))
+                _dlq_size.set(stats.get("dead", 0))
+
+                running = stats.get("running", 0)
+                total_workers = self._queue._workers
+                if total_workers > 0:
+                    _worker_utilization.set(running / total_workers)
+            except Exception:
+                logger.debug("Stats collection failed", exc_info=True)
+            time.sleep(self._interval)
+
+
+def start_metrics_server(port: int = 9090) -> None:
+    """Start a standalone Prometheus metrics HTTP server.
+
+    Args:
+        port: Port to bind to (default: 9090).
+    """
+    if start_http_server is None:
+        raise ImportError(
+            "prometheus-client is required. Install with: pip install taskito[prometheus]"
+        )
+    start_http_server(port)

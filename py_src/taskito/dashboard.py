@@ -14,10 +14,13 @@ Or programmatically::
 from __future__ import annotations
 
 import json
+import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
+
+logger = logging.getLogger("taskito.dashboard")
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -71,6 +74,13 @@ def _make_handler(queue: Queue) -> type:
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            try:
+                self._handle_get()
+            except Exception:
+                logger.exception("Error handling GET %s", self.path)
+                self._json_response({"error": "Internal server error"}, status=500)
+
+        def _handle_get(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
             qs = parse_qs(parsed.query)
@@ -115,10 +125,31 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response(queue.circuit_breakers())
             elif path == "/api/workers":
                 self._json_response(queue.workers())
+            elif path == "/api/queues/paused":
+                self._json_response(queue.paused_queues())
+            elif path == "/metrics":
+                self._serve_prometheus_metrics()
+            elif path == "/api/scaler":
+                stats = queue.stats()
+                depth = stats.get("pending", 0)
+                self._json_response(
+                    {
+                        "metricName": "taskito_queue_depth",
+                        "metricValue": depth,
+                        "isActive": depth > 0,
+                    }
+                )
             else:
                 self._serve_spa()
 
         def do_POST(self) -> None:
+            try:
+                self._handle_post()
+            except Exception:
+                logger.exception("Error handling POST %s", self.path)
+                self._json_response({"error": "Internal server error"}, status=500)
+
+        def _handle_post(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
 
@@ -137,6 +168,14 @@ def _make_handler(queue: Queue) -> type:
                 job_id = path[len("/api/jobs/") : -len("/replay")]
                 result = queue.replay(job_id)
                 self._json_response({"replay_job_id": result.id})
+            elif path.startswith("/api/queues/") and path.endswith("/pause"):
+                name = path[len("/api/queues/") : -len("/pause")]
+                queue.pause(name)
+                self._json_response({"paused": name})
+            elif path.startswith("/api/queues/") and path.endswith("/resume"):
+                name = path[len("/api/queues/") : -len("/resume")]
+                queue.resume(name)
+                self._json_response({"resumed": name})
             else:
                 self._json_response({"error": "Not found"}, status=404)
 
@@ -164,6 +203,19 @@ def _make_handler(queue: Queue) -> type:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+
+        def _serve_prometheus_metrics(self) -> None:
+            try:
+                from prometheus_client import generate_latest
+
+                body = generate_latest()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except ImportError:
+                self._json_response({"error": "prometheus-client not installed"}, status=501)
 
         def _serve_spa(self) -> None:
             body = _get_spa_html().encode()

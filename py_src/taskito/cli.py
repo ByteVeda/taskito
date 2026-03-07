@@ -32,6 +32,12 @@ def main() -> None:
         default=None,
         help="Comma-separated list of queues to process (default: all registered)",
     )
+    worker_parser.add_argument(
+        "--drain-timeout",
+        type=int,
+        default=None,
+        help="Seconds to wait for in-flight jobs during shutdown (default: 30)",
+    )
 
     # dashboard subcommand
     dash_parser = subparsers.add_parser("dashboard", help="Start the web dashboard")
@@ -59,6 +65,24 @@ def main() -> None:
         help="Continuously refresh stats every 2 seconds",
     )
 
+    # pause subcommand
+    pause_parser = subparsers.add_parser("pause", help="Pause a queue")
+    pause_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance",
+    )
+    pause_parser.add_argument("queue_name", help="Queue name to pause")
+
+    # resume subcommand
+    resume_parser = subparsers.add_parser("resume", help="Resume a paused queue")
+    resume_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance",
+    )
+    resume_parser.add_argument("queue_name", help="Queue name to resume")
+
     args = parser.parse_args()
 
     if args.command == "worker":
@@ -67,6 +91,14 @@ def main() -> None:
         run_dashboard(args)
     elif args.command == "info":
         run_info(args)
+    elif args.command == "pause":
+        queue = _load_queue(args.app)
+        queue.pause(args.queue_name)
+        print(f"Queue '{args.queue_name}' paused")
+    elif args.command == "resume":
+        queue = _load_queue(args.app)
+        queue.resume(args.queue_name)
+        print(f"Queue '{args.queue_name}' resumed")
     else:
         parser.print_help()
         sys.exit(1)
@@ -113,6 +145,8 @@ def _load_queue(app_path: str) -> Queue:
 def run_worker(args: argparse.Namespace) -> None:
     """Import the user's Queue instance and start the worker."""
     queue = _load_queue(args.app)
+    if args.drain_timeout is not None:
+        queue._drain_timeout = args.drain_timeout
     queues = args.queues.split(",") if args.queues else None
     queue.run_worker(queues=queues)
 

@@ -3,16 +3,6 @@
 import threading
 import time
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_shutdown.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_graceful_shutdown_completes_inflight(queue):
     """Graceful shutdown waits for in-flight tasks to complete."""

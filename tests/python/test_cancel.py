@@ -4,16 +4,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
-
-from taskito import Queue
-
-
-@pytest.fixture
-def queue(tmp_path):
-    db_path = str(tmp_path / "test_cancel.db")
-    return Queue(db_path=db_path, workers=2)
-
 
 def test_cancel_pending_job(queue):
     """A pending job can be cancelled."""

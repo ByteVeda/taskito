@@ -31,10 +31,11 @@ class PyTaskConfig:
         circuit_breaker_threshold: int | None = None,
         circuit_breaker_window: int | None = None,
         circuit_breaker_cooldown: int | None = None,
+        retry_delays: list[float] | None = None,
     ) -> None: ...
 
 class PyJob:
-    """A job record from the SQLite database."""
+    """A job record from the database."""
 
     id: str
     queue: str
@@ -56,9 +57,10 @@ class PyJob:
     def status(self) -> str: ...
     @property
     def result_bytes(self) -> bytes | None: ...
+    def to_dict(self) -> dict[str, Any]: ...
 
 class PyQueue:
-    """Low-level Rust queue interface backed by SQLite."""
+    """Low-level Rust queue interface backed by SQLite, PostgreSQL, or Redis."""
 
     def __init__(
         self,
@@ -126,13 +128,23 @@ class PyQueue:
         args: bytes | None = None,
         kwargs: bytes | None = None,
         queue: str = "default",
+        timezone: str | None = None,
     ) -> None: ...
     def run_worker(
         self,
         task_registry: dict[str, Any],
         task_configs: list[PyTaskConfig],
         queues: list[str] | None = None,
+        drain_timeout_secs: int | None = None,
+        tags: str | None = None,
     ) -> None: ...
+    def pause_queue(self, queue_name: str) -> None: ...
+    def resume_queue(self, queue_name: str) -> None: ...
+    def list_paused_queues(self) -> list[str]: ...
+    def purge_queue(self, queue_name: str) -> int: ...
+    def revoke_task(self, task_name: str) -> int: ...
+    def archive_old_jobs(self, cutoff_ms: int) -> int: ...
+    def list_archived(self, limit: int = 50, offset: int = 0) -> list[PyJob]: ...
     def get_metrics(
         self,
         task_name: str | None = None,
