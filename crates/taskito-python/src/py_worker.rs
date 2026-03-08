@@ -65,6 +65,7 @@ fn worker_loop(
         let max_retries = job.max_retries;
 
         let start = std::time::Instant::now();
+        eprintln!("[taskito] Task {task_name}[{job_id}] received");
 
         let result = Python::with_gil(|py| -> PyResult<Option<Vec<u8>>> {
             execute_task(py, &task_registry, &job)
@@ -73,12 +74,16 @@ fn worker_loop(
         let wall_time_ns: i64 = start.elapsed().as_nanos().try_into().unwrap_or(i64::MAX);
 
         let job_result = match result {
-            Ok(result_bytes) => JobResult::Success {
-                job_id,
-                result: result_bytes,
-                task_name: task_name.clone(),
-                wall_time_ns,
-            },
+            Ok(result_bytes) => {
+                let secs = start.elapsed().as_secs_f64();
+                eprintln!("[taskito] Task {task_name}[{job_id}] succeeded in {secs:.3}s");
+                JobResult::Success {
+                    job_id,
+                    result: result_bytes,
+                    task_name: task_name.clone(),
+                    wall_time_ns,
+                }
+            }
             Err(e) => {
                 let (error_msg, is_cancelled, exc_class_name) = Python::with_gil(|py| {
                     let msg = format_python_error(py, &e);
@@ -99,6 +104,7 @@ fn worker_loop(
                         check_should_retry(py, &retry_filters, &task_name, &exc_class_name, &e)
                     });
 
+                    eprintln!("[taskito] Task {task_name}[{job_id}] failed: {error_msg}");
                     JobResult::Failure {
                         job_id,
                         error: error_msg,
@@ -124,9 +130,30 @@ fn execute_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult
 
     // Look up the task function
     let registry_dict: &Bound<'_, PyDict> = registry.downcast()?;
-    let task_fn = registry_dict.get_item(&job.task_name)?.ok_or_else(|| {
-        pyo3::exceptions::PyKeyError::new_err(format!("task '{}' not registered", job.task_name))
-    })?;
+    let task_fn = registry_dict
+        .get_item(&job.task_name)?
+        .or_else(|| {
+            // Fallback: if task_name starts with "__main__.", try matching by suffix
+            if job.task_name.starts_with("__main__.") {
+                let suffix = &job.task_name["__main__".len()..]; // ".process_user"
+                registry_dict.iter().find_map(|(key, val)| {
+                    let key_str = key.extract::<String>().ok()?;
+                    if key_str.ends_with(suffix) {
+                        Some(val)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            pyo3::exceptions::PyKeyError::new_err(format!(
+                "task '{}' not registered",
+                job.task_name
+            ))
+        })?;
 
     // Set job context before execution
     let context_mod = py.import_bound("taskito.context")?;

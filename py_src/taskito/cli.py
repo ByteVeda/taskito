@@ -115,6 +115,10 @@ def _load_queue(app_path: str) -> Queue:
 
     module_path, attr_name = app_path.rsplit(":", 1)
 
+    # Ensure cwd is on sys.path so local modules can be imported
+    if "" not in sys.path and "." not in sys.path:
+        sys.path.insert(0, "")
+
     try:
         module = importlib.import_module(module_path)
     except ImportError as e:

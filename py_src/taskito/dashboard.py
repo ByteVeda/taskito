@@ -96,6 +96,8 @@ def _make_handler(queue: Queue) -> type:
         def do_GET(self) -> None:
             try:
                 self._handle_get()
+            except BrokenPipeError:
+                pass
             except Exception:
                 logger.exception("Error handling GET %s", self.path)
                 self._json_response({"error": "Internal server error"}, status=500)
@@ -174,6 +176,8 @@ def _make_handler(queue: Queue) -> type:
         def do_POST(self) -> None:
             try:
                 self._handle_post()
+            except BrokenPipeError:
+                pass
             except Exception:
                 logger.exception("Error handling POST %s", self.path)
                 self._json_response({"error": "Internal server error"}, status=500)

@@ -2,7 +2,7 @@ name: Publish to PyPI
 
 on:
   push:
-    tags: ["[0-9]*"]
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
 
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features postgres,redis
+          args: --release --out dist --features postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
           manylinux: 2_28
           before-script-linux: dnf install -y openssl-devel perl-IPC-Cmd
 
@@ -50,7 +50,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features postgres,redis
+          args: --release --out dist --features postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
           manylinux: musllinux_1_2
           before-script-linux: apk add --no-cache openssl-dev perl make
 
@@ -65,7 +65,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-13
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -111,6 +111,10 @@ jobs:
 
   build-wheels-windows:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
@@ -142,12 +146,13 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          target: ${{ matrix.target }}
           args: --release --out dist --features postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows
+          name: wheels-windows-${{ matrix.target }}
           path: dist/*.whl
 
   build-sdist:

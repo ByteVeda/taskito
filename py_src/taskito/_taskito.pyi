@@ -73,6 +73,7 @@ class PyQueue:
         backend: str = "sqlite",
         db_url: str | None = None,
         schema: str = "taskito",
+        pool_size: int | None = None,
     ) -> None: ...
     def request_shutdown(self) -> None: ...
     def enqueue(

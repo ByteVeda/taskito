@@ -12,7 +12,7 @@ use taskito_core::periodic::next_cron_time;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
-use taskito_core::scheduler::{Scheduler, SchedulerConfig, TaskConfig};
+use taskito_core::scheduler::{JobResult, Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::models::NewPeriodicTaskRow;
 #[cfg(feature = "postgres")]
 use taskito_core::storage::postgres::PostgresStorage;
@@ -46,7 +46,7 @@ pub struct PyQueue {
 )]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito"))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None))]
     pub fn new(
         db_path: &str,
         workers: usize,
@@ -57,6 +57,7 @@ impl PyQueue {
         backend: &str,
         db_url: Option<&str>,
         schema: &str,
+        pool_size: Option<u32>,
     ) -> PyResult<Self> {
         let storage = match backend {
             "sqlite" => {
@@ -71,8 +72,12 @@ impl PyQueue {
                         "db_url is required for postgres backend",
                     )
                 })?;
-                let s = PostgresStorage::with_schema(url, schema)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                let s = PostgresStorage::with_schema_and_pool_size(
+                    url,
+                    schema,
+                    pool_size.unwrap_or(10),
+                )
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
                 StorageBackend::Postgres(s)
             }
             #[cfg(feature = "redis")]
@@ -85,6 +90,7 @@ impl PyQueue {
                 StorageBackend::Redis(s)
             }
             _ => {
+                #[allow(unused_mut, clippy::useless_vec)]
                 let mut available = vec!["sqlite"];
                 #[cfg(feature = "postgres")]
                 available.push("postgres");
@@ -705,50 +711,82 @@ impl PyQueue {
         let scheduler_for_results = scheduler_arc.clone();
         let flag = self.shutdown_flag.clone();
 
-        py.allow_threads(move || {
-            let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs.unwrap_or(30));
+        // Poll action enum for communicating between GIL-released and
+        // GIL-held sections of the result loop.
+        enum PollAction {
+            Shutdown,
+            Result(JobResult),
+            Continue,
+            Done,
+        }
 
-            loop {
-                // Check if graceful shutdown was requested
+        let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs.unwrap_or(30));
+
+        loop {
+            // Release GIL for one iteration of result polling
+            let action = py.allow_threads(|| {
                 if flag.load(Ordering::SeqCst) {
+                    return PollAction::Shutdown;
+                }
+                match result_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                    Ok(result) => PollAction::Result(result),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => PollAction::Continue,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => PollAction::Done,
+                }
+            });
+
+            // Re-acquire GIL briefly to let Python signal handlers run
+            py.check_signals()?;
+
+            match action {
+                PollAction::Shutdown => {
                     // Stop the scheduler from dispatching new jobs
-                    shutdown.notify_one();
+                    py.allow_threads(|| shutdown.notify_one());
 
                     // Drain remaining results with a timeout
                     let drain_start = std::time::Instant::now();
                     while drain_start.elapsed() < drain_timeout {
-                        match result_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                            Ok(result) => {
-                                if let Err(e) = scheduler_for_results.handle_result(result) {
-                                    eprintln!("[taskito] result handling error: {e}");
+                        let drain_action = py.allow_threads(|| {
+                            match result_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                                Ok(result) => PollAction::Result(result),
+                                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                                    PollAction::Continue
+                                }
+                                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                                    PollAction::Done
                                 }
                             }
-                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                                continue;
+                        });
+
+                        // Allow signal handlers to run during drain too
+                        py.check_signals()?;
+
+                        match drain_action {
+                            PollAction::Result(result) => {
+                                py.allow_threads(|| {
+                                    if let Err(e) = scheduler_for_results.handle_result(result) {
+                                        eprintln!("[taskito] result handling error: {e}");
+                                    }
+                                });
                             }
-                            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                                break;
-                            }
+                            PollAction::Continue => continue,
+                            PollAction::Done => break,
+                            PollAction::Shutdown => unreachable!(),
                         }
                     }
                     break;
                 }
-
-                match result_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                    Ok(result) => {
+                PollAction::Result(result) => {
+                    py.allow_threads(|| {
                         if let Err(e) = scheduler_for_results.handle_result(result) {
                             eprintln!("[taskito] result handling error: {e}");
                         }
-                    }
-                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        continue;
-                    }
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                        break;
-                    }
+                    });
                 }
+                PollAction::Continue => continue,
+                PollAction::Done => break,
             }
-        });
+        }
 
         let _ = scheduler_handle.join();
         let _ = heartbeat_handle.join();
