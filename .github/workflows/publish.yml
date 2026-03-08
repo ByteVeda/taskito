@@ -27,7 +27,7 @@ jobs:
           args: --release --out dist --features postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
           manylinux: 2_28
           before-script-linux: |
-            dnf install -y openssl-devel perl-core perl-IPC-Cmd perl-Time-Piece perl-FindBin
+            dnf install -y openssl-devel perl-core perl-IPC-Cmd
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -54,7 +54,7 @@ jobs:
           args: --release --out dist --features postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
           manylinux: musllinux_1_2
           before-script-linux: |
-            apk add --no-cache openssl-dev perl make musl-dev
+            apt-get update && apt-get install -y libssl-dev perl pkg-config
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
