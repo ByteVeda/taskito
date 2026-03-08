@@ -12,7 +12,7 @@ mod workers;
 
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use diesel::r2d2::{self, ConnectionManager, Pool};
+use diesel::r2d2::{ConnectionManager, Pool};
 
 use crate::error::Result;
 
@@ -44,21 +44,6 @@ fn validate_schema_name(schema: &str) -> Result<()> {
     Ok(())
 }
 
-/// Sets `search_path` on every new pooled connection.
-#[derive(Debug)]
-struct SetSearchPath {
-    schema: String,
-}
-
-impl r2d2::CustomizeConnection<PgConnection, r2d2::Error> for SetSearchPath {
-    fn on_acquire(&self, conn: &mut PgConnection) -> std::result::Result<(), r2d2::Error> {
-        diesel::sql_query(format!("SET search_path TO {}", self.schema))
-            .execute(conn)
-            .map_err(r2d2::Error::QueryError)?;
-        Ok(())
-    }
-}
-
 /// PostgreSQL-backed storage for the task queue, using Diesel ORM.
 #[derive(Clone)]
 pub struct PostgresStorage {
@@ -83,16 +68,25 @@ impl PostgresStorage {
         Self::build(database_url, pool_size, "taskito")
     }
 
+    /// Connect with a custom schema name and connection pool size.
+    pub fn with_schema_and_pool_size(
+        database_url: &str,
+        schema: &str,
+        pool_size: u32,
+    ) -> Result<Self> {
+        Self::build(database_url, pool_size, schema)
+    }
+
     fn build(database_url: &str, pool_size: u32, schema: &str) -> Result<Self> {
         validate_schema_name(schema)?;
 
         let manager = ConnectionManager::<PgConnection>::new(database_url);
-        let customizer = SetSearchPath {
-            schema: schema.to_string(),
-        };
         let pool = Pool::builder()
             .max_size(pool_size)
-            .connection_customizer(Box::new(customizer))
+            .min_idle(Some(1))
+            .idle_timeout(Some(std::time::Duration::from_secs(300)))
+            .max_lifetime(Some(std::time::Duration::from_secs(1800)))
+            .connection_timeout(std::time::Duration::from_secs(10))
             .build(manager)?;
 
         let storage = Self {
@@ -106,7 +100,11 @@ impl PostgresStorage {
     pub(crate) fn conn(
         &self,
     ) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
-        Ok(self.pool.get()?)
+        let mut conn = self.pool.get()?;
+        diesel::sql_query(format!("SET search_path TO {}", self.schema))
+            .execute(&mut conn)
+            .map_err(crate::error::QueueError::Storage)?;
+        Ok(conn)
     }
 
     fn run_migrations(&self) -> Result<()> {

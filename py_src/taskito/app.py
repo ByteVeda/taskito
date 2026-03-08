@@ -36,6 +36,23 @@ from taskito.webhooks import WebhookManager
 logger = logging.getLogger("taskito")
 
 
+def _resolve_module_name(module_name: str) -> str:
+    """Resolve __main__ to the actual module name."""
+    if module_name != "__main__":
+        return module_name
+    import sys
+
+    main = sys.modules.get("__main__")
+    if main is not None:
+        spec = getattr(main, "__spec__", None)
+        if spec and spec.name:
+            return str(spec.name)
+        f = getattr(main, "__file__", None)
+        if f:
+            return str(os.path.splitext(os.path.basename(f))[0])
+    return module_name
+
+
 class Queue(
     QueueMetricsMixin,
     QueueDeadLettersMixin,
@@ -72,6 +89,7 @@ class Queue(
         backend: str = "sqlite",
         db_url: str | None = None,
         schema: str = "taskito",
+        pool_size: int | None = None,
         drain_timeout: int = 30,
     ):
         """Initialize a new task queue.
@@ -93,6 +111,9 @@ class Queue(
                 Example: ``"postgresql://user:pass@localhost/taskito"``.
             schema: PostgreSQL schema name for all taskito tables. Defaults to
                 ``"taskito"``. Ignored when backend is ``"sqlite"``.
+            pool_size: Maximum number of connections in the database connection
+                pool. Defaults to 10. Useful for managed services like Supabase
+                that have low connection limits.
             drain_timeout: Seconds to wait for in-flight jobs to finish during
                 graceful shutdown. Defaults to 30.
         """
@@ -112,6 +133,7 @@ class Queue(
             backend=backend,
             db_url=db_url,
             schema=schema,
+            pool_size=pool_size,
         )
         self._backend = backend
         self._db_url = db_url
@@ -172,7 +194,7 @@ class Queue(
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
-            task_name = name or f"{fn.__module__}.{fn.__qualname__}"
+            task_name = name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}"
 
             # Store retry filters
             if retry_on or dont_retry_on:
@@ -259,7 +281,7 @@ class Queue(
             payload = self._serializer.dumps((args, kwargs or {}))
             self._periodic_configs.append(
                 {
-                    "name": name or f"{fn.__module__}.{fn.__qualname__}",
+                    "name": name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}",
                     "task_name": wrapper.name,
                     "cron_expr": cron,
                     "payload": payload,
@@ -742,6 +764,13 @@ class Queue(
                 timezone=pc.get("timezone"),
             )
 
+        if not logging.root.handlers:
+            logging.basicConfig(
+                level=logging.INFO,
+                format="[%(asctime)s] %(levelname)s %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+
         worker_queues = queue_list or ["default"]
         self._print_banner(worker_queues)
 
@@ -758,7 +787,7 @@ class Queue(
             original_sigterm = signal.getsignal(signal.SIGTERM)
 
             def shutdown_handler(signum: int, frame: Any) -> None:
-                logger.info("Shutting down gracefully (waiting for in-flight jobs)...")
+                logger.info("Warm shutdown (waiting for running tasks to finish)...")
                 self._inner.request_shutdown()
                 # Restore original handlers so a second signal force-kills
                 signal.signal(signal.SIGINT, original_sigint)
@@ -776,7 +805,7 @@ class Queue(
                 tags=",".join(tags) if tags else None,
             )
         except KeyboardInterrupt:
-            logger.info("Worker force-stopped.")
+            logger.info("Cold shutdown (terminating immediately)")
         finally:
             self._stop_async_loop()
             logger.info("Worker stopped.")
@@ -821,7 +850,7 @@ class Queue(
         original_sigterm = signal.getsignal(signal.SIGTERM)
 
         def _shutdown_once() -> None:
-            logger.info("Shutting down gracefully (waiting for in-flight jobs)...")
+            logger.info("Warm shutdown (waiting for running tasks to finish)...")
             self._inner.request_shutdown()
             with contextlib.suppress(NotImplementedError):
                 loop.remove_signal_handler(signal.SIGINT)
