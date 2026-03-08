@@ -2,7 +2,7 @@ name: Publish to PyPI
 
 on:
   push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
 
 permissions:
   contents: read
@@ -26,7 +26,8 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --features postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
           manylinux: 2_28
-          before-script-linux: dnf install -y openssl-devel perl-IPC-Cmd
+          before-script-linux: |
+            dnf install -y openssl-devel perl-core perl-IPC-Cmd perl-Time-Piece perl-FindBin
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -52,7 +53,8 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --features postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
           manylinux: musllinux_1_2
-          before-script-linux: apk add --no-cache openssl-dev perl make
+          before-script-linux: |
+            apk add --no-cache openssl-dev perl make musl-dev
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -61,14 +63,12 @@ jobs:
           path: dist/*.whl
 
   build-wheels-macos:
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     strategy:
       matrix:
-        include:
-          - os: macos-13
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
