@@ -1,0 +1,93 @@
+/// Generates shared lock operation methods for Diesel-backed storage backends.
+///
+/// `acquire_lock` and `claim_execution` differ between SQLite and Postgres
+/// (different locking/upsert strategies), so they remain in backend-specific files.
+macro_rules! impl_diesel_lock_ops {
+    ($storage_type:ty) => {
+        impl $storage_type {
+            /// Release a lock. Returns true if the lock was held by this owner and released.
+            pub fn release_lock(&self, lock_name: &str, owner_id: &str) -> Result<bool> {
+                let mut conn = self.conn()?;
+
+                let affected = diesel::delete(
+                    distributed_locks::table
+                        .filter(distributed_locks::lock_name.eq(lock_name))
+                        .filter(distributed_locks::owner_id.eq(owner_id)),
+                )
+                .execute(&mut conn)?;
+
+                Ok(affected > 0)
+            }
+
+            /// Extend a lock's TTL. Returns true if the lock was held by this owner and extended.
+            pub fn extend_lock(
+                &self,
+                lock_name: &str,
+                owner_id: &str,
+                ttl_ms: i64,
+            ) -> Result<bool> {
+                let mut conn = self.conn()?;
+                let now = now_millis();
+
+                let affected = diesel::update(
+                    distributed_locks::table
+                        .filter(distributed_locks::lock_name.eq(lock_name))
+                        .filter(distributed_locks::owner_id.eq(owner_id)),
+                )
+                .set(distributed_locks::expires_at.eq(now + ttl_ms))
+                .execute(&mut conn)?;
+
+                Ok(affected > 0)
+            }
+
+            /// Get info about a lock.
+            pub fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfoRow>> {
+                let mut conn = self.conn()?;
+
+                let row = distributed_locks::table
+                    .find(lock_name)
+                    .select(LockInfoRow::as_select())
+                    .first(&mut conn)
+                    .optional()?;
+
+                Ok(row)
+            }
+
+            /// Remove expired locks. Returns count removed.
+            pub fn reap_expired_locks(&self, now: i64) -> Result<u64> {
+                let mut conn = self.conn()?;
+
+                let affected = diesel::delete(
+                    distributed_locks::table.filter(distributed_locks::expires_at.le(now)),
+                )
+                .execute(&mut conn)?;
+
+                Ok(affected as u64)
+            }
+
+            /// Remove the execution claim for a completed job.
+            pub fn complete_execution(&self, job_id: &str) -> Result<()> {
+                let mut conn = self.conn()?;
+
+                diesel::delete(execution_claims::table.filter(execution_claims::job_id.eq(job_id)))
+                    .execute(&mut conn)?;
+
+                Ok(())
+            }
+
+            /// Purge old execution claims. Returns count removed.
+            pub fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {
+                let mut conn = self.conn()?;
+
+                let affected = diesel::delete(
+                    execution_claims::table.filter(execution_claims::claimed_at.lt(older_than_ms)),
+                )
+                .execute(&mut conn)?;
+
+                Ok(affected as u64)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_diesel_lock_ops;

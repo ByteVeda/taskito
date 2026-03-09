@@ -160,16 +160,60 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response(queue.paused_queues())
             elif path == "/metrics":
                 self._serve_prometheus_metrics()
+            elif path == "/health":
+                from taskito.health import check_health
+
+                self._json_response(check_health())
+            elif path == "/readiness":
+                from taskito.health import check_readiness
+
+                self._json_response(check_readiness(queue))
+            elif path == "/api/stats/queues":
+                q_name = qs.get("queue", [None])[0]
+                if q_name:
+                    self._json_response(queue.stats_by_queue(q_name))
+                else:
+                    self._json_response(queue.stats_all_queues())
+            elif path.startswith("/api/jobs/") and path.endswith("/dag"):
+                job_id = _extract_path_segment(path, "/api/jobs/", "/dag")
+                self._json_response(queue.job_dag(job_id))
+            elif path == "/api/metrics/timeseries":
+                task = qs.get("task", [None])[0]
+                since = _parse_int_qs(qs, "since", 3600)
+                bucket = _parse_int_qs(qs, "bucket", 60)
+                if since is None or bucket is None:
+                    self._json_response({"error": "since and bucket must be integers"}, status=400)
+                    return
+                self._json_response(
+                    queue.metrics_timeseries(task_name=task, since=since, bucket=bucket)
+                )
             elif path == "/api/scaler":
                 stats = queue.stats()
                 depth = stats.get("pending", 0)
-                self._json_response(
-                    {
-                        "metricName": "taskito_queue_depth",
-                        "metricValue": depth,
-                        "isActive": depth > 0,
+                q_name = qs.get("queue", [None])[0]
+                response: dict[str, Any] = {
+                    "metricName": "taskito_queue_depth",
+                    "metricValue": depth,
+                    "isActive": depth > 0,
+                }
+                # Per-queue stats
+                running = stats.get("running", 0)
+                total_workers = queue._workers
+                if total_workers > 0:
+                    response["workerUtilization"] = round(running / total_workers, 3)
+                if q_name:
+                    q_stats = queue.stats_by_queue(q_name)
+                    response["metricValue"] = q_stats.get("pending", 0)
+                    response["isActive"] = q_stats.get("pending", 0) > 0
+                try:
+                    all_q = queue.stats_all_queues()
+                    response["perQueue"] = {
+                        name: {"pending": s.get("pending", 0), "running": s.get("running", 0)}
+                        for name, s in all_q.items()
                     }
-                )
+                except Exception:
+                    pass
+                self._json_response(response)
             else:
                 self._serve_spa()
 
@@ -216,19 +260,41 @@ def _make_handler(queue: Queue) -> type:
             status = qs.get("status", [None])[0]
             q = qs.get("queue", [None])[0]
             task = qs.get("task", [None])[0]
+            metadata_like = qs.get("metadata", [None])[0]
+            error_like = qs.get("error", [None])[0]
+            created_after = qs.get("created_after", [None])[0]
+            created_before = qs.get("created_before", [None])[0]
             limit = _parse_int_qs(qs, "limit", 20)
             offset = _parse_int_qs(qs, "offset", 0)
             if limit is None or offset is None:
                 self._json_response({"error": "limit and offset must be integers"}, status=400)
                 return
 
-            jobs = queue.list_jobs(
-                status=status,
-                queue=q,
-                task_name=task,
-                limit=limit,
-                offset=offset,
-            )
+            # Use filtered listing if any advanced filters are provided
+            if any(
+                x is not None for x in [metadata_like, error_like, created_after, created_before]
+            ):
+                ca = int(created_after) if created_after else None
+                cb = int(created_before) if created_before else None
+                jobs = queue.list_jobs_filtered(
+                    status=status,
+                    queue=q,
+                    task_name=task,
+                    metadata_like=metadata_like,
+                    error_like=error_like,
+                    created_after=ca,
+                    created_before=cb,
+                    limit=limit,
+                    offset=offset,
+                )
+            else:
+                jobs = queue.list_jobs(
+                    status=status,
+                    queue=q,
+                    task_name=task,
+                    limit=limit,
+                    offset=offset,
+                )
             self._json_response([j.to_dict() for j in jobs])
 
         def _json_response(self, data: Any, status: int = 200) -> None:

@@ -18,3 +18,4 @@ pyo3 = { workspace = true }
 tokio = { workspace = true }
 crossbeam-channel = { workspace = true }
 uuid = { workspace = true }
+async-trait = { workspace = true }

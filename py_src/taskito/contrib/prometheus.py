@@ -170,13 +170,20 @@ class PrometheusStatsCollector:
         while not self._stop_event.is_set():
             try:
                 stats = self._queue.stats()
-                _queue_depth.labels(queue="default").set(stats.get("pending", 0))
                 _dlq_size.set(stats.get("dead", 0))
 
                 running = stats.get("running", 0)
                 total_workers = self._queue._workers
                 if total_workers > 0:
                     _worker_utilization.set(running / total_workers)
+
+                # Per-queue depth
+                try:
+                    all_q = self._queue.stats_all_queues()
+                    for q_name, q_stats in all_q.items():
+                        _queue_depth.labels(queue=q_name).set(q_stats.get("pending", 0))
+                except Exception:
+                    _queue_depth.labels(queue="default").set(stats.get("pending", 0))
             except Exception:
                 logger.debug("Stats collection failed", exc_info=True)
             self._stop_event.wait(self._interval)

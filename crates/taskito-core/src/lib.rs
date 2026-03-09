@@ -4,6 +4,7 @@ pub mod periodic;
 pub mod resilience;
 pub mod scheduler;
 pub mod storage;
+pub mod worker;
 
 // Primary public API — the types most consumers need.
 pub use error::QueueError;

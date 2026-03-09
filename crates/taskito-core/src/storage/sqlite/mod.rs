@@ -2,6 +2,7 @@ mod archival;
 mod circuit_breakers;
 mod dead_letter;
 mod jobs;
+mod locks;
 mod logs;
 mod metrics;
 mod periodic;
@@ -390,6 +391,37 @@ impl SqliteStorage {
 
         // Migration: add namespace column to jobs
         migration_alter(&mut conn, "ALTER TABLE jobs ADD COLUMN namespace TEXT");
+
+        // ── Distributed Locks ─────────────────────────────
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS distributed_locks (
+                lock_name   TEXT PRIMARY KEY,
+                owner_id    TEXT NOT NULL,
+                acquired_at INTEGER NOT NULL,
+                expires_at  INTEGER NOT NULL
+            )",
+        )
+        .execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_distributed_locks_expires ON distributed_locks(expires_at)",
+        )
+        .execute(&mut conn)?;
+
+        // ── Execution Claims ──────────────────────────────
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS execution_claims (
+                job_id     TEXT PRIMARY KEY,
+                worker_id  TEXT NOT NULL,
+                claimed_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&mut conn)?;
+
+        diesel::sql_query(
+            "CREATE INDEX IF NOT EXISTS idx_execution_claims_claimed ON execution_claims(claimed_at)",
+        )
+        .execute(&mut conn)?;
 
         Ok(())
     }

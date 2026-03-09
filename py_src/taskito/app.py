@@ -21,12 +21,9 @@ from taskito._taskito import PyQueue, PyTaskConfig
 from taskito.events import EventBus, EventType
 from taskito.middleware import TaskMiddleware
 from taskito.mixins import (
-    QueueCircuitBreakersMixin,
-    QueueDeadLettersMixin,
-    QueueLogsMixin,
-    QueueMetricsMixin,
-    QueueReplayMixin,
-    QueueWorkersMixin,
+    QueueInspectionMixin,
+    QueueLockMixin,
+    QueueOperationsMixin,
 )
 from taskito.result import JobResult
 from taskito.serializers import CloudpickleSerializer, Serializer
@@ -54,12 +51,9 @@ def _resolve_module_name(module_name: str) -> str:
 
 
 class Queue(
-    QueueMetricsMixin,
-    QueueDeadLettersMixin,
-    QueueReplayMixin,
-    QueueCircuitBreakersMixin,
-    QueueLogsMixin,
-    QueueWorkersMixin,
+    QueueInspectionMixin,
+    QueueOperationsMixin,
+    QueueLockMixin,
 ):
     """
     Rust-powered task queue with embedded SQLite storage.
@@ -379,6 +373,7 @@ class Queue(
                         future = asyncio.run_coroutine_threadsafe(ret, loop)
                         ret = future.result()
                     else:
+                        # Fallback for test mode / non-worker contexts
                         ret = asyncio.run(ret)
                 result = ret
             except Exception as exc:
@@ -529,96 +524,6 @@ class Queue(
 
         return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
 
-    def get_job(self, job_id: str) -> JobResult | None:
-        """Retrieve a job by its unique ID."""
-        py_job = self._inner.get_job(job_id)
-        if py_job is None:
-            return None
-        return JobResult(py_job=py_job, queue=self)
-
-    def list_jobs(
-        self,
-        status: str | None = None,
-        queue: str | None = None,
-        task_name: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[JobResult]:
-        """List jobs with optional filters and pagination."""
-        py_jobs = self._inner.list_jobs(
-            status=status,
-            queue=queue,
-            task_name=task_name,
-            limit=limit,
-            offset=offset,
-        )
-        return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
-
-    # -- Sync inspection methods --
-
-    def stats(self) -> dict[str, int]:
-        """Get queue statistics as a dict of status counts."""
-        return self._inner.stats()  # type: ignore[no-any-return]
-
-    def cancel_job(self, job_id: str) -> bool:
-        """Cancel a pending job before it starts executing."""
-        return self._inner.cancel_job(job_id)  # type: ignore[no-any-return]
-
-    def cancel_running_job(self, job_id: str) -> bool:
-        """Request cancellation of a running job.
-
-        The task must call ``current_job.check_cancelled()`` to observe
-        the cancellation. Returns True if the cancel was requested.
-        """
-        return self._inner.request_cancel(job_id)  # type: ignore[no-any-return]
-
-    def update_progress(self, job_id: str, progress: int) -> None:
-        """Update the progress percentage for a running job."""
-        self._inner.update_progress(job_id, progress)
-
-    def job_errors(self, job_id: str) -> list[dict]:
-        """Get the error history for a job."""
-        return self._inner.get_job_errors(job_id)  # type: ignore[no-any-return]
-
-    def purge_completed(self, older_than: int = 86400) -> int:
-        """Delete completed jobs older than a given age."""
-        return self._inner.purge_completed(older_than)  # type: ignore[no-any-return]
-
-    # -- Queue Pause/Resume --
-
-    def pause(self, queue_name: str = "default") -> None:
-        """Pause a queue so no new jobs are dispatched from it."""
-        self._inner.pause_queue(queue_name)
-
-    def resume(self, queue_name: str = "default") -> None:
-        """Resume a paused queue."""
-        self._inner.resume_queue(queue_name)
-
-    def paused_queues(self) -> list[str]:
-        """List currently paused queues."""
-        return self._inner.list_paused_queues()  # type: ignore[no-any-return]
-
-    # -- Job Revocation --
-
-    def purge(self, queue_name: str) -> int:
-        """Cancel all pending jobs in a queue. Returns count cancelled."""
-        return self._inner.purge_queue(queue_name)  # type: ignore[no-any-return]
-
-    def revoke_task(self, task_name: str) -> int:
-        """Cancel all pending jobs for a task name. Returns count cancelled."""
-        return self._inner.revoke_task(task_name)  # type: ignore[no-any-return]
-
-    # -- Job Archival --
-
-    def archive(self, older_than: int = 86400) -> int:
-        """Archive completed/dead/cancelled jobs older than the given age (seconds)."""
-        return self._inner.archive_old_jobs(older_than)  # type: ignore[no-any-return]
-
-    def list_archived(self, limit: int = 50, offset: int = 0) -> list[JobResult]:
-        """List archived jobs with pagination."""
-        py_jobs = self._inner.list_archived(limit=limit, offset=offset)
-        return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
-
     # -- Events & Webhooks --
 
     def _emit_event(self, event_type: EventType, payload: dict[str, Any]) -> None:
@@ -651,16 +556,6 @@ class Queue(
             secret: HMAC-SHA256 signing secret.
         """
         self._webhook_manager.add_webhook(url, events, headers, secret)
-
-    # -- Async inspection methods --
-
-    async def astats(self) -> dict[str, int]:
-        """Async version of :meth:`stats`."""
-        return await self._run_sync(self.stats)  # type: ignore[no-any-return]
-
-    async def acancel_job(self, job_id: str) -> bool:
-        """Async version of :meth:`cancel_job`."""
-        return await self._run_sync(self.cancel_job, job_id)  # type: ignore[no-any-return]
 
     # -- Worker startup --
 

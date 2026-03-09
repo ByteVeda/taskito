@@ -1,3 +1,4 @@
+mod diesel_common;
 pub mod models;
 #[cfg(feature = "postgres")]
 pub mod postgres;
@@ -388,6 +389,90 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::job::Job>> {
                 self.list_archived(limit, offset)
             }
+            fn acquire_lock(
+                &self,
+                lock_name: &str,
+                owner_id: &str,
+                ttl_ms: i64,
+            ) -> $crate::error::Result<bool> {
+                self.acquire_lock(lock_name, owner_id, ttl_ms)
+            }
+            fn release_lock(
+                &self,
+                lock_name: &str,
+                owner_id: &str,
+            ) -> $crate::error::Result<bool> {
+                self.release_lock(lock_name, owner_id)
+            }
+            fn extend_lock(
+                &self,
+                lock_name: &str,
+                owner_id: &str,
+                ttl_ms: i64,
+            ) -> $crate::error::Result<bool> {
+                self.extend_lock(lock_name, owner_id, ttl_ms)
+            }
+            fn get_lock_info(
+                &self,
+                lock_name: &str,
+            ) -> $crate::error::Result<Option<$crate::storage::models::LockInfoRow>> {
+                self.get_lock_info(lock_name)
+            }
+            fn reap_expired_locks(&self, now: i64) -> $crate::error::Result<u64> {
+                self.reap_expired_locks(now)
+            }
+            fn claim_execution(
+                &self,
+                job_id: &str,
+                worker_id: &str,
+            ) -> $crate::error::Result<bool> {
+                self.claim_execution(job_id, worker_id)
+            }
+            fn complete_execution(&self, job_id: &str) -> $crate::error::Result<()> {
+                self.complete_execution(job_id)
+            }
+            fn purge_execution_claims(
+                &self,
+                older_than_ms: i64,
+            ) -> $crate::error::Result<u64> {
+                self.purge_execution_claims(older_than_ms)
+            }
+            fn stats_by_queue(
+                &self,
+                queue_name: &str,
+            ) -> $crate::error::Result<$crate::storage::QueueStats> {
+                self.stats_by_queue(queue_name)
+            }
+            fn stats_all_queues(
+                &self,
+            ) -> $crate::error::Result<std::collections::HashMap<String, $crate::storage::QueueStats>>
+            {
+                self.stats_all_queues()
+            }
+            fn list_jobs_filtered(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                offset: i64,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.list_jobs_filtered(
+                    status,
+                    queue_name,
+                    task_name,
+                    metadata_like,
+                    error_like,
+                    created_after,
+                    created_before,
+                    limit,
+                    offset,
+                )
+            }
         }
     };
 }
@@ -658,5 +743,61 @@ impl Storage for StorageBackend {
     }
     fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>> {
         delegate!(self, list_archived, limit, offset)
+    }
+    fn acquire_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool> {
+        delegate!(self, acquire_lock, lock_name, owner_id, ttl_ms)
+    }
+    fn release_lock(&self, lock_name: &str, owner_id: &str) -> Result<bool> {
+        delegate!(self, release_lock, lock_name, owner_id)
+    }
+    fn extend_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool> {
+        delegate!(self, extend_lock, lock_name, owner_id, ttl_ms)
+    }
+    fn get_lock_info(&self, lock_name: &str) -> Result<Option<models::LockInfoRow>> {
+        delegate!(self, get_lock_info, lock_name)
+    }
+    fn reap_expired_locks(&self, now: i64) -> Result<u64> {
+        delegate!(self, reap_expired_locks, now)
+    }
+    fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool> {
+        delegate!(self, claim_execution, job_id, worker_id)
+    }
+    fn complete_execution(&self, job_id: &str) -> Result<()> {
+        delegate!(self, complete_execution, job_id)
+    }
+    fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {
+        delegate!(self, purge_execution_claims, older_than_ms)
+    }
+    fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
+        delegate!(self, stats_by_queue, queue_name)
+    }
+    fn stats_all_queues(&self) -> Result<std::collections::HashMap<String, QueueStats>> {
+        delegate!(self, stats_all_queues)
+    }
+    fn list_jobs_filtered(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        metadata_like: Option<&str>,
+        error_like: Option<&str>,
+        created_after: Option<i64>,
+        created_before: Option<i64>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Job>> {
+        delegate!(
+            self,
+            list_jobs_filtered,
+            status,
+            queue_name,
+            task_name,
+            metadata_like,
+            error_like,
+            created_after,
+            created_before,
+            limit,
+            offset
+        )
     }
 }
