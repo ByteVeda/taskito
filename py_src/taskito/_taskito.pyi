@@ -152,6 +152,14 @@ class PyQueue:
         queues: list[str] | None = None,
         drain_timeout_secs: int | None = None,
         tags: str | None = None,
+        worker_id: str | None = None,
+        resources: str | None = None,
+        threads: int = 1,
+    ) -> None: ...
+    def worker_heartbeat(
+        self,
+        worker_id: str,
+        resource_health: str | None = None,
     ) -> None: ...
     def pause_queue(self, queue_name: str) -> None: ...
     def resume_queue(self, queue_name: str) -> None: ...

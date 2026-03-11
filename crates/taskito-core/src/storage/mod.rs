@@ -344,11 +344,18 @@ macro_rules! impl_storage {
                 worker_id: &str,
                 queues: &str,
                 tags: Option<&str>,
+                resources: Option<&str>,
+                resource_health: Option<&str>,
+                threads: i32,
             ) -> $crate::error::Result<()> {
-                self.register_worker(worker_id, queues, tags)
+                self.register_worker(worker_id, queues, tags, resources, resource_health, threads)
             }
-            fn heartbeat(&self, worker_id: &str) -> $crate::error::Result<()> {
-                self.heartbeat(worker_id)
+            fn heartbeat(
+                &self,
+                worker_id: &str,
+                resource_health: Option<&str>,
+            ) -> $crate::error::Result<()> {
+                self.heartbeat(worker_id, resource_health)
             }
             fn list_workers(
                 &self,
@@ -705,11 +712,28 @@ impl Storage for StorageBackend {
     fn list_circuit_breakers(&self) -> Result<Vec<models::CircuitBreakerRow>> {
         delegate!(self, list_circuit_breakers)
     }
-    fn register_worker(&self, worker_id: &str, queues: &str, tags: Option<&str>) -> Result<()> {
-        delegate!(self, register_worker, worker_id, queues, tags)
+    fn register_worker(
+        &self,
+        worker_id: &str,
+        queues: &str,
+        tags: Option<&str>,
+        resources: Option<&str>,
+        resource_health: Option<&str>,
+        threads: i32,
+    ) -> Result<()> {
+        delegate!(
+            self,
+            register_worker,
+            worker_id,
+            queues,
+            tags,
+            resources,
+            resource_health,
+            threads
+        )
     }
-    fn heartbeat(&self, worker_id: &str) -> Result<()> {
-        delegate!(self, heartbeat, worker_id)
+    fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()> {
+        delegate!(self, heartbeat, worker_id, resource_health)
     }
     fn list_workers(&self) -> Result<Vec<models::WorkerRow>> {
         delegate!(self, list_workers)

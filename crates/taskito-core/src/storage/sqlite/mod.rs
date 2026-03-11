@@ -340,6 +340,17 @@ impl SqliteStorage {
         // Migration: add tags column to workers
         migration_alter(&mut conn, "ALTER TABLE workers ADD COLUMN tags TEXT");
 
+        // Migration: add resource advertisement columns to workers
+        migration_alter(&mut conn, "ALTER TABLE workers ADD COLUMN resources TEXT");
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN resource_health TEXT",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN threads INTEGER NOT NULL DEFAULT 0",
+        );
+
         // ── Queue State ──────────────────────────────────
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS queue_state (

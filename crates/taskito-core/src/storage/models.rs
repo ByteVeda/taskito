@@ -284,6 +284,9 @@ pub struct WorkerRow {
     pub queues: String,
     pub status: String,
     pub tags: Option<String>,
+    pub resources: Option<String>,
+    pub resource_health: Option<String>,
+    pub threads: i32,
 }
 
 #[derive(Insertable, AsChangeset, Debug)]
@@ -294,6 +297,9 @@ pub struct NewWorkerRow<'a> {
     pub queues: &'a str,
     pub status: &'a str,
     pub tags: Option<&'a str>,
+    pub resources: Option<&'a str>,
+    pub resource_health: Option<&'a str>,
+    pub threads: i32,
 }
 
 // ── Queue State ─────────────────────────────────────────────────

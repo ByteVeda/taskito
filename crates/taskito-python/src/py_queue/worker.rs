@@ -18,7 +18,20 @@ use crate::py_config::PyTaskConfig;
 #[allow(clippy::useless_conversion)]
 impl PyQueue {
     /// Run the worker loop. This blocks until interrupted.
-    #[pyo3(signature = (task_registry, task_configs, queues=None, drain_timeout_secs=None, tags=None))]
+    ///
+    /// The heartbeat is now driven from Python (see `worker_heartbeat`),
+    /// so the internal Rust heartbeat thread is removed.
+    #[pyo3(signature = (
+        task_registry,
+        task_configs,
+        queues=None,
+        drain_timeout_secs=None,
+        tags=None,
+        worker_id=None,
+        resources=None,
+        threads=1,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     pub fn run_worker(
         &self,
         py: Python<'_>,
@@ -27,6 +40,9 @@ impl PyQueue {
         queues: Option<Vec<String>>,
         drain_timeout_secs: Option<u64>,
         tags: Option<String>,
+        worker_id: Option<String>,
+        resources: Option<String>,
+        threads: i32,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -113,23 +129,16 @@ impl PyQueue {
         let scheduler_arc = Arc::new(scheduler);
         let scheduler_for_dispatch = scheduler_arc.clone();
 
-        // Generate a unique worker ID and register
-        let worker_id = uuid::Uuid::now_v7().to_string();
-        let _ = self
-            .storage
-            .register_worker(&worker_id, &queues_str, tags.as_deref());
-
-        // Start heartbeat thread
-        let heartbeat_storage = self.storage.clone();
-        let heartbeat_worker_id = worker_id.clone();
-        let heartbeat_flag = self.shutdown_flag.clone();
-        let heartbeat_handle = std::thread::spawn(move || {
-            while !heartbeat_flag.load(Ordering::SeqCst) {
-                let _ = heartbeat_storage.heartbeat(&heartbeat_worker_id);
-                let _ = heartbeat_storage.reap_dead_workers();
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            }
-        });
+        // Generate or use the provided worker ID and register
+        let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let _ = self.storage.register_worker(
+            &worker_id,
+            &queues_str,
+            tags.as_deref(),
+            resources.as_deref(),
+            None,
+            threads,
+        );
 
         // Create multi-threaded tokio runtime for scheduler + async worker pool
         let num_workers = self.num_workers;
@@ -245,11 +254,20 @@ impl PyQueue {
         }
 
         let _ = runtime_handle.join();
-        let _ = heartbeat_handle.join();
 
         // Unregister worker on shutdown
         let _ = self.storage.unregister_worker(&worker_id);
 
+        Ok(())
+    }
+
+    /// Update the heartbeat for a running worker. Called from Python every 5s.
+    #[pyo3(signature = (worker_id, resource_health=None))]
+    pub fn worker_heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> PyResult<()> {
+        self.storage
+            .heartbeat(worker_id, resource_health)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let _ = self.storage.reap_dead_workers();
         Ok(())
     }
 }

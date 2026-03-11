@@ -8,7 +8,15 @@ use crate::storage::models::WorkerRow;
 const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
 impl RedisStorage {
-    pub fn register_worker(&self, worker_id: &str, queues: &str, tags: Option<&str>) -> Result<()> {
+    pub fn register_worker(
+        &self,
+        worker_id: &str,
+        queues: &str,
+        tags: Option<&str>,
+        resources: Option<&str>,
+        resource_health: Option<&str>,
+        threads: i32,
+    ) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
         let wkey = self.key(&["worker", worker_id]);
@@ -19,19 +27,24 @@ impl RedisStorage {
         pipe.hset(&wkey, "queues", queues);
         pipe.hset(&wkey, "status", "active");
         pipe.hset(&wkey, "tags", tags.unwrap_or(""));
+        pipe.hset(&wkey, "resources", resources.unwrap_or(""));
+        pipe.hset(&wkey, "resource_health", resource_health.unwrap_or(""));
+        pipe.hset(&wkey, "threads", threads);
         pipe.sadd(&wall, worker_id);
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(())
     }
 
-    pub fn heartbeat(&self, worker_id: &str) -> Result<()> {
+    pub fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
         let wkey = self.key(&["worker", worker_id]);
 
-        conn.hset::<_, _, _, ()>(&wkey, "last_heartbeat", now)
-            .map_err(map_err)?;
+        let pipe = &mut redis::pipe();
+        pipe.hset(&wkey, "last_heartbeat", now);
+        pipe.hset(&wkey, "resource_health", resource_health.unwrap_or(""));
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(())
     }
@@ -52,7 +65,8 @@ impl RedisStorage {
                 continue;
             }
 
-            let tags_val = data.get("tags").map(|s| s.as_str()).unwrap_or("");
+            let to_opt =
+                |key: &str| -> Option<String> { data.get(key).filter(|s| !s.is_empty()).cloned() };
 
             rows.push(WorkerRow {
                 worker_id: wid,
@@ -68,11 +82,13 @@ impl RedisStorage {
                     .get("status")
                     .cloned()
                     .unwrap_or_else(|| "active".to_string()),
-                tags: if tags_val.is_empty() {
-                    None
-                } else {
-                    Some(tags_val.to_string())
-                },
+                tags: to_opt("tags"),
+                resources: to_opt("resources"),
+                resource_health: to_opt("resource_health"),
+                threads: data
+                    .get("threads")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
             });
         }
 

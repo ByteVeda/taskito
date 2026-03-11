@@ -340,6 +340,20 @@ impl PostgresStorage {
             "ALTER TABLE workers ADD COLUMN IF NOT EXISTS tags TEXT",
         );
 
+        // Migration: add resource advertisement columns to workers
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS resources TEXT",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS resource_health TEXT",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS threads INTEGER NOT NULL DEFAULT 0",
+        );
+
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS queue_state (
                 queue_name TEXT PRIMARY KEY,
