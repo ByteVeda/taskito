@@ -24,17 +24,65 @@ from taskito import Queue, JsonSerializer
 queue = Queue(serializer=JsonSerializer())
 ```
 
+### MsgPackSerializer
+
+MessagePack serialization: faster than cloudpickle, produces smaller payloads, and is cross-language compatible. Requires the `msgpack` package.
+
+```bash
+pip install msgpack
+```
+
+```python
+from taskito.serializers import MsgPackSerializer
+
+queue = Queue(serializer=MsgPackSerializer())
+```
+
+!!! note "Type restrictions"
+    `MsgPackSerializer` only handles basic types: dicts, lists, strings, numbers, booleans, and `None`. It does not support lambdas, closures, or arbitrary Python objects. Use `CloudpickleSerializer` when you need to pass complex objects.
+
+### EncryptedSerializer
+
+AES-256-GCM encryption for task arguments and results. Payloads stored in the database are opaque ciphertext — only the key holder can read them. Requires the `cryptography` package.
+
+```bash
+pip install cryptography
+```
+
+```python
+import os
+from taskito.serializers import EncryptedSerializer
+
+queue = Queue(serializer=EncryptedSerializer(key=os.environ["QUEUE_KEY"]))
+```
+
+The key must be exactly 32 bytes, base64-encoded. Generate one with:
+
+```bash
+python -c "import os, base64; print(base64.b64encode(os.urandom(32)).decode())"
+```
+
+By default, `EncryptedSerializer` wraps `CloudpickleSerializer`. To wrap a different serializer:
+
+```python
+from taskito.serializers import EncryptedSerializer, MsgPackSerializer
+
+queue = Queue(serializer=EncryptedSerializer(key=key, inner=MsgPackSerializer()))
+```
+
 ## When to Use Each
 
-| | CloudpickleSerializer | JsonSerializer |
-|---|---|---|
-| **Complex objects** | Yes (lambdas, closures, classes) | No (simple types only) |
-| **Debugging** | Binary payloads (opaque) | Human-readable JSON |
-| **Cross-language** | Python only | Any language |
-| **Performance** | Slightly faster for complex objects | Slightly faster for simple types |
-| **Default** | Yes | No |
+| | CloudpickleSerializer | JsonSerializer | MsgPackSerializer | EncryptedSerializer |
+|---|---|---|---|---|
+| **Complex objects** | Yes | No | No | Depends on inner serializer |
+| **Debugging** | Binary payloads (opaque) | Human-readable JSON | Binary (opaque) | Ciphertext (opaque) |
+| **Cross-language** | Python only | Any language | Any language | Python only (by default) |
+| **Performance** | Good | Good for simple types | Best | Adds encryption overhead |
+| **Security** | None | None | None | AES-256-GCM |
+| **Extra dependency** | No | No | `msgpack` | `cryptography` |
+| **Default** | Yes | No | No | No |
 
-**Rule of thumb**: Use `CloudpickleSerializer` (default) unless you have a specific reason to use JSON.
+**Rule of thumb**: Use `CloudpickleSerializer` (default) unless you have a specific reason to switch. Use `EncryptedSerializer` when tasks carry sensitive data that must not be readable in the database.
 
 ## Custom Serializers
 

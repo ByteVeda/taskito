@@ -44,3 +44,7 @@
 .copy-markdown-btn svg {
   flex-shrink: 0;
 }
+
+.md-generator {
+  display: none;
+}

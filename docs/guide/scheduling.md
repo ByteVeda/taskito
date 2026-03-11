@@ -74,15 +74,34 @@ taskito uses **6-field cron expressions** (with seconds):
 
 ```python
 @queue.periodic(
-    cron="0 0 * * * *",       # Required: cron expression
-    name="hourly-cleanup",     # Optional: explicit name
-    args=(3600,),              # Optional: positional args
-    kwargs={"force": True},    # Optional: keyword args
-    queue="maintenance",       # Optional: target queue
+    cron="0 0 * * * *",           # Required: cron expression
+    name="hourly-cleanup",         # Optional: explicit name
+    args=(3600,),                  # Optional: positional args
+    kwargs={"force": True},        # Optional: keyword args
+    queue="maintenance",           # Optional: target queue
+    timezone="America/New_York",   # Optional: IANA timezone (default: UTC)
 )
 def cleanup(older_than, force=False):
     ...
 ```
+
+### Timezone Support
+
+By default, cron expressions are evaluated in UTC. Pass any IANA timezone name to schedule in a specific timezone:
+
+```python
+@queue.periodic(cron="0 0 9 * * 1-5", timezone="America/New_York")
+def morning_report():
+    """Run weekdays at 9:00 AM Eastern."""
+    generate_report()
+
+@queue.periodic(cron="0 0 18 * * *", timezone="Europe/London")
+def end_of_day_summary():
+    """Run at 6:00 PM London time."""
+    send_summary()
+```
+
+Timezone handling uses `chrono-tz` under the hood. Daylight saving time transitions are handled automatically. The `timezone` parameter defaults to UTC when omitted.
 
 ### How Periodic Tasks Work
 
