@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import io
+import pathlib
 import sys
 from typing import Any, ClassVar
+
+from taskito.exceptions import ProxyReconstructionError
+from taskito.proxies.schema import FieldSpec
 
 
 class FileHandler:
@@ -18,8 +22,17 @@ class FileHandler:
         io.BufferedWriter,
         io.FileIO,
     )
+    schema: ClassVar[dict[str, FieldSpec]] = {
+        "path": FieldSpec(str),
+        "mode": FieldSpec(str),
+        "encoding": FieldSpec((str, type(None)), required=False),
+        "position": FieldSpec(int, required=False),
+    }
 
     _STDIO_FILES: ClassVar[set[int]] = {id(sys.stdin), id(sys.stdout), id(sys.stderr)}
+
+    def __init__(self, path_allowlist: list[str] | None = None) -> None:
+        self._path_allowlist = [str(pathlib.Path(p).resolve()) for p in (path_allowlist or [])]
 
     def detect(self, obj: Any) -> bool:
         if not isinstance(obj, self.handled_types):
@@ -42,10 +55,19 @@ class FileHandler:
         }
 
     def reconstruct(self, recipe: dict[str, Any], version: int) -> Any:
+        path = recipe["path"]
+
+        # Path allowlist enforcement
+        if self._path_allowlist:
+            resolved = str(pathlib.Path(path).resolve())
+            allowed = any(resolved.startswith(prefix) for prefix in self._path_allowlist)
+            if not allowed:
+                raise ProxyReconstructionError(f"File path '{path}' is not in the allowed paths")
+
         kwargs: dict[str, Any] = {}
         if recipe.get("encoding") is not None:
             kwargs["encoding"] = recipe["encoding"]
-        f = open(recipe["path"], recipe["mode"], **kwargs)  # noqa: SIM115
+        f = open(path, recipe["mode"], **kwargs)  # noqa: SIM115
         position = recipe.get("position", 0)
         if position and position > 0:
             f.seek(position)

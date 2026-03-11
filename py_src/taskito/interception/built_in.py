@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import datetime
 import decimal
 import pathlib
@@ -118,6 +119,13 @@ def build_default_registry() -> TypeRegistry:
         converter=converters.convert_pattern,
         type_key="pattern",
     )
+    reg.register(
+        collections.OrderedDict,
+        Strategy.CONVERT,
+        priority=10,
+        converter=converters.convert_ordered_dict,
+        type_key="ordered_dict",
+    )
 
     # Pydantic (optional dependency)
     pydantic_base = _try_import("pydantic", "BaseModel")
@@ -152,6 +160,11 @@ def build_default_registry() -> TypeRegistry:
         ("redis", "Redis", "redis"),
         ("redis.asyncio", "Redis", "redis"),
         ("pymongo", "MongoClient", "mongo"),
+        ("motor.motor_asyncio", "AsyncIOMotorClient", "mongo"),
+        ("psycopg2.extensions", "connection", "db"),
+        ("asyncpg.connection", "Connection", "db"),
+        ("django.db.backends.base.base", "BaseDatabaseWrapper", "db"),
+        ("aiohttp", "ClientSession", "aiohttp_session"),
     ]
     for mod_path, cls_name, resource in _redirect_types:
         typ = _try_import(mod_path, cls_name)
@@ -201,6 +214,27 @@ def build_default_registry() -> TypeRegistry:
                 Strategy.PROXY,
                 priority=20,
                 proxy_handler="httpx_client",
+            )
+
+    # Optional: boto3 clients
+    boto3_base = _try_import("botocore.client", "BaseClient")
+    if boto3_base is not None:
+        reg.register(
+            boto3_base,
+            Strategy.PROXY,
+            priority=20,
+            proxy_handler="boto3_client",
+        )
+
+    # Optional: Google Cloud Storage
+    for gcs_cls in ("Client", "Bucket", "Blob"):
+        gcs_type = _try_import("google.cloud.storage", gcs_cls)
+        if gcs_type is not None:
+            reg.register(
+                gcs_type,
+                Strategy.PROXY,
+                priority=20,
+                proxy_handler="gcs_client",
             )
 
     # -- REJECT (priority 30, high — catch these before anything else) --
@@ -282,8 +316,48 @@ def build_default_registry() -> TypeRegistry:
                 ],
             )
 
+    # contextvars.Context
+    ctx_type = _try_import("contextvars", "Context")
+    if ctx_type is not None:
+        reg.register(
+            ctx_type,
+            Strategy.REJECT,
+            priority=30,
+            reject_reason=("Context variables are process-local and cannot be serialized."),
+            reject_suggestions=[
+                "Extract the values you need from the context and pass them directly",
+            ],
+        )
+
+    # multiprocessing types
+    _mp_reject: list[tuple[str, str, str]] = [
+        (
+            "multiprocessing.synchronize",
+            "Lock",
+            "Multiprocessing locks are tied to the current process.",
+        ),
+        (
+            "multiprocessing.queues",
+            "Queue",
+            "Multiprocessing queues are tied to the current process.",
+        ),
+    ]
+    for mod_path, cls_name, reason in _mp_reject:
+        typ = _try_import(mod_path, cls_name)
+        if typ is not None:
+            reg.register(
+                typ,
+                Strategy.REJECT,
+                priority=30,
+                reject_reason=reason,
+                reject_suggestions=[
+                    "Use taskito's task queue instead of multiprocessing primitives",
+                ],
+            )
+
     # Dataclass detection is handled specially in the walker since
     # dataclasses.is_dataclass() is needed (not isinstance). We register
     # a converter that the walker calls after checking is_dataclass().
+    # NamedTuple, lambda, and tempfile detection are also in the walker.
 
     return reg

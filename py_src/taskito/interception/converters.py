@@ -181,6 +181,40 @@ def reconstruct_pattern(data: dict[str, Any]) -> Any:
     return re.compile(data["value"], data["flags"])
 
 
+# -- NamedTuple --
+
+
+def convert_named_tuple(obj: Any) -> dict[str, Any]:
+    return {
+        "__taskito_convert__": True,
+        "type_key": "named_tuple",
+        "type_path": _type_path(type(obj)),
+        "fields": list(obj._asdict().values()),
+    }
+
+
+def reconstruct_named_tuple(data: dict[str, Any]) -> Any:
+    cls = _import_type(data["type_path"])
+    return cls(*data["fields"])
+
+
+# -- OrderedDict --
+
+
+def convert_ordered_dict(obj: Any) -> dict[str, Any]:
+    return {
+        "__taskito_convert__": True,
+        "type_key": "ordered_dict",
+        "pairs": list(obj.items()),
+    }
+
+
+def reconstruct_ordered_dict(data: dict[str, Any]) -> Any:
+    import collections
+
+    return collections.OrderedDict(data["pairs"])
+
+
 # -- Reconstructor dispatch --
 
 _RECONSTRUCTORS: dict[str, Any] = {
@@ -195,6 +229,8 @@ _RECONSTRUCTORS: dict[str, Any] = {
     "pydantic": reconstruct_pydantic,
     "dataclass": reconstruct_dataclass,
     "pattern": reconstruct_pattern,
+    "named_tuple": reconstruct_named_tuple,
+    "ordered_dict": reconstruct_ordered_dict,
 }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ from taskito.interception.strategy import Strategy
 from taskito.interception.walker import ArgumentWalker
 
 if TYPE_CHECKING:
+    from taskito.interception.metrics import InterceptionMetrics
     from taskito.proxies.registry import ProxyRegistry
 
 logger = logging.getLogger("taskito.interception")
@@ -57,6 +59,7 @@ class ArgumentInterceptor:
         mode: str = "strict",
         max_depth: int = 10,
         proxy_registry: ProxyRegistry | None = None,
+        metrics: InterceptionMetrics | None = None,
     ) -> None:
         if mode not in ("strict", "lenient", "off"):
             raise ValueError(
@@ -65,6 +68,7 @@ class ArgumentInterceptor:
         self._registry = registry
         self._mode = mode
         self._walker = ArgumentWalker(registry, max_depth=max_depth, proxy_registry=proxy_registry)
+        self._metrics = metrics
 
     @property
     def mode(self) -> str:
@@ -82,7 +86,16 @@ class ArgumentInterceptor:
         if self._mode == "off":
             return args, kwargs
 
+        start = time.monotonic()
         new_args, new_kwargs, walk_result = self._walker.walk(args, kwargs)
+        duration_ms = (time.monotonic() - start) * 1000
+
+        if self._metrics is not None:
+            self._metrics.record(
+                duration_ms=duration_ms,
+                strategies=walk_result.strategy_counts,
+                max_depth=walk_result.max_depth,
+            )
 
         if walk_result.failures:
             if self._mode == "strict":

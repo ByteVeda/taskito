@@ -11,6 +11,9 @@ class ResourceScope(Enum):
     """Lifecycle scope for a resource instance."""
 
     WORKER = "worker"  # shared across all tasks, lives for worker lifetime
+    TASK = "task"  # acquired per-task from a pool, returned after
+    THREAD = "thread"  # one instance per worker thread, created lazily
+    REQUEST = "request"  # fresh instance per task, torn down after
 
 
 @dataclass
@@ -25,3 +28,12 @@ class ResourceDefinition:
     max_recreation_attempts: int = 3
     scope: ResourceScope = ResourceScope.WORKER
     depends_on: list[str] = field(default_factory=list)
+    # Pool config (task scope only)
+    pool_size: int | None = None  # None = worker thread count
+    pool_min: int = 0
+    acquire_timeout: float = 10.0
+    max_lifetime: float = 3600.0
+    idle_timeout: float = 300.0
+    # Behavior flags
+    reloadable: bool = False
+    frozen: bool = False

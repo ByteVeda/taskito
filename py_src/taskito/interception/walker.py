@@ -23,11 +23,13 @@ _CONTAINER_TYPES = (list, tuple, set, frozenset)
 class WalkResult:
     """Accumulated results from walking an argument tree."""
 
-    __slots__ = ("failures", "redirects")
+    __slots__ = ("failures", "max_depth", "redirects", "strategy_counts")
 
     def __init__(self) -> None:
         self.failures: list[ArgumentFailure] = []
         self.redirects: dict[str, str] = {}  # path -> resource_name
+        self.strategy_counts: dict[str, int] = {}
+        self.max_depth: int = 0
 
 
 class ArgumentWalker:
@@ -77,6 +79,17 @@ class ArgumentWalker:
         if obj is None:
             return obj
 
+        # NoProxy wrapper — unwrap and skip interception
+        if (
+            hasattr(obj, "__class__")
+            and obj.__class__.__name__ == "NoProxy"
+            and hasattr(obj, "value")
+        ):
+            return obj.value
+
+        # Track max depth
+        result.max_depth = max(result.max_depth, depth)
+
         # Depth limit — pass through to serializer as-is
         if depth > self._max_depth:
             return obj
@@ -106,7 +119,43 @@ class ArgumentWalker:
         result: WalkResult,
         proxy_identity: dict[int, str],
     ) -> Any:
-        # Check dataclass first (can't use isinstance, need is_dataclass)
+        # Lambda detection — must check before registry (shares type with functions)
+        if callable(obj) and hasattr(obj, "__name__") and obj.__name__ == "<lambda>":
+            result.failures.append(
+                ArgumentFailure(
+                    path=path,
+                    type_name="lambda",
+                    reason="Lambda functions cannot be serialized.",
+                    suggestions=[
+                        "Extract the lambda into a named function",
+                        "Pass the computed value instead of the lambda",
+                    ],
+                )
+            )
+            return obj
+
+        # Tempfile detection — module-based check since types are private
+        if getattr(type(obj), "__module__", None) == "tempfile":
+            result.failures.append(
+                ArgumentFailure(
+                    path=path,
+                    type_name=type(obj).__qualname__,
+                    reason="Temporary file handles are OS-level and tied to the current process.",
+                    suggestions=[
+                        "Write to a permanent file and pass the path instead",
+                        "Read the contents and pass the data directly",
+                    ],
+                )
+            )
+            return obj
+
+        # NamedTuple detection — must check before registry (tuples are PASS)
+        if isinstance(obj, tuple) and hasattr(obj, "_fields") and hasattr(obj, "_asdict"):
+            from taskito.interception.converters import convert_named_tuple
+
+            return convert_named_tuple(obj)
+
+        # Check dataclass (can't use isinstance, need is_dataclass)
         if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
             entry = self._registry.resolve(obj)
             # If there's a specific registered entry for this dataclass type, use it
@@ -149,6 +198,8 @@ class ArgumentWalker:
         proxy_identity: dict[int, str],
     ) -> Any:
         strategy = entry.strategy
+        key = strategy.value
+        result.strategy_counts[key] = result.strategy_counts.get(key, 0) + 1
 
         if strategy == Strategy.PASS:
             # For containers registered as PASS (list, dict, etc.),
