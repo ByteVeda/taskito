@@ -23,8 +23,10 @@ from taskito.exceptions import (
     TaskitoError,
     TaskTimeoutError,
 )
+from taskito.inject import Inject
 from taskito.interception import InterceptionError, InterceptionReport
 from taskito.middleware import TaskMiddleware
+from taskito.proxies.no_proxy import NoProxy
 from taskito.result import JobResult
 from taskito.serializers import (
     CloudpickleSerializer,
@@ -34,7 +36,7 @@ from taskito.serializers import (
     Serializer,
 )
 from taskito.task import TaskWrapper
-from taskito.testing import TestMode, TestResult, TestResults
+from taskito.testing import MockResource, TestMode, TestResult, TestResults
 
 __all__ = [
     "CircuitBreakerOpenError",
@@ -42,13 +44,16 @@ __all__ = [
     "CloudpickleSerializer",
     "EncryptedSerializer",
     "EventType",
+    "Inject",
     "InterceptionError",
     "InterceptionReport",
     "JobNotFoundError",
     "JobResult",
     "JsonSerializer",
     "MaxRetriesExceededError",
+    "MockResource",
     "MsgPackSerializer",
+    "NoProxy",
     "ProxyCleanupError",
     "ProxyReconstructionError",
     "Queue",

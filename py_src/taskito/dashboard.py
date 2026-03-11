@@ -158,6 +158,10 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response(queue.workers())
             elif path == "/api/resources":
                 self._json_response(queue.resource_status())
+            elif path == "/api/proxy-stats":
+                self._json_response(queue.proxy_stats())
+            elif path == "/api/interception-stats":
+                self._json_response(queue.interception_stats())
             elif path == "/api/queues/paused":
                 self._json_response(queue.paused_queues())
             elif path == "/metrics":

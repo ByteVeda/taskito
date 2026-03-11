@@ -91,6 +91,19 @@ def main() -> None:
         help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
     )
 
+    # reload subcommand
+    reload_parser = subparsers.add_parser(
+        "reload", help="Reload resources on a running worker via SIGHUP"
+    )
+    reload_parser.add_argument(
+        "--pid", type=int, required=True, help="PID of the running worker process"
+    )
+    reload_parser.add_argument(
+        "--resource",
+        default=None,
+        help="Reload a specific resource (default: all reloadable)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "worker":
@@ -109,6 +122,8 @@ def main() -> None:
         print(f"Queue '{args.queue_name}' resumed")
     elif args.command == "resources":
         run_resources(args)
+    elif args.command == "reload":
+        run_reload(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -231,10 +246,43 @@ def run_resources(args: argparse.Namespace) -> None:
     print("-" * len(header))
     for r in resources:
         deps = ", ".join(r["depends_on"]) if r["depends_on"] else "-"
-        print(
+        line = (
             f"{r['name']:<20} {r['scope']:<10} {r['health']:<16} "
             f"{r['init_duration_ms']:<12.2f} {r['recreations']:<14} {deps}"
         )
+        print(line)
+        # Show pool stats for task-scoped resources
+        pool = r.get("pool")
+        if pool:
+            print(
+                f"  {'':>20} pool: "
+                f"active={pool['active']} idle={pool['idle']} "
+                f"max={pool['size']} "
+                f"timeouts={pool['total_timeouts']}"
+            )
+
+
+def run_reload(args: argparse.Namespace) -> None:
+    """Send SIGHUP to a running worker to reload resources."""
+    import os
+    import signal as sig
+
+    if not hasattr(sig, "SIGHUP"):
+        print("Error: SIGHUP is not available on this platform", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        os.kill(args.pid, sig.SIGHUP)
+        print(f"Sent SIGHUP to worker (PID {args.pid})")
+    except ProcessLookupError:
+        print(f"Error: no process with PID {args.pid}", file=sys.stderr)
+        sys.exit(1)
+    except PermissionError:
+        print(
+            f"Error: permission denied sending signal to PID {args.pid}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

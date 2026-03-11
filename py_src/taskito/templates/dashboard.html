@@ -1167,7 +1167,7 @@
       let edgesSvg = dag.edges.map(e => {
         const from = positions[e.from], to = positions[e.to];
         if (!from || !to) return '';
-        return `<line class="dag-edge" x1="${from.x + nodeW}" y1="${from.y + nodeH/2}" x2="${to.x}" y2="${to.y + nodeH/2}"/>`;
+        return `<line class="dag-edge" x1="${from.x + nodeW}" y1="${from.y + nodeH / 2}" x2="${to.x}" y2="${to.y + nodeH / 2}"/>`;
       }).join('');
 
       let nodesSvg = dag.nodes.map(n => {

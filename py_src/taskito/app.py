@@ -31,6 +31,7 @@ from taskito.mixins import (
 )
 from taskito.proxies import ProxyRegistry, cleanup_proxies, reconstruct_proxies
 from taskito.proxies.built_in import register_builtin_handlers
+from taskito.proxies.metrics import ProxyMetrics
 from taskito.resources.definition import ResourceDefinition, ResourceScope
 from taskito.resources.runtime import ResourceRuntime
 from taskito.result import JobResult
@@ -95,6 +96,10 @@ class Queue(
         drain_timeout: int = 30,
         interception: str = "off",
         max_intercept_depth: int = 10,
+        recipe_signing_key: str | None = None,
+        max_reconstruction_timeout: int = 10,
+        file_path_allowlist: list[str] | None = None,
+        disabled_proxies: list[str] | None = None,
     ):
         """Initialize a new task queue.
 
@@ -125,6 +130,12 @@ class Queue(
                 ``"off"`` (disabled, default). See :mod:`taskito.interception`.
             max_intercept_depth: Maximum recursion depth for argument walking.
                 Defaults to 10.
+            recipe_signing_key: HMAC-SHA256 key for proxy recipe integrity.
+                Falls back to ``TASKITO_RECIPE_SECRET`` env var.
+            max_reconstruction_timeout: Max seconds for proxy reconstruction.
+            file_path_allowlist: Allowed file paths for the file proxy handler.
+            disabled_proxies: Handler names to skip when registering built-in
+                proxy handlers.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -169,16 +180,28 @@ class Queue(
 
         # Proxy handlers
         self._proxy_registry = ProxyRegistry()
-        register_builtin_handlers(self._proxy_registry)
+        register_builtin_handlers(
+            self._proxy_registry,
+            disabled_proxies=disabled_proxies,
+            file_path_allowlist=file_path_allowlist,
+        )
+        self._proxy_metrics = ProxyMetrics()
+        self._recipe_signing_key = recipe_signing_key or os.environ.get("TASKITO_RECIPE_SECRET")
+        self._max_reconstruction_timeout = max_reconstruction_timeout
 
         # Argument interception
+        self._interception_metrics = None
         if interception != "off":
+            from taskito.interception.metrics import InterceptionMetrics
+
+            self._interception_metrics = InterceptionMetrics()
             registry = build_default_registry()
             self._interceptor: ArgumentInterceptor | None = ArgumentInterceptor(
                 registry=registry,
                 mode=interception,
                 max_depth=max_intercept_depth,
                 proxy_registry=self._proxy_registry,
+                metrics=self._interception_metrics,
             )
         else:
             self._interceptor = None
@@ -187,6 +210,9 @@ class Queue(
         self._resource_definitions: dict[str, ResourceDefinition] = {}
         self._resource_runtime: ResourceRuntime | None = None
         self._task_inject_map: dict[str, list[str]] = {}
+
+        # Test mode flag (Phase M)
+        self._test_mode_active = False
 
     def task(
         self,
@@ -228,6 +254,35 @@ class Queue(
         def decorator(fn: Callable) -> TaskWrapper:
             task_name = name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}"
 
+            # Detect Inject["name"] annotations (Phase E)
+            from taskito.inject import _InjectAlias
+
+            annotation_injects: list[str] = []
+            try:
+                import typing
+
+                hints: dict[str, Any] = {}
+                with contextlib.suppress(Exception):
+                    # get_type_hints evaluates string annotations
+                    ns = getattr(fn, "__globals__", {})
+                    ns = {**ns, "Inject": __import__("taskito.inject", fromlist=["Inject"]).Inject}
+                    hints = typing.get_type_hints(fn, globalns=ns, include_extras=True)
+                # Fallback: check raw annotations if get_type_hints failed
+                if not hints:
+                    with contextlib.suppress(Exception):
+                        hints = getattr(fn, "__annotations__", {})
+                for _param_name, hint in hints.items():
+                    if isinstance(hint, _InjectAlias):
+                        annotation_injects.append(hint.resource_name)
+            except Exception:
+                pass
+
+            # Merge explicit inject= with annotation-detected injects
+            final_inject = list(inject or [])
+            for res_name in annotation_injects:
+                if res_name not in final_inject:
+                    final_inject.append(res_name)
+
             # Store retry filters
             if retry_on or dont_retry_on:
                 self._task_retry_filters[task_name] = {
@@ -240,8 +295,8 @@ class Queue(
                 self._task_middleware[task_name] = middleware
 
             # Store inject map for resource injection
-            if inject:
-                self._task_inject_map[task_name] = list(inject)
+            if final_inject:
+                self._task_inject_map[task_name] = final_inject
 
             # Wrap the function with hooks, middleware, and context
             wrapped = self._wrap_task(fn, task_name, soft_timeout)
@@ -280,7 +335,7 @@ class Queue(
                 default_queue=queue,
                 default_max_retries=max_retries,
                 default_timeout=timeout,
-                inject=inject,
+                inject=final_inject or None,
             )
 
             # Preserve function metadata
@@ -383,8 +438,15 @@ class Queue(
         health_check_interval: float = 0.0,
         max_recreation_attempts: int = 3,
         scope: str = "worker",
+        pool_size: int | None = None,
+        pool_min: int = 0,
+        acquire_timeout: float = 10.0,
+        max_lifetime: float = 3600.0,
+        idle_timeout: float = 300.0,
+        reloadable: bool = False,
+        frozen: bool = False,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-        """Decorator to register a worker-scoped resource factory.
+        """Decorator to register a resource factory.
 
         Args:
             name: Resource name used in ``inject=["name"]``.
@@ -393,7 +455,15 @@ class Queue(
             health_check: Optional callable that returns truthy if healthy.
             health_check_interval: Seconds between health checks (0 = disabled).
             max_recreation_attempts: Max times to recreate on health failure.
-            scope: Resource scope (currently only ``"worker"``).
+            scope: Resource scope — ``"worker"``, ``"task"``, ``"thread"``,
+                or ``"request"``.
+            pool_size: Pool size for task-scoped resources.
+            pool_min: Minimum pre-warmed instances (task scope).
+            acquire_timeout: Max seconds to wait for pool instance.
+            max_lifetime: Max seconds a pooled instance lives.
+            idle_timeout: Max idle seconds before eviction.
+            reloadable: Whether the resource can be hot-reloaded via SIGHUP.
+            frozen: Wrap the resource in a read-only proxy.
         """
         from taskito.resources.graph import detect_cycle
 
@@ -408,6 +478,13 @@ class Queue(
                     health_check_interval=health_check_interval,
                     max_recreation_attempts=max_recreation_attempts,
                     scope=ResourceScope(scope),
+                    pool_size=pool_size,
+                    pool_min=pool_min,
+                    acquire_timeout=acquire_timeout,
+                    max_lifetime=max_lifetime,
+                    idle_timeout=idle_timeout,
+                    reloadable=reloadable,
+                    frozen=frozen,
                 )
             )
             # Validate no cycles eagerly
@@ -453,6 +530,71 @@ class Queue(
         except Exception:
             return False
 
+    def load_resources(self, toml_path: str) -> None:
+        """Load resource definitions from a TOML file.
+
+        Must be called before ``run_worker()``.
+
+        Args:
+            toml_path: Path to the TOML configuration file.
+        """
+        from taskito.resources.toml_config import load_resources_from_toml
+
+        for defn in load_resources_from_toml(toml_path):
+            self.register_resource(defn)
+
+    def proxy_stats(self) -> list[dict[str, Any]]:
+        """Return per-handler proxy reconstruction metrics."""
+        return self._proxy_metrics.to_list()
+
+    def interception_stats(self) -> dict[str, Any]:
+        """Return interception performance metrics."""
+        if self._interception_metrics is not None:
+            return self._interception_metrics.to_dict()
+        return {}
+
+    def register_type(
+        self,
+        python_type: type,
+        strategy: str,
+        *,
+        resource: str | None = None,
+        message: str | None = None,
+        converter: Callable | None = None,
+        type_key: str | None = None,
+        proxy_handler: str | None = None,
+    ) -> None:
+        """Register a custom type with the interception system.
+
+        Args:
+            python_type: The type to register.
+            strategy: One of ``"pass"``, ``"convert"``, ``"redirect"``,
+                ``"reject"``, or ``"proxy"``.
+            resource: Resource name for ``"redirect"`` strategy.
+            message: Rejection reason for ``"reject"`` strategy.
+            converter: Converter callable for ``"convert"`` strategy.
+            type_key: Key for the converter reconstructor dispatch.
+            proxy_handler: Handler name for ``"proxy"`` strategy.
+        """
+        if self._interceptor is None:
+            raise RuntimeError(
+                "Interception is disabled; set interception='strict' or "
+                "'lenient' to use register_type()"
+            )
+        from taskito.interception.strategy import Strategy as S
+
+        strat = S(strategy)
+        self._interceptor._registry.register(
+            python_type,
+            strat,
+            priority=15,
+            redirect_resource=resource,
+            reject_reason=message,
+            converter=converter,
+            type_key=type_key,
+            proxy_handler=proxy_handler,
+        )
+
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list."""
         per_task = self._task_middleware.get(task_name, [])
@@ -477,21 +619,33 @@ class Queue(
 
             # Reconstruct proxy markers (PROXY → live objects)
             proxy_cleanup: list[Any] = []
-            if queue_ref._proxy_registry is not None:
+            if queue_ref._proxy_registry is not None and not queue_ref._test_mode_active:
                 args, kwargs, proxy_cleanup = reconstruct_proxies(
-                    args, kwargs, queue_ref._proxy_registry
+                    args,
+                    kwargs,
+                    queue_ref._proxy_registry,
+                    signing_secret=queue_ref._recipe_signing_key,
+                    max_timeout=queue_ref._max_reconstruction_timeout,
+                    metrics=queue_ref._proxy_metrics,
                 )
 
             # Inject resources from runtime
+            release_callbacks: list[Any] = []
             runtime = queue_ref._resource_runtime
             if runtime is not None:
                 # From explicit inject=["db"] on task decorator
                 for res_name in queue_ref._task_inject_map.get(task_name, []):
                     if res_name not in kwargs:
-                        kwargs[res_name] = runtime.resolve(res_name)
+                        instance, release = runtime.acquire_for_task(res_name)
+                        kwargs[res_name] = instance
+                        if release is not None:
+                            release_callbacks.append(release)
                 # From interception REDIRECT markers
                 for kwarg_name, resource_name in redirects.items():
-                    kwargs[kwarg_name] = runtime.resolve(resource_name)
+                    instance, release = runtime.acquire_for_task(resource_name)
+                    kwargs[kwarg_name] = instance
+                    if release is not None:
+                        release_callbacks.append(release)
 
             middleware_chain = queue_ref._get_middleware_chain(task_name)
 
@@ -534,8 +688,14 @@ class Queue(
                     hook(task_name, args, kwargs, result)
                 return result
             finally:
+                # Release task/request-scoped resources
+                for release_fn in release_callbacks:
+                    try:
+                        release_fn()
+                    except Exception:
+                        logger.exception("resource release error")
                 # Clean up reconstructed proxies (LIFO order)
-                cleanup_proxies(proxy_cleanup)
+                cleanup_proxies(proxy_cleanup, metrics=queue_ref._proxy_metrics)
                 for hook in hooks["after_task"]:
                     hook(task_name, args, kwargs, result, error)
                 # Run middleware after hooks (only those whose before() succeeded)
@@ -594,7 +754,7 @@ class Queue(
         """
         final_args = args
         final_kwargs = kwargs or {}
-        if self._interceptor is not None:
+        if self._interceptor is not None and not self._test_mode_active:
             final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
         payload = self._serializer.dumps((final_args, final_kwargs))
 
@@ -871,6 +1031,22 @@ class Queue(
 
             signal.signal(signal.SIGINT, shutdown_handler)
             signal.signal(signal.SIGTERM, shutdown_handler)
+
+            # SIGHUP handler for hot-reloading resources (Unix only)
+            if hasattr(signal, "SIGHUP"):
+
+                def sighup_handler(signum: int, frame: Any) -> None:
+                    logger.info("SIGHUP received — reloading reloadable resources")
+                    if self._resource_runtime is not None:
+                        results = self._resource_runtime.reload()
+                        for rname, success in results.items():
+                            logger.info(
+                                "Reload %s: %s",
+                                rname,
+                                "OK" if success else "FAILED",
+                            )
+
+                signal.signal(signal.SIGHUP, sighup_handler)
 
         # Serialize resource names for worker advertisement
         resources_json: str | None = None
