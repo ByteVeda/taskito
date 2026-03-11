@@ -66,6 +66,8 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --workspace
+        env:
+          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
 
   test:
     needs: [lint, rust-test]

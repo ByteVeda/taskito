@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 default = []
+extension-module = ["pyo3/extension-module"]
 postgres = ["taskito-core/postgres"]
 redis = ["taskito-core/redis"]
 
