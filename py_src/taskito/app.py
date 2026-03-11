@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import json
 import logging
 import os
 import signal
 import threading
 import urllib.parse
+import uuid
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable
@@ -19,12 +21,18 @@ if TYPE_CHECKING:
 
 from taskito._taskito import PyQueue, PyTaskConfig
 from taskito.events import EventBus, EventType
+from taskito.interception import ArgumentInterceptor
+from taskito.interception.built_in import build_default_registry
 from taskito.middleware import TaskMiddleware
 from taskito.mixins import (
     QueueInspectionMixin,
     QueueLockMixin,
     QueueOperationsMixin,
 )
+from taskito.proxies import ProxyRegistry, cleanup_proxies, reconstruct_proxies
+from taskito.proxies.built_in import register_builtin_handlers
+from taskito.resources.definition import ResourceDefinition, ResourceScope
+from taskito.resources.runtime import ResourceRuntime
 from taskito.result import JobResult
 from taskito.serializers import CloudpickleSerializer, Serializer
 from taskito.task import TaskWrapper
@@ -85,6 +93,8 @@ class Queue(
         schema: str = "taskito",
         pool_size: int | None = None,
         drain_timeout: int = 30,
+        interception: str = "off",
+        max_intercept_depth: int = 10,
     ):
         """Initialize a new task queue.
 
@@ -110,6 +120,11 @@ class Queue(
                 that have low connection limits.
             drain_timeout: Seconds to wait for in-flight jobs to finish during
                 graceful shutdown. Defaults to 30.
+            interception: Argument interception mode — ``"strict"`` (reject
+                non-serializable args), ``"lenient"`` (warn and drop), or
+                ``"off"`` (disabled, default). See :mod:`taskito.interception`.
+            max_intercept_depth: Maximum recursion depth for argument walking.
+                Defaults to 10.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -152,6 +167,27 @@ class Queue(
         self._event_bus = EventBus()
         self._webhook_manager = WebhookManager()
 
+        # Proxy handlers
+        self._proxy_registry = ProxyRegistry()
+        register_builtin_handlers(self._proxy_registry)
+
+        # Argument interception
+        if interception != "off":
+            registry = build_default_registry()
+            self._interceptor: ArgumentInterceptor | None = ArgumentInterceptor(
+                registry=registry,
+                mode=interception,
+                max_depth=max_intercept_depth,
+                proxy_registry=self._proxy_registry,
+            )
+        else:
+            self._interceptor = None
+
+        # Worker resources (dependency injection)
+        self._resource_definitions: dict[str, ResourceDefinition] = {}
+        self._resource_runtime: ResourceRuntime | None = None
+        self._task_inject_map: dict[str, list[str]] = {}
+
     def task(
         self,
         name: str | None = None,
@@ -167,6 +203,7 @@ class Queue(
         soft_timeout: float | None = None,
         middleware: list[TaskMiddleware] | None = None,
         retry_delays: list[float] | None = None,
+        inject: list[str] | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -185,6 +222,7 @@ class Queue(
             dont_retry_on: List of exception classes that should never be retried.
             soft_timeout: Soft timeout in seconds. Checked via ``current_job.check_timeout()``.
             middleware: Per-task middleware instances (in addition to global middleware).
+            inject: List of resource names to inject as keyword arguments.
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
@@ -200,6 +238,10 @@ class Queue(
             # Store per-task middleware
             if middleware:
                 self._task_middleware[task_name] = middleware
+
+            # Store inject map for resource injection
+            if inject:
+                self._task_inject_map[task_name] = list(inject)
 
             # Wrap the function with hooks, middleware, and context
             wrapped = self._wrap_task(fn, task_name, soft_timeout)
@@ -238,6 +280,7 @@ class Queue(
                 default_queue=queue,
                 default_max_retries=max_retries,
                 default_timeout=timeout,
+                inject=inject,
             )
 
             # Preserve function metadata
@@ -329,6 +372,87 @@ class Queue(
         self._hooks["on_failure"].append(fn)
         return fn
 
+    # -- Worker Resources --
+
+    def worker_resource(
+        self,
+        name: str,
+        depends_on: list[str] | None = None,
+        teardown: Callable | None = None,
+        health_check: Callable | None = None,
+        health_check_interval: float = 0.0,
+        max_recreation_attempts: int = 3,
+        scope: str = "worker",
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Decorator to register a worker-scoped resource factory.
+
+        Args:
+            name: Resource name used in ``inject=["name"]``.
+            depends_on: Names of resources this one depends on.
+            teardown: Optional callable to clean up the resource on shutdown.
+            health_check: Optional callable that returns truthy if healthy.
+            health_check_interval: Seconds between health checks (0 = disabled).
+            max_recreation_attempts: Max times to recreate on health failure.
+            scope: Resource scope (currently only ``"worker"``).
+        """
+        from taskito.resources.graph import detect_cycle
+
+        def decorator(factory: Callable[..., Any]) -> Callable[..., Any]:
+            self.register_resource(
+                ResourceDefinition(
+                    name=name,
+                    factory=factory,
+                    depends_on=depends_on or [],
+                    teardown=teardown,
+                    health_check=health_check,
+                    health_check_interval=health_check_interval,
+                    max_recreation_attempts=max_recreation_attempts,
+                    scope=ResourceScope(scope),
+                )
+            )
+            # Validate no cycles eagerly
+            cycle = detect_cycle(self._resource_definitions)
+            if cycle is not None:
+                from taskito.exceptions import CircularDependencyError
+
+                # Roll back the registration
+                del self._resource_definitions[name]
+                raise CircularDependencyError(
+                    f"Circular dependency detected: {' -> '.join(cycle)}"
+                )
+            return factory
+
+        return decorator
+
+    def register_resource(self, definition: ResourceDefinition) -> None:
+        """Programmatically register a resource definition.
+
+        Args:
+            definition: A :class:`~taskito.resources.ResourceDefinition`.
+        """
+        self._resource_definitions[definition.name] = definition
+
+    def health_check(self, name: str) -> bool:
+        """Run a resource's health check immediately.
+
+        Args:
+            name: The registered resource name.
+
+        Returns:
+            True if healthy, False otherwise.
+        """
+        runtime = self._resource_runtime
+        if runtime is None:
+            return False
+        defn = self._resource_definitions.get(name)
+        if defn is None or defn.health_check is None:
+            return False
+        try:
+            instance = runtime.resolve(name)
+            return bool(defn.health_check(instance))
+        except Exception:
+            return False
+
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list."""
         per_task = self._task_middleware.get(task_name, [])
@@ -339,12 +463,36 @@ class Queue(
     ) -> Callable:
         """Wrap a task function with hooks, middleware, and job context."""
         from taskito.context import _clear_context, current_job
+        from taskito.interception.reconstruct import reconstruct_args
 
         hooks = self._hooks
         queue_ref = self
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Reconstruct intercepted arguments (CONVERT markers → original types)
+            redirects: dict[str, str] = {}
+            if queue_ref._interceptor is not None:
+                args, kwargs, redirects = reconstruct_args(args, kwargs)
+
+            # Reconstruct proxy markers (PROXY → live objects)
+            proxy_cleanup: list[Any] = []
+            if queue_ref._proxy_registry is not None:
+                args, kwargs, proxy_cleanup = reconstruct_proxies(
+                    args, kwargs, queue_ref._proxy_registry
+                )
+
+            # Inject resources from runtime
+            runtime = queue_ref._resource_runtime
+            if runtime is not None:
+                # From explicit inject=["db"] on task decorator
+                for res_name in queue_ref._task_inject_map.get(task_name, []):
+                    if res_name not in kwargs:
+                        kwargs[res_name] = runtime.resolve(res_name)
+                # From interception REDIRECT markers
+                for kwarg_name, resource_name in redirects.items():
+                    kwargs[kwarg_name] = runtime.resolve(resource_name)
+
             middleware_chain = queue_ref._get_middleware_chain(task_name)
 
             # Set soft timeout on context if configured
@@ -386,6 +534,8 @@ class Queue(
                     hook(task_name, args, kwargs, result)
                 return result
             finally:
+                # Clean up reconstructed proxies (LIFO order)
+                cleanup_proxies(proxy_cleanup)
                 for hook in hooks["after_task"]:
                     hook(task_name, args, kwargs, result, error)
                 # Run middleware after hooks (only those whose before() succeeded)
@@ -442,7 +592,11 @@ class Queue(
             expires: Seconds until the job expires (skipped if not started by then).
             result_ttl: Per-job result TTL in seconds. Overrides global result_ttl.
         """
-        payload = self._serializer.dumps((args, kwargs or {}))
+        final_args = args
+        final_kwargs = kwargs or {}
+        if self._interceptor is not None:
+            final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
+        payload = self._serializer.dumps((final_args, final_kwargs))
 
         dep_ids = None
         if depends_on is not None:
@@ -505,7 +659,11 @@ class Queue(
                 f"args_list length ({len(args_list)})"
             )
         kw_list = kwargs_list or [{}] * count
-        payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
+        if self._interceptor is not None:
+            pairs = [self._interceptor.intercept(a, kw) for a, kw in zip(args_list, kw_list)]
+            payloads = [self._serializer.dumps((a, kw)) for a, kw in pairs]
+        else:
+            payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
         task_names = [task_name] * count
 
         queues_list = [queue or "default"] * count if queue else None
@@ -603,6 +761,13 @@ class Queue(
                 lines.append(f"  . {pc['name']}  ({pc['cron_expr']})")
             lines.append("")
 
+        if self._resource_definitions:
+            lines.append("[resources]")
+            for rname, rdef in sorted(self._resource_definitions.items()):
+                deps = f" (depends: {', '.join(rdef.depends_on)})" if rdef.depends_on else ""
+                lines.append(f"  . {rname}{deps}")
+            lines.append("")
+
         print("\n".join(lines))
 
     def _start_async_loop(self) -> None:
@@ -672,6 +837,22 @@ class Queue(
         # Start shared async event loop for async tasks
         self._start_async_loop()
 
+        # Initialize worker resources (before Rust dispatches tasks)
+        health_checker = None
+        if self._resource_definitions:
+            from taskito.resources.health import HealthChecker
+
+            loop = getattr(self, "_async_loop", None)
+            self._resource_runtime = ResourceRuntime(self._resource_definitions)
+            self._resource_runtime.initialize(loop)
+            logger.info(
+                "Initialized %d resource(s): %s",
+                len(self._resource_definitions),
+                ", ".join(self._resource_runtime._init_order),
+            )
+            health_checker = HealthChecker(self._resource_runtime, loop)
+            health_checker.start()
+
         # Set up signal handlers for graceful shutdown (only in main thread)
         is_main = threading.current_thread() is threading.main_thread()
         original_sigint = None
@@ -691,6 +872,22 @@ class Queue(
             signal.signal(signal.SIGINT, shutdown_handler)
             signal.signal(signal.SIGTERM, shutdown_handler)
 
+        # Serialize resource names for worker advertisement
+        resources_json: str | None = None
+        if self._resource_definitions:
+            resources_json = json.dumps(sorted(self._resource_definitions.keys()))
+
+        # Generate worker ID and start Python-side heartbeat thread
+        worker_id = str(uuid.uuid4())
+        stop_heartbeat = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self._run_heartbeat,
+            args=(worker_id, stop_heartbeat),
+            daemon=True,
+            name="taskito-heartbeat",
+        )
+        heartbeat_thread.start()
+
         try:
             self._inner.run_worker(
                 task_registry=self._task_registry,
@@ -698,10 +895,21 @@ class Queue(
                 queues=queue_list,
                 drain_timeout_secs=self._drain_timeout,
                 tags=",".join(tags) if tags else None,
+                worker_id=worker_id,
+                resources=resources_json,
+                threads=self._workers,
             )
         except KeyboardInterrupt:
             logger.info("Cold shutdown (terminating immediately)")
         finally:
+            stop_heartbeat.set()
+            heartbeat_thread.join(timeout=6)
+            # Tear down resources before stopping async loop
+            if health_checker is not None:
+                health_checker.stop()
+            if self._resource_runtime is not None:
+                self._resource_runtime.teardown()
+                self._resource_runtime = None
             self._stop_async_loop()
             logger.info("Worker stopped.")
             if is_main:
@@ -710,20 +918,83 @@ class Queue(
                 if original_sigterm is not None:
                     signal.signal(signal.SIGTERM, original_sigterm)
 
+    def _build_resource_health_json(self) -> str | None:
+        """Snapshot current resource health as JSON for heartbeat."""
+        if not self._resource_definitions:
+            return None
+        runtime = self._resource_runtime
+        health: dict[str, str] = {}
+        for name in self._resource_definitions:
+            if runtime is not None and name in runtime._unhealthy:
+                health[name] = "unhealthy"
+            else:
+                health[name] = "healthy"
+        return json.dumps(health)
+
+    def _run_heartbeat(
+        self,
+        worker_id: str,
+        stop_event: threading.Event,
+    ) -> None:
+        """Send periodic heartbeats to storage with current resource health."""
+        while not stop_event.is_set():
+            resource_health = self._build_resource_health_json()
+            try:
+                self._inner.worker_heartbeat(worker_id, resource_health)
+            except Exception:
+                logger.debug("Heartbeat failed", exc_info=True)
+            stop_event.wait(timeout=5.0)
+
+    # -- Resource Status --
+
+    def resource_status(self) -> list[dict[str, Any]]:
+        """Return per-resource status info.
+
+        Each entry contains: name, scope, health, init_duration_ms,
+        recreations, depends_on.  Returns an empty list if no resources
+        are registered or the runtime is not initialized.
+        """
+        if self._resource_runtime is not None:
+            return self._resource_runtime.status()
+        # Runtime not initialized — return definitions with unknown health
+        result: list[dict[str, Any]] = []
+        for name, defn in self._resource_definitions.items():
+            result.append(
+                {
+                    "name": name,
+                    "scope": defn.scope.value,
+                    "health": "not_initialized",
+                    "init_duration_ms": 0,
+                    "recreations": 0,
+                    "depends_on": defn.depends_on,
+                }
+            )
+        return result
+
+    async def aresource_status(self) -> list[dict[str, Any]]:
+        """Async version of :meth:`resource_status`."""
+        return self.resource_status()
+
     # -- Test Mode --
 
-    def test_mode(self, propagate_errors: bool = False) -> TestMode:
+    def test_mode(
+        self,
+        propagate_errors: bool = False,
+        resources: dict[str, Any] | None = None,
+    ) -> TestMode:
         """Return a context manager that runs tasks synchronously (no worker needed).
 
         Args:
             propagate_errors: If True, re-raise task exceptions immediately.
+            resources: Dict of resource name → mock instance for injection
+                during test mode.
 
         Returns:
             A :class:`~taskito.testing.TestMode` context manager.
         """
         from taskito.testing import TestMode
 
-        return TestMode(self, propagate_errors=propagate_errors)
+        return TestMode(self, propagate_errors=propagate_errors, resources=resources)
 
     async def arun_worker(
         self,

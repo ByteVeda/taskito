@@ -43,6 +43,9 @@ _retries_total: Any = None
 _queue_depth: Any = None
 _dlq_size: Any = None
 _worker_utilization: Any = None
+_resource_health: Any = None
+_resource_recreations: Any = None
+_resource_init_duration: Any = None
 _metrics_initialized = False
 
 
@@ -52,6 +55,7 @@ _init_lock = threading.Lock()
 def _init_metrics() -> None:
     global _jobs_total, _job_duration, _active_workers, _retries_total
     global _queue_depth, _dlq_size, _worker_utilization, _metrics_initialized
+    global _resource_health, _resource_recreations, _resource_init_duration
 
     if _metrics_initialized:
         return
@@ -91,6 +95,21 @@ def _init_metrics() -> None:
         _worker_utilization = Gauge(
             "taskito_worker_utilization",
             "Worker utilization ratio (0.0-1.0)",
+        )
+        _resource_health = Gauge(
+            "taskito_resource_health_status",
+            "Resource health (1=healthy, 0=unhealthy)",
+            ["resource"],
+        )
+        _resource_recreations = Gauge(
+            "taskito_resource_recreation_total",
+            "Total recreations per resource",
+            ["resource"],
+        )
+        _resource_init_duration = Gauge(
+            "taskito_resource_init_duration_seconds",
+            "Time to initialize each resource",
+            ["resource"],
         )
         _metrics_initialized = True
 
@@ -186,6 +205,21 @@ class PrometheusStatsCollector:
                     _queue_depth.labels(queue="default").set(stats.get("pending", 0))
             except Exception:
                 logger.debug("Stats collection failed", exc_info=True)
+
+            # Resource metrics
+            try:
+                for res in self._queue.resource_status():
+                    name = res["name"]
+                    _resource_health.labels(resource=name).set(
+                        1.0 if res["health"] == "healthy" else 0.0
+                    )
+                    _resource_recreations.labels(resource=name).set(res["recreations"])
+                    _resource_init_duration.labels(resource=name).set(
+                        res["init_duration_ms"] / 1000.0
+                    )
+            except Exception:
+                logger.debug("Resource metrics collection failed", exc_info=True)
+
             self._stop_event.wait(self._interval)
 
 

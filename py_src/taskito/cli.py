@@ -83,6 +83,14 @@ def main() -> None:
     )
     resume_parser.add_argument("queue_name", help="Queue name to resume")
 
+    # resources subcommand
+    res_parser = subparsers.add_parser("resources", help="Show registered resources")
+    res_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
+    )
+
     args = parser.parse_args()
 
     if args.command == "worker":
@@ -99,6 +107,8 @@ def main() -> None:
         queue = _load_queue(args.app)
         queue.resume(args.queue_name)
         print(f"Queue '{args.queue_name}' resumed")
+    elif args.command == "resources":
+        run_resources(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -203,6 +213,28 @@ def _watch_stats(queue: Queue) -> None:
             time.sleep(2)
     except KeyboardInterrupt:
         pass
+
+
+def run_resources(args: argparse.Namespace) -> None:
+    """Print resource status from registered definitions or live runtime."""
+    queue = _load_queue(args.app)
+    resources = queue.resource_status()
+    if not resources:
+        print("No resources registered.")
+        return
+
+    header = (
+        f"{'RESOURCE':<20} {'SCOPE':<10} {'HEALTH':<16} "
+        f"{'INIT (ms)':<12} {'RECREATIONS':<14} DEPENDS ON"
+    )
+    print(header)
+    print("-" * len(header))
+    for r in resources:
+        deps = ", ".join(r["depends_on"]) if r["depends_on"] else "-"
+        print(
+            f"{r['name']:<20} {r['scope']:<10} {r['health']:<16} "
+            f"{r['init_duration_ms']:<12.2f} {r['recreations']:<14} {deps}"
+        )
 
 
 if __name__ == "__main__":

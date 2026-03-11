@@ -6,16 +6,24 @@ from taskito.context import current_job
 from taskito.events import EventType
 from taskito.exceptions import (
     CircuitBreakerOpenError,
+    CircularDependencyError,
     JobNotFoundError,
     MaxRetriesExceededError,
+    ProxyCleanupError,
+    ProxyReconstructionError,
     QueueError,
     RateLimitExceededError,
+    ResourceError,
+    ResourceInitError,
+    ResourceNotFoundError,
+    ResourceUnavailableError,
     SerializationError,
     SoftTimeoutError,
     TaskCancelledError,
     TaskitoError,
     TaskTimeoutError,
 )
+from taskito.interception import InterceptionError, InterceptionReport
 from taskito.middleware import TaskMiddleware
 from taskito.result import JobResult
 from taskito.serializers import (
@@ -30,17 +38,26 @@ from taskito.testing import TestMode, TestResult, TestResults
 
 __all__ = [
     "CircuitBreakerOpenError",
+    "CircularDependencyError",
     "CloudpickleSerializer",
     "EncryptedSerializer",
     "EventType",
+    "InterceptionError",
+    "InterceptionReport",
     "JobNotFoundError",
     "JobResult",
     "JsonSerializer",
     "MaxRetriesExceededError",
     "MsgPackSerializer",
+    "ProxyCleanupError",
+    "ProxyReconstructionError",
     "Queue",
     "QueueError",
     "RateLimitExceededError",
+    "ResourceError",
+    "ResourceInitError",
+    "ResourceNotFoundError",
+    "ResourceUnavailableError",
     "SerializationError",
     "Serializer",
     "Signature",

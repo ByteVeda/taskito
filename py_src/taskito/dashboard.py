@@ -156,6 +156,8 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response(queue.circuit_breakers())
             elif path == "/api/workers":
                 self._json_response(queue.workers())
+            elif path == "/api/resources":
+                self._json_response(queue.resource_status())
             elif path == "/api/queues/paused":
                 self._json_response(queue.paused_queues())
             elif path == "/metrics":

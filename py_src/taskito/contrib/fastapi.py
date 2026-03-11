@@ -294,6 +294,11 @@ class TaskitoRouter(APIRouter):
 
             return ReadinessResponse(**check_readiness(queue))
 
+        @self.get("/resources")
+        async def get_resources() -> list[dict[str, Any]]:
+            """Get resource status for all registered worker resources."""
+            return await queue.aresource_status()
+
         @self.get("/stats/queues")
         async def get_queue_stats(
             queue_name: str | None = Query(default=None, alias="queue"),

@@ -76,20 +76,35 @@ class TestMode:
     Chain, group, and chord work correctly because they call enqueue() internally.
     """
 
-    def __init__(self, queue: Queue, propagate_errors: bool = False):
+    def __init__(
+        self,
+        queue: Queue,
+        propagate_errors: bool = False,
+        resources: dict[str, Any] | None = None,
+    ):
         """
         Args:
             queue: The Queue instance to put into test mode.
             propagate_errors: If True, re-raise task exceptions immediately
                 instead of capturing them in TestResult.error.
+            resources: Dict of resource name → mock instance for injection.
         """
         self._queue = queue
         self._propagate = propagate_errors
+        self._resources = resources
         self._results = TestResults()
         self._patches: list[Any] = []
         self._job_counter = 0
+        self._prev_runtime: Any = None
 
     def __enter__(self) -> TestResults:
+        # Set up test resource runtime if resources provided
+        if self._resources is not None:
+            from taskito.resources.runtime import ResourceRuntime
+
+            self._prev_runtime = self._queue._resource_runtime
+            self._queue._resource_runtime = ResourceRuntime.from_test_overrides(self._resources)
+
         def test_enqueue(
             task_name: str,
             args: tuple = (),
@@ -107,6 +122,11 @@ class TestMode:
         for p in self._patches:
             p.stop()
         self._patches.clear()
+
+        # Restore previous resource runtime
+        if self._resources is not None:
+            self._queue._resource_runtime = self._prev_runtime
+            self._prev_runtime = None
 
     def _execute_task(
         self,
