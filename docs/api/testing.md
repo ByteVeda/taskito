@@ -15,13 +15,14 @@ Context manager that intercepts `enqueue()` to run tasks synchronously. No worke
 ### Constructor
 
 ```python
-TestMode(queue: Queue, propagate_errors: bool = False)
+TestMode(queue: Queue, propagate_errors: bool = False, resources: dict[str, Any] | None = None)
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `queue` | `Queue` | *required* | The Queue instance to put into test mode |
 | `propagate_errors` | `bool` | `False` | Re-raise task exceptions immediately instead of capturing them |
+| `resources` | `dict[str, Any] \| None` | `None` | Resource name → mock instance map injected during test mode. `MockResource` values are unwrapped automatically. |
 
 ### Usage
 
@@ -33,6 +34,10 @@ with TestMode(queue) as results:
 # Shortcut via Queue:
 with queue.test_mode() as results:
     my_task.delay(42)
+
+# With mock resources:
+with queue.test_mode(resources={"db": mock_session}) as results:
+    create_user.delay("Alice")
 ```
 
 ---
@@ -104,4 +109,57 @@ Returns a new `TestResults` containing only matching items.
 results.filter(task_name="myapp.send_email")
 results.filter(succeeded=False)
 results.filter(task_name="myapp.process", succeeded=True)
+```
+
+---
+
+## `MockResource`
+
+```python
+from taskito import MockResource
+```
+
+Test double for a worker resource with optional call tracking. Pass instances to `queue.test_mode(resources=...)`.
+
+### Constructor
+
+```python
+MockResource(
+    name: str,
+    return_value: Any = None,
+    wraps: Any = None,
+    track_calls: bool = False,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `str` | *required* | Resource name (informational). |
+| `return_value` | `Any` | `None` | Value returned when the resource is accessed via `.get()`. |
+| `wraps` | `Any` | `None` | A real object to wrap — returned as-is from `.get()`. |
+| `track_calls` | `bool` | `False` | Increment `call_count` each time `.get()` is called. |
+
+### Attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+| `call_count` | `int` | Number of times the resource was accessed. |
+| `calls` | `list` | Reserved for future per-call argument tracking. |
+
+### Usage
+
+```python
+from taskito import MockResource
+
+# Simple mock value
+mock_db = MockResource("db", return_value=FakeSessionFactory())
+
+# Wrap a real object with call tracking
+spy = MockResource("db", wraps=real_session_factory, track_calls=True)
+
+with queue.test_mode(resources={"db": spy}) as results:
+    process_order.delay(42)
+
+assert spy.call_count == 1
+assert results[0].succeeded
 ```

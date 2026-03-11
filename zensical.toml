@@ -47,6 +47,15 @@ nav = [
         { "Prometheus" = "integrations/prometheus.md" },
         { "Sentry" = "integrations/sentry.md" },
     ] },
+    { "Resource System" = [
+        { "Overview" = "resources/index.md" },
+        { "Argument Interception" = "resources/interception.md" },
+        { "Dependency Injection" = "resources/dependency-injection.md" },
+        { "Resource Proxies" = "resources/proxies.md" },
+        { "Configuration" = "resources/configuration.md" },
+        { "Testing" = "resources/testing.md" },
+        { "Observability" = "resources/observability.md" },
+    ] },
     { "Architecture" = "architecture.md" },
     { "API Reference" = [
         { "Queue" = "api/queue.md" },
