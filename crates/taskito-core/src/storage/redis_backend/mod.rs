@@ -2,6 +2,7 @@ mod archival;
 mod circuit_breakers;
 mod dead_letter;
 mod jobs;
+mod locks;
 mod logs;
 mod metrics;
 mod periodic;

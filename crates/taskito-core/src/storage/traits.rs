@@ -138,4 +138,39 @@ pub trait Storage: Send + Sync + Clone {
 
     fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64>;
     fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>>;
+
+    // ── Distributed locking ────────────────────────────────────
+
+    fn acquire_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool>;
+    fn release_lock(&self, lock_name: &str, owner_id: &str) -> Result<bool>;
+    fn extend_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool>;
+    fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfoRow>>;
+    fn reap_expired_locks(&self, now: i64) -> Result<u64>;
+
+    // ── Execution claims (exactly-once) ────────────────────────
+
+    fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool>;
+    fn complete_execution(&self, job_id: &str) -> Result<()>;
+    fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64>;
+
+    // ── Per-queue stats ──────────────────────────────────────────
+
+    fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats>;
+    fn stats_all_queues(&self) -> Result<std::collections::HashMap<String, QueueStats>>;
+
+    // ── Filtered job listing ─────────────────────────────────────
+
+    #[allow(clippy::too_many_arguments)]
+    fn list_jobs_filtered(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        metadata_like: Option<&str>,
+        error_like: Option<&str>,
+        created_after: Option<i64>,
+        created_before: Option<i64>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Job>>;
 }

@@ -2,6 +2,42 @@
 
 All notable changes to taskito are documented here.
 
+## 0.4.0
+
+### New Features
+
+- **Distributed locking** — `queue.lock()` / `await queue.alock()` context managers with auto-extend background thread, acquisition timeout, and cross-process support; `LockNotAcquired` exception for failed acquisitions
+- **Exactly-once semantics** — `claim_execution` / `complete_execution` storage layer prevents duplicate task execution across worker restarts
+- **Async worker pool** — `AsyncWorkerPool` with `spawn_blocking` and GIL management; `WorkerDispatcher` trait in `taskito-core` future-proofs for other language bindings
+- **Queue pause/resume** — `queue.pause()`, `queue.resume()`, `queue.paused_queues()` to suspend and restore processing per named queue
+- **Job archival** — `queue.archive()` moves jobs to a persistent archive; `queue.list_archived()` retrieves them
+- **Job revocation** — `queue.purge()` removes jobs by filter; `queue.revoke_task()` prevents all future enqueues of a given task name
+- **Job replay** — `queue.replay()` re-enqueues a completed or failed job; `queue.replay_history()` returns the replay log
+- **Circuit breakers** — `circuit_breaker={"threshold": 5, "window": 60, "cooldown": 120}` on `@queue.task()`; `queue.circuit_breakers()` returns current state of all circuit breakers
+- **Structured task logging** — `current_job.log(message)` from inside tasks; `queue.task_logs(job_id)` and `queue.query_logs()` for retrieval
+- **Cron timezone support** — `timezone="America/New_York"` on `@queue.periodic()`; uses `chrono-tz` under the hood, defaults to UTC
+- **Custom retry delays** — `retry_delays=[1, 5, 30]` on `@queue.task()` for per-attempt delay overrides instead of exponential backoff
+- **Soft timeouts** — `soft_timeout=` on `@queue.task()`; checked cooperatively via `current_job.check_timeout()`
+- **Worker tags/specialization** — `tags=["gpu", "heavy"]` on `queue.run_worker()`; jobs can be routed to workers with matching tags
+- **Worker inspection** — `queue.workers()` / `await queue.aworkers()` return live worker state
+- **Job DAG visualization** — `queue.job_dag(job_id)` returns a dependency graph for a job and its ancestors/descendants
+- **Metrics timeseries** — `queue.metrics_timeseries()` returns historical throughput/latency data; `queue.metrics()` for current snapshot
+- **Extended job filtering** — `queue.list_jobs_filtered()` with `metadata_like`, `error_like`, `created_after`, `created_before` parameters
+- **`MsgPackSerializer`** — built-in, requires `pip install msgpack`; faster than cloudpickle, smaller payloads, cross-language compatible
+- **`EncryptedSerializer`** — AES-256-GCM encryption, requires `pip install cryptography`; wraps another serializer, payloads in DB are opaque ciphertext
+- **`drain_timeout`** — configurable graceful shutdown wait time on `Queue()` constructor (default: 30 seconds)
+- **Per-job `result_ttl`** — `result_ttl` override on `.apply_async()` to set cleanup policy per job
+- **Dashboard enhancements** — workers tab, circuit breakers panel, job archival UI
+
+### Internal
+
+- `diesel_common/` shared macro module eliminates SQLite/Postgres duplication across backends
+- `scheduler` split into 4 focused modules (`mod.rs`, `poller.rs`, `result_handler.rs`, `maintenance.rs`)
+- `py_queue` split into 3 focused modules (`mod.rs`, `inspection.rs`, `worker.rs`) with PyO3 `multiple-pymethods` feature
+- Python mixins consolidated from 7 to 3 groups: `QueueInspectionMixin`, `QueueOperationsMixin`, `QueueLockMixin`
+
+---
+
 ## 0.3.0
 
 ### Features

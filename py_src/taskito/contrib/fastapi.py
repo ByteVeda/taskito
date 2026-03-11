@@ -121,6 +121,19 @@ class JobResultResponse(BaseModel):
     error: str | None = None
 
 
+class HealthResponse(BaseModel):
+    """Health check response."""
+
+    status: str
+
+
+class ReadinessResponse(BaseModel):
+    """Readiness check response."""
+
+    status: str
+    checks: dict[str, Any]
+
+
 # ── Router factory ───────────────────────────────────────
 
 
@@ -266,6 +279,29 @@ class TaskitoRouter(APIRouter):
             """Re-enqueue a dead letter job."""
             new_id = await queue.aretry_dead(dead_id)
             return RetryResponse(new_job_id=new_id)
+
+        @self.get("/health", response_model=HealthResponse)
+        async def health() -> HealthResponse:
+            """Liveness check."""
+            from taskito.health import check_health
+
+            return HealthResponse(**check_health())
+
+        @self.get("/readiness", response_model=ReadinessResponse)
+        async def readiness() -> ReadinessResponse:
+            """Readiness check."""
+            from taskito.health import check_readiness
+
+            return ReadinessResponse(**check_readiness(queue))
+
+        @self.get("/stats/queues")
+        async def get_queue_stats(
+            queue_name: str | None = Query(default=None, alias="queue"),
+        ) -> dict[str, Any]:
+            """Get per-queue stats. If queue is specified, returns stats for that queue only."""
+            if queue_name:
+                return await queue.astats_by_queue(queue_name)
+            return await queue.astats_all_queues()
 
 
 def _safe_serialize(value: Any) -> Any:

@@ -22,10 +22,15 @@ def process_data(data: dict) -> str:
 | `name` | `str \| None` | Auto-generated | Explicit task name. Defaults to `module.qualname`. |
 | `max_retries` | `int` | `3` | Max retry attempts before moving to DLQ. |
 | `retry_backoff` | `float` | `1.0` | Base delay in seconds for exponential backoff. |
-| `timeout` | `int` | `300` | Max execution time in seconds. |
+| `retry_delays` | `list[float] \| None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
+| `timeout` | `int` | `300` | Max execution time in seconds (hard timeout). |
+| `soft_timeout` | `float \| None` | `None` | Cooperative time limit in seconds; checked via `current_job.check_timeout()`. |
 | `priority` | `int` | `0` | Default priority (higher = more urgent). |
 | `rate_limit` | `str \| None` | `None` | Rate limit string, e.g. `"100/m"`. |
 | `queue` | `str` | `"default"` | Named queue to submit to. |
+| `circuit_breaker` | `dict \| None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
+| `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
+| `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
 
 ```python
 @queue.task(
@@ -38,6 +43,66 @@ def process_data(data: dict) -> str:
     queue="emails",
 )
 def send_email(to: str, subject: str, body: str):
+    ...
+```
+
+### Custom Retry Delays
+
+Use `retry_delays` to specify exact wait times between each retry attempt instead of exponential backoff:
+
+```python
+@queue.task(retry_delays=[1, 5, 30])  # 1s after 1st fail, 5s after 2nd, 30s after 3rd
+def flaky_api_call():
+    ...
+```
+
+### Soft Timeouts
+
+A soft timeout raises `SoftTimeoutError` only when the task cooperatively checks:
+
+```python
+from taskito import current_job
+
+@queue.task(timeout=300, soft_timeout=60)
+def long_running(items):
+    for item in items:
+        current_job.check_timeout()  # raises SoftTimeoutError if soft_timeout exceeded
+        process(item)
+```
+
+### Circuit Breakers
+
+Automatically open a circuit after repeated failures and refuse new executions during the cooldown period:
+
+```python
+@queue.task(circuit_breaker={"threshold": 5, "window": 60, "cooldown": 120})
+def call_external_api():
+    ...
+```
+
+- `threshold`: number of failures to trip the breaker
+- `window`: rolling time window in seconds
+- `cooldown`: seconds the breaker stays open before allowing a retry
+
+### Per-Task Middleware
+
+Apply middleware to a specific task only:
+
+```python
+from taskito.contrib.sentry import SentryMiddleware
+
+@queue.task(middleware=[SentryMiddleware()])
+def important_task():
+    ...
+```
+
+### Job Expiration
+
+Skip jobs that weren't started within the deadline:
+
+```python
+@queue.task(expires=300)  # skip if not started within 5 minutes
+def time_sensitive():
     ...
 ```
 

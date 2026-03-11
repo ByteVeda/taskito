@@ -2,8 +2,9 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::schema::{
-    archived_jobs, circuit_breakers, dead_letter, job_dependencies, job_errors, jobs,
-    periodic_tasks, queue_state, rate_limits, replay_history, task_logs, task_metrics, workers,
+    archived_jobs, circuit_breakers, dead_letter, distributed_locks, execution_claims,
+    job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits, replay_history,
+    task_logs, task_metrics, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -303,6 +304,44 @@ pub struct QueueStateRow {
     pub queue_name: String,
     pub paused: bool,
     pub paused_at: Option<i64>,
+}
+
+// ── Distributed Locks ───────────────────────────────────────────
+
+#[derive(Queryable, Selectable, QueryableByName, Debug, Clone)]
+#[diesel(table_name = distributed_locks)]
+pub struct LockInfoRow {
+    pub lock_name: String,
+    pub owner_id: String,
+    pub acquired_at: i64,
+    pub expires_at: i64,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = distributed_locks)]
+pub struct NewLockRow<'a> {
+    pub lock_name: &'a str,
+    pub owner_id: &'a str,
+    pub acquired_at: i64,
+    pub expires_at: i64,
+}
+
+// ── Execution Claims ────────────────────────────────────────────
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = execution_claims)]
+pub struct ExecutionClaimRow {
+    pub job_id: String,
+    pub worker_id: String,
+    pub claimed_at: i64,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = execution_claims)]
+pub struct NewExecutionClaimRow<'a> {
+    pub job_id: &'a str,
+    pub worker_id: &'a str,
+    pub claimed_at: i64,
 }
 
 // ── Archived Jobs ───────────────────────────────────────────────

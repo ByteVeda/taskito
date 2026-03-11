@@ -181,4 +181,21 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    distributed_locks (lock_name) {
+        lock_name -> Text,
+        owner_id -> Text,
+        acquired_at -> BigInt,
+        expires_at -> BigInt,
+    }
+}
+
+diesel::table! {
+    execution_claims (job_id) {
+        job_id -> Text,
+        worker_id -> Text,
+        claimed_at -> BigInt,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies);

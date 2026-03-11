@@ -14,6 +14,8 @@ Queue(
     default_timeout: int = 300,
     default_priority: int = 0,
     result_ttl: int | None = None,
+    middleware: list[TaskMiddleware] | None = None,
+    drain_timeout: int = 30,
 )
 ```
 
@@ -25,6 +27,8 @@ Queue(
 | `default_timeout` | `int` | `300` | Default task timeout in seconds |
 | `default_priority` | `int` | `0` | Default task priority (higher = more urgent) |
 | `result_ttl` | `int \| None` | `None` | Auto-cleanup completed/dead jobs older than this many seconds. `None` disables. |
+| `middleware` | `list[TaskMiddleware] \| None` | `None` | Queue-level middleware applied to all tasks. |
+| `drain_timeout` | `int` | `30` | Seconds to wait for in-flight tasks during graceful shutdown. |
 
 ## Task Registration
 
@@ -35,14 +39,34 @@ Queue(
     name: str | None = None,
     max_retries: int = 3,
     retry_backoff: float = 1.0,
+    retry_delays: list[float] | None = None,
     timeout: int = 300,
+    soft_timeout: float | None = None,
     priority: int = 0,
     rate_limit: str | None = None,
     queue: str = "default",
+    circuit_breaker: dict | None = None,
+    middleware: list[TaskMiddleware] | None = None,
+    expires: float | None = None,
 ) -> TaskWrapper
 ```
 
 Register a function as a background task. Returns a [`TaskWrapper`](task.md).
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `str \| None` | Auto-generated | Explicit task name. Defaults to `module.qualname`. |
+| `max_retries` | `int` | `3` | Max retry attempts before moving to DLQ. |
+| `retry_backoff` | `float` | `1.0` | Base delay in seconds for exponential backoff. |
+| `retry_delays` | `list[float] \| None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
+| `timeout` | `int` | `300` | Hard execution time limit in seconds. |
+| `soft_timeout` | `float \| None` | `None` | Cooperative time limit checked via `current_job.check_timeout()`. |
+| `priority` | `int` | `0` | Default priority (higher = more urgent). |
+| `rate_limit` | `str \| None` | `None` | Rate limit string, e.g. `"100/m"`. |
+| `queue` | `str` | `"default"` | Named queue to submit to. |
+| `circuit_breaker` | `dict \| None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
+| `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
+| `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
 
 ### `@queue.periodic()`
 
@@ -53,10 +77,20 @@ Register a function as a background task. Returns a [`TaskWrapper`](task.md).
     args: tuple = (),
     kwargs: dict | None = None,
     queue: str = "default",
+    timezone: str | None = None,
 ) -> TaskWrapper
 ```
 
 Register a periodic (cron-scheduled) task. Uses 6-field cron expressions with seconds.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `cron` | `str` | — | 6-field cron expression (seconds precision). |
+| `name` | `str \| None` | Auto-generated | Explicit task name. |
+| `args` | `tuple` | `()` | Positional arguments passed to the task on each run. |
+| `kwargs` | `dict \| None` | `None` | Keyword arguments passed to the task on each run. |
+| `queue` | `str` | `"default"` | Named queue to submit to. |
+| `timezone` | `str \| None` | `None` | IANA timezone name (e.g. `"America/New_York"`). Defaults to UTC. |
 
 ## Enqueue Methods
 
@@ -98,7 +132,7 @@ queue.enqueue_many(
 ) -> list[JobResult]
 ```
 
-Enqueue multiple jobs in a single SQLite transaction for high throughput.
+Enqueue multiple jobs in a single transaction for high throughput.
 
 ## Job Management
 
@@ -122,7 +156,7 @@ queue.list_jobs(
 ) -> list[JobResult]
 ```
 
-List jobs with optional filters. Returns a list of [`JobResult`](result.md) handles ordered by creation time (newest first).
+List jobs with optional filters. Returns newest first.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -132,13 +166,31 @@ List jobs with optional filters. Returns a list of [`JobResult`](result.md) hand
 | `limit` | `int` | `50` | Maximum results to return |
 | `offset` | `int` | `0` | Pagination offset |
 
+### `queue.list_jobs_filtered()`
+
+```python
+queue.list_jobs_filtered(
+    status: str | None = None,
+    queue: str | None = None,
+    task_name: str | None = None,
+    metadata_like: str | None = None,
+    error_like: str | None = None,
+    created_after: float | None = None,
+    created_before: float | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[JobResult]
+```
+
+Extended filtering with metadata and error pattern matching and time range constraints.
+
 ### `queue.cancel_job()`
 
 ```python
 queue.cancel_job(job_id: str) -> bool
 ```
 
-Cancel a pending job. Returns `True` if cancelled, `False` if not pending. If the job has dependents, they are cascade-cancelled.
+Cancel a pending job. Returns `True` if cancelled, `False` if not pending. Cascade-cancels dependents.
 
 ### `queue.update_progress()`
 
@@ -156,6 +208,100 @@ queue.job_errors(job_id: str) -> list[dict]
 
 Get error history for a job. Returns a list of dicts with `id`, `job_id`, `attempt`, `error`, `failed_at`.
 
+### `queue.job_dag()`
+
+```python
+queue.job_dag(job_id: str) -> dict
+```
+
+Return a dependency graph for a job, including all ancestors and descendants. Useful for visualizing workflow chains.
+
+## Queue Management
+
+### `queue.pause()`
+
+```python
+queue.pause(queue_name: str) -> None
+```
+
+Pause a named queue. Workers continue running but skip jobs in this queue until it is resumed.
+
+### `queue.resume()`
+
+```python
+queue.resume(queue_name: str) -> None
+```
+
+Resume a previously paused queue.
+
+### `queue.paused_queues()`
+
+```python
+queue.paused_queues() -> list[str]
+```
+
+Return the names of all currently paused queues.
+
+### `queue.purge()`
+
+```python
+queue.purge(
+    queue: str | None = None,
+    task_name: str | None = None,
+    status: str | None = None,
+) -> int
+```
+
+Delete jobs matching the given filters. Returns the count deleted.
+
+### `queue.revoke_task()`
+
+```python
+queue.revoke_task(task_name: str) -> None
+```
+
+Prevent all future enqueues of the given task name. Existing pending jobs are not affected.
+
+## Archival
+
+### `queue.archive()`
+
+```python
+queue.archive(job_id: str) -> None
+```
+
+Move a completed or failed job to the archive for long-term retention.
+
+### `queue.list_archived()`
+
+```python
+queue.list_archived(
+    task_name: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]
+```
+
+List archived jobs with optional task name filter.
+
+## Replay
+
+### `queue.replay()`
+
+```python
+queue.replay(job_id: str) -> JobResult
+```
+
+Re-enqueue a completed or failed job with its original arguments. Returns the new job handle.
+
+### `queue.replay_history()`
+
+```python
+queue.replay_history(job_id: str) -> list[dict]
+```
+
+Return the replay log for a job — every time it has been replayed and the resulting new job IDs.
+
 ## Statistics
 
 ### `queue.stats()`
@@ -165,6 +311,41 @@ queue.stats() -> dict[str, int]
 ```
 
 Returns `{"pending": N, "running": N, "completed": N, "failed": N, "dead": N, "cancelled": N}`.
+
+### `queue.stats_by_queue()`
+
+```python
+queue.stats_by_queue() -> dict[str, dict[str, int]]
+```
+
+Returns per-queue status counts: `{queue_name: {"pending": N, ...}}`.
+
+### `queue.stats_all_queues()`
+
+```python
+queue.stats_all_queues() -> dict[str, dict[str, int]]
+```
+
+Returns stats for all queues including those with zero jobs.
+
+### `queue.metrics()`
+
+```python
+queue.metrics() -> dict
+```
+
+Returns current throughput and latency snapshot.
+
+### `queue.metrics_timeseries()`
+
+```python
+queue.metrics_timeseries(
+    window: int = 3600,
+    bucket: int = 60,
+) -> list[dict]
+```
+
+Returns historical metrics bucketed by time. `window` is the lookback period in seconds; `bucket` is the bucket size in seconds.
 
 ## Dead Letter Queue
 
@@ -202,15 +383,156 @@ queue.purge_completed(older_than: int = 86400) -> int
 
 Purge completed jobs older than `older_than` seconds. Returns count deleted.
 
-## Worker
+## Distributed Locking
+
+### `queue.lock()`
+
+```python
+queue.lock(
+    name: str,
+    ttl: int = 30,
+    auto_extend: bool = True,
+    owner_id: str | None = None,
+    timeout: float | None = None,
+    retry_interval: float = 0.1,
+) -> contextlib.AbstractContextManager
+```
+
+Acquire a distributed lock. Use as a context manager:
+
+```python
+with queue.lock("my-resource", ttl=60):
+    # exclusive section
+    ...
+```
+
+Raises `LockNotAcquired` if acquisition fails (when `timeout` is `None` or expires).
+
+### `await queue.alock()`
+
+```python
+await queue.alock(
+    name: str,
+    ttl: int = 30,
+    auto_extend: bool = True,
+    owner_id: str | None = None,
+    timeout: float | None = None,
+    retry_interval: float = 0.1,
+) -> contextlib.AbstractAsyncContextManager
+```
+
+Async version of `lock()`:
+
+```python
+async with queue.alock("my-resource"):
+    ...
+```
+
+## Workers
 
 ### `queue.run_worker()`
 
 ```python
-queue.run_worker(queues: Sequence[str] | None = None) -> None
+queue.run_worker(
+    queues: Sequence[str] | None = None,
+    tags: list[str] | None = None,
+) -> None
 ```
 
-Start the worker loop. **Blocks** until interrupted. Pass `queues` to limit which queues are processed.
+Start the worker loop. **Blocks** until interrupted. Pass `queues` to limit which queues are processed; pass `tags` to specialize this worker.
+
+### `queue.workers()`
+
+```python
+queue.workers() -> list[dict]
+```
+
+Return live state of all registered workers: ID, hostname, started_at, last_heartbeat, current job.
+
+### `await queue.aworkers()`
+
+```python
+await queue.aworkers() -> list[dict]
+```
+
+Async version of `workers()`.
+
+## Circuit Breakers
+
+### `queue.circuit_breakers()`
+
+```python
+queue.circuit_breakers() -> list[dict]
+```
+
+Return current state of all circuit breakers: task name, state (`closed`/`open`/`half-open`), failure count, last failure time.
+
+## Logs
+
+### `queue.task_logs()`
+
+```python
+queue.task_logs(job_id: str, limit: int = 100) -> list[dict]
+```
+
+Return structured log entries emitted by `current_job.log()` during the given job's execution.
+
+### `queue.query_logs()`
+
+```python
+queue.query_logs(
+    task_name: str | None = None,
+    level: str | None = None,
+    message_like: str | None = None,
+    since: float | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]
+```
+
+Query task logs across all jobs with optional filters.
+
+## Events & Webhooks
+
+### `queue.on_event()`
+
+```python
+queue.on_event(event: str) -> Callable
+```
+
+Register a callback for a queue event. Supported events: `job.completed`, `job.failed`, `job.retried`, `job.dead`.
+
+```python
+@queue.on_event("job.failed")
+def handle_failure(job_id: str, task_name: str, error: str) -> None:
+    ...
+```
+
+### `queue.add_webhook()`
+
+```python
+queue.add_webhook(
+    url: str,
+    events: list[str],
+    headers: dict[str, str] | None = None,
+    secret: str | None = None,
+) -> str
+```
+
+Register a webhook URL for one or more events. Returns the webhook ID. 4xx responses are not retried; 5xx responses are retried with backoff.
+
+## Worker
+
+### `queue.arun_worker()`
+
+```python
+await queue.arun_worker(
+    queues: Sequence[str] | None = None,
+    tags: list[str] | None = None,
+) -> None
+```
+
+Async version of `run_worker()`. Runs the worker in a thread pool without blocking the event loop.
 
 ## Hooks
 
@@ -247,7 +569,14 @@ def hook(task_name: str, args: tuple, kwargs: dict, error: Exception) -> None: .
 | Sync | Async |
 |---|---|
 | `queue.stats()` | `await queue.astats()` |
+| `queue.stats_by_queue()` | `await queue.astats_by_queue()` |
+| `queue.stats_all_queues()` | `await queue.astats_all_queues()` |
 | `queue.dead_letters()` | `await queue.adead_letters()` |
 | `queue.retry_dead()` | `await queue.aretry_dead()` |
 | `queue.cancel_job()` | `await queue.acancel_job()` |
 | `queue.run_worker()` | `await queue.arun_worker()` |
+| `queue.metrics()` | `await queue.ametrics()` |
+| `queue.workers()` | `await queue.aworkers()` |
+| `queue.circuit_breakers()` | `await queue.acircuit_breakers()` |
+| `queue.replay()` | `await queue.areplay()` |
+| `queue.lock()` | `await queue.alock()` (async context manager) |

@@ -124,7 +124,11 @@ fn worker_loop(
     }
 }
 
-fn execute_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Option<Vec<u8>>> {
+pub fn execute_task(
+    py: Python<'_>,
+    task_registry: &PyObject,
+    job: &Job,
+) -> PyResult<Option<Vec<u8>>> {
     let cloudpickle = py.import_bound("cloudpickle")?;
     let registry = task_registry.bind(py);
 
@@ -205,7 +209,7 @@ fn execute_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult
     }
 }
 
-fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
+pub fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
     // Try to get a full traceback
     if let Ok(tb_mod) = py.import_bound("traceback") {
         if let Ok(formatted) = tb_mod.call_method1(
@@ -225,7 +229,7 @@ fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
 }
 
 /// Check if the Python exception is a TaskCancelledError.
-fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
+pub fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
     if let Ok(exceptions_mod) = py.import_bound("taskito.exceptions") {
         if let Ok(cancelled_cls) = exceptions_mod.getattr("TaskCancelledError") {
             return e
@@ -238,7 +242,7 @@ fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
 }
 
 /// Get the fully-qualified class name of a Python exception.
-fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
+pub fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
     let type_obj = e.get_type_bound(py);
     let module = type_obj
         .getattr("__module__")
@@ -258,7 +262,7 @@ fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
 
 /// Check the retry_filters dict to determine if an exception should be retried.
 /// Returns true by default (retry everything unless filtered).
-fn check_should_retry(
+pub fn check_should_retry(
     py: Python<'_>,
     retry_filters: &PyObject,
     task_name: &str,

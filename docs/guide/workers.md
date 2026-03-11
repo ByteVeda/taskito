@@ -57,6 +57,22 @@ queue = Queue(db_path="myapp.db", workers=0)  # Auto-detect (default)
 queue = Queue(db_path="myapp.db", workers=8)  # Explicit count
 ```
 
+## Worker Specialization
+
+Tag workers to route jobs to specific machines or capabilities:
+
+```python
+# Start a worker that only processes jobs tagged for GPU or heavy workloads
+queue.run_worker(tags=["gpu", "heavy"])
+```
+
+Jobs submitted to a queue with `tags` are only picked up by workers that have all the required tags. Workers without tags process untagged jobs.
+
+```bash
+# CLI equivalent
+taskito worker --app myapp:queue --tags gpu,heavy
+```
+
 !!! note
     Workers are **OS threads**, not processes. Each worker acquires the Python GIL only during task execution, so the scheduler and dispatch logic run without GIL contention.
 
@@ -64,8 +80,16 @@ queue = Queue(db_path="myapp.db", workers=8)  # Explicit count
 
 taskito supports graceful shutdown via `Ctrl+C`:
 
-1. **First `Ctrl+C`**: Stops accepting new jobs, waits up to 30 seconds for in-flight tasks to complete
+1. **First `Ctrl+C`**: Stops accepting new jobs, waits for in-flight tasks to complete (up to `drain_timeout` seconds)
 2. **Second `Ctrl+C`**: Force-kills immediately
+
+Configure the drain timeout when constructing the queue:
+
+```python
+queue = Queue(db_path="myapp.db", drain_timeout=60)  # wait up to 60 seconds
+```
+
+The default `drain_timeout` is 30 seconds.
 
 ```
 $ taskito worker --app myapp:queue

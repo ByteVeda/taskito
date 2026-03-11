@@ -1,9 +1,10 @@
 use pyo3::prelude::*;
 
+mod async_worker;
 mod py_config;
 mod py_job;
 mod py_queue;
-mod py_worker;
+pub mod py_worker;
 
 use py_config::PyTaskConfig;
 use py_job::PyJob;

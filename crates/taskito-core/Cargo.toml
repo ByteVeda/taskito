@@ -24,6 +24,7 @@ chrono = { workspace = true }
 cron = { workspace = true }
 chrono-tz = { workspace = true }
 log = { workspace = true }
+async-trait = { workspace = true }
 redis = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -35,6 +35,9 @@ pub enum QueueError {
     #[error("dependency not found: {0}")]
     DependencyNotFound(String),
 
+    #[error("lock not acquired: {0}")]
+    LockNotAcquired(String),
+
     #[error("{0}")]
     Other(String),
 }
