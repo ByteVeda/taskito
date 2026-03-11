@@ -27,7 +27,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+        uses: Swatinem/rust-cache@v2.8.2
 
       - name: Cargo fmt
         run: cargo fmt --all --check
@@ -62,7 +62,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+        uses: Swatinem/rust-cache@v2.8.2
 
       - name: Run Rust tests
         run: cargo test --workspace
@@ -97,7 +97,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+        uses: Swatinem/rust-cache@v2.8.2
 
       - name: Create virtualenv (Unix)
         if: runner.os != 'Windows'
