@@ -43,6 +43,8 @@ sentry = ["sentry-sdk"]
 msgpack = ["msgpack"]
 encryption = ["cryptography"]
 flask = ["flask>=2.0"]
+aws = ["boto3>=1.20"]
+gcs = ["google-cloud-storage>=2.0"]
 docs = ["zensical"]
 
 [tool.maturin]
