@@ -27,11 +27,29 @@ if TYPE_CHECKING:
     from taskito.app import Queue
 
 
+def _read_template(path: str) -> str:
+    """Read a file from the bundled templates directory."""
+    return resources.files("taskito").joinpath(path).read_text(encoding="utf-8")
+
+
+# JS files are loaded in dependency order: utils first, then components,
+# then views/charts/actions, and finally app.js (which boots the SPA).
+_JS_FILES = [
+    "templates/js/utils.js",
+    "templates/js/components.js",
+    "templates/js/views.js",
+    "templates/js/chart.js",
+    "templates/js/actions.js",
+    "templates/js/app.js",
+]
+
+
 def _load_spa_html() -> str:
-    """Load the dashboard SPA HTML from the bundled template file."""
-    return (
-        resources.files("taskito").joinpath("templates/dashboard.html").read_text(encoding="utf-8")
-    )
+    """Compose the dashboard SPA from CSS, JS modules, and HTML shell."""
+    html = _read_template("templates/dashboard.html")
+    css = _read_template("templates/dashboard.css")
+    js = "\n".join(_read_template(f) for f in _JS_FILES)
+    return html.replace("/* __TASKITO_CSS__ */", css).replace("/* __TASKITO_JS__ */", js)
 
 
 _SPA_HTML: str | None = None
