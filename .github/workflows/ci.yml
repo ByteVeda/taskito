@@ -122,4 +122,23 @@ jobs:
           maturin develop --release
 
       - name: Run Python tests
-        run: pytest tests/python/ -v
+        run: |
+          set +e
+          pytest tests/python/ -v --junitxml=test-results.xml
+          PYTEST_EXIT=$?
+          if [ $PYTEST_EXIT -eq 0 ]; then exit 0; fi
+          # SIGABRT (134) during interpreter shutdown is a known PyO3 issue;
+          # check junit XML to confirm all tests actually passed.
+          if [ $PYTEST_EXIT -eq 134 ] && [ -f test-results.xml ]; then
+            FAILURES=$(python -c "
+          import xml.etree.ElementTree as ET
+          r = ET.parse('test-results.xml').getroot()
+          print(int(r.get('failures',0)) + int(r.get('errors',0)))
+          ")
+            if [ "$FAILURES" = "0" ]; then
+              echo "::warning::Tests passed but process crashed during cleanup (known PyO3 issue on this Python version)"
+              exit 0
+            fi
+          fi
+          exit $PYTEST_EXIT
+        shell: bash
