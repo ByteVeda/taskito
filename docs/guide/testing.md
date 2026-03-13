@@ -36,7 +36,7 @@ No database is created. No worker threads are spawned. Tasks execute eagerly and
 ## `queue.test_mode()`
 
 ```python
-with queue.test_mode(propagate_errors=False) as results:
+with queue.test_mode(propagate_errors=False, resources=None) as results:
     # tasks run synchronously here
     ...
 ```
@@ -44,6 +44,7 @@ with queue.test_mode(propagate_errors=False) as results:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `propagate_errors` | `bool` | `False` | If `True`, task exceptions are re-raised immediately instead of being captured in `TestResult.error` |
+| `resources` | `dict[str, Any] \| None` | `None` | Map of resource name → mock instance or `MockResource` for injection. See [Resource System](resources.md#testing-with-resources). |
 
 The context manager yields a `TestResults` list that accumulates results as tasks execute.
 
@@ -255,6 +256,59 @@ async def test_async_enqueue(task_results):
     add.delay(1, 2)
     assert task_results[0].return_value == 3
 ```
+
+## Testing with Worker Resources
+
+If your tasks use [worker resources](resources.md) (injected via `inject=` or `Inject["name"]`), pass mock instances through `resources=`:
+
+```python
+from unittest.mock import MagicMock
+
+@queue.worker_resource("db")
+def create_db():
+    return real_sessionmaker
+
+@queue.task(inject=["db"])
+def create_user(name: str, db):
+    session = db()
+    session.add(User(name=name))
+    session.commit()
+
+def test_create_user():
+    mock_db = MagicMock()
+
+    with queue.test_mode(resources={"db": mock_db}) as results:
+        create_user.delay("Alice")
+
+    assert results[0].succeeded
+    mock_db.return_value.add.assert_called_once()
+```
+
+### `MockResource`
+
+`MockResource` adds call tracking to a mock value:
+
+```python
+from taskito import MockResource
+
+spy = MockResource("db", wraps=real_db, track_calls=True)
+
+with queue.test_mode(resources={"db": spy}) as results:
+    create_user.delay("Alice")
+
+assert spy.call_count == 1
+assert results[0].succeeded
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | `str` | Resource name (informational). |
+| `return_value` | `Any` | Value returned when the resource is accessed. |
+| `wraps` | `Any` | Wrap a real object — returned as-is when accessed. |
+| `track_calls` | `bool` | Increment `call_count` each access. |
+
+!!! note
+    When `resources=` is provided, proxy reconstruction is bypassed automatically. Proxy markers in arguments are passed through as-is so tests don't fail due to missing files or network connections.
 
 ## What Test Mode Does NOT Cover
 

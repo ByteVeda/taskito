@@ -27,11 +27,29 @@ if TYPE_CHECKING:
     from taskito.app import Queue
 
 
+def _read_template(path: str) -> str:
+    """Read a file from the bundled templates directory."""
+    return resources.files("taskito").joinpath(path).read_text(encoding="utf-8")
+
+
+# JS files are loaded in dependency order: utils first, then components,
+# then views/charts/actions, and finally app.js (which boots the SPA).
+_JS_FILES = [
+    "templates/js/utils.js",
+    "templates/js/components.js",
+    "templates/js/views.js",
+    "templates/js/chart.js",
+    "templates/js/actions.js",
+    "templates/js/app.js",
+]
+
+
 def _load_spa_html() -> str:
-    """Load the dashboard SPA HTML from the bundled template file."""
-    return (
-        resources.files("taskito").joinpath("templates/dashboard.html").read_text(encoding="utf-8")
-    )
+    """Compose the dashboard SPA from CSS, JS modules, and HTML shell."""
+    html = _read_template("templates/dashboard.html")
+    css = _read_template("templates/dashboard.css")
+    js = "\n".join(_read_template(f) for f in _JS_FILES)
+    return html.replace("/* __TASKITO_CSS__ */", css).replace("/* __TASKITO_JS__ */", js)
 
 
 _SPA_HTML: str | None = None
@@ -45,6 +63,59 @@ def _get_spa_html() -> str:
             if _SPA_HTML is None:
                 _SPA_HTML = _load_spa_html()
     return _SPA_HTML
+
+
+def build_scaler_response(
+    queue: Queue,
+    queue_name: str | None = None,
+    target_queue_depth: int = 10,
+) -> dict[str, Any]:
+    """Build KEDA-compatible scaler payload for a queue.
+
+    Args:
+        queue: The Queue instance to query.
+        queue_name: Optional queue name to filter by.
+        target_queue_depth: Scaling target hint for KEDA.
+
+    Returns:
+        Dict with metricName, metricValue, isActive, workerUtilization, etc.
+    """
+    stats = queue.stats()
+    depth = stats.get("pending", 0)
+    running = stats.get("running", 0)
+
+    worker_list = queue.workers()
+    live_workers = len(worker_list)
+    total_capacity = queue._workers
+
+    response: dict[str, Any] = {
+        "metricName": "taskito_queue_depth",
+        "metricValue": depth,
+        "isActive": depth > 0,
+        "liveWorkers": live_workers,
+        "totalCapacity": total_capacity,
+        "targetQueueDepth": target_queue_depth,
+    }
+
+    if total_capacity > 0:
+        response["workerUtilization"] = round(running / total_capacity, 3)
+
+    if queue_name:
+        q_stats = queue.stats_by_queue(queue_name)
+        response["metricValue"] = q_stats.get("pending", 0)
+        response["isActive"] = q_stats.get("pending", 0) > 0
+        response["metricName"] = f"taskito_queue_depth_{queue_name}"
+
+    try:
+        all_q = queue.stats_all_queues()
+        response["perQueue"] = {
+            name: {"pending": s.get("pending", 0), "running": s.get("running", 0)}
+            for name, s in all_q.items()
+        }
+    except Exception:
+        logger.warning("Failed to collect per-queue stats for scaler", exc_info=True)
+
+    return response
 
 
 def _extract_path_segment(path: str, prefix: str, suffix: str = "") -> str:
@@ -156,6 +227,12 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response(queue.circuit_breakers())
             elif path == "/api/workers":
                 self._json_response(queue.workers())
+            elif path == "/api/resources":
+                self._json_response(queue.resource_status())
+            elif path == "/api/proxy-stats":
+                self._json_response(queue.proxy_stats())
+            elif path == "/api/interception-stats":
+                self._json_response(queue.interception_stats())
             elif path == "/api/queues/paused":
                 self._json_response(queue.paused_queues())
             elif path == "/metrics":
@@ -188,32 +265,8 @@ def _make_handler(queue: Queue) -> type:
                     queue.metrics_timeseries(task_name=task, since=since, bucket=bucket)
                 )
             elif path == "/api/scaler":
-                stats = queue.stats()
-                depth = stats.get("pending", 0)
                 q_name = qs.get("queue", [None])[0]
-                response: dict[str, Any] = {
-                    "metricName": "taskito_queue_depth",
-                    "metricValue": depth,
-                    "isActive": depth > 0,
-                }
-                # Per-queue stats
-                running = stats.get("running", 0)
-                total_workers = queue._workers
-                if total_workers > 0:
-                    response["workerUtilization"] = round(running / total_workers, 3)
-                if q_name:
-                    q_stats = queue.stats_by_queue(q_name)
-                    response["metricValue"] = q_stats.get("pending", 0)
-                    response["isActive"] = q_stats.get("pending", 0) > 0
-                try:
-                    all_q = queue.stats_all_queues()
-                    response["perQueue"] = {
-                        name: {"pending": s.get("pending", 0), "running": s.get("running", 0)}
-                        for name, s in all_q.items()
-                    }
-                except Exception:
-                    pass
-                self._json_response(response)
+                self._json_response(build_scaler_response(queue, queue_name=q_name))
             else:
                 self._serve_spa()
 

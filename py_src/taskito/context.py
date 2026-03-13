@@ -124,12 +124,19 @@ class JobContext:
 
     @staticmethod
     def _require_context() -> _ActiveContext:
-        ctx: _ActiveContext | None = getattr(_local, "context", None)
-        if ctx is None:
+        # Try contextvars first (async tasks on native executor)
+        from taskito.async_support.context import get_async_context
+
+        ctx = get_async_context()
+        if ctx is not None:
+            return ctx
+        # Fall back to threading.local (sync tasks)
+        sync_ctx: _ActiveContext | None = getattr(_local, "context", None)
+        if sync_ctx is None:
             raise RuntimeError(
                 "No active job context. current_job can only be used inside a running task."
             )
-        return ctx
+        return sync_ctx
 
 
 class _ActiveContext:

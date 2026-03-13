@@ -83,6 +83,43 @@ def main() -> None:
     )
     resume_parser.add_argument("queue_name", help="Queue name to resume")
 
+    # scaler subcommand
+    scaler_parser = subparsers.add_parser("scaler", help="Start a lightweight KEDA metrics server")
+    scaler_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
+    )
+    scaler_parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    scaler_parser.add_argument("--port", type=int, default=9091, help="Bind port (default: 9091)")
+    scaler_parser.add_argument(
+        "--target-queue-depth",
+        type=int,
+        default=10,
+        help="Scaling target hint for KEDA (default: 10)",
+    )
+
+    # resources subcommand
+    res_parser = subparsers.add_parser("resources", help="Show registered resources")
+    res_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
+    )
+
+    # reload subcommand
+    reload_parser = subparsers.add_parser(
+        "reload", help="Reload resources on a running worker via SIGHUP"
+    )
+    reload_parser.add_argument(
+        "--pid", type=int, required=True, help="PID of the running worker process"
+    )
+    reload_parser.add_argument(
+        "--resource",
+        default=None,
+        help="Reload a specific resource (default: all reloadable)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "worker":
@@ -99,6 +136,12 @@ def main() -> None:
         queue = _load_queue(args.app)
         queue.resume(args.queue_name)
         print(f"Queue '{args.queue_name}' resumed")
+    elif args.command == "scaler":
+        run_scaler(args)
+    elif args.command == "resources":
+        run_resources(args)
+    elif args.command == "reload":
+        run_reload(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -203,6 +246,74 @@ def _watch_stats(queue: Queue) -> None:
             time.sleep(2)
     except KeyboardInterrupt:
         pass
+
+
+def run_scaler(args: argparse.Namespace) -> None:
+    """Start the lightweight KEDA metrics server."""
+    queue = _load_queue(args.app)
+    from taskito.scaler import serve_scaler
+
+    serve_scaler(
+        queue,
+        host=args.host,
+        port=args.port,
+        target_queue_depth=args.target_queue_depth,
+    )
+
+
+def run_resources(args: argparse.Namespace) -> None:
+    """Print resource status from registered definitions or live runtime."""
+    queue = _load_queue(args.app)
+    resources = queue.resource_status()
+    if not resources:
+        print("No resources registered.")
+        return
+
+    header = (
+        f"{'RESOURCE':<20} {'SCOPE':<10} {'HEALTH':<16} "
+        f"{'INIT (ms)':<12} {'RECREATIONS':<14} DEPENDS ON"
+    )
+    print(header)
+    print("-" * len(header))
+    for r in resources:
+        deps = ", ".join(r["depends_on"]) if r["depends_on"] else "-"
+        line = (
+            f"{r['name']:<20} {r['scope']:<10} {r['health']:<16} "
+            f"{r['init_duration_ms']:<12.2f} {r['recreations']:<14} {deps}"
+        )
+        print(line)
+        # Show pool stats for task-scoped resources
+        pool = r.get("pool")
+        if pool:
+            print(
+                f"  {'':>20} pool: "
+                f"active={pool['active']} idle={pool['idle']} "
+                f"max={pool['size']} "
+                f"timeouts={pool['total_timeouts']}"
+            )
+
+
+def run_reload(args: argparse.Namespace) -> None:
+    """Send SIGHUP to a running worker to reload resources."""
+    import os
+    import signal as sig
+
+    if not hasattr(sig, "SIGHUP"):
+        print("Error: SIGHUP is not available on this platform", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        os.kill(args.pid, sig.SIGHUP)
+        print(f"Sent SIGHUP to worker (PID {args.pid})")
+    except ProcessLookupError:
+        print(f"Error: no process with PID {args.pid}", file=sys.stderr)
+        sys.exit(1)
+    except PermissionError:
+        print(
+            f"Error: permission denied sending signal to PID {args.pid}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

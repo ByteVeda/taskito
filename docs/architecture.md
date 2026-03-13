@@ -12,6 +12,9 @@ graph TB
         C["TaskWrapper"]
         D["JobResult"]
         E["current_job"]
+        R["ResourceRuntime"]
+        IC["ArgumentInterceptor"]
+        PX["ProxyRegistry"]
     end
 
     subgraph Rust ["Rust Core · PyO3"]
@@ -26,12 +29,15 @@ graph TB
         K[("PostgreSQL<br/>Diesel ORM · r2d2 pool")]
     end
 
-    A -->|"enqueue()"| F
+    A -->|"enqueue() → intercept args"| IC
+    IC -->|"transformed args"| F
     F -->|INSERT| J
     F -->|INSERT| K
     G -->|"dequeue (poll every 50ms)"| J
     G -->|"dispatch via crossbeam"| H
     H -->|"acquire GIL → run task"| B
+    B -->|"reconstruct proxies"| PX
+    B -->|"inject resources"| R
     H -->|"JobResult"| G
     G -->|"UPDATE status"| J
     D -->|"poll status"| F
@@ -76,7 +82,8 @@ graph LR
         S["Tokio async runtime<br/>50ms poll interval"]
     end
 
-    S -->|"Job"| JCH["Job Channel<br/>(bounded: workers×2)"]
+    S -->|"sync job"| JCH["Job Channel<br/>(bounded: workers×2)"]
+    S -->|"async job"| AP["Native Async Pool<br/>(NativeAsyncPool)"]
 
     subgraph Pool ["Worker Threads"]
         W1["Worker 1<br/>GIL per task"]
@@ -84,13 +91,22 @@ graph LR
         WN["Worker N<br/>GIL per task"]
     end
 
+    subgraph AsyncPool ["Async Executor"]
+        EL["Dedicated Event Loop<br/>(daemon thread)"]
+        SEM["Semaphore<br/>(async_concurrency)"]
+    end
+
     JCH --> W1
     JCH --> W2
     JCH --> WN
 
+    AP --> EL
+    EL --> SEM
+
     W1 -->|"Result"| RCH["Result Channel<br/>(bounded: workers×2)"]
     W2 -->|"Result"| RCH
     WN -->|"Result"| RCH
+    EL -->|"PyResultSender"| RCH
 
     RCH --> ML["Main Loop<br/>(py.allow_threads)"]
     ML -->|"complete / retry / DLQ"| DB[("SQLite")]
@@ -98,9 +114,11 @@ graph LR
 
 **Key design decisions:**
 
-- **OS threads, not Python threads**: Workers are Rust `std::thread` threads. The GIL is only acquired when calling Python task code.
+- **OS threads, not Python threads**: Sync workers are Rust `std::thread` threads. The GIL is only acquired when calling Python task code.
 - **Bounded channels**: Both job and result channels are bounded to `workers × 2` to provide backpressure.
-- **GIL isolation**: Each worker acquires the GIL independently using `Python::with_gil()`. The scheduler and result handler release the GIL via `py.allow_threads()`.
+- **GIL isolation**: Each sync worker acquires the GIL independently using `Python::with_gil()`. The scheduler and result handler release the GIL via `py.allow_threads()`.
+- **Native async dispatch**: `async def` tasks bypass the thread pool entirely. A `NativeAsyncPool` sends them to a dedicated `AsyncTaskExecutor` running on a Python daemon thread. `PyResultSender` (a `#[pyclass]`) bridges results back into the Rust scheduler.
+- **Context isolation**: Sync tasks use `threading.local` for `current_job`; async tasks use `contextvars.ContextVar`, which is properly scoped across `await` boundaries and isolated between concurrent coroutines.
 
 ## Storage Layer
 
@@ -195,6 +213,39 @@ loop {
 3. Send job to worker pool via crossbeam channel
 4. Worker executes task, sends result back
 5. `handle_result()` — mark complete, schedule retry, or move to DLQ
+
+## Resource System
+
+The resource system is a three-layer Python pipeline that runs entirely outside Rust:
+
+```mermaid
+graph LR
+    subgraph Enqueue ["On enqueue()"]
+        A["Task arguments"] -->|"classify"| IC["ArgumentInterceptor"]
+        IC -->|"PASS"| S["Serializer"]
+        IC -->|"CONVERT → marker"| S
+        IC -->|"REDIRECT → DI marker"| S
+        IC -->|"PROXY → recipe"| PX["ProxyHandler.deconstruct()"]
+        PX --> S
+        IC -->|"REJECT"| ERR["InterceptionError"]
+    end
+
+    subgraph Worker ["On worker dispatch"]
+        S2["Deserialize payload"] --> RC["reconstruct_args()"]
+        RC -->|"CONVERT markers"| OBJ["Restored types"]
+        RC2["reconstruct_proxies()"] -->|"PROXY recipes"| PX2["ProxyHandler.reconstruct()"]
+        RT["ResourceRuntime.acquire_for_task()"] -->|"REDIRECT + inject="| INJ["Injected resources"]
+        OBJ --> FN["Task function"]
+        PX2 --> FN
+        INJ --> FN
+    end
+```
+
+**Layer 1 — Argument Interception**: The `ArgumentInterceptor` walks every argument before serialization, applying the strategy registered for its type. CONVERT types are transformed to JSON-safe markers. REDIRECT types are replaced with a DI placeholder. PROXY types are deconstructed by their handler. REJECT types raise an error in strict mode.
+
+**Layer 2 — Worker Resource Runtime**: `ResourceRuntime` initializes all registered resources at worker startup in topological dependency order. At task dispatch time it injects the requested resources (via `inject=` or `Inject["name"]` annotation) as keyword arguments. Task-scoped resources are acquired from a semaphore pool and returned after the task finishes.
+
+**Layer 3 — Resource Proxies**: `ProxyHandler` implementations know how to deconstruct live objects (file handles, HTTP sessions, cloud clients) into a JSON-serializable recipe, and how to reconstruct them on the worker before the task function is called. Recipes are optionally HMAC-signed for tamper detection.
 
 ## Serialization
 

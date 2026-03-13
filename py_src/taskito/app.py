@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import json
 import logging
 import os
 import signal
 import threading
 import urllib.parse
+import uuid
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable
@@ -18,13 +20,22 @@ if TYPE_CHECKING:
     from taskito.testing import TestMode
 
 from taskito._taskito import PyQueue, PyTaskConfig
+from taskito.async_support.helpers import run_maybe_async
+from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.events import EventBus, EventType
+from taskito.interception import ArgumentInterceptor
+from taskito.interception.built_in import build_default_registry
 from taskito.middleware import TaskMiddleware
 from taskito.mixins import (
     QueueInspectionMixin,
     QueueLockMixin,
     QueueOperationsMixin,
 )
+from taskito.proxies import ProxyRegistry, cleanup_proxies, reconstruct_proxies
+from taskito.proxies.built_in import register_builtin_handlers
+from taskito.proxies.metrics import ProxyMetrics
+from taskito.resources.definition import ResourceDefinition, ResourceScope
+from taskito.resources.runtime import ResourceRuntime
 from taskito.result import JobResult
 from taskito.serializers import CloudpickleSerializer, Serializer
 from taskito.task import TaskWrapper
@@ -54,6 +65,7 @@ class Queue(
     QueueInspectionMixin,
     QueueOperationsMixin,
     QueueLockMixin,
+    AsyncQueueMixin,
 ):
     """
     Rust-powered task queue with embedded SQLite storage.
@@ -85,6 +97,13 @@ class Queue(
         schema: str = "taskito",
         pool_size: int | None = None,
         drain_timeout: int = 30,
+        interception: str = "off",
+        max_intercept_depth: int = 10,
+        recipe_signing_key: str | None = None,
+        max_reconstruction_timeout: int = 10,
+        file_path_allowlist: list[str] | None = None,
+        disabled_proxies: list[str] | None = None,
+        async_concurrency: int = 100,
     ):
         """Initialize a new task queue.
 
@@ -110,6 +129,19 @@ class Queue(
                 that have low connection limits.
             drain_timeout: Seconds to wait for in-flight jobs to finish during
                 graceful shutdown. Defaults to 30.
+            interception: Argument interception mode — ``"strict"`` (reject
+                non-serializable args), ``"lenient"`` (warn and drop), or
+                ``"off"`` (disabled, default). See :mod:`taskito.interception`.
+            max_intercept_depth: Maximum recursion depth for argument walking.
+                Defaults to 10.
+            recipe_signing_key: HMAC-SHA256 key for proxy recipe integrity.
+                Falls back to ``TASKITO_RECIPE_SECRET`` env var.
+            max_reconstruction_timeout: Max seconds for proxy reconstruction.
+            file_path_allowlist: Allowed file paths for the file proxy handler.
+            disabled_proxies: Handler names to skip when registering built-in
+                proxy handlers.
+            async_concurrency: Maximum number of async tasks running concurrently
+                on the native async executor. Defaults to 100.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -152,6 +184,45 @@ class Queue(
         self._event_bus = EventBus()
         self._webhook_manager = WebhookManager()
 
+        # Proxy handlers
+        self._proxy_registry = ProxyRegistry()
+        register_builtin_handlers(
+            self._proxy_registry,
+            disabled_proxies=disabled_proxies,
+            file_path_allowlist=file_path_allowlist,
+        )
+        self._proxy_metrics = ProxyMetrics()
+        self._recipe_signing_key = recipe_signing_key or os.environ.get("TASKITO_RECIPE_SECRET")
+        self._max_reconstruction_timeout = max_reconstruction_timeout
+
+        # Argument interception
+        self._interception_metrics = None
+        if interception != "off":
+            from taskito.interception.metrics import InterceptionMetrics
+
+            self._interception_metrics = InterceptionMetrics()
+            registry = build_default_registry()
+            self._interceptor: ArgumentInterceptor | None = ArgumentInterceptor(
+                registry=registry,
+                mode=interception,
+                max_depth=max_intercept_depth,
+                proxy_registry=self._proxy_registry,
+                metrics=self._interception_metrics,
+            )
+        else:
+            self._interceptor = None
+
+        # Worker resources (dependency injection)
+        self._resource_definitions: dict[str, ResourceDefinition] = {}
+        self._resource_runtime: ResourceRuntime | None = None
+        self._task_inject_map: dict[str, list[str]] = {}
+
+        # Native async concurrency limit
+        self._async_concurrency = async_concurrency
+
+        # Test mode flag (Phase M)
+        self._test_mode_active = False
+
     def task(
         self,
         name: str | None = None,
@@ -167,6 +238,7 @@ class Queue(
         soft_timeout: float | None = None,
         middleware: list[TaskMiddleware] | None = None,
         retry_delays: list[float] | None = None,
+        inject: list[str] | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -185,10 +257,40 @@ class Queue(
             dont_retry_on: List of exception classes that should never be retried.
             soft_timeout: Soft timeout in seconds. Checked via ``current_job.check_timeout()``.
             middleware: Per-task middleware instances (in addition to global middleware).
+            inject: List of resource names to inject as keyword arguments.
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
             task_name = name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}"
+
+            # Detect Inject["name"] annotations (Phase E)
+            from taskito.inject import _InjectAlias
+
+            annotation_injects: list[str] = []
+            try:
+                import typing
+
+                hints: dict[str, Any] = {}
+                with contextlib.suppress(Exception):
+                    # get_type_hints evaluates string annotations
+                    ns = getattr(fn, "__globals__", {})
+                    ns = {**ns, "Inject": __import__("taskito.inject", fromlist=["Inject"]).Inject}
+                    hints = typing.get_type_hints(fn, globalns=ns, include_extras=True)
+                # Fallback: check raw annotations if get_type_hints failed
+                if not hints:
+                    with contextlib.suppress(Exception):
+                        hints = getattr(fn, "__annotations__", {})
+                for _param_name, hint in hints.items():
+                    if isinstance(hint, _InjectAlias):
+                        annotation_injects.append(hint.resource_name)
+            except Exception:
+                pass
+
+            # Merge explicit inject= with annotation-detected injects
+            final_inject = list(inject or [])
+            for res_name in annotation_injects:
+                if res_name not in final_inject:
+                    final_inject.append(res_name)
 
             # Store retry filters
             if retry_on or dont_retry_on:
@@ -200,6 +302,10 @@ class Queue(
             # Store per-task middleware
             if middleware:
                 self._task_middleware[task_name] = middleware
+
+            # Store inject map for resource injection
+            if final_inject:
+                self._task_inject_map[task_name] = final_inject
 
             # Wrap the function with hooks, middleware, and context
             wrapped = self._wrap_task(fn, task_name, soft_timeout)
@@ -238,10 +344,17 @@ class Queue(
                 default_queue=queue,
                 default_max_retries=max_retries,
                 default_timeout=timeout,
+                inject=final_inject or None,
             )
 
             # Preserve function metadata
             functools.update_wrapper(wrapper, fn)
+
+            # Mark async status for native async dispatch
+            is_async = asyncio.iscoroutinefunction(fn)
+            wrapper._taskito_is_async = is_async  # type: ignore[attr-defined]
+            if is_async:
+                wrapper._taskito_async_fn = fn  # type: ignore[attr-defined]
 
             return wrapper
 
@@ -329,6 +442,174 @@ class Queue(
         self._hooks["on_failure"].append(fn)
         return fn
 
+    # -- Worker Resources --
+
+    def worker_resource(
+        self,
+        name: str,
+        depends_on: list[str] | None = None,
+        teardown: Callable | None = None,
+        health_check: Callable | None = None,
+        health_check_interval: float = 0.0,
+        max_recreation_attempts: int = 3,
+        scope: str = "worker",
+        pool_size: int | None = None,
+        pool_min: int = 0,
+        acquire_timeout: float = 10.0,
+        max_lifetime: float = 3600.0,
+        idle_timeout: float = 300.0,
+        reloadable: bool = False,
+        frozen: bool = False,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Decorator to register a resource factory.
+
+        Args:
+            name: Resource name used in ``inject=["name"]``.
+            depends_on: Names of resources this one depends on.
+            teardown: Optional callable to clean up the resource on shutdown.
+            health_check: Optional callable that returns truthy if healthy.
+            health_check_interval: Seconds between health checks (0 = disabled).
+            max_recreation_attempts: Max times to recreate on health failure.
+            scope: Resource scope — ``"worker"``, ``"task"``, ``"thread"``,
+                or ``"request"``.
+            pool_size: Pool size for task-scoped resources.
+            pool_min: Minimum pre-warmed instances (task scope).
+            acquire_timeout: Max seconds to wait for pool instance.
+            max_lifetime: Max seconds a pooled instance lives.
+            idle_timeout: Max idle seconds before eviction.
+            reloadable: Whether the resource can be hot-reloaded via SIGHUP.
+            frozen: Wrap the resource in a read-only proxy.
+        """
+        from taskito.resources.graph import detect_cycle
+
+        def decorator(factory: Callable[..., Any]) -> Callable[..., Any]:
+            self.register_resource(
+                ResourceDefinition(
+                    name=name,
+                    factory=factory,
+                    depends_on=depends_on or [],
+                    teardown=teardown,
+                    health_check=health_check,
+                    health_check_interval=health_check_interval,
+                    max_recreation_attempts=max_recreation_attempts,
+                    scope=ResourceScope(scope),
+                    pool_size=pool_size,
+                    pool_min=pool_min,
+                    acquire_timeout=acquire_timeout,
+                    max_lifetime=max_lifetime,
+                    idle_timeout=idle_timeout,
+                    reloadable=reloadable,
+                    frozen=frozen,
+                )
+            )
+            # Validate no cycles eagerly
+            cycle = detect_cycle(self._resource_definitions)
+            if cycle is not None:
+                from taskito.exceptions import CircularDependencyError
+
+                # Roll back the registration
+                del self._resource_definitions[name]
+                raise CircularDependencyError(
+                    f"Circular dependency detected: {' -> '.join(cycle)}"
+                )
+            return factory
+
+        return decorator
+
+    def register_resource(self, definition: ResourceDefinition) -> None:
+        """Programmatically register a resource definition.
+
+        Args:
+            definition: A :class:`~taskito.resources.ResourceDefinition`.
+        """
+        self._resource_definitions[definition.name] = definition
+
+    def health_check(self, name: str) -> bool:
+        """Run a resource's health check immediately.
+
+        Args:
+            name: The registered resource name.
+
+        Returns:
+            True if healthy, False otherwise.
+        """
+        runtime = self._resource_runtime
+        if runtime is None:
+            return False
+        defn = self._resource_definitions.get(name)
+        if defn is None or defn.health_check is None:
+            return False
+        try:
+            instance = runtime.resolve(name)
+            return bool(defn.health_check(instance))
+        except Exception:
+            return False
+
+    def load_resources(self, toml_path: str) -> None:
+        """Load resource definitions from a TOML file.
+
+        Must be called before ``run_worker()``.
+
+        Args:
+            toml_path: Path to the TOML configuration file.
+        """
+        from taskito.resources.toml_config import load_resources_from_toml
+
+        for defn in load_resources_from_toml(toml_path):
+            self.register_resource(defn)
+
+    def proxy_stats(self) -> list[dict[str, Any]]:
+        """Return per-handler proxy reconstruction metrics."""
+        return self._proxy_metrics.to_list()
+
+    def interception_stats(self) -> dict[str, Any]:
+        """Return interception performance metrics."""
+        if self._interception_metrics is not None:
+            return self._interception_metrics.to_dict()
+        return {}
+
+    def register_type(
+        self,
+        python_type: type,
+        strategy: str,
+        *,
+        resource: str | None = None,
+        message: str | None = None,
+        converter: Callable | None = None,
+        type_key: str | None = None,
+        proxy_handler: str | None = None,
+    ) -> None:
+        """Register a custom type with the interception system.
+
+        Args:
+            python_type: The type to register.
+            strategy: One of ``"pass"``, ``"convert"``, ``"redirect"``,
+                ``"reject"``, or ``"proxy"``.
+            resource: Resource name for ``"redirect"`` strategy.
+            message: Rejection reason for ``"reject"`` strategy.
+            converter: Converter callable for ``"convert"`` strategy.
+            type_key: Key for the converter reconstructor dispatch.
+            proxy_handler: Handler name for ``"proxy"`` strategy.
+        """
+        if self._interceptor is None:
+            raise RuntimeError(
+                "Interception is disabled; set interception='strict' or "
+                "'lenient' to use register_type()"
+            )
+        from taskito.interception.strategy import Strategy as S
+
+        strat = S(strategy)
+        self._interceptor._registry.register(
+            python_type,
+            strat,
+            priority=15,
+            redirect_resource=resource,
+            reject_reason=message,
+            converter=converter,
+            type_key=type_key,
+            proxy_handler=proxy_handler,
+        )
+
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list."""
         per_task = self._task_middleware.get(task_name, [])
@@ -339,12 +620,48 @@ class Queue(
     ) -> Callable:
         """Wrap a task function with hooks, middleware, and job context."""
         from taskito.context import _clear_context, current_job
+        from taskito.interception.reconstruct import reconstruct_args
 
         hooks = self._hooks
         queue_ref = self
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Reconstruct intercepted arguments (CONVERT markers → original types)
+            redirects: dict[str, str] = {}
+            if queue_ref._interceptor is not None:
+                args, kwargs, redirects = reconstruct_args(args, kwargs)
+
+            # Reconstruct proxy markers (PROXY → live objects)
+            proxy_cleanup: list[Any] = []
+            if queue_ref._proxy_registry is not None and not queue_ref._test_mode_active:
+                args, kwargs, proxy_cleanup = reconstruct_proxies(
+                    args,
+                    kwargs,
+                    queue_ref._proxy_registry,
+                    signing_secret=queue_ref._recipe_signing_key,
+                    max_timeout=queue_ref._max_reconstruction_timeout,
+                    metrics=queue_ref._proxy_metrics,
+                )
+
+            # Inject resources from runtime
+            release_callbacks: list[Any] = []
+            runtime = queue_ref._resource_runtime
+            if runtime is not None:
+                # From explicit inject=["db"] on task decorator
+                for res_name in queue_ref._task_inject_map.get(task_name, []):
+                    if res_name not in kwargs:
+                        instance, release = runtime.acquire_for_task(res_name)
+                        kwargs[res_name] = instance
+                        if release is not None:
+                            release_callbacks.append(release)
+                # From interception REDIRECT markers
+                for kwarg_name, resource_name in redirects.items():
+                    instance, release = runtime.acquire_for_task(resource_name)
+                    kwargs[kwarg_name] = instance
+                    if release is not None:
+                        release_callbacks.append(release)
+
             middleware_chain = queue_ref._get_middleware_chain(task_name)
 
             # Set soft timeout on context if configured
@@ -366,15 +683,7 @@ class Queue(
             error = None
             result = None
             try:
-                ret = fn(*args, **kwargs)
-                if asyncio.iscoroutine(ret):
-                    loop = getattr(queue_ref, "_async_loop", None)
-                    if loop is not None and loop.is_running():
-                        future = asyncio.run_coroutine_threadsafe(ret, loop)
-                        ret = future.result()
-                    else:
-                        # Fallback for test mode / non-worker contexts
-                        ret = asyncio.run(ret)
+                ret = run_maybe_async(fn(*args, **kwargs))
                 result = ret
             except Exception as exc:
                 error = exc
@@ -386,6 +695,14 @@ class Queue(
                     hook(task_name, args, kwargs, result)
                 return result
             finally:
+                # Release task/request-scoped resources
+                for release_fn in release_callbacks:
+                    try:
+                        release_fn()
+                    except Exception:
+                        logger.exception("resource release error")
+                # Clean up reconstructed proxies (LIFO order)
+                cleanup_proxies(proxy_cleanup, metrics=queue_ref._proxy_metrics)
                 for hook in hooks["after_task"]:
                     hook(task_name, args, kwargs, result, error)
                 # Run middleware after hooks (only those whose before() succeeded)
@@ -442,7 +759,11 @@ class Queue(
             expires: Seconds until the job expires (skipped if not started by then).
             result_ttl: Per-job result TTL in seconds. Overrides global result_ttl.
         """
-        payload = self._serializer.dumps((args, kwargs or {}))
+        final_args = args
+        final_kwargs = kwargs or {}
+        if self._interceptor is not None and not self._test_mode_active:
+            final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
+        payload = self._serializer.dumps((final_args, final_kwargs))
 
         dep_ids = None
         if depends_on is not None:
@@ -505,7 +826,11 @@ class Queue(
                 f"args_list length ({len(args_list)})"
             )
         kw_list = kwargs_list or [{}] * count
-        payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
+        if self._interceptor is not None:
+            pairs = [self._interceptor.intercept(a, kw) for a, kw in zip(args_list, kw_list)]
+            payloads = [self._serializer.dumps((a, kw)) for a, kw in pairs]
+        else:
+            payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
         task_names = [task_name] * count
 
         queues_list = [queue or "default"] * count if queue else None
@@ -603,31 +928,14 @@ class Queue(
                 lines.append(f"  . {pc['name']}  ({pc['cron_expr']})")
             lines.append("")
 
+        if self._resource_definitions:
+            lines.append("[resources]")
+            for rname, rdef in sorted(self._resource_definitions.items()):
+                deps = f" (depends: {', '.join(rdef.depends_on)})" if rdef.depends_on else ""
+                lines.append(f"  . {rname}{deps}")
+            lines.append("")
+
         print("\n".join(lines))
-
-    def _start_async_loop(self) -> None:
-        """Start a shared event loop in a background thread for async tasks."""
-        self._async_loop = asyncio.new_event_loop()
-        self._async_thread = threading.Thread(
-            target=self._async_loop.run_forever,
-            daemon=True,
-            name="taskito-async-loop",
-        )
-        self._async_thread.start()
-
-    def _stop_async_loop(self) -> None:
-        """Stop the shared async event loop."""
-        loop = getattr(self, "_async_loop", None)
-        thread = getattr(self, "_async_thread", None)
-        if loop is not None:
-            if loop.is_running():
-                loop.call_soon_threadsafe(loop.stop)
-            if thread is not None:
-                thread.join(timeout=5)
-                if thread.is_alive():
-                    logger.warning("Async event loop thread did not stop within 5s timeout")
-            if not loop.is_running():
-                loop.close()
 
     def run_worker(
         self,
@@ -669,8 +977,20 @@ class Queue(
         worker_queues = queue_list or ["default"]
         self._print_banner(worker_queues)
 
-        # Start shared async event loop for async tasks
-        self._start_async_loop()
+        # Initialize worker resources (before Rust dispatches tasks)
+        health_checker = None
+        if self._resource_definitions:
+            from taskito.resources.health import HealthChecker
+
+            self._resource_runtime = ResourceRuntime(self._resource_definitions)
+            self._resource_runtime.initialize()
+            logger.info(
+                "Initialized %d resource(s): %s",
+                len(self._resource_definitions),
+                ", ".join(self._resource_runtime._init_order),
+            )
+            health_checker = HealthChecker(self._resource_runtime)
+            health_checker.start()
 
         # Set up signal handlers for graceful shutdown (only in main thread)
         is_main = threading.current_thread() is threading.main_thread()
@@ -691,6 +1011,38 @@ class Queue(
             signal.signal(signal.SIGINT, shutdown_handler)
             signal.signal(signal.SIGTERM, shutdown_handler)
 
+            # SIGHUP handler for hot-reloading resources (Unix only)
+            if hasattr(signal, "SIGHUP"):
+
+                def sighup_handler(signum: int, frame: Any) -> None:
+                    logger.info("SIGHUP received — reloading reloadable resources")
+                    if self._resource_runtime is not None:
+                        results = self._resource_runtime.reload()
+                        for rname, success in results.items():
+                            logger.info(
+                                "Reload %s: %s",
+                                rname,
+                                "OK" if success else "FAILED",
+                            )
+
+                signal.signal(signal.SIGHUP, sighup_handler)
+
+        # Serialize resource names for worker advertisement
+        resources_json: str | None = None
+        if self._resource_definitions:
+            resources_json = json.dumps(sorted(self._resource_definitions.keys()))
+
+        # Generate worker ID and start Python-side heartbeat thread
+        worker_id = str(uuid.uuid4())
+        stop_heartbeat = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self._run_heartbeat,
+            args=(worker_id, stop_heartbeat),
+            daemon=True,
+            name="taskito-heartbeat",
+        )
+        heartbeat_thread.start()
+
         try:
             self._inner.run_worker(
                 task_registry=self._task_registry,
@@ -698,11 +1050,22 @@ class Queue(
                 queues=queue_list,
                 drain_timeout_secs=self._drain_timeout,
                 tags=",".join(tags) if tags else None,
+                worker_id=worker_id,
+                resources=resources_json,
+                threads=self._workers,
+                async_concurrency=self._async_concurrency,
             )
         except KeyboardInterrupt:
             logger.info("Cold shutdown (terminating immediately)")
         finally:
-            self._stop_async_loop()
+            stop_heartbeat.set()
+            heartbeat_thread.join(timeout=6)
+            # Tear down resources before stopping async loop
+            if health_checker is not None:
+                health_checker.stop()
+            if self._resource_runtime is not None:
+                self._resource_runtime.teardown()
+                self._resource_runtime = None
             logger.info("Worker stopped.")
             if is_main:
                 if original_sigint is not None:
@@ -710,57 +1073,76 @@ class Queue(
                 if original_sigterm is not None:
                     signal.signal(signal.SIGTERM, original_sigterm)
 
+    def _build_resource_health_json(self) -> str | None:
+        """Snapshot current resource health as JSON for heartbeat."""
+        if not self._resource_definitions:
+            return None
+        runtime = self._resource_runtime
+        health: dict[str, str] = {}
+        for name in self._resource_definitions:
+            if runtime is not None and name in runtime._unhealthy:
+                health[name] = "unhealthy"
+            else:
+                health[name] = "healthy"
+        return json.dumps(health)
+
+    def _run_heartbeat(
+        self,
+        worker_id: str,
+        stop_event: threading.Event,
+    ) -> None:
+        """Send periodic heartbeats to storage with current resource health."""
+        while not stop_event.is_set():
+            resource_health = self._build_resource_health_json()
+            try:
+                self._inner.worker_heartbeat(worker_id, resource_health)
+            except Exception:
+                logger.debug("Heartbeat failed", exc_info=True)
+            stop_event.wait(timeout=5.0)
+
+    # -- Resource Status --
+
+    def resource_status(self) -> list[dict[str, Any]]:
+        """Return per-resource status info.
+
+        Each entry contains: name, scope, health, init_duration_ms,
+        recreations, depends_on.  Returns an empty list if no resources
+        are registered or the runtime is not initialized.
+        """
+        if self._resource_runtime is not None:
+            return self._resource_runtime.status()
+        # Runtime not initialized — return definitions with unknown health
+        result: list[dict[str, Any]] = []
+        for name, defn in self._resource_definitions.items():
+            result.append(
+                {
+                    "name": name,
+                    "scope": defn.scope.value,
+                    "health": "not_initialized",
+                    "init_duration_ms": 0,
+                    "recreations": 0,
+                    "depends_on": defn.depends_on,
+                }
+            )
+        return result
+
     # -- Test Mode --
 
-    def test_mode(self, propagate_errors: bool = False) -> TestMode:
+    def test_mode(
+        self,
+        propagate_errors: bool = False,
+        resources: dict[str, Any] | None = None,
+    ) -> TestMode:
         """Return a context manager that runs tasks synchronously (no worker needed).
 
         Args:
             propagate_errors: If True, re-raise task exceptions immediately.
+            resources: Dict of resource name → mock instance for injection
+                during test mode.
 
         Returns:
             A :class:`~taskito.testing.TestMode` context manager.
         """
         from taskito.testing import TestMode
 
-        return TestMode(self, propagate_errors=propagate_errors)
-
-    async def arun_worker(
-        self,
-        queues: Sequence[str] | None = None,
-        tags: list[str] | None = None,
-    ) -> None:
-        """Async version of :meth:`run_worker`.
-
-        Runs the blocking worker loop in a thread executor so it does not
-        block the asyncio event loop.
-
-        Args:
-            queues: List of queue names to consume from.
-            tags: Optional tags for worker specialization / routing.
-        """
-        loop = asyncio.get_running_loop()
-
-        original_sigint = signal.getsignal(signal.SIGINT)
-        original_sigterm = signal.getsignal(signal.SIGTERM)
-
-        def _shutdown_once() -> None:
-            logger.info("Warm shutdown (waiting for running tasks to finish)...")
-            self._inner.request_shutdown()
-            with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(signal.SIGINT)
-                loop.remove_signal_handler(signal.SIGTERM)
-            signal.signal(signal.SIGINT, original_sigint)
-            signal.signal(signal.SIGTERM, original_sigterm)
-
-        loop.add_signal_handler(signal.SIGINT, _shutdown_once)
-        loop.add_signal_handler(signal.SIGTERM, _shutdown_once)
-
-        try:
-            await loop.run_in_executor(None, lambda: self.run_worker(queues=queues, tags=tags))
-        finally:
-            with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(signal.SIGINT)
-                loop.remove_signal_handler(signal.SIGTERM)
-            signal.signal(signal.SIGINT, original_sigint)
-            signal.signal(signal.SIGTERM, original_sigterm)
+        return TestMode(self, propagate_errors=propagate_errors, resources=resources)

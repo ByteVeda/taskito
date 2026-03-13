@@ -69,6 +69,42 @@ class TestResults(list):
         return self.filter(succeeded=False)
 
 
+class MockResource:
+    """Test double for a worker resource with optional call tracking.
+
+    Usage::
+
+        mock_redis = MockResource("redis", return_value=FakeRedis())
+        spy_db = MockResource("db", wraps=real_db, track_calls=True)
+
+        with queue.test_mode(resources={"redis": mock_redis, "db": spy_db}):
+            my_task.delay(data)
+            assert spy_db.call_count == 1
+    """
+
+    def __init__(
+        self,
+        name: str,
+        return_value: Any = None,
+        wraps: Any = None,
+        track_calls: bool = False,
+    ) -> None:
+        self.name = name
+        self._return_value = return_value
+        self._wraps = wraps
+        self._track_calls = track_calls
+        self.call_count = 0
+        self.calls: list[tuple[str, ...]] = []
+
+    def get(self) -> Any:
+        """Return the mock resource value."""
+        if self._track_calls:
+            self.call_count += 1
+        if self._wraps is not None:
+            return self._wraps
+        return self._return_value
+
+
 class TestMode:
     """Context manager that intercepts enqueue() to run tasks synchronously.
 
@@ -76,20 +112,47 @@ class TestMode:
     Chain, group, and chord work correctly because they call enqueue() internally.
     """
 
-    def __init__(self, queue: Queue, propagate_errors: bool = False):
+    def __init__(
+        self,
+        queue: Queue,
+        propagate_errors: bool = False,
+        resources: dict[str, Any] | None = None,
+    ):
         """
         Args:
             queue: The Queue instance to put into test mode.
             propagate_errors: If True, re-raise task exceptions immediately
                 instead of capturing them in TestResult.error.
+            resources: Dict of resource name → mock instance or MockResource
+                for injection.
         """
         self._queue = queue
         self._propagate = propagate_errors
+        self._resources = resources
         self._results = TestResults()
         self._patches: list[Any] = []
         self._job_counter = 0
+        self._prev_runtime: Any = None
+        self._mock_resources: dict[str, MockResource] = {}
 
     def __enter__(self) -> TestResults:
+        # Set test mode flag
+        self._queue._test_mode_active = True
+
+        # Set up test resource runtime if resources provided
+        if self._resources is not None:
+            from taskito.resources.runtime import ResourceRuntime
+
+            self._prev_runtime = self._queue._resource_runtime
+            resolved: dict[str, Any] = {}
+            for name, value in self._resources.items():
+                if isinstance(value, MockResource):
+                    resolved[name] = value.get()
+                    self._mock_resources[name] = value
+                else:
+                    resolved[name] = value
+            self._queue._resource_runtime = ResourceRuntime.from_test_overrides(resolved)
+
         def test_enqueue(
             task_name: str,
             args: tuple = (),
@@ -107,6 +170,15 @@ class TestMode:
         for p in self._patches:
             p.stop()
         self._patches.clear()
+
+        # Clear test mode flag
+        self._queue._test_mode_active = False
+
+        # Restore previous resource runtime
+        if self._resources is not None:
+            self._queue._resource_runtime = self._prev_runtime
+            self._prev_runtime = None
+            self._mock_resources.clear()
 
     def _execute_task(
         self,

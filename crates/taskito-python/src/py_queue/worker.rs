@@ -11,6 +11,7 @@ use taskito_core::scheduler::{JobResult, Scheduler, SchedulerConfig, TaskConfig}
 use taskito_core::storage::Storage;
 
 use super::PyQueue;
+#[cfg(not(feature = "native-async"))]
 use crate::async_worker::AsyncWorkerPool;
 use crate::py_config::PyTaskConfig;
 
@@ -18,7 +19,21 @@ use crate::py_config::PyTaskConfig;
 #[allow(clippy::useless_conversion)]
 impl PyQueue {
     /// Run the worker loop. This blocks until interrupted.
-    #[pyo3(signature = (task_registry, task_configs, queues=None, drain_timeout_secs=None, tags=None))]
+    ///
+    /// The heartbeat is now driven from Python (see `worker_heartbeat`),
+    /// so the internal Rust heartbeat thread is removed.
+    #[pyo3(signature = (
+        task_registry,
+        task_configs,
+        queues=None,
+        drain_timeout_secs=None,
+        tags=None,
+        worker_id=None,
+        resources=None,
+        threads=1,
+        async_concurrency=100,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     pub fn run_worker(
         &self,
         py: Python<'_>,
@@ -27,6 +42,10 @@ impl PyQueue {
         queues: Option<Vec<String>>,
         drain_timeout_secs: Option<u64>,
         tags: Option<String>,
+        worker_id: Option<String>,
+        resources: Option<String>,
+        threads: i32,
+        #[allow(unused_variables)] async_concurrency: i32,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -113,25 +132,39 @@ impl PyQueue {
         let scheduler_arc = Arc::new(scheduler);
         let scheduler_for_dispatch = scheduler_arc.clone();
 
-        // Generate a unique worker ID and register
-        let worker_id = uuid::Uuid::now_v7().to_string();
-        let _ = self
-            .storage
-            .register_worker(&worker_id, &queues_str, tags.as_deref());
+        // Generate or use the provided worker ID and register
+        let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let _ = self.storage.register_worker(
+            &worker_id,
+            &queues_str,
+            tags.as_deref(),
+            resources.as_deref(),
+            None,
+            threads,
+        );
 
-        // Start heartbeat thread
-        let heartbeat_storage = self.storage.clone();
-        let heartbeat_worker_id = worker_id.clone();
-        let heartbeat_flag = self.shutdown_flag.clone();
-        let heartbeat_handle = std::thread::spawn(move || {
-            while !heartbeat_flag.load(Ordering::SeqCst) {
-                let _ = heartbeat_storage.heartbeat(&heartbeat_worker_id);
-                let _ = heartbeat_storage.reap_dead_workers();
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            }
-        });
+        // Create the async executor for native async tasks (if feature enabled)
+        #[cfg(feature = "native-async")]
+        let async_executor = {
+            let sender = taskito_async::PyResultSender::new(result_tx.clone());
+            Python::with_gil(|py| -> PyResult<Arc<PyObject>> {
+                let sender_obj = pyo3::Py::new(py, sender)?;
+                let mod_ = py.import_bound("taskito.async_support.executor")?;
+                let cls = mod_.getattr("AsyncTaskExecutor")?;
+                let context_mod = py.import_bound("taskito.context")?;
+                let queue_ref = context_mod.getattr("_queue_ref")?;
+                let executor = cls.call1((
+                    sender_obj,
+                    registry_arc.clone_ref(py),
+                    queue_ref,
+                    async_concurrency,
+                ))?;
+                executor.call_method0("start")?;
+                Ok(Arc::new(executor.into_py(py)))
+            })?
+        };
 
-        // Create multi-threaded tokio runtime for scheduler + async worker pool
+        // Create multi-threaded tokio runtime for scheduler + worker pool
         let num_workers = self.num_workers;
         // Move result_tx into the runtime — don't keep a copy in the main thread
         // so result_rx disconnects when all workers are done.
@@ -149,15 +182,29 @@ impl PyQueue {
             };
 
             rt.block_on(async {
-                let pool = AsyncWorkerPool::new(num_workers, registry_arc, filters_arc);
-
                 let scheduler_task = tokio::spawn(async move {
                     scheduler_for_dispatch.run(job_tx).await;
                 });
 
                 let worker_task = tokio::spawn(async move {
                     use taskito_core::worker::WorkerDispatcher;
-                    pool.run(job_rx, result_tx).await;
+
+                    #[cfg(feature = "native-async")]
+                    {
+                        let pool = taskito_async::NativeAsyncPool::new(
+                            num_workers,
+                            registry_arc,
+                            filters_arc,
+                            async_executor,
+                        );
+                        pool.run(job_rx, result_tx).await;
+                    }
+
+                    #[cfg(not(feature = "native-async"))]
+                    {
+                        let pool = AsyncWorkerPool::new(num_workers, registry_arc, filters_arc);
+                        pool.run(job_rx, result_tx).await;
+                    }
                 });
 
                 let _ = tokio::join!(scheduler_task, worker_task);
@@ -245,11 +292,20 @@ impl PyQueue {
         }
 
         let _ = runtime_handle.join();
-        let _ = heartbeat_handle.join();
 
         // Unregister worker on shutdown
         let _ = self.storage.unregister_worker(&worker_id);
 
+        Ok(())
+    }
+
+    /// Update the heartbeat for a running worker. Called from Python every 5s.
+    #[pyo3(signature = (worker_id, resource_health=None))]
+    pub fn worker_heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> PyResult<()> {
+        self.storage
+            .heartbeat(worker_id, resource_health)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let _ = self.storage.reap_dead_workers();
         Ok(())
     }
 }

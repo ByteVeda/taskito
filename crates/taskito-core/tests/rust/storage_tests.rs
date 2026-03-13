@@ -162,11 +162,20 @@ fn test_record_and_get_errors(s: &impl Storage) {
 }
 
 fn test_workers(s: &impl Storage) {
-    s.register_worker("w-test-1", "q-workers", None).unwrap();
-    s.heartbeat("w-test-1").unwrap();
+    let resources = Some(r#"["db","redis"]"#);
+    let health = Some(r#"{"db":"healthy","redis":"healthy"}"#);
+
+    s.register_worker("w-test-1", "q-workers", None, resources, health, 4)
+        .unwrap();
+    s.heartbeat("w-test-1", Some(r#"{"db":"unhealthy","redis":"healthy"}"#))
+        .unwrap();
 
     let workers = s.list_workers().unwrap();
     assert!(!workers.is_empty());
+    let w = workers.iter().find(|w| w.worker_id == "w-test-1").unwrap();
+    assert_eq!(w.threads, 4);
+    assert!(w.resources.as_deref().unwrap().contains("db"));
+    assert!(w.resource_health.as_deref().unwrap().contains("unhealthy"));
 
     s.unregister_worker("w-test-1").unwrap();
 }

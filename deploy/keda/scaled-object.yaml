@@ -1,0 +1,29 @@
+# KEDA ScaledObject using taskito's HTTP scaler endpoint.
+#
+# Prerequisites:
+#   1. Deploy `taskito scaler --app myapp:queue --port 9091` as a Service
+#   2. Install KEDA with the http-add-on or external scaler support
+#
+# Adjust metadata.name, scaleTargetRef, and scalerAddress to match
+# your deployment.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: taskito-worker
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: taskito-worker          # Deployment name
+  pollingInterval: 15             # seconds between KEDA polls
+  cooldownPeriod: 60              # seconds before scaling to zero
+  minReplicaCount: 0              # scale to zero when idle
+  maxReplicaCount: 10
+  triggers:
+    - type: metrics-api
+      metadata:
+        # The taskito scaler endpoint
+        url: "http://taskito-scaler:9091/api/scaler"
+        valueLocation: "metricValue"
+        targetValue: "10"
+        # Optional: filter by queue name
+        # url: "http://taskito-scaler:9091/api/scaler?queue=default"

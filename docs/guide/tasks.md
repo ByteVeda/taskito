@@ -31,6 +31,7 @@ def process_data(data: dict) -> str:
 | `circuit_breaker` | `dict \| None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
 | `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
+| `inject` | `list[str] \| None` | `None` | Worker resource names to inject as keyword arguments. See [Resource System](resources.md). |
 
 ```python
 @queue.task(

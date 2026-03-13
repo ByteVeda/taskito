@@ -132,7 +132,7 @@ result = job.result(timeout=600, poll_interval=1.0, max_poll_interval=5.0)
 ### `await job.aresult()`
 
 ```python
-async job.aresult(
+await job.aresult(
     timeout: float = 30.0,
     poll_interval: float = 0.05,
     max_poll_interval: float = 0.5,

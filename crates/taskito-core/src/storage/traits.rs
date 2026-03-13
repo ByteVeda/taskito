@@ -113,8 +113,16 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Worker operations ───────────────────────────────────────────
 
-    fn register_worker(&self, worker_id: &str, queues: &str, tags: Option<&str>) -> Result<()>;
-    fn heartbeat(&self, worker_id: &str) -> Result<()>;
+    fn register_worker(
+        &self,
+        worker_id: &str,
+        queues: &str,
+        tags: Option<&str>,
+        resources: Option<&str>,
+        resource_health: Option<&str>,
+        threads: i32,
+    ) -> Result<()>;
+    fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()>;
     fn list_workers(&self) -> Result<Vec<WorkerRow>>;
     fn reap_dead_workers(&self) -> Result<u64>;
     fn unregister_worker(&self, worker_id: &str) -> Result<()>;

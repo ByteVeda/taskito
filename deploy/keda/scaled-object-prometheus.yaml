@@ -1,0 +1,34 @@
+# KEDA ScaledObject using Prometheus as the metric source.
+#
+# Prerequisites:
+#   1. Prometheus scraping taskito's /metrics endpoint
+#   2. PrometheusStatsCollector running with the worker
+#
+# Adjust serverAddress, query, and threshold to match your setup.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: taskito-worker-prometheus
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: taskito-worker          # Deployment name
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  triggers:
+    # Scale based on queue depth
+    - type: prometheus
+      metadata:
+        serverAddress: "http://prometheus:9090"
+        metricName: taskito_queue_depth
+        query: sum(taskito_queue_depth{queue="default"})
+        threshold: "10"
+    # Scale based on worker utilization
+    - type: prometheus
+      metadata:
+        serverAddress: "http://prometheus:9090"
+        metricName: taskito_worker_utilization
+        query: taskito_worker_utilization{queue="default"}
+        threshold: "0.8"

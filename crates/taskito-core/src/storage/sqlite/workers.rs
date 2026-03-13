@@ -11,7 +11,15 @@ const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
 impl SqliteStorage {
     /// Register a new worker or update an existing one.
-    pub fn register_worker(&self, worker_id: &str, queues: &str, tags: Option<&str>) -> Result<()> {
+    pub fn register_worker(
+        &self,
+        worker_id: &str,
+        queues: &str,
+        tags: Option<&str>,
+        resources: Option<&str>,
+        resource_health: Option<&str>,
+        threads: i32,
+    ) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
 
@@ -21,6 +29,9 @@ impl SqliteStorage {
             queues,
             status: "active",
             tags,
+            resources,
+            resource_health,
+            threads,
         };
 
         diesel::replace_into(workers::table)
@@ -31,13 +42,16 @@ impl SqliteStorage {
     }
 
     /// Update the heartbeat timestamp for a worker.
-    pub fn heartbeat(&self, worker_id: &str) -> Result<()> {
+    pub fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
 
         diesel::update(workers::table)
             .filter(workers::worker_id.eq(worker_id))
-            .set(workers::last_heartbeat.eq(now))
+            .set((
+                workers::last_heartbeat.eq(now),
+                workers::resource_health.eq(resource_health),
+            ))
             .execute(&mut conn)?;
 
         Ok(())

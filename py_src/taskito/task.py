@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from taskito.app import Queue
     from taskito.canvas import Signature
+    from taskito.interception import InterceptionReport
     from taskito.result import JobResult
 
 
@@ -26,6 +27,7 @@ class TaskWrapper:
         default_queue: str,
         default_max_retries: int,
         default_timeout: int,
+        inject: list[str] | None = None,
     ):
         self._fn = fn
         self._queue = queue_ref
@@ -34,11 +36,17 @@ class TaskWrapper:
         self._default_queue = default_queue
         self._default_max_retries = default_max_retries
         self._default_timeout = default_timeout
+        self._inject = inject or []
 
     @property
     def name(self) -> str:
         """The registered task name."""
         return self._task_name
+
+    @property
+    def inject(self) -> list[str]:
+        """Resource names this task requests via dependency injection."""
+        return self._inject
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Call the underlying function directly (synchronous, not queued)."""
@@ -128,6 +136,19 @@ class TaskWrapper:
         from taskito.canvas import Signature
 
         return Signature(task=self, args=args, kwargs=kwargs, immutable=True)
+
+    def analyze(self, *args: Any, **kwargs: Any) -> InterceptionReport:
+        """Analyze arguments without enqueuing — shows what the interceptor would do.
+
+        Returns an :class:`~taskito.interception.InterceptionReport` describing
+        the strategy for each argument.
+        """
+        from taskito.interception import InterceptionReport
+
+        interceptor = self._queue._interceptor
+        if interceptor is None:
+            return InterceptionReport()
+        return interceptor.analyze(args, kwargs)
 
     def __repr__(self) -> str:
         return f"<TaskWrapper '{self._task_name}'>"

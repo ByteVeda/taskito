@@ -144,6 +144,9 @@ diesel::table! {
         queues -> Text,
         status -> Text,
         tags -> Nullable<Text>,
+        resources -> Nullable<Text>,
+        resource_health -> Nullable<Text>,
+        threads -> Integer,
     }
 }
 

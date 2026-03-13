@@ -2,29 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from concurrent.futures import Executor
-
-    from taskito.locks import AsyncDistributedLock, DistributedLock
+    from taskito.locks import DistributedLock
     from taskito.result import JobResult
 
 
-class _AsyncMixin:
-    """Provides a helper for running sync methods in an executor."""
-
-    _executor: Executor
-
-    async def _run_sync(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_running_loop()
-        if kwargs:
-            return await loop.run_in_executor(self._executor, lambda: fn(*args, **kwargs))
-        return await loop.run_in_executor(self._executor, lambda: fn(*args))
-
-
-class QueueInspectionMixin(_AsyncMixin):
+class QueueInspectionMixin:
     """Read-only inspection, stats, and query methods for the Queue."""
 
     _inner: Any
@@ -208,34 +193,8 @@ class QueueInspectionMixin(_AsyncMixin):
         """Delete completed jobs older than a given age."""
         return self._inner.purge_completed(older_than)  # type: ignore[no-any-return]
 
-    # -- Async variants --
 
-    async def astats(self) -> dict[str, int]:
-        """Async version of :meth:`stats`."""
-        return await self._run_sync(self.stats)  # type: ignore[no-any-return]
-
-    async def astats_by_queue(self, queue_name: str) -> dict[str, int]:
-        """Async version of :meth:`stats_by_queue`."""
-        return await self._run_sync(self.stats_by_queue, queue_name)  # type: ignore[no-any-return]
-
-    async def astats_all_queues(self) -> dict[str, dict[str, int]]:
-        """Async version of :meth:`stats_all_queues`."""
-        return await self._run_sync(self.stats_all_queues)  # type: ignore[no-any-return]
-
-    async def acancel_job(self, job_id: str) -> bool:
-        """Async version of :meth:`cancel_job`."""
-        return await self._run_sync(self.cancel_job, job_id)  # type: ignore[no-any-return]
-
-    async def ametrics(
-        self,
-        task_name: str | None = None,
-        since: int = 3600,
-    ) -> dict[str, Any]:
-        """Async version of :meth:`metrics`."""
-        return await self._run_sync(self.metrics, task_name=task_name, since=since)  # type: ignore[no-any-return]
-
-
-class QueueOperationsMixin(_AsyncMixin):
+class QueueOperationsMixin:
     """Dead letters, replay, circuit breakers, logs, workers, queue management."""
 
     _inner: Any
@@ -254,24 +213,12 @@ class QueueOperationsMixin(_AsyncMixin):
         """Delete dead letter entries older than a given age."""
         return self._inner.purge_dead(older_than)  # type: ignore[no-any-return]
 
-    async def adead_letters(self, limit: int = 10, offset: int = 0) -> list[dict]:
-        """Async version of :meth:`dead_letters`."""
-        return await self._run_sync(self.dead_letters, limit=limit, offset=offset)  # type: ignore[no-any-return]
-
-    async def aretry_dead(self, dead_id: str) -> str:
-        """Async version of :meth:`retry_dead`."""
-        return await self._run_sync(self.retry_dead, dead_id)  # type: ignore[no-any-return]
-
     # -- Replay --
 
     def replay(self, job_id: str) -> JobResult:
         """Re-enqueue a completed or failed job with the exact same payload."""
         new_id = self._inner.replay_job(job_id)
         return self.get_job(new_id)  # type: ignore[attr-defined, no-any-return]
-
-    async def areplay(self, job_id: str) -> JobResult:
-        """Async version of :meth:`replay`."""
-        return await self._run_sync(self.replay, job_id)  # type: ignore[no-any-return]
 
     def replay_history(self, job_id: str) -> list[dict]:
         """Get replay history for a job."""
@@ -282,10 +229,6 @@ class QueueOperationsMixin(_AsyncMixin):
     def circuit_breakers(self) -> list[dict]:
         """List all circuit breaker states."""
         return self._inner.list_circuit_breakers()  # type: ignore[no-any-return]
-
-    async def acircuit_breakers(self) -> list[dict]:
-        """Async version of :meth:`circuit_breakers`."""
-        return await self._run_sync(self.circuit_breakers)  # type: ignore[no-any-return]
 
     # -- Logs --
 
@@ -310,10 +253,6 @@ class QueueOperationsMixin(_AsyncMixin):
     def workers(self) -> list[dict]:
         """List all registered workers and their heartbeat status."""
         return self._inner.list_workers()  # type: ignore[no-any-return]
-
-    async def aworkers(self) -> list[dict]:
-        """Async version of :meth:`workers`."""
-        return await self._run_sync(self.workers)  # type: ignore[no-any-return]
 
     # -- Queue Pause/Resume --
 
@@ -380,37 +319,6 @@ class QueueLockMixin:
         from taskito.locks import DistributedLock
 
         return DistributedLock(
-            inner=self._inner,
-            name=name,
-            ttl=ttl,
-            owner_id=owner_id,
-            auto_extend=auto_extend,
-            timeout=timeout,
-            retry_interval=retry_interval,
-        )
-
-    def alock(
-        self,
-        name: str,
-        ttl: float = 30.0,
-        auto_extend: bool = True,
-        owner_id: str | None = None,
-        timeout: float | None = None,
-        retry_interval: float = 0.1,
-    ) -> AsyncDistributedLock:
-        """Return an async distributed lock context manager.
-
-        Args:
-            name: Lock name (unique across the cluster).
-            ttl: Lock TTL in seconds. Auto-extended at ttl/3 intervals.
-            auto_extend: Whether to auto-extend the lock in a background thread.
-            owner_id: Unique owner identifier. Auto-generated if not provided.
-            timeout: Max seconds to wait for acquisition. None = fail immediately.
-            retry_interval: Seconds between retries when timeout is set.
-        """
-        from taskito.locks import AsyncDistributedLock
-
-        return AsyncDistributedLock(
             inner=self._inner,
             name=name,
             ttl=ttl,

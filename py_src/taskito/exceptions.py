@@ -39,3 +39,31 @@ class JobNotFoundError(TaskitoError, KeyError):
 
 class QueueError(TaskitoError):
     """Raised on queue-level operational errors."""
+
+
+class ResourceError(TaskitoError):
+    """Base exception for resource system errors."""
+
+
+class ResourceInitError(ResourceError):
+    """Raised when a resource factory fails during initialization."""
+
+
+class ResourceUnavailableError(ResourceError):
+    """Raised when a resource is permanently unhealthy and cannot be resolved."""
+
+
+class CircularDependencyError(ResourceError):
+    """Raised when resource dependencies form a cycle."""
+
+
+class ResourceNotFoundError(ResourceError, KeyError):
+    """Raised when resolving a resource name that was never registered."""
+
+
+class ProxyReconstructionError(ResourceError):
+    """Raised when a proxy handler fails to reconstruct an object from its recipe."""
+
+
+class ProxyCleanupError(ResourceError):
+    """Raised when a proxy handler fails during cleanup."""

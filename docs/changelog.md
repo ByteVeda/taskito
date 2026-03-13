@@ -2,6 +2,56 @@
 
 All notable changes to taskito are documented here.
 
+## 0.5.0
+
+### New Features
+
+- **Native async tasks** -- `async def` task functions run natively on a dedicated event loop; no wrapping in `asyncio.run()` or thread bridging; dual-dispatch worker pool routes async jobs to `NativeAsyncPool` and sync jobs to the existing thread pool
+- **`async_concurrency` parameter** -- `Queue(async_concurrency=100)` caps concurrent async tasks on the event loop; independent of the `workers` (sync thread) count
+- **`current_job` in async tasks** -- `current_job.id`, `.log()`, `.update_progress()`, `.check_cancelled()` work inside `async def` tasks via `contextvars`; each concurrent task gets an isolated context
+- **KEDA integration** -- `taskito scaler --app myapp:queue --port 9091` starts a lightweight metrics server; `/api/scaler` returns queue depth for KEDA `metrics-api` trigger; `/metrics` exposes Prometheus text format; `/health` for liveness probes
+- **KEDA deploy templates** -- `deploy/keda/` contains ready-to-use `ScaledObject`, `ScaledObject` (Prometheus), and `ScaledJob` YAML manifests
+- **Argument interception** -- `interception="strict"|"lenient"` on `Queue()` classifies every task argument before serialization; five strategies: PASS, CONVERT, REDIRECT, PROXY, REJECT; built-in rules cover UUID, datetime, Decimal, Pydantic models, dataclasses, SQLAlchemy sessions, Redis clients, file handles, and more
+- **Worker resource runtime** -- `@queue.worker_resource("name")` decorator registers a factory initialized once at worker startup; four scopes: `"worker"` (default), `"task"` (pool), `"thread"` (thread-local), `"request"` (per-task fresh)
+- **Resource injection** -- `@queue.task(inject=["name"])` or `db: Inject["name"]` annotation syntax injects live resources into tasks without serializing them; `from taskito import Inject`
+- **Resource dependencies** -- `depends_on=["other"]` on `@queue.worker_resource()`; topological initialization order, reverse teardown; cycles detected eagerly at registration time (`CircularDependencyError`)
+- **Health checking** -- `health_check=` and `health_check_interval=` on `@queue.worker_resource()`; unhealthy resources are recreated up to `max_recreation_attempts` times; `queue.health_check("name")` for manual checks
+- **Resource pools** -- task-scoped resources get a semaphore-based pool with `pool_size`, `pool_min`, `acquire_timeout`, `max_lifetime`, `idle_timeout`; `pool_min > 0` pre-warms instances at startup
+- **Thread-local resources** -- `scope="thread"` creates one instance per worker thread via `ThreadLocalStore`, torn down on shutdown
+- **Frozen resources** -- `frozen=True` wraps the resource in a `FrozenResource` proxy that raises `AttributeError` on attribute writes
+- **Hot reload** -- `reloadable=True` marks a resource for reload on `SIGHUP`; `taskito reload --app myapp:queue` CLI subcommand; `queue._resource_runtime.reload()` programmatic reload
+- **TOML resource config** -- `queue.load_resources("resources.toml")` loads resource definitions from a TOML file; factory, teardown, and health_check are dotted import paths; Python 3.11+ built-in `tomllib`, older versions need `tomli`
+- **Resource proxies** -- transparent deconstruct/reconstruct of non-serializable objects; built-in handlers: `file`, `logger`, `requests_session`, `httpx_client`, `boto3_client`, `gcs_client`
+- **Proxy security** -- HMAC-SHA256 recipe signing via `recipe_signing_key=` on `Queue()` or `TASKITO_RECIPE_SECRET` env var; reconstruction timeout via `max_reconstruction_timeout=`; file path allowlist via `file_path_allowlist=`; per-handler opt-out via `disabled_proxies=`
+- **`NoProxy` wrapper** -- `from taskito import NoProxy`; opt out of proxy handling for a specific argument, letting the serializer handle it directly
+- **Custom type rules** -- `queue.register_type(MyType, "redirect", resource="my_resource")` registers custom types with any strategy (requires interception enabled)
+- **Interception metrics** -- `queue.interception_stats()` returns total calls, per-strategy counts, average duration, and max depth reached
+- **Proxy metrics** -- `queue.proxy_stats()` returns per-handler deconstruction/reconstruction counts, error counts, and average duration
+- **Resource status** -- `queue.resource_status()` returns per-resource health, scope, init duration, and recreation count
+- **Test mode resources** -- `queue.test_mode(resources={"db": mock_db})` injects mocks during test mode without worker startup; `MockResource(name, return_value=..., wraps=..., track_calls=True)` adds call tracking
+- **Optional cloud dependencies** -- `pip install taskito[aws]` adds boto3>=1.20; `pip install taskito[gcs]` adds google-cloud-storage>=2.0
+
+### Breaking Changes
+
+- **Dropped Python 3.9 support** -- minimum required version is now Python 3.10; Python 3.9 reached EOL in October 2025
+
+### Internal
+
+- `crates/taskito-async/` new Rust crate: `NativeAsyncPool` implementing `WorkerDispatcher`, `PyResultSender` (#[pyclass]) bridging Python executor to Rust scheduler; feature-gated via `native-async` cargo feature
+- `py_src/taskito/async_support/` package: `AsyncTaskExecutor` (dedicated event loop, bounded semaphore, full lifecycle support), `context.py` (contextvar-based job context), `__init__.py` public API
+- `py_src/taskito/scaler.py`: `serve_scaler()` with `ThreadingHTTPServer`, routes `/api/scaler`, `/metrics`, `/health`
+- Dashboard CSS and JS split into separate files (`assets/css/`, `assets/js/` modules)
+- `_taskito_is_async` and `_taskito_async_fn` attributes set on task wrappers at registration time
+- `py_src/taskito/interception/` package: `strategy.py`, `registry.py`, `walker.py`, `interceptor.py`, `reconstruct.py`, `converters.py`, `built_in.py`, `errors.py`, `metrics.py`
+- `py_src/taskito/resources/` package: `definition.py`, `runtime.py`, `pool.py`, `thread_local.py`, `frozen.py`, `health.py`, `graph.py`, `toml_config.py`
+- `py_src/taskito/proxies/` package: `handler.py`, `registry.py`, `reconstruct.py`, `signing.py`, `schema.py`, `no_proxy.py`, `metrics.py`, `built_in.py`, and `handlers/` subpackage
+- `py_src/taskito/inject.py`: `Inject` metaclass for annotation-based resource injection
+- Worker startup initializes `ResourceRuntime` before first dispatch; teardown on graceful shutdown
+- `TestMode` extended with `resources=` parameter and `_test_mode_active` flag that disables proxy reconstruction during tests
+- Worker heartbeat extended to include per-resource health JSON
+
+---
+
 ## 0.4.0
 
 ### New Features

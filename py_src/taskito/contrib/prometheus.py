@@ -43,6 +43,18 @@ _retries_total: Any = None
 _queue_depth: Any = None
 _dlq_size: Any = None
 _worker_utilization: Any = None
+_resource_health: Any = None
+_resource_recreations: Any = None
+_resource_init_duration: Any = None
+_proxy_reconstruct_duration: Any = None
+_proxy_reconstruct_total: Any = None
+_proxy_reconstruct_errors: Any = None
+_intercept_duration: Any = None
+_intercept_strategy_total: Any = None
+_pool_size: Any = None
+_pool_active: Any = None
+_pool_idle: Any = None
+_pool_timeouts: Any = None
 _metrics_initialized = False
 
 
@@ -52,6 +64,11 @@ _init_lock = threading.Lock()
 def _init_metrics() -> None:
     global _jobs_total, _job_duration, _active_workers, _retries_total
     global _queue_depth, _dlq_size, _worker_utilization, _metrics_initialized
+    global _resource_health, _resource_recreations, _resource_init_duration
+    global _proxy_reconstruct_duration, _proxy_reconstruct_total
+    global _proxy_reconstruct_errors, _intercept_duration
+    global _intercept_strategy_total
+    global _pool_size, _pool_active, _pool_idle, _pool_timeouts
 
     if _metrics_initialized:
         return
@@ -91,6 +108,66 @@ def _init_metrics() -> None:
         _worker_utilization = Gauge(
             "taskito_worker_utilization",
             "Worker utilization ratio (0.0-1.0)",
+            ["queue"],
+        )
+        _resource_health = Gauge(
+            "taskito_resource_health_status",
+            "Resource health (1=healthy, 0=unhealthy)",
+            ["resource"],
+        )
+        _resource_recreations = Gauge(
+            "taskito_resource_recreation_total",
+            "Total recreations per resource",
+            ["resource"],
+        )
+        _resource_init_duration = Gauge(
+            "taskito_resource_init_duration_seconds",
+            "Time to initialize each resource",
+            ["resource"],
+        )
+        _proxy_reconstruct_duration = Histogram(
+            "taskito_proxy_reconstruct_duration_seconds",
+            "Proxy reconstruction duration",
+            ["handler"],
+        )
+        _proxy_reconstruct_total = Counter(
+            "taskito_proxy_reconstruct_total",
+            "Total proxy reconstructions",
+            ["handler"],
+        )
+        _proxy_reconstruct_errors = Counter(
+            "taskito_proxy_reconstruct_errors_total",
+            "Total proxy reconstruction errors",
+            ["handler"],
+        )
+        _intercept_duration = Histogram(
+            "taskito_intercept_duration_seconds",
+            "Argument interception duration",
+        )
+        _intercept_strategy_total = Counter(
+            "taskito_intercept_strategy_total",
+            "Interception strategy counts",
+            ["strategy"],
+        )
+        _pool_size = Gauge(
+            "taskito_resource_pool_size",
+            "Resource pool max size",
+            ["resource"],
+        )
+        _pool_active = Gauge(
+            "taskito_resource_pool_active",
+            "Active pool instances",
+            ["resource"],
+        )
+        _pool_idle = Gauge(
+            "taskito_resource_pool_idle",
+            "Idle pool instances",
+            ["resource"],
+        )
+        _pool_timeouts = Counter(
+            "taskito_resource_pool_timeout_total",
+            "Pool acquisition timeouts",
+            ["resource"],
         )
         _metrics_initialized = True
 
@@ -174,18 +251,64 @@ class PrometheusStatsCollector:
 
                 running = stats.get("running", 0)
                 total_workers = self._queue._workers
-                if total_workers > 0:
-                    _worker_utilization.set(running / total_workers)
 
-                # Per-queue depth
+                # Per-queue depth and utilization
                 try:
                     all_q = self._queue.stats_all_queues()
                     for q_name, q_stats in all_q.items():
                         _queue_depth.labels(queue=q_name).set(q_stats.get("pending", 0))
+                        if total_workers > 0:
+                            q_running = q_stats.get("running", 0)
+                            _worker_utilization.labels(queue=q_name).set(q_running / total_workers)
                 except Exception:
                     _queue_depth.labels(queue="default").set(stats.get("pending", 0))
+                    if total_workers > 0:
+                        _worker_utilization.labels(queue="default").set(running / total_workers)
             except Exception:
                 logger.debug("Stats collection failed", exc_info=True)
+
+            # Resource metrics (including pool stats)
+            try:
+                for res in self._queue.resource_status():
+                    name = res["name"]
+                    _resource_health.labels(resource=name).set(
+                        1.0 if res["health"] == "healthy" else 0.0
+                    )
+                    _resource_recreations.labels(resource=name).set(res["recreations"])
+                    _resource_init_duration.labels(resource=name).set(
+                        res["init_duration_ms"] / 1000.0
+                    )
+                    pool = res.get("pool")
+                    if pool:
+                        _pool_size.labels(resource=name).set(pool["size"])
+                        _pool_active.labels(resource=name).set(pool["active"])
+                        _pool_idle.labels(resource=name).set(pool["idle"])
+                        _pool_timeouts.labels(resource=name).set(pool["total_timeouts"])
+            except Exception:
+                logger.debug("Resource metrics collection failed", exc_info=True)
+
+            # Proxy reconstruction metrics
+            try:
+                for pstat in self._queue.proxy_stats():
+                    handler = pstat["handler"]
+                    _proxy_reconstruct_total.labels(handler=handler)._value.set(
+                        pstat["total_reconstructions"]
+                    )
+                    _proxy_reconstruct_errors.labels(handler=handler)._value.set(
+                        pstat["total_errors"]
+                    )
+            except Exception:
+                logger.debug("Proxy metrics collection failed", exc_info=True)
+
+            # Interception metrics
+            try:
+                istats = self._queue.interception_stats()
+                if istats:
+                    for strategy, count in istats.get("strategy_counts", {}).items():
+                        _intercept_strategy_total.labels(strategy=strategy)._value.set(count)
+            except Exception:
+                logger.debug("Interception metrics collection failed", exc_info=True)
+
             self._stop_event.wait(self._interval)
 
 

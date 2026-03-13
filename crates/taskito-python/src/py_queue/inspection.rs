@@ -371,6 +371,9 @@ impl PyQueue {
                 dict.set_item("queues", r.queues)?;
                 dict.set_item("status", r.status)?;
                 dict.set_item("tags", r.tags)?;
+                dict.set_item("resources", r.resources)?;
+                dict.set_item("resource_health", r.resource_health)?;
+                dict.set_item("threads", r.threads)?;
                 result.push(dict.into());
             }
             Ok(result)
