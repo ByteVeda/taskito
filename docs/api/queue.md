@@ -22,6 +22,7 @@ Queue(
     max_reconstruction_timeout: int = 10,
     file_path_allowlist: list[str] | None = None,
     disabled_proxies: list[str] | None = None,
+    async_concurrency: int = 100,
 )
 ```
 
@@ -41,6 +42,7 @@ Queue(
 | `max_reconstruction_timeout` | `int` | `10` | Max seconds allowed for proxy reconstruction. |
 | `file_path_allowlist` | `list[str] \| None` | `None` | Allowed file path prefixes for the file proxy handler. |
 | `disabled_proxies` | `list[str] \| None` | `None` | Handler names to skip when registering built-in proxy handlers. |
+| `async_concurrency` | `int` | `100` | Maximum number of `async def` tasks running concurrently on the native async executor. |
 
 ## Task Registration
 
@@ -422,20 +424,20 @@ with queue.lock("my-resource", ttl=60):
 
 Raises `LockNotAcquired` if acquisition fails (when `timeout` is `None` or expires).
 
-### `await queue.alock()`
+### `queue.alock()`
 
 ```python
-await queue.alock(
+queue.alock(
     name: str,
-    ttl: int = 30,
+    ttl: float = 30.0,
     auto_extend: bool = True,
     owner_id: str | None = None,
     timeout: float | None = None,
     retry_interval: float = 0.1,
-) -> contextlib.AbstractAsyncContextManager
+) -> AsyncDistributedLock
 ```
 
-Async version of `lock()`:
+Async context manager version of `lock()`. Returns an `AsyncDistributedLock` directly — use `async with`, not `await`:
 
 ```python
 async with queue.alock("my-resource"):
@@ -710,5 +712,5 @@ def hook(task_name: str, args: tuple, kwargs: dict, error: Exception) -> None: .
 | `queue.workers()` | `await queue.aworkers()` |
 | `queue.circuit_breakers()` | `await queue.acircuit_breakers()` |
 | `queue.replay()` | `await queue.areplay()` |
-| `queue.lock()` | `await queue.alock()` (async context manager) |
+| `queue.lock()` | `queue.alock()` (async context manager, not a coroutine) |
 | `queue.resource_status()` | `await queue.aresource_status()` |

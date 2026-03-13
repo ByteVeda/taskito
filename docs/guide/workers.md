@@ -108,26 +108,55 @@ $ taskito worker --app myapp:queue
 queue._inner.request_shutdown()
 ```
 
+## Async Tasks
+
+`async def` task functions are dispatched natively — they run on a dedicated event loop thread, not wrapped in `asyncio.run()` on a worker thread.
+
+```python
+@queue.task()
+async def fetch_data(url: str) -> dict:
+    import httpx
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        return r.json()
+```
+
+Control the max number of async tasks running concurrently:
+
+```python
+queue = Queue(
+    db_path="myapp.db",
+    workers=4,              # OS threads for sync tasks
+    async_concurrency=200,  # concurrent async tasks (default: 100)
+)
+```
+
+See [Native Async Tasks](async-tasks.md) for the full guide.
+
 ## How Workers Work
 
 ```mermaid
 graph LR
-    S["Scheduler<br/>(Tokio async)"] -->|Job| CH["Bounded Channel"]
+    S["Scheduler<br/>(Tokio async)"] -->|"sync job"| CH["Bounded Channel"]
+    S -->|"async job"| AP["Native Async Pool"]
 
     CH --> W1["Worker 1"]
     CH --> W2["Worker 2"]
     CH --> WN["Worker N"]
 
+    AP --> EL["Event Loop Thread"]
+
     W1 -->|Result| RCH["Result Channel"]
     W2 -->|Result| RCH
     WN -->|Result| RCH
+    EL -->|Result| RCH
 
     RCH --> ML["Result Handler"]
     ML -->|"complete / retry / DLQ"| DB[("SQLite")]
 ```
 
 1. The **scheduler** runs in a dedicated Tokio async thread, polling SQLite for ready jobs every 50ms
-2. Ready jobs are sent to the **worker pool** via a bounded crossbeam channel
-3. Each **worker thread** acquires the GIL, deserializes arguments, and runs the Python function
-4. Results flow back through a **result channel** to the main loop
+2. Sync jobs are sent to the **worker thread pool** via a bounded crossbeam channel; each worker acquires the GIL and runs the Python function
+3. Async jobs are dispatched to the **native async pool** and scheduled on a dedicated Python event loop
+4. Results from both pools flow back through a **result channel** to the main loop
 5. The main loop updates job status in SQLite (complete, retry, or DLQ)

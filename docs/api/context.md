@@ -2,7 +2,7 @@
 
 ::: taskito.context
 
-Thread-local context for the currently executing job. Provides access to job metadata and controls from inside a running task.
+Per-job context for the currently executing task. Provides access to job metadata and controls from inside a running task.
 
 ## Usage
 
@@ -13,7 +13,10 @@ from taskito.context import current_job
 from taskito import current_job
 ```
 
-`current_job` is a module-level singleton. It uses thread-local storage internally, so each worker thread sees its own job context.
+`current_job` is a module-level singleton. It works in both sync and async tasks:
+
+- **Sync tasks** — reads from `threading.local`, isolated per worker thread.
+- **Async tasks** — reads from a `contextvars.ContextVar`, isolated per concurrent coroutine even when multiple async tasks run on the same event loop.
 
 !!! warning
     `current_job` can only be used inside a running task. Accessing it outside a task raises `RuntimeError`.
@@ -99,7 +102,16 @@ while job.status == "running":
 
 ## How It Works
 
-1. Before each task execution, the Rust worker calls `_set_context()` with the job's metadata
-2. `current_job` reads from thread-local storage (`threading.local()`)
+**Sync tasks (thread pool):**
+
+1. Before execution, the Rust worker calls `_set_context()` with the job's metadata
+2. `current_job` reads from `threading.local` — each worker thread has independent storage
 3. After the task completes (success or failure), `_clear_context()` resets the thread-local
-4. Each worker thread has independent context — no cross-thread interference
+
+**Async tasks (native async pool):**
+
+1. Before execution, `set_async_context()` sets a `contextvars.ContextVar` token
+2. `current_job` checks `contextvars` first; if a token is set it returns that context
+3. After the coroutine finishes, `clear_async_context()` resets the token
+
+This means concurrent async tasks on the same event loop each see their own isolated context — there is no cross-task interference.

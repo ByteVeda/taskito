@@ -111,27 +111,27 @@ Celery can use SQLite as a result backend, but still requires a broker (Redis or
 
 ## Can I use async tasks?
 
-Task functions themselves run synchronously in worker threads. However, you can use async APIs for **enqueuing** and **fetching results**:
+Yes. Define the task function with `async def` and the worker dispatches it natively — no `asyncio.run()` wrapping, no thread-pool bridging:
 
 ```python
-job = my_task.delay(data)
+@queue.task()
+async def fetch_urls(urls: list[str]) -> list[str]:
+    import httpx
+    async with httpx.AsyncClient() as client:
+        return [r.text for r in await asyncio.gather(
+            *[client.get(url) for url in urls]
+        )]
+```
+
+Enqueue and await results from async application code:
+
+```python
+job = fetch_urls.delay(urls)
 result = await job.aresult(timeout=30)
 stats = await queue.astats()
 ```
 
-If your task needs to call async code, use `asyncio.run()` inside the task:
-
-```python
-@queue.task()
-def fetch_urls(urls: list[str]):
-    import asyncio, aiohttp
-
-    async def _fetch():
-        async with aiohttp.ClientSession() as session:
-            return [await (await session.get(url)).text() for url in urls]
-
-    return asyncio.run(_fetch())
-```
+Sync and async tasks can coexist in the same queue. The worker automatically routes each job to the correct pool based on the task type. See the [Native Async Tasks](guide/async-tasks.md) guide for details including `async_concurrency` tuning and `current_job` context in async tasks.
 
 ## What serialization format does taskito use?
 

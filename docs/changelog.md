@@ -6,6 +6,11 @@ All notable changes to taskito are documented here.
 
 ### New Features
 
+- **Native async tasks** -- `async def` task functions run natively on a dedicated event loop; no wrapping in `asyncio.run()` or thread bridging; dual-dispatch worker pool routes async jobs to `NativeAsyncPool` and sync jobs to the existing thread pool
+- **`async_concurrency` parameter** -- `Queue(async_concurrency=100)` caps concurrent async tasks on the event loop; independent of the `workers` (sync thread) count
+- **`current_job` in async tasks** -- `current_job.id`, `.log()`, `.update_progress()`, `.check_cancelled()` work inside `async def` tasks via `contextvars`; each concurrent task gets an isolated context
+- **KEDA integration** -- `taskito scaler --app myapp:queue --port 9091` starts a lightweight metrics server; `/api/scaler` returns queue depth for KEDA `metrics-api` trigger; `/metrics` exposes Prometheus text format; `/health` for liveness probes
+- **KEDA deploy templates** -- `deploy/keda/` contains ready-to-use `ScaledObject`, `ScaledObject` (Prometheus), and `ScaledJob` YAML manifests
 - **Argument interception** -- `interception="strict"|"lenient"` on `Queue()` classifies every task argument before serialization; five strategies: PASS, CONVERT, REDIRECT, PROXY, REJECT; built-in rules cover UUID, datetime, Decimal, Pydantic models, dataclasses, SQLAlchemy sessions, Redis clients, file handles, and more
 - **Worker resource runtime** -- `@queue.worker_resource("name")` decorator registers a factory initialized once at worker startup; four scopes: `"worker"` (default), `"task"` (pool), `"thread"` (thread-local), `"request"` (per-task fresh)
 - **Resource injection** -- `@queue.task(inject=["name"])` or `db: Inject["name"]` annotation syntax injects live resources into tasks without serializing them; `from taskito import Inject`
@@ -28,6 +33,11 @@ All notable changes to taskito are documented here.
 
 ### Internal
 
+- `crates/taskito-async/` new Rust crate: `NativeAsyncPool` implementing `WorkerDispatcher`, `PyResultSender` (#[pyclass]) bridging Python executor to Rust scheduler; feature-gated via `native-async` cargo feature
+- `py_src/taskito/async_support/` package: `AsyncTaskExecutor` (dedicated event loop, bounded semaphore, full lifecycle support), `context.py` (contextvar-based job context), `__init__.py` public API
+- `py_src/taskito/scaler.py`: `serve_scaler()` with `ThreadingHTTPServer`, routes `/api/scaler`, `/metrics`, `/health`
+- Dashboard CSS and JS split into separate files (`assets/css/`, `assets/js/` modules)
+- `_taskito_is_async` and `_taskito_async_fn` attributes set on task wrappers at registration time
 - `py_src/taskito/interception/` package: `strategy.py`, `registry.py`, `walker.py`, `interceptor.py`, `reconstruct.py`, `converters.py`, `built_in.py`, `errors.py`, `metrics.py`
 - `py_src/taskito/resources/` package: `definition.py`, `runtime.py`, `pool.py`, `thread_local.py`, `frozen.py`, `health.py`, `graph.py`, `toml_config.py`
 - `py_src/taskito/proxies/` package: `handler.py`, `registry.py`, `reconstruct.py`, `signing.py`, `schema.py`, `no_proxy.py`, `metrics.py`, `built_in.py`, and `handlers/` subpackage

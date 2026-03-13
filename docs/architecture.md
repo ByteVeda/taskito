@@ -82,7 +82,8 @@ graph LR
         S["Tokio async runtime<br/>50ms poll interval"]
     end
 
-    S -->|"Job"| JCH["Job Channel<br/>(bounded: workers×2)"]
+    S -->|"sync job"| JCH["Job Channel<br/>(bounded: workers×2)"]
+    S -->|"async job"| AP["Native Async Pool<br/>(NativeAsyncPool)"]
 
     subgraph Pool ["Worker Threads"]
         W1["Worker 1<br/>GIL per task"]
@@ -90,13 +91,22 @@ graph LR
         WN["Worker N<br/>GIL per task"]
     end
 
+    subgraph AsyncPool ["Async Executor"]
+        EL["Dedicated Event Loop<br/>(daemon thread)"]
+        SEM["Semaphore<br/>(async_concurrency)"]
+    end
+
     JCH --> W1
     JCH --> W2
     JCH --> WN
 
+    AP --> EL
+    EL --> SEM
+
     W1 -->|"Result"| RCH["Result Channel<br/>(bounded: workers×2)"]
     W2 -->|"Result"| RCH
     WN -->|"Result"| RCH
+    EL -->|"PyResultSender"| RCH
 
     RCH --> ML["Main Loop<br/>(py.allow_threads)"]
     ML -->|"complete / retry / DLQ"| DB[("SQLite")]
@@ -104,9 +114,11 @@ graph LR
 
 **Key design decisions:**
 
-- **OS threads, not Python threads**: Workers are Rust `std::thread` threads. The GIL is only acquired when calling Python task code.
+- **OS threads, not Python threads**: Sync workers are Rust `std::thread` threads. The GIL is only acquired when calling Python task code.
 - **Bounded channels**: Both job and result channels are bounded to `workers × 2` to provide backpressure.
-- **GIL isolation**: Each worker acquires the GIL independently using `Python::with_gil()`. The scheduler and result handler release the GIL via `py.allow_threads()`.
+- **GIL isolation**: Each sync worker acquires the GIL independently using `Python::with_gil()`. The scheduler and result handler release the GIL via `py.allow_threads()`.
+- **Native async dispatch**: `async def` tasks bypass the thread pool entirely. A `NativeAsyncPool` sends them to a dedicated `AsyncTaskExecutor` running on a Python daemon thread. `PyResultSender` (a `#[pyclass]`) bridges results back into the Rust scheduler.
+- **Context isolation**: Sync tasks use `threading.local` for `current_job`; async tasks use `contextvars.ContextVar`, which is properly scoped across `await` boundaries and isolated between concurrent coroutines.
 
 ## Storage Layer
 

@@ -122,6 +122,37 @@ The module must be importable from the current working directory. If your module
 | `myapp/tasks.py` with `queue = Queue()` | `myapp.tasks:queue` |
 | `src/workers/q.py` with `app = Queue()` | `src.workers.q:app` |
 
+### `taskito scaler`
+
+Start a lightweight KEDA metrics server.
+
+```bash
+taskito scaler --app <module:attribute> [--host <addr>] [--port <port>] [--target-queue-depth <n>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--app` | — | Python path to the `Queue` instance |
+| `--host` | `0.0.0.0` | Bind address |
+| `--port` | `9091` | Bind port |
+| `--target-queue-depth` | `10` | Scaling target hint returned to KEDA in `/api/scaler` responses |
+
+The server exposes three routes:
+
+| Route | Description |
+|---|---|
+| `GET /api/scaler` | Queue depth and target for KEDA `metrics-api` trigger. Add `?queue=<name>` to filter. |
+| `GET /metrics` | Prometheus text format (requires `prometheus-client`). |
+| `GET /health` | Liveness probe — always returns `{"status": "ok"}`. |
+
+**Example:**
+
+```bash
+taskito scaler --app myapp:queue --port 9091 --target-queue-depth 5
+```
+
+See the [KEDA Integration guide](../guide/keda.md) for Kubernetes deploy templates.
+
 ## Error Messages
 
 | Error | Cause |
