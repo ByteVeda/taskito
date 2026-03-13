@@ -108,6 +108,7 @@ def _init_metrics() -> None:
         _worker_utilization = Gauge(
             "taskito_worker_utilization",
             "Worker utilization ratio (0.0-1.0)",
+            ["queue"],
         )
         _resource_health = Gauge(
             "taskito_resource_health_status",
@@ -250,16 +251,19 @@ class PrometheusStatsCollector:
 
                 running = stats.get("running", 0)
                 total_workers = self._queue._workers
-                if total_workers > 0:
-                    _worker_utilization.set(running / total_workers)
 
-                # Per-queue depth
+                # Per-queue depth and utilization
                 try:
                     all_q = self._queue.stats_all_queues()
                     for q_name, q_stats in all_q.items():
                         _queue_depth.labels(queue=q_name).set(q_stats.get("pending", 0))
+                        if total_workers > 0:
+                            q_running = q_stats.get("running", 0)
+                            _worker_utilization.labels(queue=q_name).set(q_running / total_workers)
                 except Exception:
                     _queue_depth.labels(queue="default").set(stats.get("pending", 0))
+                    if total_workers > 0:
+                        _worker_utilization.labels(queue="default").set(running / total_workers)
             except Exception:
                 logger.debug("Stats collection failed", exc_info=True)
 

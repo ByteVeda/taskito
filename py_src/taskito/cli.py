@@ -83,6 +83,22 @@ def main() -> None:
     )
     resume_parser.add_argument("queue_name", help="Queue name to resume")
 
+    # scaler subcommand
+    scaler_parser = subparsers.add_parser("scaler", help="Start a lightweight KEDA metrics server")
+    scaler_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
+    )
+    scaler_parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    scaler_parser.add_argument("--port", type=int, default=9091, help="Bind port (default: 9091)")
+    scaler_parser.add_argument(
+        "--target-queue-depth",
+        type=int,
+        default=10,
+        help="Scaling target hint for KEDA (default: 10)",
+    )
+
     # resources subcommand
     res_parser = subparsers.add_parser("resources", help="Show registered resources")
     res_parser.add_argument(
@@ -120,6 +136,8 @@ def main() -> None:
         queue = _load_queue(args.app)
         queue.resume(args.queue_name)
         print(f"Queue '{args.queue_name}' resumed")
+    elif args.command == "scaler":
+        run_scaler(args)
     elif args.command == "resources":
         run_resources(args)
     elif args.command == "reload":
@@ -228,6 +246,19 @@ def _watch_stats(queue: Queue) -> None:
             time.sleep(2)
     except KeyboardInterrupt:
         pass
+
+
+def run_scaler(args: argparse.Namespace) -> None:
+    """Start the lightweight KEDA metrics server."""
+    queue = _load_queue(args.app)
+    from taskito.scaler import serve_scaler
+
+    serve_scaler(
+        queue,
+        host=args.host,
+        port=args.port,
+        target_queue_depth=args.target_queue_depth,
+    )
 
 
 def run_resources(args: argparse.Namespace) -> None:
