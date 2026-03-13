@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from taskito.testing import TestMode
 
 from taskito._taskito import PyQueue, PyTaskConfig
+from taskito.async_support.helpers import run_maybe_async
+from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.events import EventBus, EventType
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
@@ -63,6 +65,7 @@ class Queue(
     QueueInspectionMixin,
     QueueOperationsMixin,
     QueueLockMixin,
+    AsyncQueueMixin,
 ):
     """
     Rust-powered task queue with embedded SQLite storage.
@@ -100,6 +103,7 @@ class Queue(
         max_reconstruction_timeout: int = 10,
         file_path_allowlist: list[str] | None = None,
         disabled_proxies: list[str] | None = None,
+        async_concurrency: int = 100,
     ):
         """Initialize a new task queue.
 
@@ -136,6 +140,8 @@ class Queue(
             file_path_allowlist: Allowed file paths for the file proxy handler.
             disabled_proxies: Handler names to skip when registering built-in
                 proxy handlers.
+            async_concurrency: Maximum number of async tasks running concurrently
+                on the native async executor. Defaults to 100.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -210,6 +216,9 @@ class Queue(
         self._resource_definitions: dict[str, ResourceDefinition] = {}
         self._resource_runtime: ResourceRuntime | None = None
         self._task_inject_map: dict[str, list[str]] = {}
+
+        # Native async concurrency limit
+        self._async_concurrency = async_concurrency
 
         # Test mode flag (Phase M)
         self._test_mode_active = False
@@ -340,6 +349,12 @@ class Queue(
 
             # Preserve function metadata
             functools.update_wrapper(wrapper, fn)
+
+            # Mark async status for native async dispatch
+            is_async = asyncio.iscoroutinefunction(fn)
+            wrapper._taskito_is_async = is_async  # type: ignore[attr-defined]
+            if is_async:
+                wrapper._taskito_async_fn = fn  # type: ignore[attr-defined]
 
             return wrapper
 
@@ -668,15 +683,7 @@ class Queue(
             error = None
             result = None
             try:
-                ret = fn(*args, **kwargs)
-                if asyncio.iscoroutine(ret):
-                    loop = getattr(queue_ref, "_async_loop", None)
-                    if loop is not None and loop.is_running():
-                        future = asyncio.run_coroutine_threadsafe(ret, loop)
-                        ret = future.result()
-                    else:
-                        # Fallback for test mode / non-worker contexts
-                        ret = asyncio.run(ret)
+                ret = run_maybe_async(fn(*args, **kwargs))
                 result = ret
             except Exception as exc:
                 error = exc
@@ -930,30 +937,6 @@ class Queue(
 
         print("\n".join(lines))
 
-    def _start_async_loop(self) -> None:
-        """Start a shared event loop in a background thread for async tasks."""
-        self._async_loop = asyncio.new_event_loop()
-        self._async_thread = threading.Thread(
-            target=self._async_loop.run_forever,
-            daemon=True,
-            name="taskito-async-loop",
-        )
-        self._async_thread.start()
-
-    def _stop_async_loop(self) -> None:
-        """Stop the shared async event loop."""
-        loop = getattr(self, "_async_loop", None)
-        thread = getattr(self, "_async_thread", None)
-        if loop is not None:
-            if loop.is_running():
-                loop.call_soon_threadsafe(loop.stop)
-            if thread is not None:
-                thread.join(timeout=5)
-                if thread.is_alive():
-                    logger.warning("Async event loop thread did not stop within 5s timeout")
-            if not loop.is_running():
-                loop.close()
-
     def run_worker(
         self,
         queues: Sequence[str] | None = None,
@@ -994,23 +977,19 @@ class Queue(
         worker_queues = queue_list or ["default"]
         self._print_banner(worker_queues)
 
-        # Start shared async event loop for async tasks
-        self._start_async_loop()
-
         # Initialize worker resources (before Rust dispatches tasks)
         health_checker = None
         if self._resource_definitions:
             from taskito.resources.health import HealthChecker
 
-            loop = getattr(self, "_async_loop", None)
             self._resource_runtime = ResourceRuntime(self._resource_definitions)
-            self._resource_runtime.initialize(loop)
+            self._resource_runtime.initialize()
             logger.info(
                 "Initialized %d resource(s): %s",
                 len(self._resource_definitions),
                 ", ".join(self._resource_runtime._init_order),
             )
-            health_checker = HealthChecker(self._resource_runtime, loop)
+            health_checker = HealthChecker(self._resource_runtime)
             health_checker.start()
 
         # Set up signal handlers for graceful shutdown (only in main thread)
@@ -1074,6 +1053,7 @@ class Queue(
                 worker_id=worker_id,
                 resources=resources_json,
                 threads=self._workers,
+                async_concurrency=self._async_concurrency,
             )
         except KeyboardInterrupt:
             logger.info("Cold shutdown (terminating immediately)")
@@ -1086,7 +1066,6 @@ class Queue(
             if self._resource_runtime is not None:
                 self._resource_runtime.teardown()
                 self._resource_runtime = None
-            self._stop_async_loop()
             logger.info("Worker stopped.")
             if is_main:
                 if original_sigint is not None:
@@ -1147,10 +1126,6 @@ class Queue(
             )
         return result
 
-    async def aresource_status(self) -> list[dict[str, Any]]:
-        """Async version of :meth:`resource_status`."""
-        return self.resource_status()
-
     # -- Test Mode --
 
     def test_mode(
@@ -1171,43 +1146,3 @@ class Queue(
         from taskito.testing import TestMode
 
         return TestMode(self, propagate_errors=propagate_errors, resources=resources)
-
-    async def arun_worker(
-        self,
-        queues: Sequence[str] | None = None,
-        tags: list[str] | None = None,
-    ) -> None:
-        """Async version of :meth:`run_worker`.
-
-        Runs the blocking worker loop in a thread executor so it does not
-        block the asyncio event loop.
-
-        Args:
-            queues: List of queue names to consume from.
-            tags: Optional tags for worker specialization / routing.
-        """
-        loop = asyncio.get_running_loop()
-
-        original_sigint = signal.getsignal(signal.SIGINT)
-        original_sigterm = signal.getsignal(signal.SIGTERM)
-
-        def _shutdown_once() -> None:
-            logger.info("Warm shutdown (waiting for running tasks to finish)...")
-            self._inner.request_shutdown()
-            with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(signal.SIGINT)
-                loop.remove_signal_handler(signal.SIGTERM)
-            signal.signal(signal.SIGINT, original_sigint)
-            signal.signal(signal.SIGTERM, original_sigterm)
-
-        loop.add_signal_handler(signal.SIGINT, _shutdown_once)
-        loop.add_signal_handler(signal.SIGTERM, _shutdown_once)
-
-        try:
-            await loop.run_in_executor(None, lambda: self.run_worker(queues=queues, tags=tags))
-        finally:
-            with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(signal.SIGINT)
-                loop.remove_signal_handler(signal.SIGTERM)
-            signal.signal(signal.SIGINT, original_sigint)
-            signal.signal(signal.SIGTERM, original_sigterm)

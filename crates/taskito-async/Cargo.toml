@@ -1,0 +1,11 @@
+[package]
+name = "taskito-async"
+version = "0.5.0"
+edition = "2021"
+
+[dependencies]
+taskito-core = { path = "../taskito-core" }
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }
+async-trait = { workspace = true }

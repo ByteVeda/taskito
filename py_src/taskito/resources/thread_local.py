@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 from typing import Any, Callable
+
+from taskito.async_support.helpers import run_maybe_async
 
 logger = logging.getLogger("taskito.resources")
 
@@ -21,13 +22,11 @@ class ThreadLocalStore:
         name: str,
         factory: Callable[..., Any],
         teardown: Callable[..., Any] | None,
-        loop: asyncio.AbstractEventLoop | None = None,
         dep_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self._name = name
         self._factory = factory
         self._teardown = teardown
-        self._loop = loop
         self._dep_kwargs = dep_kwargs or {}
         self._local = threading.local()
         self._instances: dict[int, Any] = {}
@@ -39,12 +38,7 @@ class ThreadLocalStore:
         if instance is not None:
             return instance
 
-        instance = self._factory(**self._dep_kwargs)
-        if asyncio.iscoroutine(instance):
-            if self._loop and self._loop.is_running():
-                instance = asyncio.run_coroutine_threadsafe(instance, self._loop).result()
-            else:
-                instance = asyncio.run(instance)
+        instance = run_maybe_async(self._factory(**self._dep_kwargs))
 
         self._local.instance = instance
         with self._lock:
@@ -57,12 +51,7 @@ class ThreadLocalStore:
             for tid, instance in self._instances.items():
                 if self._teardown is not None:
                     try:
-                        result = self._teardown(instance)
-                        if asyncio.iscoroutine(result):
-                            if self._loop and self._loop.is_running():
-                                asyncio.run_coroutine_threadsafe(result, self._loop).result()
-                            else:
-                                asyncio.run(result)
+                        run_maybe_async(self._teardown(instance))
                     except Exception:
                         logger.exception(
                             "Error tearing down thread-local resource '%s' for thread %d",

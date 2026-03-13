@@ -155,6 +155,7 @@ class PyQueue:
         worker_id: str | None = None,
         resources: str | None = None,
         threads: int = 1,
+        async_concurrency: int = 100,
     ) -> None: ...
     def worker_heartbeat(
         self,
@@ -207,3 +208,33 @@ class PyQueue:
         ttl_ms: int = 30000,
     ) -> bool: ...
     def get_lock_info(self, lock_name: str) -> dict[str, Any] | None: ...
+
+class PyResultSender:
+    """Sends task results from Python async executor back to Rust scheduler.
+
+    Only available when built with the ``native-async`` feature.
+    """
+
+    def report_success(
+        self,
+        job_id: str,
+        task_name: str,
+        result: bytes | None,
+        wall_time_ns: int,
+    ) -> None: ...
+    def report_failure(
+        self,
+        job_id: str,
+        task_name: str,
+        error: str,
+        retry_count: int,
+        max_retries: int,
+        wall_time_ns: int,
+        should_retry: bool,
+    ) -> None: ...
+    def report_cancelled(
+        self,
+        job_id: str,
+        task_name: str,
+        wall_time_ns: int,
+    ) -> None: ...

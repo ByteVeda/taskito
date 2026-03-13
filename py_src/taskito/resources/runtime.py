@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Callable
 
+from taskito.async_support.helpers import run_maybe_async
 from taskito.exceptions import (
     ResourceInitError,
     ResourceNotFoundError,
@@ -35,7 +35,7 @@ class ResourceRuntime:
         self._pools: dict[str, Any] = {}  # ResourcePool instances
         self._thread_locals: dict[str, Any] = {}  # ThreadLocalStore instances
 
-    def initialize(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+    def initialize(self) -> None:
         """Create all resources in topological (dependency-first) order."""
         import time
 
@@ -49,7 +49,7 @@ class ResourceRuntime:
             start = time.monotonic()
 
             if defn.scope == ResourceScope.WORKER:
-                self._create_resource(name, loop)
+                self._create_resource(name)
                 if defn.frozen and name in self._instances:
                     self._instances[name] = FrozenResource(self._instances[name], name)
             elif defn.scope == ResourceScope.TASK:
@@ -66,7 +66,6 @@ class ResourceRuntime:
                         max_lifetime=defn.max_lifetime,
                         idle_timeout=defn.idle_timeout,
                     ),
-                    loop=loop,
                     dep_kwargs=dep_kwargs,
                 )
                 if defn.pool_min > 0:
@@ -78,7 +77,6 @@ class ResourceRuntime:
                     name=name,
                     factory=defn.factory,
                     teardown=defn.teardown,
-                    loop=loop,
                     dep_kwargs=dep_kwargs,
                 )
                 self._thread_locals[name] = store
@@ -87,18 +85,12 @@ class ResourceRuntime:
 
             self._init_duration[name] = time.monotonic() - start
 
-    def _create_resource(self, name: str, loop: asyncio.AbstractEventLoop | None = None) -> None:
+    def _create_resource(self, name: str) -> None:
         """Invoke a resource factory, injecting its declared dependencies."""
         defn = self._definitions[name]
         dep_kwargs = {dep: self._instances[dep] for dep in defn.depends_on}
         try:
-            result = defn.factory(**dep_kwargs)
-            if asyncio.iscoroutine(result):
-                if loop is not None and loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(result, loop)
-                    result = future.result()
-                else:
-                    result = asyncio.run(result)
+            result = run_maybe_async(defn.factory(**dep_kwargs))
             self._instances[name] = result
             self._unhealthy.discard(name)
         except Exception as exc:
@@ -169,12 +161,7 @@ class ResourceRuntime:
             deps = defn.depends_on if defn else []
             dep_kwargs = {dep: self._instances.get(dep) for dep in deps}
             instance = defn.factory(**dep_kwargs) if defn else None
-            if asyncio.iscoroutine(instance):
-                loop = asyncio.get_event_loop_policy().get_event_loop()
-                if loop.is_running():
-                    instance = asyncio.run_coroutine_threadsafe(instance, loop).result()
-                else:
-                    instance = asyncio.run(instance)
+            instance = run_maybe_async(instance)
 
             def teardown_request() -> None:
                 if defn and defn.teardown is not None and instance is not None:
@@ -187,14 +174,14 @@ class ResourceRuntime:
 
         return self._instances.get(name), None
 
-    def recreate(self, name: str, loop: asyncio.AbstractEventLoop | None = None) -> bool:
+    def recreate(self, name: str) -> bool:
         """Attempt to recreate a single resource. Returns True on success."""
         try:
             old = self._instances.get(name)
             defn = self._definitions[name]
             if old is not None and defn.teardown is not None:
-                _call_maybe_async(defn.teardown, old, loop)
-            self._create_resource(name, loop)
+                run_maybe_async(defn.teardown(old))
+            self._create_resource(name)
             self._recreation_count[name] = self._recreation_count.get(name, 0) + 1
             return True
         except ResourceInitError:
@@ -237,13 +224,7 @@ class ResourceRuntime:
             instance = self._instances.pop(name, None)
             if defn is not None and defn.teardown is not None and instance is not None:
                 try:
-                    result = defn.teardown(instance)
-                    if asyncio.iscoroutine(result):
-                        loop = asyncio.get_event_loop_policy().get_event_loop()
-                        if loop.is_running():
-                            asyncio.run_coroutine_threadsafe(result, loop).result()
-                        else:
-                            asyncio.run(result)
+                    run_maybe_async(defn.teardown(instance))
                 except Exception:
                     logger.exception("Error tearing down resource '%s'", name)
         self._init_order.clear()
@@ -283,13 +264,3 @@ class ResourceRuntime:
         rt._instances = dict(instances)
         rt._init_order = list(instances.keys())
         return rt
-
-
-def _call_maybe_async(fn: Any, *args: Any, loop: asyncio.AbstractEventLoop | None = None) -> Any:
-    """Call a function, awaiting if it returns a coroutine."""
-    result = fn(*args)
-    if asyncio.iscoroutine(result):
-        if loop is not None and loop.is_running():
-            return asyncio.run_coroutine_threadsafe(result, loop).result()
-        return asyncio.run(result)
-    return result

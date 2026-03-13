@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
 from typing import TYPE_CHECKING
 
+from taskito.async_support.helpers import run_maybe_async
 from taskito.resources.definition import ResourceDefinition
 
 if TYPE_CHECKING:
@@ -23,13 +23,8 @@ class HealthChecker:
     ``health_check_interval`` is checked independently on its own schedule.
     """
 
-    def __init__(
-        self,
-        runtime: ResourceRuntime,
-        loop: asyncio.AbstractEventLoop | None = None,
-    ) -> None:
+    def __init__(self, runtime: ResourceRuntime) -> None:
         self._runtime = runtime
-        self._loop = loop
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -88,7 +83,7 @@ class HealthChecker:
                         fail_count[name],
                         defn.max_recreation_attempts,
                     )
-                    recreated = self._runtime.recreate(name, self._loop)
+                    recreated = self._runtime.recreate(name)
                     if not recreated and fail_count[name] >= defn.max_recreation_attempts:
                         self._runtime.mark_unhealthy(name)
 
@@ -104,13 +99,7 @@ class HealthChecker:
             instance = self._runtime._instances.get(name)
             if instance is None:
                 return False
-            result = defn.health_check(instance)
-            if asyncio.iscoroutine(result):
-                if self._loop is not None and self._loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(result, self._loop)
-                    return bool(future.result(timeout=10))
-                return bool(asyncio.run(result))
-            return bool(result)
+            return bool(run_maybe_async(defn.health_check(instance)))
         except Exception:
             logger.exception("Health check error for resource '%s'", name)
             return False

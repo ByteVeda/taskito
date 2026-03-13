@@ -11,6 +11,7 @@ use taskito_core::scheduler::{JobResult, Scheduler, SchedulerConfig, TaskConfig}
 use taskito_core::storage::Storage;
 
 use super::PyQueue;
+#[cfg(not(feature = "native-async"))]
 use crate::async_worker::AsyncWorkerPool;
 use crate::py_config::PyTaskConfig;
 
@@ -30,6 +31,7 @@ impl PyQueue {
         worker_id=None,
         resources=None,
         threads=1,
+        async_concurrency=100,
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn run_worker(
@@ -43,6 +45,7 @@ impl PyQueue {
         worker_id: Option<String>,
         resources: Option<String>,
         threads: i32,
+        #[allow(unused_variables)] async_concurrency: i32,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -140,7 +143,28 @@ impl PyQueue {
             threads,
         );
 
-        // Create multi-threaded tokio runtime for scheduler + async worker pool
+        // Create the async executor for native async tasks (if feature enabled)
+        #[cfg(feature = "native-async")]
+        let async_executor = {
+            let sender = taskito_async::PyResultSender::new(result_tx.clone());
+            Python::with_gil(|py| -> PyResult<Arc<PyObject>> {
+                let sender_obj = pyo3::Py::new(py, sender)?;
+                let mod_ = py.import_bound("taskito.async_support.executor")?;
+                let cls = mod_.getattr("AsyncTaskExecutor")?;
+                let context_mod = py.import_bound("taskito.context")?;
+                let queue_ref = context_mod.getattr("_queue_ref")?;
+                let executor = cls.call1((
+                    sender_obj,
+                    registry_arc.clone_ref(py),
+                    queue_ref,
+                    async_concurrency,
+                ))?;
+                executor.call_method0("start")?;
+                Ok(Arc::new(executor.into_py(py)))
+            })?
+        };
+
+        // Create multi-threaded tokio runtime for scheduler + worker pool
         let num_workers = self.num_workers;
         // Move result_tx into the runtime — don't keep a copy in the main thread
         // so result_rx disconnects when all workers are done.
@@ -158,15 +182,29 @@ impl PyQueue {
             };
 
             rt.block_on(async {
-                let pool = AsyncWorkerPool::new(num_workers, registry_arc, filters_arc);
-
                 let scheduler_task = tokio::spawn(async move {
                     scheduler_for_dispatch.run(job_tx).await;
                 });
 
                 let worker_task = tokio::spawn(async move {
                     use taskito_core::worker::WorkerDispatcher;
-                    pool.run(job_rx, result_tx).await;
+
+                    #[cfg(feature = "native-async")]
+                    {
+                        let pool = taskito_async::NativeAsyncPool::new(
+                            num_workers,
+                            registry_arc,
+                            filters_arc,
+                            async_executor,
+                        );
+                        pool.run(job_rx, result_tx).await;
+                    }
+
+                    #[cfg(not(feature = "native-async"))]
+                    {
+                        let pool = AsyncWorkerPool::new(num_workers, registry_arc, filters_arc);
+                        pool.run(job_rx, result_tx).await;
+                    }
                 });
 
                 let _ = tokio::join!(scheduler_task, worker_task);

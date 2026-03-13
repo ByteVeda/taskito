@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
@@ -10,6 +9,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from taskito.async_support.helpers import run_maybe_async
 from taskito.exceptions import ResourceUnavailableError
 
 logger = logging.getLogger("taskito.resources")
@@ -38,14 +38,12 @@ class ResourcePool:
         factory: Callable[..., Any],
         teardown: Callable[..., Any] | None,
         config: PoolConfig,
-        loop: asyncio.AbstractEventLoop | None = None,
         dep_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self._name = name
         self._factory = factory
         self._teardown = teardown
         self._config = config
-        self._loop = loop
         self._dep_kwargs = dep_kwargs or {}
 
         self._semaphore = threading.Semaphore(config.pool_size)
@@ -62,12 +60,7 @@ class ResourcePool:
         target = count if count is not None else self._config.pool_min
         for _ in range(target):
             try:
-                instance = self._factory(**self._dep_kwargs)
-                if asyncio.iscoroutine(instance):
-                    if self._loop and self._loop.is_running():
-                        instance = asyncio.run_coroutine_threadsafe(instance, self._loop).result()
-                    else:
-                        instance = asyncio.run(instance)
+                instance = run_maybe_async(self._factory(**self._dep_kwargs))
                 self._idle.append((instance, time.monotonic()))
             except Exception:
                 logger.exception("Failed to prewarm resource '%s'", self._name)
@@ -98,12 +91,7 @@ class ResourcePool:
 
         # No idle instance available — create a new one
         try:
-            instance = self._factory(**self._dep_kwargs)
-            if asyncio.iscoroutine(instance):
-                if self._loop and self._loop.is_running():
-                    instance = asyncio.run_coroutine_threadsafe(instance, self._loop).result()
-                else:
-                    instance = asyncio.run(instance)
+            instance = run_maybe_async(self._factory(**self._dep_kwargs))
             return instance
         except Exception:
             # Release semaphore on creation failure
@@ -151,11 +139,6 @@ class ResourcePool:
         if self._teardown is None:
             return
         try:
-            result = self._teardown(instance)
-            if asyncio.iscoroutine(result):
-                if self._loop and self._loop.is_running():
-                    asyncio.run_coroutine_threadsafe(result, self._loop).result()
-                else:
-                    asyncio.run(result)
+            run_maybe_async(self._teardown(instance))
         except Exception:
             logger.exception("Error tearing down pooled resource '%s'", self._name)

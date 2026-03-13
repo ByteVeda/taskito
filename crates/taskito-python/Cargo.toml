@@ -8,6 +8,7 @@ default = []
 extension-module = ["pyo3/extension-module"]
 postgres = ["taskito-core/postgres"]
 redis = ["taskito-core/redis"]
+native-async = ["dep:taskito-async"]
 
 [lib]
 name = "_taskito"
@@ -20,3 +21,4 @@ tokio = { workspace = true }
 crossbeam-channel = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
+taskito-async = { path = "../taskito-async", optional = true }
