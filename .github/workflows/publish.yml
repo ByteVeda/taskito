@@ -24,7 +24,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.10 3.11 3.12 3.13
           manylinux: 2_28
           before-script-linux: |
             dnf install -y openssl-devel perl-core perl-IPC-Cmd
@@ -51,7 +51,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.10 3.11 3.12 3.13
           manylinux: musllinux_1_2
           before-script-linux: |
             apt-get update && apt-get install -y libssl-dev perl pkg-config
@@ -72,11 +72,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.9"
-
       - name: Set up Python 3.10
         uses: actions/setup-python@v6
         with:
@@ -101,7 +96,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.10 3.11 3.12 3.13
 
       - name: Upload wheels
         uses: actions/upload-artifact@v7
@@ -118,11 +113,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.9"
-
       - name: Set up Python 3.10
         uses: actions/setup-python@v6
         with:
@@ -147,7 +137,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.9 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis --interpreter 3.10 3.11 3.12 3.13
 
       - name: Upload wheels
         uses: actions/upload-artifact@v7

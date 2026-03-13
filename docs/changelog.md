@@ -31,6 +31,10 @@ All notable changes to taskito are documented here.
 - **Test mode resources** -- `queue.test_mode(resources={"db": mock_db})` injects mocks during test mode without worker startup; `MockResource(name, return_value=..., wraps=..., track_calls=True)` adds call tracking
 - **Optional cloud dependencies** -- `pip install taskito[aws]` adds boto3>=1.20; `pip install taskito[gcs]` adds google-cloud-storage>=2.0
 
+### Breaking Changes
+
+- **Dropped Python 3.9 support** -- minimum required version is now Python 3.10; Python 3.9 reached EOL in October 2025
+
 ### Internal
 
 - `crates/taskito-async/` new Rust crate: `NativeAsyncPool` implementing `WorkerDispatcher`, `PyResultSender` (#[pyclass]) bridging Python executor to Rust scheduler; feature-gated via `native-async` cargo feature
