@@ -104,6 +104,10 @@ class Queue(
         file_path_allowlist: list[str] | None = None,
         disabled_proxies: list[str] | None = None,
         async_concurrency: int = 100,
+        event_workers: int = 4,
+        scheduler_poll_interval_ms: int = 50,
+        scheduler_reap_interval: int = 100,
+        scheduler_cleanup_interval: int = 1200,
     ):
         """Initialize a new task queue.
 
@@ -142,6 +146,13 @@ class Queue(
                 proxy handlers.
             async_concurrency: Maximum number of async tasks running concurrently
                 on the native async executor. Defaults to 100.
+            event_workers: Thread pool size for the event bus (default 4).
+            scheduler_poll_interval_ms: Milliseconds between scheduler poll
+                cycles (default 50).
+            scheduler_reap_interval: Reap stale jobs every N poll iterations
+                (default 100).
+            scheduler_cleanup_interval: Cleanup old jobs every N poll iterations
+                (default 1200).
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -160,6 +171,9 @@ class Queue(
             db_url=db_url,
             schema=schema,
             pool_size=pool_size,
+            scheduler_poll_interval_ms=scheduler_poll_interval_ms,
+            scheduler_reap_interval=scheduler_reap_interval,
+            scheduler_cleanup_interval=scheduler_cleanup_interval,
         )
         self._backend = backend
         self._db_url = db_url
@@ -177,11 +191,13 @@ class Queue(
             "on_failure": [],
         }
         self._serializer: Serializer = serializer or CloudpickleSerializer()
+        self._task_serializers: dict[str, Serializer] = {}
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
         self._drain_timeout = drain_timeout
-        self._event_bus = EventBus()
+        self._queue_configs: dict[str, dict[str, Any]] = {}
+        self._event_bus = EventBus(max_workers=event_workers)
         self._webhook_manager = WebhookManager()
 
         # Proxy handlers
@@ -239,6 +255,9 @@ class Queue(
         middleware: list[TaskMiddleware] | None = None,
         retry_delays: list[float] | None = None,
         inject: list[str] | None = None,
+        serializer: Serializer | None = None,
+        max_retry_delay: int | None = None,
+        max_concurrent: int | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -258,6 +277,11 @@ class Queue(
             soft_timeout: Soft timeout in seconds. Checked via ``current_job.check_timeout()``.
             middleware: Per-task middleware instances (in addition to global middleware).
             inject: List of resource names to inject as keyword arguments.
+            serializer: Per-task serializer. Falls back to the queue-level serializer.
+            max_retry_delay: Maximum backoff delay in seconds. Defaults to 300
+                (5 minutes) if not set.
+            max_concurrent: Maximum number of concurrent running instances of
+                this task. ``None`` means no limit.
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
@@ -303,6 +327,10 @@ class Queue(
             if middleware:
                 self._task_middleware[task_name] = middleware
 
+            # Store per-task serializer
+            if serializer is not None:
+                self._task_serializers[task_name] = serializer
+
             # Store inject map for resource injection
             if final_inject:
                 self._task_inject_map[task_name] = final_inject
@@ -332,6 +360,8 @@ class Queue(
                 circuit_breaker_window=cb_window,
                 circuit_breaker_cooldown=cb_cooldown,
                 retry_delays=retry_delays,
+                max_retry_delay=max_retry_delay,
+                max_concurrent=max_concurrent,
             )
             self._task_configs.append(config)
 
@@ -385,7 +415,7 @@ class Queue(
             wrapper = self.task(name=name, queue=queue)(fn)
 
             # Store periodic config for registration at worker startup
-            payload = self._serializer.dumps((args, kwargs or {}))
+            payload = self._get_serializer(wrapper.name).dumps((args, kwargs or {}))
             self._periodic_configs.append(
                 {
                     "name": name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}",
@@ -610,6 +640,29 @@ class Queue(
             proxy_handler=proxy_handler,
         )
 
+    def set_queue_rate_limit(self, queue_name: str, rate_limit: str) -> None:
+        """Set a rate limit for an entire queue.
+
+        Args:
+            queue_name: Queue name (e.g. ``"default"``).
+            rate_limit: Rate limit string, e.g. ``"100/m"``, ``"10/s"``.
+        """
+        self._queue_configs.setdefault(queue_name, {})["rate_limit"] = rate_limit
+
+    def set_queue_concurrency(self, queue_name: str, max_concurrent: int) -> None:
+        """Set a maximum number of concurrent jobs for a queue.
+
+        Args:
+            queue_name: Queue name (e.g. ``"default"``).
+            max_concurrent: Maximum number of jobs running simultaneously
+                from this queue.
+        """
+        self._queue_configs.setdefault(queue_name, {})["max_concurrent"] = max_concurrent
+
+    def _get_serializer(self, task_name: str) -> Serializer:
+        """Get the serializer for a task (per-task or queue-level fallback)."""
+        return self._task_serializers.get(task_name, self._serializer)
+
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list."""
         per_task = self._task_middleware.get(task_name, [])
@@ -761,9 +814,42 @@ class Queue(
         """
         final_args = args
         final_kwargs = kwargs or {}
+
+        # Run on_enqueue middleware hook (options dict is mutable)
+        enqueue_options: dict[str, Any] = {
+            "priority": priority,
+            "delay": delay,
+            "queue": queue,
+            "max_retries": max_retries,
+            "timeout": timeout,
+            "unique_key": unique_key,
+            "metadata": metadata,
+            "depends_on": depends_on,
+            "expires": expires,
+            "result_ttl": result_ttl,
+        }
+        for mw in self._global_middleware:
+            try:
+                mw.on_enqueue(task_name, final_args, final_kwargs, enqueue_options)
+            except Exception:
+                logger.exception("middleware on_enqueue() error")
+
+        # Apply any middleware mutations back
+        priority = enqueue_options.get("priority")
+        delay = enqueue_options.get("delay")
+        queue = enqueue_options.get("queue")
+        max_retries = enqueue_options.get("max_retries")
+        timeout = enqueue_options.get("timeout")
+        unique_key = enqueue_options.get("unique_key")
+        metadata = enqueue_options.get("metadata")
+        depends_on = enqueue_options.get("depends_on")
+        expires = enqueue_options.get("expires")
+        result_ttl = enqueue_options.get("result_ttl")
+
         if self._interceptor is not None and not self._test_mode_active:
             final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
-        payload = self._serializer.dumps((final_args, final_kwargs))
+        task_serializer = self._get_serializer(task_name)
+        payload = task_serializer.dumps((final_args, final_kwargs))
 
         dep_ids = None
         if depends_on is not None:
@@ -826,11 +912,12 @@ class Queue(
                 f"args_list length ({len(args_list)})"
             )
         kw_list = kwargs_list or [{}] * count
+        task_serializer = self._get_serializer(task_name)
         if self._interceptor is not None:
             pairs = [self._interceptor.intercept(a, kw) for a, kw in zip(args_list, kw_list)]
-            payloads = [self._serializer.dumps((a, kw)) for a, kw in pairs]
+            payloads = [task_serializer.dumps((a, kw)) for a, kw in pairs]
         else:
-            payloads = [self._serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
+            payloads = [task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
         task_names = [task_name] * count
 
         queues_list = [queue or "default"] * count if queue else None
@@ -871,6 +958,9 @@ class Queue(
         events: list[EventType] | None = None,
         headers: dict[str, str] | None = None,
         secret: str | None = None,
+        max_retries: int = 3,
+        timeout: float = 10.0,
+        retry_backoff: float = 2.0,
     ) -> None:
         """Register a webhook endpoint for job events.
 
@@ -879,8 +969,19 @@ class Queue(
             events: Event types to subscribe to (None = all).
             headers: Extra HTTP headers.
             secret: HMAC-SHA256 signing secret.
+            max_retries: Maximum delivery attempts (default 3).
+            timeout: HTTP request timeout in seconds (default 10.0).
+            retry_backoff: Base for exponential backoff between retries (default 2.0).
         """
-        self._webhook_manager.add_webhook(url, events, headers, secret)
+        self._webhook_manager.add_webhook(
+            url,
+            events,
+            headers,
+            secret,
+            max_retries=max_retries,
+            timeout=timeout,
+            retry_backoff=retry_backoff,
+        )
 
     # -- Worker startup --
 
@@ -1043,7 +1144,13 @@ class Queue(
         )
         heartbeat_thread.start()
 
+        self._emit_event(
+            EventType.WORKER_STARTED,
+            {"worker_id": worker_id, "queues": worker_queues},
+        )
+
         try:
+            queue_configs_json = json.dumps(self._queue_configs) if self._queue_configs else None
             self._inner.run_worker(
                 task_registry=self._task_registry,
                 task_configs=self._task_configs,
@@ -1054,10 +1161,15 @@ class Queue(
                 resources=resources_json,
                 threads=self._workers,
                 async_concurrency=self._async_concurrency,
+                queue_configs=queue_configs_json,
             )
         except KeyboardInterrupt:
             logger.info("Cold shutdown (terminating immediately)")
         finally:
+            self._emit_event(
+                EventType.WORKER_STOPPED,
+                {"worker_id": worker_id},
+            )
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=6)
             # Tear down resources before stopping async loop
