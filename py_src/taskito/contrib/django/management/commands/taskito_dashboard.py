@@ -14,10 +14,22 @@ class Command(BaseCommand):
     help = "Start the taskito web dashboard"
 
     def add_arguments(self, parser):  # type: ignore[no-untyped-def]
+        from django.conf import settings
+
+        default_host = getattr(settings, "TASKITO_DASHBOARD_HOST", "127.0.0.1")
+        default_port = getattr(settings, "TASKITO_DASHBOARD_PORT", 8080)
+
         parser.add_argument(
-            "--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)"
+            "--host",
+            default=default_host,
+            help=f"Bind address (default: {default_host})",
         )
-        parser.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+        parser.add_argument(
+            "--port",
+            type=int,
+            default=default_port,
+            help=f"Bind port (default: {default_port})",
+        )
 
     def handle(self, **options):  # type: ignore[no-untyped-def]
         from taskito.contrib.django.settings import get_queue

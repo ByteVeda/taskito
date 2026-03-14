@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from taskito.middleware import TaskMiddleware
 
@@ -35,185 +35,202 @@ except ImportError:
     Histogram = None
     start_http_server = None
 
-# Module-level metric singletons (created once on first middleware init)
-_jobs_total: Any = None
-_job_duration: Any = None
-_active_workers: Any = None
-_retries_total: Any = None
-_queue_depth: Any = None
-_dlq_size: Any = None
-_worker_utilization: Any = None
-_resource_health: Any = None
-_resource_recreations: Any = None
-_resource_init_duration: Any = None
-_proxy_reconstruct_duration: Any = None
-_proxy_reconstruct_total: Any = None
-_proxy_reconstruct_errors: Any = None
-_intercept_duration: Any = None
-_intercept_strategy_total: Any = None
-_pool_size: Any = None
-_pool_active: Any = None
-_pool_idle: Any = None
-_pool_timeouts: Any = None
-_metrics_initialized = False
+# ── Metric categories ─────────────────────────────────────
+# Used by `disabled_metrics` to skip groups of metrics.
+_METRIC_GROUPS: dict[str, list[str]] = {
+    "jobs": ["jobs_total", "job_duration_seconds", "active_workers", "retries_total"],
+    "queue": ["queue_depth", "dlq_size", "worker_utilization"],
+    "resource": [
+        "resource_health_status",
+        "resource_recreation_total",
+        "resource_init_duration_seconds",
+        "resource_pool_size",
+        "resource_pool_active",
+        "resource_pool_idle",
+        "resource_pool_timeout_total",
+    ],
+    "proxy": [
+        "proxy_reconstruct_duration_seconds",
+        "proxy_reconstruct_total",
+        "proxy_reconstruct_errors_total",
+    ],
+    "intercept": ["intercept_duration_seconds", "intercept_strategy_total"],
+}
 
 
-_init_lock = threading.Lock()
+# ── Per-namespace metric store ────────────────────────────
+
+_store_lock = threading.Lock()
+_metric_stores: dict[str, dict[str, Any]] = {}
 
 
-def _init_metrics() -> None:
-    global _jobs_total, _job_duration, _active_workers, _retries_total
-    global _queue_depth, _dlq_size, _worker_utilization, _metrics_initialized
-    global _resource_health, _resource_recreations, _resource_init_duration
-    global _proxy_reconstruct_duration, _proxy_reconstruct_total
-    global _proxy_reconstruct_errors, _intercept_duration
-    global _intercept_strategy_total
-    global _pool_size, _pool_active, _pool_idle, _pool_timeouts
+def _get_or_create_metrics(
+    namespace: str, disabled_metrics: set[str] | None = None
+) -> dict[str, Any]:
+    """Return a metric store for the given namespace, creating if needed."""
+    if namespace in _metric_stores:
+        return _metric_stores[namespace]
 
-    if _metrics_initialized:
-        return
+    with _store_lock:
+        if namespace in _metric_stores:
+            return _metric_stores[namespace]
 
-    with _init_lock:
-        if _metrics_initialized:
-            return
+        disabled_names: set[str] = set()
+        if disabled_metrics:
+            for group in disabled_metrics:
+                disabled_names.update(_METRIC_GROUPS.get(group, [group]))
 
-        _jobs_total = Counter(
-            "taskito_jobs_total",
-            "Total number of jobs processed",
-            ["task", "status"],
+        store: dict[str, Any] = {}
+
+        def _make(cls: Any, suffix: str, description: str, labels: list[str] | None = None) -> Any:
+            if suffix in disabled_names:
+                return None
+            name = f"{namespace}_{suffix}"
+            if labels:
+                return cls(name, description, labels)
+            return cls(name, description)
+
+        store["jobs_total"] = _make(
+            Counter, "jobs_total", "Total number of jobs processed", ["task", "status"]
         )
-        _job_duration = Histogram(
-            "taskito_job_duration_seconds",
-            "Job execution duration in seconds",
-            ["task"],
+        store["job_duration"] = _make(
+            Histogram, "job_duration_seconds", "Job execution duration in seconds", ["task"]
         )
-        _active_workers = Gauge(
-            "taskito_active_workers",
-            "Number of currently active workers",
+        store["active_workers"] = _make(
+            Gauge, "active_workers", "Number of currently active workers"
         )
-        _retries_total = Counter(
-            "taskito_retries_total",
-            "Total number of job retries",
-            ["task"],
+        store["retries_total"] = _make(
+            Counter, "retries_total", "Total number of job retries", ["task"]
         )
-        _queue_depth = Gauge(
-            "taskito_queue_depth",
-            "Number of pending jobs per queue",
-            ["queue"],
+        store["queue_depth"] = _make(
+            Gauge, "queue_depth", "Number of pending jobs per queue", ["queue"]
         )
-        _dlq_size = Gauge(
-            "taskito_dlq_size",
-            "Number of dead-letter jobs",
+        store["dlq_size"] = _make(Gauge, "dlq_size", "Number of dead-letter jobs")
+        store["worker_utilization"] = _make(
+            Gauge, "worker_utilization", "Worker utilization ratio (0.0-1.0)", ["queue"]
         )
-        _worker_utilization = Gauge(
-            "taskito_worker_utilization",
-            "Worker utilization ratio (0.0-1.0)",
-            ["queue"],
-        )
-        _resource_health = Gauge(
-            "taskito_resource_health_status",
+        store["resource_health"] = _make(
+            Gauge,
+            "resource_health_status",
             "Resource health (1=healthy, 0=unhealthy)",
             ["resource"],
         )
-        _resource_recreations = Gauge(
-            "taskito_resource_recreation_total",
-            "Total recreations per resource",
-            ["resource"],
+        store["resource_recreations"] = _make(
+            Gauge, "resource_recreation_total", "Total recreations per resource", ["resource"]
         )
-        _resource_init_duration = Gauge(
-            "taskito_resource_init_duration_seconds",
+        store["resource_init_duration"] = _make(
+            Gauge,
+            "resource_init_duration_seconds",
             "Time to initialize each resource",
             ["resource"],
         )
-        _proxy_reconstruct_duration = Histogram(
-            "taskito_proxy_reconstruct_duration_seconds",
+        store["proxy_reconstruct_duration"] = _make(
+            Histogram,
+            "proxy_reconstruct_duration_seconds",
             "Proxy reconstruction duration",
             ["handler"],
         )
-        _proxy_reconstruct_total = Counter(
-            "taskito_proxy_reconstruct_total",
-            "Total proxy reconstructions",
-            ["handler"],
+        store["proxy_reconstruct_total"] = _make(
+            Counter, "proxy_reconstruct_total", "Total proxy reconstructions", ["handler"]
         )
-        _proxy_reconstruct_errors = Counter(
-            "taskito_proxy_reconstruct_errors_total",
+        store["proxy_reconstruct_errors"] = _make(
+            Counter,
+            "proxy_reconstruct_errors_total",
             "Total proxy reconstruction errors",
             ["handler"],
         )
-        _intercept_duration = Histogram(
-            "taskito_intercept_duration_seconds",
-            "Argument interception duration",
+        store["intercept_duration"] = _make(
+            Histogram, "intercept_duration_seconds", "Argument interception duration"
         )
-        _intercept_strategy_total = Counter(
-            "taskito_intercept_strategy_total",
-            "Interception strategy counts",
-            ["strategy"],
+        store["intercept_strategy_total"] = _make(
+            Counter, "intercept_strategy_total", "Interception strategy counts", ["strategy"]
         )
-        _pool_size = Gauge(
-            "taskito_resource_pool_size",
-            "Resource pool max size",
-            ["resource"],
+        store["pool_size"] = _make(
+            Gauge, "resource_pool_size", "Resource pool max size", ["resource"]
         )
-        _pool_active = Gauge(
-            "taskito_resource_pool_active",
-            "Active pool instances",
-            ["resource"],
+        store["pool_active"] = _make(
+            Gauge, "resource_pool_active", "Active pool instances", ["resource"]
         )
-        _pool_idle = Gauge(
-            "taskito_resource_pool_idle",
-            "Idle pool instances",
-            ["resource"],
+        store["pool_idle"] = _make(
+            Gauge, "resource_pool_idle", "Idle pool instances", ["resource"]
         )
-        _pool_timeouts = Counter(
-            "taskito_resource_pool_timeout_total",
-            "Pool acquisition timeouts",
-            ["resource"],
+        store["pool_timeouts"] = _make(
+            Counter, "resource_pool_timeout_total", "Pool acquisition timeouts", ["resource"]
         )
-        _metrics_initialized = True
+
+        _metric_stores[namespace] = store
+        return store
 
 
 class PrometheusMiddleware(TaskMiddleware):
     """Middleware that exports Prometheus metrics for task execution.
 
-    Tracks:
-    - ``taskito_jobs_total{task,status}`` — counter of completed/failed jobs
-    - ``taskito_job_duration_seconds{task}`` — histogram of execution times
-    - ``taskito_active_workers`` — gauge of currently executing workers
-    - ``taskito_retries_total{task}`` — counter of retry attempts
+    Args:
+        namespace: Prefix for all metric names (default ``"taskito"``).
+        extra_labels_fn: Callable that returns extra labels to add to job
+            metrics. Receives a :class:`~taskito.context.JobContext` and
+            returns a dict of label key-value pairs.
+        disabled_metrics: Metric groups or individual metric names to skip.
+            Groups: ``"jobs"``, ``"queue"``, ``"resource"``, ``"proxy"``,
+            ``"intercept"``.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        namespace: str = "taskito",
+        extra_labels_fn: Callable[[JobContext], dict[str, str]] | None = None,
+        disabled_metrics: set[str] | None = None,
+    ) -> None:
         if Counter is None:
             raise ImportError(
                 "prometheus-client is required for PrometheusMiddleware. "
                 "Install it with: pip install taskito[prometheus]"
             )
-        _init_metrics()
+        self._metrics = _get_or_create_metrics(namespace, disabled_metrics)
+        self._extra_labels_fn = extra_labels_fn
         self._start_times: dict[str, float] = {}
         self._lock = threading.Lock()
 
     def before(self, ctx: JobContext) -> None:
         with self._lock:
             self._start_times[ctx.id] = time.monotonic()
-        _active_workers.inc()
+        m = self._metrics["active_workers"]
+        if m is not None:
+            m.inc()
 
     def after(self, ctx: JobContext, result: Any, error: Exception | None) -> None:
-        _active_workers.dec()
+        m = self._metrics["active_workers"]
+        if m is not None:
+            m.dec()
+
         status = "failed" if error is not None else "completed"
-        _jobs_total.labels(task=ctx.task_name, status=status).inc()
+        m = self._metrics["jobs_total"]
+        if m is not None:
+            m.labels(task=ctx.task_name, status=status).inc()
 
         with self._lock:
             start = self._start_times.pop(ctx.id, None)
         if start is not None:
             duration = time.monotonic() - start
-            _job_duration.labels(task=ctx.task_name).observe(duration)
+            m = self._metrics["job_duration"]
+            if m is not None:
+                m.labels(task=ctx.task_name).observe(duration)
 
     def on_retry(self, ctx: JobContext, error: Exception, retry_count: int) -> None:
-        _retries_total.labels(task=ctx.task_name).inc()
+        m = self._metrics["retries_total"]
+        if m is not None:
+            m.labels(task=ctx.task_name).inc()
 
 
 class PrometheusStatsCollector:
     """Daemon thread that polls queue stats and updates Prometheus gauges.
+
+    Args:
+        queue: The Queue instance to poll.
+        interval: Seconds between polls (default 10.0).
+        namespace: Prefix for metric names (default ``"taskito"``).
+        disabled_metrics: Metric groups or names to skip.
 
     Usage::
 
@@ -221,13 +238,20 @@ class PrometheusStatsCollector:
         collector.start()
     """
 
-    def __init__(self, queue: Queue, interval: float = 10.0):
+    def __init__(
+        self,
+        queue: Queue,
+        interval: float = 10.0,
+        *,
+        namespace: str = "taskito",
+        disabled_metrics: set[str] | None = None,
+    ):
         if Counter is None:
             raise ImportError(
                 "prometheus-client is required for PrometheusStatsCollector. "
                 "Install it with: pip install taskito[prometheus]"
             )
-        _init_metrics()
+        self._metrics = _get_or_create_metrics(namespace, disabled_metrics)
         self._queue = queue
         self._interval = interval
         self._thread: threading.Thread | None = None
@@ -244,10 +268,12 @@ class PrometheusStatsCollector:
             self._thread.join(timeout=5)
 
     def _poll(self) -> None:
+        m = self._metrics
         while not self._stop_event.is_set():
             try:
                 stats = self._queue.stats()
-                _dlq_size.set(stats.get("dead", 0))
+                if m["dlq_size"] is not None:
+                    m["dlq_size"].set(stats.get("dead", 0))
 
                 running = stats.get("running", 0)
                 total_workers = self._queue._workers
@@ -256,14 +282,20 @@ class PrometheusStatsCollector:
                 try:
                     all_q = self._queue.stats_all_queues()
                     for q_name, q_stats in all_q.items():
-                        _queue_depth.labels(queue=q_name).set(q_stats.get("pending", 0))
-                        if total_workers > 0:
+                        if m["queue_depth"] is not None:
+                            m["queue_depth"].labels(queue=q_name).set(q_stats.get("pending", 0))
+                        if m["worker_utilization"] is not None and total_workers > 0:
                             q_running = q_stats.get("running", 0)
-                            _worker_utilization.labels(queue=q_name).set(q_running / total_workers)
+                            m["worker_utilization"].labels(queue=q_name).set(
+                                q_running / total_workers
+                            )
                 except Exception:
-                    _queue_depth.labels(queue="default").set(stats.get("pending", 0))
-                    if total_workers > 0:
-                        _worker_utilization.labels(queue="default").set(running / total_workers)
+                    if m["queue_depth"] is not None:
+                        m["queue_depth"].labels(queue="default").set(stats.get("pending", 0))
+                    if m["worker_utilization"] is not None and total_workers > 0:
+                        m["worker_utilization"].labels(queue="default").set(
+                            running / total_workers
+                        )
             except Exception:
                 logger.debug("Stats collection failed", exc_info=True)
 
@@ -271,19 +303,26 @@ class PrometheusStatsCollector:
             try:
                 for res in self._queue.resource_status():
                     name = res["name"]
-                    _resource_health.labels(resource=name).set(
-                        1.0 if res["health"] == "healthy" else 0.0
-                    )
-                    _resource_recreations.labels(resource=name).set(res["recreations"])
-                    _resource_init_duration.labels(resource=name).set(
-                        res["init_duration_ms"] / 1000.0
-                    )
+                    if m["resource_health"] is not None:
+                        m["resource_health"].labels(resource=name).set(
+                            1.0 if res["health"] == "healthy" else 0.0
+                        )
+                    if m["resource_recreations"] is not None:
+                        m["resource_recreations"].labels(resource=name).set(res["recreations"])
+                    if m["resource_init_duration"] is not None:
+                        m["resource_init_duration"].labels(resource=name).set(
+                            res["init_duration_ms"] / 1000.0
+                        )
                     pool = res.get("pool")
                     if pool:
-                        _pool_size.labels(resource=name).set(pool["size"])
-                        _pool_active.labels(resource=name).set(pool["active"])
-                        _pool_idle.labels(resource=name).set(pool["idle"])
-                        _pool_timeouts.labels(resource=name).set(pool["total_timeouts"])
+                        if m["pool_size"] is not None:
+                            m["pool_size"].labels(resource=name).set(pool["size"])
+                        if m["pool_active"] is not None:
+                            m["pool_active"].labels(resource=name).set(pool["active"])
+                        if m["pool_idle"] is not None:
+                            m["pool_idle"].labels(resource=name).set(pool["idle"])
+                        if m["pool_timeouts"] is not None:
+                            m["pool_timeouts"].labels(resource=name).set(pool["total_timeouts"])
             except Exception:
                 logger.debug("Resource metrics collection failed", exc_info=True)
 
@@ -291,21 +330,23 @@ class PrometheusStatsCollector:
             try:
                 for pstat in self._queue.proxy_stats():
                     handler = pstat["handler"]
-                    _proxy_reconstruct_total.labels(handler=handler)._value.set(
-                        pstat["total_reconstructions"]
-                    )
-                    _proxy_reconstruct_errors.labels(handler=handler)._value.set(
-                        pstat["total_errors"]
-                    )
+                    if m["proxy_reconstruct_total"] is not None:
+                        m["proxy_reconstruct_total"].labels(handler=handler)._value.set(
+                            pstat["total_reconstructions"]
+                        )
+                    if m["proxy_reconstruct_errors"] is not None:
+                        m["proxy_reconstruct_errors"].labels(handler=handler)._value.set(
+                            pstat["total_errors"]
+                        )
             except Exception:
                 logger.debug("Proxy metrics collection failed", exc_info=True)
 
             # Interception metrics
             try:
                 istats = self._queue.interception_stats()
-                if istats:
+                if istats and m["intercept_strategy_total"] is not None:
                     for strategy, count in istats.get("strategy_counts", {}).items():
-                        _intercept_strategy_total.labels(strategy=strategy)._value.set(count)
+                        m["intercept_strategy_total"].labels(strategy=strategy)._value.set(count)
             except Exception:
                 logger.debug("Interception metrics collection failed", exc_info=True)
 

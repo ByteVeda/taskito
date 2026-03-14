@@ -18,7 +18,13 @@ class TaskitoConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
 
     def ready(self) -> None:
-        """Auto-discover ``tasks.py`` modules in all installed apps."""
+        """Auto-discover task modules in all installed apps.
+
+        The module name defaults to ``"tasks"`` but can be overridden via the
+        ``TASKITO_AUTODISCOVER_MODULE`` Django setting.
+        """
+        from django.conf import settings
         from django.utils.module_loading import autodiscover_modules
 
-        autodiscover_modules("tasks")
+        module_name = getattr(settings, "TASKITO_AUTODISCOVER_MODULE", "tasks")
+        autodiscover_modules(module_name)
