@@ -24,6 +24,9 @@ All notable changes to taskito are documented here.
 - **`max_retry_delay` on `@queue.task()`** -- caps exponential backoff at a configurable ceiling in seconds (defaults to 300 s)
 - **`max_concurrent` on `@queue.task()`** -- limits how many instances of a task run simultaneously across all workers
 - **`serializer` on `@queue.task()`** -- per-task serializer override; falls back to queue-level serializer
+- **Per-task serializer full round-trip** -- deserialization now also uses the per-task serializer; previously only enqueue (serialization) did; both the sync and native-async worker paths call `_deserialize_payload(task_name, payload)` instead of cloudpickle directly
+- **`on_timeout` middleware hook wired** -- `on_timeout(ctx)` now fires when the Rust maintenance reaper detects a stale job that exceeded its hard timeout; fires before `on_retry` (if retrying) or `on_dead_letter` (if retries exhausted); previously the hook existed in `TaskMiddleware` but was never called
+- **`QUEUE_PAUSED` / `QUEUE_RESUMED` events emitted** -- `queue.pause()` and `queue.resume()` now emit these events with payload `{"queue": "..."}` after updating storage; previously the event types were defined but never fired
 - **Scheduler tuning** -- `Queue(scheduler_poll_interval_ms=N, scheduler_reap_interval=N, scheduler_cleanup_interval=N)` exposes the three Rust scheduler timing knobs to Python
 
 ---

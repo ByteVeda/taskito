@@ -146,6 +146,8 @@ def api_event(payload: dict) -> dict:
     ...
 ```
 
+The per-task serializer is used for the full round-trip: arguments are serialized with it at enqueue time and deserialized with it on the worker before the task function is called. Both the sync worker and the native async worker honour the per-task serializer, falling back to the queue-level serializer for tasks that have none registered.
+
 Useful when a task needs a different format (e.g., human-readable JSON for audit tasks) or when the payload is not picklable.
 
 ## Task Naming

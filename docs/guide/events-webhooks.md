@@ -21,6 +21,8 @@ The `EventType` enum defines all available lifecycle events:
 
 `JOB_RETRYING`, `JOB_DEAD`, and `JOB_CANCELLED` are emitted by the Rust result handler immediately after the scheduler records the outcome. Middleware hooks (`on_retry`, `on_dead_letter`, `on_cancel`) are called in the same result-handling pass, after the event fires.
 
+`QUEUE_PAUSED` and `QUEUE_RESUMED` are emitted synchronously by `queue.pause()` and `queue.resume()` after the queue state is written to storage.
+
 ## Registering Listeners
 
 Use `queue.on_event()` to subscribe a callback to a specific event type:

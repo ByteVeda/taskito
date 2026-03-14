@@ -36,7 +36,31 @@ class LoggingMiddleware(TaskMiddleware):
 The `ctx` parameter is a `JobContext` — the same object as `current_job` — providing `ctx.id`, `ctx.task_name`, `ctx.retry_count`, and `ctx.queue_name`.
 
 !!! note "Lifecycle hooks dispatched from Rust"
-    `on_retry`, `on_dead_letter`, and `on_cancel` are called by the Rust result handler after the scheduler records the outcome. They fire after `after()` and after the corresponding event is emitted on the event bus. Exceptions raised inside these hooks are logged and do not affect job processing.
+    `on_retry`, `on_dead_letter`, `on_timeout`, and `on_cancel` are called by the Rust result handler after the scheduler records the outcome. They fire after `after()` and after the corresponding event is emitted on the event bus. Exceptions raised inside these hooks are logged and do not affect job processing.
+
+### `on_timeout` — Handling Timed-Out Jobs
+
+`on_timeout` fires when the Rust scheduler detects a stale job that exceeded its hard `timeout`. Detection happens in the maintenance reaper, which periodically scans for jobs still marked as running past their deadline.
+
+When a job times out, `on_timeout` is called **before** `on_retry` (if the job will be retried) or `on_dead_letter` (if retries are exhausted). This lets you react to the timeout itself independently of whether the job will be retried:
+
+```python
+class TimeoutAlerter(TaskMiddleware):
+    def on_timeout(self, ctx):
+        # Fires for every timed-out job, regardless of retry/DLQ outcome
+        logger.error("Job %s (%s) timed out", ctx.id, ctx.task_name)
+
+    def on_retry(self, ctx, error, retry_count):
+        # Fires after on_timeout when the job will be retried
+        logger.warning("Retrying %s (attempt %d)", ctx.task_name, retry_count)
+
+    def on_dead_letter(self, ctx, error):
+        # Fires after on_timeout when retries are exhausted
+        logger.critical("Job %s exhausted retries after timeout", ctx.id)
+```
+
+!!! tip
+    Use `on_timeout` to update dashboards, fire alerts, or record SLA violations. Combine with `on_retry` and `on_dead_letter` for full visibility into the job's fate after the timeout.
 
 ### `on_enqueue` — Modifying Enqueue Parameters
 
