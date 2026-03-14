@@ -32,9 +32,35 @@ from taskito.contrib.django.admin import TaskitoAdminSite
 admin_site = TaskitoAdminSite(name="taskito_admin")
 ```
 
-## Configuration
+## Django Settings
 
-Create a `taskito` queue configuration in your Django settings or a dedicated module. The `get_queue()` function in `taskito.contrib.django.settings` is used to retrieve the queue instance.
+The following settings can be defined in your Django `settings.py`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `TASKITO_AUTODISCOVER_MODULE` | `"tasks"` | Module name auto-discovered in each installed app on startup. |
+| `TASKITO_ADMIN_PER_PAGE` | `50` | Rows per page in the admin jobs and dead letters views. |
+| `TASKITO_ADMIN_TITLE` | `"Taskito"` | Browser tab title for `TaskitoAdminSite`. |
+| `TASKITO_ADMIN_HEADER` | `"Taskito Admin"` | Site header shown in `TaskitoAdminSite`. |
+| `TASKITO_WATCH_INTERVAL` | `2` | Polling interval in seconds for `manage.py taskito_info --watch`. |
+| `TASKITO_DASHBOARD_HOST` | `"127.0.0.1"` | Default bind host for `manage.py taskito_dashboard`. |
+| `TASKITO_DASHBOARD_PORT` | `8080` | Default bind port for `manage.py taskito_dashboard`. |
+
+Example:
+
+```python
+# settings.py
+TASKITO_AUTODISCOVER_MODULE = "jobs"   # import myapp.jobs instead of myapp.tasks
+TASKITO_ADMIN_PER_PAGE = 25
+TASKITO_ADMIN_TITLE = "MyApp Tasks"
+TASKITO_ADMIN_HEADER = "MyApp Task Queue"
+TASKITO_DASHBOARD_HOST = "0.0.0.0"
+TASKITO_DASHBOARD_PORT = 9000
+```
+
+## Queue Configuration
+
+Create a `taskito` queue instance in your Django project. The `get_queue()` function in `taskito.contrib.django.settings` is used to retrieve the queue instance.
 
 ```python
 # myproject/tasks.py

@@ -23,6 +23,10 @@ Queue(
     file_path_allowlist: list[str] | None = None,
     disabled_proxies: list[str] | None = None,
     async_concurrency: int = 100,
+    event_workers: int = 4,
+    scheduler_poll_interval_ms: int = 50,
+    scheduler_reap_interval: int = 100,
+    scheduler_cleanup_interval: int = 1200,
 )
 ```
 
@@ -43,6 +47,10 @@ Queue(
 | `file_path_allowlist` | `list[str] \| None` | `None` | Allowed file path prefixes for the file proxy handler. |
 | `disabled_proxies` | `list[str] \| None` | `None` | Handler names to skip when registering built-in proxy handlers. |
 | `async_concurrency` | `int` | `100` | Maximum number of `async def` tasks running concurrently on the native async executor. |
+| `event_workers` | `int` | `4` | Thread pool size for the event bus. Increase for high event volume. |
+| `scheduler_poll_interval_ms` | `int` | `50` | Milliseconds between scheduler poll cycles. Lower values improve scheduling precision at the cost of CPU. |
+| `scheduler_reap_interval` | `int` | `100` | Reap stale/timed-out jobs every N poll cycles. |
+| `scheduler_cleanup_interval` | `int` | `1200` | Clean up old completed jobs every N poll cycles. |
 
 ## Task Registration
 
@@ -54,6 +62,7 @@ Queue(
     max_retries: int = 3,
     retry_backoff: float = 1.0,
     retry_delays: list[float] | None = None,
+    max_retry_delay: int | None = None,
     timeout: int = 300,
     soft_timeout: float | None = None,
     priority: int = 0,
@@ -63,6 +72,8 @@ Queue(
     middleware: list[TaskMiddleware] | None = None,
     expires: float | None = None,
     inject: list[str] | None = None,
+    serializer: Serializer | None = None,
+    max_concurrent: int | None = None,
 ) -> TaskWrapper
 ```
 
@@ -74,6 +85,7 @@ Register a function as a background task. Returns a [`TaskWrapper`](task.md).
 | `max_retries` | `int` | `3` | Max retry attempts before moving to DLQ. |
 | `retry_backoff` | `float` | `1.0` | Base delay in seconds for exponential backoff. |
 | `retry_delays` | `list[float] \| None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
+| `max_retry_delay` | `int \| None` | `None` | Cap on backoff delay in seconds. Defaults to 300 s. |
 | `timeout` | `int` | `300` | Hard execution time limit in seconds. |
 | `soft_timeout` | `float \| None` | `None` | Cooperative time limit checked via `current_job.check_timeout()`. |
 | `priority` | `int` | `0` | Default priority (higher = more urgent). |
@@ -83,6 +95,8 @@ Register a function as a background task. Returns a [`TaskWrapper`](task.md).
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
 | `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
 | `inject` | `list[str] \| None` | `None` | Resource names to inject as keyword arguments. See [Resource System](../guide/resources.md). |
+| `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to queue-level serializer. |
+| `max_concurrent` | `int \| None` | `None` | Max concurrent running instances. `None` = no limit. |
 
 ### `@queue.periodic()`
 
@@ -233,6 +247,32 @@ queue.job_dag(job_id: str) -> dict
 Return a dependency graph for a job, including all ancestors and descendants. Useful for visualizing workflow chains.
 
 ## Queue Management
+
+### `queue.set_queue_rate_limit()`
+
+```python
+queue.set_queue_rate_limit(queue_name: str, rate_limit: str) -> None
+```
+
+Set a rate limit for all jobs in a queue. Checked by the scheduler before per-task rate limits.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `queue_name` | `str` | Queue name (e.g. `"default"`). |
+| `rate_limit` | `str` | Rate limit string: `"N/s"`, `"N/m"`, or `"N/h"`. |
+
+### `queue.set_queue_concurrency()`
+
+```python
+queue.set_queue_concurrency(queue_name: str, max_concurrent: int) -> None
+```
+
+Set a maximum number of concurrently running jobs for a queue across all workers. Checked by the scheduler before per-task `max_concurrent` limits.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `queue_name` | `str` | Queue name (e.g. `"default"`). |
+| `max_concurrent` | `int` | Maximum simultaneous running jobs from this queue. |
 
 ### `queue.pause()`
 
@@ -646,13 +686,26 @@ def handle_failure(job_id: str, task_name: str, error: str) -> None:
 ```python
 queue.add_webhook(
     url: str,
-    events: list[str],
+    events: list[EventType] | None = None,
     headers: dict[str, str] | None = None,
     secret: str | None = None,
-) -> str
+    max_retries: int = 3,
+    timeout: float = 10.0,
+    retry_backoff: float = 2.0,
+) -> None
 ```
 
-Register a webhook URL for one or more events. Returns the webhook ID. 4xx responses are not retried; 5xx responses are retried with backoff.
+Register a webhook URL for one or more events. 4xx responses are not retried; 5xx responses are retried with exponential backoff.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | `str` | — | URL to POST to. Must be `http://` or `https://`. |
+| `events` | `list[EventType] \| None` | `None` | Event types to subscribe to. `None` means all events. |
+| `headers` | `dict[str, str] \| None` | `None` | Extra HTTP headers to include. |
+| `secret` | `str \| None` | `None` | HMAC-SHA256 signing secret for `X-Taskito-Signature`. |
+| `max_retries` | `int` | `3` | Maximum delivery attempts. |
+| `timeout` | `float` | `10.0` | HTTP request timeout in seconds. |
+| `retry_backoff` | `float` | `2.0` | Base for exponential backoff between retries. |
 
 ## Worker
 

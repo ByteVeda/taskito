@@ -21,6 +21,22 @@ from taskito.contrib.prometheus import PrometheusMiddleware
 queue = Queue(db_path="myapp.db", middleware=[PrometheusMiddleware()])
 ```
 
+### Configuration
+
+```python
+PrometheusMiddleware(
+    namespace="myapp",
+    extra_labels_fn=lambda ctx: {"env": "prod", "region": "us-east-1"},
+    disabled_metrics={"resource", "proxy"},
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `namespace` | `str` | `"taskito"` | Prefix for all metric names. |
+| `extra_labels_fn` | `Callable[[JobContext], dict[str, str]] \| None` | `None` | Returns extra labels to add to job metrics. Receives `JobContext`. |
+| `disabled_metrics` | `set[str] \| None` | `None` | Metric groups or individual names to skip. Groups: `"jobs"`, `"queue"`, `"resource"`, `"proxy"`, `"intercept"`. |
+
 ### Metrics Tracked
 
 | Metric | Type | Labels | Description |
@@ -40,6 +56,24 @@ from taskito.contrib.prometheus import PrometheusStatsCollector
 collector = PrometheusStatsCollector(queue, interval=10)
 collector.start()
 ```
+
+### Configuration
+
+```python
+PrometheusStatsCollector(
+    queue,
+    interval=10,
+    namespace="myapp",
+    disabled_metrics={"intercept"},
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `queue` | `Queue` | — | The Queue instance to poll. |
+| `interval` | `float` | `10.0` | Seconds between polls. |
+| `namespace` | `str` | `"taskito"` | Prefix for metric names. Must match `PrometheusMiddleware` namespace to share metric objects. |
+| `disabled_metrics` | `set[str] \| None` | `None` | Metric groups or names to skip. Same groups as `PrometheusMiddleware`. |
 
 ### Metrics Tracked
 

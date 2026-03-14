@@ -84,6 +84,33 @@ high = task.apply_async(args=(3,), priority=10)
 # Processing order: high (10), mid (5), low (1)
 ```
 
+## Queue-Level Limits
+
+Apply a rate limit or concurrency cap to an entire queue, independently of per-task settings. These limits are checked in the scheduler before any per-task limits.
+
+### Rate limiting a queue
+
+```python
+queue.set_queue_rate_limit("default", "100/m")   # Max 100 jobs per minute
+queue.set_queue_rate_limit("emails", "20/s")      # Max 20 emails per second
+```
+
+The format is the same as `rate_limit` on `@queue.task()`: `"N/s"`, `"N/m"`, or `"N/h"`.
+
+### Capping concurrency per queue
+
+```python
+queue.set_queue_concurrency("default", 10)   # Max 10 jobs running at once
+queue.set_queue_concurrency("reports", 2)    # Heavy tasks: max 2 at a time
+```
+
+`set_queue_concurrency` limits how many jobs from that queue run simultaneously across all workers.
+
+!!! tip "Queue limits vs task limits"
+    Queue-level limits apply to all tasks in the queue regardless of their individual settings. Per-task `rate_limit` and `max_concurrent` are checked afterwards and may impose stricter caps. Set queue limits to protect shared downstream resources (APIs, databases) and per-task limits to manage individual task capacity.
+
+Both methods can be called at any point before or after `run_worker()` starts.
+
 ## Default Queue Settings
 
 Configure defaults at the Queue level:

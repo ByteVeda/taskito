@@ -6,14 +6,20 @@ taskito includes an in-process event bus and webhook delivery system for reactin
 
 The `EventType` enum defines all available lifecycle events:
 
-| Event | Fired when |
-|-------|------------|
-| `JOB_ENQUEUED` | A job is added to the queue |
-| `JOB_COMPLETED` | A job finishes successfully |
-| `JOB_FAILED` | A job raises an exception (before retry) |
-| `JOB_RETRYING` | A failed job is being retried |
-| `JOB_DEAD` | A job exhausts all retries and enters the DLQ |
-| `JOB_CANCELLED` | A job is cancelled |
+| Event | Fired when | Payload fields |
+|-------|------------|----------------|
+| `JOB_ENQUEUED` | A job is added to the queue | `job_id`, `task_name`, `queue` |
+| `JOB_COMPLETED` | A job finishes successfully | `job_id`, `task_name`, `queue` |
+| `JOB_FAILED` | A job raises an exception (before retry) | `job_id`, `task_name`, `queue`, `error` |
+| `JOB_RETRYING` | A failed job will be retried | `job_id`, `task_name`, `error`, `retry_count` |
+| `JOB_DEAD` | A job exhausts all retries and enters the DLQ | `job_id`, `task_name`, `error` |
+| `JOB_CANCELLED` | A job is cancelled | `job_id`, `task_name` |
+| `WORKER_STARTED` | A worker process/thread comes online | `worker_id`, `hostname` |
+| `WORKER_STOPPED` | A worker process/thread shuts down | `worker_id`, `hostname` |
+| `QUEUE_PAUSED` | A named queue is paused | `queue` |
+| `QUEUE_RESUMED` | A paused queue is resumed | `queue` |
+
+`JOB_RETRYING`, `JOB_DEAD`, and `JOB_CANCELLED` are emitted by the Rust result handler immediately after the scheduler records the outcome. Middleware hooks (`on_retry`, `on_dead_letter`, `on_cancel`) are called in the same result-handling pass, after the event fires.
 
 ## Registering Listeners
 
@@ -40,7 +46,7 @@ All callbacks receive two arguments:
 
 ### Async Delivery
 
-Callbacks are dispatched asynchronously in a `ThreadPoolExecutor` (4 threads by default). This means:
+Callbacks are dispatched asynchronously in a `ThreadPoolExecutor`. The thread pool size defaults to 4 and can be configured via `Queue(event_workers=N)`. This means:
 
 - Callbacks never block the worker
 - Exceptions in callbacks are logged but do not affect job processing
@@ -61,12 +67,15 @@ queue.add_webhook(
 )
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `url` | `str` | URL to POST event payloads to (must be `http://` or `https://`) |
-| `events` | `list[EventType] | None` | Event types to subscribe to. `None` means all events |
-| `headers` | `dict[str, str] | None` | Extra HTTP headers to include in requests |
-| `secret` | `str | None` | HMAC-SHA256 signing secret |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | `str` | — | URL to POST event payloads to (must be `http://` or `https://`) |
+| `events` | `list[EventType] \| None` | `None` | Event types to subscribe to. `None` means all events |
+| `headers` | `dict[str, str] \| None` | `None` | Extra HTTP headers to include in requests |
+| `secret` | `str \| None` | `None` | HMAC-SHA256 signing secret |
+| `max_retries` | `int` | `3` | Maximum delivery attempts |
+| `timeout` | `float` | `10.0` | HTTP request timeout in seconds |
+| `retry_backoff` | `float` | `2.0` | Base for exponential backoff between retries |
 
 ### HMAC Signing
 
@@ -89,15 +98,15 @@ def verify_signature(body: bytes, signature: str, secret: str) -> bool:
 
 ### Retry Behavior
 
-Failed webhook deliveries are retried up to 3 times with exponential backoff:
+Failed webhook deliveries are retried with exponential backoff. The number of attempts, request timeout, and backoff base are configurable per webhook via `max_retries`, `timeout`, and `retry_backoff`. With the defaults (`max_retries=3`, `retry_backoff=2.0`):
 
-| Attempt | Delay |
-|---------|-------|
-| 1st retry | 1 second |
-| 2nd retry | 2 seconds |
-| 3rd retry | 4 seconds |
+| Attempt | Delay before next retry |
+|---------|------------------------|
+| 1st retry | 1 second (`2.0 ** 0`) |
+| 2nd retry | 2 seconds (`2.0 ** 1`) |
+| 3rd retry | — (final) |
 
-If all attempts fail, a warning is logged and the event is dropped.
+4xx responses are not retried. If all attempts fail, a warning is logged and the event is dropped.
 
 ### Event Filtering
 

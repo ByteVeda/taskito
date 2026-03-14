@@ -2,6 +2,32 @@
 
 All notable changes to taskito are documented here.
 
+## 0.6.0
+
+### Features
+
+- **Middleware lifecycle hooks wired** -- `on_retry(ctx, error, retry_count)`, `on_dead_letter(ctx, error)`, and `on_cancel(ctx)` are now dispatched from the Rust result handler; they fire for every matching outcome across all registered middleware
+- **Expanded middleware hooks** -- `TaskMiddleware` gains four new hooks: `on_enqueue`, `on_dead_letter`, `on_timeout`, `on_cancel`; `on_enqueue` receives a mutable `options` dict that can modify priority, delay, queue, and other enqueue parameters before the job is written
+- **`JOB_RETRYING`, `JOB_DEAD`, `JOB_CANCELLED` events now emitted** -- these three event types were previously defined but never fired; they are now emitted from the Rust result handler with payloads `{job_id, task_name, error, retry_count}`, `{job_id, task_name, error}`, and `{job_id, task_name}` respectively
+- **Queue-level rate limits** -- `queue.set_queue_rate_limit("name", "100/m")` applies a token-bucket rate limit to an entire queue, checked in the scheduler before per-task limits
+- **Queue-level concurrency caps** -- `queue.set_queue_concurrency("name", 10)` limits how many jobs from a queue run simultaneously across all workers, checked before per-task `max_concurrent`
+- **Worker lifecycle events** -- `EventType.WORKER_STARTED` and `EventType.WORKER_STOPPED` fired when a worker thread comes online or exits; subscribe via `queue.on_event(EventType.WORKER_STARTED, cb)`
+- **Queue pause/resume events** -- `EventType.QUEUE_PAUSED` and `EventType.QUEUE_RESUMED` fired by `queue.pause()` and `queue.resume()`
+- **`event_workers` parameter** -- `Queue(event_workers=N)` configures the event bus thread pool size (default 4); raise for high event volume
+- **Per-webhook delivery options** -- `queue.add_webhook()` now accepts `max_retries`, `timeout`, and `retry_backoff` per endpoint, replacing the previous hardcoded values
+- **OTel customization** -- `OpenTelemetryMiddleware` adds `span_name_fn`, `attribute_prefix`, `extra_attributes_fn`, and `task_filter` parameters
+- **Sentry customization** -- `SentryMiddleware` adds `tag_prefix`, `transaction_name_fn`, `task_filter`, and `extra_tags_fn` parameters
+- **Prometheus customization** -- `PrometheusMiddleware` and `PrometheusStatsCollector` add `namespace`, `extra_labels_fn`, and `disabled_metrics` parameters; metrics grouped by category (`"jobs"`, `"queue"`, `"resource"`, `"proxy"`, `"intercept"`)
+- **FastAPI route selection** -- `TaskitoRouter` adds `include_routes`/`exclude_routes`, `dependencies`, `sse_poll_interval`, `result_timeout`, `default_page_size`, `max_page_size`, and `result_serializer` parameters; new endpoints: `/health`, `/readiness`, `/resources`, `/stats/queues`
+- **Flask CLI group** -- `Taskito(app, cli_group="tasks")` renames the CLI command group; `flask taskito info --format json` outputs machine-readable stats
+- **Django settings** -- `TASKITO_AUTODISCOVER_MODULE`, `TASKITO_ADMIN_PER_PAGE`, `TASKITO_ADMIN_TITLE`, `TASKITO_ADMIN_HEADER`, `TASKITO_DASHBOARD_HOST`, `TASKITO_DASHBOARD_PORT` control autodiscovery, admin pagination, branding, and dashboard bind address
+- **`max_retry_delay` on `@queue.task()`** -- caps exponential backoff at a configurable ceiling in seconds (defaults to 300 s)
+- **`max_concurrent` on `@queue.task()`** -- limits how many instances of a task run simultaneously across all workers
+- **`serializer` on `@queue.task()`** -- per-task serializer override; falls back to queue-level serializer
+- **Scheduler tuning** -- `Queue(scheduler_poll_interval_ms=N, scheduler_reap_interval=N, scheduler_cleanup_interval=N)` exposes the three Rust scheduler timing knobs to Python
+
+---
+
 ## 0.5.0
 
 ### New Features

@@ -27,7 +27,7 @@ queue = Queue(middleware=[OpenTelemetryMiddleware()])
 
 Each task execution produces a span with:
 
-- **Span name**: `taskito.execute.<task_name>`
+- **Span name**: `taskito.execute.<task_name>` (customizable)
 - **Attributes**:
     - `taskito.job_id` — the job ID
     - `taskito.task_name` — the registered task name
@@ -58,13 +58,27 @@ from taskito.contrib.otel import OpenTelemetryMiddleware
 queue = Queue(middleware=[OpenTelemetryMiddleware()])
 ```
 
-### Custom Tracer Name
+## Configuration
 
-By default, spans are created under the `"taskito"` tracer. Override with:
+`OpenTelemetryMiddleware` accepts several options to customize how spans are created:
 
 ```python
-OpenTelemetryMiddleware(tracer_name="my-service")
+OpenTelemetryMiddleware(
+    tracer_name="my-service",
+    span_name_fn=lambda ctx: f"task/{ctx.task_name}",
+    attribute_prefix="myapp",
+    extra_attributes_fn=lambda ctx: {"deployment.env": "prod"},
+    task_filter=lambda name: not name.startswith("internal."),
+)
 ```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `tracer_name` | `str` | `"taskito"` | OpenTelemetry tracer name. |
+| `span_name_fn` | `Callable[[JobContext], str] \| None` | `None` | Custom span name builder. Receives `JobContext`, returns a string. Defaults to `<prefix>.execute.<task_name>`. |
+| `attribute_prefix` | `str` | `"taskito"` | Prefix for all span attribute keys. |
+| `extra_attributes_fn` | `Callable[[JobContext], dict] \| None` | `None` | Returns extra attributes to add to each span. Receives `JobContext`. |
+| `task_filter` | `Callable[[str], bool] \| None` | `None` | Predicate that receives a task name. Return `True` to trace, `False` to skip. `None` traces all tasks. |
 
 ## Combining with Other Middleware
 
