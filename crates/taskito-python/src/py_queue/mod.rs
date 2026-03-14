@@ -33,6 +33,9 @@ pub struct PyQueue {
     pub(crate) default_priority: i32,
     pub(crate) shutdown_flag: Arc<AtomicBool>,
     pub(crate) result_ttl_ms: Option<i64>,
+    pub(crate) scheduler_poll_interval_ms: u64,
+    pub(crate) scheduler_reap_interval: u32,
+    pub(crate) scheduler_cleanup_interval: u32,
 }
 
 #[pymethods]
@@ -43,7 +46,8 @@ pub struct PyQueue {
 )]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db_path: &str,
         workers: usize,
@@ -55,6 +59,9 @@ impl PyQueue {
         db_url: Option<&str>,
         schema: &str,
         pool_size: Option<u32>,
+        scheduler_poll_interval_ms: u64,
+        scheduler_reap_interval: u32,
+        scheduler_cleanup_interval: u32,
     ) -> PyResult<Self> {
         let storage = match backend {
             "sqlite" => {
@@ -117,6 +124,9 @@ impl PyQueue {
             default_priority,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             result_ttl_ms: result_ttl.map(|s| s * 1000),
+            scheduler_poll_interval_ms,
+            scheduler_reap_interval,
+            scheduler_cleanup_interval,
         })
     }
 

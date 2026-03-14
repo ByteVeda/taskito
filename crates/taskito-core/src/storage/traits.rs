@@ -161,6 +161,10 @@ pub trait Storage: Send + Sync + Clone {
     fn complete_execution(&self, job_id: &str) -> Result<()>;
     fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64>;
 
+    // ── Per-task concurrency ──────────────────────────────────────
+
+    fn count_running_by_task(&self, task_name: &str) -> Result<i64>;
+
     // ── Per-queue stats ──────────────────────────────────────────
 
     fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats>;

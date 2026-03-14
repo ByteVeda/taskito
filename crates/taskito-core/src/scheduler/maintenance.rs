@@ -33,7 +33,7 @@ impl Scheduler {
 
         for job in stale_jobs {
             let error = format!("job timed out after {}ms", job.timeout_ms);
-            self.handle_result(JobResult::Failure {
+            let _ = self.handle_result(JobResult::Failure {
                 job_id: job.id.clone(),
                 error,
                 retry_count: job.retry_count,

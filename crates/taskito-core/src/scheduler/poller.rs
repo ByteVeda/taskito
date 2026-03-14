@@ -14,6 +14,9 @@ const CIRCUIT_BREAKER_RETRY_DELAY_MS: i64 = 5000;
 /// Delay before re-scheduling a rate-limited job (ms).
 const RATE_LIMIT_RETRY_DELAY_MS: i64 = 1000;
 
+/// Delay before re-scheduling a concurrency-limited job (ms).
+const CONCURRENCY_RETRY_DELAY_MS: i64 = 500;
+
 impl Scheduler {
     pub(super) fn try_dispatch(&self, job_tx: &tokio::sync::mpsc::Sender<Job>) -> Result<bool> {
         let now = now_millis();
@@ -53,6 +56,26 @@ impl Scheduler {
             None => return Ok(false),
         };
 
+        // Check queue-level limits
+        if let Some(qcfg) = self.queue_configs.get(&job.queue) {
+            if let Some(ref rl_config) = qcfg.rate_limit {
+                let key = format!("queue:{}", job.queue);
+                if !self.rate_limiter.try_acquire(&key, rl_config)? {
+                    self.storage
+                        .retry(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
+                    return Ok(false);
+                }
+            }
+            if let Some(max_conc) = qcfg.max_concurrent {
+                let stats = self.storage.stats_by_queue(&job.queue)?;
+                if stats.running >= max_conc as i64 {
+                    self.storage
+                        .retry(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
+                    return Ok(false);
+                }
+            }
+        }
+
         // Check circuit breaker for this task
         if let Some(config) = self.task_configs.get(&job.task_name) {
             if config.circuit_breaker.is_some() && !self.circuit_breaker.allow(&job.task_name)? {
@@ -65,6 +88,16 @@ impl Scheduler {
                 if !self.rate_limiter.try_acquire(&job.task_name, rl_config)? {
                     self.storage
                         .retry(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
+                    return Ok(false);
+                }
+            }
+
+            // Check per-task concurrency limit
+            if let Some(max_conc) = config.max_concurrent {
+                let running = self.storage.count_running_by_task(&job.task_name)?;
+                if running >= max_conc as i64 {
+                    self.storage
+                        .retry(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
                     return Ok(false);
                 }
             }

@@ -7,13 +7,142 @@ use pyo3::types::PyDict;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
-use taskito_core::scheduler::{JobResult, Scheduler, SchedulerConfig, TaskConfig};
+use taskito_core::scheduler::{JobResult, ResultOutcome, Scheduler, SchedulerConfig, TaskConfig};
 use taskito_core::storage::Storage;
 
 use super::PyQueue;
 #[cfg(not(feature = "native-async"))]
 use crate::async_worker::AsyncWorkerPool;
 use crate::py_config::PyTaskConfig;
+
+/// Dispatch a ResultOutcome to Python middleware hooks and events.
+///
+/// Called with the GIL held after `handle_result()` returns.
+fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
+    let result = (|| -> PyResult<()> {
+        let context_mod = py.import_bound("taskito.context")?;
+        let queue_ref = context_mod.getattr("_queue_ref")?;
+        if queue_ref.is_none() {
+            return Ok(());
+        }
+
+        match outcome {
+            ResultOutcome::Retry {
+                job_id,
+                task_name,
+                error,
+                retry_count,
+            } => {
+                // Emit JOB_RETRYING event
+                let events_mod = py.import_bound("taskito.events")?;
+                let event_type = events_mod.getattr("EventType")?.getattr("JOB_RETRYING")?;
+                let payload = PyDict::new_bound(py);
+                payload.set_item("job_id", job_id)?;
+                payload.set_item("task_name", task_name)?;
+                payload.set_item("error", error)?;
+                payload.set_item("retry_count", retry_count)?;
+                queue_ref.call_method1("_emit_event", (event_type, payload))?;
+
+                // Call on_retry middleware
+                let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                let error_obj =
+                    pyo3::exceptions::PyRuntimeError::new_err(error.clone()).into_py(py);
+                call_middleware_hook(
+                    py,
+                    &queue_ref,
+                    task_name,
+                    "on_retry",
+                    (ctx, error_obj, *retry_count),
+                )?;
+            }
+            ResultOutcome::DeadLettered {
+                job_id,
+                task_name,
+                error,
+            } => {
+                // Emit JOB_DEAD event
+                let events_mod = py.import_bound("taskito.events")?;
+                let event_type = events_mod.getattr("EventType")?.getattr("JOB_DEAD")?;
+                let payload = PyDict::new_bound(py);
+                payload.set_item("job_id", job_id)?;
+                payload.set_item("task_name", task_name)?;
+                payload.set_item("error", error)?;
+                queue_ref.call_method1("_emit_event", (event_type, payload))?;
+
+                // Call on_dead_letter middleware
+                let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                let error_obj =
+                    pyo3::exceptions::PyRuntimeError::new_err(error.clone()).into_py(py);
+                call_middleware_hook(
+                    py,
+                    &queue_ref,
+                    task_name,
+                    "on_dead_letter",
+                    (ctx, error_obj),
+                )?;
+            }
+            ResultOutcome::Cancelled { job_id, task_name } => {
+                // Emit JOB_CANCELLED event
+                let events_mod = py.import_bound("taskito.events")?;
+                let event_type = events_mod.getattr("EventType")?.getattr("JOB_CANCELLED")?;
+                let payload = PyDict::new_bound(py);
+                payload.set_item("job_id", job_id)?;
+                payload.set_item("task_name", task_name)?;
+                queue_ref.call_method1("_emit_event", (event_type, payload))?;
+
+                // Call on_cancel middleware
+                let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                call_middleware_hook(py, &queue_ref, task_name, "on_cancel", (ctx,))?;
+            }
+            ResultOutcome::Success { .. } => {
+                // Success events are already emitted in _wrap_task
+            }
+        }
+        Ok(())
+    })();
+
+    if let Err(e) = result {
+        eprintln!("[taskito] middleware dispatch error: {e}");
+    }
+}
+
+/// Build a lightweight JobContext-like object for middleware hooks called
+/// outside of task execution (retry/dlq/cancel outcomes).
+fn build_lightweight_ctx<'py>(
+    py: Python<'py>,
+    job_id: &str,
+    task_name: &str,
+) -> PyResult<Bound<'py, pyo3::PyAny>> {
+    let types_mod = py.import_bound("types")?;
+    let ns = types_mod.call_method1("SimpleNamespace", ())?;
+    ns.setattr("id", job_id)?;
+    ns.setattr("task_name", task_name)?;
+    ns.setattr("queue_name", "unknown")?;
+    ns.setattr("retry_count", 0)?;
+    Ok(ns)
+}
+
+/// Call a middleware hook on all middleware in the chain for a given task.
+fn call_middleware_hook(
+    py: Python<'_>,
+    queue_ref: &Bound<'_, pyo3::PyAny>,
+    task_name: &str,
+    hook_name: &str,
+    args: impl pyo3::IntoPy<pyo3::Py<pyo3::types::PyTuple>>,
+) -> PyResult<()> {
+    let chain = queue_ref.call_method1("_get_middleware_chain", (task_name,))?;
+    let args_tuple = args.into_py(py);
+    let args_bound = args_tuple.bind(py);
+    for mw in chain.iter()? {
+        let mw = mw?;
+        if let Err(e) = mw.call_method(hook_name, args_bound, None) {
+            let logging = py.import_bound("logging")?;
+            let logger = logging.call_method1("getLogger", ("taskito",))?;
+            logger.call_method1("warning", (format!("middleware {hook_name}() error: {e}"),))?;
+        }
+    }
+    Ok(())
+}
 
 #[pymethods]
 #[allow(clippy::useless_conversion)]
@@ -32,6 +161,7 @@ impl PyQueue {
         resources=None,
         threads=1,
         async_concurrency=100,
+        queue_configs=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn run_worker(
@@ -46,6 +176,7 @@ impl PyQueue {
         resources: Option<String>,
         threads: i32,
         #[allow(unused_variables)] async_concurrency: i32,
+        queue_configs: Option<String>,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -54,6 +185,9 @@ impl PyQueue {
         let queues_str = queues.join(",");
 
         let scheduler_config = SchedulerConfig {
+            poll_interval: std::time::Duration::from_millis(self.scheduler_poll_interval_ms),
+            reap_interval: self.scheduler_reap_interval,
+            cleanup_interval: self.scheduler_cleanup_interval,
             result_ttl_ms: self.result_ttl_ms,
             ..SchedulerConfig::default()
         };
@@ -94,10 +228,14 @@ impl PyQueue {
             } else {
                 (tc.retry_backoff.min(i64::MAX as f64 / 1000.0) * 1000.0) as i64
             };
+            let max_delay_ms = tc
+                .max_retry_delay
+                .map(|s| s.saturating_mul(1000))
+                .unwrap_or(300_000);
             let retry_policy = RetryPolicy {
                 max_retries: tc.max_retries,
                 base_delay_ms,
-                max_delay_ms: 300_000,
+                max_delay_ms,
                 custom_delays_ms,
             };
             let rate_limit = tc
@@ -117,8 +255,35 @@ impl PyQueue {
                     retry_policy,
                     rate_limit,
                     circuit_breaker,
+                    max_concurrent: tc.max_concurrent,
                 },
             );
+        }
+
+        // Register queue-level rate limits and concurrency caps
+        if let Some(ref qc_json) = queue_configs {
+            if let Ok(map) = serde_json::from_str::<
+                std::collections::HashMap<String, serde_json::Value>,
+            >(qc_json)
+            {
+                for (queue_name, cfg) in map {
+                    let rate_limit = cfg
+                        .get("rate_limit")
+                        .and_then(|v| v.as_str())
+                        .and_then(RateLimitConfig::parse);
+                    let max_concurrent = cfg
+                        .get("max_concurrent")
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32);
+                    scheduler.register_queue_config(
+                        queue_name,
+                        taskito_core::scheduler::QueueConfig {
+                            rate_limit,
+                            max_concurrent,
+                        },
+                    );
+                }
+            }
         }
 
         let shutdown = scheduler.shutdown_handle();
@@ -266,11 +431,14 @@ impl PyQueue {
 
                         match drain_action {
                             PollAction::Result(result) => {
-                                py.allow_threads(|| {
-                                    if let Err(e) = scheduler_for_results.handle_result(result) {
-                                        eprintln!("[taskito] result handling error: {e}");
+                                let outcome = py
+                                    .allow_threads(|| scheduler_for_results.handle_result(result));
+                                match outcome {
+                                    Ok(ref o) => dispatch_outcome(py, o),
+                                    Err(e) => {
+                                        eprintln!("[taskito] result handling error: {e}")
                                     }
-                                });
+                                }
                             }
                             PollAction::Continue => continue,
                             PollAction::Done => break,
@@ -280,11 +448,11 @@ impl PyQueue {
                     break;
                 }
                 PollAction::Result(result) => {
-                    py.allow_threads(|| {
-                        if let Err(e) = scheduler_for_results.handle_result(result) {
-                            eprintln!("[taskito] result handling error: {e}");
-                        }
-                    });
+                    let outcome = py.allow_threads(|| scheduler_for_results.handle_result(result));
+                    match outcome {
+                        Ok(ref o) => dispatch_outcome(py, o),
+                        Err(e) => eprintln!("[taskito] result handling error: {e}"),
+                    }
                 }
                 PollAction::Continue => continue,
                 PollAction::Done => break,
