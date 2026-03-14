@@ -663,6 +663,10 @@ class Queue(
         """Get the serializer for a task (per-task or queue-level fallback)."""
         return self._task_serializers.get(task_name, self._serializer)
 
+    def _deserialize_payload(self, task_name: str, payload: bytes) -> tuple:
+        """Deserialize a job payload using the per-task or queue-level serializer."""
+        return self._get_serializer(task_name).loads(payload)  # type: ignore[no-any-return]
+
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list."""
         per_task = self._task_middleware.get(task_name, [])

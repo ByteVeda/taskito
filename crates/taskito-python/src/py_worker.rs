@@ -169,9 +169,14 @@ pub fn execute_task(
 
     // Wrap deserialization + call so _clear_context is always called
     let result = (|| -> PyResult<Bound<'_, pyo3::PyAny>> {
-        // Deserialize arguments: (args, kwargs)
+        // Deserialize arguments using per-task or queue-level serializer
         let payload_bytes = PyBytes::new_bound(py, &job.payload);
-        let unpickled = cloudpickle.call_method1("loads", (payload_bytes,))?;
+        let queue_ref = context_mod.getattr("_queue_ref")?;
+        let unpickled = if !queue_ref.is_none() {
+            queue_ref.call_method1("_deserialize_payload", (&job.task_name, &payload_bytes))?
+        } else {
+            cloudpickle.call_method1("loads", (&payload_bytes,))?
+        };
         let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
 
         if args_tuple.len() != 2 {
