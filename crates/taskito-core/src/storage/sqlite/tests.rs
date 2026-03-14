@@ -363,6 +363,31 @@ fn test_cascade_cancel_on_dlq() {
 }
 
 #[test]
+fn test_count_running_by_task() {
+    let storage = test_storage();
+    storage.enqueue(make_job("task_a")).unwrap();
+    storage.enqueue(make_job("task_a")).unwrap();
+    storage.enqueue(make_job("task_b")).unwrap();
+
+    // No running jobs yet
+    assert_eq!(storage.count_running_by_task("task_a").unwrap(), 0);
+
+    let now = now_millis() + 1000;
+    // Dequeue one task_a (becomes running)
+    storage.dequeue("default", now).unwrap().unwrap();
+
+    assert_eq!(storage.count_running_by_task("task_a").unwrap(), 1);
+    assert_eq!(storage.count_running_by_task("task_b").unwrap(), 0);
+
+    // Dequeue second task_a
+    storage.dequeue("default", now).unwrap().unwrap();
+    assert_eq!(storage.count_running_by_task("task_a").unwrap(), 2);
+
+    // Nonexistent task should return 0
+    assert_eq!(storage.count_running_by_task("no_such_task").unwrap(), 0);
+}
+
+#[test]
 fn test_enqueue_rejects_missing_dependency() {
     let storage = test_storage();
 

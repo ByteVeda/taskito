@@ -23,6 +23,7 @@ def process_data(data: dict) -> str:
 | `max_retries` | `int` | `3` | Max retry attempts before moving to DLQ. |
 | `retry_backoff` | `float` | `1.0` | Base delay in seconds for exponential backoff. |
 | `retry_delays` | `list[float] \| None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
+| `max_retry_delay` | `int \| None` | `None` | Cap on backoff delay in seconds (default 300 s). |
 | `timeout` | `int` | `300` | Max execution time in seconds (hard timeout). |
 | `soft_timeout` | `float \| None` | `None` | Cooperative time limit in seconds; checked via `current_job.check_timeout()`. |
 | `priority` | `int` | `0` | Default priority (higher = more urgent). |
@@ -32,16 +33,20 @@ def process_data(data: dict) -> str:
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
 | `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
 | `inject` | `list[str] \| None` | `None` | Worker resource names to inject as keyword arguments. See [Resource System](resources.md). |
+| `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to the queue-level serializer. |
+| `max_concurrent` | `int \| None` | `None` | Max concurrent running instances of this task. `None` means no limit. |
 
 ```python
 @queue.task(
     name="emails.send",
     max_retries=5,
     retry_backoff=2.0,
+    max_retry_delay=60,  # cap backoff at 60 s
     timeout=60,
     priority=10,
     rate_limit="100/m",
     queue="emails",
+    max_concurrent=10,
 )
 def send_email(to: str, subject: str, body: str):
     ...
@@ -106,6 +111,44 @@ Skip jobs that weren't started within the deadline:
 def time_sensitive():
     ...
 ```
+
+### Max Retry Delay
+
+Cap the exponential backoff so waits don't grow unbounded:
+
+```python
+@queue.task(retry_backoff=2.0, max_retries=10, max_retry_delay=120)
+def flaky_service():
+    ...
+# Delays: 2, 4, 8, 16, 32, 64, 120, 120, 120 s (capped at 2 min)
+```
+
+### Per-Task Concurrency Limit
+
+Prevent a single task type from consuming all workers:
+
+```python
+@queue.task(max_concurrent=3)
+def expensive_render():
+    ...
+# At most 3 instances of expensive_render run simultaneously across all workers.
+```
+
+### Per-Task Serializer
+
+Override the queue-level serializer for a specific task:
+
+```python
+from taskito.serializers import JSONSerializer
+
+@queue.task(serializer=JSONSerializer())
+def api_event(payload: dict) -> dict:
+    ...
+```
+
+The per-task serializer is used for the full round-trip: arguments are serialized with it at enqueue time and deserialized with it on the worker before the task function is called. Both the sync worker and the native async worker honour the per-task serializer, falling back to the queue-level serializer for tasks that have none registered.
+
+Useful when a task needs a different format (e.g., human-readable JSON for audit tasks) or when the payload is not picklable.
 
 ## Task Naming
 

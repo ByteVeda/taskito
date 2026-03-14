@@ -37,6 +37,9 @@ class WebhookManager:
         events: list[EventType] | None = None,
         headers: dict[str, str] | None = None,
         secret: str | None = None,
+        max_retries: int = 3,
+        timeout: float = 10.0,
+        retry_backoff: float = 2.0,
     ) -> None:
         """Register a webhook endpoint.
 
@@ -45,6 +48,9 @@ class WebhookManager:
             events: List of event types to subscribe to. None means all events.
             headers: Extra HTTP headers to include.
             secret: HMAC-SHA256 signing secret for the ``X-Taskito-Signature`` header.
+            max_retries: Maximum delivery attempts (default 3).
+            timeout: HTTP request timeout in seconds (default 10.0).
+            retry_backoff: Base for exponential backoff between retries (default 2.0).
         """
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https"):
@@ -56,6 +62,9 @@ class WebhookManager:
                     "events": {e.value for e in events} if events else None,
                     "headers": headers or {},
                     "secret": secret.encode() if secret else None,
+                    "max_retries": max_retries,
+                    "timeout": timeout,
+                    "retry_backoff": retry_backoff,
                 }
             )
         self._ensure_thread()
@@ -98,10 +107,14 @@ class WebhookManager:
             sig = hmac.new(wh["secret"], body, hashlib.sha256).hexdigest()
             headers["X-Taskito-Signature"] = f"sha256={sig}"
 
-        for attempt in range(3):
+        max_retries: int = wh.get("max_retries", 3)
+        timeout: float = wh.get("timeout", 10.0)
+        retry_backoff: float = wh.get("retry_backoff", 2.0)
+
+        for attempt in range(max_retries):
             try:
                 req = urllib.request.Request(wh["url"], data=body, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
                     if resp.status < 400:
                         return
                     if resp.status < 500:
@@ -114,7 +127,9 @@ class WebhookManager:
                     logger.warning("Webhook %s returned server error %d", wh["url"], resp.status)
             except Exception:
                 logger.debug("Webhook %s attempt %d failed", wh["url"], attempt + 1, exc_info=True)
-            if attempt == 2:
-                logger.warning("Webhook delivery failed after 3 attempts: %s", wh["url"])
+            if attempt == max_retries - 1:
+                logger.warning(
+                    "Webhook delivery failed after %d attempts: %s", max_retries, wh["url"]
+                )
             else:
-                time.sleep(2**attempt)
+                time.sleep(retry_backoff**attempt)

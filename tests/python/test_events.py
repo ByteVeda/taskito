@@ -80,5 +80,9 @@ def test_all_event_types_exist():
         "job.retrying",
         "job.dead",
         "job.cancelled",
+        "worker.started",
+        "worker.stopped",
+        "queue.paused",
+        "queue.resumed",
     }
     assert {e.value for e in EventType} == expected

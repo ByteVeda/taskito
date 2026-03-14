@@ -444,6 +444,12 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<u64> {
                 self.purge_execution_claims(older_than_ms)
             }
+            fn count_running_by_task(
+                &self,
+                task_name: &str,
+            ) -> $crate::error::Result<i64> {
+                self.count_running_by_task(task_name)
+            }
             fn stats_by_queue(
                 &self,
                 queue_name: &str,
@@ -791,6 +797,9 @@ impl Storage for StorageBackend {
     }
     fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {
         delegate!(self, purge_execution_claims, older_than_ms)
+    }
+    fn count_running_by_task(&self, task_name: &str) -> Result<i64> {
+        delegate!(self, count_running_by_task, task_name)
     }
     fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
         delegate!(self, stats_by_queue, queue_name)

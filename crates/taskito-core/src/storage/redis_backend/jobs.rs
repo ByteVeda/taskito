@@ -725,6 +725,24 @@ impl RedisStorage {
         Ok(stats)
     }
 
+    /// Count running jobs for a specific task name (for per-task concurrency limiting).
+    pub fn count_running_by_task(&self, task_name: &str) -> Result<i64> {
+        let mut conn = self.conn()?;
+        let by_task_key = self.key(&["jobs", "by_task", task_name]);
+        let job_ids: Vec<String> = conn.smembers(&by_task_key).map_err(map_err)?;
+
+        let mut count: i64 = 0;
+        for id in &job_ids {
+            if let Some(job) = self.load_job(&mut conn, id)? {
+                if job.status == JobStatus::Running {
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
     pub fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
         let mut conn = self.conn()?;
         let by_queue_key = self.key(&["jobs", "by_queue", queue_name]);

@@ -916,6 +916,19 @@ macro_rules! impl_diesel_job_ops {
                 Ok(affected as u64)
             }
 
+            /// Count running jobs for a specific task name (for per-task concurrency limiting).
+            pub fn count_running_by_task(&self, task_name: &str) -> Result<i64> {
+                let mut conn = self.conn()?;
+
+                let count: i64 = jobs::table
+                    .filter(jobs::task_name.eq(task_name))
+                    .filter(jobs::status.eq(JobStatus::Running as i32))
+                    .count()
+                    .get_result(&mut conn)?;
+
+                Ok(count)
+            }
+
             /// Purge job errors older than the given timestamp.
             pub fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64> {
                 let mut conn = self.conn()?;

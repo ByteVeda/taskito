@@ -259,10 +259,18 @@ class QueueOperationsMixin:
     def pause(self, queue_name: str = "default") -> None:
         """Pause a queue so no new jobs are dispatched from it."""
         self._inner.pause_queue(queue_name)
+        if hasattr(self, "_emit_event"):
+            from taskito.events import EventType
+
+            self._emit_event(EventType.QUEUE_PAUSED, {"queue": queue_name})
 
     def resume(self, queue_name: str = "default") -> None:
         """Resume a paused queue."""
         self._inner.resume_queue(queue_name)
+        if hasattr(self, "_emit_event"):
+            from taskito.events import EventType
+
+            self._emit_event(EventType.QUEUE_RESUMED, {"queue": queue_name})
 
     def paused_queues(self) -> list[str]:
         """List currently paused queues."""

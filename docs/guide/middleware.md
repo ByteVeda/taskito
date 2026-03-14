@@ -1,6 +1,6 @@
 # Per-Task Middleware
 
-taskito supports a middleware system that lets you run code before, after, and on retry of task executions. Middleware can be applied globally (to all tasks) or per-task.
+taskito supports a middleware system that lets you run code at key points in the task lifecycle. Middleware can be applied globally (to all tasks) or per-task.
 
 ## TaskMiddleware Base Class
 
@@ -23,13 +23,60 @@ class LoggingMiddleware(TaskMiddleware):
 
 ### Hook Signatures
 
-| Hook | Signature | Called when |
-|---|---|---|
-| `before(ctx)` | `ctx: JobContext` | Before task execution |
-| `after(ctx, result, error)` | `ctx: JobContext`, `result: Any`, `error: Exception \| None` | After task execution (success or failure) |
-| `on_retry(ctx, error, retry_count)` | `ctx: JobContext`, `error: Exception`, `retry_count: int` | When a task is about to be retried |
+| Hook | Called when |
+|---|---|
+| `before(ctx)` | Before task execution |
+| `after(ctx, result, error)` | After task execution (success or failure) |
+| `on_retry(ctx, error, retry_count)` | A job fails and will be retried |
+| `on_enqueue(task_name, args, kwargs, options)` | A job is about to be enqueued |
+| `on_dead_letter(ctx, error)` | A job exhausts all retries and moves to the DLQ |
+| `on_timeout(ctx)` | A job hits its timeout limit |
+| `on_cancel(ctx)` | A job is cancelled during execution |
 
 The `ctx` parameter is a `JobContext` — the same object as `current_job` — providing `ctx.id`, `ctx.task_name`, `ctx.retry_count`, and `ctx.queue_name`.
+
+!!! note "Lifecycle hooks dispatched from Rust"
+    `on_retry`, `on_dead_letter`, `on_timeout`, and `on_cancel` are called by the Rust result handler after the scheduler records the outcome. They fire after `after()` and after the corresponding event is emitted on the event bus. Exceptions raised inside these hooks are logged and do not affect job processing.
+
+### `on_timeout` — Handling Timed-Out Jobs
+
+`on_timeout` fires when the Rust scheduler detects a stale job that exceeded its hard `timeout`. Detection happens in the maintenance reaper, which periodically scans for jobs still marked as running past their deadline.
+
+When a job times out, `on_timeout` is called **before** `on_retry` (if the job will be retried) or `on_dead_letter` (if retries are exhausted). This lets you react to the timeout itself independently of whether the job will be retried:
+
+```python
+class TimeoutAlerter(TaskMiddleware):
+    def on_timeout(self, ctx):
+        # Fires for every timed-out job, regardless of retry/DLQ outcome
+        logger.error("Job %s (%s) timed out", ctx.id, ctx.task_name)
+
+    def on_retry(self, ctx, error, retry_count):
+        # Fires after on_timeout when the job will be retried
+        logger.warning("Retrying %s (attempt %d)", ctx.task_name, retry_count)
+
+    def on_dead_letter(self, ctx, error):
+        # Fires after on_timeout when retries are exhausted
+        logger.critical("Job %s exhausted retries after timeout", ctx.id)
+```
+
+!!! tip
+    Use `on_timeout` to update dashboards, fire alerts, or record SLA violations. Combine with `on_retry` and `on_dead_letter` for full visibility into the job's fate after the timeout.
+
+### `on_enqueue` — Modifying Enqueue Parameters
+
+`on_enqueue` is unique: it fires before the job is written to the database, and the `options` dict is **mutable**. Modify it to change how the job is enqueued:
+
+```python
+class PriorityBoostMiddleware(TaskMiddleware):
+    def on_enqueue(self, task_name, args, kwargs, options):
+        # Bump priority for urgent tasks during business hours
+        import datetime
+        hour = datetime.datetime.now().hour
+        if 9 <= hour < 18 and task_name.startswith("alerts."):
+            options["priority"] = max(options.get("priority", 0), 50)
+```
+
+Keys present in `options`: `priority`, `delay`, `queue`, `max_retries`, `timeout`, `unique_key`, `metadata`.
 
 ## Queue-Level Middleware
 
@@ -79,9 +126,11 @@ taskito has two systems for running code around tasks:
 | | Hooks (`@queue.on_failure`, etc.) | Middleware (`TaskMiddleware`) |
 |---|---|---|
 | **Scope** | Queue-level only | Queue-level or per-task |
-| **Interface** | Decorated functions | Class with `before`/`after`/`on_retry` |
+| **Interface** | Decorated functions | Class with up to 7 hooks |
 | **Context** | Receives `task_name, args, kwargs` | Receives `JobContext` |
+| **Enqueue hook** | No | Yes (`on_enqueue`, can mutate options) |
 | **Retry hook** | No | Yes (`on_retry`) |
+| **DLQ / timeout / cancel hooks** | No | Yes |
 | **Execution order** | After middleware | Before hooks |
 
 Middleware runs **inside** the task wrapper (closer to the task function), while hooks run **outside**. In practice, middleware `before()` fires first, then `before_task` hooks. On completion, `on_success`/`on_failure` hooks fire, then middleware `after()`.

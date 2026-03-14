@@ -40,7 +40,9 @@ def _jobs_view(request: HttpRequest, site: Any) -> HttpResponse:
     except (ValueError, TypeError):
         page = 1
     page = max(page, 1)
-    per_page = 50
+    from django.conf import settings as django_settings
+
+    per_page = getattr(django_settings, "TASKITO_ADMIN_PER_PAGE", 50)
 
     try:
         jobs = queue.list_jobs(
@@ -96,7 +98,9 @@ def _dead_letters_view(request: HttpRequest, site: Any) -> HttpResponse:
     except (ValueError, TypeError):
         page = 1
     page = max(page, 1)
-    per_page = 50
+    from django.conf import settings as django_settings
+
+    per_page = getattr(django_settings, "TASKITO_ADMIN_PER_PAGE", 50)
     dead = queue.dead_letters(limit=per_page, offset=(page - 1) * per_page)
     context = {
         **site.each_context(request),
@@ -107,11 +111,26 @@ def _dead_letters_view(request: HttpRequest, site: Any) -> HttpResponse:
     return TemplateResponse(request, "taskito/admin/dead_letters.html", context)
 
 
-class TaskitoAdminSite(admin.AdminSite):
-    """Custom admin site with taskito queue views."""
+def _get_admin_setting(name: str, default: str) -> str:
+    from django.conf import settings as django_settings
 
-    site_header = "Taskito Admin"
-    site_title = "Taskito"
+    return str(getattr(django_settings, name, default))
+
+
+class TaskitoAdminSite(admin.AdminSite):
+    """Custom admin site with taskito queue views.
+
+    Reads ``TASKITO_ADMIN_TITLE`` and ``TASKITO_ADMIN_HEADER`` from Django
+    settings to customize the admin site branding.
+    """
+
+    @property
+    def site_header(self) -> str:
+        return _get_admin_setting("TASKITO_ADMIN_HEADER", "Taskito Admin")
+
+    @property
+    def site_title(self) -> str:
+        return _get_admin_setting("TASKITO_ADMIN_TITLE", "Taskito")
 
     def get_urls(self) -> list:
         urls = super().get_urls()

@@ -44,19 +44,23 @@ class Command(BaseCommand):
     def _watch(self, queue):  # type: ignore[no-untyped-def]
         import time
 
+        from django.conf import settings
+
+        interval = getattr(settings, "TASKITO_WATCH_INTERVAL", 2)
+
         prev_completed = 0
         try:
             while True:
                 self.stdout.write("\033[2J\033[H", ending="")
                 stats = queue.stats()
                 completed = stats.get("completed", 0)
-                throughput = (completed - prev_completed) / 2.0
+                throughput = (completed - prev_completed) / float(interval)
                 prev_completed = completed
 
                 self._print(queue)
                 if throughput > 0:
                     self.stdout.write(f"\n  throughput   {throughput:.1f} jobs/s")
-                self.stdout.write("\nRefreshing every 2s... (Ctrl+C to stop)")
-                time.sleep(2)
+                self.stdout.write(f"\nRefreshing every {interval}s... (Ctrl+C to stop)")
+                time.sleep(interval)
         except KeyboardInterrupt:
             pass

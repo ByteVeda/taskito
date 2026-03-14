@@ -44,10 +44,15 @@ class Taskito:
     - ``TASKITO_DEFAULT_PRIORITY`` — Default priority (default: 0)
     - ``TASKITO_RESULT_TTL`` — Result TTL in seconds (default: None)
     - ``TASKITO_DRAIN_TIMEOUT`` — Drain timeout in seconds (default: 30)
+
+    Args:
+        app: Optional Flask application instance.
+        cli_group: Name for the CLI command group (default ``"taskito"``).
     """
 
-    def __init__(self, app: flask.Flask | None = None):
+    def __init__(self, app: flask.Flask | None = None, cli_group: str = "taskito"):
         self.queue: Any = None
+        self._cli_group = cli_group
         if app is not None:
             self.init_app(app)
 
@@ -76,7 +81,7 @@ class Taskito:
         """Register Flask CLI commands."""
         import click
 
-        @app.cli.group("taskito")
+        @app.cli.group(self._cli_group)
         def taskito_cli() -> None:
             """Taskito task queue commands."""
 
@@ -88,13 +93,25 @@ class Taskito:
             self.queue.run_worker(queues=queue_list)
 
         @taskito_cli.command("info")
-        def info_cmd() -> None:
+        @click.option(
+            "--format",
+            "output_format",
+            type=click.Choice(["table", "json"]),
+            default="table",
+            help="Output format (default: table)",
+        )
+        def info_cmd(output_format: str) -> None:
             """Show queue statistics."""
+            import json
+
             stats = self.queue.stats()
-            click.echo("taskito queue statistics")
-            click.echo("-" * 30)
-            for key in ("pending", "running", "completed", "failed", "dead", "cancelled"):
-                click.echo(f"  {key:<12} {stats.get(key, 0)}")
-            total = sum(stats.values())
-            click.echo("-" * 30)
-            click.echo(f"  {'total':<12} {total}")
+            if output_format == "json":
+                click.echo(json.dumps(stats, indent=2))
+            else:
+                click.echo("taskito queue statistics")
+                click.echo("-" * 30)
+                for key in ("pending", "running", "completed", "failed", "dead", "cancelled"):
+                    click.echo(f"  {key:<12} {stats.get(key, 0)}")
+                total = sum(stats.values())
+                click.echo("-" * 30)
+                click.echo(f"  {'total':<12} {total}")

@@ -60,6 +60,7 @@ pub enum JobResult {
         task_name: String,
         wall_time_ns: i64,
         should_retry: bool,
+        timed_out: bool,
     },
     Cancelled {
         job_id: String,
@@ -68,12 +69,45 @@ pub enum JobResult {
     },
 }
 
+/// Outcome of processing a job result, returned to the caller for
+/// Python-side middleware hook dispatch.
+#[derive(Debug, Clone)]
+pub enum ResultOutcome {
+    /// Task completed successfully.
+    Success { job_id: String, task_name: String },
+    /// Task failed and will be retried.
+    Retry {
+        job_id: String,
+        task_name: String,
+        error: String,
+        retry_count: i32,
+        timed_out: bool,
+    },
+    /// Task exhausted retries and moved to the dead-letter queue.
+    DeadLettered {
+        job_id: String,
+        task_name: String,
+        error: String,
+        timed_out: bool,
+    },
+    /// Task was cancelled during execution.
+    Cancelled { job_id: String, task_name: String },
+}
+
 /// Per-task configuration for retry, rate limiting, and circuit breaker.
 #[derive(Debug, Clone)]
 pub struct TaskConfig {
     pub retry_policy: RetryPolicy,
     pub rate_limit: Option<crate::resilience::rate_limiter::RateLimitConfig>,
     pub circuit_breaker: Option<CircuitBreakerConfig>,
+    pub max_concurrent: Option<i32>,
+}
+
+/// Per-queue configuration for rate limiting and concurrency caps.
+#[derive(Debug, Clone)]
+pub struct QueueConfig {
+    pub rate_limit: Option<crate::resilience::rate_limiter::RateLimitConfig>,
+    pub max_concurrent: Option<i32>,
 }
 
 /// The central scheduler that coordinates job dispatch, retries, rate limiting, and circuit breakers.
@@ -83,6 +117,7 @@ pub struct Scheduler {
     dlq: DeadLetterQueue,
     circuit_breaker: CircuitBreaker,
     task_configs: HashMap<String, TaskConfig>,
+    queue_configs: HashMap<String, QueueConfig>,
     queues: Vec<String>,
     config: SchedulerConfig,
     shutdown: Arc<Notify>,
@@ -109,6 +144,7 @@ impl Scheduler {
             dlq,
             circuit_breaker,
             task_configs: HashMap::new(),
+            queue_configs: HashMap::new(),
             queues,
             config,
             shutdown: Arc::new(Notify::new()),
@@ -122,6 +158,10 @@ impl Scheduler {
 
     pub fn shutdown_handle(&self) -> Arc<Notify> {
         self.shutdown.clone()
+    }
+
+    pub fn register_queue_config(&mut self, queue_name: String, config: QueueConfig) {
+        self.queue_configs.insert(queue_name, config);
     }
 
     pub fn register_task(&mut self, task_name: String, config: TaskConfig) {
@@ -276,6 +316,7 @@ mod tests {
                 },
                 rate_limit: None,
                 circuit_breaker: None,
+                max_concurrent: None,
             },
         );
 
@@ -290,6 +331,7 @@ mod tests {
                 task_name: "retry_task".to_string(),
                 wall_time_ns: 500_000,
                 should_retry: true,
+                timed_out: false,
             })
             .unwrap();
 
@@ -312,6 +354,7 @@ mod tests {
                 task_name: "exhausted_task".to_string(),
                 wall_time_ns: 100,
                 should_retry: true,
+                timed_out: false,
             })
             .unwrap();
 
@@ -337,6 +380,7 @@ mod tests {
                 task_name: "no_retry_task".to_string(),
                 wall_time_ns: 100,
                 should_retry: false,
+                timed_out: false,
             })
             .unwrap();
 
@@ -373,6 +417,7 @@ mod tests {
                     refill_rate: 0.0,
                 }),
                 circuit_breaker: None,
+                max_concurrent: None,
             },
         );
 
@@ -414,6 +459,7 @@ mod tests {
                 retry_policy: RetryPolicy::default(),
                 rate_limit: None,
                 circuit_breaker: Some(cb_config),
+                max_concurrent: None,
             },
         );
 
@@ -452,6 +498,7 @@ mod tests {
                 },
                 rate_limit: None,
                 circuit_breaker: None,
+                max_concurrent: None,
             },
         );
 

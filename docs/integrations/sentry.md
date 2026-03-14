@@ -28,7 +28,7 @@ queue = Queue(db_path="myapp.db", middleware=[SentryMiddleware()])
 
 ### Scope Tags
 
-Each task execution gets a Sentry scope with the following tags:
+Each task execution gets a Sentry scope with the following tags (prefix customizable via `tag_prefix`):
 
 | Tag | Value |
 |-----|-------|
@@ -39,7 +39,7 @@ Each task execution gets a Sentry scope with the following tags:
 
 ### Transaction Name
 
-The Sentry transaction is set to `taskito:<task_name>`, making it easy to filter and group task performance data in the Sentry dashboard.
+The Sentry transaction is set to `taskito:<task_name>` by default. Customizable via `transaction_name_fn`.
 
 ### Automatic Error Capture
 
@@ -49,11 +49,29 @@ When a task raises an exception, `SentryMiddleware` calls `sentry_sdk.capture_ex
 
 When a task is retried, a breadcrumb is added with:
 
-- **Category**: `taskito`
+- **Category**: `taskito` (matches `tag_prefix`)
 - **Level**: `warning`
 - **Message**: `Retrying <task_name> (attempt <N>): <error>`
 
 This gives you a trail of retry attempts leading up to a final failure.
+
+## Configuration
+
+```python
+SentryMiddleware(
+    tag_prefix="myapp",
+    transaction_name_fn=lambda ctx: f"task-{ctx.task_name}",
+    task_filter=lambda name: not name.startswith("internal."),
+    extra_tags_fn=lambda ctx: {"worker.host": socket.gethostname()},
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `tag_prefix` | `str` | `"taskito"` | Prefix for Sentry tag keys and breadcrumb category. |
+| `transaction_name_fn` | `Callable[[JobContext], str] \| None` | `None` | Custom transaction name builder. Receives `JobContext`. Defaults to `<prefix>:<task_name>`. |
+| `task_filter` | `Callable[[str], bool] \| None` | `None` | Predicate on task name. Return `True` to report, `False` to skip. `None` reports all tasks. |
+| `extra_tags_fn` | `Callable[[JobContext], dict[str, str]] \| None` | `None` | Returns extra Sentry tags to set. Receives `JobContext`. |
 
 ## Combining with Other Middleware
 

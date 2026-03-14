@@ -19,6 +19,10 @@ class PyTaskConfig:
     circuit_breaker_window: int | None
     circuit_breaker_cooldown: int | None
 
+    retry_delays: list[float] | None
+    max_retry_delay: int | None
+    max_concurrent: int | None
+
     def __init__(
         self,
         name: str,
@@ -32,6 +36,8 @@ class PyTaskConfig:
         circuit_breaker_window: int | None = None,
         circuit_breaker_cooldown: int | None = None,
         retry_delays: list[float] | None = None,
+        max_retry_delay: int | None = None,
+        max_concurrent: int | None = None,
     ) -> None: ...
 
 class PyJob:
@@ -74,6 +80,9 @@ class PyQueue:
         db_url: str | None = None,
         schema: str = "taskito",
         pool_size: int | None = None,
+        scheduler_poll_interval_ms: int = 50,
+        scheduler_reap_interval: int = 100,
+        scheduler_cleanup_interval: int = 1200,
     ) -> None: ...
     def request_shutdown(self) -> None: ...
     def enqueue(
@@ -156,6 +165,7 @@ class PyQueue:
         resources: str | None = None,
         threads: int = 1,
         async_concurrency: int = 100,
+        queue_configs: str | None = None,
     ) -> None: ...
     def worker_heartbeat(
         self,

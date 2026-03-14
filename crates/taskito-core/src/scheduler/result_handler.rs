@@ -3,11 +3,14 @@ use log::{error, warn};
 use crate::error::Result;
 use crate::storage::Storage;
 
-use super::{JobResult, Scheduler};
+use super::{JobResult, ResultOutcome, Scheduler};
 
 impl Scheduler {
     /// Handle a completed or failed job result from a worker.
-    pub fn handle_result(&self, result: JobResult) -> Result<()> {
+    ///
+    /// Returns a [`ResultOutcome`] describing the action taken, so the
+    /// caller can dispatch Python-side middleware hooks and events.
+    pub fn handle_result(&self, result: JobResult) -> Result<ResultOutcome> {
         match result {
             JobResult::Success {
                 job_id,
@@ -32,6 +35,11 @@ impl Scheduler {
                 if let Err(e) = self.circuit_breaker.record_success(task_name) {
                     error!("circuit breaker error for {task_name}: {e}");
                 }
+
+                Ok(ResultOutcome::Success {
+                    job_id,
+                    task_name: task_name.clone(),
+                })
             }
             JobResult::Failure {
                 job_id,
@@ -41,6 +49,7 @@ impl Scheduler {
                 task_name,
                 wall_time_ns,
                 should_retry,
+                timed_out,
             } => {
                 // Clear execution claim so it can be retried
                 if let Err(e) = self.storage.complete_execution(&job_id) {
@@ -68,7 +77,12 @@ impl Scheduler {
                         Some(job) => self.dlq.move_to_dlq(&job, &error, None)?,
                         None => warn!("job {job_id} disappeared before DLQ move"),
                     }
-                    return Ok(());
+                    return Ok(ResultOutcome::DeadLettered {
+                        job_id,
+                        task_name,
+                        error,
+                        timed_out,
+                    });
                 }
 
                 let policy = self
@@ -86,12 +100,25 @@ impl Scheduler {
                 if retry_count < effective_max {
                     let next_at = policy.next_retry_at(retry_count);
                     self.storage.retry(&job_id, next_at)?;
+                    Ok(ResultOutcome::Retry {
+                        job_id,
+                        task_name,
+                        error,
+                        retry_count,
+                        timed_out,
+                    })
                 } else {
                     // Move to DLQ
                     match self.storage.get_job(&job_id)? {
                         Some(job) => self.dlq.move_to_dlq(&job, &error, None)?,
                         None => warn!("job {job_id} disappeared before DLQ move"),
                     }
+                    Ok(ResultOutcome::DeadLettered {
+                        job_id,
+                        task_name,
+                        error,
+                        timed_out,
+                    })
                 }
             }
             JobResult::Cancelled {
@@ -113,8 +140,8 @@ impl Scheduler {
                 {
                     error!("failed to record metric for cancelled job {job_id}: {e}");
                 }
+                Ok(ResultOutcome::Cancelled { job_id, task_name })
             }
         }
-        Ok(())
     }
 }

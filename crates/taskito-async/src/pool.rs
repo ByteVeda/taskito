@@ -96,6 +96,7 @@ impl WorkerDispatcher for NativeAsyncPool {
                             task_name: job.task_name.clone(),
                             wall_time_ns: 0,
                             should_retry: true,
+                            timed_out: false,
                         });
                     }
                 });

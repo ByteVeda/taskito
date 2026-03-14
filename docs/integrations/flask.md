@@ -55,9 +55,18 @@ All configuration is read from `app.config`:
 | `TASKITO_RESULT_TTL` | `None` | Auto-purge completed jobs after N seconds |
 | `TASKITO_DRAIN_TIMEOUT` | `30` | Seconds to wait for running tasks on shutdown |
 
+## Extension Options
+
+The `Taskito` constructor accepts a `cli_group` parameter to rename the CLI command group:
+
+```python
+# Commands will be under `flask tasks worker`, `flask tasks info`, etc.
+taskito = Taskito(app, cli_group="tasks")
+```
+
 ## CLI Commands
 
-The extension registers commands under the `flask taskito` group:
+The extension registers commands under the `flask taskito` group (configurable via `cli_group`):
 
 ### `flask taskito worker`
 
@@ -70,10 +79,11 @@ flask taskito worker --queues default,emails
 
 ### `flask taskito info`
 
-Show queue statistics:
+Show queue statistics. Supports `--format table` (default) and `--format json`:
 
 ```bash
 flask taskito info
+flask taskito info --format json
 ```
 
 ```
