@@ -63,6 +63,8 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2.8.2
+        with:
+          save-if: false
 
       - name: Run Rust tests
         run: cargo test --workspace
@@ -98,6 +100,8 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2.8.2
+        with:
+          save-if: ${{ matrix.os != 'ubuntu-latest' }}
 
       - name: Create virtualenv (Unix)
         if: runner.os != 'Windows'
