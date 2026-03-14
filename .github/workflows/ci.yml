@@ -48,7 +48,6 @@ jobs:
         run: mypy py_src/taskito/
 
   rust-test:
-    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -72,7 +71,7 @@ jobs:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
 
   test:
-    needs: [lint, rust-test]
+    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
