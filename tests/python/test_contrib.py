@@ -38,6 +38,10 @@ class TestOpenTelemetryMiddleware:
         import threading
 
         mw._tracer = mock_tracer
+        mw._span_name_fn = None
+        mw._attr_prefix = "taskito"
+        mw._extra_attributes_fn = None
+        mw._task_filter = None
         mw._spans = {}
         mw._lock = threading.Lock()
 
@@ -57,6 +61,10 @@ class TestOpenTelemetryMiddleware:
         import threading
 
         mw._tracer = MagicMock()
+        mw._span_name_fn = None
+        mw._attr_prefix = "taskito"
+        mw._extra_attributes_fn = None
+        mw._task_filter = None
         mw._spans = {"job-1": mock_span}
         mw._lock = threading.Lock()
 
@@ -77,6 +85,10 @@ class TestOpenTelemetryMiddleware:
         import threading
 
         mw._tracer = MagicMock()
+        mw._span_name_fn = None
+        mw._attr_prefix = "taskito"
+        mw._extra_attributes_fn = None
+        mw._task_filter = None
         mw._spans = {"job-1": mock_span}
         mw._lock = threading.Lock()
 
@@ -130,6 +142,10 @@ class TestSentryMiddleware:
         ctx = _make_ctx()
 
         mw = sentry_mod.SentryMiddleware.__new__(sentry_mod.SentryMiddleware)
+        mw._tag_prefix = "taskito"
+        mw._transaction_name_fn = None
+        mw._task_filter = None
+        mw._extra_tags_fn = None
         mw.before(ctx)
 
         mock_sdk.push_scope.assert_called_once()
@@ -143,6 +159,10 @@ class TestSentryMiddleware:
         ctx = _make_ctx()
 
         mw = sentry_mod.SentryMiddleware.__new__(sentry_mod.SentryMiddleware)
+        mw._tag_prefix = "taskito"
+        mw._transaction_name_fn = None
+        mw._task_filter = None
+        mw._extra_tags_fn = None
         mw.after(ctx, result="ok", error=None)
 
         mock_sdk.pop_scope_unsafe.assert_called_once()
@@ -157,6 +177,10 @@ class TestSentryMiddleware:
         exc = RuntimeError("oops")
 
         mw = sentry_mod.SentryMiddleware.__new__(sentry_mod.SentryMiddleware)
+        mw._tag_prefix = "taskito"
+        mw._transaction_name_fn = None
+        mw._task_filter = None
+        mw._extra_tags_fn = None
         mw.after(ctx, result=None, error=exc)
 
         mock_sdk.capture_exception.assert_called_once_with(exc)
@@ -181,22 +205,50 @@ def _try_import_sentry():  # type: ignore[no-untyped-def]
 # ── Prometheus ───────────────────────────────────────────────────────
 
 
+def _make_mock_metrics() -> dict:
+    """Create a mock metrics dict matching the instance-based store format."""
+    return {
+        "jobs_total": MagicMock(),
+        "job_duration": MagicMock(),
+        "active_workers": MagicMock(),
+        "retries_total": MagicMock(),
+        "queue_depth": MagicMock(),
+        "dlq_size": MagicMock(),
+        "worker_utilization": MagicMock(),
+        "resource_health": MagicMock(),
+        "resource_recreations": MagicMock(),
+        "resource_init_duration": MagicMock(),
+        "proxy_reconstruct_duration": MagicMock(),
+        "proxy_reconstruct_total": MagicMock(),
+        "proxy_reconstruct_errors": MagicMock(),
+        "intercept_duration": MagicMock(),
+        "intercept_strategy_total": MagicMock(),
+        "pool_size": MagicMock(),
+        "pool_active": MagicMock(),
+        "pool_idle": MagicMock(),
+        "pool_timeouts": MagicMock(),
+    }
+
+
 class TestPrometheusMiddleware:
     def test_before_increments_active_workers(self) -> None:
         prom = _try_import_prometheus()
         if prom is None:
             return
 
-        mw = prom.PrometheusMiddleware.__new__(prom.PrometheusMiddleware)
         import threading
 
+        metrics = _make_mock_metrics()
+        mw = prom.PrometheusMiddleware.__new__(prom.PrometheusMiddleware)
+        mw._metrics = metrics
+        mw._extra_labels_fn = None
         mw._start_times = {}
         mw._lock = threading.Lock()
 
         ctx = _make_ctx()
         mw.before(ctx)
 
-        prom._active_workers.inc.assert_called()
+        metrics["active_workers"].inc.assert_called()
 
     def test_after_tracks_counter_and_histogram(self) -> None:
         prom = _try_import_prometheus()
@@ -205,16 +257,19 @@ class TestPrometheusMiddleware:
 
         import threading
 
+        metrics = _make_mock_metrics()
         mw = prom.PrometheusMiddleware.__new__(prom.PrometheusMiddleware)
+        mw._metrics = metrics
+        mw._extra_labels_fn = None
         mw._start_times = {"job-1": 0.0}
         mw._lock = threading.Lock()
 
         ctx = _make_ctx()
         mw.after(ctx, result="ok", error=None)
 
-        prom._active_workers.dec.assert_called()
-        prom._jobs_total.labels.assert_called_with(task="my_task", status="completed")
-        prom._jobs_total.labels().inc.assert_called()
+        metrics["active_workers"].dec.assert_called()
+        metrics["jobs_total"].labels.assert_called_with(task="my_task", status="completed")
+        metrics["jobs_total"].labels().inc.assert_called()
 
     def test_after_tracks_failure(self) -> None:
         prom = _try_import_prometheus()
@@ -223,7 +278,10 @@ class TestPrometheusMiddleware:
 
         import threading
 
+        metrics = _make_mock_metrics()
         mw = prom.PrometheusMiddleware.__new__(prom.PrometheusMiddleware)
+        mw._metrics = metrics
+        mw._extra_labels_fn = None
         mw._start_times = {"job-1": 0.0}
         mw._lock = threading.Lock()
 
@@ -231,7 +289,7 @@ class TestPrometheusMiddleware:
         exc = ValueError("fail")
         mw.after(ctx, result=None, error=exc)
 
-        prom._jobs_total.labels.assert_called_with(task="my_task", status="failed")
+        metrics["jobs_total"].labels.assert_called_with(task="my_task", status="failed")
 
 
 def _try_import_prometheus():  # type: ignore[no-untyped-def]
@@ -257,14 +315,6 @@ def _try_import_prometheus():  # type: ignore[no-untyped-def]
                 del sys.modules["taskito.contrib.prometheus"]
             from taskito.contrib import prometheus
 
-            # Replace module-level metric singletons with mocks
-            prometheus._jobs_total = MagicMock()
-            prometheus._job_duration = MagicMock()
-            prometheus._active_workers = MagicMock()
-            prometheus._retries_total = MagicMock()
-            prometheus._queue_depth = MagicMock()
-            prometheus._dlq_size = MagicMock()
-            prometheus._worker_utilization = MagicMock()
             return prometheus
     except Exception:
         return None
