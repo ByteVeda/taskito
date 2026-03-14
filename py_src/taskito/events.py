@@ -12,7 +12,7 @@ logger = logging.getLogger("taskito.events")
 
 
 class EventType(enum.Enum):
-    """Types of job lifecycle events."""
+    """Types of job and worker lifecycle events."""
 
     JOB_ENQUEUED = "job.enqueued"
     JOB_COMPLETED = "job.completed"
@@ -20,6 +20,10 @@ class EventType(enum.Enum):
     JOB_RETRYING = "job.retrying"
     JOB_DEAD = "job.dead"
     JOB_CANCELLED = "job.cancelled"
+    WORKER_STARTED = "worker.started"
+    WORKER_STOPPED = "worker.stopped"
+    QUEUE_PAUSED = "queue.paused"
+    QUEUE_RESUMED = "queue.resumed"
 
 
 class EventBus:

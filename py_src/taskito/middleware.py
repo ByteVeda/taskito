@@ -33,3 +33,19 @@ class TaskMiddleware:
 
     def on_retry(self, ctx: JobContext, error: Exception, retry_count: int) -> None:
         """Called when a task is about to be retried."""
+
+    def on_enqueue(self, task_name: str, args: tuple, kwargs: dict, options: dict) -> None:
+        """Called when a job is about to be enqueued.
+
+        The ``options`` dict contains enqueue parameters (priority, delay,
+        queue, etc.) and may be mutated to modify the enqueue call.
+        """
+
+    def on_dead_letter(self, ctx: JobContext, error: Exception) -> None:
+        """Called when a job exhausts retries and moves to the dead-letter queue."""
+
+    def on_timeout(self, ctx: JobContext) -> None:
+        """Called when a job hits its timeout limit."""
+
+    def on_cancel(self, ctx: JobContext) -> None:
+        """Called when a job is cancelled during execution."""
