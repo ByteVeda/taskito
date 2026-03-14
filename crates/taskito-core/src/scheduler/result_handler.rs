@@ -49,6 +49,7 @@ impl Scheduler {
                 task_name,
                 wall_time_ns,
                 should_retry,
+                timed_out,
             } => {
                 // Clear execution claim so it can be retried
                 if let Err(e) = self.storage.complete_execution(&job_id) {
@@ -80,6 +81,7 @@ impl Scheduler {
                         job_id,
                         task_name,
                         error,
+                        timed_out,
                     });
                 }
 
@@ -103,6 +105,7 @@ impl Scheduler {
                         task_name,
                         error,
                         retry_count,
+                        timed_out,
                     })
                 } else {
                     // Move to DLQ
@@ -114,6 +117,7 @@ impl Scheduler {
                         job_id,
                         task_name,
                         error,
+                        timed_out,
                     })
                 }
             }

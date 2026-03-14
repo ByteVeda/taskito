@@ -32,6 +32,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 task_name,
                 error,
                 retry_count,
+                timed_out,
             } => {
                 // Emit JOB_RETRYING event
                 let events_mod = py.import_bound("taskito.events")?;
@@ -42,6 +43,12 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 payload.set_item("error", error)?;
                 payload.set_item("retry_count", retry_count)?;
                 queue_ref.call_method1("_emit_event", (event_type, payload))?;
+
+                // Call on_timeout middleware if this was a timeout
+                if *timed_out {
+                    let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                    call_middleware_hook(py, &queue_ref, task_name, "on_timeout", (ctx,))?;
+                }
 
                 // Call on_retry middleware
                 let ctx = build_lightweight_ctx(py, job_id, task_name)?;
@@ -59,6 +66,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 job_id,
                 task_name,
                 error,
+                timed_out,
             } => {
                 // Emit JOB_DEAD event
                 let events_mod = py.import_bound("taskito.events")?;
@@ -68,6 +76,12 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 payload.set_item("task_name", task_name)?;
                 payload.set_item("error", error)?;
                 queue_ref.call_method1("_emit_event", (event_type, payload))?;
+
+                // Call on_timeout middleware if this was a timeout
+                if *timed_out {
+                    let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                    call_middleware_hook(py, &queue_ref, task_name, "on_timeout", (ctx,))?;
+                }
 
                 // Call on_dead_letter middleware
                 let ctx = build_lightweight_ctx(py, job_id, task_name)?;

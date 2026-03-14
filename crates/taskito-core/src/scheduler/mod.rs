@@ -60,6 +60,7 @@ pub enum JobResult {
         task_name: String,
         wall_time_ns: i64,
         should_retry: bool,
+        timed_out: bool,
     },
     Cancelled {
         job_id: String,
@@ -80,12 +81,14 @@ pub enum ResultOutcome {
         task_name: String,
         error: String,
         retry_count: i32,
+        timed_out: bool,
     },
     /// Task exhausted retries and moved to the dead-letter queue.
     DeadLettered {
         job_id: String,
         task_name: String,
         error: String,
+        timed_out: bool,
     },
     /// Task was cancelled during execution.
     Cancelled { job_id: String, task_name: String },
@@ -328,6 +331,7 @@ mod tests {
                 task_name: "retry_task".to_string(),
                 wall_time_ns: 500_000,
                 should_retry: true,
+                timed_out: false,
             })
             .unwrap();
 
@@ -350,6 +354,7 @@ mod tests {
                 task_name: "exhausted_task".to_string(),
                 wall_time_ns: 100,
                 should_retry: true,
+                timed_out: false,
             })
             .unwrap();
 
@@ -375,6 +380,7 @@ mod tests {
                 task_name: "no_retry_task".to_string(),
                 wall_time_ns: 100,
                 should_retry: false,
+                timed_out: false,
             })
             .unwrap();
 

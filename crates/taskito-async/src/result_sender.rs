@@ -59,6 +59,7 @@ impl PyResultSender {
             task_name,
             wall_time_ns,
             should_retry,
+            timed_out: false,
         });
     }
 

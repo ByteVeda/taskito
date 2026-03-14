@@ -68,6 +68,7 @@ pub fn execute_sync_task(
                     task_name,
                     wall_time_ns,
                     should_retry,
+                    timed_out: false,
                 }
             }
         }
