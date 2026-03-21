@@ -16,6 +16,9 @@ The `EventType` enum defines all available lifecycle events:
 | `JOB_CANCELLED` | A job is cancelled | `job_id`, `task_name` |
 | `WORKER_STARTED` | A worker process/thread comes online | `worker_id`, `hostname` |
 | `WORKER_STOPPED` | A worker process/thread shuts down | `worker_id`, `hostname` |
+| `WORKER_ONLINE` | Worker registered in storage (visible to fleet) | `worker_id`, `queues`, `pool` |
+| `WORKER_OFFLINE` | Dead worker reaped (no heartbeat for 30s) | `worker_id` |
+| `WORKER_UNHEALTHY` | Resource health transitions to unhealthy | `worker_id`, `resources` |
 | `QUEUE_PAUSED` | A named queue is paused | `queue` |
 | `QUEUE_RESUMED` | A paused queue is resumed | `queue` |
 

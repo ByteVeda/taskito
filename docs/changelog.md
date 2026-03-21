@@ -7,13 +7,20 @@ All notable changes to taskito are documented here.
 ### Features
 
 - **Prefork worker pool** -- `queue.run_worker(pool="prefork", app="myapp:queue")` spawns child Python processes with independent GILs for true CPU parallelism; each child imports the app module, builds its own task registry, and executes tasks in a read-execute-write loop over JSON Lines IPC; the parent Rust scheduler dequeues jobs and dispatches to the least-loaded child via stdin pipes; reader threads parse child stdout and feed results back to the scheduler; graceful shutdown sends shutdown messages to children and waits with timeout before killing
+- **Worker discovery** -- `queue.workers()` now returns `hostname`, `pid`, `pool_type`, and `started_at` for each worker, giving operators visibility into multi-machine deployments
+- **Worker lifecycle events** -- three new event types: `WORKER_ONLINE` (registered in storage), `WORKER_OFFLINE` (dead worker reaped), `WORKER_UNHEALTHY` (resource health degraded); subscribe via `queue.on_event(EventType.WORKER_OFFLINE, callback)`
+- **Worker status transitions** -- workers report `active → draining → stopped` status; shutdown signal sets status to `"draining"` before drain timeout, visible in `queue.workers()` and the dashboard
+- **Orphan rescue prep** -- `list_claims_by_worker` storage method enables future orphaned job rescue when dead workers are detected
 
 ### Internal
 
 - New Rust module `crates/taskito-python/src/prefork/` with 4 files: `mod.rs` (PreforkPool + WorkerDispatcher impl), `child.rs` (ChildWriter/ChildReader/ChildProcess split handles), `protocol.rs` (ParentMessage/ChildMessage JSON serialization), `dispatch.rs` (least-loaded dispatcher)
 - New Python package `py_src/taskito/prefork/` with `child.py` (child process main loop), `__init__.py` (PreforkConfig), `__main__.py` (entry point)
-- `base64` crate added to `taskito-python` dependencies for payload encoding over JSON
+- `base64` and `gethostname` crates added to `taskito-python` dependencies
 - `run_worker()` gains `pool` and `app_path` parameters in both Rust (`py_queue/worker.rs`) and Python (`app.py`)
+- `workers` table gains 4 columns: `started_at`, `hostname`, `pid`, `pool_type` (all backends + migrations)
+- `reap_dead_workers` returns `Vec<String>` (reaped worker IDs) instead of `u64`; enables `WORKER_OFFLINE` event emission
+- New storage methods: `update_worker_status`, `list_claims_by_worker` across all 3 backends
 
 ---
 
