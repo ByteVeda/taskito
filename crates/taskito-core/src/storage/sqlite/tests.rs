@@ -39,14 +39,16 @@ fn test_dequeue() {
     let job = storage.enqueue(make_job("dequeue_task")).unwrap();
 
     let dequeued = storage
-        .dequeue("default", now_millis() + 1000)
+        .dequeue("default", now_millis() + 1000, None)
         .unwrap()
         .unwrap();
     assert_eq!(dequeued.id, job.id);
     assert_eq!(dequeued.status, JobStatus::Running);
 
     // Should not dequeue again
-    let none = storage.dequeue("default", now_millis() + 1000).unwrap();
+    let none = storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
     assert!(none.is_none());
 }
 
@@ -58,10 +60,10 @@ fn test_dequeue_respects_schedule() {
     new_job.scheduled_at = future;
     storage.enqueue(new_job).unwrap();
 
-    let none = storage.dequeue("default", now_millis()).unwrap();
+    let none = storage.dequeue("default", now_millis(), None).unwrap();
     assert!(none.is_none());
 
-    let some = storage.dequeue("default", future + 1).unwrap();
+    let some = storage.dequeue("default", future + 1, None).unwrap();
     assert!(some.is_some());
 }
 
@@ -78,10 +80,10 @@ fn test_priority_ordering() {
     storage.enqueue(high).unwrap();
 
     let now = now_millis() + 1000;
-    let first = storage.dequeue("default", now).unwrap().unwrap();
+    let first = storage.dequeue("default", now, None).unwrap().unwrap();
     assert_eq!(first.task_name, "high_priority");
 
-    let second = storage.dequeue("default", now).unwrap().unwrap();
+    let second = storage.dequeue("default", now, None).unwrap().unwrap();
     assert_eq!(second.task_name, "low_priority");
 }
 
@@ -89,7 +91,9 @@ fn test_priority_ordering() {
 fn test_complete() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("complete_task")).unwrap();
-    storage.dequeue("default", now_millis() + 1000).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
 
     storage.complete(&job.id, Some(vec![42])).unwrap();
 
@@ -102,7 +106,9 @@ fn test_complete() {
 fn test_fail_and_retry() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("fail_task")).unwrap();
-    storage.dequeue("default", now_millis() + 1000).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
 
     storage.fail(&job.id, "something broke").unwrap();
     let fetched = storage.get_job(&job.id).unwrap().unwrap();
@@ -114,7 +120,9 @@ fn test_fail_and_retry() {
 fn test_retry_reschedule() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("retry_task")).unwrap();
-    storage.dequeue("default", now_millis() + 1000).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
 
     let future = now_millis() + 5000;
     storage.retry(&job.id, future).unwrap();
@@ -129,7 +137,9 @@ fn test_retry_reschedule() {
 fn test_dead_letter_queue() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("dlq_task")).unwrap();
-    storage.dequeue("default", now_millis() + 1000).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
 
     storage
         .move_to_dlq(
@@ -151,7 +161,9 @@ fn test_dead_letter_queue() {
 fn test_retry_dead() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("retry_dead_task")).unwrap();
-    storage.dequeue("default", now_millis() + 1000).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
 
     let running_job = storage.get_job(&job.id).unwrap().unwrap();
     storage
@@ -309,15 +321,15 @@ fn test_dequeue_blocks_on_unmet_dependency() {
 
     let now = now_millis() + 1000;
 
-    let dequeued = storage.dequeue("default", now).unwrap().unwrap();
+    let dequeued = storage.dequeue("default", now, None).unwrap().unwrap();
     assert_eq!(dequeued.id, job_a.id);
 
-    let none = storage.dequeue("default", now).unwrap();
+    let none = storage.dequeue("default", now, None).unwrap();
     assert!(none.is_none());
 
     storage.complete(&job_a.id, None).unwrap();
 
-    let dequeued = storage.dequeue("default", now).unwrap().unwrap();
+    let dequeued = storage.dequeue("default", now, None).unwrap().unwrap();
     assert_eq!(dequeued.task_name, "dependent_task");
 }
 
@@ -353,7 +365,7 @@ fn test_cascade_cancel_on_dlq() {
     let job_b = storage.enqueue(dep_b).unwrap();
 
     let now = now_millis() + 1000;
-    storage.dequeue("default", now).unwrap();
+    storage.dequeue("default", now, None).unwrap();
     let running = storage.get_job(&job_a.id).unwrap().unwrap();
     storage.move_to_dlq(&running, "fatal error", None).unwrap();
 
@@ -374,13 +386,13 @@ fn test_count_running_by_task() {
 
     let now = now_millis() + 1000;
     // Dequeue one task_a (becomes running)
-    storage.dequeue("default", now).unwrap().unwrap();
+    storage.dequeue("default", now, None).unwrap().unwrap();
 
     assert_eq!(storage.count_running_by_task("task_a").unwrap(), 1);
     assert_eq!(storage.count_running_by_task("task_b").unwrap(), 0);
 
     // Dequeue second task_a
-    storage.dequeue("default", now).unwrap().unwrap();
+    storage.dequeue("default", now, None).unwrap().unwrap();
     assert_eq!(storage.count_running_by_task("task_a").unwrap(), 2);
 
     // Nonexistent task should return 0

@@ -11,7 +11,7 @@ use crate::py_job::PyJob;
 #[allow(clippy::useless_conversion)]
 impl PyQueue {
     /// List jobs with optional filters and pagination.
-    #[pyo3(signature = (status=None, queue=None, task_name=None, limit=50, offset=0))]
+    #[pyo3(signature = (status=None, queue=None, task_name=None, limit=50, offset=0, namespace=None))]
     pub fn list_jobs(
         &self,
         status: Option<&str>,
@@ -19,6 +19,7 @@ impl PyQueue {
         task_name: Option<&str>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> PyResult<Vec<PyJob>> {
         if limit < 0 || offset < 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -29,7 +30,7 @@ impl PyQueue {
 
         let jobs = self
             .storage
-            .list_jobs(status_int, queue, task_name, limit, offset)
+            .list_jobs(status_int, queue, task_name, limit, offset, namespace)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         Ok(jobs.into_iter().map(PyJob::from).collect())
@@ -37,7 +38,7 @@ impl PyQueue {
 
     /// List jobs with extended filters.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (status=None, queue=None, task_name=None, metadata_like=None, error_like=None, created_after=None, created_before=None, limit=50, offset=0))]
+    #[pyo3(signature = (status=None, queue=None, task_name=None, metadata_like=None, error_like=None, created_after=None, created_before=None, limit=50, offset=0, namespace=None))]
     pub fn list_jobs_filtered(
         &self,
         status: Option<&str>,
@@ -49,6 +50,7 @@ impl PyQueue {
         created_before: Option<i64>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> PyResult<Vec<PyJob>> {
         if limit < 0 || offset < 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -69,6 +71,7 @@ impl PyQueue {
                 created_before,
                 limit,
                 offset,
+                namespace,
             )
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 

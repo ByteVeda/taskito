@@ -2,6 +2,22 @@
 
 All notable changes to taskito are documented here.
 
+## 0.8.0
+
+### Features
+
+- **Namespace-based routing** -- `Queue(namespace="team-a")` isolates workloads across teams/services sharing a single database; enqueued jobs carry the namespace, workers only dequeue matching jobs, `list_jobs()` and `list_jobs_filtered()` default to the queue's namespace (pass `namespace=None` for global view); DLQ and archival preserve namespace through the full job lifecycle; periodic tasks inherit namespace from their scheduler; backward compatible (`None` namespace matches only `NULL`-namespace jobs)
+
+### Internal
+
+- `namespace` column added to `dead_letter` and `archived_jobs` tables; `DeadLetterRow`, `NewDeadLetterRow`, `ArchivedJobRow` models updated; Redis `DeadJobEntry` uses `#[serde(default)]` for backward compatibility
+- `Storage` trait: `dequeue`, `dequeue_from`, `list_jobs`, `list_jobs_filtered` signatures gain `namespace: Option<&str>` parameter; all 3 backends + delegate macro updated
+- `Scheduler` struct carries `namespace: Option<String>` field, passes to `dequeue_from` in poller
+- `PyQueue` struct carries `namespace: Option<String>` field; `PyJob` exposes `namespace` to Python
+- `_UNSET` sentinel in `mixins.py` distinguishes "namespace not passed" from explicit `None`
+
+---
+
 ## 0.7.0
 
 ### Features

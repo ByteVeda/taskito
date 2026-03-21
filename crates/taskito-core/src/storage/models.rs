@@ -75,6 +75,7 @@ pub struct DeadLetterRow {
     pub max_retries: i32,
     pub timeout_ms: i64,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
 }
 
 /// Insertable struct for dead letter entries.
@@ -94,6 +95,7 @@ pub struct NewDeadLetterRow<'a> {
     pub max_retries: i32,
     pub timeout_ms: i64,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<&'a str>,
 }
 
 /// A row in the `rate_limits` table.
@@ -394,4 +396,5 @@ pub struct ArchivedJobRow {
     pub cancel_requested: i32,
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
 }

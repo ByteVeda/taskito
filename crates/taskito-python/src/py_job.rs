@@ -36,6 +36,8 @@ pub struct PyJob {
     pub progress: Option<i32>,
     #[pyo3(get)]
     pub metadata: Option<String>,
+    #[pyo3(get)]
+    pub namespace: Option<String>,
 
     status_val: i32,
     result_bytes: Option<Vec<u8>>,
@@ -84,6 +86,7 @@ impl From<Job> for PyJob {
             unique_key: job.unique_key,
             progress: job.progress,
             metadata: job.metadata,
+            namespace: job.namespace,
             status_val: job.status as i32,
             result_bytes: job.result,
         }

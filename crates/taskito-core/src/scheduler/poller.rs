@@ -51,7 +51,10 @@ impl Scheduler {
             return Ok(false);
         }
 
-        let job = match self.storage.dequeue_from(&active_queues, now)? {
+        let job = match self
+            .storage
+            .dequeue_from(&active_queues, now, self.namespace.as_deref())?
+        {
             Some(j) => j,
             None => return Ok(false),
         };

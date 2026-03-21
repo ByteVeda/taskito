@@ -270,17 +270,27 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// Atomically dequeue the highest-priority ready job from the given queue.
-            /// Skips expired jobs.
-            pub fn dequeue(&self, queue_name: &str, now: i64) -> Result<Option<Job>> {
+            /// Skips expired jobs. When `namespace` is `Some`, only jobs in that
+            /// namespace are considered; when `None`, only jobs with no namespace.
+            pub fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
                 let mut conn = self.conn()?;
 
                 conn.transaction(|conn| {
-                    let candidates: Vec<JobRow> = jobs::table
+                    let mut query = jobs::table
                         .filter(jobs::queue.eq(queue_name))
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
                         .filter(jobs::scheduled_at.le(now))
                         .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
                         .limit(100)
+                        .into_boxed();
+
+                    if let Some(ns) = namespace {
+                        query = query.filter(jobs::namespace.eq(ns));
+                    } else {
+                        query = query.filter(jobs::namespace.is_null());
+                    }
+
+                    let candidates: Vec<JobRow> = query
                         .select(JobRow::as_select())
                         .load(conn)?;
 
@@ -327,9 +337,9 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// Dequeue from multiple queues, checking each in order.
-            pub fn dequeue_from(&self, queues: &[String], now: i64) -> Result<Option<Job>> {
+            pub fn dequeue_from(&self, queues: &[String], now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
                 for queue_name in queues {
-                    if let Some(job) = self.dequeue(queue_name, now)? {
+                    if let Some(job) = self.dequeue(queue_name, now, namespace)? {
                         return Ok(Some(job));
                     }
                 }
@@ -554,6 +564,8 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// List jobs with optional filters and pagination.
+            /// When `namespace` is `Some`, only jobs in that namespace are returned.
+            /// When `None`, all jobs are returned regardless of namespace.
             pub fn list_jobs(
                 &self,
                 status: Option<i32>,
@@ -561,6 +573,7 @@ macro_rules! impl_diesel_job_ops {
                 task_name: Option<&str>,
                 limit: i64,
                 offset: i64,
+                namespace: Option<&str>,
             ) -> Result<Vec<Job>> {
                 let mut conn = self.conn()?;
 
@@ -574,6 +587,9 @@ macro_rules! impl_diesel_job_ops {
                 }
                 if let Some(t) = task_name {
                     query = query.filter(jobs::task_name.eq(t));
+                }
+                if let Some(ns) = namespace {
+                    query = query.filter(jobs::namespace.eq(ns));
                 }
 
                 let rows: Vec<JobRow> = query
@@ -678,6 +694,8 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// List jobs with extended filters.
+            /// When `namespace` is `Some`, only jobs in that namespace are returned.
+            /// When `None`, all jobs are returned regardless of namespace.
             #[allow(clippy::too_many_arguments)]
             pub fn list_jobs_filtered(
                 &self,
@@ -690,6 +708,7 @@ macro_rules! impl_diesel_job_ops {
                 created_before: Option<i64>,
                 limit: i64,
                 offset: i64,
+                namespace: Option<&str>,
             ) -> Result<Vec<Job>> {
                 let mut conn = self.conn()?;
 
@@ -715,6 +734,9 @@ macro_rules! impl_diesel_job_ops {
                 }
                 if let Some(before) = created_before {
                     query = query.filter(jobs::created_at.le(before));
+                }
+                if let Some(ns) = namespace {
+                    query = query.filter(jobs::namespace.eq(ns));
                 }
 
                 let rows: Vec<JobRow> = query

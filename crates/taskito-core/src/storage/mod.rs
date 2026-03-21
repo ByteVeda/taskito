@@ -40,6 +40,7 @@ pub struct DeadJob {
     pub max_retries: i32,
     pub timeout_ms: i64,
     pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
 }
 
 impl From<models::DeadLetterRow> for DeadJob {
@@ -58,6 +59,7 @@ impl From<models::DeadLetterRow> for DeadJob {
             max_retries: row.max_retries,
             timeout_ms: row.timeout_ms,
             result_ttl_ms: row.result_ttl_ms,
+            namespace: row.namespace,
         }
     }
 }
@@ -93,15 +95,17 @@ macro_rules! impl_storage {
                 &self,
                 queue_name: &str,
                 now: i64,
+                namespace: Option<&str>,
             ) -> $crate::error::Result<Option<$crate::job::Job>> {
-                self.dequeue(queue_name, now)
+                self.dequeue(queue_name, now, namespace)
             }
             fn dequeue_from(
                 &self,
                 queues: &[String],
                 now: i64,
+                namespace: Option<&str>,
             ) -> $crate::error::Result<Option<$crate::job::Job>> {
-                self.dequeue_from(queues, now)
+                self.dequeue_from(queues, now, namespace)
             }
             fn complete(
                 &self,
@@ -151,8 +155,9 @@ macro_rules! impl_storage {
                 task_name: Option<&str>,
                 limit: i64,
                 offset: i64,
+                namespace: Option<&str>,
             ) -> $crate::error::Result<Vec<$crate::job::Job>> {
-                self.list_jobs(status, queue_name, task_name, limit, offset)
+                self.list_jobs(status, queue_name, task_name, limit, offset, namespace)
             }
             fn get_job(&self, id: &str) -> $crate::error::Result<Option<$crate::job::Job>> {
                 self.get_job(id)
@@ -473,6 +478,7 @@ macro_rules! impl_storage {
                 created_before: Option<i64>,
                 limit: i64,
                 offset: i64,
+                namespace: Option<&str>,
             ) -> $crate::error::Result<Vec<$crate::job::Job>> {
                 self.list_jobs_filtered(
                     status,
@@ -484,6 +490,7 @@ macro_rules! impl_storage {
                     created_before,
                     limit,
                     offset,
+                    namespace,
                 )
             }
         }
@@ -526,11 +533,16 @@ impl Storage for StorageBackend {
     fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
         delegate!(self, enqueue_unique, new_job)
     }
-    fn dequeue(&self, queue_name: &str, now: i64) -> Result<Option<Job>> {
-        delegate!(self, dequeue, queue_name, now)
+    fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
+        delegate!(self, dequeue, queue_name, now, namespace)
     }
-    fn dequeue_from(&self, queues: &[String], now: i64) -> Result<Option<Job>> {
-        delegate!(self, dequeue_from, queues, now)
+    fn dequeue_from(
+        &self,
+        queues: &[String],
+        now: i64,
+        namespace: Option<&str>,
+    ) -> Result<Option<Job>> {
+        delegate!(self, dequeue_from, queues, now, namespace)
     }
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
         delegate!(self, complete, id, result_bytes)
@@ -572,8 +584,9 @@ impl Storage for StorageBackend {
         task_name: Option<&str>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> Result<Vec<Job>> {
-        delegate!(self, list_jobs, status, queue_name, task_name, limit, offset)
+        delegate!(self, list_jobs, status, queue_name, task_name, limit, offset, namespace)
     }
     fn get_job(&self, id: &str) -> Result<Option<Job>> {
         delegate!(self, get_job, id)
@@ -818,6 +831,7 @@ impl Storage for StorageBackend {
         created_before: Option<i64>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> Result<Vec<Job>> {
         delegate!(
             self,
@@ -830,7 +844,8 @@ impl Storage for StorageBackend {
             created_after,
             created_before,
             limit,
-            offset
+            offset,
+            namespace
         )
     }
 }

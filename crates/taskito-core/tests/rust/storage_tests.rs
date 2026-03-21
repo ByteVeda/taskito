@@ -41,18 +41,18 @@ fn test_enqueue_and_get(s: &impl Storage) {
 fn test_dequeue(s: &impl Storage) {
     let q = "q-dequeue";
     let job = s.enqueue(make_job(q, "dequeue_task")).unwrap();
-    let dequeued = s.dequeue(q, now_millis() + 1000).unwrap().unwrap();
+    let dequeued = s.dequeue(q, now_millis() + 1000, None).unwrap().unwrap();
     assert_eq!(dequeued.id, job.id);
     assert_eq!(dequeued.status, JobStatus::Running);
 
-    let none = s.dequeue(q, now_millis() + 1000).unwrap();
+    let none = s.dequeue(q, now_millis() + 1000, None).unwrap();
     assert!(none.is_none());
 }
 
 fn test_complete(s: &impl Storage) {
     let q = "q-complete";
     let job = s.enqueue(make_job(q, "complete_task")).unwrap();
-    s.dequeue(q, now_millis() + 1000).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
     s.complete(&job.id, Some(vec![42])).unwrap();
 
     let fetched = s.get_job(&job.id).unwrap().unwrap();
@@ -63,7 +63,7 @@ fn test_complete(s: &impl Storage) {
 fn test_fail(s: &impl Storage) {
     let q = "q-fail";
     let job = s.enqueue(make_job(q, "fail_task")).unwrap();
-    s.dequeue(q, now_millis() + 1000).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
     s.fail(&job.id, "something broke").unwrap();
 
     let fetched = s.get_job(&job.id).unwrap().unwrap();
@@ -74,7 +74,7 @@ fn test_fail(s: &impl Storage) {
 fn test_retry(s: &impl Storage) {
     let q = "q-retry";
     let job = s.enqueue(make_job(q, "retry_task")).unwrap();
-    s.dequeue(q, now_millis() + 1000).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
 
     let future = now_millis() + 5000;
     s.retry(&job.id, future).unwrap();
@@ -131,7 +131,7 @@ fn test_enqueue_batch(s: &impl Storage) {
 fn test_dead_letter_queue(s: &impl Storage) {
     let q = "q-dlq";
     let job = s.enqueue(make_job(q, "dlq_task")).unwrap();
-    s.dequeue(q, now_millis() + 1000).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
 
     let running = s.get_job(&job.id).unwrap().unwrap();
     s.move_to_dlq(&running, "max retries exceeded", None)

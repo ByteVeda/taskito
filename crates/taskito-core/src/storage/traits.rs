@@ -13,8 +13,13 @@ pub trait Storage: Send + Sync + Clone {
     fn enqueue(&self, new_job: NewJob) -> Result<Job>;
     fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>>;
     fn enqueue_unique(&self, new_job: NewJob) -> Result<Job>;
-    fn dequeue(&self, queue_name: &str, now: i64) -> Result<Option<Job>>;
-    fn dequeue_from(&self, queues: &[String], now: i64) -> Result<Option<Job>>;
+    fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>>;
+    fn dequeue_from(
+        &self,
+        queues: &[String],
+        now: i64,
+        namespace: Option<&str>,
+    ) -> Result<Option<Job>>;
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()>;
     fn fail(&self, id: &str, error: &str) -> Result<()>;
     fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()>;
@@ -33,6 +38,7 @@ pub trait Storage: Send + Sync + Clone {
         task_name: Option<&str>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
     fn get_job(&self, id: &str) -> Result<Option<Job>>;
     fn stats(&self) -> Result<QueueStats>;
@@ -184,5 +190,6 @@ pub trait Storage: Send + Sync + Clone {
         created_before: Option<i64>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
 }

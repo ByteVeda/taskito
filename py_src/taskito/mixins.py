@@ -8,11 +8,14 @@ if TYPE_CHECKING:
     from taskito.locks import DistributedLock
     from taskito.result import JobResult
 
+_UNSET = object()  # sentinel to distinguish "not passed" from explicit None
+
 
 class QueueInspectionMixin:
     """Read-only inspection, stats, and query methods for the Queue."""
 
     _inner: Any
+    _namespace: str | None
 
     def get_job(self, job_id: str) -> JobResult | None:
         """Retrieve a job by its unique ID."""
@@ -30,16 +33,23 @@ class QueueInspectionMixin:
         task_name: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        namespace: Any = _UNSET,
     ) -> list[JobResult]:
-        """List jobs with optional filters and pagination."""
+        """List jobs with optional filters and pagination.
+
+        By default, scoped to this queue's namespace. Pass ``namespace=None``
+        explicitly to see jobs across all namespaces.
+        """
         from taskito.result import JobResult
 
+        ns = self._namespace if namespace is _UNSET else namespace
         py_jobs = self._inner.list_jobs(
             status=status,
             queue=queue,
             task_name=task_name,
             limit=limit,
             offset=offset,
+            namespace=ns,
         )
         return [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
 
@@ -54,10 +64,16 @@ class QueueInspectionMixin:
         created_before: int | None = None,
         limit: int = 50,
         offset: int = 0,
+        namespace: Any = _UNSET,
     ) -> list[JobResult]:
-        """List jobs with extended filters."""
+        """List jobs with extended filters.
+
+        By default, scoped to this queue's namespace. Pass ``namespace=None``
+        explicitly to see jobs across all namespaces.
+        """
         from taskito.result import JobResult
 
+        ns = self._namespace if namespace is _UNSET else namespace
         py_jobs = self._inner.list_jobs_filtered(
             status=status,
             queue=queue,
@@ -68,6 +84,7 @@ class QueueInspectionMixin:
             created_before=created_before,
             limit=limit,
             offset=offset,
+            namespace=ns,
         )
         return [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
 

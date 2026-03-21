@@ -62,6 +62,7 @@ class PyJob:
     unique_key: str | None
     progress: int | None
     metadata: str | None
+    namespace: str | None
 
     @property
     def status(self) -> str: ...
@@ -87,6 +88,7 @@ class PyQueue:
         scheduler_poll_interval_ms: int = 50,
         scheduler_reap_interval: int = 100,
         scheduler_cleanup_interval: int = 1200,
+        namespace: str | None = None,
     ) -> None: ...
     def request_shutdown(self) -> None: ...
     def enqueue(
@@ -125,6 +127,7 @@ class PyQueue:
         task_name: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        namespace: str | None = None,
     ) -> list[PyJob]: ...
     def get_job(self, job_id: str) -> PyJob | None: ...
     def get_job_errors(self, job_id: str) -> list[dict[str, Any]]: ...
@@ -149,6 +152,7 @@ class PyQueue:
         created_before: int | None = None,
         limit: int = 50,
         offset: int = 0,
+        namespace: str | None = None,
     ) -> list[PyJob]: ...
     def dead_letters(self, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]: ...
     def retry_dead(self, dead_id: str) -> str: ...
