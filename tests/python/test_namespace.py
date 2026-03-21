@@ -1,16 +1,17 @@
 """Tests for namespace-based routing and isolation."""
 
 import threading
+from pathlib import Path
 
 from taskito import Queue
 
 
-def test_namespace_enqueue_sets_namespace(tmp_path):
+def test_namespace_enqueue_sets_namespace(tmp_path: Path) -> None:
     """Jobs enqueued on a namespaced Queue carry the namespace."""
     queue = Queue(db_path=str(tmp_path / "test.db"), namespace="team-a")
 
     @queue.task()
-    def add(x, y):
+    def add(x: int, y: int) -> int:
         return x + y
 
     job = add.delay(1, 2)
@@ -19,12 +20,12 @@ def test_namespace_enqueue_sets_namespace(tmp_path):
     assert py_job.namespace == "team-a"
 
 
-def test_no_namespace_jobs_have_none(tmp_path):
+def test_no_namespace_jobs_have_none(tmp_path: Path) -> None:
     """Jobs enqueued without a namespace have namespace=None."""
     queue = Queue(db_path=str(tmp_path / "test.db"))
 
     @queue.task()
-    def noop():
+    def noop() -> None:
         pass
 
     job = noop.delay()
@@ -33,7 +34,7 @@ def test_no_namespace_jobs_have_none(tmp_path):
     assert py_job.namespace is None
 
 
-def test_namespace_isolation_worker(tmp_path):
+def test_namespace_isolation_worker(tmp_path: Path) -> None:
     """A namespaced worker only processes jobs from its namespace."""
     db = str(tmp_path / "test.db")
 
@@ -41,15 +42,15 @@ def test_namespace_isolation_worker(tmp_path):
     q_a = Queue(db_path=db, namespace="team-a")
     q_b = Queue(db_path=db, namespace="team-b")
 
-    results = []
+    results: list[str] = []
 
     @q_a.task()
-    def task_a():
+    def task_a() -> str:
         results.append("a")
         return "a"
 
     @q_b.task()
-    def task_b():
+    def task_b() -> str:
         results.append("b")
         return "b"
 
@@ -72,18 +73,18 @@ def test_namespace_isolation_worker(tmp_path):
     q_a._inner.request_shutdown()
 
 
-def test_namespace_list_jobs_scoped(tmp_path):
+def test_namespace_list_jobs_scoped(tmp_path: Path) -> None:
     """list_jobs defaults to the queue's namespace."""
     db = str(tmp_path / "test.db")
     q_a = Queue(db_path=db, namespace="ns-a")
     q_b = Queue(db_path=db, namespace="ns-b")
 
     @q_a.task()
-    def task_x():
+    def task_x() -> None:
         pass
 
     @q_b.task()
-    def task_y():
+    def task_y() -> None:
         pass
 
     task_x.delay()
@@ -98,12 +99,12 @@ def test_namespace_list_jobs_scoped(tmp_path):
     assert len(q_a.list_jobs(namespace=None)) == 3
 
 
-def test_namespace_preserved_in_job_result(tmp_path):
+def test_namespace_preserved_in_job_result(tmp_path: Path) -> None:
     """JobResult.to_dict() includes the namespace."""
     queue = Queue(db_path=str(tmp_path / "test.db"), namespace="my-ns")
 
     @queue.task()
-    def greet(name):
+    def greet(name: str) -> str:
         return f"hi {name}"
 
     job = greet.delay("world")

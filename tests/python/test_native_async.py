@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 from taskito import Queue, TaskCancelledError, current_job
@@ -18,24 +20,24 @@ from taskito.middleware import TaskMiddleware
 # ── Async detection ──────────────────────────────────────────────
 
 
-def test_async_task_detected(tmp_path):
+def test_async_task_detected(tmp_path: Path) -> None:
     """_taskito_is_async is True for async functions."""
     queue = Queue(db_path=str(tmp_path / "test.db"))
 
     @queue.task()
-    async def my_async_task():
+    async def my_async_task() -> None:
         pass
 
     assert my_async_task._taskito_is_async is True
     assert hasattr(my_async_task, "_taskito_async_fn")
 
 
-def test_sync_task_not_async(tmp_path):
+def test_sync_task_not_async(tmp_path: Path) -> None:
     """_taskito_is_async is False for sync functions."""
     queue = Queue(db_path=str(tmp_path / "test.db"))
 
     @queue.task()
-    def my_sync_task():
+    def my_sync_task() -> None:
         pass
 
     assert my_sync_task._taskito_is_async is False
@@ -45,7 +47,7 @@ def test_sync_task_not_async(tmp_path):
 # ── Async context (contextvars) ──────────────────────────────────
 
 
-def test_async_context_var():
+def test_async_context_var() -> None:
     """set/get/clear async context via contextvars."""
     token = set_async_context("job-1", "my_task", 0, "default")
     ctx = get_async_context()
@@ -58,26 +60,26 @@ def test_async_context_var():
     assert get_async_context() is None
 
 
-def test_async_context_isolated_between_tasks():
+def test_async_context_isolated_between_tasks() -> None:
     """Each async task gets its own contextvar context (no cross-contamination)."""
-    results = []
+    results: list[str | None] = []
 
-    async def coro(job_id):
+    async def coro(job_id: str) -> None:
         token = set_async_context(job_id, "task", 0, "q")
         await asyncio.sleep(0.01)
         ctx = get_async_context()
         results.append(ctx.job_id if ctx else None)
         clear_async_context(token)
 
-    async def run_both():
+    async def run_both() -> None:
         await asyncio.gather(coro("a"), coro("b"))
 
     asyncio.run(run_both())
 
-    assert sorted(results) == ["a", "b"]
+    assert sorted(r for r in results if r is not None) == ["a", "b"]
 
 
-def test_sync_context_unchanged(tmp_path):
+def test_sync_context_unchanged(tmp_path: Path) -> None:
     """current_job still works via threading.local for sync tasks."""
     from taskito.context import _clear_context, _set_context
 
@@ -89,7 +91,7 @@ def test_sync_context_unchanged(tmp_path):
     _clear_context()
 
 
-def test_async_context_fallback_to_sync():
+def test_async_context_fallback_to_sync() -> None:
     """_require_context falls back to threading.local when no async context."""
     from taskito.context import _clear_context, _set_context
 
@@ -101,7 +103,7 @@ def test_async_context_fallback_to_sync():
     _clear_context()
 
 
-def test_async_context_preferred_over_sync():
+def test_async_context_preferred_over_sync() -> None:
     """When both async and sync contexts exist, async wins."""
     from taskito.context import _clear_context, _set_context
 
@@ -116,12 +118,12 @@ def test_async_context_preferred_over_sync():
 # ── AsyncTaskExecutor unit tests ─────────────────────────────────
 
 
-def test_async_executor_lifecycle():
+def test_async_executor_lifecycle() -> None:
     """Start/stop executor without errors."""
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
-    registry = {}
+    registry: dict[str, Any] = {}
     queue_ref = MagicMock()
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -130,7 +132,7 @@ def test_async_executor_lifecycle():
     executor.stop()
 
 
-def test_async_executor_submit_and_execute():
+def test_async_executor_submit_and_execute() -> None:
     """Basic async task produces correct result via executor."""
     import cloudpickle
 
@@ -138,14 +140,14 @@ def test_async_executor_submit_and_execute():
 
     sender = MagicMock()
 
-    async def my_task(x, y):
+    async def my_task(x: int, y: int) -> int:
         return x + y
 
     # Build a minimal wrapper that the executor expects
     class FakeWrapper:
         _taskito_async_fn = staticmethod(my_task)
 
-    registry = {"test_mod.my_task": FakeWrapper()}
+    registry: dict[str, Any] = {"test_mod.my_task": FakeWrapper()}
 
     queue_ref = MagicMock()
     queue_ref._interceptor = None
@@ -173,7 +175,7 @@ def test_async_executor_submit_and_execute():
     assert result == 5
 
 
-def test_async_exception_reported():
+def test_async_exception_reported() -> None:
     """Exception in async task → failure result with traceback."""
     import cloudpickle
 
@@ -181,13 +183,13 @@ def test_async_exception_reported():
 
     sender = MagicMock()
 
-    async def failing_task():
+    async def failing_task() -> None:
         raise ValueError("boom")
 
     class FakeWrapper:
         _taskito_async_fn = staticmethod(failing_task)
 
-    registry = {"mod.failing_task": FakeWrapper()}
+    registry: dict[str, Any] = {"mod.failing_task": FakeWrapper()}
 
     queue_ref = MagicMock()
     queue_ref._interceptor = None
@@ -214,7 +216,7 @@ def test_async_exception_reported():
     assert call_args[0][6] is True  # should_retry
 
 
-def test_async_cancellation():
+def test_async_cancellation() -> None:
     """TaskCancelledError → cancelled result."""
     import cloudpickle
 
@@ -222,13 +224,13 @@ def test_async_cancellation():
 
     sender = MagicMock()
 
-    async def cancelling_task():
+    async def cancelling_task() -> None:
         raise TaskCancelledError("cancelled")
 
     class FakeWrapper:
         _taskito_async_fn = staticmethod(cancelling_task)
 
-    registry = {"mod.cancelling_task": FakeWrapper()}
+    registry: dict[str, Any] = {"mod.cancelling_task": FakeWrapper()}
 
     queue_ref = MagicMock()
     queue_ref._interceptor = None
@@ -252,7 +254,7 @@ def test_async_cancellation():
     assert sender.report_cancelled.call_args[0][0] == "job-3"
 
 
-def test_async_retry_filter():
+def test_async_retry_filter() -> None:
     """Failed async task respects retry_on filter."""
     import cloudpickle
 
@@ -260,13 +262,13 @@ def test_async_retry_filter():
 
     sender = MagicMock()
 
-    async def flaky_task():
+    async def flaky_task() -> None:
         raise TypeError("wrong type")
 
     class FakeWrapper:
         _taskito_async_fn = staticmethod(flaky_task)
 
-    registry = {"mod.flaky_task": FakeWrapper()}
+    registry: dict[str, Any] = {"mod.flaky_task": FakeWrapper()}
 
     queue_ref = MagicMock()
     queue_ref._interceptor = None
@@ -293,7 +295,7 @@ def test_async_retry_filter():
     assert sender.report_failure.call_args[0][6] is False  # should_retry = False
 
 
-def test_async_concurrency_limit():
+def test_async_concurrency_limit() -> None:
     """Semaphore bounds concurrent async tasks."""
     import cloudpickle
 
@@ -304,7 +306,7 @@ def test_async_concurrency_limit():
     current = 0
     lock = threading.Lock()
 
-    async def slow_task():
+    async def slow_task() -> None:
         nonlocal max_concurrent, current
         with lock:
             current += 1
@@ -316,7 +318,7 @@ def test_async_concurrency_limit():
     class FakeWrapper:
         _taskito_async_fn = staticmethod(slow_task)
 
-    registry = {"mod.slow_task": FakeWrapper()}
+    registry: dict[str, Any] = {"mod.slow_task": FakeWrapper()}
 
     queue_ref = MagicMock()
     queue_ref._interceptor = None
@@ -343,31 +345,31 @@ def test_async_concurrency_limit():
     assert sender.report_success.call_count == 5
 
 
-def test_async_middleware_hooks():
+def test_async_middleware_hooks() -> None:
     """Middleware before/after called for async tasks."""
     import cloudpickle
 
     from taskito.async_support.executor import AsyncTaskExecutor
 
-    before_called = []
-    after_called = []
+    before_called: list[str] = []
+    after_called: list[str] = []
 
     class TestMiddleware(TaskMiddleware):
-        def before(self, job_context):
+        def before(self, job_context: Any) -> None:
             before_called.append(job_context.id)
 
-        def after(self, job_context, result, error):
+        def after(self, job_context: Any, result: Any, error: Any) -> None:
             after_called.append(job_context.id)
 
     sender = MagicMock()
 
-    async def simple_task():
+    async def simple_task() -> int:
         return 42
 
     class FakeWrapper:
         _taskito_async_fn = staticmethod(simple_task)
 
-    registry = {"mod.simple_task": FakeWrapper()}
+    registry: dict[str, Any] = {"mod.simple_task": FakeWrapper()}
 
     queue_ref = MagicMock()
     queue_ref._interceptor = None
@@ -391,7 +393,7 @@ def test_async_middleware_hooks():
     assert "mw-job" in after_called
 
 
-def test_async_task_with_injection():
+def test_async_task_with_injection() -> None:
     """inject=["db"] works for async tasks via executor."""
     import cloudpickle
 
@@ -399,13 +401,13 @@ def test_async_task_with_injection():
 
     sender = MagicMock()
 
-    async def db_task(db=None):
+    async def db_task(db: Any = None) -> str:
         return f"got-{db}"
 
     class FakeWrapper:
         _taskito_async_fn = staticmethod(db_task)
 
-    registry = {"mod.db_task": FakeWrapper()}
+    registry: dict[str, Any] = {"mod.db_task": FakeWrapper()}
 
     fake_db = "fake-conn"
 
@@ -436,23 +438,23 @@ def test_async_task_with_injection():
     assert result == "got-fake-conn"
 
 
-def test_async_context_available_inside_task():
+def test_async_context_available_inside_task() -> None:
     """current_job.id works inside an async task via contextvars."""
     import cloudpickle
 
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
-    captured_id = []
+    captured_id: list[str] = []
 
-    async def ctx_task():
+    async def ctx_task() -> str:
         captured_id.append(current_job.id)
         return "ok"
 
     class FakeWrapper:
         _taskito_async_fn = staticmethod(ctx_task)
 
-    registry = {"mod.ctx_task": FakeWrapper()}
+    registry: dict[str, Any] = {"mod.ctx_task": FakeWrapper()}
 
     queue_ref = MagicMock()
     queue_ref._interceptor = None
@@ -475,13 +477,13 @@ def test_async_context_available_inside_task():
     assert captured_id == ["ctx-job"]
 
 
-def test_async_concurrency_parameter(tmp_path):
+def test_async_concurrency_parameter(tmp_path: Path) -> None:
     """Queue accepts async_concurrency parameter."""
     queue = Queue(db_path=str(tmp_path / "test.db"), async_concurrency=50)
     assert queue._async_concurrency == 50
 
 
-def test_async_concurrency_default(tmp_path):
+def test_async_concurrency_default(tmp_path: Path) -> None:
     """Default async_concurrency is 100."""
     queue = Queue(db_path=str(tmp_path / "test.db"))
     assert queue._async_concurrency == 100

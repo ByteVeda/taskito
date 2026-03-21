@@ -4,12 +4,14 @@ import threading
 
 import pytest
 
+from taskito import Queue
 
-def test_enqueue_with_depends_on(queue):
+
+def test_enqueue_with_depends_on(queue: Queue) -> None:
     """Jobs can declare dependencies on other jobs."""
 
     @queue.task()
-    def step(x):
+    def step(x: int) -> int:
         return x
 
     job_a = step.delay(1)
@@ -19,11 +21,11 @@ def test_enqueue_with_depends_on(queue):
     assert job_a.dependents == [job_b.id]
 
 
-def test_enqueue_with_multiple_deps(queue):
+def test_enqueue_with_multiple_deps(queue: Queue) -> None:
     """Jobs can depend on multiple other jobs."""
 
     @queue.task()
-    def step(x):
+    def step(x: int) -> int:
         return x
 
     job_a = step.delay(1)
@@ -34,11 +36,11 @@ def test_enqueue_with_multiple_deps(queue):
     assert deps == {job_a.id, job_b.id}
 
 
-def test_depends_on_string_coercion(queue):
+def test_depends_on_string_coercion(queue: Queue) -> None:
     """depends_on accepts a single string ID."""
 
     @queue.task()
-    def step(x):
+    def step(x: int) -> int:
         return x
 
     job_a = step.delay(1)
@@ -52,11 +54,11 @@ def test_depends_on_string_coercion(queue):
     assert job_b.dependencies == [job_a.id]
 
 
-def test_dependency_blocks_execution(queue):
+def test_dependency_blocks_execution(queue: Queue) -> None:
     """Dependent job waits until dependency completes."""
 
     @queue.task()
-    def step(x):
+    def step(x: int) -> int:
         return x * 10
 
     job_a = step.delay(1)
@@ -73,11 +75,11 @@ def test_dependency_blocks_execution(queue):
     assert result_b == 20
 
 
-def test_cascade_cancel_on_job_cancel(queue):
+def test_cascade_cancel_on_job_cancel(queue: Queue) -> None:
     """Cancelling a job cascades to its dependents."""
 
     @queue.task()
-    def step(x):
+    def step(x: int) -> int:
         return x
 
     job_a = step.delay(1)
@@ -92,11 +94,11 @@ def test_cascade_cancel_on_job_cancel(queue):
     assert job_c.status == "cancelled"
 
 
-def test_no_dependencies_property_when_none(queue):
+def test_no_dependencies_property_when_none(queue: Queue) -> None:
     """Jobs without dependencies return empty list."""
 
     @queue.task()
-    def step(x):
+    def step(x: int) -> int:
         return x
 
     job = step.delay(1)
@@ -104,11 +106,11 @@ def test_no_dependencies_property_when_none(queue):
     assert job.dependents == []
 
 
-def test_enqueue_rejects_missing_dependency(queue):
+def test_enqueue_rejects_missing_dependency(queue: Queue) -> None:
     """Enqueuing with a nonexistent dependency raises an error."""
 
     @queue.task()
-    def step(x):
+    def step(x: int) -> int:
         return x
 
     with pytest.raises(RuntimeError):

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import time
 
+from taskito import Queue
 
-def test_update_progress(queue):
+
+def test_update_progress(queue: Queue) -> None:
     """Progress can be updated and read back."""
 
     @queue.task()
-    def slow_task():
+    def slow_task() -> str:
 
         time.sleep(0.5)
         return "done"
@@ -20,20 +22,23 @@ def test_update_progress(queue):
     queue.update_progress(job.id, 50)
 
     refreshed = queue.get_job(job.id)
+    assert refreshed is not None
     assert refreshed.progress == 50
 
     queue.update_progress(job.id, 100)
     refreshed = queue.get_job(job.id)
+    assert refreshed is not None
     assert refreshed.progress == 100
 
 
-def test_progress_starts_none(queue):
+def test_progress_starts_none(queue: Queue) -> None:
     """Progress is None by default."""
 
     @queue.task()
-    def task_a():
+    def task_a() -> int:
         return 1
 
     job = task_a.delay()
     refreshed = queue.get_job(job.id)
+    assert refreshed is not None
     assert refreshed.progress is None

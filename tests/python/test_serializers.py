@@ -9,69 +9,69 @@ from taskito.serializers import CloudpickleSerializer, JsonSerializer, Serialize
 
 
 class TestJsonSerializer:
-    def test_roundtrip_dict(self):
+    def test_roundtrip_dict(self) -> None:
         s = JsonSerializer()
         data = {"key": "value", "num": 42, "nested": [1, 2, 3]}
         assert s.loads(s.dumps(data)) == data
 
-    def test_roundtrip_list(self):
+    def test_roundtrip_list(self) -> None:
         s = JsonSerializer()
         data = [1, "two", None, True]
         assert s.loads(s.dumps(data)) == data
 
-    def test_roundtrip_primitives(self):
+    def test_roundtrip_primitives(self) -> None:
         s = JsonSerializer()
         for val in [42, 3.14, "hello", True, None]:
             assert s.loads(s.dumps(val)) == val
 
-    def test_dumps_returns_bytes(self):
+    def test_dumps_returns_bytes(self) -> None:
         s = JsonSerializer()
         result = s.dumps({"a": 1})
         assert isinstance(result, bytes)
 
-    def test_non_serializable_raises(self):
+    def test_non_serializable_raises(self) -> None:
         s = JsonSerializer()
         with pytest.raises(TypeError):
             s.dumps(object())
 
-    def test_invalid_bytes_raises(self):
+    def test_invalid_bytes_raises(self) -> None:
         s = JsonSerializer()
         with pytest.raises((json.JSONDecodeError, UnicodeDecodeError, ValueError)):
             s.loads(b"\xff\xfe")
 
 
 class TestCloudpickleSerializer:
-    def test_roundtrip_dict(self):
+    def test_roundtrip_dict(self) -> None:
         s = CloudpickleSerializer()
         data = {"key": "value", "num": 42}
         assert s.loads(s.dumps(data)) == data
 
-    def test_roundtrip_lambda(self):
+    def test_roundtrip_lambda(self) -> None:
         s = CloudpickleSerializer()
         fn = lambda x: x * 2  # noqa: E731
         restored = s.loads(s.dumps(fn))
         assert restored(5) == 10
 
-    def test_dumps_returns_bytes(self):
+    def test_dumps_returns_bytes(self) -> None:
         s = CloudpickleSerializer()
         assert isinstance(s.dumps(42), bytes)
 
-    def test_invalid_bytes_raises(self):
+    def test_invalid_bytes_raises(self) -> None:
         s = CloudpickleSerializer()
         with pytest.raises((pickle.UnpicklingError, EOFError)):
             s.loads(b"not-valid-pickle")
 
 
 class TestSerializerProtocol:
-    def test_json_is_serializer(self):
+    def test_json_is_serializer(self) -> None:
         assert isinstance(JsonSerializer(), Serializer)
 
-    def test_cloudpickle_is_serializer(self):
+    def test_cloudpickle_is_serializer(self) -> None:
         assert isinstance(CloudpickleSerializer(), Serializer)
 
 
 class TestMsgPackSerializer:
-    def test_roundtrip(self):
+    def test_roundtrip(self) -> None:
         pytest.importorskip("msgpack")
         from taskito.serializers import MsgPackSerializer
 
@@ -79,7 +79,7 @@ class TestMsgPackSerializer:
         data = {"key": "value", "num": 42}
         assert s.loads(s.dumps(data)) == data
 
-    def test_dumps_returns_bytes(self):
+    def test_dumps_returns_bytes(self) -> None:
         pytest.importorskip("msgpack")
         from taskito.serializers import MsgPackSerializer
 
@@ -88,7 +88,7 @@ class TestMsgPackSerializer:
 
 
 class TestEncryptedSerializer:
-    def test_roundtrip(self):
+    def test_roundtrip(self) -> None:
         pytest.importorskip("cryptography")
         import os
 
@@ -99,7 +99,7 @@ class TestEncryptedSerializer:
         data = {"secret": "payload"}
         assert s.loads(s.dumps(data)) == data
 
-    def test_wrong_key_fails(self):
+    def test_wrong_key_fails(self) -> None:
         pytest.importorskip("cryptography")
         import os
 
@@ -113,7 +113,7 @@ class TestEncryptedSerializer:
         with pytest.raises(InvalidTag):
             s2.loads(encrypted)
 
-    def test_tampered_ciphertext_fails(self):
+    def test_tampered_ciphertext_fails(self) -> None:
         pytest.importorskip("cryptography")
         import os
 

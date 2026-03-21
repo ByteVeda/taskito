@@ -128,6 +128,7 @@ class TestRegisterType:
 
         q.register_type(MyDB, "redirect", resource="db")
         # Verify it's registered
+        assert q._interceptor is not None
         entry = q._interceptor._registry.resolve(MyDB())
         assert entry is not None
 
@@ -209,10 +210,10 @@ class TestResourceScopes:
         assert cfg.pool_min == 2
 
     def test_resource_pool_acquire_release(self) -> None:
-        created = []
+        created: list[dict[str, int]] = []
 
-        def factory() -> dict:
-            d: dict = {"id": len(created)}
+        def factory() -> dict[str, int]:
+            d: dict[str, int] = {"id": len(created)}
             created.append(d)
             return d
 
@@ -428,7 +429,7 @@ class TestRuntimeScopeAware:
 
 class TestInjectAnnotation:
     def test_inject_alias_created(self) -> None:
-        alias = Inject["db"]
+        alias = Inject["db"]  # type: ignore[type-arg,name-defined]
         assert isinstance(alias, _InjectAlias)
         assert alias.resource_name == "db"
 
@@ -440,7 +441,7 @@ class TestInjectAnnotation:
         q = Queue(db_path=":memory:")
 
         @q.task()
-        def my_task(x: int, db: Inject["db"]) -> None:  # type: ignore[valid-type]  # noqa: F821
+        def my_task(x: int, db: Inject["db"]) -> None:  # type: ignore[type-arg,name-defined]  # noqa: F821
             pass
 
         assert "db" in q._task_inject_map.get(my_task.name, [])
@@ -449,7 +450,7 @@ class TestInjectAnnotation:
         q = Queue(db_path=":memory:")
 
         @q.task(inject=["redis"])
-        def my_task(x: int, db: Inject["db"]) -> None:  # type: ignore[valid-type]  # noqa: F821
+        def my_task(x: int, db: Inject["db"]) -> None:  # type: ignore[type-arg,name-defined]  # noqa: F821
             pass
 
         injects = q._task_inject_map.get(my_task.name, [])
@@ -624,7 +625,7 @@ class TestResourceInjectionE2E:
         q = Queue(db_path=":memory:")
 
         @q.task()
-        def process(order_id: int, db: Inject["db"] = None) -> str:  # type: ignore[valid-type,assignment]  # noqa: F821
+        def process(order_id: int, db: Inject["db"] = None) -> str:  # type: ignore[type-arg,name-defined,assignment]  # noqa: F821
             return f"{order_id}:{db}"
 
         with q.test_mode(resources={"db": "injected"}) as results:
