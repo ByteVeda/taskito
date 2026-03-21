@@ -2,6 +2,33 @@
 
 All notable changes to taskito are documented here.
 
+## 0.7.0
+
+### Features
+
+- **Async canvas primitives** -- `Signature.apply_async()`, `chain.apply_async()`, `group.apply_async()`, and `chord.apply_async()` for non-blocking workflow execution from async contexts; `chain` uses `aresult()` for truly async step-by-step execution; `group` uses `asyncio.gather` for concurrent wave awaiting; `chord` awaits all group results then enqueues the callback
+- **Sample-based circuit breaker recovery** -- half-open state now allows N probe requests (default 5) instead of a single probe; closes only when the success rate meets a configurable threshold (default 80%); immediately re-opens when the threshold becomes mathematically impossible; timeout safety valve re-opens if probes don't complete within the cooldown period; configure via `circuit_breaker={"half_open_probes": 5, "half_open_success_rate": 0.8}` on `@queue.task()`
+- **`enqueue_many()` parity with `enqueue()`** -- batch enqueue now supports per-job `delay`/`delay_list`, `unique_keys`, `metadata`/`metadata_list`, `expires`/`expires_list`, and `result_ttl`/`result_ttl_list` parameters; also emits `JOB_ENQUEUED` events and dispatches `on_enqueue` middleware hooks, matching single-enqueue behavior
+- **`TaskFailedError` exception** -- new exception type in the hierarchy for tasks that failed (as opposed to cancelled or dead-lettered); `job.result()` now raises `TaskFailedError`, `TaskCancelledError`, `MaxRetriesExceededError`, or `SerializationError` instead of generic `RuntimeError`
+- **`PyResultSender` conditional export** -- `from taskito import PyResultSender` works when built with `native-async` feature; silently unavailable otherwise (no confusing `AttributeError`)
+
+### Fixes
+
+- **Middleware context `queue_name` was `"unknown"`** -- `on_retry`, `on_dead_letter`, `on_cancel`, and `on_timeout` middleware hooks now receive the actual queue name from the job instead of a hardcoded `"unknown"` string
+- **Redis `KEYS *` in lock reaping** -- `reap_expired_locks` replaced `KEYS` (O(N), blocks Redis server) with cursor-based `SCAN` using `COUNT 100`
+- **Redis execution claims never expire** -- `claim_execution` now uses `SET NX PX 86400000` (24-hour TTL); orphaned claims from dead workers auto-expire instead of blocking re-execution forever
+- **`_taskito_is_async` fragility** -- `_taskito_is_async` and `_taskito_async_fn` are now declared fields on `TaskWrapper.__init__` instead of dynamically monkey-patched attributes; prevents silent fallback to sync execution path if attributes are missing
+
+### Internal
+
+- All production Rust `eprintln!` calls replaced with `log` crate macros (`log::info!`, `log::warn!`, `log::error!`); `log` dependency added to `taskito-python` and `taskito-async` crates
+- `ResultOutcome::Retry`, `::DeadLettered`, `::Cancelled` now carry `queue: String` for middleware context
+- Ruff `target-version` updated from `py39` to `py310` to match `requires-python = ">=3.10"`
+- Fixed UP035 (`Callable` import from `collections.abc`) and B905 (`zip()` without `strict=`) lint warnings
+- Circuit breakers schema: 5 new columns on `circuit_breakers` table (`half_open_max_probes`, `half_open_success_rate`, `half_open_probe_count`, `half_open_success_count`, `half_open_failure_count`) with backward-compatible defaults
+
+---
+
 ## 0.6.0
 
 ### Features

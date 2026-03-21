@@ -6,7 +6,8 @@ import asyncio
 import contextlib
 import logging
 import signal
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -71,7 +71,7 @@ impl WorkerDispatcher for AsyncWorkerPool {
                 let max_retries = job.max_retries;
 
                 let start = std::time::Instant::now();
-                eprintln!("[taskito] Task {task_name}[{job_id}] received");
+                log::info!("[taskito] Task {task_name}[{job_id}] received");
 
                 let result = Python::with_gil(|py| -> PyResult<Option<Vec<u8>>> {
                     execute_task(py, &registry, &job)
@@ -82,7 +82,7 @@ impl WorkerDispatcher for AsyncWorkerPool {
                 let job_result = match result {
                     Ok(result_bytes) => {
                         let secs = start.elapsed().as_secs_f64();
-                        eprintln!("[taskito] Task {task_name}[{job_id}] succeeded in {secs:.3}s");
+                        log::info!("[taskito] Task {task_name}[{job_id}] succeeded in {secs:.3}s");
                         JobResult::Success {
                             job_id,
                             result: result_bytes,
@@ -109,7 +109,7 @@ impl WorkerDispatcher for AsyncWorkerPool {
                                 check_should_retry(py, &filters, &task_name, &exc_class_name, &e)
                             });
 
-                            eprintln!("[taskito] Task {task_name}[{job_id}] failed: {error_msg}");
+                            log::error!("[taskito] Task {task_name}[{job_id}] failed: {error_msg}");
                             JobResult::Failure {
                                 job_id,
                                 error: error_msg,

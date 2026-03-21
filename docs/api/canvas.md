@@ -48,6 +48,14 @@ job = sig.apply()
 print(job.result(timeout=10))  # 5
 ```
 
+### `await sig.apply_async()`
+
+```python
+await sig.apply_async(queue: Queue | None = None) -> JobResult
+```
+
+Async version of `apply()`. Safe to call from async contexts (FastAPI handlers, etc.).
+
 ### Mutable vs Immutable
 
 In a [`chain`](#chain), the previous task's return value is **prepended** to a mutable signature's args:
@@ -104,6 +112,19 @@ graph LR
     B -->|"16"| C["Result: 16"]
 ```
 
+### `await chain.apply_async()`
+
+```python
+await chain.apply_async(queue: Queue | None = None) -> JobResult
+```
+
+Async version of `apply()`. Awaits each step's result using `aresult()` instead of blocking with `result()`. Safe to call from async contexts.
+
+```python
+result = await chain(double.s(3), add_ten.s()).apply_async()
+value = await result.aresult(timeout=10)  # 16
+```
+
 ---
 
 ## group
@@ -143,6 +164,14 @@ graph LR
     B["add(3,4)"] --> D
     C["add(5,6)"] --> D
 ```
+
+### `await group.apply_async()`
+
+```python
+await group.apply_async(queue: Queue | None = None) -> list[JobResult]
+```
+
+Async version of `apply()`. With `max_concurrency`, uses `asyncio.gather` to await each wave concurrently instead of blocking.
 
 ---
 
@@ -192,6 +221,14 @@ graph LR
     B["fetch(b.com)"] --> C
     C --> D["Combined result"]
 ```
+
+### `await chord.apply_async()`
+
+```python
+await chord.apply_async(queue: Queue | None = None) -> JobResult
+```
+
+Async version of `apply()`. Awaits all group results using `asyncio.gather`, then enqueues the callback.
 
 ---
 

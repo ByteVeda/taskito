@@ -134,6 +134,11 @@ diesel::table! {
         threshold -> Integer,
         window_ms -> BigInt,
         cooldown_ms -> BigInt,
+        half_open_max_probes -> Integer,
+        half_open_success_rate -> Double,
+        half_open_probe_count -> Integer,
+        half_open_success_count -> Integer,
+        half_open_failure_count -> Integer,
     }
 }
 

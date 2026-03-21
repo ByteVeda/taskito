@@ -30,6 +30,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
             ResultOutcome::Retry {
                 job_id,
                 task_name,
+                queue,
                 error,
                 retry_count,
                 timed_out,
@@ -46,12 +47,12 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
 
                 // Call on_timeout middleware if this was a timeout
                 if *timed_out {
-                    let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                    let ctx = build_lightweight_ctx(py, job_id, task_name, queue)?;
                     call_middleware_hook(py, &queue_ref, task_name, "on_timeout", (ctx,))?;
                 }
 
                 // Call on_retry middleware
-                let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                let ctx = build_lightweight_ctx(py, job_id, task_name, queue)?;
                 let error_obj =
                     pyo3::exceptions::PyRuntimeError::new_err(error.clone()).into_py(py);
                 call_middleware_hook(
@@ -65,6 +66,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
             ResultOutcome::DeadLettered {
                 job_id,
                 task_name,
+                queue,
                 error,
                 timed_out,
             } => {
@@ -79,12 +81,12 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
 
                 // Call on_timeout middleware if this was a timeout
                 if *timed_out {
-                    let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                    let ctx = build_lightweight_ctx(py, job_id, task_name, queue)?;
                     call_middleware_hook(py, &queue_ref, task_name, "on_timeout", (ctx,))?;
                 }
 
                 // Call on_dead_letter middleware
-                let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                let ctx = build_lightweight_ctx(py, job_id, task_name, queue)?;
                 let error_obj =
                     pyo3::exceptions::PyRuntimeError::new_err(error.clone()).into_py(py);
                 call_middleware_hook(
@@ -95,7 +97,11 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                     (ctx, error_obj),
                 )?;
             }
-            ResultOutcome::Cancelled { job_id, task_name } => {
+            ResultOutcome::Cancelled {
+                job_id,
+                task_name,
+                queue,
+            } => {
                 // Emit JOB_CANCELLED event
                 let events_mod = py.import_bound("taskito.events")?;
                 let event_type = events_mod.getattr("EventType")?.getattr("JOB_CANCELLED")?;
@@ -105,7 +111,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 queue_ref.call_method1("_emit_event", (event_type, payload))?;
 
                 // Call on_cancel middleware
-                let ctx = build_lightweight_ctx(py, job_id, task_name)?;
+                let ctx = build_lightweight_ctx(py, job_id, task_name, queue)?;
                 call_middleware_hook(py, &queue_ref, task_name, "on_cancel", (ctx,))?;
             }
             ResultOutcome::Success { .. } => {
@@ -116,7 +122,7 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
     })();
 
     if let Err(e) = result {
-        eprintln!("[taskito] middleware dispatch error: {e}");
+        log::error!("[taskito] middleware dispatch error: {e}");
     }
 }
 
@@ -126,12 +132,13 @@ fn build_lightweight_ctx<'py>(
     py: Python<'py>,
     job_id: &str,
     task_name: &str,
+    queue_name: &str,
 ) -> PyResult<Bound<'py, pyo3::PyAny>> {
     let types_mod = py.import_bound("types")?;
     let ns = types_mod.call_method1("SimpleNamespace", ())?;
     ns.setattr("id", job_id)?;
     ns.setattr("task_name", task_name)?;
-    ns.setattr("queue_name", "unknown")?;
+    ns.setattr("queue_name", queue_name)?;
     ns.setattr("retry_count", 0)?;
     Ok(ns)
 }
@@ -262,6 +269,10 @@ impl PyQueue {
                         threshold,
                         window_ms: tc.circuit_breaker_window.unwrap_or(60) * 1000,
                         cooldown_ms: tc.circuit_breaker_cooldown.unwrap_or(300) * 1000,
+                        half_open_max_probes: tc.circuit_breaker_half_open_probes.unwrap_or(5),
+                        half_open_success_rate: tc
+                            .circuit_breaker_half_open_success_rate
+                            .unwrap_or(0.8),
                     });
             scheduler.register_task(
                 tc.name.clone(),
@@ -355,7 +366,7 @@ impl PyQueue {
             {
                 Ok(rt) => rt,
                 Err(e) => {
-                    eprintln!("taskito: failed to build tokio runtime: {e}");
+                    log::error!("taskito: failed to build tokio runtime: {e}");
                     return;
                 }
             };
@@ -450,7 +461,7 @@ impl PyQueue {
                                 match outcome {
                                     Ok(ref o) => dispatch_outcome(py, o),
                                     Err(e) => {
-                                        eprintln!("[taskito] result handling error: {e}")
+                                        log::error!("[taskito] result handling error: {e}")
                                     }
                                 }
                             }
@@ -465,7 +476,7 @@ impl PyQueue {
                     let outcome = py.allow_threads(|| scheduler_for_results.handle_result(result));
                     match outcome {
                         Ok(ref o) => dispatch_outcome(py, o),
-                        Err(e) => eprintln!("[taskito] result handling error: {e}"),
+                        Err(e) => log::error!("[taskito] result handling error: {e}"),
                     }
                 }
                 PollAction::Continue => continue,

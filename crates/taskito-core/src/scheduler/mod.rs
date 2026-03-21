@@ -79,6 +79,7 @@ pub enum ResultOutcome {
     Retry {
         job_id: String,
         task_name: String,
+        queue: String,
         error: String,
         retry_count: i32,
         timed_out: bool,
@@ -87,11 +88,16 @@ pub enum ResultOutcome {
     DeadLettered {
         job_id: String,
         task_name: String,
+        queue: String,
         error: String,
         timed_out: bool,
     },
     /// Task was cancelled during execution.
-    Cancelled { job_id: String, task_name: String },
+    Cancelled {
+        job_id: String,
+        task_name: String,
+        queue: String,
+    },
 }
 
 /// Per-task configuration for retry, rate limiting, and circuit breaker.
@@ -452,6 +458,8 @@ mod tests {
             threshold: 1,
             window_ms: 60_000,
             cooldown_ms: 300_000,
+            half_open_max_probes: 5,
+            half_open_success_rate: 0.8,
         };
         scheduler.register_task(
             "cb_task".to_string(),

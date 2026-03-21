@@ -272,6 +272,24 @@ pub struct CircuitBreakerRow {
     pub threshold: i32,
     pub window_ms: i64,
     pub cooldown_ms: i64,
+    #[serde(default = "default_max_probes")]
+    pub half_open_max_probes: i32,
+    #[serde(default = "default_success_rate")]
+    pub half_open_success_rate: f64,
+    #[serde(default)]
+    pub half_open_probe_count: i32,
+    #[serde(default)]
+    pub half_open_success_count: i32,
+    #[serde(default)]
+    pub half_open_failure_count: i32,
+}
+
+fn default_max_probes() -> i32 {
+    5
+}
+
+fn default_success_rate() -> f64 {
+    0.8
 }
 
 // ── Workers ──────────────────────────────────────────────────────

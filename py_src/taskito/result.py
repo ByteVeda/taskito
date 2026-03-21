@@ -6,6 +6,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from taskito.async_support.result import AsyncJobResultMixin
+from taskito.exceptions import (
+    MaxRetriesExceededError,
+    SerializationError,
+    TaskCancelledError,
+    TaskFailedError,
+)
 
 if TYPE_CHECKING:
     from taskito._taskito import PyJob
@@ -89,13 +95,19 @@ class JobResult(AsyncJobResultMixin):
             try:
                 return status, self._queue._serializer.loads(result_bytes)
             except Exception as exc:
-                raise RuntimeError(
+                raise SerializationError(
                     f"Failed to deserialize result for job {self.id}: {exc}"
                 ) from exc
 
-        if status in ("failed", "dead", "cancelled"):
+        if status == "cancelled":
             error_msg = self._py_job.error or "job was cancelled"
-            raise RuntimeError(f"Job {self.id} {status}: {error_msg}")
+            raise TaskCancelledError(f"Job {self.id} cancelled: {error_msg}")
+        if status == "dead":
+            error_msg = self._py_job.error or "max retries exceeded"
+            raise MaxRetriesExceededError(f"Job {self.id} dead-lettered: {error_msg}")
+        if status == "failed":
+            error_msg = self._py_job.error or "task failed"
+            raise TaskFailedError(f"Job {self.id} failed: {error_msg}")
 
         return status, None
 
@@ -121,7 +133,10 @@ class JobResult(AsyncJobResultMixin):
 
         Raises:
             TimeoutError: If the job doesn't complete within the timeout.
-            RuntimeError: If the job failed or was moved to DLQ.
+            TaskFailedError: If the job failed.
+            MaxRetriesExceededError: If the job was moved to DLQ.
+            TaskCancelledError: If the job was cancelled.
+            SerializationError: If result deserialization fails.
         """
         if timeout <= 0:
             raise ValueError("timeout must be positive")

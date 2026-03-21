@@ -12,9 +12,9 @@ import signal
 import threading
 import urllib.parse
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from taskito.testing import TestMode
@@ -342,10 +342,14 @@ class Queue(
             cb_threshold = None
             cb_window = None
             cb_cooldown = None
+            cb_half_open_probes = None
+            cb_half_open_success_rate = None
             if circuit_breaker:
                 cb_threshold = circuit_breaker.get("threshold", 5)
                 cb_window = circuit_breaker.get("window", 60)
                 cb_cooldown = circuit_breaker.get("cooldown", 300)
+                cb_half_open_probes = circuit_breaker.get("half_open_probes")
+                cb_half_open_success_rate = circuit_breaker.get("half_open_success_rate")
 
             # Store config for worker startup
             config = PyTaskConfig(
@@ -362,6 +366,8 @@ class Queue(
                 retry_delays=retry_delays,
                 max_retry_delay=max_retry_delay,
                 max_concurrent=max_concurrent,
+                circuit_breaker_half_open_probes=cb_half_open_probes,
+                circuit_breaker_half_open_success_rate=cb_half_open_success_rate,
             )
             self._task_configs.append(config)
 
@@ -382,9 +388,9 @@ class Queue(
 
             # Mark async status for native async dispatch
             is_async = asyncio.iscoroutinefunction(fn)
-            wrapper._taskito_is_async = is_async  # type: ignore[attr-defined]
+            wrapper._taskito_is_async = is_async
             if is_async:
-                wrapper._taskito_async_fn = fn  # type: ignore[attr-defined]
+                wrapper._taskito_async_fn = fn
 
             return wrapper
 
@@ -894,6 +900,15 @@ class Queue(
         queue: str | None = None,
         max_retries: int | None = None,
         timeout: int | None = None,
+        delay: float | None = None,
+        delay_list: list[float | None] | None = None,
+        unique_keys: list[str | None] | None = None,
+        metadata: str | None = None,
+        metadata_list: list[str | None] | None = None,
+        expires: float | None = None,
+        expires_list: list[float | None] | None = None,
+        result_ttl: int | None = None,
+        result_ttl_list: list[int | None] | None = None,
     ) -> list[JobResult]:
         """Enqueue multiple jobs for the same task in a single transaction.
 
@@ -905,6 +920,15 @@ class Queue(
             queue: Queue name for all jobs (uses "default" if None).
             max_retries: Max retries for all jobs (uses default if None).
             timeout: Timeout in seconds for all jobs (uses default if None).
+            delay: Uniform delay in seconds for all jobs.
+            delay_list: Per-job delays in seconds.
+            unique_keys: Per-job deduplication keys.
+            metadata: Uniform metadata JSON string for all jobs.
+            metadata_list: Per-job metadata JSON strings.
+            expires: Uniform expiry in seconds for all jobs.
+            expires_list: Per-job expiry in seconds.
+            result_ttl: Uniform result TTL in seconds for all jobs.
+            result_ttl_list: Per-job result TTL in seconds.
 
         Returns:
             List of JobResult handles, one per enqueued job.
@@ -918,16 +942,27 @@ class Queue(
         kw_list = kwargs_list or [{}] * count
         task_serializer = self._get_serializer(task_name)
         if self._interceptor is not None:
-            pairs = [self._interceptor.intercept(a, kw) for a, kw in zip(args_list, kw_list)]
+            pairs = [
+                self._interceptor.intercept(a, kw)
+                for a, kw in zip(args_list, kw_list, strict=True)
+            ]
             payloads = [task_serializer.dumps((a, kw)) for a, kw in pairs]
         else:
-            payloads = [task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
+            payloads = [
+                task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list, strict=True)
+            ]
         task_names = [task_name] * count
 
         queues_list = [queue or "default"] * count if queue else None
         priorities_list = [priority] * count if priority is not None else None
         retries_list = [max_retries] * count if max_retries is not None else None
         timeouts_list = [timeout] * count if timeout is not None else None
+
+        # Build per-job optional lists
+        delays = delay_list or ([delay] * count if delay is not None else None)
+        metas = metadata_list or ([metadata] * count if metadata is not None else None)
+        exp_list = expires_list or ([expires] * count if expires is not None else None)
+        ttl_list = result_ttl_list or ([result_ttl] * count if result_ttl is not None else None)
 
         py_jobs = self._inner.enqueue_batch(
             task_names=task_names,
@@ -936,9 +971,29 @@ class Queue(
             priorities=priorities_list,
             max_retries_list=retries_list,
             timeouts=timeouts_list,
+            delay_seconds_list=delays,
+            unique_keys=unique_keys,
+            metadata_list=metas,
+            expires_list=exp_list,
+            result_ttl_list=ttl_list,
         )
 
-        return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
+        results = [JobResult(py_job=pj, queue=self) for pj in py_jobs]
+
+        # Emit events and dispatch on_enqueue middleware
+        for job_result in results:
+            self._emit_event(
+                EventType.JOB_ENQUEUED,
+                {"job_id": job_result.id, "task_name": task_name},
+            )
+            for mw in self._get_middleware_chain(task_name):
+                try:
+                    options: dict[str, Any] = {}
+                    mw.on_enqueue(task_name, args_list[0], {}, options)
+                except Exception:
+                    pass
+
+        return results
 
     # -- Events & Webhooks --
 

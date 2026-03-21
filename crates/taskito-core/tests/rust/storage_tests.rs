@@ -206,6 +206,11 @@ fn test_circuit_breakers(s: &impl Storage) {
         threshold: 5,
         window_ms: 60_000,
         cooldown_ms: 30_000,
+        half_open_max_probes: 5,
+        half_open_success_rate: 0.8,
+        half_open_probe_count: 0,
+        half_open_success_count: 0,
+        half_open_failure_count: 0,
     };
     s.upsert_circuit_breaker(&row).unwrap();
 

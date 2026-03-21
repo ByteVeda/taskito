@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -37,6 +38,8 @@ class TaskWrapper:
         self._default_max_retries = default_max_retries
         self._default_timeout = default_timeout
         self._inject = inject or []
+        self._taskito_is_async: bool = False
+        self._taskito_async_fn: Callable | None = None
 
     @property
     def name(self) -> str:

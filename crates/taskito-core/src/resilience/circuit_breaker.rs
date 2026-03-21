@@ -36,6 +36,10 @@ pub struct CircuitBreakerConfig {
     pub threshold: i32,
     pub window_ms: i64,
     pub cooldown_ms: i64,
+    /// Number of probe requests allowed in HalfOpen state (default: 5).
+    pub half_open_max_probes: i32,
+    /// Required success rate (0.0–1.0) to close from HalfOpen (default: 0.8 = 80%).
+    pub half_open_success_rate: f64,
 }
 
 /// Circuit breaker manager backed by SQLite.
@@ -65,10 +69,13 @@ impl CircuitBreaker {
                 // Check if cooldown has elapsed
                 let opened = row.opened_at.unwrap_or(0);
                 if now.saturating_sub(opened) >= row.cooldown_ms {
-                    // Transition to half-open: allow one probe
+                    // Transition to half-open: reset probe counters
                     let updated = CircuitBreakerRow {
                         state: CircuitState::HalfOpen as i32,
                         half_open_at: Some(now),
+                        half_open_probe_count: 0,
+                        half_open_success_count: 0,
+                        half_open_failure_count: 0,
                         ..row
                     };
                     self.storage.upsert_circuit_breaker(&updated)?;
@@ -78,13 +85,37 @@ impl CircuitBreaker {
                 }
             }
             CircuitState::HalfOpen => {
-                // Only one probe at a time — block others
-                Ok(false)
+                // Allow up to max_probes concurrent probes
+                if row.half_open_probe_count < row.half_open_max_probes {
+                    let updated = CircuitBreakerRow {
+                        half_open_probe_count: row.half_open_probe_count + 1,
+                        ..row
+                    };
+                    self.storage.upsert_circuit_breaker(&updated)?;
+                    Ok(true)
+                } else {
+                    // Check for timeout: if probes haven't completed within cooldown, re-open
+                    let half_open_since = row.half_open_at.unwrap_or(0);
+                    if now.saturating_sub(half_open_since) >= row.cooldown_ms {
+                        let updated = CircuitBreakerRow {
+                            state: CircuitState::Open as i32,
+                            opened_at: Some(now),
+                            half_open_at: None,
+                            half_open_probe_count: 0,
+                            half_open_success_count: 0,
+                            half_open_failure_count: 0,
+                            ..row
+                        };
+                        self.storage.upsert_circuit_breaker(&updated)?;
+                    }
+                    Ok(false)
+                }
             }
         }
     }
 
-    /// Record a task success. Resets the circuit breaker to closed.
+    /// Record a task success. In HalfOpen, tracks probes and closes when
+    /// the success rate threshold is met.
     pub fn record_success(&self, task_name: &str) -> Result<()> {
         let row = match self.storage.get_circuit_breaker(task_name)? {
             Some(r) => r,
@@ -92,19 +123,68 @@ impl CircuitBreaker {
         };
 
         let state = CircuitState::from_i32(row.state);
-        if state == CircuitState::Closed && row.failure_count == 0 {
-            return Ok(()); // Nothing to do
-        }
 
-        let updated = CircuitBreakerRow {
-            state: CircuitState::Closed as i32,
-            failure_count: 0,
-            opened_at: None,
-            half_open_at: None,
-            ..row
-        };
-        self.storage.upsert_circuit_breaker(&updated)?;
-        Ok(())
+        match state {
+            CircuitState::Closed if row.failure_count == 0 => Ok(()),
+            CircuitState::HalfOpen => {
+                let successes = row.half_open_success_count + 1;
+                let total = successes + row.half_open_failure_count;
+
+                if total >= row.half_open_max_probes {
+                    let rate = successes as f64 / total as f64;
+                    if rate >= row.half_open_success_rate {
+                        // Threshold met — close the circuit
+                        let updated = CircuitBreakerRow {
+                            state: CircuitState::Closed as i32,
+                            failure_count: 0,
+                            opened_at: None,
+                            half_open_at: None,
+                            half_open_probe_count: 0,
+                            half_open_success_count: 0,
+                            half_open_failure_count: 0,
+                            ..row
+                        };
+                        self.storage.upsert_circuit_breaker(&updated)?;
+                    } else {
+                        // Threshold not met — re-open
+                        let now = now_millis();
+                        let updated = CircuitBreakerRow {
+                            state: CircuitState::Open as i32,
+                            opened_at: Some(now),
+                            half_open_at: None,
+                            half_open_probe_count: 0,
+                            half_open_success_count: 0,
+                            half_open_failure_count: 0,
+                            ..row
+                        };
+                        self.storage.upsert_circuit_breaker(&updated)?;
+                    }
+                } else {
+                    // Still collecting samples
+                    let updated = CircuitBreakerRow {
+                        half_open_success_count: successes,
+                        ..row
+                    };
+                    self.storage.upsert_circuit_breaker(&updated)?;
+                }
+                Ok(())
+            }
+            _ => {
+                // Closed with failures or Open — reset to clean Closed
+                let updated = CircuitBreakerRow {
+                    state: CircuitState::Closed as i32,
+                    failure_count: 0,
+                    opened_at: None,
+                    half_open_at: None,
+                    half_open_probe_count: 0,
+                    half_open_success_count: 0,
+                    half_open_failure_count: 0,
+                    ..row
+                };
+                self.storage.upsert_circuit_breaker(&updated)?;
+                Ok(())
+            }
+        }
     }
 
     /// Record a task failure. May trip the breaker open.
@@ -120,16 +200,44 @@ impl CircuitBreaker {
 
         match state {
             CircuitState::HalfOpen => {
-                // Probe failed — go back to open
-                let updated = CircuitBreakerRow {
-                    state: CircuitState::Open as i32,
-                    failure_count: row.failure_count.saturating_add(1),
-                    last_failure_at: Some(now),
-                    opened_at: Some(now),
-                    half_open_at: None,
-                    ..row
+                let failures = row.half_open_failure_count + 1;
+                let total = row.half_open_success_count + failures;
+
+                // Check if the success rate can still be met
+                let remaining = row.half_open_max_probes - total;
+                let best_possible_rate = if row.half_open_max_probes > 0 {
+                    (row.half_open_success_count + remaining) as f64
+                        / row.half_open_max_probes as f64
+                } else {
+                    0.0
                 };
-                self.storage.upsert_circuit_breaker(&updated)?;
+
+                if total >= row.half_open_max_probes
+                    || best_possible_rate < row.half_open_success_rate
+                {
+                    // Either all samples collected and failed, or impossible to meet threshold
+                    let updated = CircuitBreakerRow {
+                        state: CircuitState::Open as i32,
+                        failure_count: row.failure_count.saturating_add(1),
+                        last_failure_at: Some(now),
+                        opened_at: Some(now),
+                        half_open_at: None,
+                        half_open_probe_count: 0,
+                        half_open_success_count: 0,
+                        half_open_failure_count: 0,
+                        ..row
+                    };
+                    self.storage.upsert_circuit_breaker(&updated)?;
+                } else {
+                    // Still collecting samples
+                    let updated = CircuitBreakerRow {
+                        failure_count: row.failure_count.saturating_add(1),
+                        last_failure_at: Some(now),
+                        half_open_failure_count: failures,
+                        ..row
+                    };
+                    self.storage.upsert_circuit_breaker(&updated)?;
+                }
             }
             CircuitState::Closed => {
                 // Reset count if outside the window
@@ -193,6 +301,11 @@ impl CircuitBreaker {
             threshold: config.threshold,
             window_ms: config.window_ms,
             cooldown_ms: config.cooldown_ms,
+            half_open_max_probes: config.half_open_max_probes,
+            half_open_success_rate: config.half_open_success_rate,
+            half_open_probe_count: 0,
+            half_open_success_count: 0,
+            half_open_failure_count: 0,
         };
         self.storage.upsert_circuit_breaker(&row)?;
         Ok(())

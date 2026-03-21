@@ -71,6 +71,14 @@ impl Scheduler {
                     log::error!("circuit breaker error for {task_name}: {e}");
                 }
 
+                // Look up the job to get the queue name for middleware context
+                let queue = self
+                    .storage
+                    .get_job(&job_id)?
+                    .as_ref()
+                    .map(|j| j.queue.clone())
+                    .unwrap_or_default();
+
                 // If should_retry is false (exception filtering), skip straight to DLQ
                 if !should_retry {
                     match self.storage.get_job(&job_id)? {
@@ -80,6 +88,7 @@ impl Scheduler {
                     return Ok(ResultOutcome::DeadLettered {
                         job_id,
                         task_name,
+                        queue,
                         error,
                         timed_out,
                     });
@@ -103,6 +112,7 @@ impl Scheduler {
                     Ok(ResultOutcome::Retry {
                         job_id,
                         task_name,
+                        queue,
                         error,
                         retry_count,
                         timed_out,
@@ -116,6 +126,7 @@ impl Scheduler {
                     Ok(ResultOutcome::DeadLettered {
                         job_id,
                         task_name,
+                        queue,
                         error,
                         timed_out,
                     })
@@ -140,7 +151,17 @@ impl Scheduler {
                 {
                     error!("failed to record metric for cancelled job {job_id}: {e}");
                 }
-                Ok(ResultOutcome::Cancelled { job_id, task_name })
+                let queue = self
+                    .storage
+                    .get_job(&job_id)?
+                    .as_ref()
+                    .map(|j| j.queue.clone())
+                    .unwrap_or_default();
+                Ok(ResultOutcome::Cancelled {
+                    job_id,
+                    task_name,
+                    queue,
+                })
             }
         }
     }

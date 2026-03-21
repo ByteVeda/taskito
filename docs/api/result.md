@@ -119,14 +119,26 @@ job.result(
 **Raises:**
 
 - `TimeoutError` — if the job doesn't complete within `timeout`
-- `RuntimeError` — if the job status is `"failed"` or `"dead"`
+- `TaskFailedError` — if the job status is `"failed"`
+- `MaxRetriesExceededError` — if the job status is `"dead"` (all retries exhausted)
+- `TaskCancelledError` — if the job status is `"cancelled"`
+- `SerializationError` — if result deserialization fails
 
 ```python
+from taskito import TaskFailedError, MaxRetriesExceededError, TaskCancelledError
+
 job = add.delay(2, 3)
 result = job.result(timeout=10)  # blocks, returns 5
 
-# Custom polling for long-running tasks
-result = job.result(timeout=600, poll_interval=1.0, max_poll_interval=5.0)
+# Handle specific failure modes
+try:
+    result = job.result(timeout=10)
+except TaskCancelledError:
+    print("Job was cancelled")
+except MaxRetriesExceededError:
+    print("Job exhausted all retries")
+except TaskFailedError:
+    print("Job failed")
 ```
 
 ### `await job.aresult()`
@@ -150,7 +162,10 @@ Async version of `result()`. Uses `asyncio.sleep()` instead of `time.sleep()`, s
 **Raises:**
 
 - `TimeoutError` — if the job doesn't complete within `timeout`
-- `RuntimeError` — if the job status is `"failed"` or `"dead"`
+- `TaskFailedError` — if the job status is `"failed"`
+- `MaxRetriesExceededError` — if the job status is `"dead"`
+- `TaskCancelledError` — if the job status is `"cancelled"`
+- `SerializationError` — if result deserialization fails
 
 ```python
 job = add.delay(2, 3)

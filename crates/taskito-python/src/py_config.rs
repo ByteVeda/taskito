@@ -30,13 +30,17 @@ pub struct PyTaskConfig {
     pub max_retry_delay: Option<i64>,
     #[pyo3(get, set)]
     pub max_concurrent: Option<i32>,
+    #[pyo3(get, set)]
+    pub circuit_breaker_half_open_probes: Option<i32>,
+    #[pyo3(get, set)]
+    pub circuit_breaker_half_open_success_rate: Option<f64>,
 }
 
 #[pymethods]
 #[allow(clippy::too_many_arguments)]
 impl PyTaskConfig {
     #[new]
-    #[pyo3(signature = (name, max_retries=3, retry_backoff=1.0, timeout=300, priority=0, rate_limit=None, queue="default".to_string(), circuit_breaker_threshold=None, circuit_breaker_window=None, circuit_breaker_cooldown=None, retry_delays=None, max_retry_delay=None, max_concurrent=None))]
+    #[pyo3(signature = (name, max_retries=3, retry_backoff=1.0, timeout=300, priority=0, rate_limit=None, queue="default".to_string(), circuit_breaker_threshold=None, circuit_breaker_window=None, circuit_breaker_cooldown=None, retry_delays=None, max_retry_delay=None, max_concurrent=None, circuit_breaker_half_open_probes=None, circuit_breaker_half_open_success_rate=None))]
     pub fn new(
         name: String,
         max_retries: i32,
@@ -51,6 +55,8 @@ impl PyTaskConfig {
         retry_delays: Option<Vec<f64>>,
         max_retry_delay: Option<i64>,
         max_concurrent: Option<i32>,
+        circuit_breaker_half_open_probes: Option<i32>,
+        circuit_breaker_half_open_success_rate: Option<f64>,
     ) -> Self {
         Self {
             name,
@@ -66,6 +72,8 @@ impl PyTaskConfig {
             retry_delays,
             max_retry_delay,
             max_concurrent,
+            circuit_breaker_half_open_probes,
+            circuit_breaker_half_open_success_rate,
         }
     }
 }
