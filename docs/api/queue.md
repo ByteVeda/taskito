@@ -159,10 +159,33 @@ queue.enqueue_many(
     queue: str | None = None,
     max_retries: int | None = None,
     timeout: int | None = None,
+    delay: float | None = None,
+    delay_list: list[float | None] | None = None,
+    unique_keys: list[str | None] | None = None,
+    metadata: str | None = None,
+    metadata_list: list[str | None] | None = None,
+    expires: float | None = None,
+    expires_list: list[float | None] | None = None,
+    result_ttl: int | None = None,
+    result_ttl_list: list[int | None] | None = None,
 ) -> list[JobResult]
 ```
 
-Enqueue multiple jobs in a single transaction for high throughput.
+Enqueue multiple jobs in a single transaction for high throughput. Supports both uniform parameters (applied to all jobs) and per-job lists.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `delay` | `float \| None` | `None` | Uniform delay in seconds for all jobs |
+| `delay_list` | `list[float \| None] \| None` | `None` | Per-job delays in seconds |
+| `unique_keys` | `list[str \| None] \| None` | `None` | Per-job deduplication keys |
+| `metadata` | `str \| None` | `None` | Uniform metadata JSON for all jobs |
+| `metadata_list` | `list[str \| None] \| None` | `None` | Per-job metadata JSON |
+| `expires` | `float \| None` | `None` | Uniform expiry in seconds for all jobs |
+| `expires_list` | `list[float \| None] \| None` | `None` | Per-job expiry in seconds |
+| `result_ttl` | `int \| None` | `None` | Uniform result TTL in seconds |
+| `result_ttl_list` | `list[int \| None] \| None` | `None` | Per-job result TTL in seconds |
+
+Per-job lists (`*_list`) take precedence over uniform values when both are provided.
 
 ## Job Management
 

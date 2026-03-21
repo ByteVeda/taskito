@@ -11,13 +11,13 @@ stateDiagram-v2
     [*] --> Closed
     Closed --> Open: failures >= threshold within window
     Open --> HalfOpen: cooldown elapsed
-    HalfOpen --> Closed: task succeeds
-    HalfOpen --> Open: task fails again
+    HalfOpen --> Closed: success rate >= threshold
+    HalfOpen --> Open: success rate impossible OR timeout
 ```
 
 - **Closed** — Normal operation. Tasks execute as usual. Failures are counted.
 - **Open** — Too many failures. Tasks are immediately rejected without execution.
-- **Half-Open** — After the cooldown period, one task is allowed through as a test. If it succeeds, the breaker closes. If it fails, the breaker reopens.
+- **Half-Open** — After the cooldown period, up to N probe requests are allowed through (default 5). Success and failure counts are tracked. The circuit closes when the success rate meets the threshold (default 80%). If too many probes fail and the threshold becomes mathematically impossible, the circuit immediately re-opens. If probes don't complete within the cooldown period, the circuit re-opens as a safety valve.
 
 ## Configuration
 
@@ -26,9 +26,11 @@ Enable circuit breakers per task using the `circuit_breaker` parameter:
 ```python
 @queue.task(
     circuit_breaker={
-        "threshold": 5,    # Open after 5 failures
-        "window": 60,      # Within a 60-second window
-        "cooldown": 300,   # Stay open for 5 minutes before half-open
+        "threshold": 5,                # Open after 5 failures
+        "window": 60,                  # Within a 60-second window
+        "cooldown": 300,               # Stay open for 5 minutes before half-open
+        "half_open_probes": 5,         # Allow 5 probe requests in half-open
+        "half_open_success_rate": 0.8, # Close when 80% of probes succeed
     }
 )
 def call_external_api(endpoint: str) -> dict:
@@ -40,6 +42,8 @@ def call_external_api(endpoint: str) -> dict:
 | `threshold` | `int` | `5` | Number of failures to trigger the breaker |
 | `window` | `int` | `60` | Time window in seconds for counting failures |
 | `cooldown` | `int` | `300` | Seconds to wait before allowing a test request |
+| `half_open_probes` | `int` | `5` | Number of probe requests allowed in half-open |
+| `half_open_success_rate` | `float` | `0.8` | Required success rate (0.0–1.0) to close from half-open |
 
 ## Inspecting Circuit Breaker State
 
@@ -116,7 +120,7 @@ def charge_customer(customer_id: str, amount: float):
     return response.json()
 ```
 
-If the payment API goes down, the circuit breaker opens after 3 failures within 60 seconds, preventing a flood of requests to the failing service. After 2 minutes, a single test request is allowed through.
+If the payment API goes down, the circuit breaker opens after 3 failures within 60 seconds, preventing a flood of requests to the failing service. After 2 minutes, up to 5 probe requests are allowed through. If at least 80% succeed (4 out of 5), the circuit closes.
 
 ### Health Check with Monitoring
 
