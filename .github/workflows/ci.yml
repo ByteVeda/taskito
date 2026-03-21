@@ -42,7 +42,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Install Python dev deps
-        run: uv sync --locked --extra dev
+        run: uv sync --extra dev
 
       - name: Ruff check
         run: uv run ruff check py_src/ tests/
@@ -124,7 +124,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: uv sync --locked --extra dev
+        run: uv sync --extra dev
 
       - name: Build native extension
         uses: PyO3/maturin-action@v1
