@@ -307,6 +307,51 @@ assert results[0].succeeded
 | `wraps` | `Any` | Wrap a real object — returned as-is when accessed. |
 | `track_calls` | `bool` | Increment `call_count` each access. |
 
+#### `return_value` vs `wraps`
+
+Use `return_value` when you want a simple stub:
+
+```python
+mock_cache = MockResource("cache", return_value={"key": "value"})
+```
+
+Use `wraps` when you need the real object but want call tracking:
+
+```python
+real_db = create_test_database()
+spy_db = MockResource("db", wraps=real_db, track_calls=True)
+```
+
+#### Multiple resources
+
+Pass multiple resources to `test_mode`:
+
+```python
+with queue.test_mode(resources={
+    "db": MockResource("db", return_value=mock_db),
+    "cache": MockResource("cache", return_value={}),
+    "mailer": MockResource("mailer", return_value=mock_smtp),
+}) as results:
+    process_order.delay(order_id=123)
+```
+
+#### Testing with `inject`
+
+Tasks that use `@queue.task(inject=["db"])` receive the mock resource automatically:
+
+```python
+@queue.task(inject=["db"])
+def create_user(name, db=None):
+    db.execute("INSERT INTO users (name) VALUES (?)", (name,))
+
+mock_db = MagicMock()
+with queue.test_mode(resources={"db": mock_db}) as results:
+    create_user.delay("Alice")
+
+assert results[0].succeeded
+mock_db.execute.assert_called_once()
+```
+
 !!! note
     When `resources=` is provided, proxy reconstruction is bypassed automatically. Proxy markers in arguments are passed through as-is so tests don't fail due to missing files or network connections.
 
@@ -344,3 +389,26 @@ def test_e2e():
 
 !!! info "Middleware in test mode"
     Per-task and queue-level `TaskMiddleware` hooks (`before`, `after`, `on_retry`) **do fire** in test mode, since they run in the Python wrapper around your task function. This lets you verify middleware behavior in tests without running a real worker.
+
+## Running Tests Locally
+
+```bash
+# Rust tests
+cargo test --workspace
+
+# Rebuild the Python extension after Rust changes
+uv run maturin develop
+
+# Python tests
+uv run python -m pytest tests/python/ -v
+
+# Linting
+uv run ruff check py_src/ tests/
+uv run mypy py_src/taskito/ --no-incremental
+```
+
+To build with native async support:
+
+```bash
+uv run maturin develop --features native-async
+```
