@@ -900,6 +900,15 @@ class Queue(
         queue: str | None = None,
         max_retries: int | None = None,
         timeout: int | None = None,
+        delay: float | None = None,
+        delay_list: list[float | None] | None = None,
+        unique_keys: list[str | None] | None = None,
+        metadata: str | None = None,
+        metadata_list: list[str | None] | None = None,
+        expires: float | None = None,
+        expires_list: list[float | None] | None = None,
+        result_ttl: int | None = None,
+        result_ttl_list: list[int | None] | None = None,
     ) -> list[JobResult]:
         """Enqueue multiple jobs for the same task in a single transaction.
 
@@ -911,6 +920,15 @@ class Queue(
             queue: Queue name for all jobs (uses "default" if None).
             max_retries: Max retries for all jobs (uses default if None).
             timeout: Timeout in seconds for all jobs (uses default if None).
+            delay: Uniform delay in seconds for all jobs.
+            delay_list: Per-job delays in seconds.
+            unique_keys: Per-job deduplication keys.
+            metadata: Uniform metadata JSON string for all jobs.
+            metadata_list: Per-job metadata JSON strings.
+            expires: Uniform expiry in seconds for all jobs.
+            expires_list: Per-job expiry in seconds.
+            result_ttl: Uniform result TTL in seconds for all jobs.
+            result_ttl_list: Per-job result TTL in seconds.
 
         Returns:
             List of JobResult handles, one per enqueued job.
@@ -940,6 +958,12 @@ class Queue(
         retries_list = [max_retries] * count if max_retries is not None else None
         timeouts_list = [timeout] * count if timeout is not None else None
 
+        # Build per-job optional lists
+        delays = delay_list or ([delay] * count if delay is not None else None)
+        metas = metadata_list or ([metadata] * count if metadata is not None else None)
+        exp_list = expires_list or ([expires] * count if expires is not None else None)
+        ttl_list = result_ttl_list or ([result_ttl] * count if result_ttl is not None else None)
+
         py_jobs = self._inner.enqueue_batch(
             task_names=task_names,
             payloads=payloads,
@@ -947,9 +971,29 @@ class Queue(
             priorities=priorities_list,
             max_retries_list=retries_list,
             timeouts=timeouts_list,
+            delay_seconds_list=delays,
+            unique_keys=unique_keys,
+            metadata_list=metas,
+            expires_list=exp_list,
+            result_ttl_list=ttl_list,
         )
 
-        return [JobResult(py_job=pj, queue=self) for pj in py_jobs]
+        results = [JobResult(py_job=pj, queue=self) for pj in py_jobs]
+
+        # Emit events and dispatch on_enqueue middleware
+        for job_result in results:
+            self._emit_event(
+                EventType.JOB_ENQUEUED,
+                {"job_id": job_result.id, "task_name": task_name},
+            )
+            for mw in self._get_middleware_chain(task_name):
+                try:
+                    options: dict[str, Any] = {}
+                    mw.on_enqueue(task_name, args_list[0], {}, options)
+                except Exception:
+                    pass
+
+        return results
 
     # -- Events & Webhooks --
 

@@ -233,7 +233,8 @@ impl PyQueue {
     }
 
     /// Enqueue multiple jobs in a single transaction.
-    #[pyo3(signature = (task_names, payloads, queues=None, priorities=None, max_retries_list=None, timeouts=None))]
+    #[pyo3(signature = (task_names, payloads, queues=None, priorities=None, max_retries_list=None, timeouts=None, delay_seconds_list=None, unique_keys=None, metadata_list=None, expires_list=None, result_ttl_list=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn enqueue_batch(
         &self,
         task_names: Vec<String>,
@@ -242,6 +243,11 @@ impl PyQueue {
         priorities: Option<Vec<i32>>,
         max_retries_list: Option<Vec<i32>>,
         timeouts: Option<Vec<i64>>,
+        delay_seconds_list: Option<Vec<Option<f64>>>,
+        unique_keys: Option<Vec<Option<String>>>,
+        metadata_list: Option<Vec<Option<String>>>,
+        expires_list: Option<Vec<Option<f64>>>,
+        result_ttl_list: Option<Vec<Option<i64>>>,
     ) -> PyResult<Vec<PyJob>> {
         let count = task_names.len();
         if payloads.len() != count {
@@ -254,6 +260,34 @@ impl PyQueue {
         let mut new_jobs = Vec::with_capacity(count);
 
         for i in 0..count {
+            let delay = delay_seconds_list
+                .as_ref()
+                .and_then(|d| d.get(i).copied().flatten());
+            let scheduled_at = match delay {
+                Some(d) if d.is_finite() && d >= 0.0 => {
+                    let delay_ms = (d * 1000.0) as i64;
+                    now.saturating_add(delay_ms)
+                }
+                _ => now,
+            };
+
+            let expires_at = expires_list
+                .as_ref()
+                .and_then(|e| e.get(i).copied().flatten())
+                .and_then(|e| {
+                    if e.is_finite() && e >= 0.0 {
+                        let ms = (e * 1000.0) as i64;
+                        Some(now.saturating_add(ms))
+                    } else {
+                        None
+                    }
+                });
+
+            let result_ttl_ms = result_ttl_list
+                .as_ref()
+                .and_then(|r| r.get(i).copied().flatten())
+                .map(|s| s.saturating_mul(1000));
+
             new_jobs.push(NewJob {
                 queue: queues.as_ref().map_or("default".to_string(), |q| {
                     q.get(i).cloned().unwrap_or_else(|| "default".to_string())
@@ -263,7 +297,7 @@ impl PyQueue {
                 priority: priorities.as_ref().map_or(self.default_priority, |p| {
                     p.get(i).copied().unwrap_or(self.default_priority)
                 }),
-                scheduled_at: now,
+                scheduled_at,
                 max_retries: max_retries_list.as_ref().map_or(self.default_retry, |r| {
                     r.get(i).copied().unwrap_or(self.default_retry)
                 }),
@@ -275,11 +309,15 @@ impl PyQueue {
                         pyo3::exceptions::PyValueError::new_err("timeout too large, would overflow")
                     })?
                 },
-                unique_key: None,
-                metadata: None,
+                unique_key: unique_keys
+                    .as_ref()
+                    .and_then(|u| u.get(i).cloned().flatten()),
+                metadata: metadata_list
+                    .as_ref()
+                    .and_then(|m| m.get(i).cloned().flatten()),
                 depends_on: vec![],
-                expires_at: None,
-                result_ttl_ms: None,
+                expires_at,
+                result_ttl_ms,
                 namespace: None,
             });
         }

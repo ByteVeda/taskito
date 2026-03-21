@@ -112,6 +112,11 @@ class PyQueue:
         priorities: list[int] | None = None,
         max_retries_list: list[int] | None = None,
         timeouts: list[int] | None = None,
+        delay_seconds_list: list[float | None] | None = None,
+        unique_keys: list[str | None] | None = None,
+        metadata_list: list[str | None] | None = None,
+        expires_list: list[float | None] | None = None,
+        result_ttl_list: list[int | None] | None = None,
     ) -> list[PyJob]: ...
     def list_jobs(
         self,
