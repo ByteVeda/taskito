@@ -37,7 +37,10 @@ class AsyncJobResultMixin:
 
         Raises:
             TimeoutError: If the job doesn't complete within *timeout*.
-            RuntimeError: If the job failed or was moved to DLQ.
+            TaskFailedError: If the job failed.
+            MaxRetriesExceededError: If the job was moved to DLQ.
+            TaskCancelledError: If the job was cancelled.
+            SerializationError: If result deserialization fails.
 
         Example::
 

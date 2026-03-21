@@ -84,6 +84,15 @@ __all__ = [
     "group",
     "starmap",
 ]
+# PyResultSender is only available when built with --features native-async.
+# Expose it with a clean error instead of a confusing AttributeError.
+try:
+    from taskito._taskito import PyResultSender  # noqa: F401
+
+    __all__.append("PyResultSender")
+except (ImportError, AttributeError):
+    pass
+
 try:
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as _get_version
