@@ -125,7 +125,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Build native extension
-        run: uv run maturin develop --release --features native-async
+        run: uv run --with maturin maturin develop --release --features native-async
 
       - name: Run Python tests
         run: |
