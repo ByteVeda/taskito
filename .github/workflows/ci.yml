@@ -36,12 +36,13 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
+          version: "0.10.12"
           cache-dependency-glob: uv.lock
 
       - name: Install Python dev deps
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Ruff check
         run: uv run ruff check py_src/ tests/
@@ -117,15 +118,19 @@ jobs:
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
+          version: "0.10.12"
           cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Build native extension
-        run: uv run --with maturin maturin develop --release --features native-async
+        uses: PyO3/maturin-action@v1
+        with:
+          command: develop
+          args: --release --features native-async
 
       - name: Run Python tests
         run: |
