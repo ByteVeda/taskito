@@ -83,6 +83,9 @@ def test_all_event_types_exist() -> None:
         "job.cancelled",
         "worker.started",
         "worker.stopped",
+        "worker.online",
+        "worker.offline",
+        "worker.unhealthy",
         "queue.paused",
         "queue.resumed",
     }

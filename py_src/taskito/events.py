@@ -23,6 +23,9 @@ class EventType(enum.Enum):
     JOB_CANCELLED = "job.cancelled"
     WORKER_STARTED = "worker.started"
     WORKER_STOPPED = "worker.stopped"
+    WORKER_ONLINE = "worker.online"
+    WORKER_OFFLINE = "worker.offline"
+    WORKER_UNHEALTHY = "worker.unhealthy"
     QUEUE_PAUSED = "queue.paused"
     QUEUE_RESUMED = "queue.resumed"
 

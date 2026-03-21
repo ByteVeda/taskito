@@ -1175,6 +1175,8 @@ class Queue(
 
             def shutdown_handler(signum: int, frame: Any) -> None:
                 logger.info("Warm shutdown (waiting for running tasks to finish)...")
+                with contextlib.suppress(Exception):
+                    self._inner.set_worker_status(worker_id, "draining")
                 self._inner.request_shutdown()
                 # Restore original handlers so a second signal force-kills
                 signal.signal(signal.SIGINT, original_sigint)
@@ -1218,6 +1220,10 @@ class Queue(
         self._emit_event(
             EventType.WORKER_STARTED,
             {"worker_id": worker_id, "queues": worker_queues},
+        )
+        self._emit_event(
+            EventType.WORKER_ONLINE,
+            {"worker_id": worker_id, "queues": worker_queues, "pool": pool},
         )
 
         try:
@@ -1277,12 +1283,32 @@ class Queue(
         stop_event: threading.Event,
     ) -> None:
         """Send periodic heartbeats to storage with current resource health."""
+        prev_unhealthy: set[str] = set()
         while not stop_event.is_set():
             resource_health = self._build_resource_health_json()
             try:
-                self._inner.worker_heartbeat(worker_id, resource_health)
+                reaped_ids = self._inner.worker_heartbeat(worker_id, resource_health)
+                # Emit WORKER_OFFLINE events for reaped dead workers
+                for rid in reaped_ids:
+                    self._emit_event(EventType.WORKER_OFFLINE, {"worker_id": rid})
             except Exception:
                 logger.debug("Heartbeat failed", exc_info=True)
+
+            # Detect health transitions → emit WORKER_UNHEALTHY
+            runtime = self._resource_runtime
+            if runtime is not None:
+                current_unhealthy = set(runtime._unhealthy)
+                new_unhealthy = current_unhealthy - prev_unhealthy
+                if new_unhealthy:
+                    self._emit_event(
+                        EventType.WORKER_UNHEALTHY,
+                        {
+                            "worker_id": worker_id,
+                            "resources": sorted(new_unhealthy),
+                        },
+                    )
+                prev_unhealthy = current_unhealthy
+
             stop_event.wait(timeout=5.0)
 
     # -- Resource Status --
