@@ -3,18 +3,20 @@
 import threading
 import time
 
+from taskito import Queue
 
-def test_dead_letters_empty(queue):
+
+def test_dead_letters_empty(queue: Queue) -> None:
     """Empty DLQ returns empty list."""
     dead = queue.dead_letters()
     assert dead == []
 
 
-def test_purge_dead(queue):
+def test_purge_dead(queue: Queue) -> None:
     """Purging removes old dead letter entries."""
 
     @queue.task(max_retries=0, retry_backoff=0.1)
-    def instant_fail():
+    def instant_fail() -> None:
         raise RuntimeError("fail")
 
     instant_fail.delay()

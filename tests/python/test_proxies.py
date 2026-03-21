@@ -19,7 +19,7 @@ from taskito.proxies.handlers.logger import LoggerHandler
 
 
 class TestFileHandler:
-    def test_detect_open_file(self, tmp_path) -> None:
+    def test_detect_open_file(self, tmp_path: Any) -> None:
         f = open(tmp_path / "test.txt", "w")  # noqa: SIM115
         try:
             handler = FileHandler()
@@ -27,7 +27,7 @@ class TestFileHandler:
         finally:
             f.close()
 
-    def test_detect_closed_file(self, tmp_path) -> None:
+    def test_detect_closed_file(self, tmp_path: Any) -> None:
         f = open(tmp_path / "test.txt", "w")  # noqa: SIM115
         f.close()
         handler = FileHandler()
@@ -39,7 +39,7 @@ class TestFileHandler:
         handler = FileHandler()
         assert handler.detect(sys.stdin) is False
 
-    def test_deconstruct_text_file(self, tmp_path) -> None:
+    def test_deconstruct_text_file(self, tmp_path: Any) -> None:
         path = tmp_path / "data.txt"
         path.write_text("hello world")
         with open(path) as f:
@@ -50,7 +50,7 @@ class TestFileHandler:
             assert recipe["encoding"] is not None
             assert recipe["position"] == 0
 
-    def test_deconstruct_binary_file(self, tmp_path) -> None:
+    def test_deconstruct_binary_file(self, tmp_path: Any) -> None:
         path = tmp_path / "data.bin"
         path.write_bytes(b"\x00\x01\x02")
         with open(path, "rb") as f:
@@ -59,7 +59,7 @@ class TestFileHandler:
             assert recipe["mode"] == "rb"
             assert recipe["encoding"] is None
 
-    def test_reconstruct_text_file(self, tmp_path) -> None:
+    def test_reconstruct_text_file(self, tmp_path: Any) -> None:
         path = tmp_path / "data.txt"
         path.write_text("hello world")
         handler = FileHandler()
@@ -70,7 +70,7 @@ class TestFileHandler:
         finally:
             f.close()
 
-    def test_reconstruct_at_position(self, tmp_path) -> None:
+    def test_reconstruct_at_position(self, tmp_path: Any) -> None:
         path = tmp_path / "data.txt"
         path.write_text("hello world")
         handler = FileHandler()
@@ -81,7 +81,7 @@ class TestFileHandler:
         finally:
             f.close()
 
-    def test_cleanup_closes_file(self, tmp_path) -> None:
+    def test_cleanup_closes_file(self, tmp_path: Any) -> None:
         path = tmp_path / "data.txt"
         path.write_text("test")
         f = open(path)  # noqa: SIM115
@@ -89,7 +89,7 @@ class TestFileHandler:
         handler.cleanup(f)
         assert f.closed
 
-    def test_cleanup_already_closed(self, tmp_path) -> None:
+    def test_cleanup_already_closed(self, tmp_path: Any) -> None:
         path = tmp_path / "data.txt"
         path.write_text("test")
         f = open(path)  # noqa: SIM115
@@ -144,7 +144,7 @@ class TestProxyRegistry:
         reg = ProxyRegistry()
         assert reg.get("nonexistent") is None
 
-    def test_find_handler(self, tmp_path) -> None:
+    def test_find_handler(self, tmp_path: Any) -> None:
         reg = ProxyRegistry()
         register_builtin_handlers(reg)
         f = open(tmp_path / "test.txt", "w")  # noqa: SIM115
@@ -167,7 +167,7 @@ class TestProxyRegistry:
 
 
 class TestReconstruct:
-    def test_proxy_marker_reconstructed(self, tmp_path) -> None:
+    def test_proxy_marker_reconstructed(self, tmp_path: Any) -> None:
         path = tmp_path / "data.txt"
         path.write_text("content")
         reg = ProxyRegistry()
@@ -193,7 +193,7 @@ class TestReconstruct:
         finally:
             cleanup_proxies(cleanup_list)
 
-    def test_cleanup_list_populated(self, tmp_path) -> None:
+    def test_cleanup_list_populated(self, tmp_path: Any) -> None:
         path = tmp_path / "data.txt"
         path.write_text("test")
         reg = ProxyRegistry()
@@ -219,7 +219,7 @@ class TestReconstruct:
         cleanup_proxies(cleanup_list)
         assert obj.closed
 
-    def test_cleanup_runs_lifo(self, tmp_path) -> None:
+    def test_cleanup_runs_lifo(self, tmp_path: Any) -> None:
         """Cleanup runs in reverse reconstruction order."""
         p1 = tmp_path / "a.txt"
         p1.write_text("a")
@@ -270,7 +270,7 @@ class TestReconstruct:
             def cleanup(self, obj: Any) -> None:
                 raise RuntimeError("cleanup boom")
 
-        cleanup_list = [(BadHandler(), "obj")]  # type: ignore[list-item]
+        cleanup_list: list[tuple[Any, Any]] = [(BadHandler(), "obj")]
         cleanup_proxies(cleanup_list)  # should not raise
 
     def test_missing_handler_raises(self) -> None:
@@ -300,7 +300,7 @@ class TestReconstruct:
 
 
 class TestIdentityTracking:
-    def test_same_object_deduped(self, tmp_path) -> None:
+    def test_same_object_deduped(self, tmp_path: Any) -> None:
         """Same file handle passed twice produces one marker and one ref."""
         path = tmp_path / "data.txt"
         path.write_text("test")
@@ -308,6 +308,7 @@ class TestIdentityTracking:
         queue = Queue(db_path=str(tmp_path / "q.db"), interception="strict")
         f = open(path)  # noqa: SIM115
         try:
+            assert queue._interceptor is not None
             walker = queue._interceptor._walker
             args, _kw, _res = walker.walk((f, f), {})
 
@@ -319,7 +320,7 @@ class TestIdentityTracking:
         finally:
             f.close()
 
-    def test_identity_reconstructed_once(self, tmp_path) -> None:
+    def test_identity_reconstructed_once(self, tmp_path: Any) -> None:
         """Reconstruction creates one object; both positions share it."""
         path = tmp_path / "data.txt"
         path.write_text("shared")
@@ -348,7 +349,7 @@ class TestIdentityTracking:
         finally:
             cleanup_proxies(cleanup)
 
-    def test_different_objects_separate(self, tmp_path) -> None:
+    def test_different_objects_separate(self, tmp_path: Any) -> None:
         """Two different file handles get separate recipes."""
         p1 = tmp_path / "a.txt"
         p1.write_text("a")
@@ -359,6 +360,7 @@ class TestIdentityTracking:
         f1 = open(p1)  # noqa: SIM115
         f2 = open(p2)  # noqa: SIM115
         try:
+            assert queue._interceptor is not None
             walker = queue._interceptor._walker
             args, _, _ = walker.walk((f1, f2), {})
             assert args[0].get("__taskito_proxy__") is True
@@ -374,7 +376,7 @@ class TestIdentityTracking:
 # ---------------------------------------------------------------------------
 
 
-def test_proxy_in_nested_dict(tmp_path) -> None:
+def test_proxy_in_nested_dict(tmp_path: Any) -> None:
     """File inside a dict is proxied."""
     path = tmp_path / "nested.txt"
     path.write_text("nested content")
@@ -382,6 +384,7 @@ def test_proxy_in_nested_dict(tmp_path) -> None:
     queue = Queue(db_path=str(tmp_path / "q.db"), interception="strict")
     f = open(path)  # noqa: SIM115
     try:
+        assert queue._interceptor is not None
         walker = queue._interceptor._walker
         _, kwargs, _ = walker.walk((), {"config": {"file": f}})
         inner = kwargs["config"]["file"]
@@ -398,10 +401,10 @@ def test_proxy_in_nested_dict(tmp_path) -> None:
 
 def test_proxy_roundtrip_in_test_mode(queue: Queue) -> None:
     """In test mode, original objects pass through (no serialization)."""
-    captured: list = []
+    captured: list[Any] = []
 
     @queue.task()
-    def use_logger(lgr):
+    def use_logger(lgr: Any) -> None:
         captured.append(lgr)
 
     lgr = logging.getLogger("test.proxy.e2e")
@@ -413,11 +416,12 @@ def test_proxy_roundtrip_in_test_mode(queue: Queue) -> None:
     assert captured[0] is lgr
 
 
-def test_logger_proxy_marker_production(tmp_path) -> None:
+def test_logger_proxy_marker_production(tmp_path: Any) -> None:
     """Logger produces a proxy marker when interception is on."""
     queue = Queue(db_path=str(tmp_path / "q.db"), interception="strict")
     lgr = logging.getLogger("test.proxy.marker")
 
+    assert queue._interceptor is not None
     walker = queue._interceptor._walker
     args, _, _ = walker.walk((lgr,), {})
     assert args[0].get("__taskito_proxy__") is True

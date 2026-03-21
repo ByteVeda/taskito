@@ -5,7 +5,9 @@ import hmac
 import json
 import threading
 import time
+from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 
 import pytest
 
@@ -14,12 +16,12 @@ from taskito.webhooks import WebhookManager
 
 
 @pytest.fixture
-def webhook_server():
+def webhook_server() -> Generator[tuple[str, list[dict[str, Any]]]]:
     """Start a local HTTP server that records webhook deliveries."""
-    received = []
+    received: list[dict[str, Any]] = []
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
+        def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
             received.append(
@@ -31,7 +33,7 @@ def webhook_server():
             self.send_response(200)
             self.end_headers()
 
-        def log_message(self, *args):
+        def log_message(self, *args: Any) -> None:
             pass
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -44,7 +46,7 @@ def webhook_server():
     server.shutdown()
 
 
-def test_webhook_delivery(webhook_server):
+def test_webhook_delivery(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
     """Webhooks are delivered to registered URLs."""
     url, received = webhook_server
     mgr = WebhookManager()
@@ -58,7 +60,7 @@ def test_webhook_delivery(webhook_server):
     assert received[0]["body"]["job_id"] == "abc"
 
 
-def test_webhook_event_filtering(webhook_server):
+def test_webhook_event_filtering(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
     """Webhooks with event filters only receive matching events."""
     url, received = webhook_server
     mgr = WebhookManager()
@@ -72,7 +74,7 @@ def test_webhook_event_filtering(webhook_server):
     assert received[0]["body"]["event"] == "job.failed"
 
 
-def test_webhook_hmac_signing(webhook_server):
+def test_webhook_hmac_signing(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
     """Webhooks with a secret include a valid HMAC signature."""
     url, received = webhook_server
     secret = "my-secret-key"
@@ -93,7 +95,7 @@ def test_webhook_hmac_signing(webhook_server):
     assert sig_header == f"sha256={expected_sig}"
 
 
-def test_webhook_url_validation():
+def test_webhook_url_validation() -> None:
     """Only http:// and https:// URLs are accepted."""
     mgr = WebhookManager()
 
@@ -108,7 +110,7 @@ def test_webhook_url_validation():
     mgr.add_webhook("https://example.com/hook")
 
 
-def test_webhook_custom_headers(webhook_server):
+def test_webhook_custom_headers(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
     """Custom headers are included in webhook requests."""
     url, received = webhook_server
     mgr = WebhookManager()
@@ -121,7 +123,7 @@ def test_webhook_custom_headers(webhook_server):
     assert received[0]["headers"].get("X-Custom") == "test-value"
 
 
-def test_webhook_no_subscribers():
+def test_webhook_no_subscribers() -> None:
     """Notifying with no matching webhooks doesn't raise."""
     mgr = WebhookManager()
     mgr.notify(EventType.JOB_COMPLETED, {"job_id": "1"})

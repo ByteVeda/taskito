@@ -1,6 +1,7 @@
 """Tests for retry history (job_errors tracking)."""
 
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -8,17 +9,17 @@ from taskito import Queue
 
 
 @pytest.fixture
-def queue(tmp_path):
+def queue(tmp_path: Path) -> Queue:
     db_path = str(tmp_path / "test_retry_history.db")
     return Queue(db_path=db_path, workers=1)
 
 
-def test_retry_errors_recorded(queue):
+def test_retry_errors_recorded(queue: Queue) -> None:
     """Failed attempts are recorded in job.errors."""
     call_count = {"n": 0}
 
     @queue.task(max_retries=3, retry_backoff=0.01)
-    def flaky():
+    def flaky() -> str:
         call_count["n"] += 1
         if call_count["n"] <= 3:
             raise ValueError(f"attempt {call_count['n']}")
@@ -40,11 +41,11 @@ def test_retry_errors_recorded(queue):
     assert errors[2]["attempt"] == 2
 
 
-def test_errors_empty_on_success(queue):
+def test_errors_empty_on_success(queue: Queue) -> None:
     """Successful jobs have an empty errors list."""
 
     @queue.task()
-    def ok_task():
+    def ok_task() -> int:
         return 42
 
     job = ok_task.delay()

@@ -2,23 +2,25 @@
 
 import threading
 
+from taskito import Queue
 
-def test_task_registration(queue):
+
+def test_task_registration(queue: Queue) -> None:
     """Tasks can be registered with the decorator."""
 
     @queue.task()
-    def add(a, b):
+    def add(a: int, b: int) -> int:
         return a + b
 
     assert add.name.endswith("add")
     assert add.name in queue._task_registry
 
 
-def test_enqueue_returns_job_result(queue):
+def test_enqueue_returns_job_result(queue: Queue) -> None:
     """Enqueueing a task returns a JobResult handle."""
 
     @queue.task()
-    def noop():
+    def noop() -> None:
         pass
 
     job = noop.delay()
@@ -26,32 +28,32 @@ def test_enqueue_returns_job_result(queue):
     assert len(job.id) > 0
 
 
-def test_task_direct_call(queue):
+def test_task_direct_call(queue: Queue) -> None:
     """Decorated tasks can still be called directly."""
 
     @queue.task()
-    def multiply(a, b):
+    def multiply(a: int, b: int) -> int:
         return a * b
 
     assert multiply(3, 4) == 12
 
 
-def test_apply_async_with_delay(queue):
+def test_apply_async_with_delay(queue: Queue) -> None:
     """apply_async accepts a delay parameter."""
 
     @queue.task()
-    def slow_task():
+    def slow_task() -> None:
         pass
 
     job = slow_task.apply_async(delay=60)
     assert job.id is not None
 
 
-def test_apply_async_with_overrides(queue):
+def test_apply_async_with_overrides(queue: Queue) -> None:
     """apply_async can override default task settings."""
 
     @queue.task(priority=1, queue="default")
-    def configurable_task(x):
+    def configurable_task(x: int) -> int:
         return x
 
     job = configurable_task.apply_async(
@@ -64,11 +66,11 @@ def test_apply_async_with_overrides(queue):
     assert job.id is not None
 
 
-def test_queue_stats(queue):
+def test_queue_stats(queue: Queue) -> None:
     """stats() returns counts by status."""
 
     @queue.task()
-    def sample_task():
+    def sample_task() -> None:
         pass
 
     sample_task.delay()
@@ -79,11 +81,11 @@ def test_queue_stats(queue):
     assert stats["running"] == 0
 
 
-def test_worker_executes_task(queue):
+def test_worker_executes_task(queue: Queue) -> None:
     """Worker processes tasks and stores results."""
 
     @queue.task()
-    def add(a, b):
+    def add(a: int, b: int) -> int:
         return a + b
 
     job = add.delay(2, 3)
@@ -100,11 +102,11 @@ def test_worker_executes_task(queue):
     assert result == 5
 
 
-def test_worker_handles_kwargs(queue):
+def test_worker_handles_kwargs(queue: Queue) -> None:
     """Worker correctly passes keyword arguments."""
 
     @queue.task()
-    def greet(name, greeting="Hello"):
+    def greet(name: str, greeting: str = "Hello") -> str:
         return f"{greeting}, {name}!"
 
     job = greet.delay("World", greeting="Hi")
@@ -119,11 +121,11 @@ def test_worker_handles_kwargs(queue):
     assert result == "Hi, World!"
 
 
-def test_worker_none_result(queue):
+def test_worker_none_result(queue: Queue) -> None:
     """Tasks returning None work correctly."""
 
     @queue.task()
-    def void_task():
+    def void_task() -> None:
         pass
 
     job = void_task.delay()

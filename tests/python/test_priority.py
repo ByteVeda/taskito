@@ -2,6 +2,7 @@
 
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -9,17 +10,17 @@ from taskito import Queue
 
 
 @pytest.fixture
-def queue(tmp_path):
+def queue(tmp_path: Path) -> Queue:
     db_path = str(tmp_path / "test_priority.db")
     return Queue(db_path=db_path, workers=1)  # 1 worker for ordering
 
 
-def test_priority_ordering(queue):
+def test_priority_ordering(queue: Queue) -> None:
     """Higher priority jobs should be processed first."""
-    results = []
+    results: list[str] = []
 
     @queue.task()
-    def record_task(label):
+    def record_task(label: str) -> str:
         results.append(label)
         return label
 

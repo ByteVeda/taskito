@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -10,7 +11,7 @@ from taskito import Queue, chain, chord, group
 
 
 @pytest.fixture
-def queue(tmp_path):
+def queue(tmp_path: Path) -> Queue:
     db_path = str(tmp_path / "test_chain.db")
     q = Queue(db_path=db_path, workers=4)
 
@@ -21,15 +22,15 @@ def queue(tmp_path):
     return q
 
 
-def test_chain_executes_in_order(queue):
+def test_chain_executes_in_order(queue: Queue) -> None:
     """chain pipes results through signatures in order."""
 
     @queue.task()
-    def add(a, b):
+    def add(a: int, b: int) -> int:
         return a + b
 
     @queue.task()
-    def double(x):
+    def double(x: int) -> int:
         return x * 2
 
     result = chain(add.s(2, 3), double.s())
@@ -37,15 +38,15 @@ def test_chain_executes_in_order(queue):
     assert last_job.result(timeout=30) == 10  # (2+3) * 2 = 10
 
 
-def test_chain_with_immutable(queue):
+def test_chain_with_immutable(queue: Queue) -> None:
     """si() signatures ignore previous results."""
 
     @queue.task()
-    def add(a, b):
+    def add(a: int, b: int) -> int:
         return a + b
 
     @queue.task()
-    def constant():
+    def constant() -> int:
         return 99
 
     result = chain(add.s(1, 2), constant.si())
@@ -53,11 +54,11 @@ def test_chain_with_immutable(queue):
     assert last_job.result(timeout=30) == 99
 
 
-def test_group_parallel(queue):
+def test_group_parallel(queue: Queue) -> None:
     """group enqueues tasks in parallel."""
 
     @queue.task()
-    def square(x):
+    def square(x: int) -> int:
         return x * x
 
     jobs = group(square.s(2), square.s(3), square.s(4)).apply(queue)
@@ -65,15 +66,15 @@ def test_group_parallel(queue):
     assert sorted(results) == [4, 9, 16]
 
 
-def test_chord_callback(queue):
+def test_chord_callback(queue: Queue) -> None:
     """chord runs group, then callback with collected results."""
 
     @queue.task()
-    def add(a, b):
+    def add(a: int, b: int) -> int:
         return a + b
 
     @queue.task()
-    def total(results):
+    def total(results: list[int]) -> int:
         return sum(results)
 
     grp = group(add.s(1, 2), add.s(3, 4), add.s(5, 6))

@@ -1,6 +1,7 @@
 """Tests for FastAPI integration."""
 
 import threading
+from typing import Any
 
 import pytest
 
@@ -11,11 +12,12 @@ httpx = pytest.importorskip("httpx")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from taskito import Queue  # noqa: E402
 from taskito.contrib.fastapi import TaskitoRouter  # noqa: E402
 
 
 @pytest.fixture
-def app(queue):
+def app(queue: Queue) -> FastAPI:
     """Create a FastAPI app with TaskitoRouter."""
     app = FastAPI()
     app.include_router(TaskitoRouter(queue), prefix="/tasks")
@@ -23,17 +25,17 @@ def app(queue):
 
 
 @pytest.fixture
-def client(app):
+def client(app: FastAPI) -> TestClient:
     """Create a TestClient."""
     return TestClient(app)
 
 
 @pytest.fixture
-def populated(queue, client):
+def populated(queue: Queue, client: TestClient) -> tuple[Queue, TestClient, list[Any], Any]:
     """Queue with a task and some jobs."""
 
     @queue.task()
-    def add(a, b):
+    def add(a: int, b: int) -> int:
         return a + b
 
     jobs = [add.delay(i, i + 1) for i in range(5)]
@@ -43,7 +45,7 @@ def populated(queue, client):
 # ── Stats ────────────────────────────────────────────────
 
 
-def test_stats(populated):
+def test_stats(populated: tuple[Queue, TestClient, list[Any], Any]) -> None:
     _queue, client, _jobs, _add = populated
     resp = client.get("/tasks/stats")
     assert resp.status_code == 200
@@ -55,7 +57,7 @@ def test_stats(populated):
 # ── Job detail ───────────────────────────────────────────
 
 
-def test_get_job(populated):
+def test_get_job(populated: tuple[Queue, TestClient, list[Any], Any]) -> None:
     _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.get(f"/tasks/jobs/{job_id}")
@@ -65,7 +67,7 @@ def test_get_job(populated):
     assert data["status"] == "pending"
 
 
-def test_get_job_not_found(client):
+def test_get_job_not_found(client: TestClient) -> None:
     resp = client.get("/tasks/jobs/nonexistent")
     assert resp.status_code == 404
 
@@ -73,7 +75,7 @@ def test_get_job_not_found(client):
 # ── Job errors ───────────────────────────────────────────
 
 
-def test_get_job_errors_empty(populated):
+def test_get_job_errors_empty(populated: tuple[Queue, TestClient, list[Any], Any]) -> None:
     _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.get(f"/tasks/jobs/{job_id}/errors")
@@ -84,7 +86,7 @@ def test_get_job_errors_empty(populated):
 # ── Job result ───────────────────────────────────────────
 
 
-def test_get_job_result_pending(populated):
+def test_get_job_result_pending(populated: tuple[Queue, TestClient, list[Any], Any]) -> None:
     _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.get(f"/tasks/jobs/{job_id}/result")
@@ -94,7 +96,7 @@ def test_get_job_result_pending(populated):
     assert data["result"] is None
 
 
-def test_get_job_result_completed(populated):
+def test_get_job_result_completed(populated: tuple[Queue, TestClient, list[Any], Any]) -> None:
     queue, client, jobs, _add = populated
 
     worker = threading.Thread(target=queue.run_worker, daemon=True)
@@ -113,7 +115,7 @@ def test_get_job_result_completed(populated):
 # ── Cancel ───────────────────────────────────────────────
 
 
-def test_cancel_job(populated):
+def test_cancel_job(populated: tuple[Queue, TestClient, list[Any], Any]) -> None:
     _queue, client, jobs, _add = populated
     job_id = jobs[0].id
     resp = client.post(f"/tasks/jobs/{job_id}/cancel")
@@ -128,7 +130,7 @@ def test_cancel_job(populated):
 # ── Dead letters ─────────────────────────────────────────
 
 
-def test_dead_letters_empty(client):
+def test_dead_letters_empty(client: TestClient) -> None:
     resp = client.get("/tasks/dead-letters")
     assert resp.status_code == 200
     assert resp.json() == []
@@ -137,7 +139,7 @@ def test_dead_letters_empty(client):
 # ── Progress SSE ─────────────────────────────────────────
 
 
-def test_progress_stream(populated):
+def test_progress_stream(populated: tuple[Queue, TestClient, list[Any], Any]) -> None:
     queue, client, jobs, _add = populated
 
     # Start worker so the job completes
@@ -150,7 +152,7 @@ def test_progress_stream(populated):
 
     with client.stream("GET", f"/tasks/jobs/{job_id}/progress") as resp:
         assert resp.status_code == 200
-        lines = []
+        lines: list[str] = []
         for line in resp.iter_lines():
             if line.startswith("data:"):
                 lines.append(line)
@@ -164,7 +166,7 @@ def test_progress_stream(populated):
     assert data["status"] == "complete"
 
 
-def test_progress_stream_not_found(client):
+def test_progress_stream_not_found(client: TestClient) -> None:
     resp = client.get("/tasks/jobs/nonexistent/progress")
     assert resp.status_code == 404
 
@@ -172,13 +174,13 @@ def test_progress_stream_not_found(client):
 # ── Router config ────────────────────────────────────────
 
 
-def test_router_custom_tags(queue):
+def test_router_custom_tags(queue: Queue) -> None:
     """TaskitoRouter accepts standard APIRouter kwargs."""
     router = TaskitoRouter(queue, tags=["my-tasks"])
     assert "my-tasks" in router.tags
 
 
-def test_router_custom_prefix(queue):
+def test_router_custom_prefix(queue: Queue) -> None:
     """Router can be mounted with a custom prefix."""
     app = FastAPI()
     app.include_router(TaskitoRouter(queue), prefix="/api/v1/queue")

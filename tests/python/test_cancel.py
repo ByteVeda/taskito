@@ -4,36 +4,39 @@ from __future__ import annotations
 
 import threading
 
+from taskito import Queue
 
-def test_cancel_pending_job(queue):
+
+def test_cancel_pending_job(queue: Queue) -> None:
     """A pending job can be cancelled."""
 
     @queue.task()
-    def slow_task():
+    def slow_task() -> str:
         return "done"
 
     job = slow_task.delay()
     assert queue.cancel_job(job.id) is True
 
     refreshed = queue.get_job(job.id)
+    assert refreshed is not None
     assert refreshed.status == "cancelled"
 
 
-def test_cancel_nonexistent_job(queue):
+def test_cancel_nonexistent_job(queue: Queue) -> None:
     """Cancelling a nonexistent job returns False."""
 
     @queue.task()
-    def dummy():
+    def dummy() -> None:
         pass
 
     assert queue.cancel_job("nonexistent-id") is False
 
 
-def test_cancel_completed_job(queue):
+def test_cancel_completed_job(queue: Queue) -> None:
     """Cancelling a completed job returns False (only pending can be cancelled)."""
 
     @queue.task()
-    def quick_task():
+    def quick_task() -> int:
         return 42
 
     job = quick_task.delay()
@@ -45,11 +48,11 @@ def test_cancel_completed_job(queue):
     assert queue.cancel_job(job.id) is False
 
 
-def test_cancelled_in_stats(queue):
+def test_cancelled_in_stats(queue: Queue) -> None:
     """Cancelled jobs show up in stats."""
 
     @queue.task()
-    def task_a():
+    def task_a() -> None:
         pass
 
     job = task_a.delay()

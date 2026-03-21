@@ -3,13 +3,15 @@
 import threading
 import time
 
+from taskito import Queue
 
-def test_failing_task_retries(queue):
+
+def test_failing_task_retries(queue: Queue) -> None:
     """A failing task should be retried up to max_retries times."""
     call_count = 0
 
     @queue.task(max_retries=3, retry_backoff=0.1)
-    def flaky_task():
+    def flaky_task() -> str:
         nonlocal call_count
         call_count += 1
         if call_count < 3:
@@ -29,11 +31,11 @@ def test_failing_task_retries(queue):
     assert call_count == 3
 
 
-def test_exhausted_retries_goes_to_dlq(queue):
+def test_exhausted_retries_goes_to_dlq(queue: Queue) -> None:
     """A task that always fails should end up in the dead letter queue."""
 
     @queue.task(max_retries=2, retry_backoff=0.1)
-    def always_fails():
+    def always_fails() -> None:
         raise RuntimeError("permanent failure")
 
     always_fails.delay()
@@ -53,11 +55,11 @@ def test_exhausted_retries_goes_to_dlq(queue):
     assert dead[0]["task_name"].endswith("always_fails")
 
 
-def test_retry_dead_letter(queue):
+def test_retry_dead_letter(queue: Queue) -> None:
     """A dead letter job can be re-enqueued."""
 
     @queue.task(max_retries=1, retry_backoff=0.1)
-    def fail_once():
+    def fail_once() -> None:
         raise RuntimeError("fail")
 
     fail_once.delay()

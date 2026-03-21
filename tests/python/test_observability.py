@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from typing import Any
+
 import pytest
 
 from taskito import Queue
@@ -59,9 +62,8 @@ class TestResourceRuntimeStatus:
 
     def test_status_tracks_init_duration(self) -> None:
         """init_duration_ms is populated after initialize."""
-        import time
 
-        def slow_factory():
+        def slow_factory() -> str:
             time.sleep(0.05)
             return "result"
 
@@ -77,7 +79,7 @@ class TestResourceRuntimeStatus:
         """recreation count is incremented on successful recreate."""
         call_count = 0
 
-        def make_svc():
+        def make_svc() -> str:
             nonlocal call_count
             call_count += 1
             return f"v{call_count}"
@@ -133,12 +135,12 @@ class TestResourceRuntimeStatus:
 
 
 class TestQueueResourceStatus:
-    def test_resource_status_with_runtime(self, tmp_path) -> None:
+    def test_resource_status_with_runtime(self, tmp_path: Any) -> None:
         """resource_status() delegates to runtime when initialized."""
         queue = Queue(db_path=str(tmp_path / "q.db"))
 
         @queue.worker_resource("db")
-        def create_db():
+        def create_db() -> str:
             return "conn"
 
         # Manually initialize runtime
@@ -152,12 +154,12 @@ class TestQueueResourceStatus:
         assert status[0]["health"] == "healthy"
         rt.teardown()
 
-    def test_resource_status_without_runtime(self, tmp_path) -> None:
+    def test_resource_status_without_runtime(self, tmp_path: Any) -> None:
         """resource_status() returns definitions with not_initialized health."""
         queue = Queue(db_path=str(tmp_path / "q.db"))
 
         @queue.worker_resource("db")
-        def create_db():
+        def create_db() -> str:
             return "conn"
 
         status = queue.resource_status()
@@ -165,7 +167,7 @@ class TestQueueResourceStatus:
         assert status[0]["name"] == "db"
         assert status[0]["health"] == "not_initialized"
 
-    def test_resource_status_empty(self, tmp_path) -> None:
+    def test_resource_status_empty(self, tmp_path: Any) -> None:
         """resource_status() returns empty list with no resources."""
         queue = Queue(db_path=str(tmp_path / "q.db"))
         assert queue.resource_status() == []
@@ -177,14 +179,14 @@ class TestQueueResourceStatus:
 
 
 class TestHealthCheckIntegration:
-    def test_readiness_reports_healthy_resources(self, tmp_path) -> None:
+    def test_readiness_reports_healthy_resources(self, tmp_path: Any) -> None:
         """check_readiness includes resource status when all healthy."""
         from taskito.health import check_readiness
 
         queue = Queue(db_path=str(tmp_path / "q.db"))
 
         @queue.worker_resource("db")
-        def create_db():
+        def create_db() -> str:
             return "conn"
 
         rt = ResourceRuntime(queue._resource_definitions)
@@ -199,14 +201,14 @@ class TestHealthCheckIntegration:
         assert res_check["unhealthy"] == []
         rt.teardown()
 
-    def test_readiness_reports_unhealthy_resources(self, tmp_path) -> None:
+    def test_readiness_reports_unhealthy_resources(self, tmp_path: Any) -> None:
         """check_readiness marks status as degraded for unhealthy resources."""
         from taskito.health import check_readiness
 
         queue = Queue(db_path=str(tmp_path / "q.db"))
 
         @queue.worker_resource("db")
-        def create_db():
+        def create_db() -> str:
             return "conn"
 
         rt = ResourceRuntime(queue._resource_definitions)
@@ -221,7 +223,7 @@ class TestHealthCheckIntegration:
         assert "db" in res_check["unhealthy"]
         rt.teardown()
 
-    def test_readiness_no_resources(self, tmp_path) -> None:
+    def test_readiness_no_resources(self, tmp_path: Any) -> None:
         """check_readiness works fine without any resources."""
         from taskito.health import check_readiness
 
@@ -246,21 +248,23 @@ class TestHealthCheckIntegration:
 
 
 class TestCLIResources:
-    def test_run_resources_no_resources(self, tmp_path) -> None:
+    def test_run_resources_no_resources(self, tmp_path: Any) -> None:
         """resource_status returns empty list when no resources registered."""
         queue = Queue(db_path=str(tmp_path / "q.db"))
         assert queue.resource_status() == []
 
-    def test_resource_status_table_format(self, tmp_path, capsys) -> None:
+    def test_resource_status_table_format(
+        self, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Verify table output format from CLI helper."""
         queue = Queue(db_path=str(tmp_path / "q.db"))
 
         @queue.worker_resource("config")
-        def create_config():
+        def create_config() -> dict[str, str]:
             return {}
 
         @queue.worker_resource("db", depends_on=["config"])
-        def create_db(config):
+        def create_db(config: Any) -> str:
             return "conn"
 
         rt = ResourceRuntime(queue._resource_definitions)
@@ -294,12 +298,12 @@ class TestPrometheusResourceMetrics:
     def test_prometheus_middleware_has_resource_metrics(self) -> None:
         """Verify resource metric singletons are initialized."""
         pytest.importorskip("prometheus_client")
-        from taskito.contrib.prometheus import _init_metrics
+        from taskito.contrib.prometheus import _init_metrics  # type: ignore[attr-defined]
 
         _init_metrics()
 
         from taskito.contrib import prometheus as pmod
 
-        assert pmod._resource_health is not None
-        assert pmod._resource_recreations is not None
-        assert pmod._resource_init_duration is not None
+        assert pmod._resource_health is not None  # type: ignore[attr-defined]
+        assert pmod._resource_recreations is not None  # type: ignore[attr-defined]
+        assert pmod._resource_init_duration is not None  # type: ignore[attr-defined]

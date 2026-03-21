@@ -2,12 +2,14 @@
 
 import threading
 
+from taskito import Queue
 
-def test_enqueue_many(queue):
+
+def test_enqueue_many(queue: Queue) -> None:
     """enqueue_many enqueues all items in a single batch."""
 
     @queue.task()
-    def double(x):
+    def double(x: int) -> int:
         return x * 2
 
     jobs = queue.enqueue_many(
@@ -20,11 +22,11 @@ def test_enqueue_many(queue):
     assert stats["pending"] == 10
 
 
-def test_task_map(queue):
+def test_task_map(queue: Queue) -> None:
     """TaskWrapper.map() enqueues and returns results."""
 
     @queue.task()
-    def add(a, b):
+    def add(a: int, b: int) -> int:
         return a + b
 
     jobs = add.map([(1, 2), (3, 4), (5, 6)])
@@ -37,11 +39,11 @@ def test_task_map(queue):
     assert sorted(results) == [3, 7, 11]
 
 
-def test_batch_stats(queue):
+def test_batch_stats(queue: Queue) -> None:
     """Batch enqueue of 50 items shows correct pending count."""
 
     @queue.task()
-    def noop():
+    def noop() -> None:
         pass
 
     queue.enqueue_many(

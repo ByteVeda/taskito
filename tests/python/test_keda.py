@@ -3,7 +3,9 @@
 import json
 import threading
 import urllib.request
+from collections.abc import Generator
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -12,13 +14,13 @@ from taskito.dashboard import build_scaler_response
 
 
 @pytest.fixture()
-def empty_queue(tmp_path):
+def empty_queue(tmp_path: Path) -> Queue:
     """Queue with no pending jobs."""
     return Queue(db_path=str(tmp_path / "keda.db"), workers=4)
 
 
 @pytest.fixture()
-def populated_queue(tmp_path):
+def populated_queue(tmp_path: Path) -> Queue:
     """Queue with pending jobs across two queues."""
     q = Queue(db_path=str(tmp_path / "keda.db"), workers=4)
 
@@ -39,7 +41,7 @@ def populated_queue(tmp_path):
 
 
 @pytest.fixture()
-def scaler_server(empty_queue):
+def scaler_server(empty_queue: Queue) -> Generator[str]:
     """Start a scaler HTTP server on a random port, yield the base URL."""
     from taskito.scaler import _make_scaler_handler
 

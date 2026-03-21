@@ -3,13 +3,15 @@
 import threading
 import time
 
+from taskito import Queue
 
-def test_rate_limit_throttles(queue):
+
+def test_rate_limit_throttles(queue: Queue) -> None:
     """Rate-limited tasks should be throttled."""
-    timestamps = []
+    timestamps: list[float] = []
 
     @queue.task(rate_limit="2/s")
-    def rate_limited_task(n):
+    def rate_limited_task(n: int) -> int:
         timestamps.append(time.monotonic())
         return n
 

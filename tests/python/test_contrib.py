@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import types
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ class TestOpenTelemetryMiddleware:
         mock_span.end.assert_called_once()
 
 
-def _try_import_otel():  # type: ignore[no-untyped-def]
+def _try_import_otel() -> types.ModuleType | None:
     """Import otel module with mocked opentelemetry if not installed."""
     try:
         import sys
@@ -186,7 +188,7 @@ class TestSentryMiddleware:
         mock_sdk.capture_exception.assert_called_once_with(exc)
 
 
-def _try_import_sentry():  # type: ignore[no-untyped-def]
+def _try_import_sentry() -> types.ModuleType | None:
     try:
         import sys
 
@@ -205,7 +207,7 @@ def _try_import_sentry():  # type: ignore[no-untyped-def]
 # ── Prometheus ───────────────────────────────────────────────────────
 
 
-def _make_mock_metrics() -> dict:
+def _make_mock_metrics() -> dict[str, Any]:
     """Create a mock metrics dict matching the instance-based store format."""
     return {
         "jobs_total": MagicMock(),
@@ -292,7 +294,7 @@ class TestPrometheusMiddleware:
         metrics["jobs_total"].labels.assert_called_with(task="my_task", status="failed")
 
 
-def _try_import_prometheus():  # type: ignore[no-untyped-def]
+def _try_import_prometheus() -> types.ModuleType | None:
     try:
         import sys
 

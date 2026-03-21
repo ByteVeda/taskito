@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
 
@@ -28,7 +29,7 @@ def test_worker_resource_decorator_registers(queue: Queue) -> None:
     """@queue.worker_resource stores a ResourceDefinition."""
 
     @queue.worker_resource("cache")
-    def create_cache():
+    def create_cache() -> dict[str, int]:
         return {"hits": 0}
 
     assert "cache" in queue._resource_definitions
@@ -40,7 +41,7 @@ def test_worker_resource_decorator_registers(queue: Queue) -> None:
 def test_register_resource_programmatic(queue: Queue) -> None:
     """register_resource() stores a definition without the decorator."""
 
-    def factory():
+    def factory() -> str:
         return "hello"
 
     queue.register_resource(ResourceDefinition(name="greeter", factory=factory))
@@ -57,13 +58,13 @@ def test_circular_dependency_detected(queue: Queue) -> None:
     """Circular deps raise CircularDependencyError at registration time."""
 
     @queue.worker_resource("a", depends_on=["b"])
-    def make_a(b):
+    def make_a(b: Any) -> str:
         return "a"
 
     with pytest.raises(CircularDependencyError):
 
         @queue.worker_resource("b", depends_on=["a"])
-        def make_b(a):
+        def make_b(a: Any) -> str:
             return "b"
 
 
@@ -129,10 +130,10 @@ def test_teardown_reverse_order() -> None:
     """Resources are torn down in reverse initialization order."""
     teardown_log: list[str] = []
 
-    def td_config(inst):
+    def td_config(inst: Any) -> None:
         teardown_log.append("config")
 
-    def td_db(inst):
+    def td_db(inst: Any) -> None:
         teardown_log.append("db")
 
     defs = {
@@ -178,7 +179,7 @@ def test_from_test_overrides() -> None:
 def test_async_factory() -> None:
     """Async factories are awaited during initialize."""
 
-    async def make_client():
+    async def make_client() -> str:
         return "async_client"
 
     defs = {
@@ -199,13 +200,13 @@ def test_resource_injected_into_task(queue: Queue) -> None:
     """Task with inject=["db"] receives the resource as a kwarg."""
 
     @queue.worker_resource("db")
-    def create_db():
+    def create_db() -> str:
         return "live_db"
 
-    results_holder: list = []
+    results_holder: list[Any] = []
 
     @queue.task(inject=["db"])
-    def my_task(x: int, db):
+    def my_task(x: int, db: Any = None) -> None:
         results_holder.append((x, db))
 
     with queue.test_mode(resources={"db": "test_db"}) as results:
@@ -220,13 +221,13 @@ def test_explicit_kwarg_wins_over_inject(queue: Queue) -> None:
     """Caller-provided kwargs are not overridden by injection."""
 
     @queue.worker_resource("db")
-    def create_db():
+    def create_db() -> str:
         return "injected_db"
 
-    results_holder: list = []
+    results_holder: list[Any] = []
 
     @queue.task(inject=["db"])
-    def my_task(db):
+    def my_task(db: Any = None) -> None:
         results_holder.append(db)
 
     with queue.test_mode(resources={"db": "injected_db"}):
@@ -239,13 +240,13 @@ def test_test_mode_with_resources(queue: Queue) -> None:
     """test_mode(resources=...) injects mock resources."""
 
     @queue.worker_resource("cache")
-    def create_cache():
+    def create_cache() -> dict[str, str]:
         return {}
 
-    captured: list = []
+    captured: list[Any] = []
 
     @queue.task(inject=["cache"])
-    def use_cache(cache):
+    def use_cache(cache: Any = None) -> None:
         captured.append(cache)
 
     mock_cache = {"key": "value"}
@@ -280,14 +281,14 @@ def test_health_check_recreation() -> None:
 
     call_count = 0
 
-    def make_svc():
+    def make_svc() -> str:
         nonlocal call_count
         call_count += 1
         if call_count > 1:
             raise RuntimeError("factory broken")
         return f"svc_v{call_count}"
 
-    def check_health(inst):
+    def check_health(inst: Any) -> bool:
         # Always fail after initial creation
         return False
 
@@ -321,15 +322,15 @@ def test_health_check_recreation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_banner_shows_resources(queue: Queue, capsys) -> None:
+def test_banner_shows_resources(queue: Queue, capsys: pytest.CaptureFixture[str]) -> None:
     """Resources section appears in the startup banner."""
 
     @queue.worker_resource("db", depends_on=["config"])
-    def create_db(config):
+    def create_db(config: Any) -> str:
         return "db"
 
     @queue.worker_resource("config")
-    def create_config():
+    def create_config() -> dict[str, str]:
         return {}
 
     queue._print_banner(["default"])
@@ -349,7 +350,7 @@ def test_task_wrapper_inject_property(queue: Queue) -> None:
     """TaskWrapper exposes the inject list."""
 
     @queue.task(inject=["db", "cache"])
-    def my_task(db, cache):
+    def my_task(db: Any = None, cache: Any = None) -> None:
         pass
 
     assert my_task.inject == ["db", "cache"]
@@ -359,7 +360,7 @@ def test_task_wrapper_inject_default(queue: Queue) -> None:
     """TaskWrapper.inject defaults to empty list."""
 
     @queue.task()
-    def my_task():
+    def my_task() -> None:
         pass
 
     assert my_task.inject == []
