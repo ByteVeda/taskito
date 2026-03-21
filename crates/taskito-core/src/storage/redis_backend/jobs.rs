@@ -326,7 +326,12 @@ impl RedisStorage {
         }
     }
 
-    pub fn dequeue(&self, queue_name: &str, now: i64) -> Result<Option<Job>> {
+    pub fn dequeue(
+        &self,
+        queue_name: &str,
+        now: i64,
+        namespace: Option<&str>,
+    ) -> Result<Option<Job>> {
         let mut conn = self.conn()?;
         let queue_key = self.key(&["queue", queue_name, "pending"]);
 
@@ -353,6 +358,15 @@ impl RedisStorage {
 
             // Must be pending and scheduled_at <= now
             if job.status != JobStatus::Pending || job.scheduled_at > now {
+                continue;
+            }
+
+            // Filter by namespace: Some(ns) matches that namespace, None matches only jobs without a namespace
+            if let Some(ns) = namespace {
+                if job.namespace.as_deref() != Some(ns) {
+                    continue;
+                }
+            } else if job.namespace.is_some() {
                 continue;
             }
 
@@ -403,9 +417,14 @@ impl RedisStorage {
         Ok(None)
     }
 
-    pub fn dequeue_from(&self, queues: &[String], now: i64) -> Result<Option<Job>> {
+    pub fn dequeue_from(
+        &self,
+        queues: &[String],
+        now: i64,
+        namespace: Option<&str>,
+    ) -> Result<Option<Job>> {
         for queue_name in queues {
-            if let Some(job) = self.dequeue(queue_name, now)? {
+            if let Some(job) = self.dequeue(queue_name, now, namespace)? {
                 return Ok(Some(job));
             }
         }
@@ -632,6 +651,7 @@ impl RedisStorage {
         task_name: Option<&str>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> Result<Vec<Job>> {
         let mut conn = self.conn()?;
 
@@ -661,6 +681,11 @@ impl RedisStorage {
             let mut jobs = Vec::new();
             for id in &ids {
                 if let Some(job) = self.load_job(&mut conn, id)? {
+                    if let Some(ns) = namespace {
+                        if job.namespace.as_deref() != Some(ns) {
+                            continue;
+                        }
+                    }
                     jobs.push(job);
                 }
             }
@@ -684,6 +709,11 @@ impl RedisStorage {
                 }
                 if let Some(t) = task_name {
                     if job.task_name != t {
+                        continue;
+                    }
+                }
+                if let Some(ns) = namespace {
+                    if job.namespace.as_deref() != Some(ns) {
                         continue;
                     }
                 }
@@ -802,6 +832,7 @@ impl RedisStorage {
         created_before: Option<i64>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
     ) -> Result<Vec<Job>> {
         let mut conn = self.conn()?;
 
@@ -857,6 +888,11 @@ impl RedisStorage {
                 }
                 if let Some(before) = created_before {
                     if job.created_at > before {
+                        continue;
+                    }
+                }
+                if let Some(ns) = namespace {
+                    if job.namespace.as_deref() != Some(ns) {
                         continue;
                     }
                 }

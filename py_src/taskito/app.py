@@ -108,6 +108,7 @@ class Queue(
         scheduler_poll_interval_ms: int = 50,
         scheduler_reap_interval: int = 100,
         scheduler_cleanup_interval: int = 1200,
+        namespace: str | None = None,
     ):
         """Initialize a new task queue.
 
@@ -174,8 +175,10 @@ class Queue(
             scheduler_poll_interval_ms=scheduler_poll_interval_ms,
             scheduler_reap_interval=scheduler_reap_interval,
             scheduler_cleanup_interval=scheduler_cleanup_interval,
+            namespace=namespace,
         )
         self._backend = backend
+        self._namespace = namespace
         self._db_url = db_url
         self._schema = schema
         self._db_path = db_path

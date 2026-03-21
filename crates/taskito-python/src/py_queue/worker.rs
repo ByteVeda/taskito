@@ -212,7 +212,12 @@ impl PyQueue {
             result_ttl_ms: self.result_ttl_ms,
             ..SchedulerConfig::default()
         };
-        let mut scheduler = Scheduler::new(self.storage.clone(), queues, scheduler_config);
+        let mut scheduler = Scheduler::new(
+            self.storage.clone(),
+            queues,
+            scheduler_config,
+            self.namespace.clone(),
+        );
 
         // Build retry filters dict from the Queue's _task_retry_filters
         let retry_filters = py.eval_bound("{}", None, None)?;

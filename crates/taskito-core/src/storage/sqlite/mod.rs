@@ -430,6 +430,16 @@ impl SqliteStorage {
             "ALTER TABLE circuit_breakers ADD COLUMN half_open_failure_count INTEGER NOT NULL DEFAULT 0",
         );
 
+        // Migration: add namespace column to dead_letter and archived_jobs
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE dead_letter ADD COLUMN namespace TEXT",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE archived_jobs ADD COLUMN namespace TEXT",
+        );
+
         // ── Distributed Locks ─────────────────────────────
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS distributed_locks (

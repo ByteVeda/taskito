@@ -40,6 +40,7 @@ diesel::table! {
         max_retries -> Integer,
         timeout_ms -> BigInt,
         result_ttl_ms -> Nullable<BigInt>,
+        namespace -> Nullable<Text>,
     }
 }
 
@@ -186,6 +187,7 @@ diesel::table! {
         cancel_requested -> Integer,
         expires_at -> Nullable<BigInt>,
         result_ttl_ms -> Nullable<BigInt>,
+        namespace -> Nullable<Text>,
     }
 }
 

@@ -73,7 +73,7 @@ impl SqliteStorage {
                 cancel_requested: row.cancel_requested != 0,
                 expires_at: row.expires_at,
                 result_ttl_ms: row.result_ttl_ms,
-                namespace: None,
+                namespace: row.namespace,
             })
             .collect())
     }

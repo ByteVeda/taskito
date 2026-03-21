@@ -30,6 +30,7 @@ impl SqliteStorage {
                 max_retries: job.max_retries,
                 timeout_ms: job.timeout_ms,
                 result_ttl_ms: job.result_ttl_ms,
+                namespace: job.namespace.as_deref(),
             };
 
             diesel::insert_into(dead_letter::table)
@@ -100,7 +101,7 @@ impl SqliteStorage {
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: dead_row.result_ttl_ms,
-            namespace: None,
+            namespace: dead_row.namespace,
         };
 
         let job = new_job.into_job();

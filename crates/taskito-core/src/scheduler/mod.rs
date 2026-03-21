@@ -128,6 +128,7 @@ pub struct Scheduler {
     config: SchedulerConfig,
     shutdown: Arc<Notify>,
     paused_cache: Mutex<(HashSet<String>, Instant)>,
+    namespace: Option<String>,
 }
 
 /// Counters for tick-based scheduling of periodic maintenance tasks.
@@ -139,7 +140,12 @@ struct TickCounters {
 }
 
 impl Scheduler {
-    pub fn new(storage: StorageBackend, queues: Vec<String>, config: SchedulerConfig) -> Self {
+    pub fn new(
+        storage: StorageBackend,
+        queues: Vec<String>,
+        config: SchedulerConfig,
+        namespace: Option<String>,
+    ) -> Self {
         let rate_limiter = RateLimiter::new(storage.clone());
         let dlq = DeadLetterQueue::new(storage.clone());
         let circuit_breaker = CircuitBreaker::new(storage.clone());
@@ -155,6 +161,7 @@ impl Scheduler {
             config,
             shutdown: Arc::new(Notify::new()),
             paused_cache: Mutex::new((HashSet::new(), Instant::now())),
+            namespace,
         }
     }
 
@@ -249,6 +256,7 @@ mod tests {
             storage,
             vec!["default".to_string()],
             SchedulerConfig::default(),
+            None,
         )
     }
 
@@ -445,7 +453,7 @@ mod tests {
         // The second job should be back in pending with a future scheduled_at
         let jobs = scheduler
             .storage
-            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0)
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
             .unwrap();
         assert_eq!(jobs.len(), 1);
         assert!(jobs[0].scheduled_at > now_millis());
@@ -486,7 +494,7 @@ mod tests {
         // Job should be rescheduled
         let jobs = scheduler
             .storage
-            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0)
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
             .unwrap();
         assert_eq!(jobs.len(), 1);
         assert!(jobs[0].scheduled_at > now_millis());
@@ -562,6 +570,7 @@ mod tests {
                 Some("periodic_task"),
                 10,
                 0,
+                None,
             )
             .unwrap();
         assert_eq!(jobs.len(), 1);
@@ -575,13 +584,13 @@ mod tests {
             result_ttl_ms: Some(1), // 1ms TTL
             ..SchedulerConfig::default()
         };
-        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config);
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
 
         // Enqueue, dequeue, and complete a job
         let job = scheduler.storage.enqueue(make_job("cleanup_task")).unwrap();
         scheduler
             .storage
-            .dequeue("default", now_millis() + 1000)
+            .dequeue("default", now_millis() + 1000, None)
             .unwrap();
         scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
 
@@ -605,7 +614,7 @@ mod tests {
             cleanup_interval: 1,
             ..SchedulerConfig::default()
         };
-        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config);
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
 
         scheduler.storage.enqueue(make_job("tick_task")).unwrap();
 

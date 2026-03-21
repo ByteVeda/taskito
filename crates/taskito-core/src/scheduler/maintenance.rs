@@ -99,7 +99,7 @@ impl Scheduler {
                 depends_on: vec![],
                 expires_at: None,
                 result_ttl_ms: None,
-                namespace: None,
+                namespace: self.namespace.clone(),
             };
 
             if let Err(e) = self.storage.enqueue_unique(new_job) {

@@ -36,6 +36,7 @@ pub struct PyQueue {
     pub(crate) scheduler_poll_interval_ms: u64,
     pub(crate) scheduler_reap_interval: u32,
     pub(crate) scheduler_cleanup_interval: u32,
+    pub(crate) namespace: Option<String>,
 }
 
 #[pymethods]
@@ -46,7 +47,7 @@ pub struct PyQueue {
 )]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200, namespace=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         db_path: &str,
@@ -62,6 +63,7 @@ impl PyQueue {
         scheduler_poll_interval_ms: u64,
         scheduler_reap_interval: u32,
         scheduler_cleanup_interval: u32,
+        namespace: Option<String>,
     ) -> PyResult<Self> {
         let storage = match backend {
             "sqlite" => {
@@ -127,6 +129,7 @@ impl PyQueue {
             scheduler_poll_interval_ms,
             scheduler_reap_interval,
             scheduler_cleanup_interval,
+            namespace,
         })
     }
 
@@ -219,7 +222,7 @@ impl PyQueue {
             depends_on: depends_on.unwrap_or_default(),
             expires_at,
             result_ttl_ms,
-            namespace: None,
+            namespace: self.namespace.clone(),
         };
 
         let job = if unique_key.is_some() {
@@ -318,7 +321,7 @@ impl PyQueue {
                 depends_on: vec![],
                 expires_at,
                 result_ttl_ms,
-                namespace: None,
+                namespace: self.namespace.clone(),
             });
         }
 

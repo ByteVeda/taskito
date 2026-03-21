@@ -21,6 +21,8 @@ struct DeadJobEntry {
     pub max_retries: i32,
     pub timeout_ms: i64,
     pub result_ttl_ms: Option<i64>,
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
 impl From<DeadJobEntry> for DeadJob {
@@ -39,6 +41,7 @@ impl From<DeadJobEntry> for DeadJob {
             max_retries: e.max_retries,
             timeout_ms: e.timeout_ms,
             result_ttl_ms: e.result_ttl_ms,
+            namespace: e.namespace,
         }
     }
 }
@@ -63,6 +66,7 @@ impl RedisStorage {
             max_retries: job.max_retries,
             timeout_ms: job.timeout_ms,
             result_ttl_ms: job.result_ttl_ms,
+            namespace: job.namespace.clone(),
         };
 
         let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
@@ -145,7 +149,7 @@ impl RedisStorage {
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: entry.result_ttl_ms,
-            namespace: None,
+            namespace: entry.namespace,
         };
 
         let job = self.enqueue(new_job)?;
