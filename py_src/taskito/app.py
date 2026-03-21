@@ -342,10 +342,14 @@ class Queue(
             cb_threshold = None
             cb_window = None
             cb_cooldown = None
+            cb_half_open_probes = None
+            cb_half_open_success_rate = None
             if circuit_breaker:
                 cb_threshold = circuit_breaker.get("threshold", 5)
                 cb_window = circuit_breaker.get("window", 60)
                 cb_cooldown = circuit_breaker.get("cooldown", 300)
+                cb_half_open_probes = circuit_breaker.get("half_open_probes")
+                cb_half_open_success_rate = circuit_breaker.get("half_open_success_rate")
 
             # Store config for worker startup
             config = PyTaskConfig(
@@ -362,6 +366,8 @@ class Queue(
                 retry_delays=retry_delays,
                 max_retry_delay=max_retry_delay,
                 max_concurrent=max_concurrent,
+                circuit_breaker_half_open_probes=cb_half_open_probes,
+                circuit_breaker_half_open_success_rate=cb_half_open_success_rate,
             )
             self._task_configs.append(config)
 

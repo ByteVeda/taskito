@@ -22,6 +22,8 @@ class PyTaskConfig:
     retry_delays: list[float] | None
     max_retry_delay: int | None
     max_concurrent: int | None
+    circuit_breaker_half_open_probes: int | None
+    circuit_breaker_half_open_success_rate: float | None
 
     def __init__(
         self,
@@ -38,6 +40,8 @@ class PyTaskConfig:
         retry_delays: list[float] | None = None,
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
+        circuit_breaker_half_open_probes: int | None = None,
+        circuit_breaker_half_open_success_rate: float | None = None,
     ) -> None: ...
 
 class PyJob:

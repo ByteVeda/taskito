@@ -269,6 +269,10 @@ impl PyQueue {
                         threshold,
                         window_ms: tc.circuit_breaker_window.unwrap_or(60) * 1000,
                         cooldown_ms: tc.circuit_breaker_cooldown.unwrap_or(300) * 1000,
+                        half_open_max_probes: tc.circuit_breaker_half_open_probes.unwrap_or(5),
+                        half_open_success_rate: tc
+                            .circuit_breaker_half_open_success_rate
+                            .unwrap_or(0.8),
                     });
             scheduler.register_task(
                 tc.name.clone(),

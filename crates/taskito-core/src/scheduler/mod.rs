@@ -458,6 +458,8 @@ mod tests {
             threshold: 1,
             window_ms: 60_000,
             cooldown_ms: 300_000,
+            half_open_max_probes: 5,
+            half_open_success_rate: 0.8,
         };
         scheduler.register_task(
             "cb_task".to_string(),

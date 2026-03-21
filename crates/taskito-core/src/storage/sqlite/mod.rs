@@ -321,7 +321,12 @@ impl SqliteStorage {
                 half_open_at   INTEGER,
                 threshold      INTEGER NOT NULL DEFAULT 5,
                 window_ms      INTEGER NOT NULL DEFAULT 60000,
-                cooldown_ms    INTEGER NOT NULL DEFAULT 300000
+                cooldown_ms    INTEGER NOT NULL DEFAULT 300000,
+                half_open_max_probes   INTEGER NOT NULL DEFAULT 5,
+                half_open_success_rate REAL NOT NULL DEFAULT 0.8,
+                half_open_probe_count  INTEGER NOT NULL DEFAULT 0,
+                half_open_success_count INTEGER NOT NULL DEFAULT 0,
+                half_open_failure_count INTEGER NOT NULL DEFAULT 0
             )",
         )
         .execute(&mut conn)?;
@@ -402,6 +407,28 @@ impl SqliteStorage {
 
         // Migration: add namespace column to jobs
         migration_alter(&mut conn, "ALTER TABLE jobs ADD COLUMN namespace TEXT");
+
+        // Migration: add sample-based half-open probes to circuit breakers
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE circuit_breakers ADD COLUMN half_open_max_probes INTEGER NOT NULL DEFAULT 5",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE circuit_breakers ADD COLUMN half_open_success_rate REAL NOT NULL DEFAULT 0.8",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE circuit_breakers ADD COLUMN half_open_probe_count INTEGER NOT NULL DEFAULT 0",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE circuit_breakers ADD COLUMN half_open_success_count INTEGER NOT NULL DEFAULT 0",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE circuit_breakers ADD COLUMN half_open_failure_count INTEGER NOT NULL DEFAULT 0",
+        );
 
         // ── Distributed Locks ─────────────────────────────
         diesel::sql_query(
