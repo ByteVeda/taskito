@@ -183,6 +183,8 @@ impl PyQueue {
         threads=1,
         async_concurrency=100,
         queue_configs=None,
+        pool=None,
+        app_path=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn run_worker(
@@ -198,6 +200,8 @@ impl PyQueue {
         threads: i32,
         #[allow(unused_variables)] async_concurrency: i32,
         queue_configs: Option<String>,
+        pool: Option<String>,
+        app_path: Option<String>,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -361,6 +365,8 @@ impl PyQueue {
 
         // Create multi-threaded tokio runtime for scheduler + worker pool
         let num_workers = self.num_workers;
+        let use_prefork = pool.as_deref() == Some("prefork");
+        let prefork_app_path = app_path;
         // Move result_tx into the runtime — don't keep a copy in the main thread
         // so result_rx disconnects when all workers are done.
         let runtime_handle = std::thread::spawn(move || {
@@ -384,21 +390,27 @@ impl PyQueue {
                 let worker_task = tokio::spawn(async move {
                     use taskito_core::worker::WorkerDispatcher;
 
-                    #[cfg(feature = "native-async")]
-                    {
-                        let pool = taskito_async::NativeAsyncPool::new(
-                            num_workers,
-                            registry_arc,
-                            filters_arc,
-                            async_executor,
-                        );
+                    if use_prefork {
+                        let app = prefork_app_path.unwrap_or_default();
+                        let pool = crate::prefork::PreforkPool::new(num_workers, app);
                         pool.run(job_rx, result_tx).await;
-                    }
+                    } else {
+                        #[cfg(feature = "native-async")]
+                        {
+                            let pool = taskito_async::NativeAsyncPool::new(
+                                num_workers,
+                                registry_arc,
+                                filters_arc,
+                                async_executor,
+                            );
+                            pool.run(job_rx, result_tx).await;
+                        }
 
-                    #[cfg(not(feature = "native-async"))]
-                    {
-                        let pool = AsyncWorkerPool::new(num_workers, registry_arc, filters_arc);
-                        pool.run(job_rx, result_tx).await;
+                        #[cfg(not(feature = "native-async"))]
+                        {
+                            let pool = AsyncWorkerPool::new(num_workers, registry_arc, filters_arc);
+                            pool.run(job_rx, result_tx).await;
+                        }
                     }
                 });
 

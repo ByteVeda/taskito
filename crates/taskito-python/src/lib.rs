@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 
 #[cfg(not(feature = "native-async"))]
 mod async_worker;
+mod prefork;
 mod py_config;
 mod py_job;
 mod py_queue;
