@@ -27,6 +27,7 @@ Queue(
     scheduler_poll_interval_ms: int = 50,
     scheduler_reap_interval: int = 100,
     scheduler_cleanup_interval: int = 1200,
+    namespace: str | None = None,
 )
 ```
 
@@ -51,6 +52,7 @@ Queue(
 | `scheduler_poll_interval_ms` | `int` | `50` | Milliseconds between scheduler poll cycles. Lower values improve scheduling precision at the cost of CPU. |
 | `scheduler_reap_interval` | `int` | `100` | Reap stale/timed-out jobs every N poll cycles. |
 | `scheduler_cleanup_interval` | `int` | `1200` | Clean up old completed jobs every N poll cycles. |
+| `namespace` | `str \| None` | `None` | Namespace for multi-tenant isolation. Jobs enqueued on this queue carry this namespace; workers only dequeue matching jobs. `None` means no namespace (default). |
 
 ## Task Registration
 
@@ -206,10 +208,11 @@ queue.list_jobs(
     task_name: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    namespace: str | None = _UNSET,
 ) -> list[JobResult]
 ```
 
-List jobs with optional filters. Returns newest first.
+List jobs with optional filters. Returns newest first. Defaults to the queue's namespace — pass `namespace=None` to see all namespaces.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -232,10 +235,11 @@ queue.list_jobs_filtered(
     created_before: float | None = None,
     limit: int = 50,
     offset: int = 0,
+    namespace: str | None = _UNSET,
 ) -> list[JobResult]
 ```
 
-Extended filtering with metadata and error pattern matching and time range constraints.
+Extended filtering with metadata and error pattern matching and time range constraints. Defaults to the queue's namespace — pass `namespace=None` to see all namespaces.
 
 ### `queue.cancel_job()`
 
