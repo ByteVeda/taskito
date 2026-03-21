@@ -119,6 +119,7 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Worker operations ───────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     fn register_worker(
         &self,
         worker_id: &str,
@@ -127,11 +128,16 @@ pub trait Storage: Send + Sync + Clone {
         resources: Option<&str>,
         resource_health: Option<&str>,
         threads: i32,
+        hostname: Option<&str>,
+        pid: Option<i32>,
+        pool_type: Option<&str>,
     ) -> Result<()>;
     fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()>;
+    fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()>;
     fn list_workers(&self) -> Result<Vec<WorkerRow>>;
-    fn reap_dead_workers(&self) -> Result<u64>;
+    fn reap_dead_workers(&self) -> Result<Vec<String>>;
     fn unregister_worker(&self, worker_id: &str) -> Result<()>;
+    fn list_claims_by_worker(&self, worker_id: &str) -> Result<Vec<String>>;
 
     // ── Queue pause/resume ───────────────────────────────────────
 

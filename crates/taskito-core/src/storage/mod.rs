@@ -352,8 +352,11 @@ macro_rules! impl_storage {
                 resources: Option<&str>,
                 resource_health: Option<&str>,
                 threads: i32,
+                hostname: Option<&str>,
+                pid: Option<i32>,
+                pool_type: Option<&str>,
             ) -> $crate::error::Result<()> {
-                self.register_worker(worker_id, queues, tags, resources, resource_health, threads)
+                self.register_worker(worker_id, queues, tags, resources, resource_health, threads, hostname, pid, pool_type)
             }
             fn heartbeat(
                 &self,
@@ -362,16 +365,26 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<()> {
                 self.heartbeat(worker_id, resource_health)
             }
+            fn update_worker_status(
+                &self,
+                worker_id: &str,
+                status: &str,
+            ) -> $crate::error::Result<()> {
+                self.update_worker_status(worker_id, status)
+            }
             fn list_workers(
                 &self,
             ) -> $crate::error::Result<Vec<$crate::storage::models::WorkerRow>> {
                 self.list_workers()
             }
-            fn reap_dead_workers(&self) -> $crate::error::Result<u64> {
+            fn reap_dead_workers(&self) -> $crate::error::Result<Vec<String>> {
                 self.reap_dead_workers()
             }
             fn unregister_worker(&self, worker_id: &str) -> $crate::error::Result<()> {
                 self.unregister_worker(worker_id)
+            }
+            fn list_claims_by_worker(&self, worker_id: &str) -> $crate::error::Result<Vec<String>> {
+                self.list_claims_by_worker(worker_id)
             }
             fn pause_queue(&self, queue_name: &str) -> $crate::error::Result<()> {
                 self.pause_queue(queue_name)
@@ -739,6 +752,9 @@ impl Storage for StorageBackend {
         resources: Option<&str>,
         resource_health: Option<&str>,
         threads: i32,
+        hostname: Option<&str>,
+        pid: Option<i32>,
+        pool_type: Option<&str>,
     ) -> Result<()> {
         delegate!(
             self,
@@ -748,20 +764,29 @@ impl Storage for StorageBackend {
             tags,
             resources,
             resource_health,
-            threads
+            threads,
+            hostname,
+            pid,
+            pool_type
         )
     }
     fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()> {
         delegate!(self, heartbeat, worker_id, resource_health)
     }
+    fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()> {
+        delegate!(self, update_worker_status, worker_id, status)
+    }
     fn list_workers(&self) -> Result<Vec<models::WorkerRow>> {
         delegate!(self, list_workers)
     }
-    fn reap_dead_workers(&self) -> Result<u64> {
+    fn reap_dead_workers(&self) -> Result<Vec<String>> {
         delegate!(self, reap_dead_workers)
     }
     fn unregister_worker(&self, worker_id: &str) -> Result<()> {
         delegate!(self, unregister_worker, worker_id)
+    }
+    fn list_claims_by_worker(&self, worker_id: &str) -> Result<Vec<String>> {
+        delegate!(self, list_claims_by_worker, worker_id)
     }
     fn pause_queue(&self, queue_name: &str) -> Result<()> {
         delegate!(self, pause_queue, queue_name)

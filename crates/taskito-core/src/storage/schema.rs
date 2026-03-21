@@ -153,6 +153,10 @@ diesel::table! {
         resources -> Nullable<Text>,
         resource_health -> Nullable<Text>,
         threads -> Integer,
+        started_at -> Nullable<BigInt>,
+        hostname -> Nullable<Text>,
+        pid -> Nullable<Integer>,
+        pool_type -> Nullable<Text>,
     }
 }
 

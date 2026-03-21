@@ -307,6 +307,10 @@ pub struct WorkerRow {
     pub resources: Option<String>,
     pub resource_health: Option<String>,
     pub threads: i32,
+    pub started_at: Option<i64>,
+    pub hostname: Option<String>,
+    pub pid: Option<i32>,
+    pub pool_type: Option<String>,
 }
 
 #[derive(Insertable, AsChangeset, Debug)]
@@ -320,6 +324,10 @@ pub struct NewWorkerRow<'a> {
     pub resources: Option<&'a str>,
     pub resource_health: Option<&'a str>,
     pub threads: i32,
+    pub started_at: Option<i64>,
+    pub hostname: Option<&'a str>,
+    pub pid: Option<i32>,
+    pub pool_type: Option<&'a str>,
 }
 
 // ── Queue State ─────────────────────────────────────────────────

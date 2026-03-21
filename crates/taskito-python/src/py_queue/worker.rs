@@ -333,6 +333,8 @@ impl PyQueue {
 
         // Generate or use the provided worker ID and register
         let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let hostname = gethostname::gethostname().to_string_lossy().to_string();
+        let pid = std::process::id() as i32;
         let _ = self.storage.register_worker(
             &worker_id,
             &queues_str,
@@ -340,6 +342,9 @@ impl PyQueue {
             resources.as_deref(),
             None,
             threads,
+            Some(&hostname),
+            Some(pid),
+            pool.as_deref(),
         );
 
         // Create the async executor for native async tasks (if feature enabled)
@@ -510,12 +515,24 @@ impl PyQueue {
     }
 
     /// Update the heartbeat for a running worker. Called from Python every 5s.
+    /// Returns a list of worker IDs that were reaped as dead.
     #[pyo3(signature = (worker_id, resource_health=None))]
-    pub fn worker_heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> PyResult<()> {
+    pub fn worker_heartbeat(
+        &self,
+        worker_id: &str,
+        resource_health: Option<&str>,
+    ) -> PyResult<Vec<String>> {
         self.storage
             .heartbeat(worker_id, resource_health)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-        let _ = self.storage.reap_dead_workers();
-        Ok(())
+        let reaped = self.storage.reap_dead_workers().unwrap_or_default();
+        Ok(reaped)
+    }
+
+    /// Update the status of a worker.
+    pub fn set_worker_status(&self, worker_id: &str, status: &str) -> PyResult<()> {
+        self.storage
+            .update_worker_status(worker_id, status)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 }

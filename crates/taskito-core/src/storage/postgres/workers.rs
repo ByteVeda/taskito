@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 
 use super::super::models::*;
-use super::super::schema::workers;
+use super::super::schema::{execution_claims, workers};
 use super::PostgresStorage;
 use crate::error::Result;
 use crate::job::now_millis;
@@ -11,6 +11,7 @@ const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
 impl PostgresStorage {
     /// Register a new worker or update an existing one.
+    #[allow(clippy::too_many_arguments)]
     pub fn register_worker(
         &self,
         worker_id: &str,
@@ -19,6 +20,9 @@ impl PostgresStorage {
         resources: Option<&str>,
         resource_health: Option<&str>,
         threads: i32,
+        hostname: Option<&str>,
+        pid: Option<i32>,
+        pool_type: Option<&str>,
     ) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
@@ -32,6 +36,10 @@ impl PostgresStorage {
             resources,
             resource_health,
             threads,
+            started_at: Some(now),
+            hostname,
+            pid,
+            pool_type,
         };
 
         diesel::insert_into(workers::table)
@@ -60,6 +68,18 @@ impl PostgresStorage {
         Ok(())
     }
 
+    /// Update the status of a worker.
+    pub fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()> {
+        let mut conn = self.conn()?;
+
+        diesel::update(workers::table)
+            .filter(workers::worker_id.eq(worker_id))
+            .set(workers::status.eq(status))
+            .execute(&mut conn)?;
+
+        Ok(())
+    }
+
     /// List all workers with their heartbeat status.
     pub fn list_workers(&self) -> Result<Vec<WorkerRow>> {
         let mut conn = self.conn()?;
@@ -72,14 +92,22 @@ impl PostgresStorage {
     }
 
     /// Remove workers that haven't sent a heartbeat within the threshold.
-    pub fn reap_dead_workers(&self) -> Result<u64> {
+    /// Returns the IDs of the reaped workers.
+    pub fn reap_dead_workers(&self) -> Result<Vec<String>> {
         let mut conn = self.conn()?;
         let cutoff = now_millis().saturating_sub(DEAD_WORKER_THRESHOLD_MS);
 
-        let affected = diesel::delete(workers::table.filter(workers::last_heartbeat.lt(cutoff)))
-            .execute(&mut conn)?;
+        let dead_ids: Vec<String> = workers::table
+            .filter(workers::last_heartbeat.lt(cutoff))
+            .select(workers::worker_id)
+            .load(&mut conn)?;
 
-        Ok(affected as u64)
+        if !dead_ids.is_empty() {
+            diesel::delete(workers::table.filter(workers::worker_id.eq_any(&dead_ids)))
+                .execute(&mut conn)?;
+        }
+
+        Ok(dead_ids)
     }
 
     /// Unregister a worker (called on shutdown).
@@ -90,5 +118,17 @@ impl PostgresStorage {
             .execute(&mut conn)?;
 
         Ok(())
+    }
+
+    /// List all job IDs currently claimed by a worker.
+    pub fn list_claims_by_worker(&self, worker_id: &str) -> Result<Vec<String>> {
+        let mut conn = self.conn()?;
+
+        let job_ids: Vec<String> = execution_claims::table
+            .filter(execution_claims::worker_id.eq(worker_id))
+            .select(execution_claims::job_id)
+            .load(&mut conn)?;
+
+        Ok(job_ids)
     }
 }

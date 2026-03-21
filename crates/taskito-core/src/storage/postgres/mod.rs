@@ -359,6 +359,24 @@ impl PostgresStorage {
             "ALTER TABLE workers ADD COLUMN IF NOT EXISTS threads INTEGER NOT NULL DEFAULT 0",
         );
 
+        // Migration: add worker discovery metadata columns
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS started_at BIGINT",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS hostname TEXT",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS pid INTEGER",
+        );
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN IF NOT EXISTS pool_type TEXT",
+        );
+
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS queue_state (
                 queue_name TEXT PRIMARY KEY,
