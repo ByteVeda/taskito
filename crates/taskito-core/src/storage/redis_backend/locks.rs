@@ -127,19 +127,31 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let pattern = self.key(&["lock", "*"]);
 
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(&pattern)
-            .query(&mut conn)
-            .map_err(map_err)?;
-
         let mut count = 0u64;
-        for key in keys {
-            let expires_at: Option<i64> = conn.hget(&key, "expires_at").map_err(map_err)?;
-            if let Some(exp) = expires_at {
-                if exp <= now {
-                    conn.del::<_, ()>(&key).map_err(map_err)?;
-                    count += 1;
+        let mut cursor: u64 = 0;
+        loop {
+            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query(&mut conn)
+                .map_err(map_err)?;
+
+            for key in keys {
+                let expires_at: Option<i64> = conn.hget(&key, "expires_at").map_err(map_err)?;
+                if let Some(exp) = expires_at {
+                    if exp <= now {
+                        conn.del::<_, ()>(&key).map_err(map_err)?;
+                        count += 1;
+                    }
                 }
+            }
+
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
             }
         }
 
@@ -151,11 +163,14 @@ impl RedisStorage {
         let now = now_millis();
         let ckey = self.key(&["exec_claim", job_id]);
 
-        // NX: set only if not exists
+        // NX: set only if not exists. PX: auto-expire after 24 hours so
+        // orphaned claims from dead workers don't block re-execution forever.
         let result: bool = redis::cmd("SET")
             .arg(&ckey)
             .arg(format!("{worker_id}:{now}"))
             .arg("NX")
+            .arg("PX")
+            .arg(86_400_000i64) // 24 hours in milliseconds
             .query(&mut conn)
             .map_err(map_err)?;
 

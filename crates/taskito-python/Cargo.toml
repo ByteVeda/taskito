@@ -23,3 +23,4 @@ uuid = { workspace = true }
 async-trait = { workspace = true }
 taskito-async = { path = "../taskito-async", optional = true }
 serde_json = { workspace = true }
+log = { workspace = true }

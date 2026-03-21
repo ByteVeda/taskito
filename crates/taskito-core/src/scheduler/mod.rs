@@ -79,6 +79,7 @@ pub enum ResultOutcome {
     Retry {
         job_id: String,
         task_name: String,
+        queue: String,
         error: String,
         retry_count: i32,
         timed_out: bool,
@@ -87,11 +88,16 @@ pub enum ResultOutcome {
     DeadLettered {
         job_id: String,
         task_name: String,
+        queue: String,
         error: String,
         timed_out: bool,
     },
     /// Task was cancelled during execution.
-    Cancelled { job_id: String, task_name: String },
+    Cancelled {
+        job_id: String,
+        task_name: String,
+        queue: String,
+    },
 }
 
 /// Per-task configuration for retry, rate limiting, and circuit breaker.

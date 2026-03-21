@@ -20,6 +20,7 @@ from taskito.exceptions import (
     SerializationError,
     SoftTimeoutError,
     TaskCancelledError,
+    TaskFailedError,
     TaskitoError,
     TaskTimeoutError,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "Signature",
     "SoftTimeoutError",
     "TaskCancelledError",
+    "TaskFailedError",
     "TaskMiddleware",
     "TaskTimeoutError",
     "TaskWrapper",

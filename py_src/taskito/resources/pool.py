@@ -6,8 +6,9 @@ import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from taskito.async_support.helpers import run_maybe_async
 from taskito.exceptions import ResourceUnavailableError

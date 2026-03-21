@@ -39,7 +39,7 @@ def test_sync_task_not_async(tmp_path):
         pass
 
     assert my_sync_task._taskito_is_async is False
-    assert not hasattr(my_sync_task, "_taskito_async_fn")
+    assert my_sync_task._taskito_async_fn is None
 
 
 # ── Async context (contextvars) ──────────────────────────────────

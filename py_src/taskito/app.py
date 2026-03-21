@@ -12,9 +12,9 @@ import signal
 import threading
 import urllib.parse
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from taskito.testing import TestMode
@@ -382,9 +382,9 @@ class Queue(
 
             # Mark async status for native async dispatch
             is_async = asyncio.iscoroutinefunction(fn)
-            wrapper._taskito_is_async = is_async  # type: ignore[attr-defined]
+            wrapper._taskito_is_async = is_async
             if is_async:
-                wrapper._taskito_async_fn = fn  # type: ignore[attr-defined]
+                wrapper._taskito_async_fn = fn
 
             return wrapper
 
@@ -918,10 +918,15 @@ class Queue(
         kw_list = kwargs_list or [{}] * count
         task_serializer = self._get_serializer(task_name)
         if self._interceptor is not None:
-            pairs = [self._interceptor.intercept(a, kw) for a, kw in zip(args_list, kw_list)]
+            pairs = [
+                self._interceptor.intercept(a, kw)
+                for a, kw in zip(args_list, kw_list, strict=True)
+            ]
             payloads = [task_serializer.dumps((a, kw)) for a, kw in pairs]
         else:
-            payloads = [task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list)]
+            payloads = [
+                task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list, strict=True)
+            ]
         task_names = [task_name] * count
 
         queues_list = [queue or "default"] * count if queue else None

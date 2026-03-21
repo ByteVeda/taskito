@@ -17,6 +17,10 @@ class TaskCancelledError(TaskitoError):
     """Raised when a running task detects it has been cancelled."""
 
 
+class TaskFailedError(TaskitoError):
+    """Raised when a task has failed."""
+
+
 class MaxRetriesExceededError(TaskitoError):
     """Raised when a task has exhausted all retry attempts."""
 

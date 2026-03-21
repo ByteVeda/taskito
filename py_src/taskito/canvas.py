@@ -119,7 +119,7 @@ class group:
                 )
                 wave_jobs.append(job)
             # Wait for this wave to complete before starting next
-            for wj, sig in zip(wave_jobs, wave):
+            for wj, sig in zip(wave_jobs, wave, strict=True):
                 wj.result(timeout=sig.options.get("timeout", 300))
             all_jobs.extend(wave_jobs)
 

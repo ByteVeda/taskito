@@ -23,8 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator, Sequence
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import AsyncGenerator, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 

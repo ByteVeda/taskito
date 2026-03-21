@@ -84,9 +84,10 @@ impl WorkerDispatcher for NativeAsyncPool {
                             &job.queue,
                         ),
                     ) {
-                        eprintln!(
+                        log::error!(
                             "[taskito] Failed to submit async task {}[{}]: {e}",
-                            job.task_name, job.id
+                            job.task_name,
+                            job.id
                         );
                         let _ = result_tx.send(JobResult::Failure {
                             job_id: job.id.clone(),
