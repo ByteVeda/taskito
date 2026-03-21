@@ -519,10 +519,19 @@ async with queue.alock("my-resource"):
 queue.run_worker(
     queues: Sequence[str] | None = None,
     tags: list[str] | None = None,
+    pool: str = "thread",
+    app: str | None = None,
 ) -> None
 ```
 
-Start the worker loop. **Blocks** until interrupted. Pass `queues` to limit which queues are processed; pass `tags` to specialize this worker.
+Start the worker loop. **Blocks** until interrupted.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `queues` | `Sequence[str] \| None` | `None` | Queue names to consume from. `None` = all. |
+| `tags` | `list[str] \| None` | `None` | Tags for worker specialization / routing. |
+| `pool` | `str` | `"thread"` | Worker pool type: `"thread"` or `"prefork"`. |
+| `app` | `str \| None` | `None` | Import path to Queue (e.g. `"myapp:queue"`). Required when `pool="prefork"`. |
 
 ### `queue.workers()`
 

@@ -2,6 +2,21 @@
 
 All notable changes to taskito are documented here.
 
+## 0.9.0
+
+### Features
+
+- **Prefork worker pool** -- `queue.run_worker(pool="prefork", app="myapp:queue")` spawns child Python processes with independent GILs for true CPU parallelism; each child imports the app module, builds its own task registry, and executes tasks in a read-execute-write loop over JSON Lines IPC; the parent Rust scheduler dequeues jobs and dispatches to the least-loaded child via stdin pipes; reader threads parse child stdout and feed results back to the scheduler; graceful shutdown sends shutdown messages to children and waits with timeout before killing
+
+### Internal
+
+- New Rust module `crates/taskito-python/src/prefork/` with 4 files: `mod.rs` (PreforkPool + WorkerDispatcher impl), `child.rs` (ChildWriter/ChildReader/ChildProcess split handles), `protocol.rs` (ParentMessage/ChildMessage JSON serialization), `dispatch.rs` (least-loaded dispatcher)
+- New Python package `py_src/taskito/prefork/` with `child.py` (child process main loop), `__init__.py` (PreforkConfig), `__main__.py` (entry point)
+- `base64` crate added to `taskito-python` dependencies for payload encoding over JSON
+- `run_worker()` gains `pool` and `app_path` parameters in both Rust (`py_queue/worker.rs`) and Python (`app.py`)
+
+---
+
 ## 0.8.0
 
 ### Features

@@ -57,6 +57,61 @@ queue = Queue(db_path="myapp.db", workers=0)  # Auto-detect (default)
 queue = Queue(db_path="myapp.db", workers=8)  # Explicit count
 ```
 
+## Prefork Pool
+
+The default worker pool uses OS threads, which share a single Python GIL. For CPU-bound tasks, use the prefork pool — it spawns separate child processes, each with its own GIL:
+
+```python
+queue.run_worker(pool="prefork", app="myapp:queue", workers=4)
+```
+
+```bash
+taskito worker --app myapp:queue --pool prefork
+```
+
+Each child is a full Python interpreter that imports your app, builds the task registry, and executes tasks independently.
+
+### When to use prefork
+
+| Workload | Pool | Why |
+|----------|------|-----|
+| I/O-bound (HTTP, DB) | `thread` (default) | Threads release the GIL during I/O |
+| CPU-bound (data processing) | `prefork` | Each process has its own GIL |
+| Mixed | `prefork` | CPU tasks benefit; I/O tasks work fine too |
+
+### How it works
+
+```mermaid
+graph LR
+    S["Scheduler"] -->|"Job JSON"| P["PreforkPool"]
+    P -->|stdin| C1["Child 1<br/>(own GIL)"]
+    P -->|stdin| C2["Child 2<br/>(own GIL)"]
+    P -->|stdin| CN["Child N<br/>(own GIL)"]
+
+    C1 -->|stdout| R1["Reader 1"]
+    C2 -->|stdout| R2["Reader 2"]
+    CN -->|stdout| RN["Reader N"]
+
+    R1 -->|JobResult| RCH["Result Channel"]
+    R2 -->|JobResult| RCH
+    RN -->|JobResult| RCH
+
+    RCH --> ML["Result Handler"]
+```
+
+Jobs are serialized as JSON Lines over stdin pipes. Each child reads a job, executes the task wrapper (with middleware, resources, proxies), and writes the result as JSON to stdout. The parent's reader threads parse results and feed them to the scheduler.
+
+### Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `pool` | `str` | `"thread"` | Worker pool type: `"thread"` or `"prefork"` |
+| `app` | `str` | — | Import path to Queue (required for prefork) |
+| `workers` | `int` | CPU count | Number of child processes |
+
+!!! note
+    The `app` parameter must be an importable path like `"myapp.tasks:queue"`. Each child process imports this path to build its task registry. Tasks defined inside functions or closures cannot be imported by children.
+
 ## Worker Specialization
 
 Tag workers to route jobs to specific machines or capabilities:
