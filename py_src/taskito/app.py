@@ -1104,6 +1104,8 @@ class Queue(
         self,
         queues: Sequence[str] | None = None,
         tags: list[str] | None = None,
+        pool: str = "thread",
+        app: str | None = None,
     ) -> None:
         """Start the worker loop. Blocks until interrupted.
 
@@ -1111,7 +1113,14 @@ class Queue(
             queues: List of queue names to consume from. ``None`` consumes
                 from all queues.
             tags: Optional tags for worker specialization / routing.
+            pool: Worker pool type — ``"thread"`` (default) or ``"prefork"``.
+                Prefork spawns child processes with independent GILs for
+                true parallelism on CPU-bound tasks.
+            app: Import path to the Queue instance (e.g. ``"myapp:queue"``).
+                Required when ``pool="prefork"``.
         """
+        if pool == "prefork" and not app:
+            raise ValueError("app= is required when pool='prefork' (e.g. app='myapp:queue')")
         queue_list = list(queues) if queues else None
 
         # Make queue accessible from job context (for current_job.update_progress())
@@ -1224,6 +1233,8 @@ class Queue(
                 threads=self._workers,
                 async_concurrency=self._async_concurrency,
                 queue_configs=queue_configs_json,
+                pool=pool if pool != "thread" else None,
+                app_path=app,
             )
         except KeyboardInterrupt:
             logger.info("Cold shutdown (terminating immediately)")
