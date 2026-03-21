@@ -35,17 +35,20 @@ jobs:
       - name: Cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install Python dev deps
-        run: pip install -e ".[dev]"
+        run: uv sync --extra dev
 
       - name: Ruff check
-        run: ruff check py_src/ tests/
+        run: uv run ruff check py_src/ tests/
 
       - name: Ruff format check
-        run: ruff format --check py_src/ tests/
+        run: uv run ruff format --check py_src/ tests/
 
       - name: Mypy
-        run: mypy py_src/taskito/
+        run: uv run mypy py_src/taskito/ tests/python/ --no-incremental
 
   rust-test:
     runs-on: ubuntu-latest
@@ -69,6 +72,15 @@ jobs:
         run: cargo test --workspace
         env:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+
+      - name: Check Rust (postgres features)
+        run: cargo check --workspace --features postgres
+
+      - name: Check Rust (redis features)
+        run: cargo check --workspace --features redis
+
+      - name: Check Rust (native-async features)
+        run: cargo check --workspace --features native-async
 
   test:
     needs: lint
@@ -102,32 +114,19 @@ jobs:
         with:
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
 
-      - name: Create virtualenv (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          python -m venv .venv
-          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
-          echo "VIRTUAL_ENV=${{ github.workspace }}/.venv" >> $GITHUB_ENV
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Create virtualenv (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          python -m venv .venv
-          echo "${{ github.workspace }}\.venv\Scripts" >> $env:GITHUB_PATH
-          echo "VIRTUAL_ENV=${{ github.workspace }}\.venv" >> $env:GITHUB_ENV
+      - name: Install dependencies
+        run: uv sync --extra dev
 
-      - name: Install maturin
-        run: pip install maturin
-
-      - name: Build and install
-        run: |
-          pip install -e ".[dev]"
-          maturin develop --release
+      - name: Build native extension
+        run: uv run maturin develop --release --features native-async
 
       - name: Run Python tests
         run: |
           set +e
-          pytest tests/python/ -v --junitxml=test-results.xml
+          uv run python -m pytest tests/python/ -v --junitxml=test-results.xml
           PYTEST_EXIT=$?
           if [ $PYTEST_EXIT -eq 0 ]; then exit 0; fi
           # SIGABRT (134) during interpreter shutdown is a known PyO3 issue;
@@ -139,7 +138,7 @@ jobs:
           print(int(r.get('failures',0)) + int(r.get('errors',0)))
           ")
             if [ "$FAILURES" = "0" ]; then
-              echo "::warning::Tests passed but process crashed during cleanup (known PyO3 issue on this Python version)"
+              echo "::warning::Tests passed but process crashed during cleanup (known PyO3 issue)"
               exit 0
             fi
           fi
