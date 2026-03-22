@@ -100,6 +100,34 @@ while job.status == "running":
     time.sleep(1)
 ```
 
+### `current_job.publish()`
+
+```python
+current_job.publish(data: Any) -> None
+```
+
+Publish a partial result visible to [`job.stream()`](result.md#jobstream) consumers. Use this to stream intermediate data from long-running tasks.
+
+`data` must be JSON-serializable. It is stored as a task log entry with `level="result"`, distinguishing it from regular logs.
+
+```python
+@queue.task()
+def process_batch(items):
+    for i, item in enumerate(items):
+        result = process(item)
+        current_job.publish({"item_id": item.id, "status": "ok"})
+        current_job.update_progress(int((i + 1) / len(items) * 100))
+    return {"total": len(items)}
+```
+
+Consumer side:
+
+```python
+job = process_batch.delay(items)
+for partial in job.stream(timeout=120):
+    print(f"Processed: {partial}")
+```
+
 ## How It Works
 
 **Sync tasks (thread pool):**

@@ -171,3 +171,41 @@ Async version of `result()`. Uses `asyncio.sleep()` instead of `time.sleep()`, s
 job = add.delay(2, 3)
 result = await job.aresult(timeout=10)
 ```
+
+### `job.stream()`
+
+```python
+job.stream(
+    timeout: float = 60.0,
+    poll_interval: float = 0.5,
+) -> Iterator[Any]
+```
+
+Iterate over partial results published by the task via [`current_job.publish()`](context.md#current_jobpublish). Yields each result as it arrives, stops when the job reaches a terminal state.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `timeout` | `float` | `60.0` | Maximum seconds to wait |
+| `poll_interval` | `float` | `0.5` | Seconds between polls |
+
+```python
+job = batch_process.delay(items)
+for partial in job.stream(timeout=120):
+    print(f"Got: {partial}")
+```
+
+### `await job.astream()`
+
+```python
+async for partial in job.astream(
+    timeout: float = 60.0,
+    poll_interval: float = 0.5,
+) -> AsyncIterator[Any]
+```
+
+Async version of `stream()`. Uses `asyncio.sleep` so it won't block the event loop.
+
+```python
+async for partial in job.astream(timeout=120):
+    print(f"Got: {partial}")
+```

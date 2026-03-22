@@ -78,6 +78,7 @@ nav = [
     { "Comparison" = "comparison.md" },
     { "FAQ" = "faq.md" },
     { "Changelog" = "changelog.md" },
+    { "Changelog Archive" = "changelog/archive.md" },
 ]
 
 [project.theme]

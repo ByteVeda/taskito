@@ -87,6 +87,25 @@ class JobContext:
             extra_str = None
         _queue_ref._inner.write_task_log(ctx.job_id, ctx.task_name, level, message, extra_str)
 
+    def publish(self, data: Any) -> None:
+        """Publish a partial result visible to ``job.stream()`` consumers.
+
+        Use this to stream intermediate results from long-running tasks
+        (e.g. batch processing, ETL pipelines, ML training steps).
+
+        Args:
+            data: Any JSON-serializable value. Stored as a task log entry
+                with ``level="result"`` so it can be filtered from regular logs.
+        """
+        ctx = self._require_context()
+        if _queue_ref is None:
+            raise RuntimeError("Queue reference not set.")
+        try:
+            extra_str = json.dumps(data)
+        except (TypeError, ValueError):
+            extra_str = str(data)
+        _queue_ref._inner.write_task_log(ctx.job_id, ctx.task_name, "result", "", extra_str)
+
     def check_cancelled(self) -> None:
         """Check if cancellation has been requested for this job.
 
