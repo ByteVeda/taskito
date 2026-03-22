@@ -4,34 +4,35 @@
 
 ## Feature Matrix
 
-| Feature | taskito | Celery | RQ | Dramatiq | Huey |
-|---|---|---|---|---|---|
-| Broker required | **No** | Redis / RabbitMQ | Redis | Redis / RabbitMQ | Redis |
-| Core language | **Rust + Python** | Python | Python | Python | Python |
-| Priority queues | **Yes** | Yes | No | No | Yes |
-| Rate limiting | **Yes** | Yes | No | Yes | No |
-| Dead letter queue | **Yes** | No | Yes | No | No |
-| Task chaining | **Yes** (chain/group/chord) | Yes (canvas) | No | Yes (pipelines) | No |
-| Job cancellation | **Yes** | Yes (revoke) | No | No | Yes |
-| Progress tracking | **Yes** | Yes (custom) | No | No | No |
-| Unique tasks | **Yes** | No (manual) | No | No | Yes |
-| Batch enqueue | **Yes** | No | No | No | No |
-| Retry with backoff | **Yes** (exponential + jitter) | Yes | Yes | Yes | Yes |
-| Periodic/cron tasks | **Yes** (6-field with seconds) | Yes (celery-beat) | Yes (rq-scheduler) | Yes (APScheduler) | Yes |
-| Async support | **Yes** | Yes | No | No | No |
-| Cancel running tasks | **Yes** (cooperative) | Yes (revoke) | No | No | No |
-| Soft timeouts | **Yes** | No | No | No | No |
-| Custom serializers | **Yes** | Yes | No | No | No |
-| Per-task middleware | **Yes** | No | No | Yes | No |
-| Multi-process (prefork) | **Yes** | Yes | No | No | No |
-| Namespace isolation | **Yes** | No | No | No | No |
-| Result streaming | **Yes** (publish/stream) | No | No | No | No |
-| Worker discovery | **Yes** (hostname/pid/status) | Yes (flower) | No | No | No |
-| Lifecycle events | **Yes** (13 types) | Yes (signals) | No | Yes (actors) | No |
-| OpenTelemetry | **Yes** (optional) | Yes (contrib) | No | No | No |
-| CLI | **Yes** | Yes | Yes | Yes | Yes |
-| Result backend | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite |
-| Setup complexity | **`pip install`** | Broker + backend | Redis server | Broker | Redis server |
+| Feature | taskito | Celery | RQ | Dramatiq | Huey | TaskIQ |
+|---|---|---|---|---|---|---|
+| Broker required | **No** | Redis / RabbitMQ | Redis | Redis / RabbitMQ | Redis | Redis / RabbitMQ / Nats |
+| Core language | **Rust + Python** | Python | Python | Python | Python | Python |
+| Priority queues | **Yes** | Yes | No | No | Yes | Yes |
+| Rate limiting | **Yes** | Yes | No | Yes | No | No |
+| Dead letter queue | **Yes** | No | Yes | No | No | No |
+| Task chaining | **Yes** (chain/group/chord) | Yes (canvas) | No | Yes (pipelines) | No | Yes (pipelines) |
+| Job cancellation | **Yes** | Yes (revoke) | No | No | Yes | No |
+| Progress tracking | **Yes** | Yes (custom) | No | No | No | No |
+| Unique tasks | **Yes** | No (manual) | No | No | Yes | No |
+| Batch enqueue | **Yes** | No | No | No | No | No |
+| Retry with backoff | **Yes** (exponential + jitter) | Yes | Yes | Yes | Yes | Yes |
+| Periodic/cron tasks | **Yes** (6-field with seconds) | Yes (celery-beat) | Yes (rq-scheduler) | Yes (APScheduler) | Yes | Yes (taskiq-cron) |
+| Async support | **Yes** | Yes | No | No | No | Yes (native) |
+| Cancel running tasks | **Yes** (cooperative) | Yes (revoke) | No | No | No | No |
+| Soft timeouts | **Yes** | No | No | No | No | No |
+| Custom serializers | **Yes** | Yes | No | No | No | Yes |
+| Per-task middleware | **Yes** | No | No | Yes | No | Yes |
+| Multi-process (prefork) | **Yes** | Yes | No | No | No | No |
+| Namespace isolation | **Yes** | No | No | No | No | No |
+| Result streaming | **Yes** (publish/stream) | No | No | No | No | No |
+| Worker discovery | **Yes** (hostname/pid/status) | Yes (flower) | No | No | No | No |
+| Lifecycle events | **Yes** (13 types) | Yes (signals) | No | Yes (actors) | No | No |
+| Async canvas | **Yes** | No | No | No | No | No |
+| OpenTelemetry | **Yes** (optional) | Yes (contrib) | No | No | No | Yes (built-in) |
+| CLI | **Yes** | Yes | Yes | Yes | Yes | Yes |
+| Result backend | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite | Redis / custom |
+| Setup complexity | **`pip install`** | Broker + backend | Redis server | Broker | Redis server | Broker + backend |
 
 ## When to Use taskito
 
@@ -117,3 +118,17 @@ Huey is a lightweight task queue with Redis or SQLite backends.
 
 **Choose taskito** if you want higher performance and more features with SQLite.
 **Choose Huey** if you need a mature, well-documented SQLite-backed queue.
+
+### vs TaskIQ
+
+TaskIQ is a modern, async-native task queue. It's a good fit if you're fully async and already have a broker.
+
+| | taskito | TaskIQ |
+|---|---|---|
+| **Broker** | None (DB-backed) | Redis / RabbitMQ / Nats |
+| **Async** | Native + sync | Async-first |
+| **Scheduler** | Rust (Tokio) | Python |
+| **GIL** | Rust scheduler bypasses GIL | Python scheduler competes for GIL |
+| **Setup** | `pip install taskito` | Install broker + taskiq + broker plugin |
+
+Choose taskito if you want zero infrastructure. Choose TaskIQ if you're fully async and already have Redis/Nats.
