@@ -109,13 +109,19 @@ html:not(.dark) body {
   animation: fadeIn 0.2s ease-out;
 }
 
-.animate-shimmer {
+.dark .animate-shimmer {
   background: linear-gradient(
     90deg,
     var(--color-surface-3) 25%,
     var(--color-surface-4) 50%,
     var(--color-surface-3) 75%
   );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+html:not(.dark) .animate-shimmer {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "preact/hooks";
-import type { TimeseriesBucket } from "../api/types";
+import type { TimeseriesBucket } from "../api";
+import { theme } from "../hooks";
 
 interface TimeseriesChartProps {
   data: TimeseriesBucket[];
@@ -23,10 +24,15 @@ export function TimeseriesChart({ data }: TimeseriesChartProps) {
     const w = rect.width;
     const h = rect.height;
 
+    const isDark = theme.value === "dark";
+    const gridColor = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.06)";
+    const textColor = isDark ? "rgba(139,149,165,0.5)" : "rgba(100,116,139,0.7)";
+    const placeholderColor = isDark ? "rgba(139,149,165,0.4)" : "rgba(100,116,139,0.5)";
+
     ctx.clearRect(0, 0, w, h);
 
     if (!data.length) {
-      ctx.fillStyle = "rgba(139,149,165,0.4)";
+      ctx.fillStyle = placeholderColor;
       ctx.font = "12px -apple-system, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText("No timeseries data", w / 2, h / 2);
@@ -44,13 +50,13 @@ export function TimeseriesChart({ data }: TimeseriesChartProps) {
     // Y-axis grid
     for (let i = 0; i <= 4; i++) {
       const y = pad.top + ch * (1 - i / 4);
-      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.strokeStyle = gridColor;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(pad.left, y);
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
-      ctx.fillStyle = "rgba(139,149,165,0.5)";
+      ctx.fillStyle = textColor;
       ctx.font = "10px -apple-system, sans-serif";
       ctx.textAlign = "right";
       ctx.fillText(Math.round((maxCount * i) / 4).toString(), pad.left - 6, y + 3);
@@ -79,7 +85,7 @@ export function TimeseriesChart({ data }: TimeseriesChartProps) {
     });
 
     // X-axis timestamps
-    ctx.fillStyle = "rgba(139,149,165,0.5)";
+    ctx.fillStyle = textColor;
     ctx.font = "10px -apple-system, sans-serif";
     ctx.textAlign = "center";
     const labelCount = Math.min(6, data.length);
@@ -90,7 +96,7 @@ export function TimeseriesChart({ data }: TimeseriesChartProps) {
       const x = pad.left + idx * (barW + gap) + barW / 2;
       ctx.fillText(label, x, h - 10);
     }
-  }, [data]);
+  }, [data, theme.value]);
 
   return (
     <div class="dark:bg-surface-2 bg-white rounded-xl shadow-sm dark:shadow-black/20 p-5 mb-6 border dark:border-white/[0.06] border-slate-200">

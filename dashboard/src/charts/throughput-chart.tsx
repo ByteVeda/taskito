@@ -1,5 +1,6 @@
 import { TrendingUp } from "lucide-preact";
 import { useEffect, useRef } from "preact/hooks";
+import { theme } from "../hooks";
 
 interface ThroughputChartProps {
   data: number[];
@@ -15,6 +16,13 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const isDark = theme.value === "dark";
+    const gridColor = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.06)";
+    const textColor = isDark ? "rgba(139,149,165,0.5)" : "rgba(100,116,139,0.7)";
+    const placeholderColor = isDark ? "rgba(139,149,165,0.4)" : "rgba(100,116,139,0.5)";
+    const areaTop = isDark ? "rgba(34,197,94,0.2)" : "rgba(34,197,94,0.12)";
+    const areaBottom = isDark ? "rgba(34,197,94,0.01)" : "rgba(34,197,94,0.02)";
+
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * dpr;
@@ -26,7 +34,7 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
     ctx.clearRect(0, 0, w, h);
 
     if (data.length < 2) {
-      ctx.fillStyle = "rgba(139,149,165,0.4)";
+      ctx.fillStyle = placeholderColor;
       ctx.font = "12px -apple-system, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText("Collecting data\u2026", w / 2, h / 2);
@@ -41,13 +49,13 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
     // Grid lines
     for (let i = 0; i <= 4; i++) {
       const y = pad.top + ch * (1 - i / 4);
-      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.strokeStyle = gridColor;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(pad.left, y);
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
-      ctx.fillStyle = "rgba(139,149,165,0.5)";
+      ctx.fillStyle = textColor;
       ctx.font = "10px -apple-system, sans-serif";
       ctx.textAlign = "right";
       ctx.fillText(((max * i) / 4).toFixed(1), pad.left - 6, y + 3);
@@ -55,8 +63,8 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
 
     // Gradient fill
     const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + ch);
-    gradient.addColorStop(0, "rgba(34,197,94,0.2)");
-    gradient.addColorStop(1, "rgba(34,197,94,0.01)");
+    gradient.addColorStop(0, areaTop);
+    gradient.addColorStop(1, areaBottom);
 
     ctx.beginPath();
     ctx.moveTo(pad.left, pad.top + ch);
@@ -96,7 +104,7 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
       ctx.lineWidth = 2;
       ctx.stroke();
     }
-  }, [data]);
+  }, [data, theme.value]);
 
   const current = data.length > 0 ? data[data.length - 1] : 0;
 
