@@ -1,6 +1,6 @@
 # Comparison
 
-How taskito compares to other Python task queues.
+**TL;DR**: Taskito is Celery without the broker. Rust scheduler, no Redis/RabbitMQ, lower latency, better concurrency. Start with SQLite, scale to Postgres when needed.
 
 ## Feature Matrix
 
