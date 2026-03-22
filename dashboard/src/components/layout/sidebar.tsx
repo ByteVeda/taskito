@@ -55,7 +55,7 @@ const NAV_GROUPS: NavGroup[] = [
 
 function isActive(current: string, path: string): boolean {
   if (path === "/") return current === "/";
-  return current === path || current.startsWith(path + "/");
+  return current === path || current.startsWith(`${path}/`);
 }
 
 export function Sidebar() {

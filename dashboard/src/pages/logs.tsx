@@ -62,7 +62,7 @@ export function Logs(_props: RoutableProps) {
 
       <div class="flex gap-2.5 mb-5">
         <input
-          class={inputClass + " w-44"}
+          class={`${inputClass} w-44`}
           placeholder="Filter by task\u2026"
           value={taskFilter}
           onInput={(e) => setTaskFilter((e.target as HTMLInputElement).value)}
