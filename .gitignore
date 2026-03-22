@@ -46,5 +46,8 @@ Thumbs.db
 htmlcov/
 junk/
 
+# Dashboard
+node_modules/
+
 # Docs
 site/

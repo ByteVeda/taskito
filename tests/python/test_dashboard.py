@@ -281,4 +281,4 @@ def test_spa_html_served(dashboard_server: tuple[str, Queue, list[Any]]) -> None
     with urllib.request.urlopen(base) as resp:
         html = resp.read().decode()
         assert "taskito dashboard" in html
-        assert "<!DOCTYPE html>" in html
+        assert "<!doctype html>" in html.lower()

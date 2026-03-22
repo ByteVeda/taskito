@@ -53,6 +53,30 @@ jobs:
       - name: Mypy
         run: uv run mypy py_src/taskito/ tests/python/ --no-incremental
 
+  dashboard-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: cd dashboard && npm ci
+
+      - name: Biome lint + format check
+        run: cd dashboard && npx biome ci src/
+
+      - name: TypeScript check
+        run: cd dashboard && npx tsc --noEmit
+
+      - name: Build check
+        run: cd dashboard && npx vite build
+
   rust-test:
     runs-on: ubuntu-latest
     steps:

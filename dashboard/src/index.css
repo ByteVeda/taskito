@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #0f1117;
+  --color-surface-2: #161b22;
+  --color-surface-3: #1c2333;
+  --color-surface-4: #252d3a;
+  --color-surface-5: #2d3748;
+  --color-accent: #7c4dff;
+  --color-accent-light: #b388ff;
+  --color-accent-dim: #7c4dff33;
+  --color-success: #22c55e;
+  --color-success-dim: #22c55e22;
+  --color-warning: #f59e0b;
+  --color-warning-dim: #f59e0b22;
+  --color-danger: #ef4444;
+  --color-danger-dim: #ef444422;
+  --color-info: #3b82f6;
+  --color-info-dim: #3b82f622;
+  --color-cyan: #06b6d4;
+  --color-muted: #8b95a5;
+  --color-border: #ffffff0d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  min-height: 100vh;
+}
+
+.dark body {
+  background: var(--color-surface);
+  color: #e2e8f0;
+}
+
+html:not(.dark) body {
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+/* Scrollbar */
+.dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-surface-4);
+  border-radius: 3px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-5);
+}
+
+/* Animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.25s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-3) 25%,
+    var(--color-surface-4) 50%,
+    var(--color-surface-3) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Monospace */
+.font-mono {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+}
+
+/* Focus */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
