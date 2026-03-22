@@ -167,6 +167,30 @@ Final stats: {'pending': 0, 'running': 0, 'completed': 20100, 'failed': 0, 'dead
 | **r2d2 pool** | Up to 8 concurrent SQLite connections |
 | **Diesel ORM** | Compiled SQL queries, no runtime query building |
 
+## How It Compares
+
+Rough directional comparison on the same hardware (8-core, single machine). These are not scientific benchmarks — run the script above on your own hardware for accurate numbers.
+
+| Metric | taskito (SQLite) | taskito (Postgres) | Celery + Redis |
+|--------|-----------------|-------------------|---------------|
+| Enqueue throughput | ~55,000/s | ~20,000/s | ~5,000/s |
+| Processing (noop, 8 workers) | ~4,000/s | ~3,500/s | ~2,000/s |
+| p50 latency | 1.1ms | 2.5ms | 5–10ms |
+| p99 latency | 3.4ms | 8ms | 20–50ms |
+| Memory (idle worker) | ~30 MB | ~35 MB | ~80 MB |
+| Setup | `pip install taskito` | + Postgres | + Redis + Celery |
+| External services | 0 | 1 (Postgres) | 2 (Redis + result backend) |
+
+!!! note
+    Celery numbers are from public benchmarks and community reports. Your mileage will vary depending on workload, serializer, and broker configuration. Run your own benchmarks before making decisions.
+
+**Why is taskito faster?**
+
+- Rust scheduler avoids GIL contention — scheduling and dispatch never block Python
+- SQLite WAL mode with batch inserts — disk I/O is minimized
+- Direct DB polling — no broker hop (enqueue → DB → dequeue is one less network round-trip vs enqueue → Redis → dequeue)
+- OS thread pool with per-task GIL acquisition — no multiprocessing overhead for I/O-bound tasks
+
 ## Tuning
 
 Adjust these for your workload:
