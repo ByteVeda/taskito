@@ -72,7 +72,7 @@ export function Sidebar() {
   }, []);
 
   return (
-    <aside class="w-60 shrink-0 border-r dark:border-white/[0.06] border-slate-200 dark:bg-surface-2/50 bg-slate-50/50 overflow-y-auto h-[calc(100vh-56px)]">
+    <aside class="w-60 shrink-0 border-r dark:border-white/[0.06] border-slate-200 dark:bg-surface-2 bg-white overflow-y-auto h-[calc(100vh-56px)]">
       <nav class="p-3 space-y-5 pt-4">
         {NAV_GROUPS.map((group) => (
           <div key={group.title}>

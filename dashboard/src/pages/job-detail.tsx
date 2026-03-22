@@ -1,18 +1,26 @@
 import { FileText, RotateCcw } from "lucide-preact";
 import { route } from "preact-router";
-import { apiPost } from "../api/client";
-import type { DagData, Job, JobError, ReplayEntry, TaskLog } from "../api/types";
-import { DagViewer } from "../charts/dag-viewer";
-import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { ProgressBar } from "../components/ui/progress-bar";
-import { useApi } from "../hooks/use-api";
-import { addToast } from "../hooks/use-toast";
-import { fmtTime, truncateId } from "../lib/format";
-import type { RoutableProps } from "../lib/routes";
+import {
+  apiPost,
+  type DagData,
+  type Job,
+  type JobError,
+  type ReplayEntry,
+  type TaskLog,
+} from "../api";
+import { DagViewer } from "../charts";
+import {
+  Badge,
+  Button,
+  type Column,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Loading,
+  ProgressBar,
+} from "../components/ui";
+import { addToast, useApi } from "../hooks";
+import { fmtTime, type RoutableProps, truncateId } from "../lib";
 
 interface JobDetailProps extends RoutableProps {
   id?: string;
@@ -67,12 +75,13 @@ const REPLAY_COLUMNS: Column<ReplayEntry>[] = [
 ];
 
 export function JobDetail({ id }: JobDetailProps) {
-  const { data: job, loading, refetch } = useApi<Job>(`/api/jobs/${id}`);
+  const { data: job, loading, error, refetch } = useApi<Job>(`/api/jobs/${id}`);
   const { data: errors } = useApi<JobError[]>(`/api/jobs/${id}/errors`);
   const { data: logs } = useApi<TaskLog[]>(`/api/jobs/${id}/logs`);
   const { data: replayHistory } = useApi<ReplayEntry[]>(`/api/jobs/${id}/replay-history`);
   const { data: dag } = useApi<DagData>(`/api/jobs/${id}/dag`);
 
+  if (error && !job) return <ErrorState message={error} onRetry={refetch} />;
   if (loading && !job) return <Loading />;
   if (!job) return <EmptyState message={`Job not found: ${id}`} />;
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { api } from "../api/client";
+import { api } from "../api";
 import { markRefreshed, refreshInterval } from "./use-auto-refresh";
 
 interface UseApiResult<T> {

@@ -1,11 +1,8 @@
 import { Box } from "lucide-preact";
-import type { ResourceStatus } from "../api/types";
-import { Badge } from "../components/ui/badge";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { useApi } from "../hooks/use-api";
-import type { RoutableProps } from "../lib/routes";
+import type { ResourceStatus } from "../api";
+import { Badge, type Column, DataTable, EmptyState, ErrorState, Loading } from "../components/ui";
+import { useApi } from "../hooks";
+import type { RoutableProps } from "../lib";
 
 const RESOURCE_COLUMNS: Column<ResourceStatus>[] = [
   { header: "Name", accessor: (r) => <span class="font-medium">{r.name}</span> },
@@ -47,8 +44,9 @@ const RESOURCE_COLUMNS: Column<ResourceStatus>[] = [
 ];
 
 export function Resources(_props: RoutableProps) {
-  const { data: resources, loading } = useApi<ResourceStatus[]>("/api/resources");
+  const { data: resources, loading, error, refetch } = useApi<ResourceStatus[]>("/api/resources");
 
+  if (error && !resources) return <ErrorState message={error} onRetry={refetch} />;
   if (loading && !resources) return <Loading />;
 
   return (

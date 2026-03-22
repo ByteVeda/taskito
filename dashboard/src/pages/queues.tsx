@@ -1,14 +1,16 @@
 import { Layers, Pause, Play } from "lucide-preact";
-import { apiPost } from "../api/client";
-import type { QueueStatsMap } from "../api/types";
-import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { useApi } from "../hooks/use-api";
-import { addToast } from "../hooks/use-toast";
-import type { RoutableProps } from "../lib/routes";
+import { apiPost, type QueueStatsMap } from "../api";
+import {
+  Badge,
+  Button,
+  type Column,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Loading,
+} from "../components/ui";
+import { addToast, useApi } from "../hooks";
+import type { RoutableProps } from "../lib";
 
 interface QueueRow {
   name: string;
@@ -18,7 +20,7 @@ interface QueueRow {
 }
 
 export function Queues(_props: RoutableProps) {
-  const { data: queueStats, loading, refetch } = useApi<QueueStatsMap>("/api/stats/queues");
+  const { data: queueStats, loading, error, refetch } = useApi<QueueStatsMap>("/api/stats/queues");
   const { data: pausedQueues, refetch: refetchPaused } = useApi<string[]>("/api/queues/paused");
 
   const pausedSet = new Set(pausedQueues ?? []);
@@ -82,6 +84,7 @@ export function Queues(_props: RoutableProps) {
     },
   ];
 
+  if (error && !queueStats) return <ErrorState message={error} onRetry={refetch} />;
   if (loading && !queueStats) return <Loading />;
 
   return (

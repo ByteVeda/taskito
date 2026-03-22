@@ -1,17 +1,19 @@
 import { LayoutDashboard } from "lucide-preact";
 import { useRef } from "preact/hooks";
 import { route } from "preact-router";
-import type { Job, QueueStats } from "../api/types";
-import { ThroughputChart } from "../charts/throughput-chart";
-import { Badge } from "../components/ui/badge";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { Loading } from "../components/ui/loading";
-import { ProgressBar } from "../components/ui/progress-bar";
-import { StatsGrid } from "../components/ui/stats-grid";
-import { useApi } from "../hooks/use-api";
-import { refreshInterval } from "../hooks/use-auto-refresh";
-import { fmtTime, truncateId } from "../lib/format";
-import type { RoutableProps } from "../lib/routes";
+import type { Job, QueueStats } from "../api";
+import { ThroughputChart } from "../charts";
+import {
+  Badge,
+  type Column,
+  DataTable,
+  ErrorState,
+  Loading,
+  ProgressBar,
+  StatsGrid,
+} from "../components/ui";
+import { refreshInterval, useApi } from "../hooks";
+import { fmtTime, type RoutableProps, truncateId } from "../lib";
 
 const JOB_COLUMNS: Column<Job>[] = [
   {
@@ -26,7 +28,12 @@ const JOB_COLUMNS: Column<Job>[] = [
 ];
 
 export function Overview(_props: RoutableProps) {
-  const { data: stats, loading: statsLoading } = useApi<QueueStats>("/api/stats");
+  const {
+    data: stats,
+    loading: statsLoading,
+    error: statsError,
+    refetch: refetchStats,
+  } = useApi<QueueStats>("/api/stats");
   const { data: jobs } = useApi<Job[]>("/api/jobs?limit=10");
 
   const prevCompleted = useRef(0);
@@ -43,6 +50,7 @@ export function Overview(_props: RoutableProps) {
     history.current = [...history.current.slice(-59), throughput];
   }
 
+  if (statsError && !stats) return <ErrorState message={statsError} onRetry={refetchStats} />;
   if (statsLoading && !stats) return <Loading />;
 
   return (

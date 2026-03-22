@@ -1,13 +1,9 @@
 import { ScrollText } from "lucide-preact";
 import { useState } from "preact/hooks";
-import type { TaskLog } from "../api/types";
-import { Badge } from "../components/ui/badge";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { useApi } from "../hooks/use-api";
-import { fmtTime, truncateId } from "../lib/format";
-import type { RoutableProps } from "../lib/routes";
+import type { TaskLog } from "../api";
+import { Badge, type Column, DataTable, EmptyState, ErrorState, Loading } from "../components/ui";
+import { useApi } from "../hooks";
+import { fmtTime, type RoutableProps, truncateId } from "../lib";
 
 const LOG_COLUMNS: Column<TaskLog>[] = [
   { header: "Time", accessor: (l) => <span class="text-muted">{fmtTime(l.logged_at)}</span> },
@@ -40,10 +36,12 @@ export function Logs(_props: RoutableProps) {
   if (taskFilter) params.set("task", taskFilter);
   if (levelFilter) params.set("level", levelFilter);
 
-  const { data: logs, loading } = useApi<TaskLog[]>(`/api/logs?${params}`, [
-    taskFilter,
-    levelFilter,
-  ]);
+  const {
+    data: logs,
+    loading,
+    error,
+    refetch,
+  } = useApi<TaskLog[]>(`/api/logs?${params}`, [taskFilter, levelFilter]);
 
   const inputClass =
     "dark:bg-surface-3 bg-white dark:text-gray-200 text-slate-700 border dark:border-white/[0.06] border-slate-200 rounded-lg px-3 py-2 text-[13px] placeholder:text-muted/50 focus:border-accent/50 transition-colors";
@@ -80,7 +78,9 @@ export function Logs(_props: RoutableProps) {
         </select>
       </div>
 
-      {loading && !logs ? (
+      {error && !logs ? (
+        <ErrorState message={error} onRetry={refetch} />
+      ) : loading && !logs ? (
         <Loading />
       ) : !logs?.length ? (
         <EmptyState message="No logs yet" subtitle="Logs appear when tasks execute" />

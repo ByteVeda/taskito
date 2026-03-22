@@ -1,12 +1,10 @@
 import { BarChart3 } from "lucide-preact";
 import { useState } from "preact/hooks";
-import type { MetricsResponse, TaskMetrics, TimeseriesBucket } from "../api/types";
-import { TimeseriesChart } from "../charts/timeseries-chart";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { useApi } from "../hooks/use-api";
-import type { RoutableProps } from "../lib/routes";
+import type { MetricsResponse, TaskMetrics, TimeseriesBucket } from "../api";
+import { TimeseriesChart } from "../charts";
+import { type Column, DataTable, EmptyState, ErrorState, Loading } from "../components/ui";
+import { useApi } from "../hooks";
+import type { RoutableProps } from "../lib";
 
 interface MetricsRow extends TaskMetrics {
   task_name: string;
@@ -77,9 +75,12 @@ const TIME_RANGES = [
 
 export function Metrics(_props: RoutableProps) {
   const [since, setSince] = useState(3600);
-  const { data: metrics, loading } = useApi<MetricsResponse>(`/api/metrics?since=${since}`, [
-    since,
-  ]);
+  const {
+    data: metrics,
+    loading,
+    error,
+    refetch,
+  } = useApi<MetricsResponse>(`/api/metrics?since=${since}`, [since]);
   const { data: timeseries } = useApi<TimeseriesBucket[]>(
     `/api/metrics/timeseries?since=${since}&bucket=${since <= 3600 ? 60 : since <= 21600 ? 300 : 900}`,
     [since],
@@ -88,6 +89,8 @@ export function Metrics(_props: RoutableProps) {
   const rows: MetricsRow[] = metrics
     ? Object.entries(metrics).map(([task_name, m]) => ({ task_name, ...m }))
     : [];
+
+  if (error && !metrics) return <ErrorState message={error} onRetry={refetch} />;
 
   return (
     <div>

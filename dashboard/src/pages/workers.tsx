@@ -1,15 +1,14 @@
 import { Clock, Server, Tag } from "lucide-preact";
-import type { QueueStats, Worker as WorkerType } from "../api/types";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { useApi } from "../hooks/use-api";
-import { fmtTime } from "../lib/format";
-import type { RoutableProps } from "../lib/routes";
+import type { QueueStats, Worker as WorkerType } from "../api";
+import { EmptyState, ErrorState, Loading } from "../components/ui";
+import { useApi } from "../hooks";
+import { fmtTime, type RoutableProps } from "../lib";
 
 export function Workers(_props: RoutableProps) {
-  const { data: workers, loading } = useApi<WorkerType[]>("/api/workers");
+  const { data: workers, loading, error, refetch } = useApi<WorkerType[]>("/api/workers");
   const { data: stats } = useApi<QueueStats>("/api/stats");
 
+  if (error && !workers) return <ErrorState message={error} onRetry={refetch} />;
   if (loading && !workers) return <Loading />;
 
   return (

@@ -1,4 +1,4 @@
-import type { QueueStats } from "../../api/types";
+import type { QueueStats } from "../../api";
 import { StatCard } from "./stat-card";
 
 interface StatsGridProps {
