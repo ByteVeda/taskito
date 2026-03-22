@@ -15,7 +15,9 @@ notifications/
 ```python
 """Notification tasks with priority and deduplication."""
 
-import time
+import os
+
+import httpx
 
 from taskito import Queue
 
@@ -29,33 +31,48 @@ queue = Queue(
 
 # ── Notification Tasks ───────────────────────────────────
 
-@queue.task(priority=10)
+@queue.task(priority=10, max_retries=3, retry_backoff=2.0)
 def send_urgent_email(to: str, subject: str, body: str) -> dict:
     """High-priority email — runs before bulk notifications."""
-    # Simulate sending
-    time.sleep(0.2)
-    print(f"[URGENT] Email to {to}: {subject}")
+    response = httpx.post(
+        "https://api.mailgun.net/v3/YOUR_DOMAIN/messages",
+        auth=("api", os.environ["MAILGUN_API_KEY"]),
+        data={"from": "noreply@example.com", "to": to, "subject": subject, "text": body},
+    )
+    response.raise_for_status()
     return {"to": to, "subject": subject, "sent": True}
 
-@queue.task(priority=0)
+@queue.task(priority=0, max_retries=3, retry_backoff=2.0)
 def send_bulk_email(to: str, subject: str, body: str) -> dict:
     """Low-priority bulk email."""
-    time.sleep(0.1)
-    print(f"[BULK] Email to {to}: {subject}")
+    response = httpx.post(
+        "https://api.mailgun.net/v3/YOUR_DOMAIN/messages",
+        auth=("api", os.environ["MAILGUN_API_KEY"]),
+        data={"from": "noreply@example.com", "to": to, "subject": subject, "text": body},
+    )
+    response.raise_for_status()
     return {"to": to, "subject": subject, "sent": True}
 
 @queue.task(priority=5, max_retries=5, retry_backoff=2.0)
 def send_push(user_id: str, title: str, message: str) -> dict:
     """Push notification with retries."""
-    time.sleep(0.3)
-    print(f"[PUSH] {user_id}: {title}")
+    response = httpx.post(
+        "https://fcm.googleapis.com/fcm/send",
+        headers={"Authorization": f"key={os.environ['FCM_SERVER_KEY']}"},
+        json={"to": f"/topics/user-{user_id}", "notification": {"title": title, "body": message}},
+    )
+    response.raise_for_status()
     return {"user_id": user_id, "title": title, "sent": True}
 
-@queue.task()
+@queue.task(max_retries=3, retry_backoff=2.0)
 def send_sms(phone: str, message: str) -> dict:
-    """SMS notification."""
-    time.sleep(0.5)
-    print(f"[SMS] {phone}: {message}")
+    """SMS notification via Twilio."""
+    response = httpx.post(
+        f"https://api.twilio.com/2010-04-01/Accounts/{os.environ['TWILIO_ACCOUNT_SID']}/Messages.json",
+        auth=(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"]),
+        data={"From": os.environ["TWILIO_FROM_NUMBER"], "To": phone, "Body": message},
+    )
+    response.raise_for_status()
     return {"phone": phone, "sent": True}
 
 # ── Periodic Digest ──────────────────────────────────────

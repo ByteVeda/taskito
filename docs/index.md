@@ -1,6 +1,8 @@
 # taskito
 
-**Rust-powered task queue for Python. No broker required — just SQLite or Postgres.**
+**A brokerless, Rust-powered task queue for Python. Replace Celery without Redis.**
+
+Start with SQLite, scale to Postgres. No broker to install, configure, or manage.
 
 ```bash
 pip install taskito

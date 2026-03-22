@@ -119,6 +119,49 @@ class MetricsMiddleware(TaskMiddleware):
         })
 ```
 
+## Composition and Ordering
+
+### Multiple middleware on the same task
+
+```python
+import time
+from taskito import TaskMiddleware
+
+class TimingMiddleware(TaskMiddleware):
+    def before(self, ctx):
+        ctx._start = time.monotonic()
+    def after(self, ctx, result, error):
+        elapsed = time.monotonic() - ctx._start
+        print(f"{ctx.task_name} took {elapsed:.3f}s")
+
+class LoggingMiddleware(TaskMiddleware):
+    def before(self, ctx):
+        print(f"Starting {ctx.task_name}[{ctx.id}]")
+    def after(self, ctx, result, error):
+        print(f"Finished {ctx.task_name}[{ctx.id}]")
+
+@queue.task(middleware=[TimingMiddleware(), LoggingMiddleware()])
+def process(data):
+    ...
+```
+
+### Execution order
+
+1. **Global middleware** (registered via `Queue(middleware=[...])`) runs first
+2. **Per-task middleware** (via `@queue.task(middleware=[...])`) runs second
+3. Within each group, middleware runs in **registration order**
+4. `after()` hooks run in **reverse order** (like a stack)
+
+### Exception handling
+
+If a middleware hook raises an exception:
+
+- **`before()`**: The exception is logged, but subsequent middleware `before()` hooks still run. The task executes normally.
+- **`after()`**: The exception is logged. Other `after()` hooks still run.
+- **`on_retry()` / `on_dead_letter()`**: Logged and swallowed — these are notification hooks, not control flow.
+
+Middleware exceptions never prevent task execution or result handling.
+
 ## Middleware vs Hooks
 
 taskito has two systems for running code around tasks:

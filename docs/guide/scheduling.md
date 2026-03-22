@@ -113,3 +113,23 @@ Timezone handling uses `chrono-tz` under the hood. Daylight saving time transiti
 
 !!! note
     Periodic tasks are only active while a worker is running. If no worker is running, tasks accumulate and the **next due** job is enqueued when a worker starts.
+
+## Edge Cases
+
+### Task takes longer than the interval
+
+If a periodic task's execution time exceeds its cron interval, the next run is **skipped**, not stacked. Periodic tasks use `unique_key` deduplication internally — if the previous run is still pending or running, the new enqueue is silently dropped.
+
+### Multiple workers running periodic tasks
+
+Safe by design. Each worker's scheduler checks for due periodic tasks independently, but they all use the same `unique_key` for deduplication. Only one instance of each periodic task runs at a time, regardless of how many workers are active.
+
+### Timezone handling
+
+```python
+@queue.periodic(cron="0 9 * * *", timezone="America/New_York")
+def morning_report():
+    ...
+```
+
+Without `timezone`, cron expressions are evaluated in **UTC**. Specify a timezone string (any valid [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)) to schedule in local time. Daylight saving transitions are handled automatically via `chrono-tz`.

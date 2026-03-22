@@ -205,6 +205,33 @@ for event in [EventType.JOB_ENQUEUED, EventType.JOB_COMPLETED, EventType.JOB_FAI
     queue.on_event(event, audit_log)
 ```
 
+## Event Ordering
+
+Events fire in the order the scheduler processes results — typically the order jobs complete. For jobs that complete nearly simultaneously, ordering is **not guaranteed** across different workers or threads.
+
+Within a single job's lifecycle, events always fire in this order:
+
+1. `JOB_ENQUEUED` (at enqueue time)
+2. `JOB_COMPLETED` / `JOB_FAILED` / `JOB_CANCELLED` (at completion)
+3. `JOB_RETRYING` (if retried, before the next attempt)
+4. `JOB_DEAD` (if all retries exhausted)
+
+## Backpressure
+
+Events are dispatched to a thread pool (default size: 4, configurable via `event_workers=N`). If callbacks are slow and events arrive faster than they can be processed, they queue in memory.
+
+For high-volume event scenarios:
+
+```python
+queue = Queue(event_workers=16)  # More threads for slow callbacks
+```
+
+If a callback raises an exception, it is logged and the event is dropped — it does not retry or block other callbacks.
+
+## Webhook Failure
+
+Webhooks retry with exponential backoff (up to `max_retries`). After all retries are exhausted, the webhook delivery is **logged and dropped** — there is no dead-letter queue for webhooks. Monitor webhook failures via the `on_failure` callback or structured logging.
+
 ### Webhook Receiver (Flask)
 
 A minimal Flask app that receives and verifies taskito webhooks:

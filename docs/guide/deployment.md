@@ -331,6 +331,20 @@ taskito's [Postgres backend](postgres.md) addresses all of these limitations whi
 
 Increasing the pool beyond ~16 typically doesn't help, since SQLite write serialization is the bottleneck.
 
+## Sizing Your Deployment
+
+| Throughput | Backend | Workers | Pool | Notes |
+|-----------|---------|---------|------|-------|
+| < 100 jobs/s | SQLite | 4 | thread | Default config works fine |
+| 100–1K jobs/s | SQLite | 8–16 | thread or prefork | Increase `workers`, monitor WAL size |
+| 1K–5K jobs/s | SQLite | 16 | prefork | Prefork for CPU-bound; SQLite handles this well with WAL |
+| 5K–20K jobs/s | Postgres | 16–32 | prefork | Switch to Postgres for concurrent writers |
+| 20K–50K jobs/s | Postgres | 32+ | prefork | Multiple worker processes, tune `pool_size` |
+| > 50K jobs/s | — | — | — | Consider Celery + RabbitMQ for this scale |
+
+!!! note
+    These are rough guidelines for noop tasks. Real throughput depends on task duration, payload size, and I/O patterns. Run the [benchmark](../examples/benchmark.md) on your hardware to get accurate numbers.
+
 ## Checklist
 
 - [ ] Use an absolute path for `db_path`

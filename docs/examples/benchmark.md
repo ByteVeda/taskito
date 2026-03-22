@@ -167,6 +167,42 @@ Final stats: {'pending': 0, 'running': 0, 'completed': 20100, 'failed': 0, 'dead
 | **r2d2 pool** | Up to 8 concurrent SQLite connections |
 | **Diesel ORM** | Compiled SQL queries, no runtime query building |
 
+## How It Compares
+
+Rough directional comparison on the same hardware (8-core, single machine). These are not scientific benchmarks — run the script above on your own hardware for accurate numbers.
+
+| Metric | taskito (SQLite) | taskito (Postgres) | Celery + Redis | Dramatiq + Redis |
+|--------|-----------------|-------------------|---------------|-----------------|
+| Enqueue throughput | ~55,000/s | ~20,000/s | ~5,000/s | ~3,000/s |
+| Processing (noop, 8 workers) | ~4,000/s | ~3,500/s | ~2,000/s | ~1,500/s |
+| p50 latency | 1.1ms | 2.5ms | 5–10ms | 8–15ms |
+| p99 latency | 3.4ms | 8ms | 20–50ms | 30–80ms |
+| Memory (idle worker) | ~30 MB | ~35 MB | ~80 MB | ~60 MB |
+| Setup | `pip install taskito` | + Postgres | + Redis + Celery | + Redis + Dramatiq |
+| External services | 0 | 1 (Postgres) | 2 (Redis + result backend) | 1 (Redis) |
+
+!!! note
+    Celery numbers are from public benchmarks and community reports. Your mileage will vary depending on workload, serializer, and broker configuration. Run your own benchmarks before making decisions.
+
+**Why is taskito faster?**
+
+- Rust scheduler avoids GIL contention — scheduling and dispatch never block Python
+- SQLite WAL mode with batch inserts — disk I/O is minimized
+- Direct DB polling — no broker hop (enqueue → DB → dequeue is one less network round-trip vs enqueue → Redis → dequeue)
+- OS thread pool with per-task GIL acquisition — no multiprocessing overhead for I/O-bound tasks
+
+## Tune for Your Workload
+
+| Symptom | Config to change | Why |
+|---------|-----------------|-----|
+| Low throughput (I/O tasks) | Increase `workers` | More threads = more concurrent I/O |
+| Low throughput (CPU tasks) | Use `pool="prefork"` | Each process gets its own GIL |
+| High latency | Decrease `scheduler_poll_interval_ms` | Scheduler checks for ready jobs more often |
+| Database too busy | Increase `scheduler_poll_interval_ms` | Less frequent polling reduces DB load |
+| Memory growing | Set `result_ttl` | Auto-cleanup old results and metrics |
+| Jobs timing out | Increase `default_timeout` | Give tasks more time to complete |
+| Jobs piling up | Add more workers or use Postgres | SQLite single-writer limit may bottleneck |
+
 ## Tuning
 
 Adjust these for your workload:

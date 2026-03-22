@@ -185,3 +185,64 @@ def alert_on_error(task_name, args, kwargs, error):
 
 !!! tip "Multiple hooks"
     You can register multiple hooks of the same type. They execute in registration order.
+
+## Grafana Setup
+
+A minimal Prometheus + Grafana stack for monitoring taskito:
+
+```yaml
+# docker-compose.monitoring.yml
+services:
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+```
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: taskito
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+    metrics_path: /metrics
+```
+
+### Essential Grafana Panels
+
+**Queue Depth** (gauge):
+```promql
+taskito_queue_depth{queue="default"}
+```
+
+**Job Processing Rate** (rate):
+```promql
+rate(taskito_jobs_completed_total[5m])
+```
+
+**Job Duration p99** (histogram):
+```promql
+histogram_quantile(0.99, rate(taskito_job_duration_seconds_bucket[5m]))
+```
+
+### Alert Rules
+
+```yaml
+# Alert if queue depth stays above 1000 for 5 minutes
+- alert: TaskitoQueueBacklog
+  expr: taskito_queue_depth > 1000
+  for: 5m
+
+# Alert if p99 latency exceeds 5 seconds
+- alert: TaskitoHighLatency
+  expr: histogram_quantile(0.99, rate(taskito_job_duration_seconds_bucket[5m])) > 5
+```
