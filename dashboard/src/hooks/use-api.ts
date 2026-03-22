@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api/client";
-import { refreshInterval } from "./use-auto-refresh";
+import { markRefreshed, refreshInterval } from "./use-auto-refresh";
 
 interface UseApiResult<T> {
   data: T | null;
@@ -35,6 +35,7 @@ export function useApi<T>(url: string | null, deps: unknown[] = []): UseApiResul
           setData(result);
           setError(null);
           setLoading(false);
+          markRefreshed();
         }
       })
       .catch((err) => {
