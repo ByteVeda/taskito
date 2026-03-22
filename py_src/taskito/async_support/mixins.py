@@ -34,16 +34,65 @@ class AsyncQueueMixin:
         def stats(self) -> dict[str, int]: ...
         def stats_by_queue(self, queue_name: str) -> dict[str, int]: ...
         def stats_all_queues(self) -> dict[str, dict[str, int]]: ...
+        def get_job(self, job_id: str) -> JobResult | None: ...
+        def list_jobs(
+            self,
+            status: str | None = ...,
+            queue: str | None = ...,
+            task_name: str | None = ...,
+            limit: int = ...,
+            offset: int = ...,
+            namespace: Any = ...,
+        ) -> list[JobResult]: ...
+        def list_jobs_filtered(
+            self,
+            status: str | None = ...,
+            queue: str | None = ...,
+            task_name: str | None = ...,
+            metadata_like: str | None = ...,
+            error_like: str | None = ...,
+            created_after: int | None = ...,
+            created_before: int | None = ...,
+            limit: int = ...,
+            offset: int = ...,
+            namespace: Any = ...,
+        ) -> list[JobResult]: ...
         def cancel_job(self, job_id: str) -> bool: ...
+        def cancel_running_job(self, job_id: str) -> bool: ...
         def metrics(self, task_name: str | None = ..., since: int = ...) -> dict[str, Any]: ...
+        def metrics_timeseries(
+            self,
+            task_name: str | None = ...,
+            since: int = ...,
+            interval: int = ...,
+        ) -> list[dict]: ...
+        def job_dag(self, job_id: str) -> dict[str, Any]: ...
+        def job_errors(self, job_id: str) -> list[dict]: ...
+        def task_logs(self, job_id: str) -> list[dict]: ...
+        def query_logs(
+            self,
+            task_name: str | None = ...,
+            level: str | None = ...,
+            since: int = ...,
+            limit: int = ...,
+        ) -> list[dict]: ...
         def dead_letters(self, limit: int = ..., offset: int = ...) -> list[dict]: ...
         def retry_dead(self, dead_id: str) -> str: ...
         def replay(self, job_id: str) -> JobResult: ...
+        def replay_history(self, job_id: str) -> list[dict]: ...
         def circuit_breakers(self) -> list[dict]: ...
         def workers(self) -> list[dict]: ...
         def run_worker(
             self, queues: Sequence[str] | None = ..., tags: list[str] | None = ...
         ) -> None: ...
+        def purge_completed(self, older_than: int = ...) -> int: ...
+        def purge_dead(self, older_than: int = ...) -> int: ...
+        def revoke_task(self, task_name: str) -> int: ...
+        def archive(self, older_than: int = ...) -> int: ...
+        def list_archived(self, limit: int = ..., offset: int = ...) -> list[JobResult]: ...
+        def pause(self, queue_name: str = ...) -> None: ...
+        def resume(self, queue_name: str = ...) -> None: ...
+        def paused_queues(self) -> list[str]: ...
         def resource_status(self) -> list[dict[str, Any]]: ...
 
     # -----------------------------------------------------------------
@@ -98,9 +147,87 @@ class AsyncQueueMixin:
         """Async version of :meth:`circuit_breakers`."""
         return await self._run_sync(self.circuit_breakers)
 
+    async def aget_job(self, job_id: str) -> JobResult | None:
+        """Async version of :meth:`get_job`."""
+        return await self._run_sync(self.get_job, job_id)
+
+    async def alist_jobs(self, **kwargs: Any) -> list[JobResult]:
+        """Async version of :meth:`list_jobs`."""
+        return await self._run_sync(self.list_jobs, **kwargs)
+
+    async def alist_jobs_filtered(self, **kwargs: Any) -> list[JobResult]:
+        """Async version of :meth:`list_jobs_filtered`."""
+        return await self._run_sync(self.list_jobs_filtered, **kwargs)
+
+    async def ajob_dag(self, job_id: str) -> dict[str, Any]:
+        """Async version of :meth:`job_dag`."""
+        return await self._run_sync(self.job_dag, job_id)
+
+    async def ametrics_timeseries(self, **kwargs: Any) -> list[dict]:
+        """Async version of :meth:`metrics_timeseries`."""
+        return await self._run_sync(self.metrics_timeseries, **kwargs)
+
+    async def ajob_errors(self, job_id: str) -> list[dict]:
+        """Async version of :meth:`job_errors`."""
+        return await self._run_sync(self.job_errors, job_id)
+
+    async def atask_logs(self, job_id: str) -> list[dict]:
+        """Async version of :meth:`task_logs`."""
+        return await self._run_sync(self.task_logs, job_id)
+
+    async def aquery_logs(self, **kwargs: Any) -> list[dict]:
+        """Async version of :meth:`query_logs`."""
+        return await self._run_sync(self.query_logs, **kwargs)
+
+    async def acancel_running_job(self, job_id: str) -> bool:
+        """Async version of :meth:`cancel_running_job`."""
+        return await self._run_sync(self.cancel_running_job, job_id)
+
     async def aworkers(self) -> list[dict]:
         """Async version of :meth:`workers`."""
         return await self._run_sync(self.workers)
+
+    # -- Operations --
+
+    async def aenqueue_many(self, **kwargs: Any) -> list[JobResult]:
+        """Async version of :meth:`enqueue_many`."""
+        return await self._run_sync(self.enqueue_many, **kwargs)  # type: ignore[attr-defined]
+
+    async def apurge_completed(self, older_than: int = 86400) -> int:
+        """Async version of :meth:`purge_completed`."""
+        return await self._run_sync(self.purge_completed, older_than=older_than)
+
+    async def apurge_dead(self, older_than: int = 86400) -> int:
+        """Async version of :meth:`purge_dead`."""
+        return await self._run_sync(self.purge_dead, older_than=older_than)
+
+    async def arevoke_task(self, task_name: str) -> int:
+        """Async version of :meth:`revoke_task`."""
+        return await self._run_sync(self.revoke_task, task_name)
+
+    async def areplay_history(self, job_id: str) -> list[dict]:
+        """Async version of :meth:`replay_history`."""
+        return await self._run_sync(self.replay_history, job_id)
+
+    async def aarchive(self, older_than: int = 86400) -> int:
+        """Async version of :meth:`archive`."""
+        return await self._run_sync(self.archive, older_than=older_than)
+
+    async def alist_archived(self, limit: int = 50, offset: int = 0) -> list[JobResult]:
+        """Async version of :meth:`list_archived`."""
+        return await self._run_sync(self.list_archived, limit=limit, offset=offset)
+
+    async def apause(self, queue_name: str = "default") -> None:
+        """Async version of :meth:`pause`."""
+        await self._run_sync(self.pause, queue_name=queue_name)
+
+    async def aresume(self, queue_name: str = "default") -> None:
+        """Async version of :meth:`resume`."""
+        await self._run_sync(self.resume, queue_name=queue_name)
+
+    async def apaused_queues(self) -> list[str]:
+        """Async version of :meth:`paused_queues`."""
+        return await self._run_sync(self.paused_queues)
 
     # -- Locks --
 
