@@ -91,6 +91,33 @@ def notify(user_id):
         db.execute("UPDATE orders SET notified = 1 WHERE user_id = ?", (user_id,))
 ```
 
+## Deduplication Window
+
+`unique_key` prevents duplicate enqueue only while a job with that key is **pending or running**. Once the job completes (or is dead-lettered/cancelled), the same `unique_key` can be enqueued again.
+
+```python
+job1 = task.apply_async(args=(1,), unique_key="order-123")  # Enqueued
+job2 = task.apply_async(args=(1,), unique_key="order-123")  # Skipped (job1 pending)
+# ... job1 completes ...
+job3 = task.apply_async(args=(1,), unique_key="order-123")  # Enqueued (new job)
+```
+
+## How Claim Execution Works
+
+Before dispatching a job to a worker thread, the scheduler calls `claim_execution(job_id, worker_id)`. This is an atomic `SET NX` (SQLite: `INSERT OR IGNORE`, Postgres: `INSERT ... ON CONFLICT DO NOTHING`, Redis: `SET NX`). If another scheduler instance already claimed the job, the claim fails and the job is skipped.
+
+This prevents **duplicate dispatch** (two workers picking up the same job). It does NOT prevent **duplicate execution** after a crash — the claim is cleared by the stale reaper when it detects the timeout.
+
+## Framework vs Task Responsibility
+
+| Concern | Who handles it |
+|---------|---------------|
+| Job dispatch deduplication | Framework (`claim_execution`) |
+| Job enqueue deduplication | Framework (`unique_key`) |
+| Crash recovery | Framework (stale reaper) |
+| Idempotent execution | **You** (task code) |
+| Side-effect safety | **You** (task code) |
+
 ## Summary
 
 | Guarantee | Taskito | Celery | SQS |
