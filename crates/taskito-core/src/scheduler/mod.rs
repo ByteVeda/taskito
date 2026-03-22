@@ -233,7 +233,7 @@ impl Scheduler {
     pub async fn run(&self, job_tx: tokio::sync::mpsc::Sender<Job>) {
         let mut counters = TickCounters::default();
         let base_interval = self.config.poll_interval;
-        let max_interval = Duration::from_secs(1);
+        let max_interval = Duration::from_millis(200);
         let mut current_interval = base_interval;
 
         loop {
