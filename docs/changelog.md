@@ -6,10 +6,13 @@ All notable changes to taskito are documented here.
 
 ### Features
 
+- **Dashboard rebuild** -- full rewrite of the web dashboard using Preact, Vite, and Tailwind CSS; production-grade dark/light UI with lucide icons, toast notifications, loading states, timeseries charts, and 3 new pages (Resources, Queue Management, System Internals); 128KB single-file HTML (32KB gzipped) served from the Python package with zero runtime dependencies
 - **Smart scheduling** -- adaptive backpressure polling (50ms base → 200ms max backoff when idle, instant reset on dispatch); per-task duration cache tracks average execution time in-memory; weighted least-loaded dispatch for prefork pool factors in task duration (`score = in_flight × avg_duration`)
 
 ### Internal
 
+- Dashboard frontend source in `dashboard/` (Preact + Vite + Tailwind CSS + TypeScript); build via `cd dashboard && npm run build`; output inlined into `py_src/taskito/templates/dashboard.html`
+- `dashboard.py` simplified to read single pre-built HTML instead of composing from 8 separate template files
 - `Scheduler::run()` uses adaptive polling with exponential backoff (50ms → 200ms max); `tick()` returns `bool` for feedback
 - `TaskDurationCache` in-memory HashMap tracks per-task avg wall_time_ns, updated on every `handle_result()`
 - `weighted_least_loaded()` dispatch strategy in `prefork/dispatch.rs`; `aging_factor` field added to `SchedulerConfig`
