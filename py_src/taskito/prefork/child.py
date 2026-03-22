@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import importlib
 import json
+import logging
 import os
 import sys
 import time
@@ -21,6 +22,8 @@ from typing import Any
 
 from taskito.async_support.helpers import run_maybe_async
 from taskito.exceptions import TaskCancelledError
+
+logger = logging.getLogger("taskito.prefork.child")
 
 
 def _import_queue(app_path: str) -> Any:
@@ -50,6 +53,7 @@ def _execute_job(
     retry_count = job.get("retry_count", 0)
     max_retries = job.get("max_retries", 3)
 
+    logger.debug("executing %s[%s]", task_name, job_id)
     wrapper = queue._task_registry.get(task_name)
     if wrapper is None:
         return {
@@ -101,6 +105,7 @@ def _execute_job(
     except Exception:
         wall_time_ns = time.monotonic_ns() - start_ns
         error_msg = traceback.format_exc()
+        logger.error("task %s[%s] failed: %s", task_name, job_id, error_msg.splitlines()[-1])
 
         # Check retry filters
         should_retry = True
@@ -160,6 +165,7 @@ def main() -> None:
 
     # Signal readiness
     _write_message({"type": "ready"})
+    logger.info("child ready (app=%s, pid=%d)", app_path, os.getpid())
 
     # Main loop: read jobs from stdin, execute, write results to stdout
     try:
@@ -171,6 +177,7 @@ def main() -> None:
             msg = json.loads(line)
 
             if msg.get("type") == "shutdown":
+                logger.info("shutdown received")
                 break
 
             if msg.get("type") == "job":
@@ -178,9 +185,12 @@ def main() -> None:
                 _write_message(result)
 
     except (BrokenPipeError, EOFError, KeyboardInterrupt):
-        pass
+        logger.debug("child pipe closed or interrupted")
 
     finally:
         # Teardown resources
         if runtime is not None:
-            runtime.teardown()
+            try:
+                runtime.teardown()
+            except Exception:
+                logger.warning("resource teardown error", exc_info=True)
