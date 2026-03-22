@@ -1,12 +1,8 @@
 import { ShieldAlert } from "lucide-preact";
-import type { CircuitBreaker as CBType } from "../api/types";
-import { Badge } from "../components/ui/badge";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { useApi } from "../hooks/use-api";
-import { fmtTime } from "../lib/format";
-import type { RoutableProps } from "../lib/routes";
+import type { CircuitBreaker as CBType } from "../api";
+import { Badge, type Column, DataTable, EmptyState, ErrorState, Loading } from "../components/ui";
+import { useApi } from "../hooks";
+import { fmtTime, type RoutableProps } from "../lib";
 
 const CB_COLUMNS: Column<CBType>[] = [
   { header: "Task", accessor: (b) => <span class="font-medium">{b.task_name}</span> },
@@ -29,8 +25,9 @@ const CB_COLUMNS: Column<CBType>[] = [
 ];
 
 export function CircuitBreakers(_props: RoutableProps) {
-  const { data: breakers, loading } = useApi<CBType[]>("/api/circuit-breakers");
+  const { data: breakers, loading, error, refetch } = useApi<CBType[]>("/api/circuit-breakers");
 
+  if (error && !breakers) return <ErrorState message={error} onRetry={refetch} />;
   if (loading && !breakers) return <Loading />;
 
   return (

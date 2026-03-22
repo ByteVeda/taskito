@@ -1,10 +1,8 @@
 import { Cog } from "lucide-preact";
-import type { InterceptionStats, ProxyStats } from "../api/types";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { useApi } from "../hooks/use-api";
-import type { RoutableProps } from "../lib/routes";
+import type { InterceptionStats, ProxyStats } from "../api";
+import { type Column, DataTable, EmptyState, ErrorState, Loading } from "../components/ui";
+import { useApi } from "../hooks";
+import type { RoutableProps } from "../lib";
 
 interface ProxyRow {
   handler: string;
@@ -52,9 +50,18 @@ const INTERCEPTION_COLUMNS: Column<InterceptionRow>[] = [
 ];
 
 export function System(_props: RoutableProps) {
-  const { data: proxyStats, loading: proxyLoading } = useApi<ProxyStats>("/api/proxy-stats");
-  const { data: interceptionStats, loading: interceptLoading } =
-    useApi<InterceptionStats>("/api/interception-stats");
+  const {
+    data: proxyStats,
+    loading: proxyLoading,
+    error: proxyError,
+    refetch: refetchProxy,
+  } = useApi<ProxyStats>("/api/proxy-stats");
+  const {
+    data: interceptionStats,
+    loading: interceptLoading,
+    error: interceptError,
+    refetch: refetchIntercept,
+  } = useApi<InterceptionStats>("/api/interception-stats");
 
   const proxyRows: ProxyRow[] = proxyStats
     ? Object.entries(proxyStats).map(([handler, s]) => ({ handler, ...s }))
@@ -80,7 +87,9 @@ export function System(_props: RoutableProps) {
         <h2 class="text-sm font-semibold dark:text-gray-200 text-slate-700 mb-3">
           Proxy Reconstruction
         </h2>
-        {proxyLoading && !proxyStats ? (
+        {proxyError && !proxyStats ? (
+          <ErrorState message={proxyError} onRetry={refetchProxy} />
+        ) : proxyLoading && !proxyStats ? (
           <Loading />
         ) : !proxyRows.length ? (
           <EmptyState
@@ -94,7 +103,9 @@ export function System(_props: RoutableProps) {
 
       <div>
         <h2 class="text-sm font-semibold dark:text-gray-200 text-slate-700 mb-3">Interception</h2>
-        {interceptLoading && !interceptionStats ? (
+        {interceptError && !interceptionStats ? (
+          <ErrorState message={interceptError} onRetry={refetchIntercept} />
+        ) : interceptLoading && !interceptionStats ? (
           <Loading />
         ) : !interceptRows.length ? (
           <EmptyState

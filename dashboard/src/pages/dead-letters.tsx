@@ -1,17 +1,18 @@
 import { ChevronDown, ChevronRight, Group, List, RotateCcw, Skull, Trash2 } from "lucide-preact";
 import { useState } from "preact/hooks";
-import { apiPost } from "../api/client";
-import type { DeadLetter } from "../api/types";
-import { Button } from "../components/ui/button";
-import { ConfirmDialog } from "../components/ui/confirm-dialog";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { Pagination } from "../components/ui/pagination";
-import { useApi } from "../hooks/use-api";
-import { addToast } from "../hooks/use-toast";
-import { fmtTime, truncateId } from "../lib/format";
-import type { RoutableProps } from "../lib/routes";
+import { apiPost, type DeadLetter } from "../api";
+import {
+  Button,
+  type Column,
+  ConfirmDialog,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Loading,
+  Pagination,
+} from "../components/ui";
+import { addToast, useApi } from "../hooks";
+import { fmtTime, type RoutableProps, truncateId } from "../lib";
 
 const PAGE_SIZE = 20;
 
@@ -42,6 +43,7 @@ export function DeadLetters(_props: RoutableProps) {
   const {
     data: items,
     loading,
+    error,
     refetch,
   } = useApi<DeadLetter[]>(
     `/api/dead-letters?limit=${grouped ? 200 : PAGE_SIZE}&offset=${grouped ? 0 : page * PAGE_SIZE}`,
@@ -139,6 +141,7 @@ export function DeadLetters(_props: RoutableProps) {
     },
   ];
 
+  if (error && !items) return <ErrorState message={error} onRetry={refetch} />;
   if (loading && !items) return <Loading />;
 
   const groups = grouped && items ? groupByError(items) : [];

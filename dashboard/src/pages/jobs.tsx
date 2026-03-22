@@ -1,21 +1,22 @@
 import { Ban, ListTodo, RotateCcw, Search, X } from "lucide-preact";
 import { useState } from "preact/hooks";
 import { route } from "preact-router";
-import { apiPost } from "../api/client";
-import type { Job, QueueStats } from "../api/types";
-import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
-import { ConfirmDialog } from "../components/ui/confirm-dialog";
-import { type Column, DataTable } from "../components/ui/data-table";
-import { EmptyState } from "../components/ui/empty-state";
-import { Loading } from "../components/ui/loading";
-import { Pagination } from "../components/ui/pagination";
-import { ProgressBar } from "../components/ui/progress-bar";
-import { StatsGrid } from "../components/ui/stats-grid";
-import { useApi } from "../hooks/use-api";
-import { addToast } from "../hooks/use-toast";
-import { fmtTime, truncateId } from "../lib/format";
-import type { RoutableProps } from "../lib/routes";
+import { apiPost, type Job, type QueueStats } from "../api";
+import {
+  Badge,
+  Button,
+  type Column,
+  ConfirmDialog,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Loading,
+  Pagination,
+  ProgressBar,
+  StatsGrid,
+} from "../components/ui";
+import { addToast, useApi } from "../hooks";
+import { fmtTime, type RoutableProps, truncateId } from "../lib";
 
 interface Filters {
   status: string;
@@ -83,10 +84,15 @@ export function Jobs(_props: RoutableProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBulkCancel, setShowBulkCancel] = useState(false);
 
-  const { data: stats } = useApi<QueueStats>("/api/stats");
+  const {
+    data: stats,
+    error: statsError,
+    refetch: refetchStats,
+  } = useApi<QueueStats>("/api/stats");
   const {
     data: jobs,
     loading,
+    error: jobsError,
     refetch,
   } = useApi<Job[]>(buildUrl(filters, page), [
     filters.status,
@@ -239,7 +245,9 @@ export function Jobs(_props: RoutableProps) {
         </div>
       )}
 
-      {loading && !jobs ? (
+      {jobsError && !jobs ? (
+        <ErrorState message={jobsError} onRetry={refetch} />
+      ) : loading && !jobs ? (
         <Loading />
       ) : !jobs?.length ? (
         <EmptyState message="No jobs found" subtitle="Try adjusting your filters" />
