@@ -118,9 +118,41 @@ impl WorkerDispatcher for PreforkPool {
         );
 
         // Dispatch loop: receive jobs from scheduler, send to least-loaded child
+        let mut restart_count: u64 = 0;
         while let Some(job) = job_rx.recv().await {
             if shutdown.load(Ordering::Relaxed) {
                 break;
+            }
+
+            // Check for dead children and restart them
+            for i in 0..process_handles.len() {
+                if !process_handles[i].is_alive() {
+                    log::warn!("[taskito] prefork child {i} died, restarting");
+                    restart_count += 1;
+                    match spawn_child(&python, &app_path) {
+                        Ok((writer, mut reader, process)) => {
+                            writers[i] = writer;
+                            process_handles[i] = process;
+                            in_flight[i].store(0, Ordering::Relaxed);
+                            let tx = result_tx.clone();
+                            let in_flight_counter = in_flight.clone();
+                            reader_handles.push(thread::spawn(move || {
+                                while let Ok(msg) = reader.read() {
+                                    if let Some(job_result) = msg.into_job_result() {
+                                        in_flight_counter[i].fetch_sub(1, Ordering::Relaxed);
+                                        if tx.send(job_result).is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }));
+                            log::info!("[taskito] prefork child {i} restarted (total restarts: {restart_count})");
+                        }
+                        Err(e) => {
+                            log::error!("[taskito] failed to restart child {i}: {e}");
+                        }
+                    }
+                }
             }
 
             let counts: Vec<u32> = in_flight
