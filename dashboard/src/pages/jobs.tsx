@@ -1,16 +1,16 @@
-import { useState } from "preact/hooks";
 import { ListTodo, Search } from "lucide-preact";
-import { useApi } from "../hooks/use-api";
-import { StatsGrid } from "../components/ui/stats-grid";
-import { DataTable, type Column } from "../components/ui/data-table";
-import { Badge } from "../components/ui/badge";
-import { ProgressBar } from "../components/ui/progress-bar";
-import { Pagination } from "../components/ui/pagination";
-import { Loading } from "../components/ui/loading";
-import { EmptyState } from "../components/ui/empty-state";
-import { fmtTime, truncateId } from "../lib/format";
+import { useState } from "preact/hooks";
 import { route } from "preact-router";
-import type { QueueStats, Job } from "../api/types";
+import type { Job, QueueStats } from "../api/types";
+import { Badge } from "../components/ui/badge";
+import { type Column, DataTable } from "../components/ui/data-table";
+import { EmptyState } from "../components/ui/empty-state";
+import { Loading } from "../components/ui/loading";
+import { Pagination } from "../components/ui/pagination";
+import { ProgressBar } from "../components/ui/progress-bar";
+import { StatsGrid } from "../components/ui/stats-grid";
+import { useApi } from "../hooks/use-api";
+import { fmtTime, truncateId } from "../lib/format";
 import type { RoutableProps } from "../lib/routes";
 
 interface Filters {
@@ -75,10 +75,16 @@ export function Jobs(_props: RoutableProps) {
   const [page, setPage] = useState(0);
 
   const { data: stats } = useApi<QueueStats>("/api/stats");
-  const { data: jobs, loading } = useApi<Job[]>(
-    buildUrl(filters, page),
-    [filters.status, filters.queue, filters.task, filters.metadata, filters.error, filters.created_after, filters.created_before, page],
-  );
+  const { data: jobs, loading } = useApi<Job[]>(buildUrl(filters, page), [
+    filters.status,
+    filters.queue,
+    filters.task,
+    filters.metadata,
+    filters.error,
+    filters.created_after,
+    filters.created_before,
+    page,
+  ]);
 
   const updateFilter = (key: keyof Filters, value: string) => {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -121,12 +127,44 @@ export function Jobs(_props: RoutableProps) {
             <option value="dead">Dead</option>
             <option value="cancelled">Cancelled</option>
           </select>
-          <input class={inputClass} placeholder="Queue\u2026" value={filters.queue} onInput={(e) => updateFilter("queue", (e.target as HTMLInputElement).value)} />
-          <input class={inputClass} placeholder="Task\u2026" value={filters.task} onInput={(e) => updateFilter("task", (e.target as HTMLInputElement).value)} />
-          <input class={inputClass} placeholder="Metadata\u2026" value={filters.metadata} onInput={(e) => updateFilter("metadata", (e.target as HTMLInputElement).value)} />
-          <input class={inputClass} placeholder="Error text\u2026" value={filters.error} onInput={(e) => updateFilter("error", (e.target as HTMLInputElement).value)} />
-          <input class={inputClass} type="date" title="Created after" value={filters.created_after} onInput={(e) => updateFilter("created_after", (e.target as HTMLInputElement).value)} />
-          <input class={inputClass} type="date" title="Created before" value={filters.created_before} onInput={(e) => updateFilter("created_before", (e.target as HTMLInputElement).value)} />
+          <input
+            class={inputClass}
+            placeholder="Queue\u2026"
+            value={filters.queue}
+            onInput={(e) => updateFilter("queue", (e.target as HTMLInputElement).value)}
+          />
+          <input
+            class={inputClass}
+            placeholder="Task\u2026"
+            value={filters.task}
+            onInput={(e) => updateFilter("task", (e.target as HTMLInputElement).value)}
+          />
+          <input
+            class={inputClass}
+            placeholder="Metadata\u2026"
+            value={filters.metadata}
+            onInput={(e) => updateFilter("metadata", (e.target as HTMLInputElement).value)}
+          />
+          <input
+            class={inputClass}
+            placeholder="Error text\u2026"
+            value={filters.error}
+            onInput={(e) => updateFilter("error", (e.target as HTMLInputElement).value)}
+          />
+          <input
+            class={inputClass}
+            type="date"
+            title="Created after"
+            value={filters.created_after}
+            onInput={(e) => updateFilter("created_after", (e.target as HTMLInputElement).value)}
+          />
+          <input
+            class={inputClass}
+            type="date"
+            title="Created before"
+            value={filters.created_before}
+            onInput={(e) => updateFilter("created_before", (e.target as HTMLInputElement).value)}
+          />
         </div>
       </div>
 
@@ -135,12 +173,13 @@ export function Jobs(_props: RoutableProps) {
       ) : !jobs?.length ? (
         <EmptyState message="No jobs found" subtitle="Try adjusting your filters" />
       ) : (
-        <DataTable
-          columns={JOB_COLUMNS}
-          data={jobs}
-          onRowClick={(j) => route(`/jobs/${j.id}`)}
-        >
-          <Pagination page={page} pageSize={PAGE_SIZE} itemCount={jobs.length} onPageChange={setPage} />
+        <DataTable columns={JOB_COLUMNS} data={jobs} onRowClick={(j) => route(`/jobs/${j.id}`)}>
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            itemCount={jobs.length}
+            onPageChange={setPage}
+          />
         </DataTable>
       )}
     </div>

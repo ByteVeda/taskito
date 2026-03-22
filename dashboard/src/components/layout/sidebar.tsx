@@ -1,18 +1,18 @@
-import { useState, useEffect } from "preact/hooks";
-import { getCurrentUrl } from "preact-router";
+import type { LucideIcon } from "lucide-preact";
 import {
+  BarChart3,
+  Box,
+  Cog,
+  Layers,
   LayoutDashboard,
   ListTodo,
-  BarChart3,
   ScrollText,
   Server,
-  Layers,
-  Box,
   ShieldAlert,
   Skull,
-  Cog,
 } from "lucide-preact";
-import type { LucideIcon } from "lucide-preact";
+import { useEffect, useState } from "preact/hooks";
+import { getCurrentUrl } from "preact-router";
 
 interface NavItem {
   path: string;

@@ -1,9 +1,9 @@
-import { Server, Clock, Tag } from "lucide-preact";
-import { useApi } from "../hooks/use-api";
-import { Loading } from "../components/ui/loading";
-import { EmptyState } from "../components/ui/empty-state";
-import { fmtTime } from "../lib/format";
+import { Clock, Server, Tag } from "lucide-preact";
 import type { QueueStats, Worker as WorkerType } from "../api/types";
+import { EmptyState } from "../components/ui/empty-state";
+import { Loading } from "../components/ui/loading";
+import { useApi } from "../hooks/use-api";
+import { fmtTime } from "../lib/format";
 import type { RoutableProps } from "../lib/routes";
 
 export function Workers(_props: RoutableProps) {
@@ -37,9 +37,7 @@ export function Workers(_props: RoutableProps) {
             >
               <div class="flex items-center gap-2 mb-3">
                 <span class="w-2 h-2 rounded-full bg-success shadow-sm shadow-success/40" />
-                <span class="font-mono text-xs text-accent-light font-medium">
-                  {w.worker_id}
-                </span>
+                <span class="font-mono text-xs text-accent-light font-medium">{w.worker_id}</span>
               </div>
               <div class="space-y-2 text-[13px]">
                 <div class="flex items-center gap-2 text-muted">
@@ -48,11 +46,13 @@ export function Workers(_props: RoutableProps) {
                 </div>
                 <div class="flex items-center gap-2 text-muted">
                   <Clock class="w-3.5 h-3.5" />
-                  Last heartbeat: <span class="dark:text-gray-200 text-slate-700">{fmtTime(w.last_heartbeat)}</span>
+                  Last heartbeat:{" "}
+                  <span class="dark:text-gray-200 text-slate-700">{fmtTime(w.last_heartbeat)}</span>
                 </div>
                 <div class="flex items-center gap-2 text-muted">
                   <Clock class="w-3.5 h-3.5" />
-                  Registered: <span class="dark:text-gray-200 text-slate-700">{fmtTime(w.registered_at)}</span>
+                  Registered:{" "}
+                  <span class="dark:text-gray-200 text-slate-700">{fmtTime(w.registered_at)}</span>
                 </div>
                 {w.tags && (
                   <div class="flex items-center gap-2 text-muted">

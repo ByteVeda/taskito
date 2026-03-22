@@ -1,10 +1,4 @@
-export type JobStatus =
-  | "pending"
-  | "running"
-  | "complete"
-  | "failed"
-  | "dead"
-  | "cancelled";
+export type JobStatus = "pending" | "running" | "complete" | "failed" | "dead" | "cancelled";
 
 export interface QueueStats {
   pending: number;

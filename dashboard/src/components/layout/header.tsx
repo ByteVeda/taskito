@@ -1,9 +1,6 @@
-import { Zap, Sun, Moon, RefreshCw } from "lucide-preact";
+import { Moon, RefreshCw, Sun, Zap } from "lucide-preact";
+import { refreshInterval, setRefreshInterval } from "../../hooks/use-auto-refresh";
 import { theme, toggleTheme } from "../../hooks/use-theme";
-import {
-  refreshInterval,
-  setRefreshInterval,
-} from "../../hooks/use-auto-refresh";
 
 export function Header() {
   return (
@@ -15,9 +12,7 @@ export function Header() {
         <span class="text-[15px] font-semibold dark:text-white text-slate-900 tracking-tight">
           taskito
         </span>
-        <span class="text-xs text-muted font-normal hidden sm:inline">
-          dashboard
-        </span>
+        <span class="text-xs text-muted font-normal hidden sm:inline">dashboard</span>
       </a>
 
       <div class="flex items-center gap-3">
@@ -27,9 +22,7 @@ export function Header() {
           <select
             class="dark:bg-surface-3 bg-slate-100 dark:text-gray-300 text-slate-600 border dark:border-white/[0.06] border-slate-200 rounded-md px-2 py-1 text-xs cursor-pointer hover:dark:border-white/10 hover:border-slate-300 transition-colors"
             value={refreshInterval.value}
-            onChange={(e) =>
-              setRefreshInterval(Number((e.target as HTMLSelectElement).value))
-            }
+            onChange={(e) => setRefreshInterval(Number((e.target as HTMLSelectElement).value))}
           >
             <option value={2000}>2s</option>
             <option value={5000}>5s</option>
@@ -42,15 +35,12 @@ export function Header() {
 
         {/* Theme toggle */}
         <button
+          type="button"
           onClick={toggleTheme}
           class="p-2 rounded-lg dark:text-gray-400 text-slate-500 hover:dark:text-white hover:text-slate-900 hover:dark:bg-surface-3 hover:bg-slate-100 transition-all duration-150 border-none cursor-pointer bg-transparent"
           title={`Switch to ${theme.value === "dark" ? "light" : "dark"} mode`}
         >
-          {theme.value === "dark" ? (
-            <Sun class="w-4 h-4" />
-          ) : (
-            <Moon class="w-4 h-4" />
-          )}
+          {theme.value === "dark" ? <Sun class="w-4 h-4" /> : <Moon class="w-4 h-4" />}
         </button>
       </div>
     </header>

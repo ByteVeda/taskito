@@ -1,4 +1,4 @@
-import { ComponentChildren } from "preact";
+import type { ComponentChildren } from "preact";
 
 export interface Column<T> {
   header: string;
@@ -13,12 +13,7 @@ interface DataTableProps<T> {
   children?: ComponentChildren;
 }
 
-export function DataTable<T>({
-  columns,
-  data,
-  onRowClick,
-  children,
-}: DataTableProps<T>) {
+export function DataTable<T>({ columns, data, onRowClick, children }: DataTableProps<T>) {
   return (
     <div class="dark:bg-surface-2 bg-white rounded-xl shadow-sm dark:shadow-black/20 overflow-hidden border dark:border-white/[0.06] border-slate-200">
       <div class="overflow-x-auto">
@@ -49,10 +44,7 @@ export function DataTable<T>({
                 }`}
               >
                 {columns.map((col, ci) => (
-                  <td
-                    key={ci}
-                    class={`px-4 py-3 whitespace-nowrap ${col.className ?? ""}`}
-                  >
+                  <td key={ci} class={`px-4 py-3 whitespace-nowrap ${col.className ?? ""}`}>
                     {typeof col.accessor === "function"
                       ? col.accessor(row)
                       : (row[col.accessor] as ComponentChildren)}

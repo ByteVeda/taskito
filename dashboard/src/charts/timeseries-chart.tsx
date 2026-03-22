@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import type { TimeseriesBucket } from "../api/types";
 
 interface TimeseriesChartProps {

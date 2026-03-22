@@ -1,7 +1,10 @@
-import { CheckCircle2, XCircle, Info, X } from "lucide-preact";
-import { toasts, dismissToast, type Toast } from "../../hooks/use-toast";
+import { CheckCircle2, Info, X, XCircle } from "lucide-preact";
+import { dismissToast, type Toast, toasts } from "../../hooks/use-toast";
 
-const TYPE_CONFIG: Record<Toast["type"], { border: string; icon: typeof CheckCircle2; iconColor: string }> = {
+const TYPE_CONFIG: Record<
+  Toast["type"],
+  { border: string; icon: typeof CheckCircle2; iconColor: string }
+> = {
   success: { border: "border-l-success", icon: CheckCircle2, iconColor: "text-success" },
   error: { border: "border-l-danger", icon: XCircle, iconColor: "text-danger" },
   info: { border: "border-l-info", icon: Info, iconColor: "text-info" },
@@ -25,6 +28,7 @@ export function ToastContainer() {
             <Icon class={`w-4.5 h-4.5 ${config.iconColor} shrink-0 mt-0.5`} strokeWidth={2} />
             <span class="flex-1">{t.message}</span>
             <button
+              type="button"
               onClick={() => dismissToast(t.id)}
               class="text-muted hover:dark:text-white hover:text-slate-900 transition-colors border-none bg-transparent cursor-pointer p-0.5"
             >

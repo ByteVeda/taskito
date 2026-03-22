@@ -5,9 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && cp dist/index.html ../py_src/taskito/templates/dashboard.html",
+    "build": "vite build && sed -i 's/vertical-align:middle;display:block/display:block/g' dist/index.html && cp dist/index.html ../py_src/taskito/templates/dashboard.html",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --fix src/",
+    "format": "biome format --write src/",
+    "format:check": "biome format src/",
+    "ci": "biome ci src/ && tsc --noEmit && vite build"
   },
   "dependencies": {
     "@preact/signals": "^1.3.0",
@@ -16,6 +21,7 @@
     "preact-router": "^4.1.2"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.8",
     "@preact/preset-vite": "^2.9.0",
     "@tailwindcss/vite": "^4.0.0",
     "tailwindcss": "^4.0.0",

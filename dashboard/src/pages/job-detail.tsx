@@ -1,17 +1,17 @@
 import { FileText, RotateCcw } from "lucide-preact";
-import { useApi } from "../hooks/use-api";
-import { Badge } from "../components/ui/badge";
-import { ProgressBar } from "../components/ui/progress-bar";
-import { Button } from "../components/ui/button";
-import { Loading } from "../components/ui/loading";
-import { EmptyState } from "../components/ui/empty-state";
-import { DataTable, type Column } from "../components/ui/data-table";
-import { DagViewer } from "../charts/dag-viewer";
-import { addToast } from "../hooks/use-toast";
-import { apiPost } from "../api/client";
-import { fmtTime, truncateId } from "../lib/format";
 import { route } from "preact-router";
-import type { Job, JobError, TaskLog, ReplayEntry, DagData } from "../api/types";
+import { apiPost } from "../api/client";
+import type { DagData, Job, JobError, ReplayEntry, TaskLog } from "../api/types";
+import { DagViewer } from "../charts/dag-viewer";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { type Column, DataTable } from "../components/ui/data-table";
+import { EmptyState } from "../components/ui/empty-state";
+import { Loading } from "../components/ui/loading";
+import { ProgressBar } from "../components/ui/progress-bar";
+import { useApi } from "../hooks/use-api";
+import { addToast } from "../hooks/use-toast";
+import { fmtTime, truncateId } from "../lib/format";
 import type { RoutableProps } from "../lib/routes";
 
 interface JobDetailProps extends RoutableProps {
@@ -26,7 +26,14 @@ const ERROR_COLUMNS: Column<JobError>[] = [
 
 const LOG_COLUMNS: Column<TaskLog>[] = [
   { header: "Time", accessor: (l) => <span class="text-muted">{fmtTime(l.logged_at)}</span> },
-  { header: "Level", accessor: (l) => <Badge status={l.level === "error" ? "failed" : l.level === "warning" ? "pending" : "complete"} /> },
+  {
+    header: "Level",
+    accessor: (l) => (
+      <Badge
+        status={l.level === "error" ? "failed" : l.level === "warning" ? "pending" : "complete"}
+      />
+    ),
+  },
   { header: "Message", accessor: "message" },
   { header: "Extra", accessor: (l) => l.extra ?? "\u2014", className: "max-w-[200px] truncate" },
 ];
@@ -35,14 +42,28 @@ const REPLAY_COLUMNS: Column<ReplayEntry>[] = [
   {
     header: "Replay Job",
     accessor: (r) => (
-      <a href={`/jobs/${r.replay_job_id}`} class="font-mono text-xs text-accent-light hover:underline">
+      <a
+        href={`/jobs/${r.replay_job_id}`}
+        class="font-mono text-xs text-accent-light hover:underline"
+      >
         {truncateId(r.replay_job_id)}
       </a>
     ),
   },
-  { header: "Replayed At", accessor: (r) => <span class="text-muted">{fmtTime(r.replayed_at)}</span> },
-  { header: "Original Error", accessor: (r) => r.original_error ?? "\u2014", className: "max-w-[200px] truncate" },
-  { header: "Replay Error", accessor: (r) => r.replay_error ?? "\u2014", className: "max-w-[200px] truncate" },
+  {
+    header: "Replayed At",
+    accessor: (r) => <span class="text-muted">{fmtTime(r.replayed_at)}</span>,
+  },
+  {
+    header: "Original Error",
+    accessor: (r) => r.original_error ?? "\u2014",
+    className: "max-w-[200px] truncate",
+  },
+  {
+    header: "Replay Error",
+    accessor: (r) => r.replay_error ?? "\u2014",
+    className: "max-w-[200px] truncate",
+  },
 ];
 
 export function JobDetail({ id }: JobDetailProps) {
@@ -58,7 +79,10 @@ export function JobDetail({ id }: JobDetailProps) {
   const handleCancel = async () => {
     try {
       const res = await apiPost<{ cancelled: boolean }>(`/api/jobs/${id}/cancel`);
-      addToast(res.cancelled ? "Job cancelled" : "Failed to cancel job", res.cancelled ? "success" : "error");
+      addToast(
+        res.cancelled ? "Job cancelled" : "Failed to cancel job",
+        res.cancelled ? "success" : "error",
+      );
       refetch();
     } catch {
       addToast("Failed to cancel job", "error");
@@ -99,12 +123,18 @@ export function JobDetail({ id }: JobDetailProps) {
         </div>
       </div>
 
-      <div class={`dark:bg-surface-2 bg-white rounded-xl shadow-sm dark:shadow-black/20 p-6 border dark:border-white/[0.06] border-slate-200 border-t-[3px] ${borderColor[job.status] ?? "border-t-muted"}`}>
+      <div
+        class={`dark:bg-surface-2 bg-white rounded-xl shadow-sm dark:shadow-black/20 p-6 border dark:border-white/[0.06] border-slate-200 border-t-[3px] ${borderColor[job.status] ?? "border-t-muted"}`}
+      >
         <div class="grid grid-cols-[140px_1fr] gap-x-6 gap-y-3 text-[13px]">
           <span class="text-muted font-medium">ID</span>
-          <span class="font-mono text-xs break-all dark:text-gray-300 text-slate-600">{job.id}</span>
+          <span class="font-mono text-xs break-all dark:text-gray-300 text-slate-600">
+            {job.id}
+          </span>
           <span class="text-muted font-medium">Status</span>
-          <span><Badge status={job.status} /></span>
+          <span>
+            <Badge status={job.status} />
+          </span>
           <span class="text-muted font-medium">Task</span>
           <span class="font-medium">{job.task_name}</span>
           <span class="text-muted font-medium">Queue</span>
@@ -112,9 +142,13 @@ export function JobDetail({ id }: JobDetailProps) {
           <span class="text-muted font-medium">Priority</span>
           <span>{job.priority}</span>
           <span class="text-muted font-medium">Progress</span>
-          <span><ProgressBar progress={job.progress} /></span>
+          <span>
+            <ProgressBar progress={job.progress} />
+          </span>
           <span class="text-muted font-medium">Retries</span>
-          <span class={job.retry_count > 0 ? "text-warning" : ""}>{job.retry_count} / {job.max_retries}</span>
+          <span class={job.retry_count > 0 ? "text-warning" : ""}>
+            {job.retry_count} / {job.max_retries}
+          </span>
           <span class="text-muted font-medium">Created</span>
           <span class="text-muted">{fmtTime(job.created_at)}</span>
           <span class="text-muted font-medium">Scheduled</span>
@@ -128,7 +162,9 @@ export function JobDetail({ id }: JobDetailProps) {
           {job.error && (
             <>
               <span class="text-muted font-medium">Error</span>
-              <span class="text-danger text-xs font-mono bg-danger-dim rounded px-2 py-1">{job.error}</span>
+              <span class="text-danger text-xs font-mono bg-danger-dim rounded px-2 py-1">
+                {job.error}
+              </span>
             </>
           )}
           {job.unique_key && (
@@ -146,7 +182,9 @@ export function JobDetail({ id }: JobDetailProps) {
         </div>
         <div class="flex gap-2.5 mt-5 pt-5 border-t dark:border-white/[0.06] border-slate-100">
           {job.status === "pending" && (
-            <Button variant="danger" onClick={handleCancel}>Cancel Job</Button>
+            <Button variant="danger" onClick={handleCancel}>
+              Cancel Job
+            </Button>
           )}
           <Button onClick={handleReplay}>
             <RotateCcw class="w-3.5 h-3.5" />

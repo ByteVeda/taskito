@@ -12,9 +12,7 @@ export function EmptyState({ message, subtitle }: EmptyStateProps) {
         <Inbox class="w-6 h-6 text-muted" strokeWidth={1.5} />
       </div>
       <p class="text-sm font-medium dark:text-gray-300 text-slate-600">{message}</p>
-      {subtitle && (
-        <p class="text-xs text-muted mt-1">{subtitle}</p>
-      )}
+      {subtitle && <p class="text-xs text-muted mt-1">{subtitle}</p>}
     </div>
   );
 }

@@ -1,17 +1,17 @@
-import { useRef } from "preact/hooks";
 import { LayoutDashboard } from "lucide-preact";
-import { useApi } from "../hooks/use-api";
-import { StatsGrid } from "../components/ui/stats-grid";
-import { DataTable, type Column } from "../components/ui/data-table";
-import { Badge } from "../components/ui/badge";
-import { ProgressBar } from "../components/ui/progress-bar";
-import { Loading } from "../components/ui/loading";
-import { ThroughputChart } from "../charts/throughput-chart";
-import { fmtTime, truncateId } from "../lib/format";
+import { useRef } from "preact/hooks";
 import { route } from "preact-router";
-import type { QueueStats, Job } from "../api/types";
-import type { RoutableProps } from "../lib/routes";
+import type { Job, QueueStats } from "../api/types";
+import { ThroughputChart } from "../charts/throughput-chart";
+import { Badge } from "../components/ui/badge";
+import { type Column, DataTable } from "../components/ui/data-table";
+import { Loading } from "../components/ui/loading";
+import { ProgressBar } from "../components/ui/progress-bar";
+import { StatsGrid } from "../components/ui/stats-grid";
+import { useApi } from "../hooks/use-api";
 import { refreshInterval } from "../hooks/use-auto-refresh";
+import { fmtTime, truncateId } from "../lib/format";
+import type { RoutableProps } from "../lib/routes";
 
 const JOB_COLUMNS: Column<Job>[] = [
   {
@@ -65,11 +65,7 @@ export function Overview(_props: RoutableProps) {
         <span class="text-xs text-muted">(latest 10)</span>
       </div>
       {jobs?.length ? (
-        <DataTable
-          columns={JOB_COLUMNS}
-          data={jobs}
-          onRowClick={(j) => route(`/jobs/${j.id}`)}
-        />
+        <DataTable columns={JOB_COLUMNS} data={jobs} onRowClick={(j) => route(`/jobs/${j.id}`)} />
       ) : null}
     </div>
   );

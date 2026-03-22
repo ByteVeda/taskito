@@ -1,4 +1,4 @@
-import { signal, effect } from "@preact/signals";
+import { effect, signal } from "@preact/signals";
 
 type Theme = "dark" | "light";
 

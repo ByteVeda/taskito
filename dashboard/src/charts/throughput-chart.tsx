@@ -1,5 +1,5 @@
-import { useRef, useEffect } from "preact/hooks";
 import { TrendingUp } from "lucide-preact";
+import { useEffect, useRef } from "preact/hooks";
 
 interface ThroughputChartProps {
   data: number[];
@@ -107,7 +107,9 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
           <TrendingUp class="w-4 h-4 text-success" strokeWidth={2} />
           <h3 class="text-sm font-medium dark:text-gray-300 text-slate-600">Throughput</h3>
         </div>
-        <span class="text-xl font-bold tabular-nums text-success">{current.toFixed(1)} <span class="text-xs font-normal text-muted">jobs/s</span></span>
+        <span class="text-xl font-bold tabular-nums text-success">
+          {current.toFixed(1)} <span class="text-xs font-normal text-muted">jobs/s</span>
+        </span>
       </div>
       <canvas ref={canvasRef} class="w-full" style={{ height: "180px" }} />
     </div>

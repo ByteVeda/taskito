@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "preact/hooks";
-import { refreshInterval } from "./use-auto-refresh";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api/client";
+import { refreshInterval } from "./use-auto-refresh";
 
 interface UseApiResult<T> {
   data: T | null;
@@ -9,10 +9,7 @@ interface UseApiResult<T> {
   refetch: () => void;
 }
 
-export function useApi<T>(
-  url: string | null,
-  deps: unknown[] = [],
-): UseApiResult<T> {
+export function useApi<T>(url: string | null, deps: unknown[] = []): UseApiResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

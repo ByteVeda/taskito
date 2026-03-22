@@ -7,11 +7,7 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
-export function ConfirmDialog({
-  message,
-  onConfirm,
-  onCancel,
-}: ConfirmDialogProps) {
+export function ConfirmDialog({ message, onConfirm, onCancel }: ConfirmDialogProps) {
   return (
     <div
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in"

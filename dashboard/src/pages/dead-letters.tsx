@@ -1,16 +1,16 @@
+import { RotateCcw, Skull, Trash2 } from "lucide-preact";
 import { useState } from "preact/hooks";
-import { Skull, RotateCcw, Trash2 } from "lucide-preact";
-import { useApi } from "../hooks/use-api";
-import { DataTable, type Column } from "../components/ui/data-table";
-import { Pagination } from "../components/ui/pagination";
+import { apiPost } from "../api/client";
+import type { DeadLetter } from "../api/types";
 import { Button } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ui/confirm-dialog";
-import { Loading } from "../components/ui/loading";
+import { type Column, DataTable } from "../components/ui/data-table";
 import { EmptyState } from "../components/ui/empty-state";
+import { Loading } from "../components/ui/loading";
+import { Pagination } from "../components/ui/pagination";
+import { useApi } from "../hooks/use-api";
 import { addToast } from "../hooks/use-toast";
-import { apiPost } from "../api/client";
 import { fmtTime, truncateId } from "../lib/format";
-import type { DeadLetter } from "../api/types";
 import type { RoutableProps } from "../lib/routes";
 
 const PAGE_SIZE = 20;
@@ -19,10 +19,13 @@ export function DeadLetters(_props: RoutableProps) {
   const [page, setPage] = useState(0);
   const [showPurge, setShowPurge] = useState(false);
 
-  const { data: items, loading, refetch } = useApi<DeadLetter[]>(
-    `/api/dead-letters?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`,
-    [page],
-  );
+  const {
+    data: items,
+    loading,
+    refetch,
+  } = useApi<DeadLetter[]>(`/api/dead-letters?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`, [
+    page,
+  ]);
 
   const handleRetry = async (id: string) => {
     try {
@@ -53,7 +56,10 @@ export function DeadLetters(_props: RoutableProps) {
     {
       header: "Original Job",
       accessor: (d) => (
-        <a href={`/jobs/${d.original_job_id}`} class="font-mono text-xs text-accent-light hover:underline">
+        <a
+          href={`/jobs/${d.original_job_id}`}
+          class="font-mono text-xs text-accent-light hover:underline"
+        >
           {truncateId(d.original_job_id)}
         </a>
       ),
@@ -69,8 +75,14 @@ export function DeadLetters(_props: RoutableProps) {
       ),
       className: "max-w-[250px]",
     },
-    { header: "Retries", accessor: (d) => <span class="text-warning tabular-nums">{d.retry_count}</span> },
-    { header: "Failed At", accessor: (d) => <span class="text-muted">{fmtTime(d.failed_at)}</span> },
+    {
+      header: "Retries",
+      accessor: (d) => <span class="text-warning tabular-nums">{d.retry_count}</span>,
+    },
+    {
+      header: "Failed At",
+      accessor: (d) => <span class="text-muted">{fmtTime(d.failed_at)}</span>,
+    },
     {
       header: "Actions",
       accessor: (d) => (
@@ -108,7 +120,12 @@ export function DeadLetters(_props: RoutableProps) {
         <EmptyState message="No dead letters" subtitle="All jobs are processing normally" />
       ) : (
         <DataTable columns={columns} data={items}>
-          <Pagination page={page} pageSize={PAGE_SIZE} itemCount={items.length} onPageChange={setPage} />
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            itemCount={items.length}
+            onPageChange={setPage}
+          />
         </DataTable>
       )}
 

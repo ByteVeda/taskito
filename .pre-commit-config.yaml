@@ -35,3 +35,17 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+
+      - id: dashboard-lint
+        name: dashboard lint (biome)
+        entry: bash -c 'cd dashboard && npx biome ci src/'
+        language: system
+        files: ^dashboard/src/
+        pass_filenames: false
+
+      - id: dashboard-typecheck
+        name: dashboard typecheck
+        entry: bash -c 'cd dashboard && npx tsc --noEmit'
+        language: system
+        files: ^dashboard/src/
+        pass_filenames: false

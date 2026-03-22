@@ -1,13 +1,13 @@
-import { Layers, Play, Pause } from "lucide-preact";
-import { useApi } from "../hooks/use-api";
-import { DataTable, type Column } from "../components/ui/data-table";
-import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
-import { Loading } from "../components/ui/loading";
-import { EmptyState } from "../components/ui/empty-state";
-import { addToast } from "../hooks/use-toast";
+import { Layers, Pause, Play } from "lucide-preact";
 import { apiPost } from "../api/client";
 import type { QueueStatsMap } from "../api/types";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { type Column, DataTable } from "../components/ui/data-table";
+import { EmptyState } from "../components/ui/empty-state";
+import { Loading } from "../components/ui/loading";
+import { useApi } from "../hooks/use-api";
+import { addToast } from "../hooks/use-toast";
 import type { RoutableProps } from "../lib/routes";
 
 interface QueueRow {
@@ -56,8 +56,14 @@ export function Queues(_props: RoutableProps) {
 
   const columns: Column<QueueRow>[] = [
     { header: "Queue", accessor: (r) => <span class="font-medium">{r.name}</span> },
-    { header: "Pending", accessor: (r) => <span class="text-warning tabular-nums font-medium">{r.pending}</span> },
-    { header: "Running", accessor: (r) => <span class="text-info tabular-nums font-medium">{r.running}</span> },
+    {
+      header: "Pending",
+      accessor: (r) => <span class="text-warning tabular-nums font-medium">{r.pending}</span>,
+    },
+    {
+      header: "Running",
+      accessor: (r) => <span class="text-info tabular-nums font-medium">{r.running}</span>,
+    },
     { header: "Status", accessor: (r) => <Badge status={r.paused ? "paused" : "active"} /> },
     {
       header: "Actions",

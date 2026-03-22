@@ -7,10 +7,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(
-  path: string,
-  signal?: AbortSignal,
-): Promise<T> {
+export async function api<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { signal });
   if (!res.ok) {
     throw new ApiError(res.status, `${res.status} ${res.statusText}`);
@@ -18,10 +15,7 @@ export async function api<T>(
   return res.json();
 }
 
-export async function apiPost<T>(
-  path: string,
-  signal?: AbortSignal,
-): Promise<T> {
+export async function apiPost<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { method: "POST", signal });
   if (!res.ok) {
     throw new ApiError(res.status, `${res.status} ${res.statusText}`);

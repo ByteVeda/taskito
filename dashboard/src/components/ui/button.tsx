@@ -1,4 +1,4 @@
-import { ComponentChildren } from "preact";
+import type { ComponentChildren } from "preact";
 
 interface ButtonProps {
   onClick?: () => void;
@@ -26,6 +26,7 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       class={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all duration-150 disabled:opacity-40 disabled:cursor-default disabled:shadow-none border-none ${VARIANTS[variant]} ${className}`}

@@ -1,5 +1,5 @@
-import type { DagData, DagNode, JobStatus } from "../api/types";
 import { route } from "preact-router";
+import type { DagData, DagNode, JobStatus } from "../api/types";
 
 interface DagViewerProps {
   dag: DagData;
@@ -41,7 +41,7 @@ export function DagViewer({ dag }: DagViewerProps) {
   let queue = dag.nodes.filter((n) => (inDeg[n.id] || 0) === 0).map((n) => n.id);
   while (queue.length) {
     layers.push([...queue]);
-    queue.forEach((id) => placed.add(id));
+    for (const id of queue) placed.add(id);
     const next: string[] = [];
     queue.forEach((id) => {
       (adj[id] || []).forEach((to) => {
@@ -58,7 +58,7 @@ export function DagViewer({ dag }: DagViewerProps) {
   });
 
   const nodeMap: Record<string, DagNode> = {};
-  dag.nodes.forEach((n) => (nodeMap[n.id] = n));
+  for (const n of dag.nodes) nodeMap[n.id] = n;
 
   const positions: Record<string, { x: number; y: number }> = {};
   let svgW = 0;
@@ -77,7 +77,8 @@ export function DagViewer({ dag }: DagViewerProps) {
     <div class="mt-4">
       <h3 class="text-sm text-muted mb-2">Dependency Graph</h3>
       <div class="dark:bg-surface-2 bg-white rounded-lg shadow-sm dark:shadow-black/30 p-4 overflow-x-auto border border-transparent dark:border-white/5">
-        <svg width={svgW} height={svgH}>
+        <svg width={svgW} height={svgH} role="img" aria-label="Job dependency graph">
+          <title>Job dependency graph</title>
           <defs>
             <marker
               id="arrow"
@@ -114,11 +115,7 @@ export function DagViewer({ dag }: DagViewerProps) {
             if (!p) return null;
             const color = STATUS_COLORS[n.status] || "#a0a0b0";
             return (
-              <g
-                key={n.id}
-                class="cursor-pointer"
-                onClick={() => route(`/jobs/${n.id}`)}
-              >
+              <g key={n.id} class="cursor-pointer" onClick={() => route(`/jobs/${n.id}`)}>
                 <rect
                   x={p.x}
                   y={p.y}
@@ -130,19 +127,11 @@ export function DagViewer({ dag }: DagViewerProps) {
                   rx="6"
                   ry="6"
                 />
-                <text
-                  x={p.x + 8}
-                  y={p.y + 14}
-                  fill={color}
-                  font-size="10"
-                  font-weight="600"
-                >
+                <text x={p.x + 8} y={p.y + 14} fill={color} font-size="10" font-weight="600">
                   {n.status.toUpperCase()}
                 </text>
                 <text x={p.x + 8} y={p.y + 28} font-size="10" fill="#a0a0b0">
-                  {n.task_name.length > 18
-                    ? n.task_name.slice(-18)
-                    : n.task_name}
+                  {n.task_name.length > 18 ? n.task_name.slice(-18) : n.task_name}
                 </text>
               </g>
             );
