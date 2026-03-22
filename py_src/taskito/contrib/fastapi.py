@@ -314,8 +314,14 @@ class TaskitoRouter(APIRouter):
         if self._should_register("job-progress"):
 
             @self.get("/jobs/{job_id}/progress")
-            async def stream_progress(job_id: str) -> StreamingResponse:
-                """SSE stream of progress updates until job reaches terminal state."""
+            async def stream_progress(
+                job_id: str, include_results: bool = False
+            ) -> StreamingResponse:
+                """SSE stream of progress updates until job reaches terminal state.
+
+                Pass ``?include_results=true`` to also stream partial results
+                published via ``current_job.publish()``.
+                """
                 job = queue.get_job(job_id)
                 if job is None:
                     raise HTTPException(status_code=404, detail="Job not found")
@@ -324,6 +330,7 @@ class TaskitoRouter(APIRouter):
 
                 async def event_stream() -> AsyncGenerator[str, None]:
                     terminal = {"complete", "failed", "dead", "cancelled"}
+                    last_seen_at: int = 0
                     while True:
                         refreshed = queue.get_job(job_id)
                         if refreshed is None:
@@ -331,8 +338,33 @@ class TaskitoRouter(APIRouter):
                             return
 
                         d = refreshed.to_dict()
-                        payload = json.dumps({"status": d["status"], "progress": d["progress"]})
-                        yield f"data: {payload}\n\n"
+                        event: dict[str, Any] = {
+                            "status": d["status"],
+                            "progress": d["progress"],
+                        }
+                        yield f"data: {json.dumps(event)}\n\n"
+
+                        if include_results:
+                            logs = queue._inner.get_task_logs(job_id)
+                            for entry in logs:
+                                if entry["level"] != "result":
+                                    continue
+                                logged_at = entry.get("logged_at", 0)
+                                if logged_at <= last_seen_at:
+                                    continue
+                                last_seen_at = logged_at
+                                extra = entry.get("extra")
+                                if extra:
+                                    try:
+                                        partial = json.loads(extra)
+                                    except (json.JSONDecodeError, TypeError):
+                                        partial = extra
+                                    result_event = {
+                                        "status": d["status"],
+                                        "progress": d["progress"],
+                                        "partial_result": partial,
+                                    }
+                                    yield f"data: {json.dumps(result_event)}\n\n"
 
                         if d["status"] in terminal:
                             return
