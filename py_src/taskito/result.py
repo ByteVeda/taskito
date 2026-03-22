@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,8 @@ from taskito.exceptions import (
 if TYPE_CHECKING:
     from taskito._taskito import PyJob
     from taskito.app import Queue
+
+log = logging.getLogger("taskito.result")
 
 
 class JobResult(AsyncJobResultMixin):
@@ -195,6 +198,7 @@ class JobResult(AsyncJobResultMixin):
                     try:
                         yield json.loads(extra)
                     except (json.JSONDecodeError, TypeError):
+                        log.warning("failed to deserialize partial result for job %s", self.id)
                         yield extra
 
             self.refresh()
@@ -237,6 +241,7 @@ class JobResult(AsyncJobResultMixin):
                     try:
                         yield json.loads(extra)
                     except (json.JSONDecodeError, TypeError):
+                        log.warning("failed to deserialize partial result for job %s", self.id)
                         yield extra
 
             self.refresh()
@@ -270,6 +275,7 @@ class JobResult(AsyncJobResultMixin):
             "timeout_ms": self._py_job.timeout_ms,
             "unique_key": self._py_job.unique_key,
             "metadata": self._py_job.metadata,
+            "namespace": self._py_job.namespace,
         }
 
     def __repr__(self) -> str:
