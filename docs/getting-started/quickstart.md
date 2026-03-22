@@ -99,6 +99,18 @@ taskito info --app tasks:queue
 taskito info --app tasks:queue --watch
 ```
 
+### Web Dashboard
+
+For a full visual interface with job browsing, metrics charts, dead letter management, and queue controls:
+
+```bash
+taskito dashboard --app tasks:queue
+```
+
+Open `http://localhost:8080` in your browser. The dashboard includes 11 pages covering every aspect of your task queue — no extra dependencies needed.
+
+[:octicons-arrow-right-24: Dashboard guide](../guide/dashboard.md)
+
 ## Next Steps
 
 - [Tasks](../guide/tasks.md) — decorator options, `.delay()` vs `.apply_async()`
