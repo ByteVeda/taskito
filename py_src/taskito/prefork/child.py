@@ -171,6 +171,7 @@ def main() -> None:
             msg = json.loads(line)
 
             if msg.get("type") == "shutdown":
+                sys.stdout.flush()
                 break
 
             if msg.get("type") == "job":
