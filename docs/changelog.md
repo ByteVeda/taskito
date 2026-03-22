@@ -11,6 +11,7 @@ All notable changes to taskito are documented here.
 - **Worker lifecycle events** -- three new event types: `WORKER_ONLINE` (registered in storage), `WORKER_OFFLINE` (dead worker reaped), `WORKER_UNHEALTHY` (resource health degraded); subscribe via `queue.on_event(EventType.WORKER_OFFLINE, callback)`
 - **Worker status transitions** -- workers report `active → draining → stopped` status; shutdown signal sets status to `"draining"` before drain timeout, visible in `queue.workers()` and the dashboard
 - **Orphan rescue prep** -- `list_claims_by_worker` storage method enables future orphaned job rescue when dead workers are detected
+- **Task result streaming** -- `current_job.publish(data)` streams partial results from inside tasks; `job.stream()` / `await job.astream()` iterates partial results as they arrive; built on existing `task_logs` infrastructure with `level="result"` (no new tables or Rust changes); FastAPI SSE endpoint supports `?include_results=true` to stream partial results alongside progress
 
 ### Internal
 
