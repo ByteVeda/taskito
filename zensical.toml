@@ -18,6 +18,7 @@ nav = [
         # Core — everyone reads these
         { "Tasks" = "guide/tasks.md" },
         { "Workers" = "guide/workers.md" },
+        { "Execution Models" = "guide/execution-model.md" },
         { "Queues & Priority" = "guide/queues.md" },
         { "Scheduling" = "guide/scheduling.md" },
         { "Workflows" = "guide/workflows.md" },
@@ -43,6 +44,7 @@ nav = [
         { "Web Dashboard" = "guide/dashboard.md" },
         # Operations
         { "Testing" = "guide/testing.md" },
+        { "Troubleshooting" = "guide/troubleshooting.md" },
         { "Deployment" = "guide/deployment.md" },
         { "KEDA Autoscaling" = "guide/keda.md" },
         { "Postgres Backend" = "guide/postgres.md" },
