@@ -36,6 +36,11 @@ impl Scheduler {
                     error!("circuit breaker error for {task_name}: {e}");
                 }
 
+                // Update in-memory duration cache for smart scheduling
+                if let Ok(mut cache) = self.duration_cache.lock() {
+                    cache.record(task_name, wall_time_ns);
+                }
+
                 Ok(ResultOutcome::Success {
                     job_id,
                     task_name: task_name.clone(),
@@ -69,6 +74,11 @@ impl Scheduler {
 
                 if let Err(e) = self.circuit_breaker.record_failure(&task_name) {
                     log::error!("circuit breaker error for {task_name}: {e}");
+                }
+
+                // Update in-memory duration cache for smart scheduling
+                if let Ok(mut cache) = self.duration_cache.lock() {
+                    cache.record(&task_name, wall_time_ns);
                 }
 
                 // Look up the job to get the queue name for middleware context
