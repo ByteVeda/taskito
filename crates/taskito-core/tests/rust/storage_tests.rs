@@ -165,8 +165,18 @@ fn test_workers(s: &impl Storage) {
     let resources = Some(r#"["db","redis"]"#);
     let health = Some(r#"{"db":"healthy","redis":"healthy"}"#);
 
-    s.register_worker("w-test-1", "q-workers", None, resources, health, 4)
-        .unwrap();
+    s.register_worker(
+        "w-test-1",
+        "q-workers",
+        None,
+        resources,
+        health,
+        4,
+        Some("test-host"),
+        Some(12345),
+        Some("thread"),
+    )
+    .unwrap();
     s.heartbeat("w-test-1", Some(r#"{"db":"unhealthy","redis":"healthy"}"#))
         .unwrap();
 
@@ -176,6 +186,16 @@ fn test_workers(s: &impl Storage) {
     assert_eq!(w.threads, 4);
     assert!(w.resources.as_deref().unwrap().contains("db"));
     assert!(w.resource_health.as_deref().unwrap().contains("unhealthy"));
+    assert_eq!(w.hostname.as_deref(), Some("test-host"));
+    assert_eq!(w.pid, Some(12345));
+    assert_eq!(w.pool_type.as_deref(), Some("thread"));
+    assert!(w.started_at.is_some());
+
+    // Test update_worker_status
+    s.update_worker_status("w-test-1", "draining").unwrap();
+    let workers = s.list_workers().unwrap();
+    let w = workers.iter().find(|w| w.worker_id == "w-test-1").unwrap();
+    assert_eq!(w.status, "draining");
 
     s.unregister_worker("w-test-1").unwrap();
 }

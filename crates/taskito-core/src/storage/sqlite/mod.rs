@@ -356,6 +356,15 @@ impl SqliteStorage {
             "ALTER TABLE workers ADD COLUMN threads INTEGER NOT NULL DEFAULT 0",
         );
 
+        // Migration: add worker discovery metadata columns
+        migration_alter(
+            &mut conn,
+            "ALTER TABLE workers ADD COLUMN started_at INTEGER",
+        );
+        migration_alter(&mut conn, "ALTER TABLE workers ADD COLUMN hostname TEXT");
+        migration_alter(&mut conn, "ALTER TABLE workers ADD COLUMN pid INTEGER");
+        migration_alter(&mut conn, "ALTER TABLE workers ADD COLUMN pool_type TEXT");
+
         // ── Queue State ──────────────────────────────────
         diesel::sql_query(
             "CREATE TABLE IF NOT EXISTS queue_state (

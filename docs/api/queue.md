@@ -539,7 +539,22 @@ Start the worker loop. **Blocks** until interrupted.
 queue.workers() -> list[dict]
 ```
 
-Return live state of all registered workers: ID, hostname, started_at, last_heartbeat, current job.
+Return live state of all registered workers. Each dict contains:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `worker_id` | `str` | Unique worker ID |
+| `hostname` | `str` | OS hostname |
+| `pid` | `int` | Process ID |
+| `status` | `str` | `"active"` or `"draining"` |
+| `pool_type` | `str` | `"thread"`, `"prefork"`, or `"native-async"` |
+| `started_at` | `int` | Registration timestamp (ms since epoch) |
+| `last_heartbeat` | `int` | Last heartbeat timestamp (ms) |
+| `queues` | `str` | Comma-separated queue names |
+| `threads` | `int` | Worker thread/process count |
+| `tags` | `str \| None` | Worker specialization tags |
+| `resources` | `str \| None` | Registered resource names (JSON) |
+| `resource_health` | `str \| None` | Per-resource health status (JSON) |
 
 ### `await queue.aworkers()`
 

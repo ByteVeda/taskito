@@ -377,6 +377,10 @@ impl PyQueue {
                 dict.set_item("resources", r.resources)?;
                 dict.set_item("resource_health", r.resource_health)?;
                 dict.set_item("threads", r.threads)?;
+                dict.set_item("started_at", r.started_at)?;
+                dict.set_item("hostname", r.hostname)?;
+                dict.set_item("pid", r.pid)?;
+                dict.set_item("pool_type", r.pool_type)?;
                 result.push(dict.into());
             }
             Ok(result)

@@ -163,6 +163,65 @@ $ taskito worker --app myapp:queue
 queue._inner.request_shutdown()
 ```
 
+## Worker Discovery
+
+Inspect live workers across all machines:
+
+```python
+for w in queue.workers():
+    print(f"{w['worker_id']} on {w['hostname']} (pid {w['pid']}, {w['status']})")
+```
+
+Each worker entry includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `worker_id` | `str` | Unique ID (UUIDv7) |
+| `hostname` | `str` | OS hostname |
+| `pid` | `int` | Process ID |
+| `status` | `str` | `"active"`, `"draining"`, or deleted on exit |
+| `pool_type` | `str` | `"thread"`, `"prefork"`, or `"native-async"` |
+| `started_at` | `int` | Registration timestamp (ms) |
+| `queues` | `str` | Comma-separated queue names |
+| `threads` | `int` | Worker thread/process count |
+| `last_heartbeat` | `int` | Last heartbeat timestamp (ms) |
+
+### Status Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> active: register
+    active --> draining: shutdown signal
+    draining --> [*]: clean exit
+    active --> [*]: crash (reaped after 30s)
+```
+
+### Lifecycle Events
+
+Subscribe to worker lifecycle changes:
+
+```python
+from taskito import EventType
+
+@queue.on_event(EventType.WORKER_ONLINE)
+def on_online(event_type, payload):
+    print(f"Worker {payload['worker_id']} joined")
+
+@queue.on_event(EventType.WORKER_OFFLINE)
+def on_offline(event_type, payload):
+    print(f"Worker {payload['worker_id']} went away")
+
+@queue.on_event(EventType.WORKER_UNHEALTHY)
+def on_unhealthy(event_type, payload):
+    print(f"Worker {payload['worker_id']} unhealthy: {payload['resources']}")
+```
+
+| Event | Fires when | Payload |
+|-------|-----------|---------|
+| `WORKER_ONLINE` | Worker registered in storage | `worker_id`, `queues`, `pool` |
+| `WORKER_OFFLINE` | Dead worker reaped (no heartbeat for 30s) | `worker_id` |
+| `WORKER_UNHEALTHY` | Resource health transitions to unhealthy | `worker_id`, `resources` |
+
 ## Async Tasks
 
 `async def` task functions are dispatched natively — they run on a dedicated event loop thread, not wrapped in `asyncio.run()` on a worker thread.
