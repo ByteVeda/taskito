@@ -23,6 +23,11 @@ How taskito compares to other Python task queues.
 | Soft timeouts | **Yes** | No | No | No | No |
 | Custom serializers | **Yes** | Yes | No | No | No |
 | Per-task middleware | **Yes** | No | No | Yes | No |
+| Multi-process (prefork) | **Yes** | Yes | No | No | No |
+| Namespace isolation | **Yes** | No | No | No | No |
+| Result streaming | **Yes** (publish/stream) | No | No | No | No |
+| Worker discovery | **Yes** (hostname/pid/status) | Yes (flower) | No | No | No |
+| Lifecycle events | **Yes** (13 types) | Yes (signals) | No | Yes (actors) | No |
 | OpenTelemetry | **Yes** (optional) | Yes (contrib) | No | No | No |
 | CLI | **Yes** | Yes | Yes | Yes | Yes |
 | Result backend | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite |
@@ -42,7 +47,7 @@ taskito is ideal when:
 
 Consider alternatives when:
 
-- **Multi-server workers** — you need workers on separate machines (use Celery or Dramatiq)
+- **Multi-server workers** — you need workers on separate machines (taskito supports this with Postgres/Redis backends, but Celery has more mature distributed tooling)
 - **Very high throughput** — millions of jobs/sec across a cluster (use Celery + RabbitMQ)
 - **Existing Redis infrastructure** — if Redis is already in your stack, RQ or Huey are simple choices
 - **Complex routing** — you need topic exchanges, message filtering, or pub/sub patterns (use Celery + RabbitMQ)
