@@ -1,4 +1,4 @@
-import type { JobStatus } from "../../api/types";
+import type { JobStatus } from "../../api";
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-warning/10 text-warning border-warning/20",

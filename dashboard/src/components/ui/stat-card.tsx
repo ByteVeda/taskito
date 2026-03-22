@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-preact";
 import { Ban, CheckCircle2, Clock, Play, Skull, XCircle } from "lucide-preact";
-import { fmtNumber } from "../../lib/format";
+import { fmtNumber } from "../../lib";
 
 interface StatCardProps {
   label: string;

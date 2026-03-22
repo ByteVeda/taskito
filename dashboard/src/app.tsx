@@ -1,6 +1,6 @@
 import Router from "preact-router";
-import { Shell } from "./components/layout/shell";
-import { ToastContainer } from "./components/ui/toast";
+import { Shell } from "./components/layout";
+import { ToastContainer } from "./components/ui";
 import { CircuitBreakers } from "./pages/circuit-breakers";
 import { DeadLetters } from "./pages/dead-letters";
 import { JobDetail } from "./pages/job-detail";

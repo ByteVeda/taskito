@@ -1,5 +1,5 @@
 import { CheckCircle2, Info, X, XCircle } from "lucide-preact";
-import { dismissToast, type Toast, toasts } from "../../hooks/use-toast";
+import { dismissToast, type Toast, toasts } from "../../hooks";
 
 const TYPE_CONFIG: Record<
   Toast["type"],

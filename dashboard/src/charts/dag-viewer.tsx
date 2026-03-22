@@ -1,5 +1,5 @@
 import { route } from "preact-router";
-import type { DagData, DagNode, JobStatus } from "../api/types";
+import type { DagData, DagNode, JobStatus } from "../api";
 
 interface DagViewerProps {
   dag: DagData;

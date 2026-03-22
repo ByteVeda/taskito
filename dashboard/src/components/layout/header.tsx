@@ -1,8 +1,13 @@
 import { Moon, RefreshCw, Search, Sun, Zap } from "lucide-preact";
 import { useEffect, useState } from "preact/hooks";
 import { route } from "preact-router";
-import { lastRefreshAt, refreshInterval, setRefreshInterval } from "../../hooks/use-auto-refresh";
-import { theme, toggleTheme } from "../../hooks/use-theme";
+import {
+  lastRefreshAt,
+  refreshInterval,
+  setRefreshInterval,
+  theme,
+  toggleTheme,
+} from "../../hooks";
 
 function RelativeTime() {
   const [ago, setAgo] = useState("");
