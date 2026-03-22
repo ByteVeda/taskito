@@ -242,8 +242,8 @@ impl Scheduler {
                 _ = tokio::time::sleep(current_interval) => {}
             }
 
-            let dispatched = self.tick(&job_tx, &mut counters);
-            if dispatched {
+            let had_work = self.tick(&job_tx, &mut counters);
+            if had_work {
                 current_interval = base_interval;
             } else {
                 current_interval = (current_interval * 2).min(max_interval);
@@ -252,7 +252,8 @@ impl Scheduler {
     }
 
     /// Execute one iteration of the scheduler loop.
-    /// Returns true if a job was dispatched.
+    /// Returns true if any work was done (job dispatched or periodic task enqueued),
+    /// which resets the adaptive poll interval.
     fn tick(&self, job_tx: &tokio::sync::mpsc::Sender<Job>, counters: &mut TickCounters) -> bool {
         let dispatched = match self.try_dispatch(job_tx) {
             Ok(d) => d,
@@ -261,6 +262,8 @@ impl Scheduler {
                 false
             }
         };
+
+        let mut had_maintenance = false;
 
         counters.reap += 1;
         counters.periodic += 1;
@@ -276,8 +279,13 @@ impl Scheduler {
             .periodic
             .is_multiple_of(self.config.periodic_check_interval)
         {
-            if let Err(e) = self.check_periodic() {
-                error!("periodic check error: {e}");
+            match self.check_periodic() {
+                Ok(()) => {
+                    // Periodic tasks may have been enqueued — reset polling
+                    // so the next tick picks them up quickly.
+                    had_maintenance = true;
+                }
+                Err(e) => error!("periodic check error: {e}"),
             }
         }
 
@@ -290,7 +298,7 @@ impl Scheduler {
             }
         }
 
-        dispatched
+        dispatched || had_maintenance
     }
 }
 
