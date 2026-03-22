@@ -16,8 +16,10 @@ data-pipeline/
 ```python
 """ETL pipeline with task dependencies and named queues."""
 
+import csv
 import json
-import time
+
+import httpx
 
 from taskito import Queue, current_job
 
@@ -33,15 +35,15 @@ queue = Queue(
 @queue.task(queue="extract", max_retries=5, retry_backoff=2.0)
 def extract_api(endpoint: str) -> list[dict]:
     """Pull records from an API endpoint with retries."""
-    # Simulate API call
-    time.sleep(1)
-    return [{"id": i, "value": f"record_{i}"} for i in range(100)]
+    response = httpx.get(endpoint, timeout=30)
+    response.raise_for_status()
+    return response.json()
 
 @queue.task(queue="extract")
 def extract_csv(file_path: str) -> list[dict]:
     """Read records from a CSV file."""
-    time.sleep(0.5)
-    return [{"id": i, "row": f"csv_row_{i}"} for i in range(200)]
+    with open(file_path, newline="") as f:
+        return list(csv.DictReader(f))
 
 # ── Transform Tasks ──────────────────────────────────────
 
@@ -50,7 +52,6 @@ def normalize(records: list[dict], schema: str) -> list[dict]:
     """Normalize records against a schema with progress tracking."""
     results = []
     for i, record in enumerate(records):
-        # Simulate normalization
         results.append({**record, "schema": schema, "normalized": True})
         if (i + 1) % 50 == 0:
             current_job.update_progress(int((i + 1) / len(records) * 100))
@@ -72,9 +73,11 @@ def deduplicate(records: list[dict]) -> list[dict]:
 
 @queue.task(queue="load")
 def load_to_warehouse(records: list[dict], table: str) -> dict:
-    """Load records into the data warehouse."""
-    time.sleep(1)
-    return {"table": table, "rows_inserted": len(records)}
+    """Load records into the data warehouse (writes JSON to disk as stand-in)."""
+    dest = f"/tmp/{table.replace('.', '_')}.json"
+    with open(dest, "w") as f:
+        json.dump(records, f, indent=2)
+    return {"table": table, "rows_inserted": len(records), "dest": dest}
 
 # ── DAG Construction ─────────────────────────────────────
 
