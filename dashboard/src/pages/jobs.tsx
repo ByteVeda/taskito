@@ -1,8 +1,11 @@
-import { ListTodo, Search } from "lucide-preact";
+import { Ban, ListTodo, RotateCcw, Search, X } from "lucide-preact";
 import { useState } from "preact/hooks";
 import { route } from "preact-router";
+import { apiPost } from "../api/client";
 import type { Job, QueueStats } from "../api/types";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { ConfirmDialog } from "../components/ui/confirm-dialog";
 import { type Column, DataTable } from "../components/ui/data-table";
 import { EmptyState } from "../components/ui/empty-state";
 import { Loading } from "../components/ui/loading";
@@ -10,6 +13,7 @@ import { Pagination } from "../components/ui/pagination";
 import { ProgressBar } from "../components/ui/progress-bar";
 import { StatsGrid } from "../components/ui/stats-grid";
 import { useApi } from "../hooks/use-api";
+import { addToast } from "../hooks/use-toast";
 import { fmtTime, truncateId } from "../lib/format";
 import type { RoutableProps } from "../lib/routes";
 
@@ -43,7 +47,10 @@ const JOB_COLUMNS: Column<Job>[] = [
       </span>
     ),
   },
-  { header: "Created", accessor: (j) => <span class="text-muted">{fmtTime(j.created_at)}</span> },
+  {
+    header: "Created",
+    accessor: (j) => <span class="text-muted">{fmtTime(j.created_at)}</span>,
+  },
 ];
 
 function buildUrl(filters: Filters, page: number): string {
@@ -73,9 +80,15 @@ export function Jobs(_props: RoutableProps) {
     created_before: "",
   });
   const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showBulkCancel, setShowBulkCancel] = useState(false);
 
   const { data: stats } = useApi<QueueStats>("/api/stats");
-  const { data: jobs, loading } = useApi<Job[]>(buildUrl(filters, page), [
+  const {
+    data: jobs,
+    loading,
+    refetch,
+  } = useApi<Job[]>(buildUrl(filters, page), [
     filters.status,
     filters.queue,
     filters.task,
@@ -89,6 +102,41 @@ export function Jobs(_props: RoutableProps) {
   const updateFilter = (key: keyof Filters, value: string) => {
     setFilters((f) => ({ ...f, [key]: value }));
     setPage(0);
+    setSelected(new Set());
+  };
+
+  const handleBulkCancel = async () => {
+    setShowBulkCancel(false);
+    let cancelled = 0;
+    for (const id of selected) {
+      try {
+        const res = await apiPost<{ cancelled: boolean }>(`/api/jobs/${id}/cancel`);
+        if (res.cancelled) cancelled++;
+      } catch {
+        /* skip failed */
+      }
+    }
+    addToast(
+      `Cancelled ${cancelled} of ${selected.size} jobs`,
+      cancelled > 0 ? "success" : "error",
+    );
+    setSelected(new Set());
+    refetch();
+  };
+
+  const handleBulkReplay = async () => {
+    let replayed = 0;
+    for (const id of selected) {
+      try {
+        await apiPost<{ replay_job_id: string }>(`/api/jobs/${id}/replay`);
+        replayed++;
+      } catch {
+        /* skip failed */
+      }
+    }
+    addToast(`Replayed ${replayed} of ${selected.size} jobs`, replayed > 0 ? "success" : "error");
+    setSelected(new Set());
+    refetch();
   };
 
   const inputClass =
@@ -168,12 +216,43 @@ export function Jobs(_props: RoutableProps) {
         </div>
       </div>
 
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div class="flex items-center gap-3 mb-4 px-4 py-3 rounded-xl dark:bg-accent/[0.08] bg-accent/[0.04] border dark:border-accent/20 border-accent/10">
+          <span class="text-sm font-medium dark:text-gray-200 text-slate-700">
+            {selected.size} job{selected.size > 1 ? "s" : ""} selected
+          </span>
+          <div class="flex gap-2 ml-auto">
+            <Button variant="danger" onClick={() => setShowBulkCancel(true)}>
+              <Ban class="w-3.5 h-3.5" />
+              Cancel Selected
+            </Button>
+            <Button onClick={handleBulkReplay}>
+              <RotateCcw class="w-3.5 h-3.5" />
+              Replay Selected
+            </Button>
+            <Button variant="ghost" onClick={() => setSelected(new Set())}>
+              <X class="w-3.5 h-3.5" />
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
       {loading && !jobs ? (
         <Loading />
       ) : !jobs?.length ? (
         <EmptyState message="No jobs found" subtitle="Try adjusting your filters" />
       ) : (
-        <DataTable columns={JOB_COLUMNS} data={jobs} onRowClick={(j) => route(`/jobs/${j.id}`)}>
+        <DataTable
+          columns={JOB_COLUMNS}
+          data={jobs}
+          onRowClick={(j) => route(`/jobs/${j.id}`)}
+          selectable
+          selectedKeys={selected}
+          rowKey={(j) => j.id}
+          onSelectionChange={setSelected}
+        >
           <Pagination
             page={page}
             pageSize={PAGE_SIZE}
@@ -181,6 +260,14 @@ export function Jobs(_props: RoutableProps) {
             onPageChange={setPage}
           />
         </DataTable>
+      )}
+
+      {showBulkCancel && (
+        <ConfirmDialog
+          message={`Cancel ${selected.size} selected job${selected.size > 1 ? "s" : ""}? Only pending jobs can be cancelled.`}
+          onConfirm={handleBulkCancel}
+          onCancel={() => setShowBulkCancel(false)}
+        />
       )}
     </div>
   );
