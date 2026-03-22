@@ -1,4 +1,19 @@
-"""Main Queue class and @task decorator."""
+"""Main Queue class and @task decorator.
+
+The Queue class is composed from multiple mixins for organization:
+
+- ``QueueInspectionMixin`` (mixins.py) — read-only inspection, stats, queries
+- ``QueueOperationsMixin`` (mixins.py) — write operations (cancel, purge, archive, etc.)
+- ``QueueLockMixin`` (mixins.py) — distributed locking
+- ``AsyncQueueMixin`` (async_support/mixins.py) — ``a*`` async wrappers for all sync methods
+
+The Queue class itself (this file) handles:
+- Constructor and storage backend initialization
+- @task() and @periodic() decorators with task registration
+- enqueue() / enqueue_many() job submission
+- run_worker() worker lifecycle (signals, heartbeat, resources)
+- Event bus and webhook management
+"""
 
 from __future__ import annotations
 
