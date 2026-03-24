@@ -30,7 +30,7 @@ Building from source requires a Rust toolchain (1.70+).
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
-git clone https://github.com/pratyush618/taskito.git
+git clone https://github.com/ByteVeda/taskito.git
 cd taskito
 python -m venv .venv
 source .venv/bin/activate
