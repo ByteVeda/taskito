@@ -13,7 +13,7 @@ Thanks for your interest in contributing! taskito is a hybrid Rust + Python proj
 ### Clone and Install
 
 ```bash
-git clone https://github.com/pratyush618/taskito.git
+git clone https://github.com/ByteVeda/taskito.git
 cd taskito
 
 # Create a virtual environment

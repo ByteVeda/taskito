@@ -1,6 +1,6 @@
 document.addEventListener("DOMContentLoaded", function () {
   const GITHUB_RAW_BASE =
-    "https://raw.githubusercontent.com/pratyush618/taskito/master/docs/";
+    "https://raw.githubusercontent.com/ByteVeda/taskito/master/docs/";
 
   function getSourcePath() {
     // Try the edit button first (most reliable)

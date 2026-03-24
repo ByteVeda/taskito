@@ -1,9 +1,9 @@
 [project]
 site_name = "taskito"
 site_description = "Rust-powered task queue for Python. No broker required."
-site_url = "https://taskito.grigori.in"
-repo_url = "https://github.com/pratyush618/taskito"
-repo_name = "pratyush618/taskito"
+site_url = "https://docs.byteveda.org/taskito"
+repo_url = "https://github.com/ByteVeda/taskito"
+repo_name = "ByteVeda/taskito"
 
 extra_javascript = ["assets/js/copy-markdown.js"]
 extra_css = ["assets/css/custom.css"]
@@ -150,7 +150,7 @@ search = {}
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
-link = "https://github.com/pratyush618/taskito"
+link = "https://github.com/ByteVeda/taskito"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/python"
