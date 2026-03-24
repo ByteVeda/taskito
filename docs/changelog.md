@@ -2,6 +2,16 @@
 
 All notable changes to taskito are documented here.
 
+## 0.10.1
+
+### Changed
+
+- Repository transferred to [ByteVeda](https://github.com/ByteVeda/taskito) org
+- Documentation URL updated to [docs.byteveda.org/taskito](https://docs.byteveda.org/taskito)
+- All internal links updated from `pratyush618/taskito` to `ByteVeda/taskito`
+
+---
+
 ## 0.10.0
 
 ### Features
