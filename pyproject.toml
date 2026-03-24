@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "taskito"
-version = "0.10.0"
+version = "0.10.1"
 description = "Rust-powered task queue for Python. No broker required."
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -25,7 +25,7 @@ classifiers = [
 dependencies = ["cloudpickle>=3.0"]
 [project.urls]
 Homepage = "https://github.com/ByteVeda/taskito"
-Documentation = "https://taskito.grigori.in"
+Documentation = "https://docs.byteveda.org/taskito"
 Repository = "https://github.com/ByteVeda/taskito"
 Changelog = "https://github.com/ByteVeda/taskito/blob/master/docs/changelog.md"
 Issues = "https://github.com/ByteVeda/taskito/issues"
