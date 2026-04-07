@@ -114,7 +114,7 @@ Start the dashboard:
 taskito dashboard --app myapp.tasks:queue
 ```
 
-See the [Web Dashboard](../guide/dashboard.md) guide for full dashboard documentation.
+See the [Web Dashboard](../guide/observability/dashboard.md) guide for full dashboard documentation.
 
 ## CLI commands
 

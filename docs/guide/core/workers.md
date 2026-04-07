@@ -245,7 +245,7 @@ queue = Queue(
 )
 ```
 
-See [Native Async Tasks](async-tasks.md) for the full guide.
+See [Native Async Tasks](../execution/async-tasks.md) for the full guide.
 
 ## How Workers Work
 

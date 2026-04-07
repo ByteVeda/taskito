@@ -109,13 +109,13 @@ taskito dashboard --app tasks:queue
 
 Open `http://localhost:8080` in your browser. The dashboard includes 11 pages covering every aspect of your task queue — no extra dependencies needed.
 
-[:octicons-arrow-right-24: Dashboard guide](../guide/dashboard.md)
+[:octicons-arrow-right-24: Dashboard guide](../guide/observability/dashboard.md)
 
 ## Next Steps
 
-- [Tasks](../guide/tasks.md) — decorator options, `.delay()` vs `.apply_async()`
-- [Workers](../guide/workers.md) — CLI flags, graceful shutdown, worker count
-- [Retries](../guide/retries.md) — exponential backoff, dead letter queue
-- [Workflows](../guide/workflows.md) — chain, group, chord
-- [Testing](../guide/testing.md) — run tasks synchronously in tests with `queue.test_mode()`
-- [Migrating from Celery](../guide/migration.md) — concept mapping and side-by-side examples
+- [Tasks](../guide/core/tasks.md) — decorator options, `.delay()` vs `.apply_async()`
+- [Workers](../guide/core/workers.md) — CLI flags, graceful shutdown, worker count
+- [Retries](../guide/reliability/retries.md) — exponential backoff, dead letter queue
+- [Workflows](../guide/core/workflows.md) — chain, group, chord
+- [Testing](../guide/operations/testing.md) — run tasks synchronously in tests with `queue.test_mode()`
+- [Migrating from Celery](../guide/operations/migration.md) — concept mapping and side-by-side examples

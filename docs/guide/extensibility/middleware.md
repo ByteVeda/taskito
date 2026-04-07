@@ -192,4 +192,4 @@ queue = Queue(middleware=[
 ])
 ```
 
-See the [OpenTelemetry guide](otel.md) for setup details.
+See the [OpenTelemetry guide](../../integrations/otel.md) for setup details.

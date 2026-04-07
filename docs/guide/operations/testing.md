@@ -44,7 +44,7 @@ with queue.test_mode(propagate_errors=False, resources=None) as results:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `propagate_errors` | `bool` | `False` | If `True`, task exceptions are re-raised immediately instead of being captured in `TestResult.error` |
-| `resources` | `dict[str, Any] \| None` | `None` | Map of resource name → mock instance or `MockResource` for injection. See [Resource System](resources.md#testing-with-resources). |
+| `resources` | `dict[str, Any] | None` | `None` | Map of resource name → mock instance or `MockResource` for injection. See [Resource System](../../resources/index.md#testing-with-resources). |
 
 The context manager yields a `TestResults` list that accumulates results as tasks execute.
 
@@ -75,8 +75,8 @@ with queue.test_mode() as results:
 | `args` | `tuple` | Positional arguments passed to the task |
 | `kwargs` | `dict` | Keyword arguments passed to the task |
 | `return_value` | `Any` | Return value on success, `None` on failure |
-| `error` | `Exception \| None` | The exception if the task failed |
-| `traceback` | `str \| None` | Formatted traceback if the task failed |
+| `error` | `Exception | None` | The exception if the task failed |
+| `traceback` | `str | None` | Formatted traceback if the task failed |
 | `succeeded` | `bool` | `True` if no error |
 | `failed` | `bool` | `True` if an error occurred |
 
@@ -109,8 +109,8 @@ results.filter(task_name=None, succeeded=None) -> TestResults
 
 | Parameter | Type | Description |
 |---|---|---|
-| `task_name` | `str \| None` | Filter by exact task name |
-| `succeeded` | `bool \| None` | `True` for successes, `False` for failures |
+| `task_name` | `str | None` | Filter by exact task name |
+| `succeeded` | `bool | None` | `True` for successes, `False` for failures |
 
 ## Testing Failures
 
@@ -259,7 +259,7 @@ async def test_async_enqueue(task_results):
 
 ## Testing with Worker Resources
 
-If your tasks use [worker resources](resources.md) (injected via `inject=` or `Inject["name"]`), pass mock instances through `resources=`:
+If your tasks use [worker resources](../../resources/index.md) (injected via `inject=` or `Inject["name"]`), pass mock instances through `resources=`:
 
 ```python
 from unittest.mock import MagicMock

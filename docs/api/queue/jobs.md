@@ -1,0 +1,129 @@
+# Queue — Job Management
+
+Methods for retrieving, filtering, cancelling, archiving, and replaying jobs.
+
+## Job Retrieval
+
+### `queue.get_job()`
+
+```python
+queue.get_job(job_id: str) -> JobResult | None
+```
+
+Retrieve a job by ID. Returns `None` if not found.
+
+### `queue.list_jobs()`
+
+```python
+queue.list_jobs(
+    status: str | None = None,
+    queue: str | None = None,
+    task_name: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    namespace: str | None = _UNSET,
+) -> list[JobResult]
+```
+
+List jobs with optional filters. Returns newest first. Defaults to the queue's namespace — pass `namespace=None` to see all namespaces.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `status` | `str | None` | `None` | Filter by status: `pending`, `running`, `completed`, `failed`, `dead`, `cancelled` |
+| `queue` | `str | None` | `None` | Filter by queue name |
+| `task_name` | `str | None` | `None` | Filter by task name |
+| `limit` | `int` | `50` | Maximum results to return |
+| `offset` | `int` | `0` | Pagination offset |
+
+### `queue.list_jobs_filtered()`
+
+```python
+queue.list_jobs_filtered(
+    status: str | None = None,
+    queue: str | None = None,
+    task_name: str | None = None,
+    metadata_like: str | None = None,
+    error_like: str | None = None,
+    created_after: float | None = None,
+    created_before: float | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    namespace: str | None = _UNSET,
+) -> list[JobResult]
+```
+
+Extended filtering with metadata and error pattern matching and time range constraints. Defaults to the queue's namespace — pass `namespace=None` to see all namespaces.
+
+## Job Operations
+
+### `queue.cancel_job()`
+
+```python
+queue.cancel_job(job_id: str) -> bool
+```
+
+Cancel a pending job. Returns `True` if cancelled, `False` if not pending. Cascade-cancels dependents.
+
+### `queue.update_progress()`
+
+```python
+queue.update_progress(job_id: str, progress: int) -> None
+```
+
+Update progress for a running job (0–100).
+
+### `queue.job_errors()`
+
+```python
+queue.job_errors(job_id: str) -> list[dict]
+```
+
+Get error history for a job. Returns a list of dicts with `id`, `job_id`, `attempt`, `error`, `failed_at`.
+
+### `queue.job_dag()`
+
+```python
+queue.job_dag(job_id: str) -> dict
+```
+
+Return a dependency graph for a job, including all ancestors and descendants. Useful for visualizing workflow chains.
+
+## Archival
+
+### `queue.archive()`
+
+```python
+queue.archive(job_id: str) -> None
+```
+
+Move a completed or failed job to the archive for long-term retention.
+
+### `queue.list_archived()`
+
+```python
+queue.list_archived(
+    task_name: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]
+```
+
+List archived jobs with optional task name filter.
+
+## Replay
+
+### `queue.replay()`
+
+```python
+queue.replay(job_id: str) -> JobResult
+```
+
+Re-enqueue a completed or failed job with its original arguments. Returns the new job handle.
+
+### `queue.replay_history()`
+
+```python
+queue.replay_history(job_id: str) -> list[dict]
+```
+
+Return the replay log for a job — every time it has been replayed and the resulting new job IDs.

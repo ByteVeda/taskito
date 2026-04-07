@@ -223,7 +223,7 @@ job_success = on_valid.apply_async(
 ```
 
 !!! note "Dependencies vs. Workflows"
-    `depends_on` is a lower-level primitive than [chains, groups, and chords](workflows.md). Use `depends_on` when you need fine-grained control over a custom DAG. Use the workflow primitives when your pipeline fits a standard pattern.
+    `depends_on` is a lower-level primitive than [chains, groups, and chords](../core/workflows.md). Use `depends_on` when you need fine-grained control over a custom DAG. Use the workflow primitives when your pipeline fits a standard pattern.
 
 ## Combining with Other Features
 

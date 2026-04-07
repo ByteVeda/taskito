@@ -69,9 +69,9 @@ SentryMiddleware(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `tag_prefix` | `str` | `"taskito"` | Prefix for Sentry tag keys and breadcrumb category. |
-| `transaction_name_fn` | `Callable[[JobContext], str] \| None` | `None` | Custom transaction name builder. Receives `JobContext`. Defaults to `<prefix>:<task_name>`. |
-| `task_filter` | `Callable[[str], bool] \| None` | `None` | Predicate on task name. Return `True` to report, `False` to skip. `None` reports all tasks. |
-| `extra_tags_fn` | `Callable[[JobContext], dict[str, str]] \| None` | `None` | Returns extra Sentry tags to set. Receives `JobContext`. |
+| `transaction_name_fn` | `Callable[[JobContext], str] | None` | `None` | Custom transaction name builder. Receives `JobContext`. Defaults to `<prefix>:<task_name>`. |
+| `task_filter` | `Callable[[str], bool] | None` | `None` | Predicate on task name. Return `True` to report, `False` to skip. `None` reports all tasks. |
+| `extra_tags_fn` | `Callable[[JobContext], dict[str, str]] | None` | `None` | Returns extra Sentry tags to set. Receives `JobContext`. |
 
 ## Combining with Other Middleware
 
@@ -91,7 +91,7 @@ queue = Queue(
 )
 ```
 
-See the [Middleware guide](../guide/middleware.md) for more on combining middleware.
+See the [Middleware guide](../guide/extensibility/middleware.md) for more on combining middleware.
 
 ## Full Example
 

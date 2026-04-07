@@ -71,7 +71,7 @@ Celery is the most popular Python task queue — battle-tested, feature-rich, an
 **Choose taskito** if you want zero-infrastructure simplicity on a single machine.
 **Choose Celery** if you need distributed workers, complex routing, or enterprise features.
 
-Looking to switch? See the [Migrating from Celery](guide/migration.md) guide for a step-by-step walkthrough with side-by-side code examples.
+Looking to switch? See the [Migrating from Celery](guide/operations/migration.md) guide for a step-by-step walkthrough with side-by-side code examples.
 
 ### vs RQ (Redis Queue)
 

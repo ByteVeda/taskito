@@ -1,0 +1,165 @@
+# Queue — Resources & Locking
+
+Methods for the worker resource system and distributed locking.
+
+## Resource System
+
+### `@queue.worker_resource()`
+
+```python
+@queue.worker_resource(
+    name: str,
+    depends_on: list[str] | None = None,
+    teardown: Callable | None = None,
+    health_check: Callable | None = None,
+    health_check_interval: float = 0.0,
+    max_recreation_attempts: int = 3,
+    scope: str = "worker",
+    pool_size: int | None = None,
+    pool_min: int = 0,
+    acquire_timeout: float = 10.0,
+    max_lifetime: float = 3600.0,
+    idle_timeout: float = 300.0,
+    reloadable: bool = False,
+    frozen: bool = False,
+) -> Callable
+```
+
+Decorator to register a resource factory initialized at worker startup.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `str` | — | Resource name used in `inject=["name"]` or `Inject["name"]`. |
+| `depends_on` | `list[str] | None` | `None` | Names of resources this one depends on. |
+| `teardown` | `Callable | None` | `None` | Called with the resource instance on shutdown. |
+| `health_check` | `Callable | None` | `None` | Called periodically; returns truthy if healthy. |
+| `health_check_interval` | `float` | `0.0` | Seconds between health checks (0 = disabled). |
+| `max_recreation_attempts` | `int` | `3` | Max times to recreate on health failure. |
+| `scope` | `str` | `"worker"` | Lifetime scope: `"worker"`, `"task"`, `"thread"`, or `"request"`. |
+| `pool_size` | `int | None` | `None` | Pool capacity for task-scoped resources (default = worker thread count). |
+| `pool_min` | `int` | `0` | Pre-warmed instances for task-scoped resources. |
+| `acquire_timeout` | `float` | `10.0` | Max seconds to wait for a pool instance. |
+| `max_lifetime` | `float` | `3600.0` | Max seconds a pooled instance can live. |
+| `idle_timeout` | `float` | `300.0` | Max idle seconds before pool eviction. |
+| `reloadable` | `bool` | `False` | Allow hot-reload via SIGHUP. |
+| `frozen` | `bool` | `False` | Wrap in a read-only proxy that blocks attribute writes. |
+
+### `queue.register_resource()`
+
+```python
+queue.register_resource(definition: ResourceDefinition) -> None
+```
+
+Programmatically register a `ResourceDefinition`. Equivalent to `@queue.worker_resource()` but accepts a pre-built definition object.
+
+### `queue.load_resources()`
+
+```python
+queue.load_resources(toml_path: str) -> None
+```
+
+Load resource definitions from a TOML file. Must be called before `run_worker()`. See [TOML Configuration](../../resources/configuration.md).
+
+### `queue.health_check()`
+
+```python
+queue.health_check(name: str) -> bool
+```
+
+Run a resource's health check immediately. Returns `True` if healthy, `False` otherwise or if the runtime is not initialized.
+
+### `queue.resource_status()`
+
+```python
+queue.resource_status() -> list[dict]
+```
+
+Return per-resource status. Each entry contains: `name`, `scope`, `health`, `init_duration_ms`, `recreations`, `depends_on`. Task-scoped entries also include `pool` stats.
+
+### `queue.register_type()`
+
+```python
+queue.register_type(
+    python_type: type,
+    strategy: str,
+    *,
+    resource: str | None = None,
+    message: str | None = None,
+    converter: Callable | None = None,
+    type_key: str | None = None,
+    proxy_handler: str | None = None,
+) -> None
+```
+
+Register a custom type with the interception system. Requires `interception="strict"` or `"lenient"`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `python_type` | `type` | The type to register. |
+| `strategy` | `str` | `"pass"`, `"convert"`, `"redirect"`, `"reject"`, or `"proxy"`. |
+| `resource` | `str | None` | Resource name for `"redirect"` strategy. |
+| `message` | `str | None` | Rejection reason for `"reject"` strategy. |
+| `converter` | `Callable | None` | Converter callable for `"convert"` strategy. |
+| `type_key` | `str | None` | Dispatch key for the converter reconstructor. |
+| `proxy_handler` | `str | None` | Handler name for `"proxy"` strategy. |
+
+### `queue.interception_stats()`
+
+```python
+queue.interception_stats() -> dict
+```
+
+Return interception metrics: total call count, per-strategy counts, average duration in ms, max depth reached. Returns an empty dict if interception is disabled.
+
+### `queue.proxy_stats()`
+
+```python
+queue.proxy_stats() -> list[dict]
+```
+
+Return per-handler proxy metrics: handler name, deconstruction count, reconstruction count, error count, average reconstruction time in ms.
+
+## Distributed Locking
+
+### `queue.lock()`
+
+```python
+queue.lock(
+    name: str,
+    ttl: int = 30,
+    auto_extend: bool = True,
+    owner_id: str | None = None,
+    timeout: float | None = None,
+    retry_interval: float = 0.1,
+) -> contextlib.AbstractContextManager
+```
+
+Acquire a distributed lock. Use as a context manager:
+
+```python
+with queue.lock("my-resource", ttl=60):
+    # exclusive section
+    ...
+```
+
+Raises `LockNotAcquired` if acquisition fails (when `timeout` is `None` or expires).
+
+### `queue.alock()`
+
+```python
+queue.alock(
+    name: str,
+    ttl: float = 30.0,
+    auto_extend: bool = True,
+    owner_id: str | None = None,
+    timeout: float | None = None,
+    retry_interval: float = 0.1,
+) -> AsyncDistributedLock
+```
+
+Async context manager version of `lock()`. Returns an `AsyncDistributedLock` directly — use `async with`, not `await`:
+
+```python
+async with queue.alock("my-resource"):
+    ...
+```

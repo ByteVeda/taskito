@@ -33,8 +33,8 @@ queue.lock(
 | `name` | `str` | — | Lock name. All processes using the same name compete for the same lock. |
 | `ttl` | `int` | `30` | Lock TTL in seconds. Auto-extended if `auto_extend=True`. |
 | `auto_extend` | `bool` | `True` | Automatically extend the lock before it expires (background thread). |
-| `owner_id` | `str \| None` | `None` | Custom owner identifier. Defaults to a random UUID per acquisition. |
-| `timeout` | `float \| None` | `None` | Max seconds to wait for the lock. `None` raises immediately if unavailable. |
+| `owner_id` | `str | None` | `None` | Custom owner identifier. Defaults to a random UUID per acquisition. |
+| `timeout` | `float | None` | `None` | Max seconds to wait for the lock. `None` raises immediately if unavailable. |
 | `retry_interval` | `float` | `0.1` | Seconds between retry attempts when waiting for the lock. |
 
 ## Async Context Manager

@@ -75,10 +75,10 @@ OpenTelemetryMiddleware(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `tracer_name` | `str` | `"taskito"` | OpenTelemetry tracer name. |
-| `span_name_fn` | `Callable[[JobContext], str] \| None` | `None` | Custom span name builder. Receives `JobContext`, returns a string. Defaults to `<prefix>.execute.<task_name>`. |
+| `span_name_fn` | `Callable[[JobContext], str] | None` | `None` | Custom span name builder. Receives `JobContext`, returns a string. Defaults to `<prefix>.execute.<task_name>`. |
 | `attribute_prefix` | `str` | `"taskito"` | Prefix for all span attribute keys. |
-| `extra_attributes_fn` | `Callable[[JobContext], dict] \| None` | `None` | Returns extra attributes to add to each span. Receives `JobContext`. |
-| `task_filter` | `Callable[[str], bool] \| None` | `None` | Predicate that receives a task name. Return `True` to trace, `False` to skip. `None` traces all tasks. |
+| `extra_attributes_fn` | `Callable[[JobContext], dict] | None` | `None` | Returns extra attributes to add to each span. Receives `JobContext`. |
+| `task_filter` | `Callable[[str], bool] | None` | `None` | Predicate that receives a task name. Return `True` to trace, `False` to skip. `None` traces all tasks. |
 
 ## Combining with Other Middleware
 
@@ -94,4 +94,4 @@ queue = Queue(middleware=[
 !!! note "Thread safety"
     `OpenTelemetryMiddleware` is thread-safe and can be used with multi-worker configurations. Internal span tracking is protected by a lock.
 
-See the [Middleware guide](../guide/middleware.md) for more on combining middleware.
+See the [Middleware guide](../guide/extensibility/middleware.md) for more on combining middleware.

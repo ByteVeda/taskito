@@ -183,7 +183,7 @@ spec:
         threshold: "0.8"
 ```
 
-See the [Prometheus integration](../integrations/prometheus.md) for setting up the metrics collector.
+See the [Prometheus integration](../../integrations/prometheus.md) for setting up the metrics collector.
 
 ## Deploy Templates
 

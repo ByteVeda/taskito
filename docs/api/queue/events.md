@@ -1,0 +1,70 @@
+# Queue — Events & Logs
+
+Methods for event callbacks, webhook registration, and structured task logging.
+
+## Events & Webhooks
+
+### `queue.on_event()`
+
+```python
+queue.on_event(event: str) -> Callable
+```
+
+Register a callback for a queue event. Supported events: `job.completed`, `job.failed`, `job.retried`, `job.dead`.
+
+```python
+@queue.on_event("job.failed")
+def handle_failure(job_id: str, task_name: str, error: str) -> None:
+    ...
+```
+
+### `queue.add_webhook()`
+
+```python
+queue.add_webhook(
+    url: str,
+    events: list[EventType] | None = None,
+    headers: dict[str, str] | None = None,
+    secret: str | None = None,
+    max_retries: int = 3,
+    timeout: float = 10.0,
+    retry_backoff: float = 2.0,
+) -> None
+```
+
+Register a webhook URL for one or more events. 4xx responses are not retried; 5xx responses are retried with exponential backoff.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | `str` | — | URL to POST to. Must be `http://` or `https://`. |
+| `events` | `list[EventType] | None` | `None` | Event types to subscribe to. `None` means all events. |
+| `headers` | `dict[str, str] | None` | `None` | Extra HTTP headers to include. |
+| `secret` | `str | None` | `None` | HMAC-SHA256 signing secret for `X-Taskito-Signature`. |
+| `max_retries` | `int` | `3` | Maximum delivery attempts. |
+| `timeout` | `float` | `10.0` | HTTP request timeout in seconds. |
+| `retry_backoff` | `float` | `2.0` | Base for exponential backoff between retries. |
+
+## Logs
+
+### `queue.task_logs()`
+
+```python
+queue.task_logs(job_id: str, limit: int = 100) -> list[dict]
+```
+
+Return structured log entries emitted by `current_job.log()` during the given job's execution.
+
+### `queue.query_logs()`
+
+```python
+queue.query_logs(
+    task_name: str | None = None,
+    level: str | None = None,
+    message_like: str | None = None,
+    since: float | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]
+```
+
+Query task logs across all jobs with optional filters.

@@ -220,7 +220,7 @@ def on_task_failure(task_name, args, kwargs, error):
 
 ### Test Mode for Isolation
 
-Use [test mode](testing.md) to run tasks synchronously and inspect errors without a worker:
+Use [test mode](../operations/testing.md) to run tasks synchronously and inspect errors without a worker:
 
 ```python
 with queue.test_mode() as results:

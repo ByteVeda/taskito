@@ -19,7 +19,7 @@ To use PostgreSQL as the storage backend instead of SQLite:
 pip install taskito[postgres]
 ```
 
-See the [Postgres Backend guide](../guide/postgres.md) for configuration details.
+See the [Postgres Backend guide](../guide/operations/postgres.md) for configuration details.
 
 ## From Source
 

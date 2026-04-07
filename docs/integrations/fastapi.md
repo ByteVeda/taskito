@@ -79,15 +79,117 @@ app.include_router(
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `include_routes` | `set[str] \| None` | `None` | If set, only register these route names. Cannot be combined with `exclude_routes`. |
-| `exclude_routes` | `set[str] \| None` | `None` | If set, skip these route names. Cannot be combined with `include_routes`. |
-| `dependencies` | `Sequence[Depends] \| None` | `None` | FastAPI dependencies applied to every route (e.g. auth). |
+| `include_routes` | `set[str] | None` | `None` | If set, only register these route names. Cannot be combined with `exclude_routes`. |
+| `exclude_routes` | `set[str] | None` | `None` | If set, skip these route names. Cannot be combined with `include_routes`. |
+| `dependencies` | `Sequence[Depends] | None` | `None` | FastAPI dependencies applied to every route (e.g. auth). |
 | `sse_poll_interval` | `float` | `0.5` | Seconds between SSE progress polls. |
 | `result_timeout` | `float` | `1.0` | Default timeout for non-blocking result fetch. |
 | `default_page_size` | `int` | `20` | Default page size for paginated endpoints. |
 | `max_page_size` | `int` | `100` | Maximum allowed page size. |
-| `result_serializer` | `Callable[[Any], Any] \| None` | `None` | Custom result serializer. Receives any value, must return a JSON-serializable value. |
+| `result_serializer` | `Callable[[Any], Any] | None` | `None` | Custom result serializer. Receives any value, must return a JSON-serializable value. |
 
 Valid route names: `stats`, `jobs`, `job-errors`, `job-result`, `job-progress`, `cancel`, `dead-letters`, `retry-dead`, `health`, `readiness`, `resources`, `queue-stats`.
 
-For full details on SSE streaming, blocking result fetch, Pydantic response models, and authentication, see the [Advanced guide](../guide/advanced.md#fastapi-integration).
+## Blocking Result Fetch
+
+The `/jobs/{job_id}/result` endpoint supports an optional `timeout` query parameter (0–300 seconds). When `timeout > 0`, the request blocks until the job completes or the timeout elapses:
+
+```bash
+# Non-blocking (default)
+curl http://localhost:8000/tasks/jobs/01H5K6X.../result
+
+# Block up to 30 seconds for the result
+curl http://localhost:8000/tasks/jobs/01H5K6X.../result?timeout=30
+```
+
+## SSE Progress Streaming
+
+Stream real-time progress for a running job using Server-Sent Events:
+
+```python
+import httpx
+
+with httpx.stream("GET", "http://localhost:8000/tasks/jobs/01H5K6X.../progress") as r:
+    for line in r.iter_lines():
+        print(line)
+        # data: {"progress": 25, "status": "running"}
+        # data: {"progress": 50, "status": "running"}
+        # data: {"progress": 100, "status": "completed"}
+```
+
+From the browser:
+
+```javascript
+const source = new EventSource("/tasks/jobs/01H5K6X.../progress");
+source.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`Progress: ${data.progress}%`);
+  if (data.status === "completed" || data.status === "failed") {
+    source.close();
+  }
+};
+```
+
+The stream sends a JSON event every 0.5 seconds while the job is active, then a final event when the job reaches a terminal state.
+
+## Pydantic Response Models
+
+All endpoints return validated Pydantic models with clean OpenAPI docs. You can import them for type-safe client code:
+
+```python
+from taskito.contrib.fastapi import (
+    StatsResponse,
+    JobResponse,
+    JobErrorResponse,
+    JobResultResponse,
+    CancelResponse,
+    DeadLetterResponse,
+    RetryResponse,
+)
+```
+
+## Full Example
+
+```python
+from fastapi import FastAPI, Header, HTTPException, Depends
+from taskito import Queue, current_job
+from taskito.contrib.fastapi import TaskitoRouter
+
+queue = Queue(db_path="myapp.db")
+
+@queue.task()
+def resize_image(image_url: str, sizes: list[int]) -> dict:
+    results = {}
+    for i, size in enumerate(sizes):
+        results[size] = do_resize(image_url, size)
+        current_job.update_progress(int((i + 1) / len(sizes) * 100))
+    return results
+
+async def require_auth(authorization: str = Header(...)):
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401)
+
+app = FastAPI(title="Image Service")
+app.include_router(
+    TaskitoRouter(queue, dependencies=[Depends(require_auth)]),
+    prefix="/tasks",
+    tags=["tasks"],
+)
+
+# Start worker in a separate process:
+#   taskito worker --app myapp:queue
+```
+
+```bash
+# Check job status
+curl http://localhost:8000/tasks/jobs/01H5K6X... \
+  -H "Authorization: Bearer mytoken"
+
+# Stream progress
+curl -N http://localhost:8000/tasks/jobs/01H5K6X.../progress \
+  -H "Authorization: Bearer mytoken"
+
+# Block for result (up to 60s)
+curl http://localhost:8000/tasks/jobs/01H5K6X.../result?timeout=60 \
+  -H "Authorization: Bearer mytoken"
+```

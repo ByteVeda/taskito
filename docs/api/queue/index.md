@@ -1,0 +1,199 @@
+# Queue
+
+::: taskito.app.Queue
+
+The central class for creating and managing a task queue.
+
+!!! tip "Sub-pages"
+    The Queue API is split across several pages for readability:
+
+    - **[Job Management](jobs.md)** — get, list, cancel, archive, replay jobs
+    - **[Queue & Stats](queues.md)** — rate limits, concurrency, pause/resume, statistics, dead letters
+    - **[Workers & Hooks](workers.md)** — run workers, lifecycle hooks, circuit breakers, async methods
+    - **[Resources & Locking](resources.md)** — resource system, distributed locks
+    - **[Events & Logs](events.md)** — event callbacks, webhooks, structured logs
+
+## Constructor
+
+```python
+Queue(
+    db_path: str = ".taskito/taskito.db",
+    workers: int = 0,
+    default_retry: int = 3,
+    default_timeout: int = 300,
+    default_priority: int = 0,
+    result_ttl: int | None = None,
+    middleware: list[TaskMiddleware] | None = None,
+    drain_timeout: int = 30,
+    interception: str = "off",
+    max_intercept_depth: int = 10,
+    recipe_signing_key: str | None = None,
+    max_reconstruction_timeout: int = 10,
+    file_path_allowlist: list[str] | None = None,
+    disabled_proxies: list[str] | None = None,
+    async_concurrency: int = 100,
+    event_workers: int = 4,
+    scheduler_poll_interval_ms: int = 50,
+    scheduler_reap_interval: int = 100,
+    scheduler_cleanup_interval: int = 1200,
+    namespace: str | None = None,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `db_path` | `str` | `".taskito/taskito.db"` | Path to SQLite database file. Parent directories are created automatically. |
+| `workers` | `int` | `0` | Number of worker threads (`0` = auto-detect CPU count) |
+| `default_retry` | `int` | `3` | Default max retry attempts for tasks |
+| `default_timeout` | `int` | `300` | Default task timeout in seconds |
+| `default_priority` | `int` | `0` | Default task priority (higher = more urgent) |
+| `result_ttl` | `int | None` | `None` | Auto-cleanup completed/dead jobs older than this many seconds. `None` disables. |
+| `middleware` | `list[TaskMiddleware] | None` | `None` | Queue-level middleware applied to all tasks. |
+| `drain_timeout` | `int` | `30` | Seconds to wait for in-flight tasks during graceful shutdown. |
+| `interception` | `str` | `"off"` | Argument interception mode: `"strict"`, `"lenient"`, or `"off"`. See [Resource System](../../resources/interception.md). |
+| `max_intercept_depth` | `int` | `10` | Max recursion depth for argument walking. |
+| `recipe_signing_key` | `str | None` | `None` | HMAC-SHA256 key for proxy recipe integrity. Falls back to `TASKITO_RECIPE_SECRET` env var. |
+| `max_reconstruction_timeout` | `int` | `10` | Max seconds allowed for proxy reconstruction. |
+| `file_path_allowlist` | `list[str] | None` | `None` | Allowed file path prefixes for the file proxy handler. |
+| `disabled_proxies` | `list[str] | None` | `None` | Handler names to skip when registering built-in proxy handlers. |
+| `async_concurrency` | `int` | `100` | Maximum number of `async def` tasks running concurrently on the native async executor. |
+| `event_workers` | `int` | `4` | Thread pool size for the event bus. Increase for high event volume. |
+| `scheduler_poll_interval_ms` | `int` | `50` | Milliseconds between scheduler poll cycles. Lower values improve scheduling precision at the cost of CPU. |
+| `scheduler_reap_interval` | `int` | `100` | Reap stale/timed-out jobs every N poll cycles. |
+| `scheduler_cleanup_interval` | `int` | `1200` | Clean up old completed jobs every N poll cycles. |
+| `namespace` | `str | None` | `None` | Namespace for multi-tenant isolation. Jobs enqueued on this queue carry this namespace; workers only dequeue matching jobs. `None` means no namespace (default). |
+
+## Task Registration
+
+### `@queue.task()`
+
+```python
+@queue.task(
+    name: str | None = None,
+    max_retries: int = 3,
+    retry_backoff: float = 1.0,
+    retry_delays: list[float] | None = None,
+    max_retry_delay: int | None = None,
+    timeout: int = 300,
+    soft_timeout: float | None = None,
+    priority: int = 0,
+    rate_limit: str | None = None,
+    queue: str = "default",
+    circuit_breaker: dict | None = None,
+    middleware: list[TaskMiddleware] | None = None,
+    expires: float | None = None,
+    inject: list[str] | None = None,
+    serializer: Serializer | None = None,
+    max_concurrent: int | None = None,
+) -> TaskWrapper
+```
+
+Register a function as a background task. Returns a [`TaskWrapper`](../task.md).
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `str | None` | Auto-generated | Explicit task name. Defaults to `module.qualname`. |
+| `max_retries` | `int` | `3` | Max retry attempts before moving to DLQ. |
+| `retry_backoff` | `float` | `1.0` | Base delay in seconds for exponential backoff. |
+| `retry_delays` | `list[float] | None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
+| `max_retry_delay` | `int | None` | `None` | Cap on backoff delay in seconds. Defaults to 300 s. |
+| `timeout` | `int` | `300` | Hard execution time limit in seconds. |
+| `soft_timeout` | `float | None` | `None` | Cooperative time limit checked via `current_job.check_timeout()`. |
+| `priority` | `int` | `0` | Default priority (higher = more urgent). |
+| `rate_limit` | `str | None` | `None` | Rate limit string, e.g. `"100/m"`. |
+| `queue` | `str` | `"default"` | Named queue to submit to. |
+| `circuit_breaker` | `dict | None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
+| `middleware` | `list[TaskMiddleware] | None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
+| `expires` | `float | None` | `None` | Seconds until the job expires if not started. |
+| `inject` | `list[str] | None` | `None` | Resource names to inject as keyword arguments. See [Resource System](../../resources/index.md). |
+| `serializer` | `Serializer | None` | `None` | Per-task serializer override. Falls back to queue-level serializer. |
+| `max_concurrent` | `int | None` | `None` | Max concurrent running instances. `None` = no limit. |
+
+### `@queue.periodic()`
+
+```python
+@queue.periodic(
+    cron: str,
+    name: str | None = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
+    queue: str = "default",
+    timezone: str | None = None,
+) -> TaskWrapper
+```
+
+Register a periodic (cron-scheduled) task. Uses 6-field cron expressions with seconds.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `cron` | `str` | — | 6-field cron expression (seconds precision). |
+| `name` | `str | None` | Auto-generated | Explicit task name. |
+| `args` | `tuple` | `()` | Positional arguments passed to the task on each run. |
+| `kwargs` | `dict | None` | `None` | Keyword arguments passed to the task on each run. |
+| `queue` | `str` | `"default"` | Named queue to submit to. |
+| `timezone` | `str | None` | `None` | IANA timezone name (e.g. `"America/New_York"`). Defaults to UTC. |
+
+## Enqueue Methods
+
+### `queue.enqueue()`
+
+```python
+queue.enqueue(
+    task_name: str,
+    args: tuple = (),
+    kwargs: dict | None = None,
+    priority: int | None = None,
+    delay: float | None = None,
+    queue: str | None = None,
+    max_retries: int | None = None,
+    timeout: int | None = None,
+    unique_key: str | None = None,
+    metadata: str | None = None,
+    depends_on: str | list[str] | None = None,
+) -> JobResult
+```
+
+Enqueue a task for execution. Returns a [`JobResult`](../result.md) handle.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `depends_on` | `str | list[str] | None` | `None` | Job ID(s) this job depends on. See [Dependencies](../../guide/execution/dependencies.md). |
+
+### `queue.enqueue_many()`
+
+```python
+queue.enqueue_many(
+    task_name: str,
+    args_list: list[tuple],
+    kwargs_list: list[dict] | None = None,
+    priority: int | None = None,
+    queue: str | None = None,
+    max_retries: int | None = None,
+    timeout: int | None = None,
+    delay: float | None = None,
+    delay_list: list[float | None] | None = None,
+    unique_keys: list[str | None] | None = None,
+    metadata: str | None = None,
+    metadata_list: list[str | None] | None = None,
+    expires: float | None = None,
+    expires_list: list[float | None] | None = None,
+    result_ttl: int | None = None,
+    result_ttl_list: list[int | None] | None = None,
+) -> list[JobResult]
+```
+
+Enqueue multiple jobs in a single transaction for high throughput. Supports both uniform parameters (applied to all jobs) and per-job lists.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `delay` | `float | None` | `None` | Uniform delay in seconds for all jobs |
+| `delay_list` | `list[float | None] | None` | `None` | Per-job delays in seconds |
+| `unique_keys` | `list[str | None] | None` | `None` | Per-job deduplication keys |
+| `metadata` | `str | None` | `None` | Uniform metadata JSON for all jobs |
+| `metadata_list` | `list[str | None] | None` | `None` | Per-job metadata JSON |
+| `expires` | `float | None` | `None` | Uniform expiry in seconds for all jobs |
+| `expires_list` | `list[float | None] | None` | `None` | Per-job expiry in seconds |
+| `result_ttl` | `int | None` | `None` | Uniform result TTL in seconds |
+| `result_ttl_list` | `list[int | None] | None` | `None` | Per-job result TTL in seconds |
+
+Per-job lists (`*_list`) take precedence over uniform values when both are provided.

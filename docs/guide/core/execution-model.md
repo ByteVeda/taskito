@@ -52,7 +52,7 @@ taskito worker --app myapp:queue --pool prefork
 
 The `app` parameter tells each child process where to import your `Queue` instance. It must be a module-level name (`"module:attribute"` format) — tasks defined inside functions or closures cannot be imported by child processes.
 
-For more details, see the [Prefork Pool guide](prefork.md).
+For more details, see the [Prefork Pool guide](../execution/prefork.md).
 
 ## Native Async
 
@@ -75,7 +75,7 @@ queue = Queue(
 )
 ```
 
-For more details, see the [Native Async Tasks guide](async-tasks.md).
+For more details, see the [Native Async Tasks guide](../execution/async-tasks.md).
 
 ## Mixing Sync and Async
 

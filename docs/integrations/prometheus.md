@@ -34,8 +34,8 @@ PrometheusMiddleware(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `namespace` | `str` | `"taskito"` | Prefix for all metric names. |
-| `extra_labels_fn` | `Callable[[JobContext], dict[str, str]] \| None` | `None` | Returns extra labels to add to job metrics. Receives `JobContext`. |
-| `disabled_metrics` | `set[str] \| None` | `None` | Metric groups or individual names to skip. Groups: `"jobs"`, `"queue"`, `"resource"`, `"proxy"`, `"intercept"`. |
+| `extra_labels_fn` | `Callable[[JobContext], dict[str, str]] | None` | `None` | Returns extra labels to add to job metrics. Receives `JobContext`. |
+| `disabled_metrics` | `set[str] | None` | `None` | Metric groups or individual names to skip. Groups: `"jobs"`, `"queue"`, `"resource"`, `"proxy"`, `"intercept"`. |
 
 ### Metrics Tracked
 
@@ -73,7 +73,7 @@ PrometheusStatsCollector(
 | `queue` | `Queue` | — | The Queue instance to poll. |
 | `interval` | `float` | `10.0` | Seconds between polls. |
 | `namespace` | `str` | `"taskito"` | Prefix for metric names. Must match `PrometheusMiddleware` namespace to share metric objects. |
-| `disabled_metrics` | `set[str] \| None` | `None` | Metric groups or names to skip. Same groups as `PrometheusMiddleware`. |
+| `disabled_metrics` | `set[str] | None` | `None` | Metric groups or names to skip. Same groups as `PrometheusMiddleware`. |
 
 ### Metrics Tracked
 
@@ -152,7 +152,7 @@ queue = Queue(
 )
 ```
 
-See the [Middleware guide](../guide/middleware.md) for more on combining middleware.
+See the [Middleware guide](../guide/extensibility/middleware.md) for more on combining middleware.
 
 ## Example: Alert on High DLQ Size
 

@@ -175,7 +175,7 @@ Diesel's `r2d2` connection pool with up to 8 connections (SQLite) or 10 connecti
 
 ### Postgres Configuration
 
-taskito also supports PostgreSQL as an alternative storage backend. See the [Postgres Backend guide](guide/postgres.md) for full details.
+taskito also supports PostgreSQL as an alternative storage backend. See the [Postgres Backend guide](guide/operations/postgres.md) for full details.
 
 Key differences from the SQLite storage layer:
 
@@ -269,7 +269,7 @@ Same behavior as database unavailable. The scheduler retries on the next poll cy
 
 ### Duplicate execution
 
-`claim_execution` prevents two workers from picking up the same job simultaneously. But if a worker crashes *after* starting execution, the job will be retried — potentially executing the same task twice. Design tasks to be [idempotent](guide/guarantees.md) to handle this safely.
+`claim_execution` prevents two workers from picking up the same job simultaneously. But if a worker crashes *after* starting execution, the job will be retried — potentially executing the same task twice. Design tasks to be [idempotent](guide/reliability/guarantees.md) to handle this safely.
 
 ### Recovery timeline
 
@@ -295,7 +295,7 @@ sequenceDiagram
 
 ### Partial writes
 
-If a task completes successfully but the result write to the database fails (e.g., database full, connection lost), the job stays in `running` status. The stale reaper eventually marks it failed and retries it. The task will execute again — make sure it's [idempotent](guide/guarantees.md).
+If a task completes successfully but the result write to the database fails (e.g., database full, connection lost), the job stays in `running` status. The stale reaper eventually marks it failed and retries it. The task will execute again — make sure it's [idempotent](guide/reliability/guarantees.md).
 
 ### Jobs without timeouts
 
