@@ -81,13 +81,13 @@ Use the **Postgres backend** (`pip install taskito[postgres]`) when you need:
 - **Higher write throughput** — Postgres handles concurrent writers better than SQLite
 - **Existing Postgres infrastructure** — leverage your existing database and backups
 
-For single-machine workloads, SQLite is simpler and requires zero setup. See the [Postgres Backend guide](guide/postgres.md).
+For single-machine workloads, SQLite is simpler and requires zero setup. See the [Postgres Backend guide](guide/operations/postgres.md).
 
 ## Is taskito production-ready?
 
 taskito is suitable for production workloads — background job processing, periodic tasks, data pipelines, and similar use cases.
 
-For single-machine deployments, use the default SQLite backend. For multi-server setups, use the [Postgres backend](guide/postgres.md).
+For single-machine deployments, use the default SQLite backend. For multi-server setups, use the [Postgres backend](guide/operations/postgres.md).
 
 ## What observability options does taskito support?
 
@@ -131,7 +131,7 @@ result = await job.aresult(timeout=30)
 stats = await queue.astats()
 ```
 
-Sync and async tasks can coexist in the same queue. The worker automatically routes each job to the correct pool based on the task type. See the [Native Async Tasks](guide/async-tasks.md) guide for details including `async_concurrency` tuning and `current_job` context in async tasks.
+Sync and async tasks can coexist in the same queue. The worker automatically routes each job to the correct pool based on the task type. See the [Native Async Tasks](guide/execution/async-tasks.md) guide for details including `async_concurrency` tuning and `current_job` context in async tasks.
 
 ## What serialization format does taskito use?
 

@@ -151,7 +151,7 @@ The server exposes three routes:
 taskito scaler --app myapp:queue --port 9091 --target-queue-depth 5
 ```
 
-See the [KEDA Integration guide](../guide/keda.md) for Kubernetes deploy templates.
+See the [KEDA Integration guide](../guide/operations/keda.md) for Kubernetes deploy templates.
 
 ## Error Messages
 

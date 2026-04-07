@@ -55,15 +55,15 @@ Enqueue with full control over submission options. Any parameter not provided fa
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `args` | `tuple` | `()` | Positional arguments for the task |
-| `kwargs` | `dict \| None` | `None` | Keyword arguments for the task |
-| `priority` | `int \| None` | `None` | Override priority (higher = more urgent) |
-| `delay` | `float \| None` | `None` | Delay in seconds before the task is eligible |
-| `queue` | `str \| None` | `None` | Override queue name |
-| `max_retries` | `int \| None` | `None` | Override max retry count |
-| `timeout` | `int \| None` | `None` | Override timeout in seconds |
-| `unique_key` | `str \| None` | `None` | Deduplicate active jobs with same key |
-| `metadata` | `str \| None` | `None` | Arbitrary JSON metadata to attach |
-| `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](../guide/dependencies.md). |
+| `kwargs` | `dict | None` | `None` | Keyword arguments for the task |
+| `priority` | `int | None` | `None` | Override priority (higher = more urgent) |
+| `delay` | `float | None` | `None` | Delay in seconds before the task is eligible |
+| `queue` | `str | None` | `None` | Override queue name |
+| `max_retries` | `int | None` | `None` | Override max retry count |
+| `timeout` | `int | None` | `None` | Override timeout in seconds |
+| `unique_key` | `str | None` | `None` | Deduplicate active jobs with same key |
+| `metadata` | `str | None` | `None` | Arbitrary JSON metadata to attach |
+| `depends_on` | `str | list[str] | None` | `None` | Job ID(s) this job depends on. See [Dependencies](../guide/execution/dependencies.md). |
 
 ```python
 job = send_email.apply_async(

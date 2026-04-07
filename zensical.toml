@@ -11,45 +11,62 @@ extra_css = ["assets/css/custom.css"]
 nav = [
     { "Home" = "index.md" },
     { "Getting Started" = [
+        { "Overview" = "getting-started/index.md" },
         { "Installation" = "getting-started/installation.md" },
         { "Quickstart" = "getting-started/quickstart.md" },
     ] },
     { "User Guide" = [
-        # Core — everyone reads these
-        { "Tasks" = "guide/tasks.md" },
-        { "Workers" = "guide/workers.md" },
-        { "Execution Models" = "guide/execution-model.md" },
-        { "Queues & Priority" = "guide/queues.md" },
-        { "Scheduling" = "guide/scheduling.md" },
-        { "Workflows" = "guide/workflows.md" },
-        # Reliability — production users
-        { "Retries & Dead Letters" = "guide/retries.md" },
-        { "Error Handling" = "guide/error-handling.md" },
-        { "Delivery Guarantees" = "guide/guarantees.md" },
-        { "Rate Limiting" = "guide/rate-limiting.md" },
-        { "Circuit Breakers" = "guide/circuit-breakers.md" },
-        { "Distributed Locking" = "guide/locking.md" },
-        # Advanced execution
-        { "Prefork Pool" = "guide/prefork.md" },
-        { "Native Async Tasks" = "guide/async-tasks.md" },
-        { "Result Streaming" = "guide/streaming.md" },
-        { "Dependencies" = "guide/dependencies.md" },
-        # Extensibility
-        { "Middleware" = "guide/middleware.md" },
-        { "Serializers" = "guide/serializers.md" },
-        { "Events & Webhooks" = "guide/events-webhooks.md" },
-        # Observability
-        { "Monitoring & Hooks" = "guide/monitoring.md" },
-        { "Structured Logging" = "guide/logging.md" },
-        { "Web Dashboard" = "guide/dashboard.md" },
-        # Operations
-        { "Testing" = "guide/testing.md" },
-        { "Troubleshooting" = "guide/troubleshooting.md" },
-        { "Deployment" = "guide/deployment.md" },
-        { "KEDA Autoscaling" = "guide/keda.md" },
-        { "Postgres Backend" = "guide/postgres.md" },
-        { "Migrating from Celery" = "guide/migration.md" },
-        { "Advanced" = "guide/advanced.md" },
+        { "Overview" = "guide/index.md" },
+        { "Core" = [
+            { "Overview" = "guide/core/index.md" },
+            { "Tasks" = "guide/core/tasks.md" },
+            { "Workers" = "guide/core/workers.md" },
+            { "Execution Models" = "guide/core/execution-model.md" },
+            { "Queues & Priority" = "guide/core/queues.md" },
+            { "Scheduling" = "guide/core/scheduling.md" },
+            { "Workflows" = "guide/core/workflows.md" },
+        ] },
+        { "Reliability" = [
+            { "Overview" = "guide/reliability/index.md" },
+            { "Retries & Dead Letters" = "guide/reliability/retries.md" },
+            { "Error Handling" = "guide/reliability/error-handling.md" },
+            { "Delivery Guarantees" = "guide/reliability/guarantees.md" },
+            { "Rate Limiting" = "guide/reliability/rate-limiting.md" },
+            { "Circuit Breakers" = "guide/reliability/circuit-breakers.md" },
+            { "Distributed Locking" = "guide/reliability/locking.md" },
+        ] },
+        { "Advanced Execution" = [
+            { "Overview" = "guide/execution/index.md" },
+            { "Prefork Pool" = "guide/execution/prefork.md" },
+            { "Native Async Tasks" = "guide/execution/async-tasks.md" },
+            { "Result Streaming" = "guide/execution/streaming.md" },
+            { "Dependencies" = "guide/execution/dependencies.md" },
+            { "Batch Enqueue" = "guide/execution/batch-enqueue.md" },
+            { "Unique Tasks" = "guide/execution/unique-tasks.md" },
+        ] },
+        { "Extensibility" = [
+            { "Overview" = "guide/extensibility/index.md" },
+            { "Middleware" = "guide/extensibility/middleware.md" },
+            { "Serializers" = "guide/extensibility/serializers.md" },
+            { "Events & Webhooks" = "guide/extensibility/events-webhooks.md" },
+        ] },
+        { "Observability" = [
+            { "Overview" = "guide/observability/index.md" },
+            { "Monitoring & Hooks" = "guide/observability/monitoring.md" },
+            { "Structured Logging" = "guide/observability/logging.md" },
+            { "Web Dashboard" = "guide/observability/dashboard.md" },
+            { "Dashboard REST API" = "guide/observability/dashboard-api.md" },
+        ] },
+        { "Operations" = [
+            { "Overview" = "guide/operations/index.md" },
+            { "Testing" = "guide/operations/testing.md" },
+            { "Job Management" = "guide/operations/job-management.md" },
+            { "Troubleshooting" = "guide/operations/troubleshooting.md" },
+            { "Deployment" = "guide/operations/deployment.md" },
+            { "KEDA Autoscaling" = "guide/operations/keda.md" },
+            { "Postgres Backend" = "guide/operations/postgres.md" },
+            { "Migrating from Celery" = "guide/operations/migration.md" },
+        ] },
     ] },
     { "Integrations" = [
         { "Overview" = "integrations/index.md" },
@@ -71,7 +88,15 @@ nav = [
     ] },
     { "Architecture" = "architecture.md" },
     { "API Reference" = [
-        { "Queue" = "api/queue.md" },
+        { "Overview" = "api/index.md" },
+        { "Queue" = [
+            { "Constructor & Registration" = "api/queue/index.md" },
+            { "Job Management" = "api/queue/jobs.md" },
+            { "Queue & Stats" = "api/queue/queues.md" },
+            { "Workers & Hooks" = "api/queue/workers.md" },
+            { "Resources & Locking" = "api/queue/resources.md" },
+            { "Events & Logs" = "api/queue/events.md" },
+        ] },
         { "TaskWrapper" = "api/task.md" },
         { "JobResult" = "api/result.md" },
         { "JobContext" = "api/context.md" },
@@ -80,6 +105,7 @@ nav = [
         { "CLI" = "api/cli.md" },
     ] },
     { "Examples" = [
+        { "Overview" = "examples/index.md" },
         { "FastAPI Service" = "examples/fastapi-service.md" },
         { "Notification Service" = "examples/notifications.md" },
         { "Web Scraper Pipeline" = "examples/web-scraper.md" },
@@ -97,6 +123,11 @@ name = "material"
 features = [
     "navigation.instant",
     "navigation.tracking",
+    "navigation.tabs",
+    "navigation.sections",
+    "navigation.indexes",
+    "navigation.path",
+    "navigation.prune",
     "navigation.top",
     "content.code.copy",
     "content.code.annotate",
@@ -147,6 +178,9 @@ def_list = {}
 
 [project.plugins]
 search = {}
+
+[project.extra]
+generator = false
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"

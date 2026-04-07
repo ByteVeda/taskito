@@ -75,9 +75,9 @@ queue.add_webhook(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `url` | `str` | — | URL to POST event payloads to (must be `http://` or `https://`) |
-| `events` | `list[EventType] \| None` | `None` | Event types to subscribe to. `None` means all events |
-| `headers` | `dict[str, str] \| None` | `None` | Extra HTTP headers to include in requests |
-| `secret` | `str \| None` | `None` | HMAC-SHA256 signing secret |
+| `events` | `list[EventType] | None` | `None` | Event types to subscribe to. `None` means all events |
+| `headers` | `dict[str, str] | None` | `None` | Extra HTTP headers to include in requests |
+| `secret` | `str | None` | `None` | HMAC-SHA256 signing secret |
 | `max_retries` | `int` | `3` | Maximum delivery attempts |
 | `timeout` | `float` | `10.0` | HTTP request timeout in seconds |
 | `retry_backoff` | `float` | `2.0` | Base for exponential backoff between retries |

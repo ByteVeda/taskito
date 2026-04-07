@@ -78,7 +78,7 @@ for err in job.errors:
 job.dependencies -> list[str]
 ```
 
-List of job IDs this job depends on. Returns an empty list if the job has no dependencies. See [Dependencies](../guide/dependencies.md).
+List of job IDs this job depends on. Returns an empty list if the job has no dependencies. See [Dependencies](../guide/execution/dependencies.md).
 
 ### `job.dependents`
 
@@ -96,7 +96,7 @@ List of job IDs that depend on this job. Returns an empty list if no other jobs 
 job.to_dict() -> dict
 ```
 
-Return all job fields as a plain dictionary. Useful for JSON serialization (e.g. in the [dashboard](../guide/dashboard.md) or [FastAPI integration](../guide/advanced.md#fastapi-integration)).
+Return all job fields as a plain dictionary. Useful for JSON serialization (e.g. in the [dashboard](../guide/observability/dashboard.md) or [FastAPI integration](../integrations/fastapi.md)).
 
 ### `job.result()`
 

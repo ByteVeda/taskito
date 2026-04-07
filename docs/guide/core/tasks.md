@@ -19,22 +19,22 @@ def process_data(data: dict) -> str:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `name` | `str \| None` | Auto-generated | Explicit task name. Defaults to `module.qualname`. |
+| `name` | `str | None` | Auto-generated | Explicit task name. Defaults to `module.qualname`. |
 | `max_retries` | `int` | `3` | Max retry attempts before moving to DLQ. |
 | `retry_backoff` | `float` | `1.0` | Base delay in seconds for exponential backoff. |
-| `retry_delays` | `list[float] \| None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
-| `max_retry_delay` | `int \| None` | `None` | Cap on backoff delay in seconds (default 300 s). |
+| `retry_delays` | `list[float] | None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
+| `max_retry_delay` | `int | None` | `None` | Cap on backoff delay in seconds (default 300 s). |
 | `timeout` | `int` | `300` | Max execution time in seconds (hard timeout). |
-| `soft_timeout` | `float \| None` | `None` | Cooperative time limit in seconds; checked via `current_job.check_timeout()`. |
+| `soft_timeout` | `float | None` | `None` | Cooperative time limit in seconds; checked via `current_job.check_timeout()`. |
 | `priority` | `int` | `0` | Default priority (higher = more urgent). |
-| `rate_limit` | `str \| None` | `None` | Rate limit string, e.g. `"100/m"`. |
+| `rate_limit` | `str | None` | `None` | Rate limit string, e.g. `"100/m"`. |
 | `queue` | `str` | `"default"` | Named queue to submit to. |
-| `circuit_breaker` | `dict \| None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
-| `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
-| `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
-| `inject` | `list[str] \| None` | `None` | Worker resource names to inject as keyword arguments. See [Resource System](resources.md). |
-| `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to the queue-level serializer. |
-| `max_concurrent` | `int \| None` | `None` | Max concurrent running instances of this task. `None` means no limit. |
+| `circuit_breaker` | `dict | None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
+| `middleware` | `list[TaskMiddleware] | None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
+| `expires` | `float | None` | `None` | Seconds until the job expires if not started. |
+| `inject` | `list[str] | None` | `None` | Worker resource names to inject as keyword arguments. See [Resource System](../../resources/index.md). |
+| `serializer` | `Serializer | None` | `None` | Per-task serializer override. Falls back to the queue-level serializer. |
+| `max_concurrent` | `int | None` | `None` | Max concurrent running instances of this task. `None` means no limit. |
 
 ```python
 @queue.task(

@@ -149,3 +149,32 @@ maturin develop --features native-async
 ```
 
 Without the feature, async tasks are still enqueued and processed — they fall back to running via `asyncio.run()` on a worker thread.
+
+## Async Queue Methods
+
+All inspection methods have async variants that run in a thread pool:
+
+```python
+# Sync
+stats = queue.stats()
+dead = queue.dead_letters()
+new_id = queue.retry_dead(dead_id)
+cancelled = queue.cancel_job(job_id)
+result = job.result(timeout=30)
+
+# Async equivalents
+stats = await queue.astats()
+dead = await queue.adead_letters()
+new_id = await queue.aretry_dead(dead_id)
+cancelled = await queue.acancel_job(job_id)
+result = await job.aresult(timeout=30)
+```
+
+### Async Worker
+
+```python
+async def main():
+    await queue.arun_worker(queues=["default"])
+
+asyncio.run(main())
+```

@@ -22,7 +22,7 @@ TestMode(queue: Queue, propagate_errors: bool = False, resources: dict[str, Any]
 |---|---|---|---|
 | `queue` | `Queue` | *required* | The Queue instance to put into test mode |
 | `propagate_errors` | `bool` | `False` | Re-raise task exceptions immediately instead of capturing them |
-| `resources` | `dict[str, Any] \| None` | `None` | Resource name → mock instance map injected during test mode. `MockResource` values are unwrapped automatically. |
+| `resources` | `dict[str, Any] | None` | `None` | Resource name → mock instance map injected during test mode. `MockResource` values are unwrapped automatically. |
 
 ### Usage
 
@@ -59,8 +59,8 @@ Dataclass capturing the result of a single task execution in test mode.
 | `args` | `tuple` | Positional arguments the task was called with |
 | `kwargs` | `dict` | Keyword arguments the task was called with |
 | `return_value` | `Any` | Return value of the task (or `None` if it failed) |
-| `error` | `Exception \| None` | Exception instance if the task raised |
-| `traceback` | `str \| None` | Formatted traceback string if the task raised |
+| `error` | `Exception | None` | Exception instance if the task raised |
+| `traceback` | `str | None` | Formatted traceback string if the task raised |
 
 ### Properties
 
@@ -98,8 +98,8 @@ Filter results by task name and/or outcome.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `task_name` | `str \| None` | `None` | Exact match on task name |
-| `succeeded` | `bool \| None` | `None` | `True` = successes only, `False` = failures only |
+| `task_name` | `str | None` | `None` | Exact match on task name |
+| `succeeded` | `bool | None` | `None` | `True` = successes only, `False` = failures only |
 
 Returns a new `TestResults` containing only matching items.
 

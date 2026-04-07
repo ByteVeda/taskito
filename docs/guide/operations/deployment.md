@@ -299,7 +299,7 @@ queue = Queue(
 )
 ```
 
-If you need distributed workers across multiple machines, use the [Postgres backend](postgres.md) which removes the single-writer constraint and supports multi-machine deployments. Alternatively, consider [Celery or Dramatiq](../comparison.md).
+If you need distributed workers across multiple machines, use the [Postgres backend](postgres.md) which removes the single-writer constraint and supports multi-machine deployments. Alternatively, consider [Celery or Dramatiq](../../comparison.md).
 
 ## SQLite Scaling Limits
 
@@ -343,7 +343,7 @@ Increasing the pool beyond ~16 typically doesn't help, since SQLite write serial
 | > 50K jobs/s | — | — | — | Consider Celery + RabbitMQ for this scale |
 
 !!! note
-    These are rough guidelines for noop tasks. Real throughput depends on task duration, payload size, and I/O patterns. Run the [benchmark](../examples/benchmark.md) on your hardware to get accurate numbers.
+    These are rough guidelines for noop tasks. Real throughput depends on task duration, payload size, and I/O patterns. Run the [benchmark](../../examples/benchmark.md) on your hardware to get accurate numbers.
 
 ## Checklist
 

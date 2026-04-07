@@ -73,7 +73,7 @@ job = send_report.apply_async(
 )
 ```
 
-If a job with the same `unique_key` is already pending or running, the duplicate is silently dropped. See [Advanced > Unique Tasks](advanced.md) for details.
+If a job with the same `unique_key` is already pending or running, the duplicate is silently dropped. See [Unique Tasks](../execution/unique-tasks.md) for details.
 
 ### Avoid side effects that can't be undone
 
