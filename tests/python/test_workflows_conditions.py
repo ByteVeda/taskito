@@ -316,7 +316,7 @@ def test_callable_accesses_results(queue: Queue) -> None:
         return "skip"
 
     def high_score(ctx: WorkflowContext) -> bool:
-        return ctx.results.get("validate", {}).get("score", 0) > 0.95
+        return bool(ctx.results.get("validate", {}).get("score", 0) > 0.95)
 
     wf = Workflow(name="callable_results")
     wf.step("validate", score_task)

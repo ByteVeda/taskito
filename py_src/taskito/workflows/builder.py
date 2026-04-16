@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from taskito.app import Queue
-    from taskito.task import TaskWrapper
 
     from .run import WorkflowRun
 
@@ -95,7 +94,7 @@ class Workflow:
     def step(
         self,
         name: str,
-        task: TaskWrapper,
+        task: Any,
         *,
         after: str | list[str] | None = None,
         args: tuple = (),

@@ -86,6 +86,17 @@ nav = [
         { "Testing" = "resources/testing.md" },
         { "Observability" = "resources/observability.md" },
     ] },
+    { "Workflows" = [
+        { "Overview" = "workflows/index.md" },
+        { "Building Workflows" = "workflows/building.md" },
+        { "Fan-Out & Fan-In" = "workflows/fan-out.md" },
+        { "Conditions & Error Handling" = "workflows/conditions.md" },
+        { "Approval Gates" = "workflows/gates.md" },
+        { "Sub-Workflows & Scheduling" = "workflows/composition.md" },
+        { "Incremental Runs" = "workflows/caching.md" },
+        { "Analysis & Visualization" = "workflows/analysis.md" },
+        { "Canvas Primitives" = "workflows/canvas.md" },
+    ] },
     { "Architecture" = "architecture.md" },
     { "API Reference" = [
         { "Overview" = "api/index.md" },

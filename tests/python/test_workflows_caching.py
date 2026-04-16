@@ -139,7 +139,7 @@ def test_dirty_propagation(queue: Queue) -> None:
     predecessors = {"a": [], "b": ["a"], "c": ["b"]}
 
     # Simulate "a" being dirty (not in base).
-    base_nodes_missing_a = [
+    base_nodes_missing_a: list[tuple[str, str, str | None]] = [
         ("b", "completed", "hash_b"),
         ("c", "completed", "hash_c"),
     ]
@@ -226,7 +226,7 @@ def test_cache_ttl_expires() -> None:
     """Expired base run results trigger re-execution."""
     from taskito.workflows.incremental import compute_dirty_set
 
-    base_nodes = [
+    base_nodes: list[tuple[str, str, str | None]] = [
         ("a", "completed", "hash_a"),
     ]
 

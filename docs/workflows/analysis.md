@@ -1,0 +1,140 @@
+# Analysis & Visualization
+
+Analyze the workflow DAG before execution and render diagrams with live status.
+
+## Graph inspection
+
+```python
+wf = Workflow(name="pipeline")
+wf.step("a", task_a)
+wf.step("b", task_b, after="a")
+wf.step("c", task_c, after="a")
+wf.step("d", task_d, after=["b", "c"])
+
+wf.ancestors("d")          # ["a", "b", "c"]
+wf.descendants("a")        # ["b", "c", "d"]
+wf.topological_levels()    # [["a"], ["b", "c"], ["d"]]
+wf.stats()
+# {"nodes": 4, "edges": 4, "depth": 3, "width": 2, "density": 0.6667}
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ancestors(node)` | `list[str]` | All transitive predecessors |
+| `descendants(node)` | `list[str]` | All transitive successors |
+| `topological_levels()` | `list[list[str]]` | Nodes grouped by depth |
+| `stats()` | `dict` | Node count, edge count, depth, width, density |
+
+## Critical path
+
+Find the longest-weighted path through the DAG:
+
+```python
+path, cost = wf.critical_path({
+    "a": 2.0,
+    "b": 7.0,
+    "c": 1.0,
+    "d": 3.0,
+})
+# path = ["a", "b", "d"], cost = 12.0
+```
+
+Pass estimated durations per step. The critical path determines the minimum total execution time.
+
+## Execution plan
+
+Generate a step-by-step schedule respecting worker limits:
+
+```python
+plan = wf.execution_plan(max_workers=2)
+# [["a"], ["b", "c"], ["d"]]
+
+plan = wf.execution_plan(max_workers=1)
+# [["a"], ["b"], ["c"], ["d"]]
+```
+
+Each stage contains up to `max_workers` nodes. Nodes in the same topological level are batched together.
+
+## Bottleneck analysis
+
+Identify the most expensive step on the critical path:
+
+```python
+result = wf.bottleneck_analysis({
+    "a": 2.0, "b": 7.0, "c": 1.0, "d": 3.0
+})
+# {
+#     "node": "b",
+#     "cost": 7.0,
+#     "percentage": 58.3,
+#     "critical_path": ["a", "b", "d"],
+#     "total_cost": 12.0,
+#     "suggestion": "b is the bottleneck (58.3% of total time). ..."
+# }
+```
+
+## Visualization
+
+Render the DAG as a diagram string:
+
+=== "Mermaid"
+
+    ```python
+    print(wf.visualize("mermaid"))
+    ```
+
+    ```
+    graph LR
+      a[a]
+      b[b]
+      c[c]
+      d[d]
+      a --> b
+      a --> c
+      b --> d
+      c --> d
+    ```
+
+=== "Graphviz DOT"
+
+    ```python
+    print(wf.visualize("dot"))
+    ```
+
+    ```
+    digraph workflow {
+      rankdir=LR;
+      a [label="a" style=filled fillcolor=white];
+      b [label="b" style=filled fillcolor=white];
+      ...
+    }
+    ```
+
+### Live status visualization
+
+`WorkflowRun.visualize()` includes status colors:
+
+```python
+run = queue.submit_workflow(wf)
+run.wait()
+
+print(run.visualize("mermaid"))
+```
+
+```
+graph LR
+  a[a ✓]
+  b[b ✓]
+  a --> b
+  style a fill:#90EE90
+  style b fill:#90EE90
+```
+
+| Status | Color |
+|--------|-------|
+| Completed | Green `#90EE90` |
+| Failed | Red `#FFB6C1` |
+| Running | Blue `#87CEEB` |
+| Pending | Gray `#D3D3D3` |
+| Skipped | Light gray `#F5F5F5` |
+| Waiting Approval | Yellow `#FFFACD` |

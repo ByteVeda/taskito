@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 
 import pytest
 
@@ -33,7 +34,7 @@ def test_fan_out_each(queue: Queue) -> None:
     def double(x: int) -> int:
         return x * 2
 
-    collected: list[object] = []
+    collected: list[Any] = []
 
     @queue.task()
     def aggregate(results: list[int]) -> str:
@@ -67,7 +68,7 @@ def test_fan_out_empty_list(queue: Queue) -> None:
     def process(x: int) -> int:
         return x * 2
 
-    collected: list[object] = []
+    collected: list[Any] = []
 
     @queue.task()
     def aggregate(results: list) -> str:
@@ -101,7 +102,7 @@ def test_fan_out_single_item(queue: Queue) -> None:
     def add_one(x: int) -> int:
         return x + 1
 
-    collected: list[object] = []
+    collected: list[Any] = []
 
     @queue.task()
     def aggregate(results: list[int]) -> str:
@@ -320,7 +321,7 @@ def test_fan_out_preserves_result_order(queue: Queue) -> None:
     def identity(item: str) -> str:
         return item
 
-    collected: list[object] = []
+    collected: list[Any] = []
 
     @queue.task()
     def aggregate(results: list[str]) -> str:
