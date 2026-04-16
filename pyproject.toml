@@ -50,7 +50,7 @@ docs = ["zensical"]
 manifest-path = "crates/taskito-python/Cargo.toml"
 python-source = "py_src"
 module-name = "taskito._taskito"
-features = ["extension-module", "postgres", "redis"]
+features = ["extension-module", "postgres", "redis", "workflows"]
 
 [project.scripts]
 taskito = "taskito.cli:main"    

@@ -3,6 +3,8 @@
 
 mod inspection;
 mod worker;
+#[cfg(feature = "workflows")]
+mod workflow_ops;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

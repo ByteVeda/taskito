@@ -7,6 +7,8 @@ mod py_config;
 mod py_job;
 mod py_queue;
 pub mod py_worker;
+#[cfg(feature = "workflows")]
+mod py_workflow;
 
 use py_config::PyTaskConfig;
 use py_job::PyJob;
@@ -19,5 +21,11 @@ fn _taskito(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTaskConfig>()?;
     #[cfg(feature = "native-async")]
     m.add_class::<taskito_async::PyResultSender>()?;
+    #[cfg(feature = "workflows")]
+    {
+        m.add_class::<py_workflow::PyWorkflowBuilder>()?;
+        m.add_class::<py_workflow::PyWorkflowHandle>()?;
+        m.add_class::<py_workflow::PyWorkflowRunStatus>()?;
+    }
     Ok(())
 }

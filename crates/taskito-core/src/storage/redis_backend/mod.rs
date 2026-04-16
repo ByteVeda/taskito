@@ -58,7 +58,7 @@ impl RedisStorage {
     }
 
     /// Get a Redis connection.
-    fn conn(&self) -> Result<redis::Connection> {
+    pub fn conn(&self) -> Result<redis::Connection> {
         self.client
             .get_connection()
             .map_err(|e| QueueError::Other(format!("Redis connection error: {e}")))
