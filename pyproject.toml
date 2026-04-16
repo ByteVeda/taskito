@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "taskito"
-version = "0.10.1"
+version = "0.11.0"
 description = "Rust-powered task queue for Python. No broker required."
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -50,7 +50,7 @@ docs = ["zensical"]
 manifest-path = "crates/taskito-python/Cargo.toml"
 python-source = "py_src"
 module-name = "taskito._taskito"
-features = ["extension-module", "postgres", "redis"]
+features = ["extension-module", "postgres", "redis", "workflows"]
 
 [project.scripts]
 taskito = "taskito.cli:main"    

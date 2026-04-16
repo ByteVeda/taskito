@@ -1,0 +1,13 @@
+[package]
+name = "taskito-workflows"
+version = "0.11.0"
+edition = "2021"
+
+[dependencies]
+taskito-core = { path = "../taskito-core" }
+dagron-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+diesel = { workspace = true }
+log = { workspace = true }

@@ -88,5 +88,10 @@ def test_all_event_types_exist() -> None:
         "worker.unhealthy",
         "queue.paused",
         "queue.resumed",
+        "workflow.submitted",
+        "workflow.completed",
+        "workflow.failed",
+        "workflow.cancelled",
+        "workflow.gate_reached",
     }
     assert {e.value for e in EventType} == expected

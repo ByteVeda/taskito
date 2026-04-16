@@ -209,7 +209,7 @@ graph TB
     I -.->|token state| J
 ```
 
-[:octicons-arrow-right-24: Architecture deep dive](architecture.md)
+[:octicons-arrow-right-24: Architecture deep dive](architecture/index.md)
 
 ---
 

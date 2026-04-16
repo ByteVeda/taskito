@@ -98,9 +98,7 @@ impl PostgresStorage {
         Ok(storage)
     }
 
-    pub(crate) fn conn(
-        &self,
-    ) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
+    pub fn conn(&self) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
         let mut conn = self.pool.get()?;
         diesel::sql_query(format!("SET search_path TO {}", self.schema))
             .execute(&mut conn)

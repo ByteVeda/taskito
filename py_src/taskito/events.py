@@ -28,6 +28,11 @@ class EventType(enum.Enum):
     WORKER_UNHEALTHY = "worker.unhealthy"
     QUEUE_PAUSED = "queue.paused"
     QUEUE_RESUMED = "queue.resumed"
+    WORKFLOW_SUBMITTED = "workflow.submitted"
+    WORKFLOW_COMPLETED = "workflow.completed"
+    WORKFLOW_FAILED = "workflow.failed"
+    WORKFLOW_CANCELLED = "workflow.cancelled"
+    WORKFLOW_GATE_REACHED = "workflow.gate_reached"
 
 
 class EventBus:

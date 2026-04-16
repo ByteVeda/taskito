@@ -95,7 +95,7 @@ impl SqliteStorage {
         Ok(storage)
     }
 
-    pub(crate) fn conn(
+    pub fn conn(
         &self,
     ) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<SqliteConnection>>> {
         Ok(self.pool.get()?)
