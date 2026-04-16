@@ -84,11 +84,7 @@ export function Jobs(_props: RoutableProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBulkCancel, setShowBulkCancel] = useState(false);
 
-  const {
-    data: stats,
-    error: statsError,
-    refetch: refetchStats,
-  } = useApi<QueueStats>("/api/stats");
+  const { data: stats } = useApi<QueueStats>("/api/stats");
   const {
     data: jobs,
     loading,
