@@ -154,7 +154,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: develop
-          args: --release --features native-async
+          args: --release --features extension-module,postgres,redis,native-async,workflows
 
       - name: Run Python tests
         run: |
