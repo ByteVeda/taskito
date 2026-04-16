@@ -234,6 +234,121 @@ class PyQueue:
         ttl_ms: int = 30000,
     ) -> bool: ...
     def get_lock_info(self, lock_name: str) -> dict[str, Any] | None: ...
+    def submit_workflow(
+        self,
+        name: str,
+        version: int,
+        dag_bytes: bytes,
+        step_metadata_json: str,
+        node_payloads: dict[str, bytes],
+        queue_default: str = "default",
+        params_json: str | None = None,
+        deferred_node_names: list[str] | None = None,
+        parent_run_id: str | None = None,
+        parent_node_name: str | None = None,
+        cache_hit_nodes: dict[str, str] | None = None,
+    ) -> PyWorkflowHandle: ...
+    def get_workflow_run_status(self, run_id: str) -> PyWorkflowRunStatus: ...
+    def cancel_workflow_run(self, run_id: str) -> None: ...
+    def mark_workflow_node_result(
+        self,
+        job_id: str,
+        succeeded: bool,
+        error: str | None = None,
+        skip_cascade: bool = False,
+        result_hash: str | None = None,
+    ) -> tuple[str, str, str | None] | None: ...
+    def get_base_run_node_data(self, base_run_id: str) -> list[tuple[str, str, str | None]]: ...
+    def skip_workflow_node(self, run_id: str, node_name: str) -> None: ...
+    def expand_fan_out(
+        self,
+        run_id: str,
+        parent_node_name: str,
+        child_names: list[str],
+        child_payloads: list[bytes],
+        task_name: str,
+        queue: str,
+        max_retries: int,
+        timeout_ms: int,
+        priority: int,
+    ) -> list[str]: ...
+    def create_deferred_job(
+        self,
+        run_id: str,
+        node_name: str,
+        payload: bytes,
+        task_name: str,
+        queue: str,
+        max_retries: int,
+        timeout_ms: int,
+        priority: int,
+    ) -> str: ...
+    def check_fan_out_completion(
+        self,
+        run_id: str,
+        parent_node_name: str,
+    ) -> tuple[bool, list[str]] | None: ...
+    def finalize_run_if_terminal(self, run_id: str) -> str | None: ...
+    def set_workflow_node_waiting_approval(self, run_id: str, node_name: str) -> None: ...
+    def resolve_workflow_gate(
+        self,
+        run_id: str,
+        node_name: str,
+        approved: bool,
+        error: str | None = None,
+    ) -> None: ...
+    def get_workflow_definition_dag(self, run_id: str) -> bytes: ...
+    def set_workflow_node_fan_out_count(self, run_id: str, node_name: str, count: int) -> None: ...
+
+class PyWorkflowBuilder:
+    """Rust-side workflow DAG builder.
+
+    Only available when built with the ``workflows`` feature.
+    """
+
+    def __init__(self) -> None: ...
+    def add_step(
+        self,
+        name: str,
+        task_name: str,
+        after: list[str] | None = None,
+        queue: str | None = None,
+        max_retries: int | None = None,
+        timeout_ms: int | None = None,
+        priority: int | None = None,
+        args_template: str | None = None,
+        kwargs_template: str | None = None,
+        fan_out: str | None = None,
+        fan_in: str | None = None,
+        condition: str | None = None,
+    ) -> None: ...
+    def step_count(self) -> int: ...
+    def step_names(self) -> list[str]: ...
+    def serialize(self) -> tuple[bytes, str]: ...
+
+class PyWorkflowHandle:
+    """Opaque handle returned from ``PyQueue.submit_workflow``.
+
+    Only available when built with the ``workflows`` feature.
+    """
+
+    run_id: str
+    name: str
+    definition_id: str
+
+class PyWorkflowRunStatus:
+    """Snapshot of a workflow run's state and per-node status.
+
+    Only available when built with the ``workflows`` feature.
+    """
+
+    run_id: str
+    state: str
+    started_at: int | None
+    completed_at: int | None
+    error: str | None
+
+    def node_statuses(self) -> dict[str, dict[str, Any]]: ...
 
 class PyResultSender:
     """Sends task results from Python async executor back to Rust scheduler.

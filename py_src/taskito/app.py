@@ -56,6 +56,19 @@ from taskito.serializers import CloudpickleSerializer, Serializer
 from taskito.task import TaskWrapper
 from taskito.webhooks import WebhookManager
 
+try:
+    from taskito.workflows.mixins import QueueWorkflowMixin
+    from taskito.workflows.tracker import WorkflowTracker
+
+    _WORKFLOWS_AVAILABLE = True
+except ImportError:  # pragma: no cover - workflows feature not compiled in
+
+    class QueueWorkflowMixin:  # type: ignore[no-redef]
+        pass
+
+    WorkflowTracker = None  # type: ignore[assignment,misc]
+    _WORKFLOWS_AVAILABLE = False
+
 logger = logging.getLogger("taskito")
 
 
@@ -80,6 +93,7 @@ class Queue(
     QueueInspectionMixin,
     QueueOperationsMixin,
     QueueLockMixin,
+    QueueWorkflowMixin,
     AsyncQueueMixin,
 ):
     """
@@ -256,6 +270,12 @@ class Queue(
 
         # Test mode flag (Phase M)
         self._test_mode_active = False
+
+        # Workflow support
+        self._workflow_registry: dict[str, Any] = {}
+        self._workflow_tracker: Any = None
+        if _WORKFLOWS_AVAILABLE and hasattr(self._inner, "submit_workflow"):
+            self._workflow_tracker = WorkflowTracker(self)
 
     def task(
         self,
@@ -435,6 +455,30 @@ class Queue(
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
+            # If fn is a WorkflowProxy (from @queue.workflow()), create a
+            # launcher task that submits the workflow on each cron trigger.
+            if getattr(fn, "_is_workflow_proxy", False):
+                proxy: Any = fn
+                launcher_name = f"_wf_launcher_{proxy._name}"
+
+                @self.task(name=launcher_name, queue=queue)
+                def _wf_launcher() -> str:
+                    run = proxy.submit()
+                    return f"submitted workflow run {run.id}"
+
+                payload = self._get_serializer(launcher_name).dumps(((), {}))
+                self._periodic_configs.append(
+                    {
+                        "name": launcher_name,
+                        "task_name": launcher_name,
+                        "cron_expr": cron,
+                        "payload": payload,
+                        "queue": queue,
+                        "timezone": timezone,
+                    }
+                )
+                return fn  # type: ignore[return-value]
+
             # Register as a normal task first
             wrapper = self.task(name=name, queue=queue)(fn)
 
