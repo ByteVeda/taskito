@@ -101,6 +101,7 @@ nav = [
         { "JobResult" = "api/result.md" },
         { "JobContext" = "api/context.md" },
         { "Canvas" = "api/canvas.md" },
+        { "Workflows" = "api/workflows.md" },
         { "Testing" = "api/testing.md" },
         { "CLI" = "api/cli.md" },
     ] },

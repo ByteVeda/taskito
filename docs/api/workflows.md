@@ -1,0 +1,305 @@
+# Workflows API
+
+::: taskito.workflows
+
+DAG workflow builder, execution handles, and analysis tools.
+
+## `Workflow`
+
+::: taskito.workflows.Workflow
+
+Builder for a workflow DAG.
+
+### Constructor
+
+```python
+Workflow(
+    name: str = "workflow",
+    version: int = 1,
+    on_failure: str = "fail_fast",
+    cache_ttl: float | None = None,
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | `str` | `"workflow"` | Workflow name (used for definition storage) |
+| `version` | `int` | `1` | Version number |
+| `on_failure` | `str` | `"fail_fast"` | Error strategy: `"fail_fast"` or `"continue"` |
+| `cache_ttl` | `float \| None` | `None` | Cache TTL in seconds for incremental runs |
+
+### `step()`
+
+```python
+wf.step(
+    name: str,
+    task: TaskWrapper,
+    *,
+    after: str | list[str] | None = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
+    queue: str | None = None,
+    max_retries: int | None = None,
+    timeout_ms: int | None = None,
+    priority: int | None = None,
+    fan_out: str | None = None,
+    fan_in: str | None = None,
+    condition: str | Callable | None = None,
+) -> Workflow
+```
+
+Add a task step. Returns `self` for chaining.
+
+### `gate()`
+
+```python
+wf.gate(
+    name: str,
+    *,
+    after: str | list[str] | None = None,
+    condition: str | Callable | None = None,
+    timeout: float | None = None,
+    on_timeout: str = "reject",
+    message: str | Callable | None = None,
+) -> Workflow
+```
+
+Add an approval gate step.
+
+### `visualize()`
+
+```python
+wf.visualize(fmt: str = "mermaid") -> str
+```
+
+Render the DAG as a Mermaid or DOT diagram string.
+
+### `ancestors()` / `descendants()`
+
+```python
+wf.ancestors(node: str) -> list[str]
+wf.descendants(node: str) -> list[str]
+```
+
+### `topological_levels()`
+
+```python
+wf.topological_levels() -> list[list[str]]
+```
+
+### `stats()`
+
+```python
+wf.stats() -> dict[str, int | float]
+```
+
+Returns `{nodes, edges, depth, width, density}`.
+
+### `critical_path()`
+
+```python
+wf.critical_path(costs: dict[str, float]) -> tuple[list[str], float]
+```
+
+Returns `(path, total_cost)` — the longest-weighted path.
+
+### `execution_plan()`
+
+```python
+wf.execution_plan(max_workers: int = 1) -> list[list[str]]
+```
+
+### `bottleneck_analysis()`
+
+```python
+wf.bottleneck_analysis(costs: dict[str, float]) -> dict[str, Any]
+```
+
+Returns `{node, cost, percentage, critical_path, total_cost, suggestion}`.
+
+---
+
+## `WorkflowRun`
+
+::: taskito.workflows.WorkflowRun
+
+Handle for a submitted workflow run.
+
+### `status()`
+
+```python
+run.status() -> WorkflowStatus
+```
+
+### `wait()`
+
+```python
+run.wait(timeout: float | None = None, poll_interval: float = 0.1) -> WorkflowStatus
+```
+
+Block until the workflow reaches a terminal state. Raises `WorkflowTimeoutError` on timeout.
+
+### `cancel()`
+
+```python
+run.cancel() -> None
+```
+
+### `node_status()`
+
+```python
+run.node_status(node_name: str) -> NodeStatus
+```
+
+### `visualize()`
+
+```python
+run.visualize(fmt: str = "mermaid") -> str
+```
+
+Render the DAG with live node status colors.
+
+---
+
+## `WorkflowProxy`
+
+::: taskito.workflows.WorkflowProxy
+
+Returned by `@queue.workflow()`. Wraps a factory function.
+
+### `submit()`
+
+```python
+proxy.submit(*args, **kwargs) -> WorkflowRun
+```
+
+Build and submit the workflow.
+
+### `build()`
+
+```python
+proxy.build(*args, **kwargs) -> Workflow
+```
+
+Materialize without submitting.
+
+### `as_step()`
+
+```python
+proxy.as_step(**params) -> SubWorkflowRef
+```
+
+Return a reference for use as a sub-workflow step.
+
+---
+
+## Queue Methods
+
+Added to `Queue` via `QueueWorkflowMixin`:
+
+### `submit_workflow()`
+
+```python
+queue.submit_workflow(
+    workflow: Workflow,
+    *,
+    incremental: bool = False,
+    base_run: str | None = None,
+) -> WorkflowRun
+```
+
+### `approve_gate()`
+
+```python
+queue.approve_gate(run_id: str, node_name: str) -> None
+```
+
+### `reject_gate()`
+
+```python
+queue.reject_gate(run_id: str, node_name: str, error: str = "rejected") -> None
+```
+
+### `@queue.workflow()`
+
+```python
+@queue.workflow(name: str | None = None, *, version: int = 1)
+def factory() -> Workflow: ...
+```
+
+---
+
+## Types
+
+### `WorkflowState`
+
+```python
+class WorkflowState(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    PAUSED = "paused"
+```
+
+### `NodeStatus`
+
+```python
+class NodeStatus(str, Enum):
+    PENDING = "pending"
+    READY = "ready"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    WAITING_APPROVAL = "waiting_approval"
+    CACHE_HIT = "cache_hit"
+```
+
+### `WorkflowStatus`
+
+```python
+@dataclass
+class WorkflowStatus:
+    run_id: str
+    state: WorkflowState
+    started_at: int | None
+    completed_at: int | None
+    error: str | None
+    nodes: dict[str, NodeSnapshot]
+```
+
+### `NodeSnapshot`
+
+```python
+@dataclass
+class NodeSnapshot:
+    name: str
+    status: NodeStatus
+    job_id: str | None
+    error: str | None
+```
+
+### `WorkflowContext`
+
+```python
+@dataclass(frozen=True)
+class WorkflowContext:
+    run_id: str
+    results: dict[str, Any]
+    statuses: dict[str, str]
+    params: dict[str, Any] | None
+    failure_count: int
+    success_count: int
+```
+
+### `GateConfig`
+
+```python
+@dataclass
+class GateConfig:
+    timeout: float | None = None
+    on_timeout: str = "reject"
+    message: str | Callable | None = None
+```

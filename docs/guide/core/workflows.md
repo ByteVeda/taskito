@@ -1,200 +1,383 @@
 # Workflows
 
-taskito provides three composition primitives for building complex task pipelines: **chain**, **group**, and **chord**.
+taskito supports two workflow models: **canvas primitives** (chain, group, chord) for simple pipelines, and **DAG workflows** for complex multi-step pipelines with fan-out, conditions, approval gates, and more.
 
-## Signatures
+## DAG Workflows
 
-A `Signature` wraps a task call for deferred execution. Create them with `.s()` or `.si()`:
+Define multi-step pipelines as directed acyclic graphs. Each step is a registered task; the engine handles ordering, parallelism, failure propagation, and state tracking.
+
+```python
+from taskito.workflows import Workflow
+
+@queue.task()
+def extract(): return fetch_data()
+
+@queue.task()
+def transform(data): return clean(data)
+
+@queue.task()
+def load(data): db.insert(data)
+
+wf = Workflow(name="etl")
+wf.step("extract", extract)
+wf.step("transform", transform, after="extract")
+wf.step("load", load, after="transform")
+
+run = queue.submit_workflow(wf)
+result = run.wait(timeout=60)
+print(result.state)  # WorkflowState.COMPLETED
+```
+
+### Step Configuration
+
+Each step accepts the same options as `queue.enqueue()`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | `str` | required | Unique step name |
+| `task` | `TaskWrapper` | required | Registered task function |
+| `after` | `str \| list[str]` | `None` | Predecessor step(s) |
+| `args` | `tuple` | `()` | Positional arguments |
+| `kwargs` | `dict` | `None` | Keyword arguments |
+| `queue` | `str` | `None` | Override queue name |
+| `max_retries` | `int` | `None` | Override retry count |
+| `timeout_ms` | `int` | `None` | Override timeout |
+| `priority` | `int` | `None` | Override priority |
+| `fan_out` | `str` | `None` | Fan-out strategy (`"each"`) |
+| `fan_in` | `str` | `None` | Fan-in strategy (`"all"`) |
+| `condition` | `str \| callable` | `None` | Execution condition |
+
+### Workflow Decorator
+
+Register reusable workflow factories:
+
+```python
+@queue.workflow("nightly_etl")
+def etl_pipeline():
+    wf = Workflow()
+    wf.step("extract", extract)
+    wf.step("load", load, after="extract")
+    return wf
+
+run = etl_pipeline.submit()
+run.wait()
+```
+
+## Fan-Out / Fan-In
+
+Split a step's result into parallel child jobs, then collect results:
+
+```mermaid
+graph LR
+    fetch[fetch] --> process_0[process 0]
+    fetch --> process_1[process 1]
+    fetch --> process_2[process 2]
+    process_0 --> aggregate[aggregate]
+    process_1 --> aggregate
+    process_2 --> aggregate
+```
+
+```python
+@queue.task()
+def fetch() -> list[int]:
+    return [10, 20, 30]
+
+@queue.task()
+def process(item: int) -> int:
+    return item * 2
+
+@queue.task()
+def aggregate(results: list[int]) -> int:
+    return sum(results)
+
+wf = Workflow(name="map_reduce")
+wf.step("fetch", fetch)
+wf.step("process", process, after="fetch", fan_out="each")
+wf.step("aggregate", aggregate, after="process", fan_in="all")
+
+run = queue.submit_workflow(wf)
+result = run.wait(timeout=30)
+# aggregate receives [20, 40, 60]
+```
+
+The `fan_out="each"` strategy calls the task once per element in the predecessor's return value. Results are collected in order by `fan_in="all"`.
+
+## Conditions
+
+Control which steps execute based on predecessor outcomes:
+
+```python
+wf = Workflow(name="deploy_pipeline")
+wf.step("test", run_tests)
+wf.step("deploy", deploy, after="test")  # default: on_success
+wf.step("rollback", rollback, after="deploy", condition="on_failure")
+wf.step("notify", send_slack, after="deploy", condition="always")
+```
+
+| Condition | Runs when |
+|-----------|-----------|
+| `None` / `"on_success"` | All predecessors completed successfully |
+| `"on_failure"` | Any predecessor failed |
+| `"always"` | Predecessors are terminal (regardless of outcome) |
+| `callable` | `condition(ctx)` returns `True` |
+
+### Callable Conditions
+
+Pass a function that receives a `WorkflowContext`:
+
+```python
+from taskito.workflows import WorkflowContext
+
+def high_score(ctx: WorkflowContext) -> bool:
+    return ctx.results["validate"]["score"] > 0.95
+
+wf.step("deploy", deploy, after="validate", condition=high_score)
+```
+
+`WorkflowContext` provides: `results` (predecessor return values), `statuses`, `failure_count`, `success_count`, `run_id`.
+
+## Error Handling
+
+Control failure behavior at the workflow level:
+
+=== "Fail Fast (default)"
+
+    ```python
+    wf = Workflow(name="strict", on_failure="fail_fast")
+    ```
+
+    One failure cancels all pending steps. The workflow transitions to `FAILED`.
+
+=== "Continue"
+
+    ```python
+    wf = Workflow(name="resilient", on_failure="continue")
+    ```
+
+    Failed steps skip their `on_success` dependents, but independent branches keep running. Steps with `condition="on_failure"` or `"always"` still execute.
+
+## Approval Gates
+
+Pause a workflow for human review:
+
+```python
+wf = Workflow(name="ml_deploy")
+wf.step("train", train_model)
+wf.step("evaluate", evaluate, after="train")
+wf.gate("approve", after="evaluate", timeout=86400, on_timeout="reject")
+wf.step("deploy", deploy, after="approve")
+```
+
+The gate enters `WAITING_APPROVAL` status. Resolve it programmatically:
+
+```python
+run = queue.submit_workflow(wf)
+
+# Later, after review:
+queue.approve_gate(run.id, "approve")  # workflow continues
+# or:
+queue.reject_gate(run.id, "approve")   # gate fails, downstream skipped
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `timeout` | `float` | `None` | Seconds until auto-resolve |
+| `on_timeout` | `str` | `"reject"` | `"approve"` or `"reject"` |
+| `message` | `str` | `None` | Human-readable approval message |
+
+## Sub-Workflows
+
+Nest workflows for composition:
+
+```python
+@queue.workflow("etl")
+def etl_pipeline(region):
+    wf = Workflow()
+    wf.step("extract", extract, args=[region])
+    wf.step("load", load, after="extract")
+    return wf
+
+@queue.workflow("daily")
+def daily_pipeline():
+    wf = Workflow()
+    wf.step("eu_etl", etl_pipeline.as_step(region="eu"))
+    wf.step("us_etl", etl_pipeline.as_step(region="us"))
+    wf.step("reconcile", reconcile, after=["eu_etl", "us_etl"])
+    return wf
+
+run = daily_pipeline.submit()
+```
+
+Child workflows run independently with their own nodes and state. Cancelling the parent cascades to children.
+
+## Cron-Scheduled Workflows
+
+Combine `@queue.periodic()` with `@queue.workflow()`:
+
+```python
+@queue.periodic(cron="0 0 2 * * *")
+@queue.workflow("nightly_analytics")
+def nightly():
+    wf = Workflow()
+    wf.step("extract", extract_clickstream)
+    wf.step("aggregate", build_dashboards, after="extract")
+    return wf
+```
+
+Each cron trigger submits a new workflow run.
+
+## Incremental Runs
+
+Skip unchanged steps by reusing results from a prior run:
+
+```python
+run1 = queue.submit_workflow(wf)
+run1.wait()
+
+# Second run: only re-execute dirty nodes
+run2 = queue.submit_workflow(wf, incremental=True, base_run=run1.id)
+run2.wait()
+```
+
+Nodes that completed in the base run get `CACHE_HIT` status. If any predecessor is dirty (failed or missing in the base run), downstream nodes re-execute.
+
+Set a TTL to expire cached results:
+
+```python
+wf = Workflow(name="pipeline", cache_ttl=3600)  # 1 hour
+```
+
+## Monitoring
+
+### Status
+
+```python
+run = queue.submit_workflow(wf)
+status = run.status()
+print(status.state)          # WorkflowState.RUNNING
+print(status.nodes["step_a"])  # NodeSnapshot(status=COMPLETED, ...)
+```
+
+### Wait
+
+```python
+final = run.wait(timeout=60)
+if final.state == WorkflowState.COMPLETED:
+    print("All steps succeeded")
+```
+
+### Cancel
+
+```python
+run.cancel()  # Skips pending steps, cancels running jobs
+```
+
+## Visualization
+
+Render the workflow DAG as a diagram:
+
+```python
+# Pre-execution (structure only)
+print(wf.visualize("mermaid"))
+
+# Live status (with node colors)
+print(run.visualize("mermaid"))
+print(run.visualize("dot"))  # Graphviz DOT format
+```
+
+## Graph Analysis
+
+Analyze the workflow DAG before execution:
+
+```python
+wf.ancestors("load")       # ["extract", "transform"]
+wf.descendants("extract")  # ["transform", "load"]
+wf.topological_levels()    # [["extract"], ["transform"], ["load"]]
+wf.stats()                 # {nodes: 3, edges: 2, depth: 3, ...}
+
+# With cost estimates
+path, cost = wf.critical_path({"extract": 2.0, "transform": 7.0, "load": 1.0})
+# path=["extract", "transform", "load"], cost=10.0
+
+plan = wf.execution_plan(max_workers=4)
+# [["extract"], ["transform"], ["load"]]
+
+analysis = wf.bottleneck_analysis({"extract": 2.0, "transform": 7.0, "load": 1.0})
+# {"node": "transform", "percentage": 70.0, ...}
+```
+
+## Node Statuses
+
+| Status | Meaning |
+|--------|---------|
+| `PENDING` | Waiting for predecessors or job creation |
+| `RUNNING` | Job is executing |
+| `COMPLETED` | Step succeeded |
+| `FAILED` | Step failed (after retries exhausted) |
+| `SKIPPED` | Skipped due to failure cascade or condition |
+| `WAITING_APPROVAL` | Gate awaiting approve/reject |
+| `CACHE_HIT` | Reused result from a prior run |
+
+---
+
+## Canvas Primitives
+
+For simpler pipelines without DAG features, taskito also provides **chain**, **group**, and **chord**.
+
+### Signatures
+
+A `Signature` wraps a task call for deferred execution:
 
 ```python
 from taskito import chain, group, chord
 
-# Mutable signature — receives previous result as first argument
-sig = add.s(1, 2)
-
-# Immutable signature — ignores previous result
-sig = add.si(1, 2)
+sig = add.s(1, 2)    # Mutable — receives previous result
+sig = add.si(1, 2)   # Immutable — ignores previous result
 ```
 
-## Chain
+### Chain
 
-Execute tasks **sequentially**, piping each result as the first argument to the next task:
-
-```mermaid
-graph LR
-    S1["extract.s(url)"] -->|result| S2["transform.s()"]
-    S2 -->|result| S3["load.s()"]
-```
+Execute tasks sequentially, piping results:
 
 ```python
-@queue.task()
-def extract(url):
-    return requests.get(url).json()
-
-@queue.task()
-def transform(data):
-    return [item["name"] for item in data]
-
-@queue.task()
-def load(names):
-    db.insert_many(names)
-    return len(names)
-
-# Build and execute the pipeline
 result = chain(
     extract.s("https://api.example.com/users"),
     transform.s(),
     load.s(),
 ).apply(queue)
-
-print(result.result(timeout=30))  # Number of records loaded
 ```
 
-!!! tip
-    Use `.si()` (immutable signatures) when a step should **not** receive the previous result:
+### Group
 
-    ```python
-    chain(
-        step_a.s(input_data),
-        step_b.si(independent_data),  # Ignores step_a's result
-        step_c.s(),
-    ).apply(queue)
-    ```
-
-## Group
-
-Execute tasks **in parallel** (fan-out):
-
-```mermaid
-graph TD
-    G["group()"] --> S1["process.s(1)"]
-    G --> S2["process.s(2)"]
-    G --> S3["process.s(3)"]
-
-    S1 --> R1["Result 1"]
-    S2 --> R2["Result 2"]
-    S3 --> R3["Result 3"]
-```
+Execute tasks in parallel:
 
 ```python
-@queue.task()
-def process(item_id):
-    return fetch_and_process(item_id)
-
-# Enqueue all three in parallel
 jobs = group(
     process.s(1),
     process.s(2),
     process.s(3),
 ).apply(queue)
-
-# Collect results
-results = [j.result(timeout=30) for j in jobs]
 ```
 
-## Chord
+### Chord
 
-Fan-out with a **callback** — execute tasks in parallel, then pass all results to a final task:
-
-```mermaid
-graph TD
-    F1["fetch.s(url1)"] --> C["Collect results"]
-    F2["fetch.s(url2)"] --> C
-    F3["fetch.s(url3)"] --> C
-    C -->|"[r1, r2, r3]"| CB["merge.s()"]
-```
+Fan-out with a callback:
 
 ```python
-@queue.task()
-def fetch(url):
-    return requests.get(url).json()
-
-@queue.task()
-def merge(results):
-    combined = {}
-    for r in results:
-        combined.update(r)
-    return combined
-
-# Fetch in parallel, then merge
 result = chord(
-    group(
-        fetch.s("https://api1.example.com"),
-        fetch.s("https://api2.example.com"),
-        fetch.s("https://api3.example.com"),
-    ),
+    group(fetch.s(url) for url in urls),
     merge.s(),
 ).apply(queue)
-
-print(result.result(timeout=60))
 ```
 
-## chunks
-
-Split a list of items into batched groups, creating one task per chunk:
+### chunks / starmap
 
 ```python
-from taskito import chunks
+from taskito import chunks, starmap
 
-@queue.task()
-def process_batch(items):
-    return [transform(item) for item in items]
-
-# Split 1000 items into groups of 100
+# Batch processing
 results = chunks(process_batch, items, chunk_size=100).apply(queue)
-```
 
-`chunks()` returns a `group`, so you can combine it with `chord` for a map-reduce pattern:
-
-```python
-result = chord(
-    chunks(process_batch, items, chunk_size=100),
-    merge_results.s(),
-).apply(queue)
-```
-
-## starmap
-
-Create one task per args tuple — similar to Python's `itertools.starmap`:
-
-```python
-from taskito import starmap
-
-@queue.task()
-def add(a, b):
-    return a + b
-
-results = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply(queue)
-```
-
-`starmap()` also returns a `group`, so all tasks execute in parallel.
-
-## Group Concurrency Limits
-
-Limit how many group members run concurrently with `max_concurrency`:
-
-```python
-# Only 5 tasks run at a time; the rest wait in waves
-jobs = group(
-    *[fetch.s(url) for url in urls],
-    max_concurrency=5,
-).apply(queue)
-```
-
-Without `max_concurrency`, all group members are enqueued immediately. With it, members are dispatched in waves — each wave waits for completion before the next starts.
-
-## Real-World Example: ETL Pipeline
-
-```python
-# Extract from multiple sources in parallel,
-# transform each, then load all results
-pipeline = chord(
-    group(
-        chain(extract.s(source), transform.s())
-        for source in data_sources
-    ),
-    load.s(),
-)
-
-result = pipeline.apply(queue)
+# Tuple unpacking
+results = starmap(add, [(1, 2), (3, 4)]).apply(queue)
 ```
