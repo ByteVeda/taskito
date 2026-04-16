@@ -8,7 +8,7 @@ instance and enforces acyclicity + unique node names).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -16,6 +16,14 @@ if TYPE_CHECKING:
     from taskito.app import Queue
 
     from .run import WorkflowRun
+
+
+@runtime_checkable
+class HasTaskName(Protocol):
+    """Any object that exposes a ``_task_name`` attribute."""
+
+    @property
+    def _task_name(self) -> str: ...
 
 
 _VALID_FAN_OUT = frozenset({"each"})
@@ -94,7 +102,7 @@ class Workflow:
     def step(
         self,
         name: str,
-        task: Any,
+        task: HasTaskName,
         *,
         after: str | list[str] | None = None,
         args: tuple = (),
