@@ -3,28 +3,14 @@
 Build multi-step pipelines as directed acyclic graphs. Define steps, wire dependencies, and let taskito handle execution order, parallelism, failure propagation, and state tracking — all backed by a Rust engine with dagron-core for graph algorithms.
 
 ```mermaid
-graph LR
-    subgraph Build["1 — Build"]
-        WB["Workflow Builder<br/>step · gate · fan_out"]
-    end
-
-    subgraph Submit["2 — Submit"]
-        TE["Topology Engine<br/>dagron-core"]
-        WS["Storage<br/>SQLite"]
-        SC["Scheduler<br/>depends_on chains"]
-    end
-
-    subgraph Run["3 — Execute"]
-        WT["Tracker<br/>event orchestration"]
-        WR["WorkflowRun<br/>status · wait · cancel"]
-    end
-
-    WB -- "_compile()" --> TE
-    TE --> WS
-    WS -- "enqueue jobs" --> SC
-    SC -- "JOB_COMPLETED" --> WT
-    WT -- "evaluate<br/>successors" --> WS
-    WT --> WR
+flowchart TD
+    WB["Workflow Builder\nstep() · gate() · fan_out"]
+    WB -->|"_compile()"| TE["Topology Engine\ndagron-core DAG"]
+    TE --> WS["Workflow Storage\nSQLite — definitions, runs, nodes"]
+    WS -->|"enqueue jobs"| SC["Scheduler\ndepends_on chains"]
+    SC -->|"JOB_COMPLETED event"| WT["Workflow Tracker\nevent-driven orchestration"]
+    WT -->|"evaluate successors"| WS
+    WT --> WR["WorkflowRun\nstatus() · wait() · cancel()"]
 ```
 
 ## Quick start
