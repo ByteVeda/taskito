@@ -2,6 +2,34 @@
 
 All notable changes to taskito are documented here.
 
+## 0.11.0
+
+### Features
+
+- **DAG workflows** -- first-class support for directed acyclic graph workflows built on the new [dagron-core](https://github.com/ByteVeda/dagron) engine; `Workflow` builder with `step()`, `gate()`, and `after=` dependencies; `queue.submit_workflow(wf)` launches a run, `WorkflowRun.wait()` blocks until terminal, `run.status()` returns per-node snapshots, `run.cancel()` halts in-flight execution; workflows are persisted across restarts with full node history
+- **Fan-out / fan-in** -- `step(fan_out="each")` expands a list result into N parallel child jobs; `step(fan_in="all")` aggregates all child results into a single downstream step; supports empty lists, single-item lists, and preserves result ordering
+- **Conditional execution** -- per-step `condition="on_success" | "on_failure" | "always"` or a callable `(WorkflowContext) -> bool`; combine with `Workflow(on_failure="continue")` so independent branches keep running after a sibling fails; skip propagation respects `always`
+- **Approval gates** -- `wf.gate("review", after="evaluate", timeout=3600, on_timeout="reject")` pauses the workflow until `queue.approve_gate(run_id, name)` or `queue.reject_gate(run_id, name)`; timeout enforced with a background timer; emits `WORKFLOW_GATE_REACHED` event
+- **Sub-workflows** -- compose workflows by referencing another workflow as a step via `region_etl.as_step(region="eu")`; child workflows have a `parent_run_id` link and propagate cancellation and failure upward; child terminal status feeds into parent DAG evaluation
+- **Cron-scheduled workflows** -- `@queue.periodic(cron=...)` now accepts a `WorkflowProxy`; launcher task is auto-registered and submits a fresh workflow run on every tick
+- **Incremental re-runs** -- `Workflow(cache_ttl=86400)` hashes step results with SHA-256; `queue.submit_workflow(wf, incremental=True, base_run=prev_run.id)` skips completed steps whose inputs are unchanged; failed steps always re-run; dirty propagation cascades to downstream nodes; new `CACHE_HIT` terminal status distinguishes cached steps from freshly executed ones
+- **Graph algorithms** -- `wf.topological_levels()`, `wf.stats()`, `wf.critical_path(durations)`, `wf.bottleneck_analysis(durations)`, and `wf.execution_plan()` for pre-execution analysis; all algorithms operate on the compiled DAG without requiring a live run
+- **Visualization** -- `wf.visualize("mermaid")` and `wf.visualize("dot")` render the DAG; `run.visualize("mermaid")` color-codes live node status (running/completed/failed/cache-hit/waiting-approval)
+- **Workflow events** -- new event types `WORKFLOW_SUBMITTED`, `WORKFLOW_COMPLETED`, `WORKFLOW_FAILED`, `WORKFLOW_CANCELLED`, `WORKFLOW_GATE_REACHED` for observability hooks
+- **Type-safe builder** -- `step()` accepts any object satisfying the `HasTaskName` protocol (runtime-checkable), keeping the builder API strict without coupling to a concrete `TaskWrapper` class
+
+### Internal
+
+- New Rust crate `crates/taskito-workflows/` -- workflow engine with `WorkflowDefinition`, `WorkflowRun`, `WorkflowNode`, node status state machine (including `CacheHit` variant), and storage trait with SQLite/Postgres/Redis backends; feature-gated behind `workflows` cargo feature
+- `dagron-core` added as git dependency (`https://github.com/ByteVeda/dagron.git`) for DAG construction and traversal
+- New PyO3 bindings in `crates/taskito-python/src/py_workflow/` -- `PyWorkflowBuilder`, `PyWorkflowHandle`, `PyWorkflowRunStatus`; `py_queue/workflow_ops.rs` exposes `submit_workflow`, `mark_workflow_node_result`, `expand_fan_out`, `check_fan_out_completion`, `skip_workflow_node`, `set_workflow_node_waiting_approval`, `resolve_workflow_gate`, `finalize_run_if_terminal`, and base-run lookup helpers
+- New Python package `py_src/taskito/workflows/` with 11 modules -- `builder.py` (Workflow, GateConfig, WorkflowProxy), `tracker.py` (cascade evaluator), `run.py` (WorkflowRun), `mixins.py` (QueueWorkflowMixin), `fan_out.py`, `context.py` (WorkflowContext), `incremental.py` (dirty-set computation), `analysis.py` (graph algorithms), `visualization.py`, `types.py`, `__init__.py`
+- `maturin` CI feature list fixed -- `ci.yml` and `publish.yml` now include `workflows` alongside `extension-module,postgres,redis,native-async` (previously missing, which would have shipped broken wheels)
+- CI action versions bumped -- `Swatinem/rust-cache@v2.9.1`, `actions/setup-node@v6` to silence Node.js 20 deprecation warnings
+- 74 new Python tests across 10 files covering linear, fan-out, conditions, gates, sub-workflows, cron, analysis, caching, and visualization
+
+---
+
 ## 0.10.1
 
 ### Changed
