@@ -3,32 +3,27 @@
 Build multi-step pipelines as directed acyclic graphs. Define steps, wire dependencies, and let taskito handle execution order, parallelism, failure propagation, and state tracking — all backed by a Rust engine with dagron-core for graph algorithms.
 
 ```mermaid
-graph TB
-    subgraph Python["Python Layer"]
-        WB["Workflow Builder<br/><code>Workflow.step() / .gate()</code>"]
-        WT["Workflow Tracker<br/>Event-driven orchestration"]
-        WR["WorkflowRun<br/>.status() / .wait() / .cancel()"]
+graph LR
+    subgraph Build["1 — Build"]
+        WB["Workflow Builder<br/>step · gate · fan_out"]
     end
 
-    subgraph Rust["Rust Engine"]
-        WS["WorkflowStorage<br/>SQLite (definitions, runs, nodes)"]
-        TE["Topology Engine<br/>dagron-core DAG algorithms"]
-        SC["Scheduler<br/>depends_on job chains"]
+    subgraph Submit["2 — Submit"]
+        TE["Topology Engine<br/>dagron-core"]
+        WS["Storage<br/>SQLite"]
+        SC["Scheduler<br/>depends_on chains"]
     end
 
-    subgraph Features["Capabilities"]
-        FO["Fan-Out / Fan-In"]
-        CD["Conditions & Gates"]
-        SW["Sub-Workflows"]
-        IC["Incremental Caching"]
-        VZ["Visualization"]
+    subgraph Run["3 — Execute"]
+        WT["Tracker<br/>event orchestration"]
+        WR["WorkflowRun<br/>status · wait · cancel"]
     end
 
-    WB -->|"_compile()"| TE
-    WB -->|"submit_workflow()"| WS
-    WS -->|"enqueue jobs"| SC
-    SC -->|"JOB_COMPLETED"| WT
-    WT -->|"evaluate successors"| WS
+    WB -- "_compile()" --> TE
+    TE --> WS
+    WS -- "enqueue jobs" --> SC
+    SC -- "JOB_COMPLETED" --> WT
+    WT -- "evaluate<br/>successors" --> WS
     WT --> WR
 ```
 
