@@ -4,11 +4,12 @@
 //! workflow-specific methods to `PyQueue` via a separate `#[pymethods]`
 //! impl block (enabled by pyo3's `multiple-pymethods` feature).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
+use taskito_core::error::Result as CoreResult;
 use taskito_core::job::{now_millis, NewJob};
 use taskito_core::storage::{Storage, StorageBackend};
 use taskito_workflows::{
@@ -19,15 +20,24 @@ use taskito_workflows::{
 use crate::py_queue::PyQueue;
 use crate::py_workflow::{PyWorkflowHandle, PyWorkflowRunStatus};
 
-/// Build a `WorkflowSqliteStorage` from a `PyQueue`'s backend.
+/// Return the queue's cached workflow storage, initializing it on first use.
 ///
-/// Currently only SQLite is supported for workflows. Migrations run on
-/// construction; repeated calls are cheap because the migrations use
-/// `CREATE TABLE IF NOT EXISTS`.
+/// Migrations run on first construction only; subsequent calls are a cheap
+/// `OnceLock::get()`. Callers receive a cloned handle (the underlying
+/// `SqliteStorage` is a pool handle so clones share the same connection pool).
 fn workflow_storage(queue: &PyQueue) -> PyResult<WorkflowSqliteStorage> {
+    if let Some(wf) = queue.workflow_storage.get() {
+        return Ok(wf.clone());
+    }
     match &queue.storage {
-        StorageBackend::Sqlite(s) => WorkflowSqliteStorage::new(s.clone())
-            .map_err(|e| PyRuntimeError::new_err(e.to_string())),
+        StorageBackend::Sqlite(s) => {
+            let wf = WorkflowSqliteStorage::new(s.clone())
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            // If another thread raced us to initialize, our value is ignored —
+            // either handle is equivalent because the underlying pool is shared.
+            let _ = queue.workflow_storage.set(wf.clone());
+            Ok(wf)
+        }
         #[cfg(feature = "postgres")]
         StorageBackend::Postgres(_) => Err(PyRuntimeError::new_err(
             "workflows are currently only supported on the SQLite backend",
@@ -44,16 +54,63 @@ fn parse_step_metadata(json: &str) -> PyResult<HashMap<String, StepMetadata>> {
         .map_err(|e| PyValueError::new_err(format!("invalid step_metadata JSON: {e}")))
 }
 
+/// Build a job-metadata JSON blob that carries workflow routing info.
+///
+/// Uses `serde_json` to guarantee proper escaping of node names containing
+/// backslashes, control characters, or Unicode — hand-rolled escaping previously
+/// produced invalid JSON for such inputs.
 fn build_metadata_json(run_id: &str, node_name: &str) -> String {
-    format!(
-        r#"{{"workflow_run_id":"{}","workflow_node_name":"{}"}}"#,
-        run_id.replace('"', "\\\""),
-        node_name.replace('"', "\\\""),
-    )
+    serde_json::json!({
+        "workflow_run_id": run_id,
+        "workflow_node_name": node_name,
+    })
+    .to_string()
 }
 
 fn status_to_py(status: WorkflowState) -> String {
     status.as_str().to_string()
+}
+
+/// Mark every pending/ready node in a run as skipped and cancel its job.
+///
+/// Best-effort: per-node failures are logged but do not abort the sweep.
+fn cascade_skip_pending_nodes(
+    storage: &StorageBackend,
+    wf_storage: &WorkflowSqliteStorage,
+    run_id: &str,
+    nodes: &[WorkflowNode],
+) -> CoreResult<()> {
+    for node in nodes {
+        if !matches!(
+            node.status,
+            WorkflowNodeStatus::Pending | WorkflowNodeStatus::Ready
+        ) {
+            continue;
+        }
+        if let Some(job_id) = &node.job_id {
+            if let Err(e) = storage.cancel_job(job_id) {
+                log::warn!(
+                    "[taskito] cancel_job({}) failed during cascade skip for run {}: {}",
+                    job_id,
+                    run_id,
+                    e
+                );
+            }
+        }
+        if let Err(e) = wf_storage.update_workflow_node_status(
+            run_id,
+            &node.node_name,
+            WorkflowNodeStatus::Skipped,
+        ) {
+            log::warn!(
+                "[taskito] skip node '{}' failed for run {}: {}",
+                node.node_name,
+                run_id,
+                e
+            );
+        }
+    }
+    Ok(())
 }
 
 #[pymethods]
@@ -262,83 +319,95 @@ impl PyQueue {
     }
 
     /// Fetch a snapshot of a workflow run's state and per-node status.
-    pub fn get_workflow_run_status(&self, run_id: &str) -> PyResult<PyWorkflowRunStatus> {
+    pub fn get_workflow_run_status(
+        &self,
+        py: Python<'_>,
+        run_id: &str,
+    ) -> PyResult<PyWorkflowRunStatus> {
         let wf_storage = workflow_storage(self)?;
-        let run = wf_storage
-            .get_workflow_run(run_id)
+        let run_id_owned = run_id.to_string();
+
+        let result: CoreResult<Option<PyWorkflowRunStatus>> = py.allow_threads(|| {
+            let run = match wf_storage.get_workflow_run(&run_id_owned)? {
+                Some(r) => r,
+                None => return Ok(None),
+            };
+            let nodes = wf_storage.get_workflow_nodes(&run_id_owned)?;
+            let node_rows = nodes
+                .into_iter()
+                .map(|n| {
+                    (
+                        n.node_name,
+                        n.status.as_str().to_string(),
+                        n.job_id,
+                        n.error,
+                    )
+                })
+                .collect();
+            Ok(Some(PyWorkflowRunStatus {
+                run_id: run.id,
+                state: status_to_py(run.state),
+                started_at: run.started_at,
+                completed_at: run.completed_at,
+                error: run.error,
+                nodes: node_rows,
+            }))
+        });
+
+        result
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-            .ok_or_else(|| PyValueError::new_err(format!("workflow run '{run_id}' not found")))?;
-
-        let nodes = wf_storage
-            .get_workflow_nodes(run_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        let node_rows = nodes
-            .into_iter()
-            .map(|n| {
-                (
-                    n.node_name,
-                    n.status.as_str().to_string(),
-                    n.job_id,
-                    n.error,
-                )
-            })
-            .collect();
-
-        Ok(PyWorkflowRunStatus {
-            run_id: run.id,
-            state: status_to_py(run.state),
-            started_at: run.started_at,
-            completed_at: run.completed_at,
-            error: run.error,
-            nodes: node_rows,
-        })
+            .ok_or_else(|| PyValueError::new_err(format!("workflow run '{run_id}' not found")))
     }
 
-    /// Cancel a workflow run.
+    /// Cancel a workflow run and all of its sub-workflow descendants.
     ///
-    /// Marks the run `Cancelled`, skips any pending nodes, and cancels
-    /// their underlying jobs. Nodes already running are left alone
+    /// Marks each visited run `Cancelled`, skips pending/ready nodes, and
+    /// cancels their underlying jobs. Traversal is iterative with a visited
+    /// set so that any accidental cycle in `parent_run_id` links terminates
+    /// safely instead of recursing. Nodes already running are left alone
     /// (consistent with taskito's existing cancel semantics).
-    pub fn cancel_workflow_run(&self, run_id: &str) -> PyResult<()> {
+    pub fn cancel_workflow_run(&self, py: Python<'_>, run_id: &str) -> PyResult<()> {
         let wf_storage = workflow_storage(self)?;
-        let nodes = wf_storage
-            .get_workflow_nodes(run_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let root = run_id.to_string();
 
-        for node in &nodes {
-            if matches!(
-                node.status,
-                WorkflowNodeStatus::Pending | WorkflowNodeStatus::Ready
-            ) {
-                if let Some(job_id) = &node.job_id {
-                    let _ = self.storage.cancel_job(job_id);
+        let result: CoreResult<()> = py.allow_threads(|| {
+            let mut visited: HashSet<String> = HashSet::new();
+            let mut stack: Vec<String> = vec![root];
+            let now = now_millis();
+
+            while let Some(rid) = stack.pop() {
+                if !visited.insert(rid.clone()) {
+                    continue;
                 }
-                let _ = wf_storage.update_workflow_node_status(
-                    run_id,
-                    &node.node_name,
-                    WorkflowNodeStatus::Skipped,
-                );
-            }
-        }
 
-        wf_storage
-            .update_workflow_run_state(run_id, WorkflowState::Cancelled, None)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        wf_storage
-            .set_workflow_run_completed(run_id, now_millis())
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                let nodes = wf_storage.get_workflow_nodes(&rid)?;
+                cascade_skip_pending_nodes(&self.storage, &wf_storage, &rid, &nodes)?;
 
-        // Cascade cancellation to child workflow runs (sub-workflows).
-        if let Ok(children) = wf_storage.get_child_workflow_runs(run_id) {
-            for child in children {
-                if !child.state.is_terminal() {
-                    let _ = self.cancel_workflow_run(&child.id);
+                wf_storage.update_workflow_run_state(&rid, WorkflowState::Cancelled, None)?;
+                wf_storage.set_workflow_run_completed(&rid, now)?;
+
+                match wf_storage.get_child_workflow_runs(&rid) {
+                    Ok(children) => {
+                        for child in children {
+                            if !child.state.is_terminal() && !visited.contains(&child.id) {
+                                stack.push(child.id);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[taskito] get_child_workflow_runs({}) failed during cancel: {}",
+                            rid,
+                            e
+                        );
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        });
+
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Record the terminal outcome of a workflow node's job.
@@ -358,6 +427,7 @@ impl PyQueue {
     #[pyo3(signature = (job_id, succeeded, error=None, skip_cascade=false, result_hash=None))]
     pub fn mark_workflow_node_result(
         &self,
+        py: Python<'_>,
         job_id: &str,
         succeeded: bool,
         error: Option<String>,
@@ -365,86 +435,82 @@ impl PyQueue {
         result_hash: Option<String>,
     ) -> PyResult<Option<(String, String, Option<String>)>> {
         let wf_storage = workflow_storage(self)?;
-        let job = self
-            .storage
-            .get_job(job_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-            .ok_or_else(|| PyValueError::new_err(format!("job '{job_id}' not found")))?;
+        let job_id_owned = job_id.to_string();
 
-        let metadata_json = match &job.metadata {
-            Some(m) => m,
-            None => return Ok(None),
-        };
-        let parsed: serde_json::Value = match serde_json::from_str(metadata_json) {
-            Ok(v) => v,
-            Err(_) => return Ok(None),
-        };
-        let run_id = match parsed.get("workflow_run_id").and_then(|v| v.as_str()) {
-            Some(id) => id.to_string(),
-            None => return Ok(None),
-        };
-        let node_name = match parsed.get("workflow_node_name").and_then(|v| v.as_str()) {
-            Some(n) => n.to_string(),
-            None => return Ok(None),
-        };
-
-        let now = now_millis();
-        if succeeded {
-            wf_storage
-                .set_workflow_node_completed(&run_id, &node_name, now, result_hash.as_deref())
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        } else {
-            let err_msg = error.clone().unwrap_or_else(|| "failed".to_string());
-            wf_storage
-                .set_workflow_node_error(&run_id, &node_name, &err_msg)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        enum Outcome {
+            NotFound,
+            NoWorkflowMetadata,
+            Settled {
+                run_id: String,
+                node_name: String,
+                final_state: Option<String>,
+            },
         }
 
-        // Fail-fast: cascade failure to pending/ready nodes.
-        // Skipped when the Python tracker manages cascade (conditions / continue mode).
-        if !succeeded && !skip_cascade {
-            let nodes = wf_storage
-                .get_workflow_nodes(&run_id)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            for n in &nodes {
-                if matches!(
-                    n.status,
-                    WorkflowNodeStatus::Pending | WorkflowNodeStatus::Ready
-                ) {
-                    if let Some(j) = &n.job_id {
-                        let _ = self.storage.cancel_job(j);
-                    }
-                    let _ = wf_storage.update_workflow_node_status(
-                        &run_id,
-                        &n.node_name,
-                        WorkflowNodeStatus::Skipped,
-                    );
-                }
+        let outcome: CoreResult<Outcome> = py.allow_threads(|| {
+            let job = match self.storage.get_job(&job_id_owned)? {
+                Some(j) => j,
+                None => return Ok(Outcome::NotFound),
+            };
+
+            let metadata_json = match &job.metadata {
+                Some(m) => m,
+                None => return Ok(Outcome::NoWorkflowMetadata),
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(metadata_json) {
+                Ok(v) => v,
+                Err(_) => return Ok(Outcome::NoWorkflowMetadata),
+            };
+            let run_id = match parsed.get("workflow_run_id").and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => return Ok(Outcome::NoWorkflowMetadata),
+            };
+            let node_name = match parsed.get("workflow_node_name").and_then(|v| v.as_str()) {
+                Some(n) => n.to_string(),
+                None => return Ok(Outcome::NoWorkflowMetadata),
+            };
+
+            let now = now_millis();
+            if succeeded {
+                wf_storage.set_workflow_node_completed(
+                    &run_id,
+                    &node_name,
+                    now,
+                    result_hash.as_deref(),
+                )?;
+            } else {
+                let err_msg = error.clone().unwrap_or_else(|| "failed".to_string());
+                wf_storage.set_workflow_node_error(&run_id, &node_name, &err_msg)?;
             }
-        }
 
-        // Note: fan-out parent status is NOT updated here. The Python
-        // tracker calls `check_fan_out_completion` which atomically marks
-        // the parent and triggers fan-in. Doing it here would race.
+            // Fail-fast: cascade failure to pending/ready nodes. Skipped when the
+            // Python tracker manages cascade (conditions / continue mode).
+            if !succeeded && !skip_cascade {
+                let nodes = wf_storage.get_workflow_nodes(&run_id)?;
+                cascade_skip_pending_nodes(&self.storage, &wf_storage, &run_id, &nodes)?;
+            }
 
-        // Check if the entire run is terminal.
-        let nodes = wf_storage
-            .get_workflow_nodes(&run_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let all_terminal = nodes.iter().all(|n| n.status.is_terminal());
-        if !all_terminal {
-            return Ok(Some((run_id, node_name, None)));
-        }
+            // Note: fan-out parent status is NOT updated here. The tracker calls
+            // `check_fan_out_completion` which uses a CAS to finalize exactly once.
 
-        let any_failed = nodes.iter().any(|n| n.status == WorkflowNodeStatus::Failed);
-        let final_state = if any_failed || !succeeded {
-            WorkflowState::Failed
-        } else {
-            WorkflowState::Completed
-        };
+            let nodes = wf_storage.get_workflow_nodes(&run_id)?;
+            let all_terminal = nodes.iter().all(|n| n.status.is_terminal());
+            if !all_terminal {
+                return Ok(Outcome::Settled {
+                    run_id,
+                    node_name,
+                    final_state: None,
+                });
+            }
 
-        wf_storage
-            .update_workflow_run_state(
+            let any_failed = nodes.iter().any(|n| n.status == WorkflowNodeStatus::Failed);
+            let final_state = if any_failed || !succeeded {
+                WorkflowState::Failed
+            } else {
+                WorkflowState::Completed
+            };
+
+            wf_storage.update_workflow_run_state(
                 &run_id,
                 final_state,
                 if final_state == WorkflowState::Failed {
@@ -452,17 +518,25 @@ impl PyQueue {
                 } else {
                     None
                 },
-            )
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        wf_storage
-            .set_workflow_run_completed(&run_id, now)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            )?;
+            wf_storage.set_workflow_run_completed(&run_id, now)?;
 
-        Ok(Some((
-            run_id,
-            node_name,
-            Some(final_state.as_str().to_string()),
-        )))
+            Ok(Outcome::Settled {
+                run_id,
+                node_name,
+                final_state: Some(final_state.as_str().to_string()),
+            })
+        });
+
+        match outcome.map_err(|e| PyRuntimeError::new_err(e.to_string()))? {
+            Outcome::NotFound => Err(PyValueError::new_err(format!("job '{job_id}' not found"))),
+            Outcome::NoWorkflowMetadata => Ok(None),
+            Outcome::Settled {
+                run_id,
+                node_name,
+                final_state,
+            } => Ok(Some((run_id, node_name, final_state))),
+        }
     }
 
     // ── Fan-out / Fan-in helpers ────────────────────────────────
@@ -480,6 +554,7 @@ impl PyQueue {
     #[allow(clippy::too_many_arguments)]
     pub fn expand_fan_out(
         &self,
+        py: Python<'_>,
         run_id: &str,
         parent_node_name: &str,
         child_names: Vec<String>,
@@ -497,68 +572,68 @@ impl PyQueue {
         }
 
         let wf_storage = workflow_storage(self)?;
-        let now = now_millis();
-        let count = child_names.len() as i32;
+        let run_id_owned = run_id.to_string();
+        let parent_name_owned = parent_node_name.to_string();
+        let task_name_owned = task_name.to_string();
+        let queue_owned = queue.to_string();
 
-        // Empty fan-out: mark parent completed immediately.
-        if count == 0 {
-            wf_storage
-                .set_workflow_node_fan_out_count(run_id, parent_node_name, 0)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            wf_storage
-                .set_workflow_node_completed(run_id, parent_node_name, now, None)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            return Ok(vec![]);
-        }
+        let result: CoreResult<Vec<String>> = py.allow_threads(|| {
+            let now = now_millis();
+            let count = child_names.len() as i32;
 
-        let mut child_job_ids = Vec::with_capacity(child_names.len());
+            // Empty fan-out: mark parent completed immediately.
+            if count == 0 {
+                wf_storage.set_workflow_node_fan_out_count(&run_id_owned, &parent_name_owned, 0)?;
+                wf_storage.set_workflow_node_completed(
+                    &run_id_owned,
+                    &parent_name_owned,
+                    now,
+                    None,
+                )?;
+                return Ok(Vec::new());
+            }
 
-        for (child_name, payload) in child_names.iter().zip(child_payloads.into_iter()) {
-            let new_job = NewJob {
-                queue: queue.to_string(),
-                task_name: task_name.to_string(),
-                payload,
-                priority,
-                scheduled_at: now,
-                max_retries,
-                timeout_ms,
-                unique_key: None,
-                metadata: Some(build_metadata_json(run_id, child_name)),
-                depends_on: vec![],
-                expires_at: None,
-                result_ttl_ms: self.result_ttl_ms,
-                namespace: self.namespace.clone(),
-            };
+            let mut child_job_ids = Vec::with_capacity(child_names.len());
+            for (child_name, payload) in child_names.iter().zip(child_payloads.into_iter()) {
+                let new_job = NewJob {
+                    queue: queue_owned.clone(),
+                    task_name: task_name_owned.clone(),
+                    payload,
+                    priority,
+                    scheduled_at: now,
+                    max_retries,
+                    timeout_ms,
+                    unique_key: None,
+                    metadata: Some(build_metadata_json(&run_id_owned, child_name)),
+                    depends_on: vec![],
+                    expires_at: None,
+                    result_ttl_ms: self.result_ttl_ms,
+                    namespace: self.namespace.clone(),
+                };
+                let job = self.storage.enqueue(new_job)?;
+                child_job_ids.push(job.id.clone());
 
-            let job = self
-                .storage
-                .enqueue(new_job)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            child_job_ids.push(job.id.clone());
+                let wf_node = WorkflowNode {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    run_id: run_id_owned.clone(),
+                    node_name: child_name.clone(),
+                    job_id: Some(job.id),
+                    status: WorkflowNodeStatus::Pending,
+                    result_hash: None,
+                    fan_out_count: None,
+                    fan_in_data: None,
+                    started_at: None,
+                    completed_at: None,
+                    error: None,
+                };
+                wf_storage.create_workflow_node(&wf_node)?;
+            }
 
-            let wf_node = WorkflowNode {
-                id: uuid::Uuid::now_v7().to_string(),
-                run_id: run_id.to_string(),
-                node_name: child_name.clone(),
-                job_id: Some(job.id),
-                status: WorkflowNodeStatus::Pending,
-                result_hash: None,
-                fan_out_count: None,
-                fan_in_data: None,
-                started_at: None,
-                completed_at: None,
-                error: None,
-            };
-            wf_storage
-                .create_workflow_node(&wf_node)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        }
+            wf_storage.set_workflow_node_fan_out_count(&run_id_owned, &parent_name_owned, count)?;
+            Ok(child_job_ids)
+        });
 
-        wf_storage
-            .set_workflow_node_fan_out_count(run_id, parent_node_name, count)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        Ok(child_job_ids)
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Create a job for a deferred workflow node.
@@ -569,6 +644,7 @@ impl PyQueue {
     #[allow(clippy::too_many_arguments)]
     pub fn create_deferred_job(
         &self,
+        py: Python<'_>,
         run_id: &str,
         node_name: &str,
         payload: Vec<u8>,
@@ -579,88 +655,86 @@ impl PyQueue {
         priority: i32,
     ) -> PyResult<String> {
         let wf_storage = workflow_storage(self)?;
-        let now = now_millis();
+        let run_id_owned = run_id.to_string();
+        let node_name_owned = node_name.to_string();
+        let task_name_owned = task_name.to_string();
+        let queue_owned = queue.to_string();
 
-        let new_job = NewJob {
-            queue: queue.to_string(),
-            task_name: task_name.to_string(),
-            payload,
-            priority,
-            scheduled_at: now,
-            max_retries,
-            timeout_ms,
-            unique_key: None,
-            metadata: Some(build_metadata_json(run_id, node_name)),
-            depends_on: vec![],
-            expires_at: None,
-            result_ttl_ms: self.result_ttl_ms,
-            namespace: self.namespace.clone(),
-        };
+        let result: CoreResult<String> = py.allow_threads(|| {
+            let now = now_millis();
+            let new_job = NewJob {
+                queue: queue_owned,
+                task_name: task_name_owned,
+                payload,
+                priority,
+                scheduled_at: now,
+                max_retries,
+                timeout_ms,
+                unique_key: None,
+                metadata: Some(build_metadata_json(&run_id_owned, &node_name_owned)),
+                depends_on: vec![],
+                expires_at: None,
+                result_ttl_ms: self.result_ttl_ms,
+                namespace: self.namespace.clone(),
+            };
+            let job = self.storage.enqueue(new_job)?;
+            wf_storage.set_workflow_node_job(&run_id_owned, &node_name_owned, &job.id)?;
+            Ok(job.id)
+        });
 
-        let job = self
-            .storage
-            .enqueue(new_job)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        wf_storage
-            .set_workflow_node_job(run_id, node_name, &job.id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        Ok(job.id)
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Check whether all fan-out children of a parent node are terminal.
     ///
-    /// If all children are terminal, atomically marks the parent node as
-    /// `Completed` (all succeeded) or `Failed` (any failed) and returns
-    /// `Some((all_succeeded, child_job_ids))`. Returns `None` if not all
-    /// children are done yet or if the parent was already finalized by a
-    /// concurrent call.
+    /// When all children are terminal, performs an atomic compare-and-swap on
+    /// the parent node's status to finalize it exactly once, even across
+    /// concurrent callers. Returns `Some((all_succeeded, child_job_ids))` if
+    /// this caller performed the transition, `None` otherwise (either not all
+    /// children are done yet, or another concurrent caller already finalized).
     pub fn check_fan_out_completion(
         &self,
+        py: Python<'_>,
         run_id: &str,
         parent_node_name: &str,
     ) -> PyResult<Option<(bool, Vec<String>)>> {
         let wf_storage = workflow_storage(self)?;
+        let run_id_owned = run_id.to_string();
+        let parent_name_owned = parent_node_name.to_string();
 
-        // Guard: if the parent is already terminal, another call beat us.
-        let parent = wf_storage
-            .get_workflow_node(run_id, parent_node_name)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-            .ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "workflow node '{parent_node_name}' not found in run '{run_id}'"
-                ))
-            })?;
-        if parent.status.is_terminal() {
-            return Ok(None);
-        }
+        let result: CoreResult<Option<(bool, Vec<String>)>> = py.allow_threads(|| {
+            let prefix = format!("{parent_name_owned}[");
+            let children = wf_storage.get_workflow_nodes_by_prefix(&run_id_owned, &prefix)?;
 
-        let children = wf_storage
-            .get_workflow_nodes_by_prefix(run_id, &format!("{parent_node_name}["))
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            if children.is_empty() || !children.iter().all(|n| n.status.is_terminal()) {
+                return Ok(None);
+            }
 
-        if !children.iter().all(|n| n.status.is_terminal()) {
-            return Ok(None);
-        }
+            let any_failed = children
+                .iter()
+                .any(|n| n.status == WorkflowNodeStatus::Failed);
+            let child_job_ids: Vec<String> =
+                children.iter().filter_map(|n| n.job_id.clone()).collect();
 
-        let any_failed = children
-            .iter()
-            .any(|n| n.status == WorkflowNodeStatus::Failed);
-        let child_job_ids: Vec<String> = children.iter().filter_map(|n| n.job_id.clone()).collect();
+            let transitioned = wf_storage.finalize_fan_out_parent(
+                &run_id_owned,
+                &parent_name_owned,
+                !any_failed,
+                if any_failed {
+                    Some("fan-out child failed")
+                } else {
+                    None
+                },
+                now_millis(),
+            )?;
+            if !transitioned {
+                return Ok(None);
+            }
 
-        let now = now_millis();
-        if any_failed {
-            wf_storage
-                .set_workflow_node_error(run_id, parent_node_name, "fan-out child failed")
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        } else {
-            wf_storage
-                .set_workflow_node_completed(run_id, parent_node_name, now, None)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        }
+            Ok(Some((!any_failed, child_job_ids)))
+        });
 
-        Ok(Some((!any_failed, child_job_ids)))
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Check whether all workflow nodes are terminal and finalize the run.
@@ -669,57 +743,87 @@ impl PyQueue {
     /// (e.g., after a failed fan-out). If all nodes are terminal, transitions
     /// the run to `Completed` or `Failed` and returns the final state string.
     /// Returns `None` if not all nodes are terminal yet.
-    pub fn finalize_run_if_terminal(&self, run_id: &str) -> PyResult<Option<String>> {
+    pub fn finalize_run_if_terminal(
+        &self,
+        py: Python<'_>,
+        run_id: &str,
+    ) -> PyResult<Option<String>> {
         let wf_storage = workflow_storage(self)?;
-        let nodes = wf_storage
-            .get_workflow_nodes(run_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let run_id_owned = run_id.to_string();
 
-        if !nodes.iter().all(|n| n.status.is_terminal()) {
-            return Ok(None);
-        }
+        let result: CoreResult<Option<String>> = py.allow_threads(|| {
+            let nodes = wf_storage.get_workflow_nodes(&run_id_owned)?;
+            if !nodes.iter().all(|n| n.status.is_terminal()) {
+                return Ok(None);
+            }
 
-        let any_failed = nodes.iter().any(|n| n.status == WorkflowNodeStatus::Failed);
-        let final_state = if any_failed {
-            WorkflowState::Failed
-        } else {
-            WorkflowState::Completed
-        };
+            let any_failed = nodes.iter().any(|n| n.status == WorkflowNodeStatus::Failed);
+            let final_state = if any_failed {
+                WorkflowState::Failed
+            } else {
+                WorkflowState::Completed
+            };
 
-        let now = now_millis();
-        wf_storage
-            .update_workflow_run_state(
-                run_id,
+            let now = now_millis();
+            wf_storage.update_workflow_run_state(
+                &run_id_owned,
                 final_state,
                 if final_state == WorkflowState::Failed {
                     Some("fan-out child failed")
                 } else {
                     None
                 },
-            )
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        wf_storage
-            .set_workflow_run_completed(run_id, now)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            )?;
+            wf_storage.set_workflow_run_completed(&run_id_owned, now)?;
+            Ok(Some(final_state.as_str().to_string()))
+        });
 
-        Ok(Some(final_state.as_str().to_string()))
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Transition a workflow node to `WaitingApproval` status.
     ///
     /// Used by the Python tracker when a gate node becomes evaluable.
-    /// Sets `started_at` without overriding the status (unlike
-    /// `set_workflow_node_started` which forces `running`).
     pub fn set_workflow_node_waiting_approval(
         &self,
+        py: Python<'_>,
         run_id: &str,
         node_name: &str,
     ) -> PyResult<()> {
         let wf_storage = workflow_storage(self)?;
-        wf_storage
-            .update_workflow_node_status(run_id, node_name, WorkflowNodeStatus::WaitingApproval)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(())
+        let run_id_owned = run_id.to_string();
+        let node_name_owned = node_name.to_string();
+
+        py.allow_threads(|| {
+            wf_storage.update_workflow_node_status(
+                &run_id_owned,
+                &node_name_owned,
+                WorkflowNodeStatus::WaitingApproval,
+            )
+        })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Transition a workflow node to `Running` with a `started_at` timestamp.
+    ///
+    /// Used by the Python tracker to promote sub-workflow parent nodes after
+    /// the child workflow has been successfully compiled and submitted. This
+    /// is the clean counterpart to the old "waiting-approval → skip → running"
+    /// dance that could leave nodes permanently skipped on compile failure.
+    pub fn set_workflow_node_running(
+        &self,
+        py: Python<'_>,
+        run_id: &str,
+        node_name: &str,
+    ) -> PyResult<()> {
+        let wf_storage = workflow_storage(self)?;
+        let run_id_owned = run_id.to_string();
+        let node_name_owned = node_name.to_string();
+
+        py.allow_threads(|| {
+            wf_storage.set_workflow_node_running(&run_id_owned, &node_name_owned, now_millis())
+        })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Fetch node data from a prior run for incremental caching.
@@ -727,50 +831,72 @@ impl PyQueue {
     /// Returns a list of ``(node_name, status, result_hash)`` tuples.
     pub fn get_base_run_node_data(
         &self,
+        py: Python<'_>,
         base_run_id: &str,
     ) -> PyResult<Vec<(String, String, Option<String>)>> {
         let wf_storage = workflow_storage(self)?;
-        let nodes = wf_storage
-            .get_workflow_nodes(base_run_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(nodes
-            .into_iter()
-            .map(|n| (n.node_name, n.status.as_str().to_string(), n.result_hash))
-            .collect())
+        let base_run_id_owned = base_run_id.to_string();
+
+        let result: CoreResult<Vec<(String, String, Option<String>)>> = py.allow_threads(|| {
+            let nodes = wf_storage.get_workflow_nodes(&base_run_id_owned)?;
+            Ok(nodes
+                .into_iter()
+                .map(|n| (n.node_name, n.status.as_str().to_string(), n.result_hash))
+                .collect())
+        });
+
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Return the DAG JSON bytes for a workflow run's definition.
     ///
     /// Used by the Python visualization layer to render diagrams.
-    pub fn get_workflow_definition_dag(&self, run_id: &str) -> PyResult<Vec<u8>> {
+    pub fn get_workflow_definition_dag(&self, py: Python<'_>, run_id: &str) -> PyResult<Vec<u8>> {
         let wf_storage = workflow_storage(self)?;
-        let run = wf_storage
-            .get_workflow_run(run_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-            .ok_or_else(|| PyValueError::new_err(format!("run '{run_id}' not found")))?;
-        let def = wf_storage
-            .get_workflow_definition_by_id(&run.definition_id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-            .ok_or_else(|| {
-                PyRuntimeError::new_err(format!("definition '{}' not found", run.definition_id))
-            })?;
-        Ok(def.dag_data)
+        let run_id_owned = run_id.to_string();
+
+        enum Outcome {
+            RunMissing,
+            DefinitionMissing(String),
+            Found(Vec<u8>),
+        }
+
+        let outcome: CoreResult<Outcome> = py.allow_threads(|| {
+            let run = match wf_storage.get_workflow_run(&run_id_owned)? {
+                Some(r) => r,
+                None => return Ok(Outcome::RunMissing),
+            };
+            match wf_storage.get_workflow_definition_by_id(&run.definition_id)? {
+                Some(def) => Ok(Outcome::Found(def.dag_data)),
+                None => Ok(Outcome::DefinitionMissing(run.definition_id)),
+            }
+        });
+
+        match outcome.map_err(|e| PyRuntimeError::new_err(e.to_string()))? {
+            Outcome::Found(data) => Ok(data),
+            Outcome::RunMissing => Err(PyValueError::new_err(format!("run '{run_id}' not found"))),
+            Outcome::DefinitionMissing(def_id) => Err(PyRuntimeError::new_err(format!(
+                "definition '{def_id}' not found"
+            ))),
+        }
     }
 
     /// Set a node's fan_out_count and transition to Running.
-    ///
-    /// Also used by the tracker to mark sub-workflow parent nodes as Running.
     pub fn set_workflow_node_fan_out_count(
         &self,
+        py: Python<'_>,
         run_id: &str,
         node_name: &str,
         count: i32,
     ) -> PyResult<()> {
         let wf_storage = workflow_storage(self)?;
-        wf_storage
-            .set_workflow_node_fan_out_count(run_id, node_name, count)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(())
+        let run_id_owned = run_id.to_string();
+        let node_name_owned = node_name.to_string();
+
+        py.allow_threads(|| {
+            wf_storage.set_workflow_node_fan_out_count(&run_id_owned, &node_name_owned, count)
+        })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Approve or reject an approval gate node.
@@ -779,42 +905,96 @@ impl PyQueue {
     #[pyo3(signature = (run_id, node_name, approved, error=None))]
     pub fn resolve_workflow_gate(
         &self,
+        py: Python<'_>,
         run_id: &str,
         node_name: &str,
         approved: bool,
         error: Option<String>,
     ) -> PyResult<()> {
         let wf_storage = workflow_storage(self)?;
-        let now = now_millis();
-        if approved {
-            wf_storage
-                .set_workflow_node_completed(run_id, node_name, now, None)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        } else {
-            let err_msg = error.unwrap_or_else(|| "rejected".to_string());
-            wf_storage
-                .set_workflow_node_error(run_id, node_name, &err_msg)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        }
-        Ok(())
+        let run_id_owned = run_id.to_string();
+        let node_name_owned = node_name.to_string();
+
+        let result: CoreResult<()> = py.allow_threads(|| {
+            let now = now_millis();
+            if approved {
+                wf_storage.set_workflow_node_completed(
+                    &run_id_owned,
+                    &node_name_owned,
+                    now,
+                    None,
+                )?;
+            } else {
+                let err_msg = error.unwrap_or_else(|| "rejected".to_string());
+                wf_storage.set_workflow_node_error(&run_id_owned, &node_name_owned, &err_msg)?;
+            }
+            Ok(())
+        });
+
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Mark a workflow node as `Failed` with an error message.
+    ///
+    /// Used by the Python tracker when sub-workflow compilation or submission
+    /// fails — the parent node needs a terminal state so the outer run can
+    /// finalize instead of hanging.
+    pub fn fail_workflow_node(
+        &self,
+        py: Python<'_>,
+        run_id: &str,
+        node_name: &str,
+        error: &str,
+    ) -> PyResult<()> {
+        let wf_storage = workflow_storage(self)?;
+        let run_id_owned = run_id.to_string();
+        let node_name_owned = node_name.to_string();
+        let error_owned = error.to_string();
+
+        py.allow_threads(|| {
+            wf_storage.set_workflow_node_error(&run_id_owned, &node_name_owned, &error_owned)
+        })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Mark a single workflow node as `Skipped` and cancel its job.
     ///
     /// Used by the Python tracker for condition-based skip propagation.
-    pub fn skip_workflow_node(&self, run_id: &str, node_name: &str) -> PyResult<()> {
+    /// Cancel-job failures are logged but do not abort the skip — the node's
+    /// terminal status is more important than best-effort job cancellation.
+    pub fn skip_workflow_node(
+        &self,
+        py: Python<'_>,
+        run_id: &str,
+        node_name: &str,
+    ) -> PyResult<()> {
         let wf_storage = workflow_storage(self)?;
-        let node = wf_storage
-            .get_workflow_node(run_id, node_name)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        if let Some(node) = node {
-            if let Some(job_id) = &node.job_id {
-                let _ = self.storage.cancel_job(job_id);
+        let run_id_owned = run_id.to_string();
+        let node_name_owned = node_name.to_string();
+
+        let result: CoreResult<()> = py.allow_threads(|| {
+            let node = wf_storage.get_workflow_node(&run_id_owned, &node_name_owned)?;
+            if let Some(node) = node {
+                if let Some(job_id) = &node.job_id {
+                    if let Err(e) = self.storage.cancel_job(job_id) {
+                        log::warn!(
+                            "[taskito] cancel_job({}) failed while skipping node '{}' in run {}: {}",
+                            job_id,
+                            node_name_owned,
+                            run_id_owned,
+                            e
+                        );
+                    }
+                }
+                wf_storage.update_workflow_node_status(
+                    &run_id_owned,
+                    &node_name_owned,
+                    WorkflowNodeStatus::Skipped,
+                )?;
             }
-            wf_storage
-                .update_workflow_node_status(run_id, node_name, WorkflowNodeStatus::Skipped)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        }
-        Ok(())
+            Ok(())
+        });
+
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 }
