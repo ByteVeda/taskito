@@ -61,7 +61,9 @@ run.cancel()  # Cancels parent + all child sub-workflows
 
 ### Failure
 
-If a child workflow fails, the parent node is marked `FAILED`. Downstream steps follow the parent's `on_failure` strategy.
+If a child workflow fails at runtime, the parent node is marked `FAILED`. Downstream steps follow the parent's `on_failure` strategy.
+
+The same holds for failures at *submission* time -- if the child's factory raises or the DAG fails to compile when the parent node becomes evaluable, the parent node is marked `FAILED` immediately (rather than leaving the outer run hanging), and the parent run finalizes normally.
 
 ## Cron-scheduled workflows
 
