@@ -722,7 +722,7 @@ impl RedisStorage {
         }
 
         // Sort by created_at desc
-        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.created_at));
 
         // Apply pagination
         let start = (offset.max(0) as usize).min(jobs.len());
@@ -900,7 +900,7 @@ impl RedisStorage {
             }
         }
 
-        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.created_at));
 
         let start = (offset.max(0) as usize).min(jobs.len());
         let end = start.saturating_add(limit.max(0) as usize).min(jobs.len());

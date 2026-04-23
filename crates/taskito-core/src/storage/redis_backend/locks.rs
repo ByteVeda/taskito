@@ -162,10 +162,11 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let now = now_millis();
         let ckey = self.key(&["exec_claim", job_id]);
+        let index_key = self.key(&["exec_claims", "by_time"]);
 
         // NX: set only if not exists. PX: auto-expire after 24 hours so
         // orphaned claims from dead workers don't block re-execution forever.
-        let result: bool = redis::cmd("SET")
+        let acquired: bool = redis::cmd("SET")
             .arg(&ckey)
             .arg(format!("{worker_id}:{now}"))
             .arg("NX")
@@ -174,22 +175,51 @@ impl RedisStorage {
             .query(&mut conn)
             .map_err(map_err)?;
 
-        Ok(result)
+        if acquired {
+            // Mirror the claim into a time-indexed sorted set so the
+            // scheduler's maintenance loop can purge stale claims with an
+            // O(log n) range query.
+            conn.zadd::<_, _, _, ()>(&index_key, job_id, now as f64)
+                .map_err(map_err)?;
+        }
+
+        Ok(acquired)
     }
 
     pub fn complete_execution(&self, job_id: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let ckey = self.key(&["exec_claim", job_id]);
+        let index_key = self.key(&["exec_claims", "by_time"]);
 
-        conn.del::<_, ()>(&ckey).map_err(map_err)?;
+        let pipe = &mut redis::pipe();
+        pipe.del(&ckey);
+        pipe.zrem(&index_key, job_id);
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(())
     }
 
-    pub fn purge_execution_claims(&self, _older_than_ms: i64) -> Result<u64> {
-        // Redis doesn't have efficient timestamp-based scanning for simple keys.
-        // For production use, execution claims should use TTL on the key itself.
-        // For now, this is a no-op — claims are cleaned up on complete_execution.
-        Ok(0)
+    pub fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let index_key = self.key(&["exec_claims", "by_time"]);
+
+        // Find all claims with `claimed_at <= older_than_ms`.
+        let expired_ids: Vec<String> = conn
+            .zrangebyscore(&index_key, "-inf", older_than_ms as f64)
+            .map_err(map_err)?;
+
+        if expired_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let pipe = &mut redis::pipe();
+        for id in &expired_ids {
+            let ckey = self.key(&["exec_claim", id]);
+            pipe.del(&ckey);
+            pipe.zrem(&index_key, id);
+        }
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
+
+        Ok(expired_ids.len() as u64)
     }
 }

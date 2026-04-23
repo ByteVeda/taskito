@@ -211,6 +211,37 @@ fn test_pause_resume_queue(s: &impl Storage) {
     assert!(!paused.contains(&q.to_string()));
 }
 
+fn test_execution_claims_purge(s: &impl Storage) {
+    // Regression: Redis `purge_execution_claims` was a silent no-op. The
+    // scheduler's maintenance loop relies on this method to reap stale claims,
+    // so all backends must honor the `older_than_ms` cutoff.
+    let worker = "w-purge";
+    let old_job = "old-claim-job-id";
+    let fresh_job = "fresh-claim-job-id";
+
+    assert!(s.claim_execution(old_job, worker).unwrap());
+    // Advance past the old claim so the cutoff below can catch it but miss
+    // the fresh claim (claimed after the cutoff below is computed).
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let cutoff = now_millis();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert!(s.claim_execution(fresh_job, worker).unwrap());
+
+    let purged = s.purge_execution_claims(cutoff).unwrap();
+    assert!(
+        purged >= 1,
+        "purge must delete at least the one claim older than the cutoff"
+    );
+
+    // The old claim is gone — a fresh claim_execution for the same job succeeds.
+    assert!(s.claim_execution(old_job, worker).unwrap());
+    // The fresh claim must still be held.
+    assert!(!s.claim_execution(fresh_job, worker).unwrap());
+
+    s.complete_execution(old_job).unwrap();
+    s.complete_execution(fresh_job).unwrap();
+}
+
 fn test_circuit_breakers(s: &impl Storage) {
     let task = "cb-test-task";
     let cb = s.get_circuit_breaker(task).unwrap();
@@ -256,6 +287,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_workers(s);
     test_pause_resume_queue(s);
     test_circuit_breakers(s);
+    test_execution_claims_purge(s);
 }
 
 // ── Backend-specific wiring ──────────────────────────────────────────

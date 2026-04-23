@@ -39,6 +39,11 @@ pub struct PyQueue {
     pub(crate) scheduler_reap_interval: u32,
     pub(crate) scheduler_cleanup_interval: u32,
     pub(crate) namespace: Option<String>,
+    /// Cached workflow storage handle. Lazily initialized on first workflow API
+    /// call; migrations run exactly once per `PyQueue` instance instead of
+    /// per-call.
+    #[cfg(feature = "workflows")]
+    pub(crate) workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowSqliteStorage>,
 }
 
 #[pymethods]
@@ -132,6 +137,8 @@ impl PyQueue {
             scheduler_reap_interval,
             scheduler_cleanup_interval,
             namespace,
+            #[cfg(feature = "workflows")]
+            workflow_storage: std::sync::OnceLock::new(),
         })
     }
 

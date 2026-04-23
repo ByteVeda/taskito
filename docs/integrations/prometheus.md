@@ -28,6 +28,7 @@ PrometheusMiddleware(
     namespace="myapp",
     extra_labels_fn=lambda ctx: {"env": "prod", "region": "us-east-1"},
     disabled_metrics={"resource", "proxy"},
+    task_filter=lambda name: not name.startswith("internal."),
 )
 ```
 
@@ -36,6 +37,7 @@ PrometheusMiddleware(
 | `namespace` | `str` | `"taskito"` | Prefix for all metric names. |
 | `extra_labels_fn` | `Callable[[JobContext], dict[str, str]] | None` | `None` | Returns extra labels to add to job metrics. Receives `JobContext`. |
 | `disabled_metrics` | `set[str] | None` | `None` | Metric groups or individual names to skip. Groups: `"jobs"`, `"queue"`, `"resource"`, `"proxy"`, `"intercept"`. |
+| `task_filter` | `Callable[[str], bool] | None` | `None` | Predicate that receives a task name. Return `True` to export metrics for the task, `False` to skip it. `None` exports all tasks. |
 
 ### Metrics Tracked
 

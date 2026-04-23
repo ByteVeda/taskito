@@ -121,7 +121,7 @@ impl RedisStorage {
         }
 
         // Sort by recorded_at desc
-        rows.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.recorded_at));
         Ok(rows)
     }
 
@@ -210,7 +210,7 @@ impl RedisStorage {
         }
 
         // Sort by replayed_at desc
-        rows.sort_by(|a, b| b.replayed_at.cmp(&a.replayed_at));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.replayed_at));
         Ok(rows)
     }
 }

@@ -57,6 +57,12 @@ class WorkflowTracker:
         self._waiters_lock = threading.Lock()
         self._waiters: dict[str, list[threading.Event]] = {}
         self._event_bus = queue._event_bus
+        # `_state_lock` guards every read and write of `_run_configs`,
+        # `_job_to_run`, `_child_to_parent`, and `_gate_timers`. These dicts
+        # are accessed from worker threads (event bus), timer threads
+        # (gate timeouts), and user threads (approve_gate/reject_gate).
+        # A single lock is simple and adequate; tracker operations are short.
+        self._state_lock = threading.RLock()
         self._run_configs: dict[str, _RunConfig] = {}
         self._job_to_run: dict[str, str] = {}
         self._gate_timers: dict[tuple[str, str], threading.Timer] = {}
@@ -128,17 +134,20 @@ class WorkflowTracker:
             gate_configs=gate_configs or {},
             sub_workflow_refs=sub_workflow_refs or {},
         )
-        self._run_configs[run_id] = config
+        with self._state_lock:
+            self._run_configs[run_id] = config
 
         # Populate job→run mapping for initial nodes.
         try:
             raw = self._queue._inner.get_workflow_run_status(run_id)
-            for _name, info in raw.node_statuses().items():
-                jid = info.get("job_id")
-                if jid:
-                    self._job_to_run[jid] = run_id
-        except Exception:  # pragma: no cover
-            logger.exception("failed to populate job→run mapping for %s", run_id)
+        except (RuntimeError, ValueError):
+            logger.exception("failed to read workflow run status for %s", run_id)
+        else:
+            with self._state_lock:
+                for _name, info in raw.node_statuses().items():
+                    jid = info.get("job_id")
+                    if jid:
+                        self._job_to_run[jid] = run_id
 
         # Evaluate root deferred nodes (those with no predecessors).
         self._evaluate_root_deferred(run_id, config)
@@ -182,8 +191,9 @@ class WorkflowTracker:
             return
 
         # Determine if this job belongs to a managed run.
-        run_id = self._job_to_run.get(job_id)
-        config = self._run_configs.get(run_id) if run_id else None
+        with self._state_lock:
+            run_id = self._job_to_run.get(job_id)
+            config = self._run_configs.get(run_id) if run_id else None
         skip_cascade = config is not None
 
         # Compute result hash for successful completions.
@@ -195,8 +205,12 @@ class WorkflowTracker:
             result = self._queue._inner.mark_workflow_node_result(
                 job_id, succeeded, error, skip_cascade, rh
             )
-        except Exception:  # pragma: no cover - defensive
+        except (RuntimeError, ValueError) as exc:
             logger.exception("mark_workflow_node_result failed for job %s", job_id)
+            # Notify any waiters so they don't block forever on a silent failure.
+            if run_id is not None:
+                self._emit_terminal(run_id, "failed", str(exc))
+                self._cleanup_run(run_id)
             return
 
         if result is None:
@@ -211,7 +225,8 @@ class WorkflowTracker:
 
         # Re-fetch config now that we have the definitive run_id.
         if config is None:
-            config = self._run_configs.get(run_id)
+            with self._state_lock:
+                config = self._run_configs.get(run_id)
         if config is None:
             return  # Static workflow — Rust cascade handled everything.
 
@@ -240,13 +255,27 @@ class WorkflowTracker:
                     workflow_event,
                     {"run_id": run_id, "state": terminal_state, "error": error},
                 )
-            except Exception:  # pragma: no cover - defensive
+            except Exception:
                 logger.exception("failed to emit %s", workflow_event)
         self._release_waiters(run_id)
 
     def _cleanup_run(self, run_id: str) -> None:
-        self._run_configs.pop(run_id, None)
-        self._job_to_run = {jid: rid for jid, rid in self._job_to_run.items() if rid != run_id}
+        """Drop all tracker state tied to `run_id` and cancel any live timers."""
+        with self._state_lock:
+            self._run_configs.pop(run_id, None)
+            self._job_to_run = {jid: rid for jid, rid in self._job_to_run.items() if rid != run_id}
+            # Cancel and remove any gate timers still scheduled for this run.
+            stale_timer_keys = [k for k in self._gate_timers if k[0] == run_id]
+            for key in stale_timer_keys:
+                timer = self._gate_timers.pop(key, None)
+                if timer is not None:
+                    timer.cancel()
+            # Drop any child→parent mappings whose parent run is finishing.
+            stale_child_ids = [
+                cid for cid, (prid, _) in self._child_to_parent.items() if prid == run_id
+            ]
+            for cid in stale_child_ids:
+                self._child_to_parent.pop(cid, None)
 
     # ── Condition evaluation ───────────────────────────────────────
 
@@ -312,7 +341,7 @@ class WorkflowTracker:
         """Mark a node as SKIPPED and recursively evaluate its successors."""
         try:
             self._queue._inner.skip_workflow_node(run_id, node_name)
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("skip_workflow_node failed for %s", node_name)
             return
         config.deferred_nodes.discard(node_name)
@@ -325,7 +354,7 @@ class WorkflowTracker:
         """Transition a gate node to WAITING_APPROVAL and start timeout."""
         try:
             self._queue._inner.set_workflow_node_waiting_approval(run_id, node_name)
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("set_workflow_node_waiting_approval failed for %s", node_name)
             return
         config.deferred_nodes.discard(node_name)
@@ -340,7 +369,7 @@ class WorkflowTracker:
                     "message": gate.message if isinstance(gate.message, str) else None,
                 },
             )
-        except Exception:  # pragma: no cover
+        except Exception:
             logger.exception("failed to emit WORKFLOW_GATE_REACHED")
 
         if gate.timeout is not None and gate.timeout > 0:
@@ -350,8 +379,9 @@ class WorkflowTracker:
                 args=(run_id, node_name, gate.on_timeout),
             )
             timer.daemon = True
+            with self._state_lock:
+                self._gate_timers[(run_id, node_name)] = timer
             timer.start()
-            self._gate_timers[(run_id, node_name)] = timer
 
     def resolve_gate(
         self,
@@ -363,15 +393,15 @@ class WorkflowTracker:
     ) -> None:
         """Approve or reject a gate, resuming the workflow."""
         # Cancel any pending timeout timer.
-        timer = self._gate_timers.pop((run_id, node_name), None)
+        with self._state_lock:
+            timer = self._gate_timers.pop((run_id, node_name), None)
+            config = self._run_configs.get(run_id)
         if timer is not None:
             timer.cancel()
 
-        config = self._run_configs.get(run_id)
-
         try:
             self._queue._inner.resolve_workflow_gate(run_id, node_name, approved, error)
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("resolve_workflow_gate failed for %s", node_name)
             return
 
@@ -382,25 +412,19 @@ class WorkflowTracker:
     # ── Sub-workflows ──────────────────────────────────────────────
 
     def _submit_sub_workflow(self, run_id: str, node_name: str, config: _RunConfig) -> None:
-        """Submit a child workflow for a sub-workflow node."""
+        """Submit a child workflow and transition the parent node to Running.
+
+        The parent node is only promoted to `Running` after the child has
+        successfully compiled *and* been submitted. On any failure during
+        compile/submit, the parent is marked Failed so the run can finalize
+        instead of hanging in an indeterminate state.
+        """
         ref = config.sub_workflow_refs.get(node_name)
         if ref is None:  # pragma: no cover
             return
-        try:
-            child_wf = ref.proxy.build(**ref.params)
-            # Mark parent node as RUNNING.
-            self._queue._inner.set_workflow_node_waiting_approval(run_id, node_name)
-            # Override status to RUNNING (waiting_approval was just to set started_at).
-            self._queue._inner.skip_workflow_node(run_id, node_name)
-            # Actually, let me use a cleaner approach: just mark running via the
-            # node status update. Use the Rust set_workflow_node_fan_out_count
-            # trick (sets RUNNING). Or add a direct call.
-        except Exception:
-            logger.exception("failed to build sub-workflow for %s", node_name)
-            return
 
         try:
-            # Submit child workflow with parent linkage.
+            child_wf = ref.proxy.build(**ref.params)
             (
                 dag_bytes,
                 meta_json,
@@ -424,45 +448,65 @@ class WorkflowTracker:
                 run_id,  # parent_run_id
                 node_name,  # parent_node_name
             )
-
-            child_run_id = handle.run_id
-            self._child_to_parent[child_run_id] = (run_id, node_name)
-
-            # Mark parent node as RUNNING (use fan_out_count trick).
-            self._queue._inner.set_workflow_node_fan_out_count(run_id, node_name, 1)
-
-            # Register child with tracker if it has deferred nodes.
-            needs_child_tracker = (
-                bool(deferred)
-                or bool(callables)
-                or bool(gates)
-                or bool(sub_refs)
-                or on_failure != "fail_fast"
-            )
-            if needs_child_tracker:
-                child_payloads = {n: payloads[n] for n in deferred if n in payloads}
-                self.register_run(
-                    child_run_id,
-                    meta_json,
-                    dag_bytes,
-                    deferred,
-                    child_payloads,
-                    on_failure=on_failure,
-                    callable_conditions=callables,
-                    gate_configs=gates,
-                    sub_workflow_refs=sub_refs,
-                )
-
-            config.deferred_nodes.discard(node_name)
-        except Exception:
+        except Exception as exc:
             logger.exception("submit sub-workflow failed for %s", node_name)
+            # Mark the parent node Failed so the outer run can finalize rather
+            # than hanging. This is the central fix for the old bug where a
+            # compile failure left the node permanently Skipped.
+            try:
+                self._queue._inner.fail_workflow_node(
+                    run_id, node_name, f"sub-workflow submit failed: {exc}"
+                )
+            except (RuntimeError, ValueError):
+                logger.exception("failed to mark sub-workflow parent %s as failed", node_name)
+            config.deferred_nodes.discard(node_name)
+            # Evaluate successors now that this node is terminal.
+            self._evaluate_successors(run_id, node_name, config)
+            return
+
+        # Child compiled and submitted successfully — now promote the parent.
+        child_run_id = handle.run_id
+        with self._state_lock:
+            self._child_to_parent[child_run_id] = (run_id, node_name)
+        try:
+            self._queue._inner.set_workflow_node_running(run_id, node_name)
+        except (RuntimeError, ValueError):
+            logger.exception(
+                "set_workflow_node_running failed for sub-workflow parent %s",
+                node_name,
+            )
+
+        # Register child with tracker if it has deferred nodes.
+        needs_child_tracker = (
+            bool(deferred)
+            or bool(callables)
+            or bool(gates)
+            or bool(sub_refs)
+            or on_failure != "fail_fast"
+        )
+        if needs_child_tracker:
+            child_payloads = {n: payloads[n] for n in deferred if n in payloads}
+            self.register_run(
+                child_run_id,
+                meta_json,
+                dag_bytes,
+                deferred,
+                child_payloads,
+                on_failure=on_failure,
+                callable_conditions=callables,
+                gate_configs=gates,
+                sub_workflow_refs=sub_refs,
+            )
+
+        config.deferred_nodes.discard(node_name)
 
     def _on_child_workflow_terminal(self, _event_type: EventType, payload: dict[str, Any]) -> None:
         """Handle child workflow completion → update parent node."""
         child_run_id = payload.get("run_id")
         if not child_run_id:
             return
-        parent_info = self._child_to_parent.pop(child_run_id, None)
+        with self._state_lock:
+            parent_info = self._child_to_parent.pop(child_run_id, None)
         if parent_info is None:
             return  # Not a sub-workflow child.
 
@@ -477,7 +521,7 @@ class WorkflowTracker:
                 succeeded,
                 payload.get("error") if not succeeded else None,
             )
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception(
                 "failed to update parent node %s for child %s",
                 parent_node_name,
@@ -485,14 +529,20 @@ class WorkflowTracker:
             )
             return
 
-        config = self._run_configs.get(parent_run_id)
+        with self._state_lock:
+            config = self._run_configs.get(parent_run_id)
         if config is not None:
             self._evaluate_successors(parent_run_id, parent_node_name, config)
             self._try_finalize(parent_run_id)
 
     def _on_gate_timeout(self, run_id: str, node_name: str, action: str) -> None:
         """Handle gate timeout expiry."""
-        self._gate_timers.pop((run_id, node_name), None)
+        with self._state_lock:
+            # If the run was cleaned up (e.g., cancelled before timeout fired),
+            # the timer entry was already removed by `_cleanup_run` — stop.
+            if (run_id, node_name) not in self._gate_timers:
+                return
+            self._gate_timers.pop((run_id, node_name), None)
         approved = action == "approve"
         error = None if approved else "gate timeout"
         self.resolve_gate(run_id, node_name, approved=approved, error=error)
@@ -603,16 +653,18 @@ class WorkflowTracker:
                 timeout_ms,
                 priority,
             )
-            self._job_to_run[job_id] = run_id
-            config.deferred_nodes.discard(node_name)
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("create_deferred_job failed for %s", node_name)
+            return
+        with self._state_lock:
+            self._job_to_run[job_id] = run_id
+        config.deferred_nodes.discard(node_name)
 
     def _try_finalize(self, run_id: str) -> None:
         """If all nodes are terminal, finalize the run and emit the event."""
         try:
             terminal_state = self._queue._inner.finalize_run_if_terminal(run_id)
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("finalize_run_if_terminal failed for %s", run_id)
             return
         if terminal_state is not None:
@@ -683,11 +735,12 @@ class WorkflowTracker:
                 timeout_ms,
                 priority,
             )
-            for jid in child_job_ids:
-                self._job_to_run[jid] = run_id
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("expand_fan_out failed for %s in run %s", fan_out_node, run_id)
             return
+        with self._state_lock:
+            for jid in child_job_ids:
+                self._job_to_run[jid] = run_id
 
         # Empty fan-out: parent is immediately COMPLETED with 0 children.
         if not child_names:
@@ -705,7 +758,7 @@ class WorkflowTracker:
         parent_name = child_name.split("[")[0]
         try:
             completion = self._queue._inner.check_fan_out_completion(run_id, parent_name)
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("check_fan_out_completion failed for %s", parent_name)
             return
 
@@ -736,7 +789,7 @@ class WorkflowTracker:
         parent_name = child_name.split("[")[0]
         try:
             completion = self._queue._inner.check_fan_out_completion(run_id, parent_name)
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("check_fan_out_completion failed for %s", parent_name)
             return
 
@@ -780,9 +833,11 @@ class WorkflowTracker:
                 timeout_ms,
                 priority,
             )
-            self._job_to_run[job_id] = run_id
-        except Exception:
+        except (RuntimeError, ValueError):
             logger.exception("create_deferred_job failed for fan-in %s", fan_in_node)
+            return
+        with self._state_lock:
+            self._job_to_run[job_id] = run_id
 
 
 # ── Helpers ────────────────────────────────────────────────────────

@@ -131,7 +131,7 @@ impl RedisStorage {
         }
 
         // Sort by logged_at desc
-        rows.sort_by(|a, b| b.logged_at.cmp(&a.logged_at));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.logged_at));
         if limit >= 0 {
             rows.truncate(limit as usize);
         }

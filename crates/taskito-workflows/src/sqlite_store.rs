@@ -600,6 +600,61 @@ impl WorkflowStorage for WorkflowSqliteStorage {
         Ok(())
     }
 
+    fn set_workflow_node_running(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        started_at: i64,
+    ) -> Result<()> {
+        let mut conn = self.inner.conn()?;
+        diesel::sql_query(
+            "UPDATE workflow_nodes SET status = 'running', started_at = ?
+             WHERE run_id = ? AND node_name = ?",
+        )
+        .bind::<diesel::sql_types::BigInt, _>(started_at)
+        .bind::<Text, _>(run_id)
+        .bind::<Text, _>(node_name)
+        .execute(&mut conn)?;
+        Ok(())
+    }
+
+    fn finalize_fan_out_parent(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        succeeded: bool,
+        error: Option<&str>,
+        completed_at: i64,
+    ) -> Result<bool> {
+        let mut conn = self.inner.conn()?;
+        // Compare-and-swap: only update if not already terminal. Exactly one
+        // concurrent caller will affect >0 rows; losers see 0 rows affected.
+        let affected = if succeeded {
+            diesel::sql_query(
+                "UPDATE workflow_nodes
+                 SET status = 'completed', completed_at = ?
+                 WHERE run_id = ? AND node_name = ?
+                   AND status NOT IN ('completed', 'failed', 'skipped', 'cache_hit')",
+            )
+            .bind::<diesel::sql_types::BigInt, _>(completed_at)
+            .bind::<Text, _>(run_id)
+            .bind::<Text, _>(node_name)
+            .execute(&mut conn)?
+        } else {
+            diesel::sql_query(
+                "UPDATE workflow_nodes
+                 SET status = 'failed', error = ?
+                 WHERE run_id = ? AND node_name = ?
+                   AND status NOT IN ('completed', 'failed', 'skipped', 'cache_hit')",
+            )
+            .bind::<Text, _>(error.unwrap_or("fan-out child failed"))
+            .bind::<Text, _>(run_id)
+            .bind::<Text, _>(node_name)
+            .execute(&mut conn)?
+        };
+        Ok(affected > 0)
+    }
+
     fn get_workflow_nodes_by_prefix(
         &self,
         run_id: &str,

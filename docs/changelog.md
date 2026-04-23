@@ -2,6 +2,40 @@
 
 All notable changes to taskito are documented here.
 
+## Unreleased
+
+### Fixed
+
+- **Workflow fan-in race** -- concurrent child completions on different worker threads could both expand fan-in. The `check_fan_out_completion` Rust call now delegates to a new `WorkflowStorage::finalize_fan_out_parent` compare-and-swap, so the parent transitions at most once regardless of how many children complete simultaneously.
+- **Sub-workflow compile failure** -- if a child workflow's factory or compile step raised, the parent node was left permanently `SKIPPED`, hanging the outer run. The parent is now promoted to `RUNNING` only after the child's compile + submit succeed, and is marked `FAILED` on error so the run finalizes.
+- **Redis `purge_execution_claims`** -- previously a silent no-op. Execution claims are now mirrored into a time-indexed sorted set (`taskito:exec_claims:by_time`) so the scheduler's maintenance loop can reap stale claims in O(log n). Legacy keys still expire via the 24 h `PX` TTL.
+- **SQLite `move_to_dlq` cascade** -- cascade-cancel errors on the dependent sweep are now propagated (parity with Postgres and Redis) instead of being swallowed as a warning. Callers see the failure and can decide whether to retry or alert.
+
+### Performance
+
+- **Workflow ops release the GIL during SQLite I/O** -- every method in `workflow_ops.rs` now wraps DB round-trips in `py.allow_threads(...)`. Event-bus callbacks that fire from worker threads no longer serialize the rest of the Python runtime on each fan-in / mark-result / cancel call.
+- **`WorkflowSqliteStorage` cached per queue** -- migrations run once on first workflow API call via `OnceLock`, instead of re-running `CREATE TABLE IF NOT EXISTS` on every single call.
+
+### Safety
+
+- **`cancel_workflow_run` iterative** -- replaced recursive sub-workflow cascade with an iterative BFS plus `visited` set. No recursion deadlock, no connection-pool exhaustion on deep sub-workflow trees, and any accidental cycle in `parent_run_id` terminates safely.
+- **Tracker state lock** -- `WorkflowTracker._state_lock` (RLock) now guards every access to `_run_configs`, `_job_to_run`, `_child_to_parent`, and `_gate_timers`, which are touched from worker threads, gate-timeout timers, and user threads.
+- **Gate timer cleanup** -- `_cleanup_run` cancels any pending gate timers for the finishing run and drops stale child→parent mappings. Timers no longer fire on already-terminal runs.
+- **Workflow metadata JSON escaping** -- `build_metadata_json` uses `serde_json::json!`; node names containing backslashes, control characters, or Unicode are now escaped correctly. Previously they produced malformed JSON that silently dropped the workflow event.
+- **Narrower exception handling in the tracker** -- broad `except Exception:` clauses narrowed to `(RuntimeError, ValueError)` on Rust FFI call sites; the remaining broad catches are restricted to user callables and event emission with an explanatory `# noqa`. Silent `let _ = storage.cancel_job(...)` replaced with `log::warn!` via a shared helper.
+
+### Added
+
+- **`PrometheusMiddleware(task_filter=...)`** -- parity with `OTelMiddleware` and `SentryMiddleware`. A predicate `(task_name: str) -> bool` toggles metric export per task.
+
+### Changed
+
+- **`dagron-core` git dependency pinned** -- `Cargo.toml` now pins `dagron-core` to a specific commit SHA. Upstream pushes no longer cause silent build breakage.
+- **`Storage` trait doc comment** -- now lists all three backends (SQLite, Postgres, Redis) instead of just the two Diesel ones.
+- **`AsyncQueueMixin.metrics_timeseries` stub** -- parameter name corrected from `interval` to `bucket` to match the real sync signature. Call sites typed via the stub were silently wrong at runtime.
+
+---
+
 ## 0.11.0
 
 ### Features

@@ -701,3 +701,140 @@ fn test_get_nodes_by_prefix() {
         .unwrap();
     assert!(empty.is_empty());
 }
+
+// ── Regression tests for correctness fixes (2026-04-24) ──────────
+
+/// Explicit `set_workflow_node_running` transitions without overloading
+/// fan_out_count — used by the sub-workflow tracker after the child
+/// successfully compiles and submits.
+#[test]
+fn test_set_workflow_node_running() {
+    let storage = test_storage();
+    let def = make_definition("sub_wf_parent");
+    storage.create_workflow_definition(&def).unwrap();
+    let run = make_run(&def.id);
+    let run_id = run.id.clone();
+    storage.create_workflow_run(&run).unwrap();
+    storage
+        .create_workflow_node(&make_node(&run_id, "parent"))
+        .unwrap();
+
+    let before = now_millis();
+    storage
+        .set_workflow_node_running(&run_id, "parent", before)
+        .unwrap();
+
+    let fetched = storage
+        .get_workflow_node(&run_id, "parent")
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, WorkflowNodeStatus::Running);
+    assert_eq!(fetched.started_at, Some(before));
+    assert_eq!(
+        fetched.fan_out_count, None,
+        "set_workflow_node_running must not set fan_out_count"
+    );
+}
+
+/// The CAS-based finalize must transition exactly once even when called
+/// twice in a row (simulating concurrent callers that both see all children
+/// terminal). This is the storage-layer guarantee behind the P0 fan-in race fix.
+#[test]
+fn test_finalize_fan_out_parent_is_idempotent() {
+    let storage = test_storage();
+    let def = make_definition("fan_in_race");
+    storage.create_workflow_definition(&def).unwrap();
+    let run = make_run(&def.id);
+    let run_id = run.id.clone();
+    storage.create_workflow_run(&run).unwrap();
+    storage
+        .create_workflow_node(&make_node(&run_id, "process"))
+        .unwrap();
+
+    // First call: not terminal → transition runs.
+    let now = now_millis();
+    let first = storage
+        .finalize_fan_out_parent(&run_id, "process", true, None, now)
+        .unwrap();
+    assert!(first, "first caller must perform the transition");
+
+    let after_first = storage
+        .get_workflow_node(&run_id, "process")
+        .unwrap()
+        .unwrap();
+    assert_eq!(after_first.status, WorkflowNodeStatus::Completed);
+
+    // Second call: already terminal → CAS returns false, state unchanged.
+    let second = storage
+        .finalize_fan_out_parent(&run_id, "process", true, None, now + 1000)
+        .unwrap();
+    assert!(!second, "second caller must be rejected by the CAS");
+
+    let after_second = storage
+        .get_workflow_node(&run_id, "process")
+        .unwrap()
+        .unwrap();
+    assert_eq!(after_second.status, WorkflowNodeStatus::Completed);
+    assert_eq!(
+        after_second.completed_at, after_first.completed_at,
+        "second caller must not overwrite completed_at"
+    );
+}
+
+/// Rejected-path of the CAS: any child failure routes through the
+/// failure branch and sets the node error.
+#[test]
+fn test_finalize_fan_out_parent_failure_branch() {
+    let storage = test_storage();
+    let def = make_definition("fan_in_fail");
+    storage.create_workflow_definition(&def).unwrap();
+    let run = make_run(&def.id);
+    let run_id = run.id.clone();
+    storage.create_workflow_run(&run).unwrap();
+    storage
+        .create_workflow_node(&make_node(&run_id, "process"))
+        .unwrap();
+
+    let now = now_millis();
+    let transitioned = storage
+        .finalize_fan_out_parent(&run_id, "process", false, Some("boom"), now)
+        .unwrap();
+    assert!(transitioned);
+
+    let node = storage
+        .get_workflow_node(&run_id, "process")
+        .unwrap()
+        .unwrap();
+    assert_eq!(node.status, WorkflowNodeStatus::Failed);
+    assert_eq!(node.error.as_deref(), Some("boom"));
+}
+
+/// Nodes that are already in a terminal state must not be re-transitioned
+/// by the CAS — this guards against a late-arriving event from a
+/// cascade-skipped child.
+#[test]
+fn test_finalize_fan_out_parent_no_op_on_terminal_node() {
+    let storage = test_storage();
+    let def = make_definition("skipped_parent");
+    storage.create_workflow_definition(&def).unwrap();
+    let run = make_run(&def.id);
+    let run_id = run.id.clone();
+    storage.create_workflow_run(&run).unwrap();
+    storage
+        .create_workflow_node(&make_node(&run_id, "process"))
+        .unwrap();
+    storage
+        .update_workflow_node_status(&run_id, "process", WorkflowNodeStatus::Skipped)
+        .unwrap();
+
+    let transitioned = storage
+        .finalize_fan_out_parent(&run_id, "process", true, None, now_millis())
+        .unwrap();
+    assert!(!transitioned, "already-skipped nodes must be left alone");
+
+    let node = storage
+        .get_workflow_node(&run_id, "process")
+        .unwrap()
+        .unwrap();
+    assert_eq!(node.status, WorkflowNodeStatus::Skipped);
+}

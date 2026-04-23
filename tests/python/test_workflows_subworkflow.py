@@ -97,6 +97,42 @@ def test_sub_workflow_failure(queue: Queue) -> None:
     assert final.nodes["after"].status == NodeStatus.SKIPPED
 
 
+def test_sub_workflow_compile_failure_marks_parent_failed(queue: Queue) -> None:
+    """Regression: a factory that raises during `build()` must not leave the
+    parent node Skipped forever — it must be marked Failed so the outer run
+    can finalize. Before the fix, the tracker called `skip_workflow_node`
+    on the parent before attempting compile, and a compile failure left the
+    node Skipped permanently."""
+
+    @queue.task()
+    def downstream() -> str:
+        return "should not run"
+
+    @queue.workflow("broken_sub")
+    def broken_sub() -> Workflow:
+        raise RuntimeError("factory blew up")
+
+    wf = Workflow(name="parent_compile_fail")
+    wf.step("sub", broken_sub.as_step())
+    wf.step("after", downstream, after="sub")
+
+    worker = _start_worker(queue)
+    try:
+        run = queue.submit_workflow(wf)
+        final = run.wait(timeout=15)
+    finally:
+        _stop_worker(queue, worker)
+
+    assert final.state == WorkflowState.FAILED, (
+        f"outer run must finalize as FAILED, got {final.state}"
+    )
+    assert final.nodes["sub"].status == NodeStatus.FAILED, (
+        f"sub-workflow parent must be FAILED (was {final.nodes['sub'].status}) — "
+        "the old bug left it SKIPPED"
+    )
+    assert final.nodes["after"].status == NodeStatus.SKIPPED
+
+
 def test_cancel_parent_cascades(queue: Queue) -> None:
     """Cancelling a parent workflow cancels the child sub-workflow too."""
 

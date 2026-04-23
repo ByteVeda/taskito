@@ -82,6 +82,36 @@ pub trait WorkflowStorage: Send + Sync {
         count: i32,
     ) -> Result<()>;
 
+    /// Transition a node to `Running` and set its `started_at` timestamp.
+    ///
+    /// Used by the tracker to promote gate/sub-workflow nodes to running
+    /// without going through fan-out bookkeeping.
+    fn set_workflow_node_running(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        started_at: i64,
+    ) -> Result<()>;
+
+    /// Atomically finalize a fan-out parent node if it is not already terminal.
+    ///
+    /// Issues a single conditional `UPDATE` that transitions the node to
+    /// `Completed` (with `completed_at`) when `succeeded` is true, or `Failed`
+    /// (with `error`) when false — but only when the current status is
+    /// non-terminal. Returns `true` if this call performed the transition,
+    /// `false` if another concurrent caller already finalized it. This is the
+    /// compare-and-swap that makes fan-in expansion exactly-once even when
+    /// multiple children complete on different worker threads at the same
+    /// instant.
+    fn finalize_fan_out_parent(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        succeeded: bool,
+        error: Option<&str>,
+        completed_at: i64,
+    ) -> Result<bool>;
+
     /// Return all nodes whose `node_name` starts with `prefix`.
     ///
     /// Used to find fan-out children (e.g., prefix `"process["` returns

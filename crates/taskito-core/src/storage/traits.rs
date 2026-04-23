@@ -5,8 +5,9 @@ use crate::storage::{DeadJob, QueueStats};
 
 /// Trait abstracting the storage backend for the task queue.
 ///
-/// Implementations include `SqliteStorage` and `PostgresStorage`. This trait
-/// enables alternative backends and simplifies testing with mock storage.
+/// Implementations: `SqliteStorage` (default), `PostgresStorage` (feature
+/// `postgres`), and `RedisStorage` (feature `redis`). The trait enables
+/// alternative backends and simplifies testing with mock storage.
 pub trait Storage: Send + Sync + Clone {
     // ── Job operations ──────────────────────────────────────────────
 
