@@ -174,6 +174,10 @@ class PrometheusMiddleware(TaskMiddleware):
         disabled_metrics: Metric groups or individual metric names to skip.
             Groups: ``"jobs"``, ``"queue"``, ``"resource"``, ``"proxy"``,
             ``"intercept"``.
+        task_filter: Predicate that receives a task name and returns ``True``
+            to export metrics for the task, ``False`` to ignore it. Defaults
+            to exporting all tasks. Parity with ``OTelMiddleware`` and
+            ``SentryMiddleware``.
     """
 
     def __init__(
@@ -182,6 +186,7 @@ class PrometheusMiddleware(TaskMiddleware):
         namespace: str = "taskito",
         extra_labels_fn: Callable[[JobContext], dict[str, str]] | None = None,
         disabled_metrics: set[str] | None = None,
+        task_filter: Callable[[str], bool] | None = None,
     ) -> None:
         if Counter is None:
             raise ImportError(
@@ -190,10 +195,16 @@ class PrometheusMiddleware(TaskMiddleware):
             )
         self._metrics = _get_or_create_metrics(namespace, disabled_metrics)
         self._extra_labels_fn = extra_labels_fn
+        self._task_filter = task_filter
         self._start_times: dict[str, float] = {}
         self._lock = threading.Lock()
 
+    def _should_track(self, task_name: str) -> bool:
+        return self._task_filter is None or self._task_filter(task_name)
+
     def before(self, ctx: JobContext) -> None:
+        if not self._should_track(ctx.task_name):
+            return
         with self._lock:
             self._start_times[ctx.id] = time.monotonic()
         m = self._metrics["active_workers"]
@@ -201,6 +212,8 @@ class PrometheusMiddleware(TaskMiddleware):
             m.inc()
 
     def after(self, ctx: JobContext, result: Any, error: Exception | None) -> None:
+        if not self._should_track(ctx.task_name):
+            return
         m = self._metrics["active_workers"]
         if m is not None:
             m.dec()
@@ -219,6 +232,8 @@ class PrometheusMiddleware(TaskMiddleware):
                 m.labels(task=ctx.task_name).observe(duration)
 
     def on_retry(self, ctx: JobContext, error: Exception, retry_count: int) -> None:
+        if not self._should_track(ctx.task_name):
+            return
         m = self._metrics["retries_total"]
         if m is not None:
             m.labels(task=ctx.task_name).inc()

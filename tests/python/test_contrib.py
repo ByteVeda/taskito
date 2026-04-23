@@ -244,6 +244,7 @@ class TestPrometheusMiddleware:
         mw = prom.PrometheusMiddleware.__new__(prom.PrometheusMiddleware)
         mw._metrics = metrics
         mw._extra_labels_fn = None
+        mw._task_filter = None
         mw._start_times = {}
         mw._lock = threading.Lock()
 
@@ -263,6 +264,7 @@ class TestPrometheusMiddleware:
         mw = prom.PrometheusMiddleware.__new__(prom.PrometheusMiddleware)
         mw._metrics = metrics
         mw._extra_labels_fn = None
+        mw._task_filter = None
         mw._start_times = {"job-1": 0.0}
         mw._lock = threading.Lock()
 
@@ -284,6 +286,7 @@ class TestPrometheusMiddleware:
         mw = prom.PrometheusMiddleware.__new__(prom.PrometheusMiddleware)
         mw._metrics = metrics
         mw._extra_labels_fn = None
+        mw._task_filter = None
         mw._start_times = {"job-1": 0.0}
         mw._lock = threading.Lock()
 
