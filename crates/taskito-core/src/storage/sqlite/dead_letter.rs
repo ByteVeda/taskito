@@ -49,17 +49,15 @@ impl SqliteStorage {
             Ok::<(), diesel::result::Error>(())
         })?;
 
-        // Drop connection before cascade (needed for single-connection pools)
+        // Drop connection before cascade (needed for single-connection pools).
         drop(conn);
 
-        // Cascade cancel dependents — log warning on failure since the DLQ
-        // transaction already committed and we can't roll it back.
-        if let Err(e) = self.cascade_cancel(&job_id, "dependency failed") {
-            log::warn!(
-                "[taskito] cascade_cancel failed for job {}: {}. Dependent jobs may be left pending.",
-                job_id, e
-            );
-        }
+        // Cascade cancel dependents. Errors propagate so callers can decide how
+        // to react; parity with the Postgres and Redis backends. Note: the DLQ
+        // row has already been committed, so a failure here leaves a partial
+        // state (DLQ entry present, dependents possibly uncancelled) — callers
+        // should log and alert, not silently retry `move_to_dlq`.
+        self.cascade_cancel(&job_id, "dependency failed")?;
 
         Ok(())
     }
