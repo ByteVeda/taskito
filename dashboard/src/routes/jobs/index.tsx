@@ -1,8 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
 import { Pagination } from "@/components/ui";
-import { JobFiltersBar, JobSearchBar, JobTable, jobsListQuery, useJobs } from "@/features/jobs";
-import type { JobFilters, JobListQuery } from "@/features/jobs/types";
+import {
+  type JobFilters,
+  JobFiltersBar,
+  type JobListQuery,
+  JobSearchBar,
+  JobTable,
+  jobsListQuery,
+  useJobs,
+} from "@/features/jobs";
 import { parseJobListSearch } from "@/features/jobs/utils";
 
 export const Route = createFileRoute("/jobs/")({

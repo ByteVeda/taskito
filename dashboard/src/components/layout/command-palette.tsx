@@ -24,7 +24,7 @@ import {
   CommandList,
   CommandSeparator,
   CommandShortcut,
-} from "@/components/ui/command";
+} from "@/components/ui";
 import { type RefreshOption, useCommandPalette, useRefreshInterval, useTheme } from "@/providers";
 
 interface NavCmd {
