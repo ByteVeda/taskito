@@ -16,36 +16,43 @@ repos:
         pass_filenames: false
 
       - id: ruff-check
-        name: ruff check
-        entry: uv run ruff check .
+        name: ruff check (py_src + tests)
+        entry: uv run ruff check py_src/ tests/
         language: system
         types: [python]
         pass_filenames: false
 
       - id: ruff-format
-        name: ruff format
-        entry: uv run ruff format --check .
+        name: ruff format (py_src + tests)
+        entry: uv run ruff format --check py_src/ tests/
         language: system
         types: [python]
         pass_filenames: false
 
       - id: mypy
-        name: mypy
-        entry: uv run mypy py_src/
+        name: mypy (py_src + tests)
+        entry: uv run mypy py_src/taskito/ tests/python/ --no-incremental
         language: system
         types: [python]
         pass_filenames: false
 
       - id: dashboard-lint
         name: dashboard lint (biome)
-        entry: bash -c 'cd dashboard && npx biome ci src/'
+        entry: bash -c 'cd dashboard && pnpm exec biome ci src/'
         language: system
         files: ^dashboard/src/
         pass_filenames: false
 
       - id: dashboard-typecheck
         name: dashboard typecheck
-        entry: bash -c 'cd dashboard && npx tsc --noEmit'
+        entry: bash -c 'cd dashboard && pnpm exec tsc --noEmit'
+        language: system
+        files: ^dashboard/(src/|tsconfig\.json|package\.json)
+        pass_filenames: false
+
+      - id: dashboard-test
+        name: dashboard tests (vitest)
+        entry: bash -c 'cd dashboard && pnpm exec vitest run'
         language: system
         files: ^dashboard/src/
         pass_filenames: false
