@@ -1,5 +1,5 @@
 import path from "node:path";
-import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
@@ -8,7 +8,8 @@ const backend = "http://127.0.0.1:8080";
 
 export default defineConfig({
   plugins: [
-    TanStackRouterVite({
+    tanstackRouter({
+      target: "react",
       routesDirectory: "./src/routes",
       generatedRouteTree: "./src/route-tree.gen.ts",
       quoteStyle: "double",
@@ -23,7 +24,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "dist",
+    outDir: "../py_src/taskito/static/dashboard",
     emptyOutDir: true,
     sourcemap: false,
     target: "es2022",
