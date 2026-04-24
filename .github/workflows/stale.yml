@@ -1,0 +1,29 @@
+name: Stale PRs
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-pr-stale: 7
+          days-before-pr-close: 3
+          stale-pr-label: stale
+          stale-pr-message: >
+            This PR has had no activity for 7 days and has been marked as stale.
+            It will be closed in 3 days if no further activity occurs.
+          close-pr-message: >
+            Closing this PR due to 10 days of inactivity.
+            Feel free to reopen it once you're ready to continue.
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          exempt-pr-labels: "pinned,security,work-in-progress"
