@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { type RefreshOption, useRefreshInterval } from "@/providers/refresh-interval-provider";
+import { type RefreshOption, useRefreshInterval } from "@/providers";
 
 const OPTIONS: RefreshOption[] = ["2s", "5s", "10s", "off"];
 

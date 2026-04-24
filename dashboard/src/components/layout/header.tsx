@@ -1,7 +1,7 @@
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { useCommandPalette } from "@/providers/command-palette-provider";
+import { useCommandPalette } from "@/providers";
 import { LastRefreshed } from "./last-refreshed";
 import { MobileMenu } from "./mobile-menu";
 import { RefreshControl } from "./refresh-control";
