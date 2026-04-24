@@ -1,0 +1,85 @@
+name: Dashboard
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/dashboard.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/dashboard.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: dashboard
+
+jobs:
+  ci:
+    name: lint · typecheck · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.30.3"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate route tree
+        # TanStack Router's file-based tree is a build artifact; tsc needs
+        # it to resolve route imports.
+        run: pnpm exec tsr generate
+
+      - name: Biome (lint + format)
+        run: pnpm exec biome ci src/
+
+      - name: TypeScript check
+        run: pnpm exec tsc --noEmit
+
+      - name: Unit tests (vitest)
+        run: pnpm exec vitest run
+
+      - name: Build
+        run: pnpm exec vite build
+
+      - name: Bundle size summary
+        if: always()
+        run: |
+          set -e
+          {
+            echo "### Dashboard bundle"
+            echo
+            echo "| File | Size | Gzipped |"
+            echo "|------|-----:|--------:|"
+            find ../py_src/taskito/static/dashboard -type f \( -name "*.js" -o -name "*.css" -o -name "*.html" \) | sort | while read -r f; do
+              raw=$(stat -c%s "$f")
+              gz=$(gzip -c "$f" | wc -c)
+              printf "| \`%s\` | %s | %s |\n" "${f#../py_src/taskito/static/dashboard/}" "$(numfmt --to=iec --suffix=B "$raw")" "$(numfmt --to=iec --suffix=B "$gz")"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload built assets
+        uses: actions/upload-artifact@v5
+        with:
+          name: dashboard-dist
+          path: py_src/taskito/static/dashboard/
+          retention-days: 7
+          if-no-files-found: error

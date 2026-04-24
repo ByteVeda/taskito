@@ -1,0 +1,57 @@
+import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
+import { AlertTriangle, ArrowLeft, Home } from "lucide-react";
+import { AppShell } from "@/components/layout";
+import { Button, buttonVariants } from "@/components/ui";
+import { cn } from "@/lib/cn";
+
+export const Route = createRootRoute({
+  component: RootLayout,
+  errorComponent: ErrorView,
+  notFoundComponent: NotFoundView,
+});
+
+function RootLayout() {
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
+  );
+}
+
+function ErrorView({ error }: { error: Error }) {
+  return (
+    <AppShell>
+      <div className="grid min-h-[50vh] place-items-center">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 grid size-12 place-items-center rounded-full bg-danger-dim text-danger">
+            <AlertTriangle className="size-5" aria-hidden />
+          </div>
+          <h1 className="text-lg font-semibold">Something went wrong</h1>
+          <p className="mt-2 text-sm text-[var(--fg-muted)]">{error.message}</p>
+          <Button variant="secondary" className="mt-5" onClick={() => window.location.reload()}>
+            <ArrowLeft aria-hidden /> Reload
+          </Button>
+        </div>
+      </div>
+    </AppShell>
+  );
+}
+
+function NotFoundView() {
+  return (
+    <div className="grid min-h-[50vh] place-items-center">
+      <div className="max-w-md text-center">
+        <div className="mx-auto mb-4 grid size-12 place-items-center rounded-full bg-[var(--surface-2)] text-[var(--fg-muted)]">
+          <span className="font-mono text-base">404</span>
+        </div>
+        <h1 className="text-lg font-semibold">Page not found</h1>
+        <p className="mt-2 text-sm text-[var(--fg-muted)]">
+          The page you are looking for doesn't exist or has been moved.
+        </p>
+        <Link to="/" className={cn(buttonVariants({ variant: "secondary" }), "mt-5")}>
+          <Home aria-hidden /> Go home
+        </Link>
+      </div>
+    </div>
+  );
+}

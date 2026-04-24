@@ -1,18 +1,35 @@
-import { Inbox } from "lucide-preact";
+import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "@/lib/cn";
 
 interface EmptyStateProps {
-  message: string;
-  subtitle?: string;
+  icon?: LucideIcon;
+  title: string;
+  description?: string;
+  action?: ReactNode;
+  className?: string;
 }
 
-export function EmptyState({ message, subtitle }: EmptyStateProps) {
+export function EmptyState({ icon: Icon, title, description, action, className }: EmptyStateProps) {
   return (
-    <div class="flex flex-col items-center justify-center py-16 text-center">
-      <div class="w-12 h-12 rounded-xl dark:bg-surface-3 bg-slate-100 flex items-center justify-center mb-4">
-        <Inbox class="w-6 h-6 text-muted" strokeWidth={1.5} />
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[var(--border-strong)] bg-[var(--surface)] px-6 py-12 text-center",
+        className,
+      )}
+    >
+      {Icon ? (
+        <div className="grid size-10 place-items-center rounded-full bg-[var(--surface-2)] text-[var(--fg-muted)]">
+          <Icon className="size-5" aria-hidden />
+        </div>
+      ) : null}
+      <div>
+        <div className="text-sm font-medium text-[var(--fg)]">{title}</div>
+        {description ? (
+          <div className="mt-1 text-xs text-[var(--fg-muted)]">{description}</div>
+        ) : null}
       </div>
-      <p class="text-sm font-medium dark:text-gray-300 text-slate-600">{message}</p>
-      {subtitle && <p class="text-xs text-muted mt-1">{subtitle}</p>}
+      {action}
     </div>
   );
 }

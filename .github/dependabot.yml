@@ -1,17 +1,98 @@
 version: 2
-  updates:
-    - package-ecosystem: cargo
-      directory: /
-      schedule:
-        interval: weekly
-      groups:
-        rust-deps:
-          patterns: ["*"]
-    - package-ecosystem: pip
-      directory: /
-      schedule:
-        interval: weekly
-    - package-ecosystem: github-actions
-      directory: /
-      schedule:
-        interval: monthly
+
+# Weekly dependency updates across every ecosystem taskito uses.
+# Patch + minor updates are grouped into one PR per ecosystem to keep
+# review traffic low; major updates get their own PRs so they can be
+# evaluated individually. Security advisories always open dedicated PRs.
+updates:
+  # Rust (workspace Cargo.toml + per-crate)
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - area/rust
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      rust-deps:
+        update-types:
+          - patch
+          - minor
+
+  # Python (pyproject.toml — uv manages resolution)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - area/python
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      python-deps:
+        update-types:
+          - patch
+          - minor
+
+  # Dashboard (pnpm)
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - area/dashboard
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      dashboard-deps:
+        update-types:
+          - patch
+          - minor
+      # Surface Radix + TanStack ecosystem upgrades together when they
+      # co-release — lets us pin compatible sets in a single PR.
+      radix:
+        patterns:
+          - "@radix-ui/*"
+      tanstack:
+        patterns:
+          - "@tanstack/*"
+
+  # GitHub Actions used in .github/workflows/*.yml
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - area/ci
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        update-types:
+          - patch
+          - minor
+          - major

@@ -1,0 +1,41 @@
+name: Semantic PR title
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Keep this list aligned with CLAUDE.md's conventional-commit guidance.
+          types: |
+            feat
+            fix
+            refactor
+            perf
+            chore
+            docs
+            test
+            ci
+            build
+            style
+            revert
+          requireScope: false
+          # Enforce lowercase-first so "feat: Add X" fails but "feat: add X" passes.
+          subjectPattern: "^(?![A-Z]).+$"
+          subjectPatternError: |
+            The subject "{subject}" starts with an uppercase character.
+            Use lowercase, e.g. "feat: add foo" not "feat: Add foo".

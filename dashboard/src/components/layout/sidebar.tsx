@@ -1,21 +1,23 @@
-import type { LucideIcon } from "lucide-preact";
+import { Link, useLocation } from "@tanstack/react-router";
 import {
+  Activity,
+  AlertOctagon,
   BarChart3,
   Box,
-  Cog,
-  Layers,
+  CircuitBoard,
   LayoutDashboard,
-  ListTodo,
+  ListTree,
+  type LucideIcon,
   ScrollText,
   Server,
-  ShieldAlert,
+  Settings2,
   Skull,
-} from "lucide-preact";
-import { useEffect, useState } from "preact/hooks";
-import { getCurrentUrl } from "preact-router";
+} from "lucide-react";
+import { cn } from "@/lib/cn";
+import { site } from "@/lib/site";
 
 interface NavItem {
-  path: string;
+  to: string;
   label: string;
   icon: LucideIcon;
 }
@@ -25,89 +27,82 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const NAV_GROUPS: NavGroup[] = [
+const NAV: NavGroup[] = [
   {
     title: "Monitoring",
     items: [
-      { path: "/", label: "Overview", icon: LayoutDashboard },
-      { path: "/jobs", label: "Jobs", icon: ListTodo },
-      { path: "/metrics", label: "Metrics", icon: BarChart3 },
-      { path: "/logs", label: "Logs", icon: ScrollText },
+      { to: "/", label: "Overview", icon: LayoutDashboard },
+      { to: "/jobs", label: "Jobs", icon: ListTree },
+      { to: "/metrics", label: "Metrics", icon: BarChart3 },
+      { to: "/logs", label: "Logs", icon: ScrollText },
     ],
   },
   {
     title: "Infrastructure",
     items: [
-      { path: "/workers", label: "Workers", icon: Server },
-      { path: "/queues", label: "Queues", icon: Layers },
-      { path: "/resources", label: "Resources", icon: Box },
-      { path: "/circuit-breakers", label: "Circuit Breakers", icon: ShieldAlert },
+      { to: "/queues", label: "Queues", icon: Box },
+      { to: "/workers", label: "Workers", icon: Server },
+      { to: "/resources", label: "Resources", icon: Activity },
     ],
   },
   {
-    title: "Advanced",
+    title: "Reliability",
     items: [
-      { path: "/dead-letters", label: "Dead Letters", icon: Skull },
-      { path: "/system", label: "System", icon: Cog },
+      { to: "/dead-letters", label: "Dead letters", icon: Skull },
+      { to: "/circuit-breakers", label: "Circuit breakers", icon: CircuitBoard },
+      { to: "/system", label: "System", icon: Settings2 },
     ],
   },
 ];
 
-function isActive(current: string, path: string): boolean {
-  if (path === "/") return current === "/";
-  return current === path || current.startsWith(`${path}/`);
-}
-
 export function Sidebar() {
-  const [currentPath, setCurrentPath] = useState(getCurrentUrl());
-
-  useEffect(() => {
-    const handler = () => setCurrentPath(getCurrentUrl());
-    addEventListener("popstate", handler);
-    addEventListener("pushstate", handler);
-    return () => {
-      removeEventListener("popstate", handler);
-      removeEventListener("pushstate", handler);
-    };
-  }, []);
-
+  const { pathname } = useLocation();
   return (
-    <aside class="w-60 shrink-0 border-r dark:border-white/[0.06] border-slate-200 dark:bg-surface-2 bg-white overflow-y-auto h-[calc(100vh-56px)]">
-      <nav class="p-3 space-y-5 pt-4">
-        {NAV_GROUPS.map((group) => (
-          <div key={group.title}>
-            <div class="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.1em] text-muted/60">
+    <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)]">
+      <div className="flex items-center gap-2 px-5 py-4">
+        <div className="grid place-items-center size-7 rounded-md bg-accent text-accent-fg">
+          <AlertOctagon className="size-4" aria-hidden />
+        </div>
+        <div className="flex flex-col leading-tight">
+          <span className="text-sm font-semibold tracking-tight">{site.name}</span>
+          <span className="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)]">
+            Dashboard
+          </span>
+        </div>
+      </div>
+      <nav className="flex-1 overflow-y-auto px-3 pb-4">
+        {NAV.map((group) => (
+          <div key={group.title} className="mt-5 first:mt-2">
+            <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
               {group.title}
             </div>
-            <div class="space-y-0.5">
-              {group.items.map((item) => {
-                const active = isActive(currentPath, item.path);
-                const Icon = item.icon;
+            <ul className="flex flex-col gap-0.5">
+              {group.items.map(({ to, label, icon: Icon }) => {
+                const active = pathname === to || (to !== "/" && pathname.startsWith(`${to}/`));
                 return (
-                  <a
-                    key={item.path}
-                    href={item.path}
-                    class={`flex items-center gap-2.5 px-3 py-2 text-[13px] rounded-lg transition-all duration-150 no-underline relative ${
-                      active
-                        ? "dark:bg-accent/10 bg-accent/5 dark:text-white text-slate-900 font-medium"
-                        : "dark:text-gray-400 text-slate-500 hover:dark:text-gray-200 hover:text-slate-700 hover:dark:bg-white/[0.03] hover:bg-slate-100"
-                    }`}
-                  >
-                    {active && (
-                      <div class="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-accent" />
-                    )}
-                    <Icon
-                      class={`w-4 h-4 shrink-0 ${active ? "text-accent" : ""}`}
-                      strokeWidth={active ? 2.2 : 1.8}
-                    />
-                    {item.label}
-                  </a>
+                  <li key={to}>
+                    <Link
+                      to={to}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
+                        active
+                          ? "bg-[var(--surface-2)] text-[var(--fg)] shadow-xs"
+                          : "text-[var(--fg-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]",
+                      )}
+                    >
+                      <Icon className={cn("size-4", active && "text-accent")} aria-hidden />
+                      <span>{label}</span>
+                    </Link>
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           </div>
         ))}
       </nav>
+      <div className="border-t border-[var(--border)] px-5 py-3 text-[11px] text-[var(--fg-subtle)]">
+        {import.meta.env.DEV ? "dev build" : "production"}
+      </div>
     </aside>
   );
 }

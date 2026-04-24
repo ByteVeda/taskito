@@ -1,116 +1,128 @@
-import type { ComponentChildren } from "preact";
+import {
+  type ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  type Row,
+  type SortingState,
+  useReactTable,
+} from "@tanstack/react-table";
+import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
+import { type ReactNode, useState } from "react";
+import { cn } from "@/lib/cn";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
 
-export interface Column<T> {
-  header: string;
-  accessor: keyof T | ((row: T) => ComponentChildren);
+interface DataTableProps<TData> {
+  columns: ColumnDef<TData, unknown>[];
+  data: TData[];
+  empty?: ReactNode;
+  onRowClick?: (row: TData) => void;
+  rowKey?: (row: TData, index: number) => string;
   className?: string;
+  initialSorting?: SortingState;
 }
 
-interface DataTableProps<T> {
-  columns: Column<T>[];
-  data: T[];
-  onRowClick?: (row: T) => void;
-  children?: ComponentChildren;
-  selectable?: boolean;
-  selectedKeys?: Set<string>;
-  rowKey?: (row: T) => string;
-  onSelectionChange?: (keys: Set<string>) => void;
-}
-
-export function DataTable<T>({
+export function DataTable<TData>({
   columns,
   data,
+  empty,
   onRowClick,
-  children,
-  selectable,
-  selectedKeys,
   rowKey,
-  onSelectionChange,
-}: DataTableProps<T>) {
-  const allKeys = selectable && rowKey ? data.map(rowKey) : [];
-  const allSelected =
-    selectable && allKeys.length > 0 && allKeys.every((k) => selectedKeys?.has(k));
+  className,
+  initialSorting = [],
+}: DataTableProps<TData>) {
+  const [sorting, setSorting] = useState<SortingState>(initialSorting);
 
-  const toggleAll = () => {
-    if (!onSelectionChange) return;
-    onSelectionChange(allSelected ? new Set() : new Set(allKeys));
-  };
-
-  const toggleRow = (key: string) => {
-    if (!onSelectionChange || !selectedKeys) return;
-    const next = new Set(selectedKeys);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    onSelectionChange(next);
-  };
+  const table = useReactTable({
+    data,
+    columns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
 
   return (
-    <div class="dark:bg-surface-2 bg-white rounded-xl shadow-sm dark:shadow-black/20 overflow-hidden border dark:border-white/[0.06] border-slate-200">
-      <div class="overflow-x-auto">
-        <table class="w-full border-collapse text-[13px]">
-          <thead>
-            <tr>
-              {selectable && (
-                <th class="w-10 text-center px-3 py-2.5 dark:bg-surface-3/50 bg-slate-50 border-b dark:border-white/[0.04] border-slate-100">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={toggleAll}
-                    class="accent-accent cursor-pointer"
-                  />
-                </th>
-              )}
-              {columns.map((col, i) => (
-                <th
-                  key={i}
-                  class={`text-left px-4 py-2.5 dark:bg-surface-3/50 bg-slate-50 text-muted font-semibold text-[11px] uppercase tracking-[0.05em] whitespace-nowrap border-b dark:border-white/[0.04] border-slate-100 ${col.className ?? ""}`}
-                >
-                  {col.header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row, ri) => {
-              const key = selectable && rowKey ? rowKey(row) : String(ri);
-              const isSelected = selectedKeys?.has(key);
-              return (
-                <tr
-                  key={key}
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  class={`border-b dark:border-white/[0.03] border-slate-50 last:border-0 transition-colors duration-100 ${
-                    ri % 2 === 1 ? "dark:bg-white/[0.01] bg-slate-50/30" : ""
-                  } ${isSelected ? "dark:bg-accent/[0.08] bg-accent/[0.04]" : ""} ${
-                    onRowClick
-                      ? "cursor-pointer hover:dark:bg-accent/[0.04] hover:bg-accent/[0.02]"
-                      : ""
-                  }`}
-                >
-                  {selectable && (
-                    <td class="w-10 text-center px-3 py-3">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleRow(key)}
-                        onClick={(e) => e.stopPropagation()}
-                        class="accent-accent cursor-pointer"
-                      />
-                    </td>
-                  )}
-                  {columns.map((col, ci) => (
-                    <td key={ci} class={`px-4 py-3 whitespace-nowrap ${col.className ?? ""}`}>
-                      {typeof col.accessor === "function"
-                        ? col.accessor(row)
-                        : (row[col.accessor] as ComponentChildren)}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {children}
+    <div
+      className={cn(
+        "rounded-lg bg-[var(--surface)] ring-1 ring-inset ring-[var(--border)] shadow-xs",
+        className,
+      )}
+    >
+      <Table>
+        <TableHeader>
+          {table.getHeaderGroups().map((group) => (
+            <TableRow key={group.id}>
+              {group.headers.map((header) => {
+                const canSort = header.column.getCanSort();
+                const sorted = header.column.getIsSorted();
+                return (
+                  <TableHead key={header.id} style={{ width: header.getSize() }}>
+                    {header.isPlaceholder ? null : canSort ? (
+                      <button
+                        type="button"
+                        onClick={header.column.getToggleSortingHandler()}
+                        className="inline-flex items-center gap-1 uppercase tracking-wider transition-colors hover:text-[var(--fg)]"
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {sorted === "asc" ? (
+                          <ArrowUp className="size-3" aria-hidden />
+                        ) : sorted === "desc" ? (
+                          <ArrowDown className="size-3" aria-hidden />
+                        ) : (
+                          <ChevronsUpDown className="size-3 opacity-40" aria-hidden />
+                        )}
+                      </button>
+                    ) : (
+                      flexRender(header.column.columnDef.header, header.getContext())
+                    )}
+                  </TableHead>
+                );
+              })}
+            </TableRow>
+          ))}
+        </TableHeader>
+        <TableBody>
+          {table.getRowModel().rows.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={columns.length}
+                className="h-32 text-center text-sm text-[var(--fg-subtle)]"
+              >
+                {empty ?? "No data"}
+              </TableCell>
+            </TableRow>
+          ) : (
+            table.getRowModel().rows.map((row: Row<TData>, index) => (
+              <TableRow
+                key={rowKey ? rowKey(row.original, index) : row.id}
+                className={cn(
+                  onRowClick &&
+                    "cursor-pointer focus-visible:outline-none focus-visible:bg-[var(--surface-2)]",
+                )}
+                tabIndex={onRowClick ? 0 : undefined}
+                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                onKeyDown={
+                  onRowClick
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onRowClick(row.original);
+                        }
+                      }
+                    : undefined
+                }
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <TableCell key={cell.id}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
     </div>
   );
 }

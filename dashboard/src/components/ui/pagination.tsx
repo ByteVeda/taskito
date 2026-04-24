@@ -1,37 +1,48 @@
-import { ChevronLeft, ChevronRight } from "lucide-preact";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { cn } from "@/lib/cn";
+import { Button } from "./button";
 
 interface PaginationProps {
   page: number;
-  pageSize: number;
-  itemCount: number;
-  onPageChange: (page: number) => void;
+  pageCount?: number;
+  hasMore?: boolean;
+  onChange: (page: number) => void;
+  className?: string;
 }
 
-export function Pagination({ page, pageSize, itemCount, onPageChange }: PaginationProps) {
+export function Pagination({ page, pageCount, hasMore, onChange, className }: PaginationProps) {
+  const canNext = pageCount != null ? page < pageCount - 1 : Boolean(hasMore);
+  const canPrev = page > 0;
   return (
-    <div class="flex items-center justify-between px-4 py-3 text-[13px] text-muted border-t dark:border-white/[0.04] border-slate-100">
-      <span>
-        Showing {page * pageSize + 1}\u2013{page * pageSize + itemCount} items
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 text-xs text-[var(--fg-muted)]",
+        className,
+      )}
+    >
+      <span className="tabular-nums">
+        Page <span className="font-medium text-[var(--fg)]">{page + 1}</span>
+        {pageCount != null ? (
+          <>
+            {" "}
+            of <span className="font-medium text-[var(--fg)]">{pageCount}</span>
+          </>
+        ) : null}
       </span>
-      <div class="flex gap-1.5">
-        <button
-          type="button"
-          onClick={() => onPageChange(page - 1)}
-          disabled={page === 0}
-          class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg dark:bg-surface-3 bg-slate-100 dark:text-gray-300 text-slate-600 border dark:border-white/[0.06] border-slate-200 disabled:opacity-30 cursor-pointer disabled:cursor-default hover:enabled:dark:bg-surface-4 hover:enabled:bg-slate-200 transition-all duration-150 text-[13px]"
+      <div className="flex items-center gap-1">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!canPrev}
+          onClick={() => onChange(Math.max(0, page - 1))}
         >
-          <ChevronLeft class="w-3.5 h-3.5" />
-          Prev
-        </button>
-        <button
-          type="button"
-          onClick={() => onPageChange(page + 1)}
-          disabled={itemCount < pageSize}
-          class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg dark:bg-surface-3 bg-slate-100 dark:text-gray-300 text-slate-600 border dark:border-white/[0.06] border-slate-200 disabled:opacity-30 cursor-pointer disabled:cursor-default hover:enabled:dark:bg-surface-4 hover:enabled:bg-slate-200 transition-all duration-150 text-[13px]"
-        >
+          <ChevronLeft aria-hidden />
+          Previous
+        </Button>
+        <Button variant="outline" size="sm" disabled={!canNext} onClick={() => onChange(page + 1)}>
           Next
-          <ChevronRight class="w-3.5 h-3.5" />
-        </button>
+          <ChevronRight aria-hidden />
+        </Button>
       </div>
     </div>
   );
