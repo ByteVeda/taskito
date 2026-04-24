@@ -1,4 +1,5 @@
 export { AppShell } from "./app-shell";
+export { BackendOffline } from "./backend-offline";
 export type { Crumb } from "./breadcrumbs";
 export { Breadcrumbs } from "./breadcrumbs";
 export { CommandPalette } from "./command-palette";

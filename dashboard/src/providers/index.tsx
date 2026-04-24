@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { CommandPaletteProvider } from "./command-palette-provider";
@@ -5,10 +6,16 @@ import { QueryProvider } from "./query-provider";
 import { RefreshIntervalProvider } from "./refresh-interval-provider";
 import { ThemeProvider } from "./theme-provider";
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({
+  queryClient,
+  children,
+}: {
+  queryClient: QueryClient;
+  children: ReactNode;
+}) {
   return (
     <ThemeProvider>
-      <QueryProvider>
+      <QueryProvider client={queryClient}>
         <RefreshIntervalProvider>
           <CommandPaletteProvider>
             {children}
