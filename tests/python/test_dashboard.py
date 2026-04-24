@@ -275,11 +275,52 @@ def test_api_dead_letters_empty(dashboard_server: tuple[str, Queue, list[Any]]) 
     assert data == []
 
 
-def test_spa_html_served(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
-    """GET / returns the SPA HTML shell."""
+def test_spa_html_served(
+    dashboard_server: tuple[str, Queue, list[Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """GET / serves the SPA index.html when assets are bundled.
+
+    The Python CI matrix doesn't build the frontend, so we synthesise a
+    minimal bundle in a tmp dir and point the dashboard's cached static
+    root at it. This keeps the test independent of Node/pnpm.
+    """
+    from taskito import dashboard as dashboard_module
+
+    tmp_path.joinpath("index.html").write_text(
+        '<!doctype html><html><body><div id="app"></div></body></html>',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dashboard_module, "_static_root", tmp_path)
+    monkeypatch.setattr(dashboard_module, "_static_root_resolved", True)
+
     base, _, __ = dashboard_server
     with urllib.request.urlopen(base) as resp:
+        assert resp.status == 200
         assert resp.headers.get("Content-Type", "").startswith("text/html")
         html = resp.read().decode()
         assert "<!doctype html>" in html.lower()
         assert 'id="app"' in html
+
+
+def test_spa_missing_assets_returns_503(
+    dashboard_server: tuple[str, Queue, list[Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the frontend build wasn't run, the dashboard returns 503 with
+    actionable rebuild instructions rather than silently 404-ing."""
+    from taskito import dashboard as dashboard_module
+
+    monkeypatch.setattr(dashboard_module, "_static_root", None)
+    monkeypatch.setattr(dashboard_module, "_static_root_resolved", True)
+
+    base, _, __ = dashboard_server
+    try:
+        urllib.request.urlopen(base)
+        pytest.fail("Expected 503")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 503
+        body = exc.read().decode()
+        assert "not bundled" in body.lower()
+        assert "pnpm" in body.lower()
