@@ -1,16 +1,8 @@
 import { api } from "@/lib/api-client";
-import type { Job, QueueStats, QueueStatsMap, TimeseriesBucket } from "@/lib/api-types";
+import type { Job, QueueStats, TimeseriesBucket } from "@/lib/api-types";
 
 export function fetchStats(signal?: AbortSignal): Promise<QueueStats> {
   return api.get<QueueStats>("/api/stats", { signal });
-}
-
-export function fetchQueueStats(signal?: AbortSignal): Promise<QueueStatsMap> {
-  return api.get<QueueStatsMap>("/api/stats/queues", { signal });
-}
-
-export function fetchPausedQueues(signal?: AbortSignal): Promise<string[]> {
-  return api.get<string[]>("/api/queues/paused", { signal });
 }
 
 export function fetchRecentJobs(limit: number, signal?: AbortSignal): Promise<Job[]> {
