@@ -1,15 +1,24 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { Breadcrumbs, type Crumb } from "./breadcrumbs";
 
 interface PageHeaderProps {
   eyebrow?: string;
   title: string;
   description?: string;
   actions?: ReactNode;
+  breadcrumbs?: Crumb[];
   className?: string;
 }
 
-export function PageHeader({ eyebrow, title, description, actions, className }: PageHeaderProps) {
+export function PageHeader({
+  eyebrow,
+  title,
+  description,
+  actions,
+  breadcrumbs,
+  className,
+}: PageHeaderProps) {
   return (
     <div
       className={cn(
@@ -18,7 +27,9 @@ export function PageHeader({ eyebrow, title, description, actions, className }: 
       )}
     >
       <div>
-        {eyebrow ? (
+        {breadcrumbs && breadcrumbs.length > 0 ? (
+          <Breadcrumbs items={breadcrumbs} className="mb-2" />
+        ) : eyebrow ? (
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
             {eyebrow}
           </div>
@@ -26,7 +37,7 @@ export function PageHeader({ eyebrow, title, description, actions, className }: 
         <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">{title}</h1>
         {description ? <p className="mt-1 text-sm text-[var(--fg-muted)]">{description}</p> : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );
 }

@@ -1,7 +1,12 @@
 export { AppShell } from "./app-shell";
+export type { Crumb } from "./breadcrumbs";
+export { Breadcrumbs } from "./breadcrumbs";
 export { CommandPalette } from "./command-palette";
 export { Header } from "./header";
+export { LastRefreshed } from "./last-refreshed";
+export { MobileMenu } from "./mobile-menu";
 export { PageHeader } from "./page-header";
 export { RefreshControl } from "./refresh-control";
+export { RouteErrorBoundary } from "./route-error-boundary";
 export { Sidebar } from "./sidebar";
 export { ThemeToggle } from "./theme-toggle";

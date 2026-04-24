@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Toaster } from "@/components/ui/toaster";
 import { CommandPaletteProvider } from "./command-palette-provider";
 import { QueryProvider } from "./query-provider";
 import { RefreshIntervalProvider } from "./refresh-interval-provider";
@@ -9,7 +10,10 @@ export function Providers({ children }: { children: ReactNode }) {
     <ThemeProvider>
       <QueryProvider>
         <RefreshIntervalProvider>
-          <CommandPaletteProvider>{children}</CommandPaletteProvider>
+          <CommandPaletteProvider>
+            {children}
+            <Toaster />
+          </CommandPaletteProvider>
         </RefreshIntervalProvider>
       </QueryProvider>
     </ThemeProvider>
