@@ -24,7 +24,7 @@ interface Row {
 
 export function LatencyChart({ buckets, loading }: LatencyChartProps) {
   const data = useMemo<Row[]>(
-    () => (buckets ?? []).map((b) => ({ t: b.timestamp * 1000, avg_ms: b.avg_ms })),
+    () => (buckets ?? []).map((b) => ({ t: b.timestamp, avg_ms: b.avg_ms })),
     [buckets],
   );
 

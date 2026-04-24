@@ -43,7 +43,7 @@ export function JobErrorsTab({ errors, loading, error, onRetry }: JobErrorsTabPr
           <div className="mb-2 flex items-center justify-between text-xs">
             <span className="font-medium text-[var(--fg)]">Attempt {err.attempt}</span>
             <span className="tabular-nums text-[var(--fg-subtle)]">
-              {formatAbsolute(err.failed_at * 1000)}
+              {formatAbsolute(err.failed_at)}
             </span>
           </div>
           <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-danger-dim/30 p-3 font-mono text-[11px] text-danger">

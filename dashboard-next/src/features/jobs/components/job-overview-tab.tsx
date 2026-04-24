@@ -42,7 +42,7 @@ export function JobOverviewTab({ job }: JobOverviewTabProps) {
             ) : null}
             <Row label="Timeout">{formatDuration(job.timeout_ms)}</Row>
             {startedToCompleted != null ? (
-              <Row label="Duration">{formatDuration(startedToCompleted * 1000)}</Row>
+              <Row label="Duration">{formatDuration(startedToCompleted)}</Row>
             ) : null}
           </Dl>
         </CardContent>
@@ -55,19 +55,19 @@ export function JobOverviewTab({ job }: JobOverviewTabProps) {
         <CardContent>
           <Dl>
             <Row label="Created">
-              <Timestamp unix={job.created_at} />
+              <Timestamp ms={job.created_at} />
             </Row>
             <Row label="Scheduled">
-              <Timestamp unix={job.scheduled_at} />
+              <Timestamp ms={job.scheduled_at} />
             </Row>
             {job.started_at ? (
               <Row label="Started">
-                <Timestamp unix={job.started_at} />
+                <Timestamp ms={job.started_at} />
               </Row>
             ) : null}
             {job.completed_at ? (
               <Row label="Completed">
-                <Timestamp unix={job.completed_at} />
+                <Timestamp ms={job.completed_at} />
               </Row>
             ) : null}
           </Dl>
@@ -116,8 +116,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Timestamp({ unix }: { unix: number }) {
-  const ms = unix * 1000;
+function Timestamp({ ms }: { ms: number }) {
   return (
     <span className="inline-flex flex-col">
       <span className="tabular-nums">{formatAbsolute(ms)}</span>

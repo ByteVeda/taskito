@@ -63,7 +63,7 @@ export function RecentJobs({ jobs, loading, error, onRetry }: RecentJobsProps) {
         header: "Created",
         cell: ({ getValue }) => (
           <span className="text-xs tabular-nums text-[var(--fg-muted)]">
-            {formatRelative(getValue<number>() * 1000)}
+            {formatRelative(getValue<number>())}
           </span>
         ),
       },

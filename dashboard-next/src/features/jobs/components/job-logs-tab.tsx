@@ -43,7 +43,7 @@ export function JobLogsTab({ logs, loading, error, onRetry }: JobLogsTabProps) {
           return (
             <li key={key} className="flex gap-3 px-4 py-2 hover:bg-[var(--surface-2)]/60">
               <span className="shrink-0 text-[var(--fg-subtle)]">
-                {formatAbsolute(log.logged_at * 1000)}
+                {formatAbsolute(log.logged_at)}
               </span>
               <span className={cn("shrink-0 uppercase", levelClass)}>{log.level}</span>
               <span className="flex-1 whitespace-pre-wrap break-words text-[var(--fg)]">

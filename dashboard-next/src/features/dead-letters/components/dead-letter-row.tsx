@@ -32,7 +32,7 @@ export function DeadLetterRow({ item }: DeadLetterRowProps) {
             </Badge>
           ) : null}
           <span className="ml-auto tabular-nums text-[var(--fg-subtle)]">
-            {formatRelative(item.failed_at * 1000)}
+            {formatRelative(item.failed_at)}
           </span>
         </div>
         {item.error ? (

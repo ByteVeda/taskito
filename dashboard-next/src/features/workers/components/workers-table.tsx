@@ -53,14 +53,14 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
         header: "Heartbeat",
         cell: ({ getValue }) => {
           const ts = getValue<number>();
-          const stale = Date.now() - ts * 1000 > STALE_AFTER_MS;
+          const stale = Date.now() - ts > STALE_AFTER_MS;
           return (
             <div className="flex items-center gap-2">
               <span
                 className={`size-1.5 rounded-full ${stale ? "bg-warning" : "bg-success"}`}
                 aria-hidden
               />
-              <span className="text-xs text-[var(--fg-muted)]">{formatRelative(ts * 1000)}</span>
+              <span className="text-xs text-[var(--fg-muted)]">{formatRelative(ts)}</span>
             </div>
           );
         },
@@ -70,7 +70,7 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
         header: "Registered",
         cell: ({ getValue }) => (
           <span className="text-xs text-[var(--fg-muted)]">
-            {formatRelative(getValue<number>() * 1000)}
+            {formatRelative(getValue<number>())}
           </span>
         ),
       },

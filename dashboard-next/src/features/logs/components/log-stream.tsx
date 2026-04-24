@@ -104,7 +104,7 @@ export function LogStream({ logs, loading, error, onRetry, className }: LogStrea
                 className="flex gap-3 px-4 py-1 font-mono text-[11px] hover:bg-[var(--surface-2)]/40"
               >
                 <span className="shrink-0 text-[var(--fg-subtle)]">
-                  {formatAbsolute(log.logged_at * 1000)}
+                  {formatAbsolute(log.logged_at)}
                 </span>
                 <span className={cn("w-14 shrink-0 uppercase", levelClass)}>{log.level}</span>
                 <span className="w-40 shrink-0 truncate text-[var(--fg-muted)]">
