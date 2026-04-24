@@ -1,20 +1,40 @@
-import { defineConfig } from "vite";
-import preact from "@preact/preset-vite";
+import path from "node:path";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
-import { viteSingleFile } from "vite-plugin-singlefile";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+const backend = "http://127.0.0.1:8080";
 
 export default defineConfig({
-  plugins: [preact(), tailwindcss(), viteSingleFile()],
+  plugins: [
+    tanstackRouter({
+      target: "react",
+      routesDirectory: "./src/routes",
+      generatedRouteTree: "./src/route-tree.gen.ts",
+      quoteStyle: "double",
+      semicolons: true,
+    }),
+    react(),
+    tailwindcss(),
+  ],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   build: {
-    outDir: "dist",
+    outDir: "../py_src/taskito/static/dashboard",
     emptyOutDir: true,
+    sourcemap: false,
+    target: "es2022",
   },
   server: {
     proxy: {
-      "/api": "http://localhost:8080",
-      "/health": "http://localhost:8080",
-      "/readiness": "http://localhost:8080",
-      "/metrics": "http://localhost:8080",
+      "/api": backend,
+      "/health": backend,
+      "/readiness": backend,
+      "/metrics": backend,
     },
   },
 });

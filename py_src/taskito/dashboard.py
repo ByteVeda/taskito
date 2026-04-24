@@ -10,14 +10,10 @@ Or programmatically::
     from taskito.dashboard import serve_dashboard
     serve_dashboard(queue, host="0.0.0.0", port=8080)
 
-Static asset delivery supports two layouts:
-
-- **Multi-file SPA** at ``py_src/taskito/static/dashboard/`` with
-  ``index.html`` plus hashed ``assets/`` produced by the new Vite build.
-- **Legacy single-file HTML** at ``py_src/taskito/templates/dashboard.html``
-  as a fallback for older wheels that don't ship the multi-file layout.
-
-Whichever layout is present at startup wins; there's no runtime switch.
+Serves the SPA at ``py_src/taskito/static/dashboard/`` (``index.html`` plus
+hashed ``assets/`` produced by the Vite build) plus the JSON API under
+``/api/*``. Requests for client-side routes fall back to ``index.html`` so
+deep links work.
 """
 
 from __future__ import annotations
@@ -106,6 +102,10 @@ def _resolve_static_node(base: Any, rel_path: str) -> Any | None:
     return node if node.is_file() else None
 
 
+class _AssetsNotBundled(RuntimeError):
+    """Raised when the dashboard SPA assets aren't present in the wheel."""
+
+
 _static_root_lock = threading.Lock()
 _static_root_resolved = False
 _static_root: Any | None = None
@@ -114,9 +114,9 @@ _static_root: Any | None = None
 def _get_static_root() -> Any | None:
     """Return the Traversable root of the bundled SPA, or ``None``.
 
-    Cached after the first call. Returns ``None`` if the package doesn't
-    ship a multi-file dashboard layout (in which case callers should fall
-    back to the legacy single-file template).
+    Cached after the first call. ``None`` means the package doesn't ship
+    dashboard assets — typically an editable install where the frontend
+    build hasn't been run yet. Rebuild with ``pnpm -C dashboard build``.
     """
     global _static_root_resolved, _static_root
     if _static_root_resolved:
@@ -133,27 +133,18 @@ def _get_static_root() -> Any | None:
     return _static_root
 
 
-def _read_template(path: str) -> str:
-    """Read a file from the bundled templates directory."""
-    return resources.files("taskito").joinpath(path).read_text(encoding="utf-8")
-
-
-def _load_legacy_html() -> str:
-    """Load the pre-built single-file dashboard (legacy layout)."""
-    return _read_template("templates/dashboard.html")
-
-
-_LEGACY_HTML: str | None = None
-_legacy_lock = threading.Lock()
-
-
-def _get_legacy_html() -> str:
-    global _LEGACY_HTML
-    if _LEGACY_HTML is None:
-        with _legacy_lock:
-            if _LEGACY_HTML is None:
-                _LEGACY_HTML = _load_legacy_html()
-    return _LEGACY_HTML
+_MISSING_ASSETS_HTML = (
+    "<!doctype html><html><head><meta charset='utf-8'>"
+    "<title>Taskito — dashboard assets missing</title></head>"
+    "<body style='font-family:system-ui;padding:2rem;max-width:640px'>"
+    "<h1>Dashboard assets not bundled</h1>"
+    "<p>This taskito install doesn't ship the compiled dashboard. "
+    "If you're working from source, rebuild with:</p>"
+    "<pre>pnpm --dir dashboard install &amp;&amp; pnpm --dir dashboard build</pre>"
+    "<p>Then reinstall the package (<code>uv sync --reinstall-package taskito</code> "
+    "or <code>pip install -e .</code>).</p>"
+    "</body></html>"
+)
 
 
 def _parse_int_qs(qs: dict, key: str, default: int) -> int:
@@ -481,12 +472,12 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response({"error": "prometheus-client not installed"}, status=501)
 
         def _serve_spa(self, req_path: str) -> None:
-            """Serve the SPA: an asset under static/dashboard/, the index.html
-            fallback for client-side routes, or the legacy single-file HTML.
+            """Serve a static asset from the SPA bundle, falling back to
+            ``index.html`` so client-side routes deep-link correctly.
             """
             static_root = _get_static_root()
             if static_root is None:
-                self._serve_legacy_html()
+                self._serve_missing_assets()
                 return
 
             node = _resolve_static_node(static_root, req_path)
@@ -499,12 +490,11 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response({"error": "Not found"}, status=404)
                 return
 
-            index = static_root.joinpath("index.html")
-            if index.is_file():
-                self._send_asset(index, "text/html; charset=utf-8", immutable=False)
-                return
-
-            self._serve_legacy_html()
+            self._send_asset(
+                static_root.joinpath("index.html"),
+                "text/html; charset=utf-8",
+                immutable=False,
+            )
 
         def _send_asset(self, node: Any, content_type: str, *, immutable: bool) -> None:
             body: bytes = node.read_bytes()
@@ -516,9 +506,9 @@ def _make_handler(queue: Queue) -> type:
             self.end_headers()
             self.wfile.write(body)
 
-        def _serve_legacy_html(self) -> None:
-            body = _get_legacy_html().encode()
-            self.send_response(200)
+        def _serve_missing_assets(self) -> None:
+            body = _MISSING_ASSETS_HTML.encode()
+            self.send_response(503)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")

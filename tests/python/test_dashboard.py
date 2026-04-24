@@ -276,9 +276,10 @@ def test_api_dead_letters_empty(dashboard_server: tuple[str, Queue, list[Any]]) 
 
 
 def test_spa_html_served(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
-    """GET / returns the SPA HTML."""
+    """GET / returns the SPA HTML shell."""
     base, _, __ = dashboard_server
     with urllib.request.urlopen(base) as resp:
+        assert resp.headers.get("Content-Type", "").startswith("text/html")
         html = resp.read().decode()
-        assert "taskito dashboard" in html
         assert "<!doctype html>" in html.lower()
+        assert 'id="app"' in html

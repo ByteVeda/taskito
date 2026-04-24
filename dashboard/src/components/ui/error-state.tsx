@@ -1,25 +1,49 @@
-import { RefreshCw, WifiOff } from "lucide-preact";
+import { AlertTriangle, type LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "@/lib/cn";
 import { Button } from "./button";
 
 interface ErrorStateProps {
-  message: string;
+  icon?: LucideIcon;
+  title?: string;
+  description?: string;
   onRetry?: () => void;
+  retryLabel?: string;
+  action?: ReactNode;
+  className?: string;
 }
 
-export function ErrorState({ message, onRetry }: ErrorStateProps) {
+export function ErrorState({
+  icon: Icon = AlertTriangle,
+  title = "Something went wrong",
+  description,
+  onRetry,
+  retryLabel = "Retry",
+  action,
+  className,
+}: ErrorStateProps) {
   return (
-    <div class="flex flex-col items-center justify-center py-20 text-center">
-      <div class="w-14 h-14 rounded-2xl dark:bg-danger/10 bg-danger/5 flex items-center justify-center mb-5">
-        <WifiOff class="w-7 h-7 text-danger" strokeWidth={1.5} />
-      </div>
-      <p class="text-sm font-medium dark:text-gray-200 text-slate-700 mb-1">Unable to load data</p>
-      <p class="text-xs text-muted max-w-xs mb-5">{message}</p>
-      {onRetry && (
-        <Button variant="ghost" onClick={onRetry}>
-          <RefreshCw class="w-3.5 h-3.5" />
-          Retry
-        </Button>
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-danger/40 bg-danger-dim/30 px-6 py-10 text-center",
+        className,
       )}
+    >
+      <div className="grid size-10 place-items-center rounded-full bg-danger-dim text-danger">
+        <Icon className="size-5" aria-hidden />
+      </div>
+      <div>
+        <div className="text-sm font-medium text-[var(--fg)]">{title}</div>
+        {description ? (
+          <div className="mt-1 text-xs text-[var(--fg-muted)]">{description}</div>
+        ) : null}
+      </div>
+      {action ??
+        (onRetry ? (
+          <Button variant="secondary" size="sm" onClick={onRetry}>
+            {retryLabel}
+          </Button>
+        ) : null)}
     </div>
   );
 }

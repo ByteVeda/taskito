@@ -2,6 +2,20 @@
 
 All notable changes to taskito are documented here.
 
+## Unreleased
+
+### Changed
+
+- **Dashboard rewrite** -- replaced the Preact single-file dashboard with a React + Vite + TanStack Router SPA. Same Python entrypoint (`taskito dashboard --app myapp:queue`), richer UX: cmdk command palette (`⌘K`), URL-synced job filters, optimistic cancel/replay mutations, Recharts metrics (lazy-loaded), virtualized live-tail logs, type-to-confirm destructive actions, keyboard-accessible tables. Assets ship as hashed multi-file output at `py_src/taskito/static/dashboard/`; the legacy single-HTML `templates/dashboard.html` is gone.
+- **Dashboard dead letters** -- grouping now keys on `(task, exception class)` extracted from the traceback (e.g. `hard_fail::ValueError`) instead of the full error string, so runs that differ only in message text collapse into one actionable group. Group header shows the latest failure timestamp and a "Retry all" button.
+- **Dashboard resources** -- `/api/resources` now falls back to worker heartbeat snapshots when the dashboard runs in a different process than the worker, so health surfaces correctly across process boundaries.
+
+### Fixed
+
+- **Dashboard timestamps** -- every timestamp field (`created_at`, `last_heartbeat`, `logged_at`, etc.) is now rendered as milliseconds consistent with the backend; previously the frontend applied an extra `× 1000` that pushed dates into year 58282.
+
+---
+
 ## 0.11.1
 
 ### Fixed

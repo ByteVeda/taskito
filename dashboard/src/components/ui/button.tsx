@@ -1,37 +1,49 @@
-import type { ComponentChildren } from "preact";
+import { cva, type VariantProps } from "class-variance-authority";
+import { type ButtonHTMLAttributes, forwardRef } from "react";
+import { cn } from "@/lib/cn";
 
-interface ButtonProps {
-  onClick?: () => void;
-  variant?: "primary" | "danger" | "ghost";
-  disabled?: boolean;
-  children: ComponentChildren;
-  class?: string;
-}
+const buttonVariants = cva(
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  {
+    variants: {
+      variant: {
+        default: "bg-accent text-accent-fg hover:bg-accent/90 shadow-sm",
+        secondary:
+          "bg-[var(--surface-2)] text-[var(--fg)] hover:bg-[var(--surface-3)] ring-1 ring-inset ring-[var(--border-strong)]",
+        ghost: "text-[var(--fg-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]",
+        outline:
+          "ring-1 ring-inset ring-[var(--border-strong)] bg-transparent text-[var(--fg)] hover:bg-[var(--surface-2)]",
+        danger: "bg-danger text-white hover:bg-danger/90 shadow-sm",
+        link: "text-accent underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-9 px-3.5 py-2",
+        sm: "h-8 rounded-md px-3 text-xs",
+        lg: "h-10 rounded-md px-5",
+        icon: "size-9",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  },
+);
 
-const VARIANTS: Record<string, string> = {
-  primary:
-    "bg-accent text-white shadow-sm shadow-accent/20 hover:bg-accent/90 hover:shadow-md hover:shadow-accent/25 active:scale-[0.98]",
-  danger:
-    "bg-danger text-white shadow-sm shadow-danger/20 hover:bg-danger/90 hover:shadow-md hover:shadow-danger/25 active:scale-[0.98]",
-  ghost:
-    "dark:text-gray-400 text-slate-500 hover:dark:bg-surface-3 hover:bg-slate-100 hover:dark:text-gray-200 hover:text-slate-700 active:scale-[0.98]",
-};
+export interface ButtonProps
+  extends ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {}
 
-export function Button({
-  onClick,
-  variant = "primary",
-  disabled,
-  children,
-  class: className = "",
-}: ButtonProps) {
-  return (
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, type = "button", ...props }, ref) => (
     <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      class={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all duration-150 disabled:opacity-40 disabled:cursor-default disabled:shadow-none border-none ${VARIANTS[variant]} ${className}`}
-    >
-      {children}
-    </button>
-  );
-}
+      ref={ref}
+      type={type}
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  ),
+);
+Button.displayName = "Button";
+
+export { buttonVariants };

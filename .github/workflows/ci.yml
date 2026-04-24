@@ -79,37 +79,11 @@ jobs:
       - name: TypeScript check
         run: cd dashboard && pnpm exec tsc --noEmit
 
+      - name: Unit tests
+        run: cd dashboard && pnpm exec vitest run
+
       - name: Build check
         run: cd dashboard && pnpm exec vite build
-
-  dashboard-next-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: "10.30.3"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: "pnpm"
-          cache-dependency-path: dashboard-next/pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: cd dashboard-next && pnpm install --frozen-lockfile
-
-      - name: Biome lint + format check
-        run: cd dashboard-next && pnpm exec biome ci src/
-
-      - name: TypeScript check
-        run: cd dashboard-next && pnpm exec tsc --noEmit
-
-      - name: Build check
-        run: cd dashboard-next && pnpm exec vite build
 
   rust-test:
     runs-on: ubuntu-latest

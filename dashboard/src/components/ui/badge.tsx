@@ -1,52 +1,33 @@
-import type { JobStatus } from "../../api";
+import { cva, type VariantProps } from "class-variance-authority";
+import type { HTMLAttributes } from "react";
+import { cn } from "@/lib/cn";
 
-const STATUS_STYLES: Record<string, string> = {
-  pending: "bg-warning/10 text-warning border-warning/20",
-  running: "bg-info/10 text-info border-info/20",
-  complete: "bg-success/10 text-success border-success/20",
-  failed: "bg-danger/10 text-danger border-danger/20",
-  dead: "bg-danger/15 text-danger border-danger/25",
-  cancelled: "bg-muted/10 text-muted border-muted/20",
-  closed: "bg-success/10 text-success border-success/20",
-  open: "bg-danger/10 text-danger border-danger/20",
-  half_open: "bg-warning/10 text-warning border-warning/20",
-  healthy: "bg-success/10 text-success border-success/20",
-  unhealthy: "bg-danger/10 text-danger border-danger/20",
-  degraded: "bg-warning/10 text-warning border-warning/20",
-  active: "bg-success/10 text-success border-success/20",
-  paused: "bg-warning/10 text-warning border-warning/20",
-};
+const badgeVariants = cva(
+  "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium tracking-tight",
+  {
+    variants: {
+      tone: {
+        neutral:
+          "bg-[var(--surface-3)] text-[var(--fg-muted)] ring-1 ring-inset ring-[var(--border-strong)]",
+        accent: "bg-accent-dim text-accent ring-1 ring-inset ring-accent/30",
+        info: "bg-info-dim text-info ring-1 ring-inset ring-info/30",
+        success: "bg-success-dim text-success ring-1 ring-inset ring-success/30",
+        warning: "bg-warning-dim text-warning ring-1 ring-inset ring-warning/30",
+        danger: "bg-danger-dim text-danger ring-1 ring-inset ring-danger/30",
+      },
+    },
+    defaultVariants: {
+      tone: "neutral",
+    },
+  },
+);
 
-const DOT_COLORS: Record<string, string> = {
-  pending: "bg-warning",
-  running: "bg-info",
-  complete: "bg-success",
-  failed: "bg-danger",
-  dead: "bg-danger",
-  cancelled: "bg-muted",
-  closed: "bg-success",
-  open: "bg-danger",
-  half_open: "bg-warning",
-  healthy: "bg-success",
-  unhealthy: "bg-danger",
-  degraded: "bg-warning",
-  active: "bg-success",
-  paused: "bg-warning",
-};
+export interface BadgeProps
+  extends HTMLAttributes<HTMLSpanElement>,
+    VariantProps<typeof badgeVariants> {}
 
-interface BadgeProps {
-  status: JobStatus | string;
+export function Badge({ className, tone, ...props }: BadgeProps) {
+  return <span className={cn(badgeVariants({ tone, className }))} {...props} />;
 }
 
-export function Badge({ status }: BadgeProps) {
-  const style = STATUS_STYLES[status] ?? "bg-muted/10 text-muted border-muted/20";
-  const dot = DOT_COLORS[status] ?? "bg-muted";
-  return (
-    <span
-      class={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide border ${style}`}
-    >
-      <span class={`w-1.5 h-1.5 rounded-full ${dot}`} />
-      {status}
-    </span>
-  );
-}
+export { badgeVariants };

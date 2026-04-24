@@ -271,47 +271,60 @@ pnpm run build
 !!! tip "Don't have pnpm?"
     Run `corepack enable` once (Node 16+) and pnpm will be provisioned automatically from the version pinned in `dashboard/package.json`.
 
-The build script compiles the Preact app into a single HTML file and copies it to `py_src/taskito/templates/dashboard.html`. This file is committed to the repository so Python-only users never need Node.js.
+The build produces a static `index.html` plus hashed JS/CSS chunks under `py_src/taskito/static/dashboard/`. The built assets aren't committed — release tooling runs `pnpm -C dashboard build` before packaging so the wheel ships them.
 
 ### How the build works
 
 ```
-dashboard/src/ (Preact + TypeScript)
+dashboard/src/ (React + TypeScript)
     ↓ pnpm run build
-    ↓ Vite compiles, tree-shakes, and minifies
-    ↓ vite-plugin-singlefile inlines all JS and CSS
-    ↓ Copies to py_src/taskito/templates/dashboard.html
+    ↓ Vite compiles, tree-shakes, minifies, code-splits
+    ↓ Outputs to py_src/taskito/static/dashboard/
     ↓
-py_src/taskito/templates/dashboard.html (128KB self-contained)
-    ↓ pip install / maturin develop
+py_src/taskito/static/dashboard/
+  index.html + assets/index-<hash>.{js,css}
+  + lazy chunks (metrics, logs)
+    ↓ pip install / maturin develop / uv sync
     ↓ Bundled in the Python wheel
     ↓
-dashboard.py reads it via importlib.resources
-    ↓ Serves via Python stdlib http.server
+dashboard.py serves assets via importlib.resources + http.server
+    ↓ /api/* → Queue methods · /assets/* → hashed bundles · else → index.html
     ↓
-Browser loads single HTML → Preact SPA boots → fetches /api/*
+Browser loads index.html → React SPA boots → fetches /api/*
 ```
 
 ### Project structure
 
 ```
 dashboard/
-├── package.json          # Dependencies: preact, @preact/signals, lucide-preact, tailwindcss
-├── vite.config.ts        # Vite + Preact + Tailwind + singlefile plugins, API proxy
-├── tsconfig.json         # TypeScript config (strict, Preact JSX)
-├── index.html            # Vite entry point
+├── package.json            # Dependencies: react, @tanstack/*, tailwindcss, radix-ui, recharts, cmdk
+├── vite.config.ts          # Vite + TanStack Router + React + Tailwind, API proxy
+├── vitest.config.ts        # Unit-test config
+├── biome.json              # Lint + format config
+├── components.json         # shadcn config
+├── tsconfig.json           # TypeScript config (strict, React JSX)
+├── index.html              # Vite entry point
 └── src/
-    ├── main.tsx          # Mount point
-    ├── app.tsx           # Router setup (preact-router)
-    ├── index.css         # Tailwind directives, theme tokens, animations
-    ├── api/              # API client and TypeScript types
-    ├── hooks/            # useApi, useAutoRefresh, useTheme, useToast
+    ├── main.tsx            # Mount point + router bootstrap
+    ├── globals.css         # Tailwind + design tokens
+    ├── routes/             # TanStack file-based routes (11 pages; metrics + logs lazy-loaded)
     ├── components/
-    │   ├── layout/       # Shell, Header, Sidebar
-    │   └── ui/           # Badge, Button, DataTable, StatCard, Toast, etc.
-    ├── charts/           # ThroughputChart, TimeseriesChart, DagViewer
-    ├── pages/            # One file per page (11 total)
-    └── lib/              # Format helpers, route constants
+    │   ├── layout/         # AppShell, Sidebar, Header, CommandPalette, RouteErrorBoundary
+    │   └── ui/             # Button, Dialog, DataTable, Badge, Toaster, etc. (shadcn-style)
+    ├── features/           # Per-feature api / hooks / components / utils
+    │   ├── overview/       # Stats grid, throughput sparkline, recent jobs
+    │   ├── jobs/           # List with URL-synced filters + detail tabs + DAG
+    │   ├── queues/         # Pause/resume mutations
+    │   ├── workers/        # Worker table with heartbeat freshness
+    │   ├── metrics/        # Recharts-backed throughput + latency (lazy)
+    │   ├── logs/           # Virtualized live tail (lazy)
+    │   ├── circuit-breakers/
+    │   ├── resources/
+    │   ├── dead-letters/   # Group by task + exception class, typed-purge
+    │   └── system/         # Proxy + interception stats
+    ├── hooks/              # Shared hooks (useDebouncedValue, useMediaQuery, useLastRefreshed)
+    ├── lib/                # api-client, cn, time, number, status, api-types
+    └── providers/          # Query, Theme, RefreshInterval, CommandPalette
 ```
 
 !!! warning "Authentication"
