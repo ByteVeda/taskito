@@ -43,6 +43,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate route tree
+        # TanStack Router's file-based tree is a build artifact; tsc needs
+        # it to resolve route imports.
+        run: pnpm exec tsr generate
+
       - name: Biome (lint + format)
         run: pnpm exec biome ci src/
 

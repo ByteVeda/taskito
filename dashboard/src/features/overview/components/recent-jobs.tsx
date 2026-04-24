@@ -26,7 +26,7 @@ export function RecentJobs({ jobs, loading, error, onRetry }: RecentJobsProps) {
             to="/jobs/$id"
             params={{ id: row.original.id }}
             className="font-mono text-xs text-accent hover:underline"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
           >
             {row.original.id.slice(0, 8)}…
           </Link>

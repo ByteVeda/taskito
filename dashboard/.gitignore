@@ -4,4 +4,4 @@ dist
 *.log
 .env
 .env.local
-src/route-tree.gen.ts
+src/routeTree.gen.ts
