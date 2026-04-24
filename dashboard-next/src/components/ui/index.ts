@@ -21,6 +21,7 @@ export {
 } from "./command";
 export { ConfirmDialog } from "./confirm-dialog";
 export { DataTable } from "./data-table";
+export { DestructiveConfirmDialog } from "./destructive-confirm-dialog";
 export {
   Dialog,
   DialogClose,
