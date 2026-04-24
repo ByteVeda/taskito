@@ -9,12 +9,22 @@ Or programmatically::
 
     from taskito.dashboard import serve_dashboard
     serve_dashboard(queue, host="0.0.0.0", port=8080)
+
+Static asset delivery supports two layouts:
+
+- **Multi-file SPA** at ``py_src/taskito/static/dashboard/`` with
+  ``index.html`` plus hashed ``assets/`` produced by the new Vite build.
+- **Legacy single-file HTML** at ``py_src/taskito/templates/dashboard.html``
+  as a fallback for older wheels that don't ship the multi-file layout.
+
+Whichever layout is present at startup wins; there's no runtime switch.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,27 +45,115 @@ class _BadRequest(Exception):
         self.message = message
 
 
+class _NotFound(Exception):
+    """Raised by route handlers to signal a 404 response."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+# ── Static asset delivery ────────────────────────────────────────────
+
+_CONTENT_TYPES: dict[str, str] = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".mjs": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".webmanifest": "application/manifest+json",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".txt": "text/plain; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+}
+
+_STATIC_ROOT_REL = "static/dashboard"
+_IMMUTABLE_PREFIX = "/assets/"
+
+
+def _content_type_for(path: str) -> str:
+    """Return the Content-Type for a request path by extension."""
+    ext = os.path.splitext(path)[1].lower()
+    return _CONTENT_TYPES.get(ext, "application/octet-stream")
+
+
+def _resolve_static_node(base: Any, rel_path: str) -> Any | None:
+    """Resolve a request path to a file node under ``base``.
+
+    Rejects traversal attempts, null bytes, and backslash escapes. Returns
+    ``None`` if the resolved node is not an existing regular file.
+
+    ``base`` must support ``joinpath(name)``; the returned node must
+    support ``is_file()`` and ``read_bytes()``. Works with both
+    ``pathlib.Path`` and ``importlib.resources.abc.Traversable``.
+    """
+    clean = rel_path.lstrip("/")
+    if not clean:
+        return None
+    parts = clean.split("/")
+    for part in parts:
+        if part in ("", ".", ".."):
+            return None
+        if "\x00" in part or "\\" in part:
+            return None
+    node = base
+    for part in parts:
+        node = node.joinpath(part)
+    return node if node.is_file() else None
+
+
+_static_root_lock = threading.Lock()
+_static_root_resolved = False
+_static_root: Any | None = None
+
+
+def _get_static_root() -> Any | None:
+    """Return the Traversable root of the bundled SPA, or ``None``.
+
+    Cached after the first call. Returns ``None`` if the package doesn't
+    ship a multi-file dashboard layout (in which case callers should fall
+    back to the legacy single-file template).
+    """
+    global _static_root_resolved, _static_root
+    if _static_root_resolved:
+        return _static_root
+    with _static_root_lock:
+        if not _static_root_resolved:
+            try:
+                candidate = resources.files("taskito").joinpath(_STATIC_ROOT_REL)
+                if candidate.joinpath("index.html").is_file():
+                    _static_root = candidate
+            except (ModuleNotFoundError, FileNotFoundError, AttributeError):
+                _static_root = None
+            _static_root_resolved = True
+    return _static_root
+
+
 def _read_template(path: str) -> str:
     """Read a file from the bundled templates directory."""
     return resources.files("taskito").joinpath(path).read_text(encoding="utf-8")
 
 
-def _load_spa_html() -> str:
-    """Load the pre-built dashboard SPA (single-file Vite output)."""
+def _load_legacy_html() -> str:
+    """Load the pre-built single-file dashboard (legacy layout)."""
     return _read_template("templates/dashboard.html")
 
 
-_SPA_HTML: str | None = None
-_spa_lock = threading.Lock()
+_LEGACY_HTML: str | None = None
+_legacy_lock = threading.Lock()
 
 
-def _get_spa_html() -> str:
-    global _SPA_HTML
-    if _SPA_HTML is None:
-        with _spa_lock:
-            if _SPA_HTML is None:
-                _SPA_HTML = _load_spa_html()
-    return _SPA_HTML
+def _get_legacy_html() -> str:
+    global _LEGACY_HTML
+    if _LEGACY_HTML is None:
+        with _legacy_lock:
+            if _LEGACY_HTML is None:
+                _LEGACY_HTML = _load_legacy_html()
+    return _LEGACY_HTML
 
 
 def _parse_int_qs(qs: dict, key: str, default: int) -> int:
@@ -137,13 +235,6 @@ def _handle_stats_queues(queue: Queue, qs: dict) -> dict:
     if q_name:
         return queue.stats_by_queue(q_name)
     return queue.stats_all_queues()
-
-
-class _NotFound(Exception):
-    """Raised by route handlers to signal a 404 response."""
-
-    def __init__(self, message: str) -> None:
-        self.message = message
 
 
 def _handle_get_job(queue: Queue, _qs: dict, job_id: str) -> dict:
@@ -338,7 +429,7 @@ def _make_handler(queue: Queue) -> type:
             elif path == "/metrics":
                 self._serve_prometheus_metrics()
             else:
-                self._serve_spa()
+                self._serve_spa(path)
 
         def do_POST(self) -> None:
             try:
@@ -389,11 +480,48 @@ def _make_handler(queue: Queue) -> type:
             except ImportError:
                 self._json_response({"error": "prometheus-client not installed"}, status=501)
 
-        def _serve_spa(self) -> None:
-            body = _get_spa_html().encode()
+        def _serve_spa(self, req_path: str) -> None:
+            """Serve the SPA: an asset under static/dashboard/, the index.html
+            fallback for client-side routes, or the legacy single-file HTML.
+            """
+            static_root = _get_static_root()
+            if static_root is None:
+                self._serve_legacy_html()
+                return
+
+            node = _resolve_static_node(static_root, req_path)
+            if node is not None:
+                immutable = req_path.startswith(_IMMUTABLE_PREFIX)
+                self._send_asset(node, _content_type_for(req_path), immutable=immutable)
+                return
+
+            if req_path.startswith(_IMMUTABLE_PREFIX):
+                self._json_response({"error": "Not found"}, status=404)
+                return
+
+            index = static_root.joinpath("index.html")
+            if index.is_file():
+                self._send_asset(index, "text/html; charset=utf-8", immutable=False)
+                return
+
+            self._serve_legacy_html()
+
+        def _send_asset(self, node: Any, content_type: str, *, immutable: bool) -> None:
+            body: bytes = node.read_bytes()
+            cache = "public, max-age=31536000, immutable" if immutable else "no-cache"
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", cache)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _serve_legacy_html(self) -> None:
+            body = _get_legacy_html().encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body)
 
