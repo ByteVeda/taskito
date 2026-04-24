@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from taskito.async_support.canvas import AsyncChordMixin, AsyncGroupMixin
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -101,7 +102,7 @@ class chain:
         return last_job  # type: ignore[return-value]
 
 
-class group:
+class group(AsyncGroupMixin):
     """Execute signatures in parallel and collect all results.
 
     Args:
@@ -156,51 +157,8 @@ class group:
 
         return all_jobs
 
-    async def apply_async(self, queue: Queue | None = None) -> list[JobResult]:
-        """Enqueue all signatures for parallel execution (async-safe).
 
-        With ``max_concurrency`` set, dispatches in waves, awaiting each
-        wave before starting the next.
-        """
-        q = queue or self.signatures[0].task._queue
-
-        if self.max_concurrency is None:
-            jobs: list[JobResult] = []
-            for sig in self.signatures:
-                job = q.enqueue(
-                    task_name=sig.task.name,
-                    args=sig.args,
-                    kwargs=sig.kwargs if sig.kwargs else None,
-                    **sig.options,
-                )
-                jobs.append(job)
-            return jobs
-
-        all_jobs: list[JobResult] = []
-        mc = self.max_concurrency
-        for i in range(0, len(self.signatures), mc):
-            wave = self.signatures[i : i + mc]
-            wave_jobs: list[JobResult] = []
-            for sig in wave:
-                job = q.enqueue(
-                    task_name=sig.task.name,
-                    args=sig.args,
-                    kwargs=sig.kwargs if sig.kwargs else None,
-                    **sig.options,
-                )
-                wave_jobs.append(job)
-            await asyncio.gather(
-                *(
-                    wj.aresult(timeout=sig.options.get("timeout", 300))
-                    for wj, sig in zip(wave_jobs, wave, strict=True)
-                )
-            )
-            all_jobs.extend(wave_jobs)
-
-        return all_jobs
-
-
-class chord:
+class chord(AsyncChordMixin):
     """Run a group in parallel, then a callback with all results."""
 
     def __init__(self, group_: group, callback: Signature):
@@ -222,28 +180,6 @@ class chord:
         args = self.callback.args
         if not self.callback.immutable:
             args = (results, *self.callback.args)
-
-        return q.enqueue(
-            task_name=self.callback.task.name,
-            args=args,
-            kwargs=self.callback.kwargs if self.callback.kwargs else None,
-            **self.callback.options,
-        )
-
-    async def apply_async(self, queue: Queue | None = None) -> JobResult:
-        """Execute group, await all results, then run the callback (async-safe)."""
-        q = queue or self.callback.task._queue
-
-        jobs = self.group.apply(queue=q)
-        max_timeout = max(
-            (sig.options.get("timeout", 300) for sig in self.group.signatures),
-            default=300,
-        )
-        results = await asyncio.gather(*(job.aresult(timeout=max_timeout) for job in jobs))
-
-        args = self.callback.args
-        if not self.callback.immutable:
-            args = (list(results), *self.callback.args)
 
         return q.enqueue(
             task_name=self.callback.task.name,
