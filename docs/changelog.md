@@ -2,7 +2,7 @@
 
 All notable changes to taskito are documented here.
 
-## Unreleased
+## 0.11.1
 
 ### Fixed
 
