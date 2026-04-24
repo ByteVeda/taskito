@@ -83,7 +83,11 @@ class AsyncQueueMixin:
         def circuit_breakers(self) -> list[dict]: ...
         def workers(self) -> list[dict]: ...
         def run_worker(
-            self, queues: Sequence[str] | None = ..., tags: list[str] | None = ...
+            self,
+            queues: Sequence[str] | None = ...,
+            tags: list[str] | None = ...,
+            pool: str = ...,
+            app: str | None = ...,
         ) -> None: ...
         def purge_completed(self, older_than: int = ...) -> int: ...
         def purge_dead(self, older_than: int = ...) -> int: ...
@@ -268,6 +272,8 @@ class AsyncQueueMixin:
         self,
         queues: Sequence[str] | None = None,
         tags: list[str] | None = None,
+        pool: str = "thread",
+        app: str | None = None,
     ) -> None:
         """Async version of :meth:`run_worker`.
 
@@ -277,6 +283,9 @@ class AsyncQueueMixin:
         Args:
             queues: List of queue names to consume from.
             tags: Optional tags for worker specialization / routing.
+            pool: Worker pool type — ``"thread"`` (default) or ``"prefork"``.
+            app: Import path to the Queue instance (e.g. ``"myapp:queue"``).
+                Required when ``pool="prefork"``.
         """
         loop = asyncio.get_running_loop()
 
@@ -296,7 +305,10 @@ class AsyncQueueMixin:
         loop.add_signal_handler(signal.SIGTERM, _shutdown_once)
 
         try:
-            await loop.run_in_executor(None, lambda: self.run_worker(queues=queues, tags=tags))
+            await loop.run_in_executor(
+                None,
+                lambda: self.run_worker(queues=queues, tags=tags, pool=pool, app=app),
+            )
         finally:
             with contextlib.suppress(NotImplementedError):
                 loop.remove_signal_handler(signal.SIGINT)

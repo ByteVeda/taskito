@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from taskito.async_support.result import AsyncJobResultMixin
@@ -206,49 +205,6 @@ class JobResult(AsyncJobResultMixin):
                 return
 
             time.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
-
-    async def astream(
-        self,
-        timeout: float = 60.0,
-        poll_interval: float = 0.5,
-    ) -> AsyncIterator[Any]:
-        """Async iterate over partial results published by the task.
-
-        Async version of :meth:`stream`. Uses ``asyncio.sleep`` so it won't
-        block the event loop.
-
-        Args:
-            timeout: Maximum seconds to wait for results.
-            poll_interval: Seconds between polls.
-
-        Yields:
-            Deserialized partial result data.
-        """
-        deadline = time.monotonic() + timeout
-        last_seen_at: int = 0
-
-        while time.monotonic() < deadline:
-            logs = self._queue._inner.get_task_logs(self.id)
-            for entry in logs:
-                if entry["level"] != "result":
-                    continue
-                logged_at = entry.get("logged_at", 0)
-                if logged_at <= last_seen_at:
-                    continue
-                last_seen_at = logged_at
-                extra = entry.get("extra")
-                if extra:
-                    try:
-                        yield json.loads(extra)
-                    except (json.JSONDecodeError, TypeError):
-                        log.warning("failed to deserialize partial result for job %s", self.id)
-                        yield extra
-
-            self.refresh()
-            if self._py_job.status in self._TERMINAL_STATUSES:
-                return
-
-            await asyncio.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a plain dictionary for JSON serialization.
