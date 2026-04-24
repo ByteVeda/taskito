@@ -1,16 +1,11 @@
+import * as v from "valibot";
 import type { JobStatus } from "@/lib/api-types";
+import { JOB_STATUS_VALUES, jobListSearchSchema } from "./search-schema";
 import type { JobFilters, JobListQuery } from "./types";
 
-const STATUS_VALUES: readonly JobStatus[] = [
-  "pending",
-  "running",
-  "complete",
-  "failed",
-  "dead",
-  "cancelled",
-] as const;
-
 const DEFAULT_PAGE_SIZE = 25;
+const MIN_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 200;
 
 function asTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -26,16 +21,20 @@ function asNonNegativeInteger(value: unknown): number | undefined {
 }
 
 function asJobStatus(value: unknown): JobStatus | undefined {
-  return STATUS_VALUES.find((s) => s === value);
+  return JOB_STATUS_VALUES.find((s) => s === value);
 }
 
 /**
  * Parse raw search params (from TanStack Router's `validateSearch`) into a
  * strongly-typed query. Missing/invalid fields are dropped silently so deep
  * links never crash the route — an over-strict parser would be a footgun.
+ *
+ * After imperative normalization the result is asserted against
+ * `jobListSearchSchema` to catch any drift between this code and the schema
+ * (e.g. a new filter added to one but not the other).
  */
 export function parseJobListSearch(raw: Record<string, unknown>): JobListQuery {
-  return {
+  const normalized = {
     status: asJobStatus(raw.status),
     queue: asTrimmedString(raw.queue),
     task: asTrimmedString(raw.task),
@@ -44,8 +43,12 @@ export function parseJobListSearch(raw: Record<string, unknown>): JobListQuery {
     createdAfter: asNonNegativeInteger(raw.createdAfter),
     createdBefore: asNonNegativeInteger(raw.createdBefore),
     page: asNonNegativeInteger(raw.page) ?? 0,
-    pageSize: Math.min(Math.max(asNonNegativeInteger(raw.pageSize) ?? DEFAULT_PAGE_SIZE, 10), 200),
+    pageSize: Math.min(
+      Math.max(asNonNegativeInteger(raw.pageSize) ?? DEFAULT_PAGE_SIZE, MIN_PAGE_SIZE),
+      MAX_PAGE_SIZE,
+    ),
   };
+  return v.parse(jobListSearchSchema, normalized);
 }
 
 /**
