@@ -1,20 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CircuitBoard } from "lucide-react";
 import { PageHeader } from "@/components/layout";
-import { EmptyState } from "@/components/ui/empty-state";
+import { CircuitBreakersTable, useCircuitBreakers } from "@/features/circuit-breakers";
 
 export const Route = createFileRoute("/circuit-breakers")({
   component: CircuitBreakersPage,
 });
 
 function CircuitBreakersPage() {
+  const breakers = useCircuitBreakers();
+
   return (
     <>
       <PageHeader
         title="Circuit breakers"
         description="State, thresholds, and cooldowns by task."
       />
-      <EmptyState icon={CircuitBoard} title="Circuit breakers view coming online" />
+      <CircuitBreakersTable
+        breakers={breakers.data}
+        loading={breakers.isLoading}
+        error={breakers.error}
+        onRetry={() => breakers.refetch()}
+      />
     </>
   );
 }

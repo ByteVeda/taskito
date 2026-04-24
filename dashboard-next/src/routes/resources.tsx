@@ -1,17 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Activity } from "lucide-react";
 import { PageHeader } from "@/components/layout";
-import { EmptyState } from "@/components/ui/empty-state";
+import { ResourcesTable, useResources } from "@/features/resources";
 
 export const Route = createFileRoute("/resources")({
   component: ResourcesPage,
 });
 
 function ResourcesPage() {
+  const resources = useResources();
+
   return (
     <>
-      <PageHeader title="Resources" description="Worker-side DI: health, pools, scopes." />
-      <EmptyState icon={Activity} title="Resources view coming online" />
+      <PageHeader
+        title="Resources"
+        description="Worker-side DI: health, pools, and dependency graph."
+      />
+      <ResourcesTable
+        resources={resources.data}
+        loading={resources.isLoading}
+        error={resources.error}
+        onRetry={() => resources.refetch()}
+      />
     </>
   );
 }
