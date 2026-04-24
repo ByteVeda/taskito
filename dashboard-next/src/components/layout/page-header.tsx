@@ -5,7 +5,7 @@ import { Breadcrumbs, type Crumb } from "./breadcrumbs";
 interface PageHeaderProps {
   eyebrow?: string;
   title: string;
-  description?: string;
+  description?: ReactNode;
   actions?: ReactNode;
   breadcrumbs?: Crumb[];
   className?: string;
