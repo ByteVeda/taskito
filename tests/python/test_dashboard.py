@@ -166,26 +166,36 @@ def test_to_dict_is_json_serializable(queue: Queue) -> None:
 # ── Dashboard HTTP tests ─────────────────────────────────
 
 
+def _start_dashboard(queue: Queue, *, static_assets: Any = None) -> tuple[str, Any]:
+    """Boot a dashboard server bound to a random port.
+
+    Returns the (url, server) pair so callers can shut it down explicitly.
+    Optionally takes a ``StaticAssets`` instance — production code uses
+    the package-bundled default; tests inject their own.
+    """
+    from http.server import ThreadingHTTPServer
+
+    from taskito.dashboard import _make_handler
+
+    handler = _make_handler(queue, static_assets=static_assets)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return f"http://127.0.0.1:{port}", server
+
+
 @pytest.fixture
 def dashboard_server(
     populated_queue: tuple[Queue, list[Any]],
 ) -> Generator[tuple[str, Queue, list[Any]]]:
     """Start a dashboard server on a random port."""
     queue, jobs = populated_queue
-    from http.server import ThreadingHTTPServer
-
-    from taskito.dashboard import _make_handler
-
-    handler = _make_handler(queue)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    port = server.server_address[1]
-
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-
-    yield f"http://127.0.0.1:{port}", queue, jobs
-
-    server.shutdown()
+    url, server = _start_dashboard(queue)
+    try:
+        yield url, queue, jobs
+    finally:
+        server.shutdown()
 
 
 def _get(url: str) -> Any:
@@ -276,51 +286,118 @@ def test_api_dead_letters_empty(dashboard_server: tuple[str, Queue, list[Any]]) 
 
 
 def test_spa_html_served(
-    dashboard_server: tuple[str, Queue, list[Any]],
-    monkeypatch: pytest.MonkeyPatch,
+    populated_queue: tuple[Queue, list[Any]],
     tmp_path: Path,
 ) -> None:
     """GET / serves the SPA index.html when assets are bundled.
 
-    The Python CI matrix doesn't build the frontend, so we synthesise a
-    minimal bundle in a tmp dir and point the dashboard's cached static
-    root at it. This keeps the test independent of Node/pnpm.
+    Tests inject a ``StaticAssets`` rooted at a tmp directory so the test
+    is self-contained — no dependency on a prior frontend build.
     """
-    from taskito import dashboard as dashboard_module
+    from taskito.dashboard import StaticAssets
 
     tmp_path.joinpath("index.html").write_text(
         '<!doctype html><html><body><div id="app"></div></body></html>',
         encoding="utf-8",
     )
-    monkeypatch.setattr(dashboard_module, "_static_root", tmp_path)
-    monkeypatch.setattr(dashboard_module, "_static_root_resolved", True)
+    queue, _ = populated_queue
+    url, server = _start_dashboard(queue, static_assets=StaticAssets(tmp_path))
+    try:
+        with urllib.request.urlopen(url) as resp:
+            assert resp.status == 200
+            assert resp.headers.get("Content-Type", "").startswith("text/html")
+            html = resp.read().decode()
+            assert "<!doctype html>" in html.lower()
+            assert 'id="app"' in html
+    finally:
+        server.shutdown()
 
-    base, _, __ = dashboard_server
-    with urllib.request.urlopen(base) as resp:
-        assert resp.status == 200
-        assert resp.headers.get("Content-Type", "").startswith("text/html")
-        html = resp.read().decode()
-        assert "<!doctype html>" in html.lower()
-        assert 'id="app"' in html
+
+def test_spa_assets_resolved_under_root(
+    populated_queue: tuple[Queue, list[Any]],
+    tmp_path: Path,
+) -> None:
+    """Hashed asset paths resolve under the bundle root and get long
+    immutable cache headers."""
+    from taskito.dashboard import StaticAssets
+
+    tmp_path.joinpath("index.html").write_text("<html><body></body></html>", encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    assets_dir.joinpath("index-abc.js").write_text("export {};", encoding="utf-8")
+
+    queue, _ = populated_queue
+    url, server = _start_dashboard(queue, static_assets=StaticAssets(tmp_path))
+    try:
+        with urllib.request.urlopen(f"{url}/assets/index-abc.js") as resp:
+            assert resp.status == 200
+            assert resp.headers.get("Content-Type", "").startswith("application/javascript")
+            assert "immutable" in resp.headers.get("Cache-Control", "")
+            assert resp.read().decode() == "export {};"
+    finally:
+        server.shutdown()
+
+
+def test_spa_unknown_route_falls_back_to_index(
+    populated_queue: tuple[Queue, list[Any]],
+    tmp_path: Path,
+) -> None:
+    """Client-side routes (anything that's not /assets/* or a real file)
+    resolve to index.html so deep links keep working."""
+    from taskito.dashboard import StaticAssets
+
+    tmp_path.joinpath("index.html").write_text(
+        '<!doctype html><html><body><div id="app"></div></body></html>',
+        encoding="utf-8",
+    )
+    queue, _ = populated_queue
+    url, server = _start_dashboard(queue, static_assets=StaticAssets(tmp_path))
+    try:
+        with urllib.request.urlopen(f"{url}/jobs/some-id") as resp:
+            assert resp.status == 200
+            assert 'id="app"' in resp.read().decode()
+    finally:
+        server.shutdown()
+
+
+def test_spa_missing_asset_under_assets_returns_404(
+    populated_queue: tuple[Queue, list[Any]],
+    tmp_path: Path,
+) -> None:
+    """A miss inside ``/assets/`` returns 404 — never the index fallback,
+    so a stale page can't confuse the browser into running old chunks."""
+    from taskito.dashboard import StaticAssets
+
+    tmp_path.joinpath("index.html").write_text("<html></html>", encoding="utf-8")
+    queue, _ = populated_queue
+    url, server = _start_dashboard(queue, static_assets=StaticAssets(tmp_path))
+    try:
+        try:
+            urllib.request.urlopen(f"{url}/assets/missing.js")
+            pytest.fail("Expected 404")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+    finally:
+        server.shutdown()
 
 
 def test_spa_missing_assets_returns_503(
-    dashboard_server: tuple[str, Queue, list[Any]],
-    monkeypatch: pytest.MonkeyPatch,
+    populated_queue: tuple[Queue, list[Any]],
 ) -> None:
     """When the frontend build wasn't run, the dashboard returns 503 with
     actionable rebuild instructions rather than silently 404-ing."""
-    from taskito import dashboard as dashboard_module
+    from taskito.dashboard import StaticAssets
 
-    monkeypatch.setattr(dashboard_module, "_static_root", None)
-    monkeypatch.setattr(dashboard_module, "_static_root_resolved", True)
-
-    base, _, __ = dashboard_server
+    queue, _ = populated_queue
+    url, server = _start_dashboard(queue, static_assets=StaticAssets(None))
     try:
-        urllib.request.urlopen(base)
-        pytest.fail("Expected 503")
-    except urllib.error.HTTPError as exc:
-        assert exc.code == 503
-        body = exc.read().decode()
-        assert "not bundled" in body.lower()
-        assert "pnpm" in body.lower()
+        try:
+            urllib.request.urlopen(url)
+            pytest.fail("Expected 503")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 503
+            body = exc.read().decode()
+            assert "not bundled" in body.lower()
+            assert "pnpm" in body.lower()
+    finally:
+        server.shutdown()

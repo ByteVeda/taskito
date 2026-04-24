@@ -102,35 +102,74 @@ def _resolve_static_node(base: Any, rel_path: str) -> Any | None:
     return node if node.is_file() else None
 
 
-class _AssetsNotBundled(RuntimeError):
-    """Raised when the dashboard SPA assets aren't present in the wheel."""
+class StaticAssets:
+    """Resolves dashboard SPA files under a single root.
 
-
-_static_root_lock = threading.Lock()
-_static_root_resolved = False
-_static_root: Any | None = None
-
-
-def _get_static_root() -> Any | None:
-    """Return the Traversable root of the bundled SPA, or ``None``.
-
-    Cached after the first call. ``None`` means the package doesn't ship
-    dashboard assets — typically an editable install where the frontend
-    build hasn't been run yet. Rebuild with ``pnpm -C dashboard build``.
+    Treat instances as immutable — the root is fixed at construction.
+    Pass one explicitly to :func:`serve_dashboard` or :func:`_make_handler`
+    to override the default lookup; this is the seam tests use to swap in
+    a tmp directory or force the missing-assets fallback without touching
+    module-level state.
     """
-    global _static_root_resolved, _static_root
-    if _static_root_resolved:
-        return _static_root
-    with _static_root_lock:
-        if not _static_root_resolved:
-            try:
-                candidate = resources.files("taskito").joinpath(_STATIC_ROOT_REL)
-                if candidate.joinpath("index.html").is_file():
-                    _static_root = candidate
-            except (ModuleNotFoundError, FileNotFoundError, AttributeError):
-                _static_root = None
-            _static_root_resolved = True
-    return _static_root
+
+    __slots__ = ("_root",)
+
+    def __init__(self, root: Any | None) -> None:
+        self._root = root
+
+    @classmethod
+    def from_package(cls) -> StaticAssets:
+        """Locate assets bundled with the installed ``taskito`` package.
+
+        Returns an instance whose root points at ``static/dashboard/`` if
+        ``index.html`` is present in the wheel, otherwise an instance with
+        ``available is False`` so the handler can render the missing-
+        assets fallback.
+        """
+        try:
+            candidate = resources.files("taskito").joinpath(_STATIC_ROOT_REL)
+            if candidate.joinpath("index.html").is_file():
+                return cls(candidate)
+        except (ModuleNotFoundError, FileNotFoundError, AttributeError):
+            pass
+        return cls(None)
+
+    @property
+    def available(self) -> bool:
+        return self._root is not None
+
+    def resolve(self, rel_path: str) -> Any | None:
+        """Return a file node for ``rel_path`` under the root, or ``None``."""
+        if self._root is None:
+            return None
+        return _resolve_static_node(self._root, rel_path)
+
+    def index(self) -> Any | None:
+        """Return the ``index.html`` node, or ``None`` if assets aren't bundled."""
+        if self._root is None:
+            return None
+        node = self._root.joinpath("index.html")
+        return node if node.is_file() else None
+
+
+_default_assets_lock = threading.Lock()
+_default_assets: StaticAssets | None = None
+
+
+def _get_default_assets() -> StaticAssets:
+    """Lazily resolve and memoise the package-bundled ``StaticAssets``.
+
+    Cheap to call repeatedly — the actual filesystem probe runs at most
+    once per process. Tests don't touch this; they construct a
+    ``StaticAssets`` directly and pass it to the handler.
+    """
+    global _default_assets
+    if _default_assets is not None:
+        return _default_assets
+    with _default_assets_lock:
+        if _default_assets is None:
+            _default_assets = StaticAssets.from_package()
+    return _default_assets
 
 
 _MISSING_ASSETS_HTML = (
@@ -288,6 +327,8 @@ def serve_dashboard(
     queue: Queue,
     host: str = "127.0.0.1",
     port: int = 8080,
+    *,
+    static_assets: StaticAssets | None = None,
 ) -> None:
     """Start the dashboard HTTP server (blocking).
 
@@ -295,8 +336,11 @@ def serve_dashboard(
         queue: The Queue instance to monitor.
         host: Bind address.
         port: Bind port.
+        static_assets: Override the default SPA asset source. Mainly a
+            test seam; downstream embedders can also use it to ship a
+            customised dashboard bundle from a different location.
     """
-    handler = _make_handler(queue)
+    handler = _make_handler(queue, static_assets=static_assets)
     server = ThreadingHTTPServer((host, port), handler)
     print(f"taskito dashboard → http://{host}:{port}")
     print("Press Ctrl+C to stop")
@@ -309,8 +353,15 @@ def serve_dashboard(
         server.server_close()
 
 
-def _make_handler(queue: Queue) -> type:
-    """Create a request handler class bound to the given queue."""
+def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) -> type:
+    """Create a request handler class bound to the given queue.
+
+    Args:
+        queue: Queue inspected by the JSON routes.
+        static_assets: SPA asset source. Defaults to the package-bundled
+            assets resolved once per process; tests inject their own.
+    """
+    assets = static_assets if static_assets is not None else _get_default_assets()
 
     # ── Routing tables ────────────────────────────────────────────
     #
@@ -475,12 +526,11 @@ def _make_handler(queue: Queue) -> type:
             """Serve a static asset from the SPA bundle, falling back to
             ``index.html`` so client-side routes deep-link correctly.
             """
-            static_root = _get_static_root()
-            if static_root is None:
+            if not assets.available:
                 self._serve_missing_assets()
                 return
 
-            node = _resolve_static_node(static_root, req_path)
+            node = assets.resolve(req_path)
             if node is not None:
                 immutable = req_path.startswith(_IMMUTABLE_PREFIX)
                 self._send_asset(node, _content_type_for(req_path), immutable=immutable)
@@ -490,11 +540,11 @@ def _make_handler(queue: Queue) -> type:
                 self._json_response({"error": "Not found"}, status=404)
                 return
 
-            self._send_asset(
-                static_root.joinpath("index.html"),
-                "text/html; charset=utf-8",
-                immutable=False,
-            )
+            index = assets.index()
+            if index is None:
+                self._serve_missing_assets()
+                return
+            self._send_asset(index, "text/html; charset=utf-8", immutable=False)
 
         def _send_asset(self, node: Any, content_type: str, *, immutable: bool) -> None:
             body: bytes = node.read_bytes()
