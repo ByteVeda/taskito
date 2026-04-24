@@ -77,7 +77,7 @@ The dashboard is built with Preact, Tailwind CSS, and TypeScript, compiled into 
 | **System** | Proxy reconstruction and interception strategy metrics |
 
 !!! info "Zero extra dependencies"
-    The SPA is embedded directly in the Python package. No Node.js, no npm, no CDN -- just `pip install taskito`. Node.js is only needed by contributors who modify the dashboard source.
+    The SPA is embedded directly in the Python package. No Node.js, no pnpm, no CDN -- just `pip install taskito`. Node.js is only needed by contributors who modify the dashboard source.
 
 ## Tutorial
 
@@ -255,18 +255,21 @@ Use the **Refresh** dropdown in the header to change how often all data refreshe
 Contributors who want to modify the dashboard source:
 
 ```bash
-# Install dependencies
-cd dashboard && npm install
+# Install dependencies (pnpm is pinned via the `packageManager` field)
+cd dashboard && pnpm install
 
 # Start Vite dev server (proxies /api/* to localhost:8080)
-npm run dev
+pnpm run dev
 
 # In another terminal, start the backend
 taskito dashboard --app myapp:queue
 
 # Build and copy to Python package
-npm run build
+pnpm run build
 ```
+
+!!! tip "Don't have pnpm?"
+    Run `corepack enable` once (Node 16+) and pnpm will be provisioned automatically from the version pinned in `dashboard/package.json`.
 
 The build script compiles the Preact app into a single HTML file and copies it to `py_src/taskito/templates/dashboard.html`. This file is committed to the repository so Python-only users never need Node.js.
 
@@ -274,7 +277,7 @@ The build script compiles the Preact app into a single HTML file and copies it t
 
 ```
 dashboard/src/ (Preact + TypeScript)
-    ↓ npm run build
+    ↓ pnpm run build
     ↓ Vite compiles, tree-shakes, and minifies
     ↓ vite-plugin-singlefile inlines all JS and CSS
     ↓ Copies to py_src/taskito/templates/dashboard.html
