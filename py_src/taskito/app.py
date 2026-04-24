@@ -1376,22 +1376,70 @@ class Queue(
         """Return per-resource status info.
 
         Each entry contains: name, scope, health, init_duration_ms,
-        recreations, depends_on.  Returns an empty list if no resources
-        are registered or the runtime is not initialized.
+        recreations, depends_on. If this process is running the worker, the
+        live in-process runtime is authoritative. Otherwise (e.g. the
+        dashboard is a separate process), health is reconstructed from the
+        latest heartbeat each worker pushed via ``worker_heartbeat``.
+        Returns an empty list when nothing is registered and no worker has
+        reported yet.
         """
         if self._resource_runtime is not None:
             return self._resource_runtime.status()
-        # Runtime not initialized — return definitions with unknown health
+        return self._resource_status_from_heartbeats()
+
+    def _resource_status_from_heartbeats(self) -> list[dict[str, Any]]:
+        """Fallback path when the runtime isn't in this process.
+
+        Aggregates each worker's ``resource_health`` JSON snapshot into a
+        status list shaped like ``ResourceRuntime.status()``. Uses the
+        rule: any ``unhealthy`` wins; mixed healthy/unhealthy is
+        ``degraded``; all ``healthy`` → ``healthy``; no workers reporting
+        a given resource → ``not_initialized``.
+        """
+        observed: dict[str, list[str]] = {}
+        try:
+            workers = self._inner.list_workers()
+        except Exception:
+            logger.warning("resource_status: failed to list workers", exc_info=True)
+            workers = []
+
+        for worker in workers:
+            raw = worker.get("resource_health")
+            if not raw:
+                continue
+            try:
+                report = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(report, dict):
+                continue
+            for name, health in report.items():
+                observed.setdefault(str(name), []).append(str(health).lower())
+
+        # Build an entry for every registered definition, joined with any
+        # resource a live worker reports (covers the case where the
+        # dashboard process has no definitions registered at all).
+        names = set(self._resource_definitions.keys()) | set(observed.keys())
         result: list[dict[str, Any]] = []
-        for name, defn in self._resource_definitions.items():
+        for name in sorted(names):
+            defn = self._resource_definitions.get(name)
+            healths = observed.get(name, [])
+            if not healths:
+                health = "not_initialized"
+            elif any(h == "unhealthy" for h in healths):
+                health = "unhealthy"
+            elif all(h == "healthy" for h in healths):
+                health = "healthy"
+            else:
+                health = "degraded"
             result.append(
                 {
                     "name": name,
-                    "scope": defn.scope.value,
-                    "health": "not_initialized",
+                    "scope": defn.scope.value if defn is not None else "unknown",
+                    "health": health,
                     "init_duration_ms": 0,
                     "recreations": 0,
-                    "depends_on": defn.depends_on,
+                    "depends_on": defn.depends_on if defn is not None else [],
                 }
             )
         return result
