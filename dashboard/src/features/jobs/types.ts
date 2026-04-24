@@ -1,21 +1,13 @@
-import type { JobStatus } from "@/lib/api-types";
+import type * as v from "valibot";
+import type { jobFiltersSchema, jobListSearchSchema } from "./search-schema";
 
 /**
- * Filter criteria for listing jobs. Every field is optional and narrowing
- * — pagination lives alongside so a single `JobListQuery` round-trips
- * through the URL search params.
+ * Filter criteria for listing jobs. Inferred from the valibot schema so the
+ * runtime validator and compile-time type stay in sync.
  */
-export interface JobFilters {
-  status?: JobStatus;
-  queue?: string;
-  task?: string;
-  metadata?: string;
-  error?: string;
-  createdAfter?: number;
-  createdBefore?: number;
-}
+export type JobFilters = v.InferOutput<typeof jobFiltersSchema>;
 
-export interface JobListQuery extends JobFilters {
-  page: number;
-  pageSize: number;
-}
+/**
+ * Full shape of the `/jobs` URL search params: filters plus pagination.
+ */
+export type JobListQuery = v.InferOutput<typeof jobListSearchSchema>;

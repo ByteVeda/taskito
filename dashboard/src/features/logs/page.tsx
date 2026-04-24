@@ -1,39 +1,42 @@
-import { useState } from "react";
+import { getRouteApi } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
 import type { LogLevel } from "./api";
 import { LogFilters, LogStream } from "./components";
 import { useLogs } from "./hooks";
+import { LOGS_DEFAULT_SINCE_SECONDS, LOGS_PAGE_SIZE } from "./search-schema";
 
-const DEFAULT_SINCE_SECONDS = 3_600;
-const PAGE_SIZE = 500;
+const routeApi = getRouteApi("/logs");
 
 /**
  * Logs route body. Default-exported so the route file can lazy-load the
  * entire logs surface (including the virtual list dependency) on demand.
  */
 export default function LogsPage() {
-  const [task, setTask] = useState<string | undefined>(undefined);
-  const [level, setLevel] = useState<LogLevel | undefined>(undefined);
+  const search = routeApi.useSearch();
+  const navigate = routeApi.useNavigate();
+
+  const setFilter = (next: { task?: string; level?: LogLevel }) => {
+    navigate({
+      search: () => ({
+        task: next.task,
+        level: next.level,
+      }),
+      replace: true,
+    });
+  };
 
   const logs = useLogs({
-    task,
-    level,
-    sinceSeconds: DEFAULT_SINCE_SECONDS,
-    limit: PAGE_SIZE,
+    task: search.task,
+    level: search.level,
+    sinceSeconds: LOGS_DEFAULT_SINCE_SECONDS,
+    limit: LOGS_PAGE_SIZE,
   });
 
   return (
     <>
       <PageHeader title="Logs" description="Live-tailing task log stream across all workers." />
       <div className="flex flex-col gap-3">
-        <LogFilters
-          task={task}
-          level={level}
-          onChange={(next) => {
-            setTask(next.task);
-            setLevel(next.level);
-          }}
-        />
+        <LogFilters task={search.task} level={search.level} onChange={setFilter} />
         <LogStream
           logs={logs.data}
           loading={logs.isLoading || (logs.isFetching && !logs.data)}

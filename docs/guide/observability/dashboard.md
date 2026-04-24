@@ -49,15 +49,17 @@ taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
 
 ## Dashboard Features
 
-The dashboard is built with Preact, Tailwind CSS, and TypeScript, compiled into a single self-contained HTML file.
+The dashboard is a React + Vite + TypeScript SPA routed via TanStack Router, styled with Tailwind v4 and shadcn/ui, and shipped as hash-busted multi-file assets under `py_src/taskito/static/dashboard/`.
 
 ### Design
 
-- **Dark and light mode** -- Toggle between themes via the sun/moon button in the header. Preference is stored in `localStorage` and persists across sessions.
-- **Auto-refresh** -- Configurable refresh interval (2s, 5s, 10s, or off) via the header dropdown. All pages auto-refresh at the selected interval.
+- **Dark and light mode** -- Toggle between themes via the sun/moon button in the header. Preference is stored in `localStorage` and follows the system scheme by default.
+- **Auto-refresh** -- Configurable refresh interval (2s, 5s, 10s, or off) via the header dropdown. All pages auto-refresh at the selected interval; TanStack Query handles caching and background revalidation.
+- **Command palette** -- `⌘K` / `Ctrl+K` opens a cmdk palette for route navigation and common actions.
 - **Icons** -- Lucide icons throughout for visual clarity — every nav item, stat card, and action button has a meaningful icon.
-- **Toast notifications** -- Every action (cancel, retry, replay, pause, resume, purge) shows a success or error toast in the bottom-right corner. Toasts auto-dismiss after 3 seconds.
-- **Loading states** -- Spinners while data loads, skeleton screens for tables and cards.
+- **Toast notifications** -- Every action (cancel, retry, replay, pause, resume, purge) shows a success or error toast via sonner. Optimistic mutations update the UI immediately and roll back on error.
+- **Destructive confirms** -- Irreversible actions (purge, retry all) use a type-to-confirm dialog.
+- **Loading states** -- Skeleton screens for tables and cards, error boundaries with retry.
 - **Responsive layout** -- Sidebar navigation with grouped sections (Monitoring, Infrastructure, Advanced). The main content area scrolls independently.
 
 ### Pages
@@ -76,8 +78,8 @@ The dashboard is built with Preact, Tailwind CSS, and TypeScript, compiled into 
 | **Dead Letters** | Failed jobs that exhausted retries -- retry individual entries or purge all |
 | **System** | Proxy reconstruction and interception strategy metrics |
 
-!!! info "Zero extra dependencies"
-    The SPA is embedded directly in the Python package. No Node.js, no pnpm, no CDN -- just `pip install taskito`. Node.js is only needed by contributors who modify the dashboard source.
+!!! info "Zero extra dependencies at runtime"
+    The built SPA ships inside the Python wheel under `py_src/taskito/static/dashboard/` and is served by the Python dashboard process. No Node.js, no pnpm, no CDN at runtime -- just `pip install taskito`. Node.js and pnpm are only needed by contributors rebuilding the dashboard source in `dashboard/`.
 
 ## Tutorial
 

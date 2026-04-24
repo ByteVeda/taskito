@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui";
 import { CommandPalette } from "./command-palette";
 import { Header } from "./header";
 import { RouteErrorBoundary } from "./route-error-boundary";

@@ -1,6 +1,6 @@
 import {
   keepPreviousData,
-  type Query,
+  queryOptions,
   useMutation,
   useQuery,
   useQueryClient,
@@ -31,18 +31,56 @@ const KEY = {
   dag: (id: string) => ["jobs", "detail", id, "dag"] as const,
 };
 
+export function jobsListQuery(query: JobListQuery) {
+  return queryOptions({
+    queryKey: KEY.list(query),
+    queryFn: ({ signal }) => fetchJobs(query, signal),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function jobDetailQuery(id: string) {
+  return queryOptions({
+    queryKey: KEY.detail(id),
+    queryFn: ({ signal }) => fetchJob(id, signal),
+  });
+}
+
+export function jobLogsQuery(id: string) {
+  return queryOptions({
+    queryKey: KEY.logs(id),
+    queryFn: ({ signal }) => fetchJobLogs(id, signal),
+  });
+}
+
+export function jobErrorsQuery(id: string) {
+  return queryOptions({
+    queryKey: KEY.errors(id),
+    queryFn: ({ signal }) => fetchJobErrors(id, signal),
+  });
+}
+
+export function jobReplayHistoryQuery(id: string) {
+  return queryOptions({
+    queryKey: KEY.replays(id),
+    queryFn: ({ signal }) => fetchReplayHistory(id, signal),
+  });
+}
+
+export function jobDagQuery(id: string) {
+  return queryOptions({
+    queryKey: KEY.dag(id),
+    queryFn: ({ signal }) => fetchJobDag(id, signal),
+  });
+}
+
 /**
  * Paginated job list. Uses `keepPreviousData` to avoid flashing empty state
  * between pages, and polls at the dashboard-wide refresh cadence.
  */
 export function useJobs(query: JobListQuery) {
   const { intervalMs } = useRefreshInterval();
-  return useQuery({
-    queryKey: KEY.list(query),
-    queryFn: ({ signal }) => fetchJobs(query, signal),
-    placeholderData: keepPreviousData,
-    refetchInterval: intervalMs,
-  });
+  return useQuery({ ...jobsListQuery(query), refetchInterval: intervalMs });
 }
 
 /**
@@ -52,11 +90,10 @@ export function useJobs(query: JobListQuery) {
 export function useJob(id: string, enabled = true) {
   const { intervalMs } = useRefreshInterval();
   return useQuery({
-    queryKey: KEY.detail(id),
-    queryFn: ({ signal }) => fetchJob(id, signal),
+    ...jobDetailQuery(id),
     enabled,
-    refetchInterval: (query: Query<Job>) => {
-      const data = query.state.data;
+    refetchInterval: (query) => {
+      const data = query.state.data as Job | undefined;
       if (data && isTerminalStatus(data.status)) return false;
       return intervalMs;
     },
@@ -65,38 +102,20 @@ export function useJob(id: string, enabled = true) {
 
 export function useJobLogs(id: string, enabled = true) {
   const { intervalMs } = useRefreshInterval();
-  return useQuery({
-    queryKey: KEY.logs(id),
-    queryFn: ({ signal }) => fetchJobLogs(id, signal),
-    enabled,
-    refetchInterval: intervalMs,
-  });
+  return useQuery({ ...jobLogsQuery(id), enabled, refetchInterval: intervalMs });
 }
 
 export function useJobErrors(id: string, enabled = true) {
   const { intervalMs } = useRefreshInterval();
-  return useQuery({
-    queryKey: KEY.errors(id),
-    queryFn: ({ signal }) => fetchJobErrors(id, signal),
-    enabled,
-    refetchInterval: intervalMs,
-  });
+  return useQuery({ ...jobErrorsQuery(id), enabled, refetchInterval: intervalMs });
 }
 
 export function useReplayHistory(id: string, enabled = true) {
-  return useQuery({
-    queryKey: KEY.replays(id),
-    queryFn: ({ signal }) => fetchReplayHistory(id, signal),
-    enabled,
-  });
+  return useQuery({ ...jobReplayHistoryQuery(id), enabled });
 }
 
 export function useJobDag(id: string, enabled = true) {
-  return useQuery({
-    queryKey: KEY.dag(id),
-    queryFn: ({ signal }) => fetchJobDag(id, signal),
-    enabled,
-  });
+  return useQuery({ ...jobDagQuery(id), enabled });
 }
 
 interface MutationContext {

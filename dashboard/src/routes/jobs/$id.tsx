@@ -16,6 +16,7 @@ import {
   JobLogsTab,
   JobOverviewTab,
   JobReplayTab,
+  jobDetailQuery,
   useJob,
   useJobDag,
   useJobErrors,
@@ -25,6 +26,8 @@ import {
 import { JOB_STATUS_LABEL, JOB_STATUS_TONE } from "@/lib/status";
 
 export const Route = createFileRoute("/jobs/$id")({
+  loader: ({ context: { queryClient }, params: { id } }) =>
+    queryClient.ensureQueryData(jobDetailQuery(id)),
   component: JobDetailPage,
 });
 

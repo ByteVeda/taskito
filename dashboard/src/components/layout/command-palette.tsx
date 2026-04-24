@@ -24,10 +24,8 @@ import {
   CommandList,
   CommandSeparator,
   CommandShortcut,
-} from "@/components/ui/command";
-import { useCommandPalette } from "@/providers/command-palette-provider";
-import { type RefreshOption, useRefreshInterval } from "@/providers/refresh-interval-provider";
-import { useTheme } from "@/providers/theme-provider";
+} from "@/components/ui";
+import { type RefreshOption, useCommandPalette, useRefreshInterval, useTheme } from "@/providers";
 
 interface NavCmd {
   label: string;

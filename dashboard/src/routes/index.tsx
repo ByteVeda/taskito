@@ -1,10 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
 import {
+  pausedQueuesQuery,
   QueueBreakdown,
+  queueStatsQuery,
   RecentJobs,
+  recentJobsQuery,
   StatsGrid,
+  statsQuery,
   ThroughputSparkline,
+  throughputQuery,
   usePausedQueues,
   useQueueStats,
   useRecentJobs,
@@ -13,6 +18,14 @@ import {
 } from "@/features/overview";
 
 export const Route = createFileRoute("/")({
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.ensureQueryData(statsQuery()),
+      queryClient.ensureQueryData(queueStatsQuery()),
+      queryClient.ensureQueryData(pausedQueuesQuery()),
+      queryClient.ensureQueryData(recentJobsQuery(10)),
+      queryClient.ensureQueryData(throughputQuery(60, 3600)),
+    ]),
   component: OverviewPage,
 });
 

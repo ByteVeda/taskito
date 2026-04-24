@@ -2,7 +2,7 @@ import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui";
 
 function RouteErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   return (

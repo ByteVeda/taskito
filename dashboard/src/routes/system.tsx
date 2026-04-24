@@ -2,12 +2,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
 import {
   InterceptionTable,
+  interceptionStatsQuery,
   ProxyTable,
+  proxyStatsQuery,
   useInterceptionStats,
   useProxyStats,
 } from "@/features/system";
 
 export const Route = createFileRoute("/system")({
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.ensureQueryData(proxyStatsQuery()),
+      queryClient.ensureQueryData(interceptionStatsQuery()),
+    ]),
   component: SystemPage,
 });
 

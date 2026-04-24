@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
-import { ResourcesTable, useResources } from "@/features/resources";
+import { ResourcesTable, resourcesQuery, useResources } from "@/features/resources";
 
 export const Route = createFileRoute("/resources")({
+  loader: ({ context: { queryClient } }) => queryClient.ensureQueryData(resourcesQuery()),
   component: ResourcesPage,
 });
 

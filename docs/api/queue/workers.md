@@ -61,10 +61,12 @@ Async version of `workers()`.
 await queue.arun_worker(
     queues: Sequence[str] | None = None,
     tags: list[str] | None = None,
+    pool: str = "thread",
+    app: str | None = None,
 ) -> None
 ```
 
-Async version of `run_worker()`. Runs the worker in a thread pool without blocking the event loop.
+Async version of `run_worker()`. Runs the blocking worker loop in a thread executor so it does not block the asyncio event loop. Accepts the same `pool` and `app` kwargs as the sync variant (`app` is required when `pool="prefork"`).
 
 ## Circuit Breakers
 

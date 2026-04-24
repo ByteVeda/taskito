@@ -1,10 +1,16 @@
-import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
+import type { QueryClient } from "@tanstack/react-query";
+import { createRootRouteWithContext, Link, Outlet } from "@tanstack/react-router";
 import { AlertTriangle, ArrowLeft, Home } from "lucide-react";
-import { AppShell } from "@/components/layout";
+import { AppShell, BackendOffline } from "@/components/layout";
 import { Button, buttonVariants } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { isBackendUnreachable } from "@/lib/errors";
 
-export const Route = createRootRoute({
+export interface RouterContext {
+  queryClient: QueryClient;
+}
+
+export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootLayout,
   errorComponent: ErrorView,
   notFoundComponent: NotFoundView,
@@ -18,7 +24,21 @@ function RootLayout() {
   );
 }
 
+/**
+ * Top-level error boundary for loader failures and uncaught render errors.
+ *
+ * Network/5xx failures get a dedicated "backend unreachable" page with
+ * actionable steps. Everything else falls through to the generic error
+ * view — usually a programming bug the user can't fix on their own.
+ */
 function ErrorView({ error }: { error: Error }) {
+  if (isBackendUnreachable(error)) {
+    return (
+      <AppShell>
+        <BackendOffline error={error} />
+      </AppShell>
+    );
+  }
   return (
     <AppShell>
       <div className="grid min-h-[50vh] place-items-center">

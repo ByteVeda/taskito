@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { getRouteApi } from "@tanstack/react-router";
+import { useMemo } from "react";
 import { PageHeader } from "@/components/layout";
 import {
   LatencyChart,
@@ -8,18 +9,28 @@ import {
   TimeRangeSelector,
 } from "./components";
 import { useMetricsSummary, useMetricsTimeseries } from "./hooks";
-import { DEFAULT_TIME_RANGE, type TimeRange } from "./types";
+import type { TimeRange } from "./types";
+
+const routeApi = getRouteApi("/metrics");
 
 /**
  * The metrics dashboard.
  *
  * Exported as a default component so the route can dynamically import it
- * and keep Recharts off the main bundle. Time range + task filter live as
- * local state; if they turn out to be shareable we can promote to URL.
+ * and keep Recharts off the main bundle. `range` + `task` are URL-backed so
+ * views (e.g. "send_email, last 24h") are shareable.
  */
 export default function MetricsPage() {
-  const [range, setRange] = useState<TimeRange>(DEFAULT_TIME_RANGE);
-  const [task, setTask] = useState<string | undefined>(undefined);
+  const { range, task } = routeApi.useSearch();
+  const navigate = routeApi.useNavigate();
+
+  const setRange = (next: TimeRange) => {
+    navigate({ search: (prev) => ({ ...prev, range: next }), replace: true });
+  };
+
+  const setTask = (next: string | undefined) => {
+    navigate({ search: (prev) => ({ ...prev, task: next }), replace: true });
+  };
 
   const summary = useMetricsSummary(range, task);
   const series = useMetricsTimeseries(range, task);
