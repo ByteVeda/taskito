@@ -1,0 +1,61 @@
+# Path-based PR auto-labels. Drives triage, filtering, and release-notes
+# grouping. Each area label is additive — a PR touching Rust + docs gets
+# both `area/rust` and `area/docs`.
+
+area/rust:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/**"
+          - "Cargo.toml"
+          - "Cargo.lock"
+
+area/python:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "py_src/**"
+          - "pyproject.toml"
+          - "uv.lock"
+
+area/dashboard:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "dashboard/**"
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "README.md"
+          - "CHANGELOG.md"
+          - "**/*.md"
+
+area/tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tests/**"
+          - "**/*_test.py"
+          - "**/test_*.py"
+          - "**/*.test.ts"
+          - "**/*.test.tsx"
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - ".pre-commit-config.yaml"
+
+area/storage:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/taskito-core/src/storage/**"
+
+area/scheduler:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/taskito-core/src/scheduler/**"
+
+area/workflows:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/taskito-core/src/workflow*/**"
+          - "py_src/taskito/workflows/**"
