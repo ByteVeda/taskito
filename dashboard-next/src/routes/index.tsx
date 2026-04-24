@@ -1,22 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Clock, ListTree, Pause, Play, Skull } from "lucide-react";
 import { PageHeader } from "@/components/layout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  QueueBreakdown,
+  RecentJobs,
+  StatsGrid,
+  ThroughputSparkline,
+  usePausedQueues,
+  useQueueStats,
+  useRecentJobs,
+  useStats,
+  useThroughput,
+} from "@/features/overview";
 
 export const Route = createFileRoute("/")({
   component: OverviewPage,
 });
 
-const STATS = [
-  { key: "pending", label: "Pending", icon: Clock, tone: "text-[var(--fg-muted)]" },
-  { key: "running", label: "Running", icon: Play, tone: "text-info" },
-  { key: "completed", label: "Completed", icon: ListTree, tone: "text-success" },
-  { key: "failed", label: "Failed / dead", icon: Skull, tone: "text-danger" },
-  { key: "paused", label: "Paused queues", icon: Pause, tone: "text-warning" },
-] as const;
-
 function OverviewPage() {
+  const stats = useStats();
+  const queueStats = useQueueStats();
+  const paused = usePausedQueues();
+  const jobs = useRecentJobs(10);
+  const throughput = useThroughput(60, 3600);
+
   return (
     <>
       <PageHeader
@@ -24,18 +30,36 @@ function OverviewPage() {
         title="Overview"
         description="A live pulse on your queues, jobs, and workers."
       />
-      <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(220px,1fr))]">
-        {STATS.map(({ key, label, icon: Icon, tone }) => (
-          <Card key={key}>
-            <CardHeader className="flex-row items-center justify-between pb-1">
-              <CardTitle>{label}</CardTitle>
-              <Icon className={`size-4 ${tone}`} aria-hidden />
-            </CardHeader>
-            <CardContent>
-              <Skeleton className="h-8 w-20" />
-            </CardContent>
-          </Card>
-        ))}
+
+      <div className="flex flex-col gap-6">
+        <StatsGrid stats={stats.data} pausedCount={paused.data?.length} loading={stats.isLoading} />
+
+        <ThroughputSparkline buckets={throughput.data} loading={throughput.isLoading} />
+
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold tracking-tight text-[var(--fg)]">Queues</h2>
+          </div>
+          <QueueBreakdown
+            queueStats={queueStats.data}
+            paused={paused.data}
+            loading={queueStats.isLoading}
+            error={queueStats.error}
+            onRetry={() => queueStats.refetch()}
+          />
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold tracking-tight text-[var(--fg)]">Recent jobs</h2>
+          </div>
+          <RecentJobs
+            jobs={jobs.data}
+            loading={jobs.isLoading}
+            error={jobs.error}
+            onRetry={() => jobs.refetch()}
+          />
+        </section>
       </div>
     </>
   );
