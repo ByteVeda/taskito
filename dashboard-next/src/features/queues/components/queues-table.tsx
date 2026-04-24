@@ -19,6 +19,7 @@ interface QueueRow {
   completed: number;
   failed: number;
   dead: number;
+  failedTotal: number;
 }
 
 interface QueuesTableProps {
@@ -30,22 +31,24 @@ interface QueuesTableProps {
 }
 
 export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTableProps) {
-  const pauseMutation = usePauseQueue();
-  const resumeMutation = useResumeQueue();
-
   const rows = useMemo<QueueRow[]>(() => {
     if (!stats) return [];
     const pausedSet = new Set(paused ?? []);
     return Object.entries(stats)
-      .map(([name, s]) => ({
-        name,
-        paused: pausedSet.has(name),
-        pending: s.pending ?? 0,
-        running: s.running ?? 0,
-        completed: s.completed ?? 0,
-        failed: s.failed ?? 0,
-        dead: s.dead ?? 0,
-      }))
+      .map(([name, s]) => {
+        const failed = s.failed ?? 0;
+        const dead = s.dead ?? 0;
+        return {
+          name,
+          paused: pausedSet.has(name),
+          pending: s.pending ?? 0,
+          running: s.running ?? 0,
+          completed: s.completed ?? 0,
+          failed,
+          dead,
+          failedTotal: failed + dead,
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [stats, paused]);
 
@@ -85,10 +88,10 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
         ),
       },
       {
-        accessorKey: "failed",
-        header: "Failed",
-        cell: ({ row }) => {
-          const total = row.original.failed + row.original.dead;
+        accessorKey: "failedTotal",
+        header: "Failed / dead",
+        cell: ({ getValue }) => {
+          const total = getValue<number>();
           return (
             <span
               className={`tabular-nums ${total > 0 ? "text-danger" : "text-[var(--fg-muted)]"}`}
@@ -101,40 +104,12 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
       {
         id: "actions",
         header: "",
-        cell: ({ row }) => {
-          const name = row.original.name;
-          if (row.original.paused) {
-            return (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  resumeMutation.mutate(name);
-                }}
-                disabled={resumeMutation.isPending}
-              >
-                <Play aria-hidden /> Resume
-              </Button>
-            );
-          }
-          return (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                pauseMutation.mutate(name);
-              }}
-              disabled={pauseMutation.isPending}
-            >
-              <Pause aria-hidden /> Pause
-            </Button>
-          );
-        },
+        cell: ({ row }) => (
+          <PauseResumeCell name={row.original.name} paused={row.original.paused} />
+        ),
       },
     ],
-    [pauseMutation, resumeMutation],
+    [],
   );
 
   if (error) {
@@ -158,4 +133,42 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
   }
 
   return <DataTable columns={columns} data={rows} rowKey={(r) => r.name} />;
+}
+
+/**
+ * Per-row pause/resume button. Owning the mutation locally ensures only
+ * the clicked row is disabled while its request is in flight — other rows
+ * stay clickable.
+ */
+function PauseResumeCell({ name, paused }: { name: string; paused: boolean }) {
+  const pause = usePauseQueue();
+  const resume = useResumeQueue();
+  if (paused) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={(e) => {
+          e.stopPropagation();
+          resume.mutate(name);
+        }}
+        disabled={resume.isPending}
+      >
+        <Play aria-hidden /> Resume
+      </Button>
+    );
+  }
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={(e) => {
+        e.stopPropagation();
+        pause.mutate(name);
+      }}
+      disabled={pause.isPending}
+    >
+      <Pause aria-hidden /> Pause
+    </Button>
+  );
 }

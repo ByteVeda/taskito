@@ -14,6 +14,7 @@ interface Row {
   completed: number;
   failed: number;
   dead: number;
+  failedTotal: number;
   paused: boolean;
 }
 
@@ -36,15 +37,20 @@ export function QueueBreakdown({
     if (!queueStats) return [];
     const pausedSet = new Set(paused ?? []);
     return Object.entries(queueStats)
-      .map(([name, s]) => ({
-        name,
-        pending: s.pending ?? 0,
-        running: s.running ?? 0,
-        completed: s.completed ?? 0,
-        failed: s.failed ?? 0,
-        dead: s.dead ?? 0,
-        paused: pausedSet.has(name),
-      }))
+      .map(([name, s]) => {
+        const failed = s.failed ?? 0;
+        const dead = s.dead ?? 0;
+        return {
+          name,
+          pending: s.pending ?? 0,
+          running: s.running ?? 0,
+          completed: s.completed ?? 0,
+          failed,
+          dead,
+          failedTotal: failed + dead,
+          paused: pausedSet.has(name),
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [queueStats, paused]);
 
@@ -84,10 +90,10 @@ export function QueueBreakdown({
         ),
       },
       {
-        accessorKey: "failed",
-        header: "Failed",
-        cell: ({ row }) => {
-          const total = row.original.failed + row.original.dead;
+        accessorKey: "failedTotal",
+        header: "Failed / dead",
+        cell: ({ getValue }) => {
+          const total = getValue<number>();
           return (
             <span
               className={`tabular-nums ${total > 0 ? "text-danger" : "text-[var(--fg-muted)]"}`}
