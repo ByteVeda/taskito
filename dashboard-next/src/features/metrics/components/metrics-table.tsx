@@ -1,9 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import { DataTable } from "@/components/ui/data-table";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { MetricsResponse, TaskMetrics } from "@/lib/api-types";
 import { formatCount, formatPercent } from "@/lib/number";
 

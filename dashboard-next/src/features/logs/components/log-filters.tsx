@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { Input } from "@/components/ui/input";
 import {
+  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
+} from "@/components/ui";
+import { useDebouncedValue } from "@/hooks";
 import { cn } from "@/lib/cn";
 import { LOG_LEVELS, type LogLevel } from "../api";
 
@@ -34,7 +34,7 @@ export function LogFilters({ task, level, onChange, className }: LogFiltersProps
       onChange({ task: next, level });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- propagate only debounced value
-  }, [debounced]);
+  }, [debounced, task, onChange, level]);
 
   return (
     <div className={cn("grid gap-2 md:grid-cols-[1fr_200px]", className)}>

@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { RotateCcw } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge, Button } from "@/components/ui";
 import type { DeadLetter } from "@/lib/api-types";
 import { formatRelative } from "@/lib/time";
 import { useRetryDeadLetter } from "../hooks";

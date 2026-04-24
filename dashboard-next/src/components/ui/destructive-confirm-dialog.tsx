@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "./button";
 import {
   Dialog,
   DialogContent,
@@ -7,8 +7,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+} from "./dialog";
+import { Input } from "./input";
 
 interface DestructiveConfirmDialogProps {
   open: boolean;

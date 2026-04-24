@@ -1,7 +1,6 @@
 import { ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge, Button } from "@/components/ui";
 import { formatRelative } from "@/lib/time";
 import { useRetryDeadLetter } from "../hooks";
 import type { DeadLetterGroup } from "../utils";

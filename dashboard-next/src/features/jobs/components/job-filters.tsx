@@ -1,15 +1,15 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
+  Button,
+  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
+} from "@/components/ui";
+import { useDebouncedValue } from "@/hooks";
 import type { JobStatus } from "@/lib/api-types";
 import { cn } from "@/lib/cn";
 import { JOB_STATUS_LABEL } from "@/lib/status";
@@ -79,7 +79,15 @@ export function JobFiltersBar({ filters, onChange, className }: JobFiltersBarPro
       onChange(next);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: propagate only debounced values
-  }, [debouncedQueue, debouncedTask, debouncedMetadata, debouncedError]);
+  }, [
+    debouncedQueue,
+    debouncedTask,
+    debouncedMetadata,
+    debouncedError,
+    filters.task,
+    filters,
+    onChange,
+  ]);
 
   const activeCount = countActiveFilters(filters);
 

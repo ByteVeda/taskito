@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Job } from "@/lib/api-types";
-import { useRefreshInterval } from "@/providers/refresh-interval-provider";
+import { useRefreshInterval } from "@/providers";
 import {
   cancelJob,
   fetchJob,

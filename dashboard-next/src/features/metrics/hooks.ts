@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useRefreshInterval } from "@/providers/refresh-interval-provider";
+import { useRefreshInterval } from "@/providers";
 import { fetchMetrics, fetchTimeseries } from "./api";
 import { type TimeRange, timeRangeConfig } from "./types";
 

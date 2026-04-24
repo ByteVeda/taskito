@@ -1,10 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
-import { DataTable } from "@/components/ui/data-table";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Badge, DataTable, ErrorState, Skeleton } from "@/components/ui";
 import type { Job } from "@/lib/api-types";
 import { JOB_STATUS_LABEL, JOB_STATUS_TONE } from "@/lib/status";
 import { formatRelative } from "@/lib/time";

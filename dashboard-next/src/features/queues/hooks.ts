@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useRefreshInterval } from "@/providers/refresh-interval-provider";
+import { useRefreshInterval } from "@/providers";
 import { fetchPausedQueues, fetchQueueStats, pauseQueue, resumeQueue } from "./api";
 
 const KEY = {

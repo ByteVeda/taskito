@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
 import type { Job } from "@/lib/api-types";
 import { formatAbsolute, formatDuration, formatRelative } from "@/lib/time";
 

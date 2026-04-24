@@ -1,6 +1,6 @@
 import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
-import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
+import { Card } from "./card";
 
 interface StatCardProps extends HTMLAttributes<HTMLDivElement> {
   label: string;

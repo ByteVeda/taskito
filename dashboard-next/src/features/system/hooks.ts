@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useRefreshInterval } from "@/providers/refresh-interval-provider";
+import { useRefreshInterval } from "@/providers";
 import { fetchInterceptionStats, fetchProxyStats } from "./api";
 
 export function useProxyStats() {

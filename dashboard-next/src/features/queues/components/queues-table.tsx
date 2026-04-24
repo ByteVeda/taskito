@@ -1,12 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Box, Pause, Play } from "lucide-react";
 import { useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { DataTable } from "@/components/ui/data-table";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Badge, Button, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { QueueStatsMap } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 import { usePauseQueue, useResumeQueue } from "../hooks";

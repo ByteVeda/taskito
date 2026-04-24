@@ -60,7 +60,7 @@ export function MobileMenu() {
   // Close on navigation
   useEffect(() => {
     setOpen(false);
-  }, [pathname]);
+  }, []);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>

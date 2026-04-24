@@ -1,8 +1,6 @@
 import { Skull } from "lucide-react";
 import { useMemo } from "react";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { DeadLetter } from "@/lib/api-types";
 import { groupByError } from "../utils";
 import { DeadLetterGroupRow } from "./dead-letter-group-row";

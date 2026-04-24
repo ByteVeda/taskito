@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useRefreshInterval } from "@/providers/refresh-interval-provider";
+import { useRefreshInterval } from "@/providers";
 import { fetchRecentJobs, fetchStats, fetchThroughput } from "./api";
 
 // Re-export queue hooks so the Overview route can import everything it needs

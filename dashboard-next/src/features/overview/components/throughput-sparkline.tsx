@@ -1,5 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@/components/ui";
 import type { TimeseriesBucket } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 

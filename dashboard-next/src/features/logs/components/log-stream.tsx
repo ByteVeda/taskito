@@ -1,9 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ScrollText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { TaskLog } from "@/lib/api-types";
 import { cn } from "@/lib/cn";
 import { formatAbsolute } from "@/lib/time";

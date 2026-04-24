@@ -1,9 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Workflow } from "lucide-react";
 import { useMemo } from "react";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { DagData, DagEdge, DagNode, JobStatus } from "@/lib/api-types";
 import { JOB_STATUS_LABEL } from "@/lib/status";
 

@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowRight, Search } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/components/ui";
 import { cn } from "@/lib/cn";
 
 interface JobSearchBarProps {

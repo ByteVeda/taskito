@@ -1,9 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
-import { DataTable } from "@/components/ui/data-table";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Badge, DataTable, ErrorState, Skeleton } from "@/components/ui";
 import type { QueueStatsMap } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 

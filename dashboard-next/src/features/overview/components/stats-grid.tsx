@@ -1,6 +1,5 @@
 import { CheckCircle2, Clock, Pause, Play, Skull } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
-import { StatCard } from "@/components/ui/stat-card";
+import { Skeleton, StatCard } from "@/components/ui";
 import type { QueueStats } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 

@@ -1,8 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { RotateCcw } from "lucide-react";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { ReplayEntry } from "@/lib/api-types";
 import { formatAbsolute, formatRelative } from "@/lib/time";
 

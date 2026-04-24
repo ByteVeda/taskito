@@ -1,8 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import { DataTable } from "@/components/ui/data-table";
-import { ErrorState } from "@/components/ui/error-state";
-import { Skeleton } from "@/components/ui/skeleton";
+import { DataTable, ErrorState, Skeleton } from "@/components/ui";
 import type { InterceptionStats } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 

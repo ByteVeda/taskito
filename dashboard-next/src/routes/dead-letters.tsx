@@ -2,9 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { List, Rows3, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { PageHeader } from "@/components/layout";
-import { Button } from "@/components/ui/button";
-import { DestructiveConfirmDialog } from "@/components/ui/destructive-confirm-dialog";
-import { Pagination } from "@/components/ui/pagination";
+import { Button, DestructiveConfirmDialog, Pagination } from "@/components/ui";
 import {
   DeadLetterList,
   type DeadLetterView,
