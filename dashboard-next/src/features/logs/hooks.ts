@@ -1,0 +1,15 @@
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useRefreshInterval } from "@/providers/refresh-interval-provider";
+import { fetchLogs, type LogsQuery } from "./api";
+
+const KEY = (q: LogsQuery) => ["logs", q.task ?? "", q.level ?? "", q.sinceSeconds, q.limit];
+
+export function useLogs(query: LogsQuery) {
+  const { intervalMs } = useRefreshInterval();
+  return useQuery({
+    queryKey: KEY(query),
+    queryFn: ({ signal }) => fetchLogs(query, signal),
+    placeholderData: keepPreviousData,
+    refetchInterval: intervalMs,
+  });
+}
