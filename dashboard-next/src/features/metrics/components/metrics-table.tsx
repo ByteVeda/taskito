@@ -119,10 +119,9 @@ export function MetricsTable({ metrics, loading, error, onRetry }: MetricsTableP
   return <DataTable columns={columns} data={rows} rowKey={(r) => r.task} />;
 }
 
-function Ms({ value }: { value: number }) {
-  return (
-    <span className="tabular-nums text-[var(--fg-muted)]">
-      {value > 0 ? `${value.toFixed(1)}ms` : "—"}
-    </span>
-  );
+function Ms({ value }: { value: number | null | undefined }) {
+  if (value == null || !Number.isFinite(value)) {
+    return <span className="tabular-nums text-[var(--fg-subtle)]">—</span>;
+  }
+  return <span className="tabular-nums text-[var(--fg-muted)]">{`${value.toFixed(1)}ms`}</span>;
 }

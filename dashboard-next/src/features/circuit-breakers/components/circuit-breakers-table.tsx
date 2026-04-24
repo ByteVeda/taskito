@@ -8,7 +8,7 @@ import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CircuitBreaker } from "@/lib/api-types";
 import { CIRCUIT_LABEL, CIRCUIT_TONE } from "@/lib/status";
-import { formatDuration } from "@/lib/time";
+import { formatDuration, formatRelative } from "@/lib/time";
 
 interface CircuitBreakersTableProps {
   breakers: CircuitBreaker[] | undefined;
@@ -76,11 +76,8 @@ export function CircuitBreakersTable({
         cell: ({ getValue }) => {
           const v = getValue<number | null>();
           if (!v) return <span className="text-[var(--fg-subtle)]">—</span>;
-          const ago = Math.round((Date.now() - v * 1000) / 1000);
           return (
-            <span className="text-xs tabular-nums text-[var(--fg-muted)]">
-              {ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`}
-            </span>
+            <span className="text-xs tabular-nums text-[var(--fg-muted)]">{formatRelative(v)}</span>
           );
         },
       },

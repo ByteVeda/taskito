@@ -103,8 +103,22 @@ export function DataTable<TData>({
             table.getRowModel().rows.map((row: Row<TData>, index) => (
               <TableRow
                 key={rowKey ? rowKey(row.original, index) : row.id}
-                className={cn(onRowClick && "cursor-pointer")}
+                className={cn(
+                  onRowClick &&
+                    "cursor-pointer focus-visible:outline-none focus-visible:bg-[var(--surface-2)]",
+                )}
+                tabIndex={onRowClick ? 0 : undefined}
                 onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                onKeyDown={
+                  onRowClick
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onRowClick(row.original);
+                        }
+                      }
+                    : undefined
+                }
               >
                 {row.getVisibleCells().map((cell) => (
                   <TableCell key={cell.id}>
