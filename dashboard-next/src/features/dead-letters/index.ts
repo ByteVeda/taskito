@@ -1,3 +1,8 @@
 export * from "./components";
 export * from "./hooks";
-export { type DeadLetterGroup, groupByError } from "./utils";
+export {
+  type DeadLetterGroup,
+  extractExceptionClass,
+  extractReason,
+  groupByError,
+} from "./utils";

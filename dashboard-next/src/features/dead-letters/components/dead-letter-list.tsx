@@ -52,7 +52,7 @@ export function DeadLetterList({ items, view, loading, error, onRetry }: DeadLet
     return (
       <div className="flex flex-col gap-2">
         {groups.map((g) => (
-          <DeadLetterGroupRow key={g.error} group={g} />
+          <DeadLetterGroupRow key={g.key} group={g} />
         ))}
       </div>
     );
