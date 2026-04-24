@@ -1,8 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
-import { CircuitBreakersTable, useCircuitBreakers } from "@/features/circuit-breakers";
+import {
+  CircuitBreakersTable,
+  circuitBreakersQuery,
+  useCircuitBreakers,
+} from "@/features/circuit-breakers";
 
 export const Route = createFileRoute("/circuit-breakers")({
+  loader: ({ context: { queryClient } }) => queryClient.ensureQueryData(circuitBreakersQuery()),
   component: CircuitBreakersPage,
 });
 

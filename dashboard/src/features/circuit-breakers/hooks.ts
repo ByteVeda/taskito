@@ -1,12 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import { useRefreshInterval } from "@/providers";
 import { fetchCircuitBreakers } from "./api";
 
-export function useCircuitBreakers() {
-  const { intervalMs } = useRefreshInterval();
-  return useQuery({
+export function circuitBreakersQuery() {
+  return queryOptions({
     queryKey: ["circuit-breakers"],
     queryFn: ({ signal }) => fetchCircuitBreakers(signal),
-    refetchInterval: intervalMs,
   });
+}
+
+export function useCircuitBreakers() {
+  const { intervalMs } = useRefreshInterval();
+  return useQuery({ ...circuitBreakersQuery(), refetchInterval: intervalMs });
 }

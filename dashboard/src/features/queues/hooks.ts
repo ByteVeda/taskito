@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRefreshInterval } from "@/providers";
 import { fetchPausedQueues, fetchQueueStats, pauseQueue, resumeQueue } from "./api";
@@ -9,22 +9,28 @@ const KEY = {
   all: ["queues"] as const,
 };
 
-export function useQueueStats() {
-  const { intervalMs } = useRefreshInterval();
-  return useQuery({
+export function queueStatsQuery() {
+  return queryOptions({
     queryKey: KEY.stats,
     queryFn: ({ signal }) => fetchQueueStats(signal),
-    refetchInterval: intervalMs,
   });
+}
+
+export function pausedQueuesQuery() {
+  return queryOptions({
+    queryKey: KEY.paused,
+    queryFn: ({ signal }) => fetchPausedQueues(signal),
+  });
+}
+
+export function useQueueStats() {
+  const { intervalMs } = useRefreshInterval();
+  return useQuery({ ...queueStatsQuery(), refetchInterval: intervalMs });
 }
 
 export function usePausedQueues() {
   const { intervalMs } = useRefreshInterval();
-  return useQuery({
-    queryKey: KEY.paused,
-    queryFn: ({ signal }) => fetchPausedQueues(signal),
-    refetchInterval: intervalMs,
-  });
+  return useQuery({ ...pausedQueuesQuery(), refetchInterval: intervalMs });
 }
 
 interface OptimisticContext {

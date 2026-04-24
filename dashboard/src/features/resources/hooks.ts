@@ -1,12 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import { useRefreshInterval } from "@/providers";
 import { fetchResources } from "./api";
 
-export function useResources() {
-  const { intervalMs } = useRefreshInterval();
-  return useQuery({
+export function resourcesQuery() {
+  return queryOptions({
     queryKey: ["resources"],
     queryFn: ({ signal }) => fetchResources(signal),
-    refetchInterval: intervalMs,
   });
+}
+
+export function useResources() {
+  const { intervalMs } = useRefreshInterval();
+  return useQuery({ ...resourcesQuery(), refetchInterval: intervalMs });
 }

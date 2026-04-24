@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
-import { useWorkers, WorkersTable } from "@/features/workers";
+import { useWorkers, WorkersTable, workersQuery } from "@/features/workers";
 import { formatCount } from "@/lib/number";
 
 export const Route = createFileRoute("/workers")({
+  loader: ({ context: { queryClient } }) => queryClient.ensureQueryData(workersQuery()),
   component: WorkersPage,
 });
 

@@ -1,23 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
 import { Pagination } from "@/components/ui";
-import { JobFiltersBar, JobSearchBar, JobTable, useJobs } from "@/features/jobs";
+import { JobFiltersBar, JobSearchBar, JobTable, jobsListQuery, useJobs } from "@/features/jobs";
 import type { JobFilters, JobListQuery } from "@/features/jobs/types";
 import { parseJobListSearch } from "@/features/jobs/utils";
 
 export const Route = createFileRoute("/jobs/")({
+  validateSearch: (search): JobListQuery => parseJobListSearch(search),
+  loaderDeps: ({ search }) => ({ search }),
+  loader: ({ context: { queryClient }, deps: { search } }) =>
+    queryClient.ensureQueryData(jobsListQuery(search)),
   component: JobsListPage,
-  validateSearch: (search) => parseJobListSearch(search),
 });
 
 function JobsListPage() {
-  const search = Route.useSearch() as JobListQuery;
+  const search = Route.useSearch();
   const navigate = Route.useNavigate();
 
   const updateFilters = (filters: JobFilters) => {
     navigate({
       search: (prev) => ({
-        ...(prev as JobListQuery),
+        ...prev,
         ...filters,
         // Reset to first page whenever filters change
         page: 0,
@@ -27,7 +30,7 @@ function JobsListPage() {
   };
 
   const setPage = (page: number) => {
-    navigate({ search: (prev) => ({ ...(prev as JobListQuery), page }) });
+    navigate({ search: (prev) => ({ ...prev, page }) });
   };
 
   const jobs = useJobs(search);

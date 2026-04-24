@@ -1,8 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
-import { QueuesTable, usePausedQueues, useQueueStats } from "@/features/queues";
+import {
+  pausedQueuesQuery,
+  QueuesTable,
+  queueStatsQuery,
+  usePausedQueues,
+  useQueueStats,
+} from "@/features/queues";
 
 export const Route = createFileRoute("/queues")({
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.ensureQueryData(queueStatsQuery()),
+      queryClient.ensureQueryData(pausedQueuesQuery()),
+    ]),
   component: QueuesPage,
 });
 

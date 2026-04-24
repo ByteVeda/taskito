@@ -6,6 +6,7 @@ import { Button, DestructiveConfirmDialog, Pagination } from "@/components/ui";
 import {
   DeadLetterList,
   type DeadLetterView,
+  deadLettersQuery,
   useDeadLetters,
   usePurgeDeadLetters,
 } from "@/features/dead-letters";
@@ -14,6 +15,8 @@ import { cn } from "@/lib/cn";
 const PAGE_SIZE = 25;
 
 export const Route = createFileRoute("/dead-letters")({
+  loader: ({ context: { queryClient } }) =>
+    queryClient.ensureQueryData(deadLettersQuery(0, PAGE_SIZE)),
   component: DeadLettersPage,
 });
 

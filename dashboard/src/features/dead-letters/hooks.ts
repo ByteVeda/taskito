@@ -1,4 +1,10 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRefreshInterval } from "@/providers";
 import { fetchDeadLetters, purgeDeadLetters, retryDeadLetter } from "./api";
@@ -8,14 +14,17 @@ const KEY = {
   list: (page: number, pageSize: number) => ["dead-letters", "list", page, pageSize] as const,
 };
 
-export function useDeadLetters(page: number, pageSize: number) {
-  const { intervalMs } = useRefreshInterval();
-  return useQuery({
+export function deadLettersQuery(page: number, pageSize: number) {
+  return queryOptions({
     queryKey: KEY.list(page, pageSize),
     queryFn: ({ signal }) => fetchDeadLetters(page, pageSize, signal),
     placeholderData: keepPreviousData,
-    refetchInterval: intervalMs,
   });
+}
+
+export function useDeadLetters(page: number, pageSize: number) {
+  const { intervalMs } = useRefreshInterval();
+  return useQuery({ ...deadLettersQuery(page, pageSize), refetchInterval: intervalMs });
 }
 
 export function useRetryDeadLetter() {
