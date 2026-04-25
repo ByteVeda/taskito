@@ -160,7 +160,9 @@ impl RedisStorage {
                     local job_data = redis.call('GET', job_key)
                     if job_data then
                         local job = cjson.decode(job_data)
-                        if job.status == 0 or job.status == 1 then
+                        -- JobStatus serializes as variant names ("Pending"/"Running"),
+                        -- not the #[repr(i32)] discriminant.
+                        if job.status == 'Pending' or job.status == 'Running' then
                             -- Pending or Running — return existing job data
                             return job_data
                         end
@@ -240,7 +242,7 @@ impl RedisStorage {
                     local ej_data = redis.call('GET', prefix .. existing)
                     if ej_data then
                         local ej = cjson.decode(ej_data)
-                        if ej.status == 0 or ej.status == 1 then
+                        if ej.status == 'Pending' or ej.status == 'Running' then
                             return ej_data
                         end
                     end
