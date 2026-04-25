@@ -43,7 +43,7 @@ pub struct PyQueue {
     /// call; migrations run exactly once per `PyQueue` instance instead of
     /// per-call.
     #[cfg(feature = "workflows")]
-    pub(crate) workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowSqliteStorage>,
+    pub(crate) workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowStorageBackend>,
 }
 
 #[pymethods]

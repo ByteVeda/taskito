@@ -14,7 +14,7 @@ use taskito_core::job::{now_millis, NewJob};
 use taskito_core::storage::{Storage, StorageBackend};
 use taskito_workflows::{
     topological_order, StepMetadata, WorkflowNode, WorkflowNodeStatus, WorkflowRun,
-    WorkflowSqliteStorage, WorkflowState, WorkflowStorage,
+    WorkflowSqliteStorage, WorkflowState, WorkflowStorage, WorkflowStorageBackend,
 };
 
 use crate::py_queue::PyQueue;
@@ -23,30 +23,34 @@ use crate::py_workflow::{PyWorkflowHandle, PyWorkflowRunStatus};
 /// Return the queue's cached workflow storage, initializing it on first use.
 ///
 /// Migrations run on first construction only; subsequent calls are a cheap
-/// `OnceLock::get()`. Callers receive a cloned handle (the underlying
-/// `SqliteStorage` is a pool handle so clones share the same connection pool).
-fn workflow_storage(queue: &PyQueue) -> PyResult<WorkflowSqliteStorage> {
+/// `OnceLock::get()`. Callers receive a cloned handle — every variant of
+/// `WorkflowStorageBackend` wraps a pool handle so clones share the same
+/// connection pool.
+fn workflow_storage(queue: &PyQueue) -> PyResult<WorkflowStorageBackend> {
     if let Some(wf) = queue.workflow_storage.get() {
         return Ok(wf.clone());
     }
-    match &queue.storage {
-        StorageBackend::Sqlite(s) => {
-            let wf = WorkflowSqliteStorage::new(s.clone())
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            // If another thread raced us to initialize, our value is ignored —
-            // either handle is equivalent because the underlying pool is shared.
-            let _ = queue.workflow_storage.set(wf.clone());
-            Ok(wf)
-        }
+    let wf = match &queue.storage {
+        StorageBackend::Sqlite(s) => WorkflowSqliteStorage::new(s.clone())
+            .map(WorkflowStorageBackend::Sqlite)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
         #[cfg(feature = "postgres")]
-        StorageBackend::Postgres(_) => Err(PyRuntimeError::new_err(
-            "workflows are currently only supported on the SQLite backend",
-        )),
+        StorageBackend::Postgres(_) => {
+            return Err(PyRuntimeError::new_err(
+                "workflows are currently only supported on the SQLite backend",
+            ))
+        }
         #[cfg(feature = "redis")]
-        StorageBackend::Redis(_) => Err(PyRuntimeError::new_err(
-            "workflows are currently only supported on the SQLite backend",
-        )),
-    }
+        StorageBackend::Redis(_) => {
+            return Err(PyRuntimeError::new_err(
+                "workflows are currently only supported on the SQLite backend",
+            ))
+        }
+    };
+    // If another thread raced us to initialize, our value is ignored — either
+    // handle is equivalent because the underlying pool is shared.
+    let _ = queue.workflow_storage.set(wf.clone());
+    Ok(wf)
 }
 
 fn parse_step_metadata(json: &str) -> PyResult<HashMap<String, StepMetadata>> {
@@ -76,7 +80,7 @@ fn status_to_py(status: WorkflowState) -> String {
 /// Best-effort: per-node failures are logged but do not abort the sweep.
 fn cascade_skip_pending_nodes(
     storage: &StorageBackend,
-    wf_storage: &WorkflowSqliteStorage,
+    wf_storage: &WorkflowStorageBackend,
     run_id: &str,
     nodes: &[WorkflowNode],
 ) -> CoreResult<()> {
