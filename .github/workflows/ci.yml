@@ -76,14 +76,80 @@ jobs:
         env:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
 
-      - name: Check Rust (postgres features)
-        run: cargo check --workspace --features postgres
-
-      - name: Check Rust (redis features)
-        run: cargo check --workspace --features redis
-
       - name: Check Rust (native-async features)
         run: cargo check --workspace --features native-async
+
+  rust-test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: taskito_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          save-if: false
+
+      - name: Run Rust tests (postgres)
+        run: cargo test --workspace --features postgres
+        env:
+          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+          TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
+
+  rust-test-redis:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          save-if: false
+
+      - name: Run Rust tests (redis)
+        run: cargo test --workspace --features redis
+        env:
+          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+          TASKITO_REDIS_TEST_URL: redis://localhost:6379/15
 
   test:
     needs: lint
