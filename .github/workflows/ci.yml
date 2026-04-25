@@ -12,27 +12,29 @@ concurrency:
 
 jobs:
   lint:
+    name: Lint & Static Analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Rust cache
+      - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2.9.1
 
-      - name: Cargo fmt
+      - name: Check Rust formatting
         run: cargo fmt --all --check
 
-      - name: Cargo clippy
+      - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Install uv
@@ -41,45 +43,48 @@ jobs:
           version: "0.10.12"
           cache-dependency-glob: pyproject.toml
 
-      - name: Install Python dev deps
+      - name: Install Python dependencies
         run: uv sync --extra dev
 
-      - name: Ruff check
+      - name: Lint Python with Ruff
         run: uv run ruff check py_src/ tests/
 
-      - name: Ruff format check
+      - name: Check Python formatting with Ruff
         run: uv run ruff format --check py_src/ tests/
 
-      - name: Mypy
+      - name: Type-check Python with mypy
         run: uv run mypy py_src/taskito/ tests/python/ --no-incremental
 
   rust-test:
+    name: Rust Tests (SQLite)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2.9.1
         with:
           save-if: false
 
-      - name: Run Rust tests
+      - name: Run Rust test suite
         run: cargo test --workspace
         env:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
 
-      - name: Check Rust (native-async features)
+      - name: Check build with native-async features
         run: cargo check --workspace --features native-async
 
   rust-test-postgres:
+    name: Rust Tests (PostgreSQL)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -96,28 +101,30 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2.9.1
         with:
           save-if: false
 
-      - name: Run Rust tests (postgres)
+      - name: Run Rust test suite (PostgreSQL backend)
         run: cargo test --workspace --features postgres
         env:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
 
   rust-test-redis:
+    name: Rust Tests (Redis)
     runs-on: ubuntu-latest
     services:
       redis:
@@ -130,28 +137,30 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2.9.1
         with:
           save-if: false
 
-      - name: Run Rust tests (redis)
+      - name: Run Rust test suite (Redis backend)
         run: cargo test --workspace --features redis
         env:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_REDIS_TEST_URL: redis://localhost:6379/15
 
   test:
+    name: Python Tests (${{ matrix.os }} / Python ${{ matrix.python-version }})
     needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
@@ -168,17 +177,18 @@ jobs:
           - os: windows-latest
             python-version: "3.10"
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2.9.1
         with:
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
@@ -189,16 +199,16 @@ jobs:
           version: "0.10.12"
           cache-dependency-glob: pyproject.toml
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: uv sync --extra dev
 
-      - name: Build native extension
+      - name: Build native extension with maturin
         uses: PyO3/maturin-action@v1
         with:
           command: develop
           args: --release --features extension-module,postgres,redis,native-async,workflows
 
-      - name: Run Python tests
+      - name: Run Python test suite
         run: |
           set +e
           uv run python -m pytest tests/python/ -v --junitxml=test-results.xml
