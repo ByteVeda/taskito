@@ -1,11 +1,11 @@
 version: 2
 
-# Weekly dependency updates across every ecosystem taskito uses.
-# Patch + minor updates are grouped into one PR per ecosystem to keep
-# review traffic low; major updates get their own PRs so they can be
-# evaluated individually. Security advisories always open dedicated PRs.
+# Weekly grouped updates per ecosystem; major bumps open as their own PRs.
+#
+# Note on commit prefix: `include: scope` auto-appends the ecosystem scope
+# (`deps` / `deps-dev`), so the configured `prefix` must be the bare type
+# to avoid the doubled `chore(deps)(deps): bump X`.
 updates:
-  # Rust (workspace Cargo.toml + per-crate)
   - package-ecosystem: cargo
     directory: /
     schedule:
@@ -18,7 +18,7 @@ updates:
       - dependencies
       - area/rust
     commit-message:
-      prefix: "chore(deps)"
+      prefix: chore
       include: scope
     groups:
       rust-deps:
@@ -26,7 +26,6 @@ updates:
           - patch
           - minor
 
-  # Python (pyproject.toml — uv manages resolution)
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -39,7 +38,7 @@ updates:
       - dependencies
       - area/python
     commit-message:
-      prefix: "chore(deps)"
+      prefix: chore
       include: scope
     groups:
       python-deps:
@@ -47,7 +46,6 @@ updates:
           - patch
           - minor
 
-  # Dashboard (pnpm)
   - package-ecosystem: npm
     directory: /dashboard
     schedule:
@@ -60,15 +58,14 @@ updates:
       - dependencies
       - area/dashboard
     commit-message:
-      prefix: "chore(deps)"
+      prefix: chore
       include: scope
     groups:
       dashboard-deps:
         update-types:
           - patch
           - minor
-      # Surface Radix + TanStack ecosystem upgrades together when they
-      # co-release — lets us pin compatible sets in a single PR.
+      # Co-released ecosystems pinned together so compatible sets land in one PR.
       radix:
         patterns:
           - "@radix-ui/*"
@@ -76,7 +73,6 @@ updates:
         patterns:
           - "@tanstack/*"
 
-  # GitHub Actions used in .github/workflows/*.yml
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -89,7 +85,7 @@ updates:
       - dependencies
       - area/ci
     commit-message:
-      prefix: "chore(ci)"
+      prefix: chore(ci)
     groups:
       actions:
         update-types:
