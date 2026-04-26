@@ -4,8 +4,7 @@ use super::{map_err, RedisStorage};
 use crate::error::Result;
 use crate::job::now_millis;
 use crate::storage::models::WorkerRow;
-
-const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
+use crate::storage::DEAD_WORKER_THRESHOLD_MS;
 
 impl RedisStorage {
     #[allow(clippy::too_many_arguments)]

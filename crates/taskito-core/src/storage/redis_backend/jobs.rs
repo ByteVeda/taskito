@@ -14,32 +14,43 @@ fn dequeue_score(priority: i32, scheduled_at: i64) -> f64 {
 }
 
 impl RedisStorage {
+    /// Validate that each `dep_id` references a job that exists and isn't
+    /// in `Dead` / `Cancelled` state.
+    ///
+    /// `skip` short-circuits intra-batch dependencies for `enqueue_batch`,
+    /// where some dep ids point at jobs being created in the same call.
+    fn validate_dep_ids(
+        &self,
+        conn: &mut redis::Connection,
+        dep_ids: &[String],
+        skip: Option<&std::collections::HashSet<&str>>,
+    ) -> Result<()> {
+        const DEP_MISSING: &str = "dependency not found or already dead/cancelled";
+        for dep_id in dep_ids {
+            if skip.is_some_and(|s| s.contains(dep_id.as_str())) {
+                continue;
+            }
+            let dep_key = self.key(&["job", dep_id]);
+            let data: Option<String> = conn.get(&dep_key).map_err(map_err)?;
+            let dep_job: Job = match data {
+                None => return Err(QueueError::DependencyNotFound(DEP_MISSING.to_string())),
+                Some(d) => {
+                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?
+                }
+            };
+            if dep_job.status == JobStatus::Dead || dep_job.status == JobStatus::Cancelled {
+                return Err(QueueError::DependencyNotFound(DEP_MISSING.to_string()));
+            }
+        }
+        Ok(())
+    }
+
     pub fn enqueue(&self, new_job: NewJob) -> Result<Job> {
         let depends_on = new_job.depends_on.clone();
         let job = new_job.into_job();
         let mut conn = self.conn()?;
 
-        // Validate dependencies exist and aren't dead/cancelled
-        for dep_id in &depends_on {
-            let job_key = self.key(&["job", dep_id]);
-            let data: Option<String> = conn.get(&job_key).map_err(map_err)?;
-            match data {
-                None => {
-                    return Err(QueueError::DependencyNotFound(
-                        "dependency not found or already dead/cancelled".to_string(),
-                    ));
-                }
-                Some(d) => {
-                    let dep_job: Job =
-                        serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                    if dep_job.status == JobStatus::Dead || dep_job.status == JobStatus::Cancelled {
-                        return Err(QueueError::DependencyNotFound(
-                            "dependency not found or already dead/cancelled".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
+        self.validate_dep_ids(&mut conn, &depends_on, None)?;
 
         let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
         let job_key = self.key(&["job", &job.id]);
@@ -81,33 +92,8 @@ impl RedisStorage {
         let batch_ids: std::collections::HashSet<&str> =
             jobs.iter().map(|j| j.id.as_str()).collect();
 
-        // Validate dependencies exist and aren't dead/cancelled
         for depends_on in &dep_lists {
-            for dep_id in depends_on {
-                if batch_ids.contains(dep_id.as_str()) {
-                    continue; // intra-batch dependency
-                }
-                let dep_key = self.key(&["job", dep_id]);
-                let data: Option<String> = conn.get(&dep_key).map_err(map_err)?;
-                match data {
-                    None => {
-                        return Err(QueueError::DependencyNotFound(
-                            "dependency not found or already dead/cancelled".to_string(),
-                        ));
-                    }
-                    Some(d) => {
-                        let dep_job: Job = serde_json::from_str(&d)
-                            .map_err(|e| QueueError::Other(e.to_string()))?;
-                        if dep_job.status == JobStatus::Dead
-                            || dep_job.status == JobStatus::Cancelled
-                        {
-                            return Err(QueueError::DependencyNotFound(
-                                "dependency not found or already dead/cancelled".to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
+            self.validate_dep_ids(&mut conn, depends_on, Some(&batch_ids))?;
         }
 
         let pipe = &mut redis::pipe();
@@ -200,29 +186,7 @@ impl RedisStorage {
             let job_json =
                 serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
 
-            // Validate dependencies
-            for dep_id in &depends_on {
-                let dep_key = self.key(&["job", dep_id]);
-                let data: Option<String> = conn.get(&dep_key).map_err(map_err)?;
-                match data {
-                    None => {
-                        return Err(QueueError::DependencyNotFound(
-                            "dependency not found or already dead/cancelled".to_string(),
-                        ));
-                    }
-                    Some(d) => {
-                        let dep_job: Job = serde_json::from_str(&d)
-                            .map_err(|e| QueueError::Other(e.to_string()))?;
-                        if dep_job.status == JobStatus::Dead
-                            || dep_job.status == JobStatus::Cancelled
-                        {
-                            return Err(QueueError::DependencyNotFound(
-                                "dependency not found or already dead/cancelled".to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
+            self.validate_dep_ids(&mut conn, &depends_on, None)?;
 
             // Store everything atomically via Lua. Active-status names are
             // passed via ARGV (positions 7-8) for the same reason as above —
