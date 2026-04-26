@@ -1,10 +1,14 @@
 version: 2
 
 # Weekly grouped updates per ecosystem; major bumps open as their own PRs.
+#
+# Note on commit prefix: `include: scope` auto-appends the ecosystem scope
+# (`deps` / `deps-dev`), so the configured `prefix` must be the bare type
+# to avoid the doubled `chore(deps)(deps): bump X`.
 updates:
   - package-ecosystem: cargo
     directory: /
-    schedule: &weekly
+    schedule:
       interval: weekly
       day: monday
       time: "06:00"
@@ -13,9 +17,7 @@ updates:
     labels:
       - dependencies
       - area/rust
-    # `include: scope` auto-appends the ecosystem scope, so prefix must be
-    # the bare type to avoid the doubled `chore(deps)(deps): bump X`.
-    commit-message: &chore-deps-scoped
+    commit-message:
       prefix: chore
       include: scope
     groups:
@@ -26,12 +28,18 @@ updates:
 
   - package-ecosystem: pip
     directory: /
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
     open-pull-requests-limit: 5
     labels:
       - dependencies
       - area/python
-    commit-message: *chore-deps-scoped
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       python-deps:
         update-types:
@@ -40,12 +48,18 @@ updates:
 
   - package-ecosystem: npm
     directory: /dashboard
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
     open-pull-requests-limit: 5
     labels:
       - dependencies
       - area/dashboard
-    commit-message: *chore-deps-scoped
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       dashboard-deps:
         update-types:
@@ -61,7 +75,11 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
     open-pull-requests-limit: 3
     labels:
       - dependencies
