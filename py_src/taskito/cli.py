@@ -38,6 +38,12 @@ def main() -> None:
         default=None,
         help="Seconds to wait for in-flight jobs during shutdown (default: 30)",
     )
+    worker_parser.add_argument(
+        "--pool",
+        choices=["thread", "prefork"],
+        default="thread",
+        help="Worker pool: 'thread' (default) or 'prefork' for true CPU parallelism",
+    )
 
     # dashboard subcommand
     dash_parser = subparsers.add_parser("dashboard", help="Start the web dashboard")
@@ -195,7 +201,7 @@ def run_worker(args: argparse.Namespace) -> None:
     if args.drain_timeout is not None:
         queue._drain_timeout = args.drain_timeout
     queues = args.queues.split(",") if args.queues else None
-    queue.run_worker(queues=queues)
+    queue.run_worker(queues=queues, pool=args.pool, app=args.app)
 
 
 def run_dashboard(args: argparse.Namespace) -> None:

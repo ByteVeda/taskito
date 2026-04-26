@@ -44,7 +44,7 @@ print(job.result(timeout=10))  # 5
 
 Most Python task queues require a separate broker (Redis, RabbitMQ) even for single-machine workloads. taskito embeds everything — storage, scheduling, and worker management — into a single `pip install` with no external dependencies beyond Python itself. For distributed setups, an optional Postgres backend enables multi-machine workers with the same API.
 
-The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool with crossbeam channels, and Diesel ORM over SQLite in WAL mode. Python's GIL is only held during task execution.
+The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool with crossbeam channels, and Diesel ORM over SQLite in WAL mode. Python's GIL is only held during task execution. For CPU-bound workloads, run with `--pool prefork` to spawn child processes with independent GILs and get true parallel speedup — see the [prefork guide](https://taskito.grigori.in/guide/execution/prefork/).
 
 ## Features
 
