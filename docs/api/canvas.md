@@ -5,7 +5,7 @@
 Canvas primitives for composing task workflows. Import directly from the package:
 
 ```python
-from taskito import chain, group, chord
+from taskito import chain, group, chord, chunks, starmap
 ```
 
 ---
@@ -229,6 +229,69 @@ await chord.apply_async(queue: Queue | None = None) -> JobResult
 ```
 
 Async version of `apply()`. Awaits all group results using `asyncio.gather`, then enqueues the callback.
+
+---
+
+## chunks
+
+Split an iterable into fixed-size chunks and process each chunk in parallel.
+
+### Constructor
+
+```python
+chunks(task: TaskWrapper, items: list, chunk_size: int) -> group
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `task` | `TaskWrapper` | The task to call for each chunk. Receives the chunk as a single positional argument. |
+| `items` | `list` | The full list to split. Must be non-empty. |
+| `chunk_size` | `int` | Items per chunk. Must be positive. |
+
+Returns a [`group`](#group) of signatures — one per chunk. Apply it the same way as any other group.
+
+```python
+@queue.task()
+def process_batch(records):
+    return [transform(r) for r in records]
+
+records = load_records()  # 10_000 items
+jobs = chunks(process_batch, records, 100).apply()  # → 100 parallel jobs
+
+results = [j.result(timeout=60) for j in jobs]
+```
+
+Raises `ValueError` if `chunk_size <= 0` or `items` is empty.
+
+---
+
+## starmap
+
+Spread an iterable of argument tuples over parallel task invocations.
+
+### Constructor
+
+```python
+starmap(task: TaskWrapper, args_list: list[tuple]) -> group
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `task` | `TaskWrapper` | The task to call. Each tuple is unpacked into positional args. |
+| `args_list` | `list[tuple]` | One tuple per invocation. Must be non-empty. |
+
+Returns a [`group`](#group) of signatures — one per tuple. Equivalent to `group(task.s(*a) for a in args_list)`.
+
+```python
+@queue.task()
+def add(x, y):
+    return x + y
+
+jobs = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply()
+results = [j.result(timeout=10) for j in jobs]  # [3, 7, 11]
+```
+
+Raises `ValueError` if `args_list` is empty.
 
 ---
 
