@@ -38,6 +38,24 @@ impl JobStatus {
             Self::Cancelled => "cancelled",
         }
     }
+
+    /// Canonical name used by `serde` when this enum is serialized to JSON.
+    ///
+    /// Backends that decode `Job` JSON in non-Rust contexts (e.g. the Redis
+    /// backend's Lua scripts) must compare against this exact value rather
+    /// than the `#[repr(i32)]` discriminant — `serde_derive` emits the
+    /// variant name, not the integer. The `serde_name_matches_serde_output`
+    /// test guards the contract.
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Running => "Running",
+            Self::Complete => "Complete",
+            Self::Failed => "Failed",
+            Self::Dead => "Dead",
+            Self::Cancelled => "Cancelled",
+        }
+    }
 }
 
 /// A job stored in the queue.
@@ -149,4 +167,33 @@ pub fn now_millis() -> i64 {
         .unwrap_or(Duration::ZERO)
         .as_millis()
         .min(i64::MAX as u128) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lock the Rust→JSON wire contract for `JobStatus`. The Redis backend's
+    /// Lua scripts compare `job.status` against `JobStatus::wire_name()`; if
+    /// `serde_derive` ever stops emitting the variant name verbatim (e.g.
+    /// someone adds `#[serde(rename_all = "...")]`), this test fails before
+    /// the divergence ships.
+    #[test]
+    fn wire_name_matches_serde_output() {
+        for status in [
+            JobStatus::Pending,
+            JobStatus::Running,
+            JobStatus::Complete,
+            JobStatus::Failed,
+            JobStatus::Dead,
+            JobStatus::Cancelled,
+        ] {
+            let json = serde_json::to_string(&status).expect("serialize JobStatus");
+            assert_eq!(
+                json,
+                format!("\"{}\"", status.wire_name()),
+                "wire_name() drift for {status:?}",
+            );
+        }
+    }
 }

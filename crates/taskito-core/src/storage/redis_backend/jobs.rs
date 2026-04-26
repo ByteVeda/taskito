@@ -148,24 +148,30 @@ impl RedisStorage {
         if let Some(uk) = new_job.unique_key.clone() {
             let unique_key = self.key(&["jobs", "unique", &uk]);
 
+            // Active-status comparison values are sourced from Rust via ARGV
+            // rather than hardcoded in Lua, keeping the wire-format contract
+            // single-sourced in `JobStatus::wire_name()`.
+            let active_pending = JobStatus::Pending.wire_name();
+            let active_running = JobStatus::Running.wire_name();
+
             // Atomically: check unique key → validate referenced job → decide
             let script = redis::Script::new(
                 r#"
                 local unique_key = KEYS[1]
-                local existing_id = redis.call('GET', unique_key)
+                local job_key_prefix = ARGV[1]
+                local active_pending = ARGV[2]
+                local active_running = ARGV[3]
 
+                local existing_id = redis.call('GET', unique_key)
                 if existing_id then
-                    -- Check if referenced job still exists and is active
-                    local job_key = ARGV[1] .. existing_id
-                    local job_data = redis.call('GET', job_key)
+                    local job_data = redis.call('GET', job_key_prefix .. existing_id)
                     if job_data then
                         local job = cjson.decode(job_data)
-                        if job.status == 0 or job.status == 1 then
-                            -- Pending or Running — return existing job data
+                        if job.status == active_pending or job.status == active_running then
                             return job_data
                         end
                     end
-                    -- Job not found or no longer active — delete stale unique key
+                    -- Referenced job is gone or terminal — drop the stale pointer.
                     redis.call('DEL', unique_key)
                 end
 
@@ -177,6 +183,8 @@ impl RedisStorage {
             let result: Option<String> = script
                 .key(&unique_key)
                 .arg(&job_key_prefix)
+                .arg(active_pending)
+                .arg(active_running)
                 .invoke(&mut conn)
                 .map_err(map_err)?;
 
@@ -216,7 +224,10 @@ impl RedisStorage {
                 }
             }
 
-            // Store everything atomically via Lua
+            // Store everything atomically via Lua. Active-status names are
+            // passed via ARGV (positions 7-8) for the same reason as above —
+            // single-sourced in `JobStatus::wire_name()`. Dependency triples
+            // start at ARGV[9].
             let store_script = redis::Script::new(
                 r#"
                 local unique_key = KEYS[1]
@@ -232,22 +243,25 @@ impl RedisStorage {
                 local score = tonumber(ARGV[3])
                 local created_at = tonumber(ARGV[4])
                 local num_deps = tonumber(ARGV[5])
+                local job_key_prefix = ARGV[6]
+                local active_pending = ARGV[7]
+                local active_running = ARGV[8]
+                local dep_args_base = 9
 
-                -- Re-check unique key (race guard)
+                -- Re-check unique key (race guard against a concurrent enqueue).
                 local existing = redis.call('GET', unique_key)
                 if existing then
-                    local prefix = ARGV[6]
-                    local ej_data = redis.call('GET', prefix .. existing)
+                    local ej_data = redis.call('GET', job_key_prefix .. existing)
                     if ej_data then
                         local ej = cjson.decode(ej_data)
-                        if ej.status == 0 or ej.status == 1 then
+                        if ej.status == active_pending or ej.status == active_running then
                             return ej_data
                         end
                     end
                     redis.call('DEL', unique_key)
                 end
 
-                -- Store job
+                -- Store job and queue indices.
                 redis.call('SET', job_key, job_json)
                 redis.call('SADD', status_key, job_id)
                 redis.call('ZADD', queue_key, score, job_id)
@@ -256,12 +270,12 @@ impl RedisStorage {
                 redis.call('ZADD', all_key, -created_at, job_id)
                 redis.call('SET', unique_key, job_id)
 
-                -- Store dependencies
-                local base = 7
+                -- Store dependencies (3 ARGVs per dep: dep_on_key, dep_id, dependents_key).
                 for i = 1, num_deps do
-                    local dep_on_key = ARGV[base + (i-1)*3]
-                    local dep_id = ARGV[base + (i-1)*3 + 1]
-                    local dependents_key = ARGV[base + (i-1)*3 + 2]
+                    local offset = dep_args_base + (i - 1) * 3
+                    local dep_on_key = ARGV[offset]
+                    local dep_id = ARGV[offset + 1]
+                    local dependents_key = ARGV[offset + 2]
                     redis.call('SADD', dep_on_key, dep_id)
                     redis.call('SADD', dependents_key, job_id)
                 end
@@ -296,6 +310,8 @@ impl RedisStorage {
                 job.created_at.to_string(),
                 depends_on.len().to_string(),
                 job_key_prefix,
+                active_pending.to_string(),
+                active_running.to_string(),
             ];
 
             for dep_id in &depends_on {
