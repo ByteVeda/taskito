@@ -2,12 +2,10 @@ use diesel::prelude::*;
 
 use super::super::models::*;
 use super::super::schema::{execution_claims, workers};
+use super::super::DEAD_WORKER_THRESHOLD_MS;
 use super::SqliteStorage;
 use crate::error::Result;
 use crate::job::now_millis;
-
-/// Dead worker threshold: 30 seconds without heartbeat.
-const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
 impl SqliteStorage {
     /// Register a new worker or update an existing one.

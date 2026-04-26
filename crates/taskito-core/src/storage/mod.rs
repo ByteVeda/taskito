@@ -13,6 +13,14 @@ pub use traits::Storage;
 use crate::error::Result;
 use crate::job::{Job, NewJob};
 
+// ── Shared constants ───────────────────────────────────────────────────
+
+/// Maximum gap between worker heartbeats before a worker is considered dead.
+///
+/// Used by every backend's `reap_dead_workers()` to compute the `now - 30s`
+/// cutoff. Kept in one place so SQLite, Postgres, and Redis can never drift.
+pub const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
+
 // ── Shared helper types ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
