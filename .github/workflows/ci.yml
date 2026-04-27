@@ -11,6 +11,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+            python:
+              - 'py_src/**'
+              - 'tests/python/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+
   lint:
     name: Lint & Static Analysis
     runs-on: ubuntu-latest
@@ -57,6 +88,8 @@ jobs:
 
   rust-test:
     name: Rust Tests (SQLite)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -85,6 +118,8 @@ jobs:
 
   rust-test-postgres:
     name: Rust Tests (PostgreSQL)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -125,6 +160,8 @@ jobs:
 
   rust-test-redis:
     name: Rust Tests (Redis)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     services:
       redis:
@@ -161,7 +198,8 @@ jobs:
 
   test:
     name: Python Tests (${{ matrix.os }} / Python ${{ matrix.python-version }})
-    needs: lint
+    needs: [lint, changes]
+    if: needs.changes.outputs.python == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -229,3 +267,24 @@ jobs:
           fi
           exit $PYTEST_EXIT
         shell: bash
+
+  ci-status:
+    name: CI status
+    if: always()
+    needs: [lint, rust-test, rust-test-postgres, rust-test-redis, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that no required job failed
+        run: |
+          results='${{ toJson(needs) }}'
+          echo "$results"
+          fail=$(echo "$results" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          bad = [k for k, v in data.items() if v['result'] not in ('success', 'skipped')]
+          print(','.join(bad))
+          ")
+          if [ -n "$fail" ]; then
+            echo "::error::Failing or cancelled jobs: $fail"
+            exit 1
+          fi
