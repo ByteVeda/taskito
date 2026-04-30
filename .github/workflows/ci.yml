@@ -201,6 +201,13 @@ jobs:
     needs: [lint, changes]
     if: needs.changes.outputs.python == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
+    env:
+      # setup-python on macOS upgrades certifi via pip; pip's HTTP cache
+      # occasionally fails to deserialize across runner image versions and
+      # surfaces as a noisy "Cache entry deserialization failed" annotation.
+      # Disabling pip's cache eliminates the warning at zero cost (we use uv
+      # for actual package installs).
+      PIP_NO_CACHE_DIR: "1"
     strategy:
       matrix:
         os: [ubuntu-latest]
@@ -247,26 +254,10 @@ jobs:
           args: --release --features extension-module,postgres,redis,native-async,workflows
 
       - name: Run Python test suite
-        run: |
-          set +e
-          uv run python -m pytest tests/python/ -v --junitxml=test-results.xml
-          PYTEST_EXIT=$?
-          if [ $PYTEST_EXIT -eq 0 ]; then exit 0; fi
-          # SIGABRT (134) during interpreter shutdown is a known PyO3 issue;
-          # check junit XML to confirm all tests actually passed.
-          if [ $PYTEST_EXIT -eq 134 ] && [ -f test-results.xml ]; then
-            FAILURES=$(python -c "
-          import xml.etree.ElementTree as ET
-          r = ET.parse('test-results.xml').getroot()
-          print(int(r.get('failures',0)) + int(r.get('errors',0)))
-          ")
-            if [ "$FAILURES" = "0" ]; then
-              echo "::warning::Tests passed but process crashed during cleanup (known PyO3 issue)"
-              exit 0
-            fi
-          fi
-          exit $PYTEST_EXIT
-        shell: bash
+        # The pytest_unconfigure hook in tests/python/conftest.py calls
+        # ``os._exit(0)`` on a clean run to bypass CPython finalization and
+        # avoid the PyO3 daemon-thread SIGABRT we used to paper over here.
+        run: uv run python -m pytest tests/python/ -v --junitxml=test-results.xml
 
   ci-status:
     name: CI status
