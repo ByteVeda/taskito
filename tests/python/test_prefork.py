@@ -31,6 +31,14 @@ def test_prefork_requires_app_path(tmp_path: Path) -> None:
         queue.run_worker(pool="prefork")
 
 
+def test_prefork_rejected_on_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """pool='prefork' on Windows fails fast with NotImplementedError."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    queue = Queue(db_path=str(tmp_path / "test.db"))
+    with pytest.raises(NotImplementedError, match="not supported on Windows"):
+        queue.run_worker(pool="prefork", app="x:y")
+
+
 def test_prefork_basic_execution(tmp_path: Path) -> None:
     """A task enqueued and processed by a prefork worker returns the correct result.
 
