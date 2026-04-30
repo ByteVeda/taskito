@@ -56,9 +56,20 @@ pub struct ChildProcess {
 
 impl ChildProcess {
     /// Check if the child process is still alive.
-    #[allow(dead_code)]
     pub fn is_alive(&mut self) -> bool {
         matches!(self.process.try_wait(), Ok(None))
+    }
+
+    /// `SIGKILL` the child and reap the zombie.
+    ///
+    /// Both calls are best-effort: the child may have already exited (e.g.
+    /// crashed) between the watchdog's deadline scan and this call, in which
+    /// case `kill` returns `EPERM`/`ESRCH` and `wait` returns immediately.
+    /// After this returns, `is_alive()` is guaranteed to be `false`, so the
+    /// dispatcher's respawn path will pick the slot up on the next job.
+    pub fn kill_and_reap(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
     }
 
     /// Wait for the child to exit, with a timeout. Kills if it doesn't exit in time.

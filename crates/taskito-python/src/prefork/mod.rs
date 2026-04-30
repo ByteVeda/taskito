@@ -8,15 +8,20 @@
 //! Architecture:
 //! - One dispatch thread: receives `Job` from scheduler, sends to children via stdin
 //! - N reader threads: one per child, reads results from stdout, sends to `result_tx`
+//! - One watchdog thread: enforces per-job timeouts by `SIGKILL`-ing children
+//!   whose deadlines pass
 //! - Child processes: run `python -m taskito.prefork <app_path>`
 
 mod child;
 mod dispatch;
 pub mod protocol;
+mod slot;
+mod watchdog;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
-use std::thread;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use crossbeam_channel::Sender;
@@ -25,8 +30,13 @@ use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
 use taskito_core::worker::WorkerDispatcher;
 
-use child::{spawn_child, ChildWriter};
+use child::{spawn_child, ChildProcess, ChildReader, ChildWriter};
 use protocol::ParentMessage;
+use slot::{ActiveJob, SlotState};
+
+/// How long graceful shutdown will wait for each child to drain before
+/// sending `SIGKILL`.
+const SHUTDOWN_DRAIN: Duration = Duration::from_secs(30);
 
 /// Multi-process worker pool that dispatches jobs to child Python processes.
 pub struct PreforkPool {
@@ -57,100 +67,88 @@ impl WorkerDispatcher for PreforkPool {
         result_tx: Sender<JobResult>,
     ) {
         let num_workers = self.num_workers;
-        let app_path = self.app_path.clone();
-        let python = self.python.clone();
-        let shutdown = &self.shutdown;
 
-        // Spawn all children and split into writers + readers
-        let mut writers: Vec<ChildWriter> = Vec::with_capacity(num_workers);
+        // Shared per-child state.
+        let slots: SlotState = slot::new_slots(num_workers);
         let in_flight: Arc<Vec<AtomicU32>> =
             Arc::new((0..num_workers).map(|_| AtomicU32::new(0)).collect());
-        let mut reader_handles: Vec<thread::JoinHandle<()>> = Vec::new();
-        let mut process_handles: Vec<child::ChildProcess> = Vec::new();
+        let processes: Arc<Vec<Mutex<Option<ChildProcess>>>> =
+            Arc::new((0..num_workers).map(|_| Mutex::new(None)).collect());
 
-        for i in 0..num_workers {
-            match spawn_child(&python, &app_path) {
-                Ok((writer, mut reader, process)) => {
-                    log::info!("[taskito] prefork child {i} ready");
-                    writers.push(writer);
-                    process_handles.push(process);
+        // Per-child writers stay on the dispatch thread.
+        let mut writers: Vec<Option<ChildWriter>> = (0..num_workers).map(|_| None).collect();
+        let mut reader_handles: Vec<JoinHandle<()>> = Vec::new();
 
-                    // Spawn a reader thread for this child
-                    let tx = result_tx.clone();
-                    let in_flight_counter = in_flight.clone();
-                    let child_idx = i;
-                    reader_handles.push(thread::spawn(move || {
-                        loop {
-                            match reader.read() {
-                                Ok(msg) => {
-                                    if let Some(job_result) = msg.into_job_result() {
-                                        in_flight_counter[child_idx]
-                                            .fetch_sub(1, Ordering::Relaxed);
-                                        if tx.send(job_result).is_err() {
-                                            break; // result channel closed
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "[taskito] prefork child {child_idx} reader error: {e}"
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                    }));
-                }
-                Err(e) => {
-                    log::error!("[taskito] failed to spawn prefork child {i}: {e}");
-                }
+        // Initial spawn.
+        for idx in 0..num_workers {
+            if let Some(handle) = start_child(
+                idx,
+                &self.python,
+                &self.app_path,
+                &mut writers,
+                &processes,
+                &slots,
+                &in_flight,
+                &result_tx,
+            ) {
+                reader_handles.push(handle);
             }
         }
 
-        if writers.is_empty() {
+        if writers.iter().all(Option::is_none) {
             log::error!("[taskito] no prefork children started, aborting");
             return;
         }
 
         log::info!(
             "[taskito] prefork pool running with {} children",
-            writers.len()
+            writers.iter().filter(|w| w.is_some()).count()
         );
 
-        // Dispatch loop: receive jobs from scheduler, send to least-loaded child
+        // Watchdog: kills children that exceed their per-job timeout.
+        let watchdog_shutdown = Arc::new(AtomicBool::new(false));
+        let watchdog_handle = watchdog::spawn(
+            slots.clone(),
+            processes.clone(),
+            in_flight.clone(),
+            result_tx.clone(),
+            watchdog_shutdown.clone(),
+        );
+
+        // Dispatch loop.
         let mut restart_count: u64 = 0;
         while let Some(job) = job_rx.recv().await {
-            if shutdown.load(Ordering::Relaxed) {
+            if self.shutdown.load(Ordering::Relaxed) {
                 break;
             }
 
-            // Check for dead children and restart them
-            for i in 0..process_handles.len() {
-                if !process_handles[i].is_alive() {
-                    log::warn!("[taskito] prefork child {i} died, restarting");
+            // Bring back any children that have exited (crashed, killed by
+            // watchdog, OOM, etc.).
+            for idx in 0..num_workers {
+                let dead = match processes[idx].lock() {
+                    Ok(mut guard) => match guard.as_mut() {
+                        Some(p) => !p.is_alive(),
+                        None => true,
+                    },
+                    Err(_) => false,
+                };
+                if dead {
+                    log::warn!("[taskito] prefork child {idx} died, restarting");
                     restart_count += 1;
-                    match spawn_child(&python, &app_path) {
-                        Ok((writer, mut reader, process)) => {
-                            writers[i] = writer;
-                            process_handles[i] = process;
-                            in_flight[i].store(0, Ordering::Relaxed);
-                            let tx = result_tx.clone();
-                            let in_flight_counter = in_flight.clone();
-                            reader_handles.push(thread::spawn(move || {
-                                while let Ok(msg) = reader.read() {
-                                    if let Some(job_result) = msg.into_job_result() {
-                                        in_flight_counter[i].fetch_sub(1, Ordering::Relaxed);
-                                        if tx.send(job_result).is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }));
-                            log::info!("[taskito] prefork child {i} restarted (total restarts: {restart_count})");
-                        }
-                        Err(e) => {
-                            log::error!("[taskito] failed to restart child {i}: {e}");
-                        }
+                    if let Some(handle) = start_child(
+                        idx,
+                        &self.python,
+                        &self.app_path,
+                        &mut writers,
+                        &processes,
+                        &slots,
+                        &in_flight,
+                        &result_tx,
+                    ) {
+                        reader_handles.push(handle);
+                        log::info!(
+                            "[taskito] prefork child {idx} restarted (total restarts: {restart_count})"
+                        );
                     }
                 }
             }
@@ -161,38 +159,168 @@ impl WorkerDispatcher for PreforkPool {
                 .collect();
             let idx = dispatch::least_loaded(&counts);
 
-            let msg = ParentMessage::from(&job);
-            if let Err(e) = writers[idx].send(&msg) {
+            let Some(writer) = writers[idx].as_mut() else {
                 log::error!(
-                    "[taskito] failed to send job {} to child {idx}: {e}",
+                    "[taskito] no live writer for child {idx}, dropping job {}; will be reaped",
                     job.id
                 );
-                // Job will be reaped by the scheduler's stale job reaper
                 continue;
+            };
+
+            let active = ActiveJob {
+                job_id: job.id.clone(),
+                task_name: job.task_name.clone(),
+                retry_count: job.retry_count,
+                max_retries: job.max_retries,
+                timeout_ms: job.timeout_ms,
+                started_at: Instant::now(),
+                deadline: deadline_from_timeout(job.timeout_ms),
+            };
+
+            // Register *before* sending so a fast child can never publish a
+            // result the reader can't pair with a slot entry.
+            slot::set(&slots, idx, active);
+
+            let msg = ParentMessage::from(&job);
+            match writer.send(&msg) {
+                Ok(()) => {
+                    in_flight[idx].fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    // Roll back the slot install — neither reader nor watchdog
+                    // should fire for this aborted dispatch.
+                    let _ = slot::take(&slots, idx);
+                    log::error!(
+                        "[taskito] failed to send job {} to child {idx}: {e}",
+                        job.id
+                    );
+                    // Job will be reaped by the scheduler's stale-job reaper.
+                }
             }
-            in_flight[idx].fetch_add(1, Ordering::Relaxed);
         }
 
-        // Graceful shutdown: tell all children to stop
-        for (i, writer) in writers.iter_mut().enumerate() {
-            writer.send_shutdown();
-            log::info!("[taskito] sent shutdown to prefork child {i}");
+        // Stop the watchdog before sending shutdown so it doesn't race with
+        // children draining their final results.
+        watchdog_shutdown.store(true, Ordering::SeqCst);
+
+        // Graceful shutdown: tell all live children to stop.
+        for (idx, writer) in writers.iter_mut().enumerate() {
+            if let Some(w) = writer.as_mut() {
+                w.send_shutdown();
+                log::info!("[taskito] sent shutdown to prefork child {idx}");
+            }
         }
 
-        // Wait for children to exit
-        let drain_timeout = std::time::Duration::from_secs(30);
-        for (i, process) in process_handles.iter_mut().enumerate() {
-            process.wait_or_kill(drain_timeout);
-            log::info!("[taskito] prefork child {i} exited");
+        // Wait for children to exit (or kill after the drain timeout).
+        for idx in 0..num_workers {
+            if let Ok(mut guard) = processes[idx].lock() {
+                if let Some(process) = guard.as_mut() {
+                    process.wait_or_kill(SHUTDOWN_DRAIN);
+                    log::info!("[taskito] prefork child {idx} exited");
+                }
+            }
         }
 
-        // Wait for reader threads
+        // Reader threads exit when their child closes stdout.
         for handle in reader_handles {
             let _ = handle.join();
         }
+        let _ = watchdog_handle.join();
     }
 
     fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Spawn child `idx` and its reader thread, plumbing the writer + process into
+/// the shared state. Returns the reader thread handle on success, `None` on
+/// spawn failure (already logged).
+#[allow(clippy::too_many_arguments)]
+fn start_child(
+    idx: usize,
+    python: &str,
+    app_path: &str,
+    writers: &mut [Option<ChildWriter>],
+    processes: &Arc<Vec<Mutex<Option<ChildProcess>>>>,
+    slots: &SlotState,
+    in_flight: &Arc<Vec<AtomicU32>>,
+    result_tx: &Sender<JobResult>,
+) -> Option<JoinHandle<()>> {
+    match spawn_child(python, app_path) {
+        Ok((writer, reader, process)) => {
+            log::info!("[taskito] prefork child {idx} ready");
+            writers[idx] = Some(writer);
+            if let Ok(mut slot) = processes[idx].lock() {
+                *slot = Some(process);
+            }
+            // Reset the slot for the new child — the killed/dead one's job (if
+            // any) was already completed by the watchdog or shutdown path.
+            let _ = slot::take(slots, idx);
+            in_flight[idx].store(0, Ordering::Relaxed);
+
+            Some(spawn_reader_thread(
+                idx,
+                reader,
+                slots.clone(),
+                in_flight.clone(),
+                result_tx.clone(),
+            ))
+        }
+        Err(e) => {
+            log::error!("[taskito] failed to spawn prefork child {idx}: {e}");
+            None
+        }
+    }
+}
+
+/// Reader thread: forwards child results to the scheduler.
+///
+/// The slot acts as the ownership token — the reader emits a result *only* if
+/// it can `take()` the slot entry first. If the watchdog has already taken
+/// the slot (deadline expired), the reader silently drops the message because
+/// the watchdog has already synthesised the timeout failure.
+fn spawn_reader_thread(
+    idx: usize,
+    mut reader: ChildReader,
+    slots: SlotState,
+    in_flight: Arc<Vec<AtomicU32>>,
+    result_tx: Sender<JobResult>,
+) -> JoinHandle<()> {
+    thread::Builder::new()
+        .name(format!("taskito-prefork-reader-{idx}"))
+        .spawn(move || loop {
+            match reader.read() {
+                Ok(msg) => {
+                    let Some(job_result) = msg.into_job_result() else {
+                        continue;
+                    };
+                    if slot::take(&slots, idx).is_none() {
+                        // Watchdog already completed this job; drop the
+                        // (now-redundant) child message.
+                        continue;
+                    }
+                    in_flight[idx].fetch_sub(1, Ordering::Relaxed);
+                    if result_tx.send(job_result).is_err() {
+                        break; // result channel closed
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[taskito] prefork child {idx} reader error: {e}");
+                    break;
+                }
+            }
+        })
+        .expect("failed to spawn prefork reader thread")
+}
+
+/// Convert a per-task timeout in milliseconds to an absolute `Instant` deadline.
+/// Returns `None` for `timeout_ms <= 0` (no timeout configured) so the watchdog
+/// skips the slot.
+fn deadline_from_timeout(timeout_ms: i64) -> Option<Instant> {
+    if timeout_ms <= 0 {
+        None
+    } else {
+        Instant::now().checked_add(Duration::from_millis(timeout_ms as u64))
     }
 }
