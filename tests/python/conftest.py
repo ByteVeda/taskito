@@ -1,5 +1,7 @@
 """Shared fixtures for taskito tests."""
 
+import os
+import sys
 import threading
 from collections.abc import Generator
 from pathlib import Path
@@ -24,3 +26,34 @@ def run_worker(queue: Queue) -> Generator[threading.Thread]:
     yield thread
     queue._inner.request_shutdown()
     thread.join(timeout=5)
+
+
+_PYTEST_EXIT_STATUS: int = 0
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Capture the exit status for ``pytest_unconfigure`` to act on."""
+    global _PYTEST_EXIT_STATUS
+    _PYTEST_EXIT_STATUS = int(exitstatus)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Bypass CPython's interpreter finalization on a clean exit.
+
+    Many tests leave PyO3-backed daemon threads (heartbeat, async executor,
+    webhook delivery, distributed-lock extender) running at process end.
+    During ``Py_Finalize`` those threads may try to (re)acquire the GIL after
+    it has been torn down, producing ``FATAL: exception not rethrown`` and a
+    SIGABRT — even though every test passed. ``os._exit`` skips finalization
+    entirely after the terminal summary and junit XML are already written,
+    eliminating the spurious crash.
+
+    ``pytest_unconfigure`` fires after every other hook (terminal summary,
+    junitxml plugin, etc.), so output and side effects are preserved. We
+    skip the bypass on failure so pytest's normal traceback machinery still
+    runs.
+    """
+    if _PYTEST_EXIT_STATUS == 0:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
