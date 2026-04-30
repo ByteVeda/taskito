@@ -66,6 +66,16 @@ def test_prefork_thread_pool_unchanged(tmp_path: Path) -> None:
 # Per-job timeout enforcement (issue #81)
 # ---------------------------------------------------------------------------
 
+# The prefork pool is Unix-oriented: child processes communicate over anonymous
+# stdio pipes, which on Windows have different blocking semantics that make
+# parent-side reader threads hang after `TerminateProcess`. Per-job timeout
+# behaviour itself is identical, but the surrounding pool plumbing isn't
+# Windows-ready, so these end-to-end tests are skipped there.
+prefork_unix_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="prefork pool is Unix-only — child stdio pipe semantics differ on Windows",
+)
+
 PREFORK_APP_PATH = "prefork_apps.timeout_app:queue"
 PREFORK_APP_DIR = str(Path(__file__).parent)
 
@@ -138,6 +148,7 @@ def _wait_for_terminal(job: Any, timeout: float) -> str:
     return final_status
 
 
+@prefork_unix_only
 def test_prefork_kills_hung_task(timeout_app: object) -> None:
     """A task that hangs past its `timeout=` is SIGKILLed by the watchdog and
     reported as a timeout failure within the timeout + watchdog tick budget."""
@@ -165,6 +176,7 @@ def test_prefork_kills_hung_task(timeout_app: object) -> None:
     assert job.id in timeouts_seen, "on_timeout middleware did not fire"
 
 
+@prefork_unix_only
 def test_prefork_no_timeout_unaffected(timeout_app: object) -> None:
     """A task with no timeout (timeout=0) runs to completion — the watchdog
     must not kill jobs that have no deadline configured."""
@@ -177,6 +189,7 @@ def test_prefork_no_timeout_unaffected(timeout_app: object) -> None:
     assert result == 42
 
 
+@prefork_unix_only
 def test_prefork_finishes_before_deadline(timeout_app: object) -> None:
     """A task that completes well before its deadline returns normally — the
     watchdog only fires when the deadline is actually crossed."""
