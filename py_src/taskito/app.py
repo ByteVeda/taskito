@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import signal
+import sys
 import threading
 import urllib.parse
 import uuid
@@ -1178,8 +1179,14 @@ class Queue(
             app: Import path to the Queue instance (e.g. ``"myapp:queue"``).
                 Required when ``pool="prefork"``.
         """
-        if pool == "prefork" and not app:
-            raise ValueError("app= is required when pool='prefork' (e.g. app='myapp:queue')")
+        if pool == "prefork":
+            if sys.platform == "win32":
+                raise NotImplementedError(
+                    "pool='prefork' is not supported on Windows. "
+                    "Use pool='thread' (default) or run on Linux/macOS."
+                )
+            if not app:
+                raise ValueError("app= is required when pool='prefork' (e.g. app='myapp:queue')")
         queue_list = list(queues) if queues else None
 
         # Make queue accessible from job context (for current_job.update_progress())
