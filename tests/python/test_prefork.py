@@ -19,6 +19,10 @@ from taskito.context import JobContext
 from taskito.middleware import TaskMiddleware
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="prefork is rejected on Windows before app= is checked",
+)
 def test_prefork_requires_app_path(tmp_path: Path) -> None:
     """pool='prefork' without app= raises ValueError."""
     queue = Queue(db_path=str(tmp_path / "test.db"))
