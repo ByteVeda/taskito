@@ -5,6 +5,7 @@ import {
   Box,
   CircuitBoard,
   Cog,
+  ExternalLink as ExternalLinkIcon,
   LayoutDashboard,
   ListTree,
   type LucideIcon,
@@ -23,8 +24,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui";
+import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
-import { site } from "@/lib/site";
 
 interface NavItem {
   to: string;
@@ -66,6 +67,8 @@ const NAV: Array<{ title: string; items: NavItem[] }> = [
 
 export function MobileMenu() {
   const { pathname } = useLocation();
+  const { title } = useBranding();
+  const externalLinks = useExternalLinks();
   const [open, setOpen] = useState(false);
 
   // Close on navigation
@@ -82,7 +85,7 @@ export function MobileMenu() {
       </SheetTrigger>
       <SheetContent side="left" className="flex flex-col p-0">
         <SheetHeader className="border-b border-[var(--border)] px-5 py-4">
-          <SheetTitle>{site.name} Dashboard</SheetTitle>
+          <SheetTitle>{title} Dashboard</SheetTitle>
         </SheetHeader>
         <nav className="flex-1 overflow-y-auto px-3 py-3">
           {NAV.map((group) => (
@@ -113,6 +116,28 @@ export function MobileMenu() {
               </ul>
             </div>
           ))}
+          {externalLinks.length > 0 ? (
+            <div className="mt-4">
+              <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
+                Links
+              </div>
+              <ul className="flex flex-col gap-0.5">
+                {externalLinks.map((link) => (
+                  <li key={`${link.label}|${link.url}`}>
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
+                    >
+                      <ExternalLinkIcon className="size-4" aria-hidden />
+                      <span className="truncate">{link.label}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </nav>
       </SheetContent>
     </Sheet>

@@ -6,6 +6,7 @@ import {
   Box,
   CircuitBoard,
   Cog,
+  ExternalLink as ExternalLinkIcon,
   LayoutDashboard,
   ListTree,
   type LucideIcon,
@@ -14,8 +15,8 @@ import {
   Settings2,
   Skull,
 } from "lucide-react";
+import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
-import { site } from "@/lib/site";
 
 interface NavItem {
   to: string;
@@ -62,6 +63,8 @@ const NAV: NavGroup[] = [
 
 export function Sidebar() {
   const { pathname } = useLocation();
+  const { title } = useBranding();
+  const externalLinks = useExternalLinks();
   return (
     <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)]">
       <div className="flex items-center gap-2 px-5 py-4">
@@ -69,7 +72,7 @@ export function Sidebar() {
           <AlertOctagon className="size-4" aria-hidden />
         </div>
         <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold tracking-tight">{site.name}</span>
+          <span className="text-sm font-semibold tracking-tight">{title}</span>
           <span className="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)]">
             Dashboard
           </span>
@@ -104,6 +107,28 @@ export function Sidebar() {
             </ul>
           </div>
         ))}
+        {externalLinks.length > 0 ? (
+          <div className="mt-5">
+            <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
+              Links
+            </div>
+            <ul className="flex flex-col gap-0.5">
+              {externalLinks.map((link) => (
+                <li key={`${link.label}|${link.url}`}>
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
+                  >
+                    <ExternalLinkIcon className="size-4" aria-hidden />
+                    <span className="truncate">{link.label}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </nav>
       <div className="border-t border-[var(--border)] px-5 py-3 text-[11px] text-[var(--fg-subtle)]">
         {import.meta.env.DEV ? "dev build" : "production"}
