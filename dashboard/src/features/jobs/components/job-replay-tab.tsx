@@ -49,8 +49,7 @@ export function JobReplayTab({ replays, loading, error, onRetry }: JobReplayTabP
               {entry.replay_job_id}
             </Link>
             <span className="text-xs tabular-nums text-[var(--fg-subtle)]">
-              {formatAbsolute(entry.replayed_at * 1000)} ·{" "}
-              {formatRelative(entry.replayed_at * 1000)}
+              {formatAbsolute(entry.replayed_at)} · {formatRelative(entry.replayed_at)}
             </span>
           </div>
           {entry.original_error ? (

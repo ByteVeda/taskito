@@ -28,7 +28,7 @@ export function ThroughputChart({ buckets, loading }: ThroughputChartProps) {
   const data = useMemo<Row[]>(
     () =>
       (buckets ?? []).map((b) => ({
-        t: b.timestamp * 1000,
+        t: b.timestamp,
         success: b.success,
         failure: b.failure,
       })),
