@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@/components/ui";
 import type { TimeseriesBucket } from "@/lib/api-types";
+import { formatAxisTime } from "../utils";
 
 interface LatencyChartProps {
   buckets: TimeseriesBucket[] | undefined;
@@ -98,8 +99,4 @@ function LatencyTooltip({
       <div className="mt-0.5 tabular-nums text-[var(--fg)]">{avg.toFixed(1)} ms avg</div>
     </div>
   );
-}
-
-function formatAxisTime(value: number): string {
-  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }

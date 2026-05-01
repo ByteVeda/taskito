@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@/components/ui";
 import type { TimeseriesBucket } from "@/lib/api-types";
+import { formatAxisTime } from "../utils";
 
 interface ThroughputChartProps {
   buckets: TimeseriesBucket[] | undefined;
@@ -127,8 +128,4 @@ function ChartTooltip({
       ))}
     </div>
   );
-}
-
-function formatAxisTime(value: number): string {
-  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
