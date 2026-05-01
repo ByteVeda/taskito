@@ -81,12 +81,12 @@ class JobResult(AsyncJobResultMixin):
     @property
     def dependencies(self) -> list[str]:
         """IDs of jobs this job depends on."""
-        return self._queue._inner.get_dependencies(self.id)  # type: ignore[no-any-return]
+        return self._queue._inner.get_dependencies(self.id)
 
     @property
     def dependents(self) -> list[str]:
         """IDs of jobs that depend on this job."""
-        return self._queue._inner.get_dependents(self.id)  # type: ignore[no-any-return]
+        return self._queue._inner.get_dependents(self.id)
 
     def _poll_once(self) -> tuple[str, Any]:
         """Refresh and return (status, deserialized result or None)."""

@@ -1,14 +1,12 @@
-"""Mixin classes that compose into the main Queue class."""
+"""Read-only inspection, stats, and query methods for the Queue."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections import defaultdict
+from typing import Any
 
-if TYPE_CHECKING:
-    from taskito.locks import DistributedLock
-    from taskito.result import JobResult
-
-_UNSET = object()  # sentinel to distinguish "not passed" from explicit None
+from taskito.mixins._shared import _UNSET
+from taskito.result import JobResult
 
 
 class QueueInspectionMixin:
@@ -19,8 +17,6 @@ class QueueInspectionMixin:
 
     def get_job(self, job_id: str) -> JobResult | None:
         """Retrieve a job by its unique ID."""
-        from taskito.result import JobResult
-
         py_job = self._inner.get_job(job_id)
         if py_job is None:
             return None
@@ -40,8 +36,6 @@ class QueueInspectionMixin:
         By default, scoped to this queue's namespace. Pass ``namespace=None``
         explicitly to see jobs across all namespaces.
         """
-        from taskito.result import JobResult
-
         ns = self._namespace if namespace is _UNSET else namespace
         py_jobs = self._inner.list_jobs(
             status=status,
@@ -71,8 +65,6 @@ class QueueInspectionMixin:
         By default, scoped to this queue's namespace. Pass ``namespace=None``
         explicitly to see jobs across all namespaces.
         """
-        from taskito.result import JobResult
-
         ns = self._namespace if namespace is _UNSET else namespace
         py_jobs = self._inner.list_jobs_filtered(
             status=status,
@@ -211,153 +203,8 @@ class QueueInspectionMixin:
         return self._inner.purge_completed(older_than)  # type: ignore[no-any-return]
 
 
-class QueueOperationsMixin:
-    """Dead letters, replay, circuit breakers, logs, workers, queue management."""
-
-    _inner: Any
-
-    # -- Dead Letters --
-
-    def dead_letters(self, limit: int = 10, offset: int = 0) -> list[dict]:
-        """List dead letter queue entries."""
-        return self._inner.dead_letters(limit=limit, offset=offset)  # type: ignore[no-any-return]
-
-    def retry_dead(self, dead_id: str) -> str:
-        """Re-enqueue a dead letter job. Returns new job ID."""
-        return self._inner.retry_dead(dead_id)  # type: ignore[no-any-return]
-
-    def purge_dead(self, older_than: int = 86400) -> int:
-        """Delete dead letter entries older than a given age."""
-        return self._inner.purge_dead(older_than)  # type: ignore[no-any-return]
-
-    # -- Replay --
-
-    def replay(self, job_id: str) -> JobResult:
-        """Re-enqueue a completed or failed job with the exact same payload."""
-        new_id = self._inner.replay_job(job_id)
-        return self.get_job(new_id)  # type: ignore[attr-defined, no-any-return]
-
-    def replay_history(self, job_id: str) -> list[dict]:
-        """Get replay history for a job."""
-        return self._inner.get_replay_history(job_id)  # type: ignore[no-any-return]
-
-    # -- Circuit Breakers --
-
-    def circuit_breakers(self) -> list[dict]:
-        """List all circuit breaker states."""
-        return self._inner.list_circuit_breakers()  # type: ignore[no-any-return]
-
-    # -- Logs --
-
-    def task_logs(self, job_id: str) -> list[dict]:
-        """Get structured logs for a specific job."""
-        return self._inner.get_task_logs(job_id)  # type: ignore[no-any-return]
-
-    def query_logs(
-        self,
-        task_name: str | None = None,
-        level: str | None = None,
-        since: int = 3600,
-        limit: int = 100,
-    ) -> list[dict]:
-        """Query structured task logs with filters."""
-        return self._inner.query_task_logs(  # type: ignore[no-any-return]
-            task_name=task_name, level=level, since_seconds=since, limit=limit
-        )
-
-    # -- Workers --
-
-    def workers(self) -> list[dict]:
-        """List all registered workers and their heartbeat status."""
-        return self._inner.list_workers()  # type: ignore[no-any-return]
-
-    # -- Queue Pause/Resume --
-
-    def pause(self, queue_name: str = "default") -> None:
-        """Pause a queue so no new jobs are dispatched from it."""
-        self._inner.pause_queue(queue_name)
-        if hasattr(self, "_emit_event"):
-            from taskito.events import EventType
-
-            self._emit_event(EventType.QUEUE_PAUSED, {"queue": queue_name})
-
-    def resume(self, queue_name: str = "default") -> None:
-        """Resume a paused queue."""
-        self._inner.resume_queue(queue_name)
-        if hasattr(self, "_emit_event"):
-            from taskito.events import EventType
-
-            self._emit_event(EventType.QUEUE_RESUMED, {"queue": queue_name})
-
-    def paused_queues(self) -> list[str]:
-        """List currently paused queues."""
-        return self._inner.list_paused_queues()  # type: ignore[no-any-return]
-
-    # -- Job Revocation --
-
-    def purge(self, queue_name: str) -> int:
-        """Cancel all pending jobs in a queue. Returns count cancelled."""
-        return self._inner.purge_queue(queue_name)  # type: ignore[no-any-return]
-
-    def revoke_task(self, task_name: str) -> int:
-        """Cancel all pending jobs for a task name. Returns count cancelled."""
-        return self._inner.revoke_task(task_name)  # type: ignore[no-any-return]
-
-    # -- Job Archival --
-
-    def archive(self, older_than: int = 86400) -> int:
-        """Archive completed/dead/cancelled jobs older than the given age (seconds)."""
-        return self._inner.archive_old_jobs(older_than)  # type: ignore[no-any-return]
-
-    def list_archived(self, limit: int = 50, offset: int = 0) -> list[JobResult]:
-        """List archived jobs with pagination."""
-        from taskito.result import JobResult
-
-        py_jobs = self._inner.list_archived(limit=limit, offset=offset)
-        return [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
-
-
-class QueueLockMixin:
-    """Distributed locking methods for the Queue."""
-
-    _inner: Any
-
-    def lock(
-        self,
-        name: str,
-        ttl: float = 30.0,
-        auto_extend: bool = True,
-        owner_id: str | None = None,
-        timeout: float | None = None,
-        retry_interval: float = 0.1,
-    ) -> DistributedLock:
-        """Return a sync distributed lock context manager.
-
-        Args:
-            name: Lock name (unique across the cluster).
-            ttl: Lock TTL in seconds. Auto-extended at ttl/3 intervals.
-            auto_extend: Whether to auto-extend the lock in a background thread.
-            owner_id: Unique owner identifier. Auto-generated if not provided.
-            timeout: Max seconds to wait for acquisition. None = fail immediately.
-            retry_interval: Seconds between retries when timeout is set.
-        """
-        from taskito.locks import DistributedLock
-
-        return DistributedLock(
-            inner=self._inner,
-            name=name,
-            ttl=ttl,
-            owner_id=owner_id,
-            auto_extend=auto_extend,
-            timeout=timeout,
-            retry_interval=retry_interval,
-        )
-
-
 def _aggregate_metrics(raw: list[dict]) -> dict[str, Any]:
     """Aggregate raw metric rows into per-task statistics."""
-    from collections import defaultdict
-
     by_task: dict[str, list[dict]] = defaultdict(list)
     for r in raw:
         by_task[r["task_name"]].append(r)
