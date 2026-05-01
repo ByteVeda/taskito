@@ -21,7 +21,7 @@ function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="Persistent dashboard configuration shared across workers and viewers."
+        description="Customize the dashboard's appearance and configure external integrations."
       />
 
       {isLoading || !data ? (
