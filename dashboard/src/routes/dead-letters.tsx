@@ -13,16 +13,38 @@ import {
 import { cn } from "@/lib/cn";
 
 const PAGE_SIZE = 25;
+const DEAD_LETTER_VIEWS: readonly DeadLetterView[] = ["grouped", "flat"];
+
+interface DeadLetterSearch {
+  page: number;
+  view: DeadLetterView;
+}
+
+function parseDeadLetterSearch(raw: Record<string, unknown>): DeadLetterSearch {
+  const pageRaw = Number(raw.page);
+  const page = Number.isFinite(pageRaw) && pageRaw >= 0 ? Math.floor(pageRaw) : 0;
+  const view = DEAD_LETTER_VIEWS.find((v) => v === raw.view) ?? "grouped";
+  return { page, view };
+}
 
 export const Route = createFileRoute("/dead-letters")({
-  loader: ({ context: { queryClient } }) =>
-    queryClient.ensureQueryData(deadLettersQuery(0, PAGE_SIZE)),
+  validateSearch: parseDeadLetterSearch,
+  loaderDeps: ({ search }) => ({ page: search.page }),
+  loader: ({ context: { queryClient }, deps: { page } }) =>
+    queryClient.ensureQueryData(deadLettersQuery(page, PAGE_SIZE)),
   component: DeadLettersPage,
 });
 
 function DeadLettersPage() {
-  const [page, setPage] = useState(0);
-  const [view, setView] = useState<DeadLetterView>("grouped");
+  const { page, view } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const setPage = (next: number) => {
+    navigate({ search: (prev) => ({ ...prev, page: next }) });
+  };
+  const setView = (next: DeadLetterView) => {
+    navigate({ search: (prev) => ({ ...prev, view: next, page: 0 }), replace: true });
+  };
+
   const [confirmPurge, setConfirmPurge] = useState(false);
 
   const query = useDeadLetters(page, PAGE_SIZE);
