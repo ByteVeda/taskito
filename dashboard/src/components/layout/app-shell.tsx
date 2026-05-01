@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui";
+import { useApplyAccent } from "@/features/settings";
 import { CommandPalette } from "./command-palette";
 import { Header } from "./header";
 import { RouteErrorBoundary } from "./route-error-boundary";
 import { Sidebar } from "./sidebar";
 
 export function AppShell({ children }: { children: ReactNode }) {
+  useApplyAccent();
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex min-h-screen bg-[var(--bg)] text-[var(--fg)]">

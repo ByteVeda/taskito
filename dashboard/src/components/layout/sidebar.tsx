@@ -14,8 +14,8 @@ import {
   Settings2,
   Skull,
 } from "lucide-react";
+import { useBranding } from "@/features/settings";
 import { cn } from "@/lib/cn";
-import { site } from "@/lib/site";
 
 interface NavItem {
   to: string;
@@ -62,6 +62,7 @@ const NAV: NavGroup[] = [
 
 export function Sidebar() {
   const { pathname } = useLocation();
+  const { title } = useBranding();
   return (
     <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)]">
       <div className="flex items-center gap-2 px-5 py-4">
@@ -69,7 +70,7 @@ export function Sidebar() {
           <AlertOctagon className="size-4" aria-hidden />
         </div>
         <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold tracking-tight">{site.name}</span>
+          <span className="text-sm font-semibold tracking-tight">{title}</span>
           <span className="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)]">
             Dashboard
           </span>

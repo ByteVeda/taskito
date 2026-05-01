@@ -23,8 +23,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui";
+import { useBranding } from "@/features/settings";
 import { cn } from "@/lib/cn";
-import { site } from "@/lib/site";
 
 interface NavItem {
   to: string;
@@ -66,6 +66,7 @@ const NAV: Array<{ title: string; items: NavItem[] }> = [
 
 export function MobileMenu() {
   const { pathname } = useLocation();
+  const { title } = useBranding();
   const [open, setOpen] = useState(false);
 
   // Close on navigation
@@ -82,7 +83,7 @@ export function MobileMenu() {
       </SheetTrigger>
       <SheetContent side="left" className="flex flex-col p-0">
         <SheetHeader className="border-b border-[var(--border)] px-5 py-4">
-          <SheetTitle>{site.name} Dashboard</SheetTitle>
+          <SheetTitle>{title} Dashboard</SheetTitle>
         </SheetHeader>
         <nav className="flex-1 overflow-y-auto px-3 py-3">
           {NAV.map((group) => (
