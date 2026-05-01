@@ -68,7 +68,7 @@ export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
         header: "Created",
         cell: ({ getValue }) => (
           <span className="text-xs tabular-nums text-[var(--fg-muted)]">
-            {formatRelative(getValue<number>() * 1000)}
+            {formatRelative(getValue<number>())}
           </span>
         ),
       },

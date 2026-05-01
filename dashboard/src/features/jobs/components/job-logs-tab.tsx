@@ -2,6 +2,7 @@ import { ScrollText } from "lucide-react";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { TaskLog } from "@/lib/api-types";
 import { cn } from "@/lib/cn";
+import { logLevelClass } from "@/lib/status";
 import { formatAbsolute } from "@/lib/time";
 
 interface JobLogsTabProps {
@@ -10,14 +11,6 @@ interface JobLogsTabProps {
   error: Error | null;
   onRetry: () => void;
 }
-
-const LEVEL_STYLE: Record<string, string> = {
-  error: "text-danger",
-  warning: "text-warning",
-  warn: "text-warning",
-  info: "text-info",
-  debug: "text-[var(--fg-subtle)]",
-};
 
 export function JobLogsTab({ logs, loading, error, onRetry }: JobLogsTabProps) {
   if (error) {
@@ -36,7 +29,7 @@ export function JobLogsTab({ logs, loading, error, onRetry }: JobLogsTabProps) {
     <div className="rounded-lg bg-[var(--surface)] ring-1 ring-inset ring-[var(--border)]">
       <ul className="divide-y divide-[var(--border)] font-mono text-[11px]">
         {logs.map((log, i) => {
-          const levelClass = LEVEL_STYLE[log.level.toLowerCase()] ?? "text-[var(--fg-muted)]";
+          const levelClass = logLevelClass(log.level);
           const key = `${log.logged_at}-${log.level}-${i}`;
           return (
             <li key={key} className="flex gap-3 px-4 py-2 hover:bg-[var(--surface-2)]/60">

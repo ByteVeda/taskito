@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Button,
   Input,
@@ -62,32 +62,34 @@ export function JobFiltersBar({ filters, onChange, className }: JobFiltersBarPro
   const debouncedMetadata = useDebouncedValue(local.metadata, 300);
   const debouncedError = useDebouncedValue(local.error, 300);
 
+  // Hold the latest filters/onChange in refs so the propagation effect re-runs
+  // only when debounced values settle. Listing them as deps would re-fire the
+  // effect on every parent render and defeat the debounce.
+  const filtersRef = useRef(filters);
+  const onChangeRef = useRef(onChange);
   useEffect(() => {
+    filtersRef.current = filters;
+    onChangeRef.current = onChange;
+  });
+
+  useEffect(() => {
+    const current = filtersRef.current;
     const next: JobFilters = {
-      ...filters,
+      ...current,
       queue: debouncedQueue || undefined,
       task: debouncedTask || undefined,
       metadata: debouncedMetadata || undefined,
       error: debouncedError || undefined,
     };
     if (
-      next.queue !== filters.queue ||
-      next.task !== filters.task ||
-      next.metadata !== filters.metadata ||
-      next.error !== filters.error
+      next.queue !== current.queue ||
+      next.task !== current.task ||
+      next.metadata !== current.metadata ||
+      next.error !== current.error
     ) {
-      onChange(next);
+      onChangeRef.current(next);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: propagate only debounced values
-  }, [
-    debouncedQueue,
-    debouncedTask,
-    debouncedMetadata,
-    debouncedError,
-    filters.task,
-    filters,
-    onChange,
-  ]);
+  }, [debouncedQueue, debouncedTask, debouncedMetadata, debouncedError]);
 
   const activeCount = countActiveFilters(filters);
 

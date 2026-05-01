@@ -12,7 +12,7 @@
         "noForEach": "off"
       },
       "correctness": {
-        "useExhaustiveDependencies": "warn"
+        "useExhaustiveDependencies": "error"
       },
       "style": {
         "noNonNullAssertion": "off"

@@ -45,3 +45,17 @@ export function resourceTone(health: string): Tone {
   if (key === "unhealthy") return "danger";
   return "neutral";
 }
+
+const LOG_LEVEL_CLASS: Record<string, string> = {
+  error: "text-danger",
+  warning: "text-warning",
+  warn: "text-warning",
+  info: "text-info",
+  debug: "text-[var(--fg-subtle)]",
+};
+
+const LOG_LEVEL_FALLBACK = "text-[var(--fg-muted)]";
+
+export function logLevelClass(level: string): string {
+  return LOG_LEVEL_CLASS[level.toLowerCase()] ?? LOG_LEVEL_FALLBACK;
+}

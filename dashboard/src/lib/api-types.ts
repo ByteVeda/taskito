@@ -5,6 +5,11 @@
  * Keep in sync with:
  * - `py_src/taskito/dashboard.py` route handlers
  * - `docs/guide/observability/dashboard-api.md` (documented contract)
+ *
+ * **Timestamps**: every timestamp field exposed by the dashboard API is Unix
+ * milliseconds (the Rust core uses `now_millis()` and the Python aggregators
+ * work in ms). Pass them straight to `Date`, `formatRelative`, `formatAbsolute`
+ * — never multiply by 1000.
  */
 
 export type JobStatus = "pending" | "running" | "complete" | "failed" | "dead" | "cancelled";
@@ -39,9 +44,13 @@ export interface Job {
   progress: number | null;
   retry_count: number;
   max_retries: number;
+  /** Unix milliseconds. */
   created_at: number;
+  /** Unix milliseconds. */
   scheduled_at: number;
+  /** Unix milliseconds; null if the job hasn't started. */
   started_at: number | null;
+  /** Unix milliseconds; null if the job hasn't finished. */
   completed_at: number | null;
   timeout_ms: number;
   error: string | null;
@@ -52,6 +61,7 @@ export interface Job {
 export interface JobError {
   attempt: number;
   error: string;
+  /** Unix milliseconds. */
   failed_at: number;
 }
 
@@ -61,11 +71,13 @@ export interface TaskLog {
   level: string;
   message: string;
   extra: string | null;
+  /** Unix milliseconds. */
   logged_at: number;
 }
 
 export interface ReplayEntry {
   replay_job_id: string;
+  /** Unix milliseconds. */
   replayed_at: number;
   original_error: string | null;
   replay_error: string | null;
@@ -94,6 +106,7 @@ export interface DeadLetter {
   queue: string;
   error: string | null;
   retry_count: number;
+  /** Unix milliseconds. */
   failed_at: number;
 }
 
@@ -112,6 +125,7 @@ export interface TaskMetrics {
 export type MetricsResponse = Record<string, TaskMetrics>;
 
 export interface TimeseriesBucket {
+  /** Bucket start; Unix milliseconds. */
   timestamp: number;
   count: number;
   success: number;
@@ -122,7 +136,9 @@ export interface TimeseriesBucket {
 export interface Worker {
   worker_id: string;
   queues: string;
+  /** Unix milliseconds. */
   last_heartbeat: number;
+  /** Unix milliseconds. */
   registered_at: number;
   tags: string | null;
 }
@@ -134,6 +150,7 @@ export interface CircuitBreaker {
   threshold: number;
   window_ms: number;
   cooldown_ms: number;
+  /** Unix milliseconds; null if no failures yet. */
   last_failure_at: number | null;
 }
 
