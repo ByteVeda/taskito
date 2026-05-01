@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { TaskLog } from "@/lib/api-types";
 import { cn } from "@/lib/cn";
+import { logLevelClass } from "@/lib/status";
 import { formatAbsolute } from "@/lib/time";
 
 interface LogStreamProps {
@@ -13,14 +14,6 @@ interface LogStreamProps {
   onRetry: () => void;
   className?: string;
 }
-
-const LEVEL_TONE: Record<string, string> = {
-  error: "text-danger",
-  warning: "text-warning",
-  warn: "text-warning",
-  info: "text-info",
-  debug: "text-[var(--fg-subtle)]",
-};
 
 const ROW_ESTIMATE = 28;
 const AUTO_SCROLL_THRESHOLD_PX = 40;
@@ -88,7 +81,7 @@ export function LogStream({ logs, loading, error, onRetry, className }: LogStrea
           {virtualizer.getVirtualItems().map((item) => {
             const log = logs[item.index];
             if (!log) return null;
-            const levelClass = LEVEL_TONE[log.level.toLowerCase()] ?? "text-[var(--fg-muted)]";
+            const levelClass = logLevelClass(log.level);
             return (
               <div
                 key={`${log.logged_at}-${log.job_id}-${item.index}`}
