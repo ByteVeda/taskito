@@ -1,9 +1,24 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ApiError } from "@/lib/api-client";
 import { deleteSetting, fetchSettings, setSetting } from "./api";
 import type { SettingsSnapshot } from "./types";
 
 const KEY = ["settings"] as const;
+
+/**
+ * Return a user-friendly error description.
+ *
+ * Validation errors (4xx) carry messages we wrote ourselves and are useful
+ * to surface verbatim. Anything else (5xx, network, unknown) is hidden
+ * behind a generic message so internal details never leak to the UI.
+ */
+function describeError(error: unknown): string | undefined {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+    return error.message;
+  }
+  return undefined;
+}
 
 export function settingsQuery() {
   return queryOptions({
@@ -38,9 +53,7 @@ export function useUpdateSetting() {
     },
     onError: (error, _input, ctx) => {
       if (ctx?.prev) qc.setQueryData(KEY, ctx.prev);
-      toast.error("Couldn't save setting", {
-        description: error instanceof Error ? error.message : String(error),
-      });
+      toast.error("Couldn't save setting", { description: describeError(error) });
     },
     onSuccess: () => toast.success("Setting saved"),
     onSettled: () => qc.invalidateQueries({ queryKey: KEY }),
@@ -63,9 +76,7 @@ export function useDeleteSetting() {
     },
     onError: (error, _key, ctx) => {
       if (ctx?.prev) qc.setQueryData(KEY, ctx.prev);
-      toast.error("Couldn't delete setting", {
-        description: error instanceof Error ? error.message : String(error),
-      });
+      toast.error("Couldn't delete setting", { description: describeError(error) });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: KEY }),
   });
