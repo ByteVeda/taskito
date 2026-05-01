@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .builder import Workflow, WorkflowProxy
-from .run import WorkflowRun
+from taskito.workflows.builder import Workflow, WorkflowProxy
+from taskito.workflows.incremental import compute_dirty_set
+from taskito.workflows.run import WorkflowRun
+from taskito.workflows.tracker.dag import build_dag_maps
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,12 +57,9 @@ class QueueWorkflowMixin:
         # Compute cache hits for incremental runs.
         cache_hit_nodes: dict[str, str] | None = None
         if incremental and base_run:
-            from .incremental import compute_dirty_set
-            from .tracker import _build_dag_maps
-
             base_nodes = self._inner.get_base_run_node_data(base_run)
-            _, preds = _build_dag_maps(dag_bytes)
-            succs, _ = _build_dag_maps(dag_bytes)
+            _, preds = build_dag_maps(dag_bytes)
+            succs, _ = build_dag_maps(dag_bytes)
 
             # Get base run completion time for TTL check.
             base_status = self._inner.get_workflow_run_status(base_run)
