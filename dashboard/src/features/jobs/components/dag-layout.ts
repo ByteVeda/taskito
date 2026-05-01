@@ -62,9 +62,14 @@ function assignLayers(nodes: DagNode[], edges: DagData["edges"]): Map<string, nu
     queue.push(nodes[0]!.id);
   }
 
+  // Cap depth at nodes.length - 1 so cycles can't push layers up forever.
+  // The longest acyclic path through N nodes has N-1 edges, so any layer
+  // beyond that signals a back-edge in a cycle and is safe to drop.
+  const maxLayer = Math.max(0, nodes.length - 1);
   while (queue.length > 0) {
     const id = queue.shift()!;
     const depth = layerOf.get(id) ?? 0;
+    if (depth >= maxLayer) continue;
     for (const child of outgoing.get(id) ?? []) {
       const nextDepth = depth + 1;
       if ((layerOf.get(child) ?? -1) < nextDepth) {
