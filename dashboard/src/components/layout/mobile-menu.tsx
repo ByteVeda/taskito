@@ -5,6 +5,7 @@ import {
   Box,
   CircuitBoard,
   Cog,
+  ExternalLink as ExternalLinkIcon,
   LayoutDashboard,
   ListTree,
   type LucideIcon,
@@ -23,7 +24,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui";
-import { useBranding } from "@/features/settings";
+import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
 
 interface NavItem {
@@ -67,6 +68,7 @@ const NAV: Array<{ title: string; items: NavItem[] }> = [
 export function MobileMenu() {
   const { pathname } = useLocation();
   const { title } = useBranding();
+  const externalLinks = useExternalLinks();
   const [open, setOpen] = useState(false);
 
   // Close on navigation
@@ -114,6 +116,28 @@ export function MobileMenu() {
               </ul>
             </div>
           ))}
+          {externalLinks.length > 0 ? (
+            <div className="mt-4">
+              <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
+                Links
+              </div>
+              <ul className="flex flex-col gap-0.5">
+                {externalLinks.map((link) => (
+                  <li key={`${link.label}|${link.url}`}>
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
+                    >
+                      <ExternalLinkIcon className="size-4" aria-hidden />
+                      <span className="truncate">{link.label}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </nav>
       </SheetContent>
     </Sheet>

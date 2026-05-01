@@ -1,7 +1,37 @@
 import { useEffect } from "react";
 import { site } from "@/lib/site";
 import { useSettings } from "./hooks";
-import { SETTING_KEYS } from "./types";
+import { type ExternalLink, SETTING_KEYS } from "./types";
+
+/**
+ * Parse the JSON-encoded ``external_links`` setting into a typed list,
+ * tolerating malformed values (returns ``[]``) so a bad write never
+ * breaks the page.
+ */
+export function parseExternalLinks(raw: string | undefined): ExternalLink[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is ExternalLink =>
+          typeof item === "object" &&
+          item !== null &&
+          typeof (item as ExternalLink).label === "string" &&
+          typeof (item as ExternalLink).url === "string",
+      )
+      .map((item) => ({ label: item.label, url: item.url }));
+  } catch {
+    return [];
+  }
+}
+
+/** User-defined external links rendered in the sidebar. */
+export function useExternalLinks(): ExternalLink[] {
+  const { data } = useSettings();
+  return parseExternalLinks(data?.[SETTING_KEYS.externalLinks]);
+}
 
 /**
  * Resolved branding values. Falls back to the bundled defaults when no

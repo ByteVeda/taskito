@@ -9,6 +9,7 @@ import {
   CardTitle,
   Input,
 } from "@/components/ui";
+import { parseExternalLinks } from "../derived";
 import { useDeleteSetting, useUpdateSetting } from "../hooks";
 import { type ExternalLink, SETTING_KEYS, type SettingsSnapshot } from "../types";
 
@@ -24,30 +25,6 @@ function draftId(): string {
 }
 
 /**
- * Parse the JSON-encoded ``external_links`` setting into a typed list,
- * tolerating malformed values (returns ``[]``) so a bad write never
- * breaks the page.
- */
-function parseLinks(raw: string | undefined): ExternalLink[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (item): item is ExternalLink =>
-          typeof item === "object" &&
-          item !== null &&
-          typeof (item as ExternalLink).label === "string" &&
-          typeof (item as ExternalLink).url === "string",
-      )
-      .map((item) => ({ label: item.label, url: item.url }));
-  } catch {
-    return [];
-  }
-}
-
-/**
  * User-defined links rendered in the sidebar (e.g. wiki, runbook, status
  * page). Stored as a single JSON-encoded array under
  * ``dashboard.external_links``.
@@ -56,7 +33,10 @@ export function ExternalLinksSection({ settings }: { settings: SettingsSnapshot 
   const update = useUpdateSetting();
   const remove = useDeleteSetting();
 
-  const initial = useMemo(() => parseLinks(settings[SETTING_KEYS.externalLinks]), [settings]);
+  const initial = useMemo(
+    () => parseExternalLinks(settings[SETTING_KEYS.externalLinks]),
+    [settings],
+  );
   const [links, setLinks] = useState<DraftLink[]>(() =>
     initial.map((link) => ({ ...link, id: draftId() })),
   );
