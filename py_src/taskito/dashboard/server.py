@@ -30,6 +30,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("taskito.dashboard")
 
+# ASCII control characters (0x00-0x1F and 0x7F) plus tab are stripped before
+# logging user-controlled paths. Tab survives so legitimate URLs containing
+# ``%09`` decode-equivalents stay readable; CR/LF/null bytes are removed to
+# defeat log-forging via crafted requests.
+_LOG_UNSAFE_CHARS = {c: None for c in range(32) if c != 9}
+_LOG_UNSAFE_CHARS[127] = None
+_LOG_PATH_MAX = 256
+
+
+def _safe_path(path: str) -> str:
+    """Return ``path`` with control characters stripped and length capped.
+
+    Used when including the request URI in log messages — never trust
+    user-controlled strings to be free of CR/LF/null bytes that would let
+    an attacker forge fake log lines.
+    """
+    return path.translate(_LOG_UNSAFE_CHARS)[:_LOG_PATH_MAX]
+
 
 def serve_dashboard(
     queue: Queue,
@@ -78,7 +96,7 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
             except BrokenPipeError:
                 pass
             except Exception:
-                logger.exception("Error handling GET %s", self.path)
+                logger.exception("Error handling GET %s", _safe_path(self.path))
                 self._json_response({"error": "Internal server error"}, status=500)
 
         def _handle_get(self) -> None:
@@ -125,7 +143,7 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
             except BrokenPipeError:
                 pass
             except Exception:
-                logger.exception("Error handling POST %s", self.path)
+                logger.exception("Error handling POST %s", _safe_path(self.path))
                 self._json_response({"error": "Internal server error"}, status=500)
 
         def _handle_post(self) -> None:
