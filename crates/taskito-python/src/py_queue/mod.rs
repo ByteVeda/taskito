@@ -495,6 +495,34 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Get a single dashboard setting value, or ``None`` if unset.
+    pub fn get_setting(&self, key: &str) -> PyResult<Option<String>> {
+        self.storage
+            .get_setting(key)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Set a dashboard setting (insert or update).
+    pub fn set_setting(&self, key: &str, value: &str) -> PyResult<()> {
+        self.storage
+            .set_setting(key, value)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Delete a dashboard setting. Returns ``True`` if the key existed.
+    pub fn delete_setting(&self, key: &str) -> PyResult<bool> {
+        self.storage
+            .delete_setting(key)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Return all dashboard settings as a ``{key: value}`` dict.
+    pub fn list_settings(&self) -> PyResult<std::collections::HashMap<String, String>> {
+        self.storage
+            .list_settings()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Cancel all pending jobs for a task name. Returns count cancelled.
     pub fn revoke_task(&self, task_name: &str) -> PyResult<u64> {
         self.storage

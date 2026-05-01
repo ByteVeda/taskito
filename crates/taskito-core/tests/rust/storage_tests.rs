@@ -242,6 +242,34 @@ fn test_execution_claims_purge(s: &impl Storage) {
     s.complete_execution(fresh_job).unwrap();
 }
 
+fn test_dashboard_settings(s: &impl Storage) {
+    // get on missing key
+    assert!(s.get_setting("settings-nonexistent").unwrap().is_none());
+
+    // set then get
+    s.set_setting("settings-key", "settings-value").unwrap();
+    assert_eq!(
+        s.get_setting("settings-key").unwrap(),
+        Some("settings-value".to_string())
+    );
+
+    // overwrite
+    s.set_setting("settings-key", "settings-new").unwrap();
+    assert_eq!(
+        s.get_setting("settings-key").unwrap(),
+        Some("settings-new".to_string())
+    );
+
+    // list contains the key
+    let all = s.list_settings().unwrap();
+    assert_eq!(all.get("settings-key"), Some(&"settings-new".to_string()));
+
+    // delete returns true once, false the second time
+    assert!(s.delete_setting("settings-key").unwrap());
+    assert!(!s.delete_setting("settings-key").unwrap());
+    assert!(s.get_setting("settings-key").unwrap().is_none());
+}
+
 fn test_circuit_breakers(s: &impl Storage) {
     let task = "cb-test-task";
     let cb = s.get_circuit_breaker(task).unwrap();
@@ -288,6 +316,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_pause_resume_queue(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
+    test_dashboard_settings(s);
 }
 
 // ── Backend-specific wiring ──────────────────────────────────────────

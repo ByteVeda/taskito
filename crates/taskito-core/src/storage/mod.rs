@@ -514,6 +514,20 @@ macro_rules! impl_storage {
                     namespace,
                 )
             }
+            fn get_setting(&self, key: &str) -> $crate::error::Result<Option<String>> {
+                self.get_setting(key)
+            }
+            fn set_setting(&self, key: &str, value: &str) -> $crate::error::Result<()> {
+                self.set_setting(key, value)
+            }
+            fn delete_setting(&self, key: &str) -> $crate::error::Result<bool> {
+                self.delete_setting(key)
+            }
+            fn list_settings(
+                &self,
+            ) -> $crate::error::Result<std::collections::HashMap<String, String>> {
+                self.list_settings()
+            }
         }
     };
 }
@@ -880,5 +894,17 @@ impl Storage for StorageBackend {
             offset,
             namespace
         )
+    }
+    fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        delegate!(self, get_setting, key)
+    }
+    fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        delegate!(self, set_setting, key, value)
+    }
+    fn delete_setting(&self, key: &str) -> Result<bool> {
+        delegate!(self, delete_setting, key)
+    }
+    fn list_settings(&self) -> Result<std::collections::HashMap<String, String>> {
+        delegate!(self, list_settings)
     }
 }

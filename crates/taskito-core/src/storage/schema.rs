@@ -212,4 +212,12 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    dashboard_settings (key) {
+        key -> Text,
+        value -> Text,
+        updated_at -> BigInt,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies);
