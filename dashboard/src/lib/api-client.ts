@@ -71,4 +71,27 @@ export const api = {
     });
     return parse<T>(response);
   },
+
+  async put<T>(path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
+    const response = await fetch(buildUrl(path, options.params), {
+      method: "PUT",
+      signal: options.signal,
+      headers: {
+        Accept: "application/json",
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return parse<T>(response);
+  },
+
+  async delete<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const response = await fetch(buildUrl(path, options.params), {
+      method: "DELETE",
+      signal: options.signal,
+      headers: { Accept: "application/json", ...options.headers },
+    });
+    return parse<T>(response);
+  },
 };

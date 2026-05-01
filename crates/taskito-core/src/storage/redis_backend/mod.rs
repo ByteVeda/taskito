@@ -1,5 +1,6 @@
 mod archival;
 mod circuit_breakers;
+mod dashboard_settings;
 mod dead_letter;
 mod jobs;
 mod locks;

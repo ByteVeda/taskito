@@ -199,4 +199,15 @@ pub trait Storage: Send + Sync + Clone {
         offset: i64,
         namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
+
+    // ── Dashboard settings (key/value store) ─────────────────────
+
+    /// Fetch a single setting value by key, or ``None`` if unset.
+    fn get_setting(&self, key: &str) -> Result<Option<String>>;
+    /// Insert or update a setting.
+    fn set_setting(&self, key: &str, value: &str) -> Result<()>;
+    /// Delete a setting. Returns ``true`` if a row was removed.
+    fn delete_setting(&self, key: &str) -> Result<bool>;
+    /// Return all settings as a key→value map.
+    fn list_settings(&self) -> Result<std::collections::HashMap<String, String>>;
 }

@@ -7,6 +7,7 @@ from taskito.mixins.lifecycle import QueueLifecycleMixin
 from taskito.mixins.locks import QueueLockMixin
 from taskito.mixins.operations import QueueOperationsMixin
 from taskito.mixins.resources import QueueResourceMixin
+from taskito.mixins.settings import QueueSettingsMixin
 
 __all__ = [
     "QueueDecoratorMixin",
@@ -16,4 +17,5 @@ __all__ = [
     "QueueLockMixin",
     "QueueOperationsMixin",
     "QueueResourceMixin",
+    "QueueSettingsMixin",
 ]

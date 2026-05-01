@@ -408,3 +408,59 @@ fn test_enqueue_rejects_missing_dependency() {
     let result = storage.enqueue(dep_job);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_setting_get_returns_none_when_unset() {
+    let storage = test_storage();
+    assert_eq!(storage.get_setting("missing").unwrap(), None);
+}
+
+#[test]
+fn test_setting_set_and_get() {
+    let storage = test_storage();
+    storage.set_setting("dashboard.title", "My Queue").unwrap();
+    assert_eq!(
+        storage.get_setting("dashboard.title").unwrap(),
+        Some("My Queue".to_string())
+    );
+}
+
+#[test]
+fn test_setting_set_overwrites() {
+    let storage = test_storage();
+    storage.set_setting("k", "v1").unwrap();
+    storage.set_setting("k", "v2").unwrap();
+    assert_eq!(storage.get_setting("k").unwrap(), Some("v2".to_string()));
+}
+
+#[test]
+fn test_setting_delete() {
+    let storage = test_storage();
+    storage.set_setting("k", "v").unwrap();
+    assert!(storage.delete_setting("k").unwrap());
+    assert_eq!(storage.get_setting("k").unwrap(), None);
+    // Deleting non-existent returns false.
+    assert!(!storage.delete_setting("k").unwrap());
+}
+
+#[test]
+fn test_setting_list_returns_all() {
+    let storage = test_storage();
+    storage.set_setting("a", "1").unwrap();
+    storage.set_setting("b", "2").unwrap();
+    let all = storage.list_settings().unwrap();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all.get("a"), Some(&"1".to_string()));
+    assert_eq!(all.get("b"), Some(&"2".to_string()));
+}
+
+#[test]
+fn test_setting_preserves_unicode_and_json() {
+    let storage = test_storage();
+    let payload = r#"{"label":"Grafana ⏱️","url":"https://grafana.example/dash"}"#;
+    storage.set_setting("dashboard.links.0", payload).unwrap();
+    assert_eq!(
+        storage.get_setting("dashboard.links.0").unwrap(),
+        Some(payload.to_string())
+    );
+}

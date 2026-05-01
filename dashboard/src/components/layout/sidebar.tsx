@@ -5,6 +5,7 @@ import {
   BarChart3,
   Box,
   CircuitBoard,
+  Cog,
   LayoutDashboard,
   ListTree,
   type LucideIcon,
@@ -52,6 +53,10 @@ const NAV: NavGroup[] = [
       { to: "/circuit-breakers", label: "Circuit breakers", icon: CircuitBoard },
       { to: "/system", label: "System", icon: Settings2 },
     ],
+  },
+  {
+    title: "Configuration",
+    items: [{ to: "/settings", label: "Settings", icon: Cog }],
   },
 ];
 

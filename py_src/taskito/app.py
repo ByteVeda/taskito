@@ -37,6 +37,7 @@ from taskito.mixins import (
     QueueLockMixin,
     QueueOperationsMixin,
     QueueResourceMixin,
+    QueueSettingsMixin,
 )
 from taskito.proxies import ProxyRegistry, cleanup_proxies, reconstruct_proxies
 from taskito.proxies.built_in import register_builtin_handlers
@@ -75,6 +76,7 @@ class Queue(
     QueueInspectionMixin,
     QueueOperationsMixin,
     QueueLockMixin,
+    QueueSettingsMixin,
     QueueWorkflowMixin,
     AsyncQueueMixin,
 ):

@@ -10,10 +10,12 @@ from urllib.parse import parse_qs, urlparse
 
 from taskito.dashboard.errors import _BadRequest, _NotFound
 from taskito.dashboard.routes import (
+    DELETE_PARAM_ROUTES,
     GET_PARAM_ROUTES,
     GET_ROUTES,
     POST_PARAM_ROUTES,
     POST_ROUTES,
+    PUT_PARAM_ROUTES,
 )
 from taskito.dashboard.static import (
     IMMUTABLE_PREFIX,
@@ -37,6 +39,11 @@ logger = logging.getLogger("taskito.dashboard")
 _LOG_UNSAFE_CHARS = {c: None for c in range(32) if c != 9}
 _LOG_UNSAFE_CHARS[127] = None
 _LOG_PATH_MAX = 256
+
+# Hard cap on the request body we'll parse for PUT requests. Settings and
+# other config writes are tiny; anything larger is almost certainly an
+# attacker probing for memory exhaustion.
+_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MiB
 
 
 def _safe_path(path: str) -> str:
@@ -163,6 +170,82 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                     return
 
             self._json_response({"error": "Not found"}, status=404)
+
+        def do_PUT(self) -> None:
+            try:
+                self._handle_put()
+            except BrokenPipeError:
+                pass
+            except Exception:
+                logger.exception("Error handling PUT %s", _safe_path(self.path))
+                self._json_response({"error": "Internal server error"}, status=500)
+
+        def _handle_put(self) -> None:
+            path = urlparse(self.path).path
+            for pattern, param_handler in PUT_PARAM_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    body = self._read_json_body()
+                    if body is None:
+                        return
+                    try:
+                        self._json_response(param_handler(queue, body, m.group(1)))
+                    except _BadRequest as e:
+                        self._json_response({"error": e.message}, status=400)
+                    except _NotFound as e:
+                        self._json_response({"error": e.message}, status=404)
+                    return
+            self._json_response({"error": "Not found"}, status=404)
+
+        def do_DELETE(self) -> None:
+            try:
+                self._handle_delete()
+            except BrokenPipeError:
+                pass
+            except Exception:
+                logger.exception("Error handling DELETE %s", _safe_path(self.path))
+                self._json_response({"error": "Internal server error"}, status=500)
+
+        def _handle_delete(self) -> None:
+            path = urlparse(self.path).path
+            for pattern, param_handler in DELETE_PARAM_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    try:
+                        self._json_response(param_handler(queue, m.group(1)))
+                    except _BadRequest as e:
+                        self._json_response({"error": e.message}, status=400)
+                    except _NotFound as e:
+                        self._json_response({"error": e.message}, status=404)
+                    return
+            self._json_response({"error": "Not found"}, status=404)
+
+        def _read_json_body(self) -> Any | None:
+            """Read and parse the request body as JSON.
+
+            Returns ``None`` after writing the appropriate error response
+            (400/413) when the body is missing, malformed, or oversized.
+            """
+            length_header = self.headers.get("Content-Length")
+            try:
+                length = int(length_header) if length_header is not None else 0
+            except ValueError:
+                self._json_response({"error": "invalid Content-Length"}, status=400)
+                return None
+            if length < 0:
+                self._json_response({"error": "invalid Content-Length"}, status=400)
+                return None
+            if length > _MAX_BODY_BYTES:
+                self._json_response({"error": "request body too large"}, status=413)
+                return None
+            raw = self.rfile.read(length) if length else b""
+            if not raw:
+                return {}
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                self._json_response({"error": f"invalid JSON: {e.msg}"}, status=400)
+                return None
 
         def _json_response(self, data: Any, status: int = 200) -> None:
             body = json.dumps(data, default=str).encode()

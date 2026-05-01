@@ -1,5 +1,6 @@
 mod archival;
 mod circuit_breakers;
+mod dashboard_settings;
 mod dead_letter;
 mod jobs;
 mod locks;
@@ -477,6 +478,16 @@ impl SqliteStorage {
 
         diesel::sql_query(
             "CREATE INDEX IF NOT EXISTS idx_execution_claims_claimed ON execution_claims(claimed_at)",
+        )
+        .execute(&mut conn)?;
+
+        // ── Dashboard Settings ───────────────────────────
+        diesel::sql_query(
+            "CREATE TABLE IF NOT EXISTS dashboard_settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
         )
         .execute(&mut conn)?;
 

@@ -21,6 +21,12 @@ from taskito.dashboard.handlers.logs import _handle_logs
 from taskito.dashboard.handlers.metrics import _handle_metrics, _handle_metrics_timeseries
 from taskito.dashboard.handlers.queues import _handle_stats_queues
 from taskito.dashboard.handlers.scaler import build_scaler_response
+from taskito.dashboard.handlers.settings import (
+    _handle_delete_setting,
+    _handle_get_setting,
+    _handle_list_settings,
+    _handle_set_setting,
+)
 
 # ── Exact-match GET routes: path → handler(queue, qs) → JSON data ──
 GET_ROUTES: dict[str, Any] = {
@@ -38,6 +44,7 @@ GET_ROUTES: dict[str, Any] = {
     "/api/queues/paused": lambda q, qs: q.paused_queues(),
     "/api/stats/queues": _handle_stats_queues,
     "/api/scaler": lambda q, qs: build_scaler_response(q, queue_name=qs.get("queue", [None])[0]),
+    "/api/settings": _handle_list_settings,
 }
 
 # ── Parameterized GET routes: regex → handler(queue, qs, captured_id) ──
@@ -51,6 +58,7 @@ GET_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     ),
     (re.compile(r"^/api/jobs/([^/]+)/dag$"), lambda q, qs, jid: q.job_dag(jid)),
     (re.compile(r"^/api/jobs/([^/]+)$"), _handle_get_job),
+    (re.compile(r"^/api/settings/(.+)$"), _handle_get_setting),
 ]
 
 # ── Exact-match POST routes: path → handler(queue) → JSON data ──
@@ -74,4 +82,14 @@ POST_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
         re.compile(r"^/api/queues/([^/]+)/resume$"),
         lambda q, n: (q.resume(n), {"resumed": n})[1],
     ),
+]
+
+# ── Parameterized PUT routes: regex → handler(queue, body, captured_id) ──
+PUT_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
+    (re.compile(r"^/api/settings/(.+)$"), _handle_set_setting),
+]
+
+# ── Parameterized DELETE routes: regex → handler(queue, captured_id) ──
+DELETE_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
+    (re.compile(r"^/api/settings/(.+)$"), _handle_delete_setting),
 ]

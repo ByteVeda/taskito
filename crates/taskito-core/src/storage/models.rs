@@ -2,9 +2,9 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::schema::{
-    archived_jobs, circuit_breakers, dead_letter, distributed_locks, execution_claims,
-    job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits, replay_history,
-    task_logs, task_metrics, workers,
+    archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
+    execution_claims, job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits,
+    replay_history, task_logs, task_metrics, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -338,6 +338,16 @@ pub struct QueueStateRow {
     pub queue_name: String,
     pub paused: bool,
     pub paused_at: Option<i64>,
+}
+
+// ── Dashboard Settings ──────────────────────────────────────────
+
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
+#[diesel(table_name = dashboard_settings)]
+pub struct DashboardSettingRow {
+    pub key: String,
+    pub value: String,
+    pub updated_at: i64,
 }
 
 // ── Distributed Locks ───────────────────────────────────────────
