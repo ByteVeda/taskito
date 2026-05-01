@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { site } from "@/lib/site";
 import { useSettings } from "./hooks";
-import { type ExternalLink, SETTING_KEYS } from "./types";
+import { type ExternalLink, type IntegrationUrls, SETTING_KEYS } from "./types";
 
 /**
  * Parse the JSON-encoded ``external_links`` setting into a typed list,
@@ -31,6 +31,27 @@ export function parseExternalLinks(raw: string | undefined): ExternalLink[] {
 export function useExternalLinks(): ExternalLink[] {
   const { data } = useSettings();
   return parseExternalLinks(data?.[SETTING_KEYS.externalLinks]);
+}
+
+/** Configured integration URLs, with empty/whitespace values normalized. */
+export function useIntegrations(): IntegrationUrls {
+  const { data } = useSettings();
+  return {
+    grafana: data?.[SETTING_KEYS.integrationGrafana]?.trim() ?? "",
+    sentry: data?.[SETTING_KEYS.integrationSentry]?.trim() ?? "",
+    otel: data?.[SETTING_KEYS.integrationOtel]?.trim() ?? "",
+  };
+}
+
+/**
+ * Substitute supported placeholders in an integration URL template.
+ *
+ * Currently supports ``{job_id}``. URLs without any placeholder are
+ * returned unchanged so users can configure either a templated deep
+ * link or a static landing page.
+ */
+export function applyJobContext(template: string, jobId: string): string {
+  return template.replaceAll("{job_id}", encodeURIComponent(jobId));
 }
 
 /**

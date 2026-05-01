@@ -1,6 +1,9 @@
+import { ExternalLink as ExternalLinkIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+import { buttonVariants, Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+import { applyJobContext, useIntegrations } from "@/features/settings";
 import type { Job } from "@/lib/api-types";
+import { cn } from "@/lib/cn";
 import { formatAbsolute, formatDuration, formatRelative } from "@/lib/time";
 
 interface JobOverviewTabProps {
@@ -13,6 +16,7 @@ export function JobOverviewTab({ job }: JobOverviewTabProps) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      <JobIntegrations job={job} />
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Identity</CardTitle>
@@ -131,4 +135,45 @@ function tryPrettyJson(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+/**
+ * Render configured integration shortcuts (Grafana / Sentry / OTel) for
+ * the given job. Each URL may contain a ``{job_id}`` placeholder; if it
+ * doesn't, the configured URL opens as-is. Renders nothing when no
+ * integration is configured.
+ */
+function JobIntegrations({ job }: { job: Job }) {
+  const integrations = useIntegrations();
+  const links = (
+    [
+      { label: "Open in Grafana", href: integrations.grafana },
+      { label: "Open in Sentry", href: integrations.sentry },
+      { label: "Open in OTel", href: integrations.otel },
+    ] as const
+  ).filter((entry) => entry.href);
+
+  if (links.length === 0) return null;
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader className="pb-2">
+        <CardTitle>Integrations</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-wrap gap-2">
+        {links.map(({ label, href }) => (
+          <a
+            key={label}
+            href={applyJobContext(href, job.id)}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <ExternalLinkIcon className="size-4" aria-hidden />
+            {label}
+          </a>
+        ))}
+      </CardContent>
+    </Card>
+  );
 }
