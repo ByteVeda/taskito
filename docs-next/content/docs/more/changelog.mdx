@@ -1,10 +1,441 @@
 ---
 title: Changelog
-description: "Release history."
+description: "Release history for taskito — every notable change, fix, and feature."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+All notable changes to taskito are documented here.
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+## 0.12.0
+
+### Added
+
+- **Dashboard persistent settings** -- new `/settings` route exposes branding (title + accent), external links (deployment-wide sidebar shortcuts), and integration URLs (Grafana / Sentry / OTel base) backed by four new `Storage` methods (`get_setting`, `set_setting`, `delete_setting`, `list_settings`) on every backend. REST API at `/api/settings` (GET/PUT/DELETE); optimistic TanStack Query mutations with rollback. The dashboard auto-applies the persisted branding and surfaces the configured links on every page load.
+- **CLI `--pool prefork`** -- `taskito worker --pool prefork --app myapp:queue` now selects the prefork worker pool from the command line.
+- **Dead-letter URL state** -- page number and grouping view persist via TanStack Router `validateSearch`, so reloading or sharing a link preserves the user's place.
+
+### Changed
+
+- **Dashboard rewrite** -- replaced the Preact single-file dashboard with a React + Vite + TanStack Router SPA. Same Python entrypoint (`taskito dashboard --app myapp:queue`), richer UX: cmdk command palette (`⌘K`), URL-synced job filters, optimistic cancel/replay mutations, Recharts metrics (lazy-loaded), virtualized live-tail logs, type-to-confirm destructive actions, keyboard-accessible tables. Assets ship as hashed multi-file output at `py_src/taskito/static/dashboard/`; the legacy single-HTML `templates/dashboard.html` is gone.
+- **Dashboard dead letters** -- grouping now keys on `(task, exception class)` extracted from the traceback (e.g. `hard_fail::ValueError`) instead of the full error string, so runs that differ only in message text collapse into one actionable group. Group header shows the latest failure timestamp and a "Retry all" button.
+- **Dashboard resources** -- `/api/resources` falls back to worker heartbeat snapshots when the dashboard runs in a different process than the worker, so health surfaces correctly across process boundaries.
+- **Async-separation boundary enforced** -- `import asyncio` now lives only in `py_src/taskito/async_support/` and `contrib/fastapi.py`. `mixins/decorators.py` switched to `inspect.iscoroutinefunction`. The boundary is machine-checkable: `grep -rn "import asyncio" py_src/taskito/ | grep -v -E "(async_support/|contrib/fastapi\.py)"` returns empty.
+- **`run_maybe_async` clear error under a running loop** -- explicit detection of a running event loop with a taskito-specific `RuntimeError` pointing at the async API and `await`, instead of the cryptic `asyncio.run() cannot be called from a running event loop`.
+- **Redis status discriminants** -- `archive_old_jobs`, `purge_completed`, `purge_completed_with_ttl`, `reap_stale_jobs`, and `expire_pending_jobs` now cast `JobStatus::Foo as i32` instead of using magic numbers (`[2, 4, 5]`, `"0"`, `"1"`, `"2"`). Reordering or inserting variants in the enum will fail the build instead of silently archiving the wrong buckets.
+- **`enqueue_batch` Rust signature widened** -- `priorities`, `max_retries_list`, `timeouts` widened from `Option<Vec<i32>>` to `Option<Vec<Option<i32>>>` so callers can omit individual entries (matches the pattern already used by `delay_seconds_list` / `metadata_list` / etc.). Type stub follows; pure Python callers unaffected.
+
+### Fixed
+
+- **Scheduler concurrency cap atomicity** -- a TOCTOU race between the cap check and `claim_execution` allowed two schedulers to both pass the cap and over-dispatch. Also fixed an off-by-one (`>=` against a count that already includes the just-dequeued running job). `try_dispatch` was restructured into named helpers (`active_queues`, `check_pre_claim_gates`, `claim_for_dispatch`, `check_post_claim_concurrency`, `rollback_claim_and_retry`); cap check now runs after `claim_execution` with strict `>`. New regression tests cover exact-cap, max-1, and per-queue caps.
+- **Scheduler reschedule on full or closed worker channel** -- a naive `try_send` swallowed `TrySendError::Full` / `Closed`, leaving the job in `Running` until the stale-reaper timed it out -- surfacing as a *timeout* in metrics and middleware (wrong outcome for a job that never ran). Replaced with a full match: warn, roll back the claim, and reschedule with a 100 ms backoff.
+- **`enqueue_many` middleware contract** -- `on_enqueue` now receives each job's own args and kwargs (was always `args_list[0]`). Mutations to the per-job options dict propagate to the enqueued jobs (was discarded -- middleware ran *after* `enqueue_batch` against a fresh empty dict). Middleware exceptions surface via `logger.exception("middleware on_enqueue() error")` instead of a silent `except: pass`.
+- **`result()` / `aresult()` deadline race** -- could raise `TimeoutError` even when the job had already failed/died/cancelled, when the terminal state landed during the final poll-then-deadline-check window. A defensive re-poll inside the deadline branch lets the caller see the real exception class (`TaskFailedError`, `MaxRetriesExceededError`, `TaskCancelledError`).
+- **`result_handler.rs` triple-fetch** -- the Failure branch fetched `get_job` up to three times per call (queue context + `!should_retry` DLQ + retry-exhausted DLQ). Now fetches once and reuses the same `Option<&Job>` via a small DLQ closure.
+- **`ResourcePool._active_count` underflow** -- the increment moved to *after* the factory call returns successfully. The failure path no longer needs (or has) a decrement, so a wedged factory can't underflow `active` in `stats()`. Failed attempts also stop counting toward `total_acquisitions`.
+- **Prefork timeout** -- children that exceed their per-job timeout are killed; previously could hang indefinitely.
+- **CI PyO3 finalization SIGABRT** -- eliminated; pip cache warning silenced.
+- **Dashboard timestamps** -- every timestamp field (`created_at`, `last_heartbeat`, `logged_at`, etc.) renders as milliseconds consistent with the backend; previously an extra `× 1000` pushed dates into year 58282. The contract is documented at the top of `dashboard/src/lib/api-types.ts` with per-field JSDoc.
+- **Dashboard DAG cycle bound** -- BFS layer assignment now uses a `visited` set + max-iterations break, so an accidental cycle in a workflow definition can't loop forever.
+- **Dashboard settings storage opacity** -- settings PUT bodies are JSON-encoded server-side so callers see structured values, not stringified JSON.
+- **Dashboard dead-letter row keyboard accessibility** -- clickable group rows use `role="button"`, `tabIndex={0}`, and an `onKeyDown` handler that triggers expansion on Enter / Space; `aria-expanded` reflects the open/closed state. Biome `noStaticElementInteractions` and `useKeyWithClickEvents` rules promoted from `off` to `error`.
+
+### Internal
+
+- **`app.py` split into `mixins/` package** -- `QueueInspectionMixin`, `QueueOperationsMixin`, `QueueLockMixin`, `QueueWorkflowMixin`, and the decorator/event/resource modules now live under `py_src/taskito/mixins/`. The `Queue` class is now a thin assembly over the mixins.
+- **`workflows/tracker.py` split into package** -- `WorkflowTracker` decomposed into `_GateManager`, `_FanOutOrchestrator`, `_SubWorkflowCoordinator`.
+- **`redis_backend/jobs.rs` split into submodule** -- separate files for enqueue, query, helpers, maintenance.
+- **`py_queue/workflow_ops.rs` split into submodule**.
+- **`dashboard.py` split into package** -- handler/router separation.
+- **Dashboard health-audit follow-ups** -- extracted `formatAxisTime` shared between metric charts; extracted `job-dag-layout` pure module; centralized log-level color map in `status.ts`; debounced filters via refs (no `eslint-disable`); promoted Biome `useExhaustiveDependencies` from `warn` to `error`; pure helpers (`parseRefreshOption`, `refreshIntervalMs`) extracted from `refresh-interval-provider` for testability; new vitest coverage on `api-client`, `errors`, `settings`, and `refresh-interval-provider` (81 tests at release).
+- **Dependency bumps** -- `redis 0.27 → 1.2`, `libsqlite3-sys 0.30 → 0.37`, `thiserror 1 → 2`, `rand 0.8 → 0.10`, `pq-sys`, `cron`, `tailwind-merge`, `@vitejs/plugin-react`, `react`, and Python dep floors to latest stable.
+- **CI** -- `dorny/paths-filter v3 → v4`; drop `area/` label prefix and skip jobs by path; floating major tags for action references; per-PR Postgres/Redis service containers run the storage contract suite on every change (PR #73, landed in 0.11.1; now exercised across every release).
+
+### Test counts at release
+
+- Rust: 89 tests (up from 78)
+- Python: 496 passed, 9 skipped across 49 files (up from 469 / 46)
+- Dashboard (vitest): 81 tests
+
+---
+
+## 0.11.1
+
+### Fixed
+
+- **Workflow fan-in race** -- concurrent child completions on different worker threads could both expand fan-in. The `check_fan_out_completion` Rust call now delegates to a new `WorkflowStorage::finalize_fan_out_parent` compare-and-swap, so the parent transitions at most once regardless of how many children complete simultaneously.
+- **Sub-workflow compile failure** -- if a child workflow's factory or compile step raised, the parent node was left permanently `SKIPPED`, hanging the outer run. The parent is now promoted to `RUNNING` only after the child's compile + submit succeed, and is marked `FAILED` on error so the run finalizes.
+- **Redis `purge_execution_claims`** -- previously a silent no-op. Execution claims are now mirrored into a time-indexed sorted set (`taskito:exec_claims:by_time`) so the scheduler's maintenance loop can reap stale claims in O(log n). Legacy keys still expire via the 24 h `PX` TTL.
+- **SQLite `move_to_dlq` cascade** -- cascade-cancel errors on the dependent sweep are now propagated (parity with Postgres and Redis) instead of being swallowed as a warning. Callers see the failure and can decide whether to retry or alert.
+
+### Performance
+
+- **Workflow ops release the GIL during SQLite I/O** -- every method in `workflow_ops.rs` now wraps DB round-trips in `py.allow_threads(...)`. Event-bus callbacks that fire from worker threads no longer serialize the rest of the Python runtime on each fan-in / mark-result / cancel call.
+- **`WorkflowSqliteStorage` cached per queue** -- migrations run once on first workflow API call via `OnceLock`, instead of re-running `CREATE TABLE IF NOT EXISTS` on every single call.
+
+### Safety
+
+- **`cancel_workflow_run` iterative** -- replaced recursive sub-workflow cascade with an iterative BFS plus `visited` set. No recursion deadlock, no connection-pool exhaustion on deep sub-workflow trees, and any accidental cycle in `parent_run_id` terminates safely.
+- **Tracker state lock** -- `WorkflowTracker._state_lock` (RLock) now guards every access to `_run_configs`, `_job_to_run`, `_child_to_parent`, and `_gate_timers`, which are touched from worker threads, gate-timeout timers, and user threads.
+- **Gate timer cleanup** -- `_cleanup_run` cancels any pending gate timers for the finishing run and drops stale child→parent mappings. Timers no longer fire on already-terminal runs.
+- **Workflow metadata JSON escaping** -- `build_metadata_json` uses `serde_json::json!`; node names containing backslashes, control characters, or Unicode are now escaped correctly. Previously they produced malformed JSON that silently dropped the workflow event.
+- **Narrower exception handling in the tracker** -- broad `except Exception:` clauses narrowed to `(RuntimeError, ValueError)` on Rust FFI call sites; the remaining broad catches are restricted to user callables and event emission with an explanatory `# noqa`. Silent `let _ = storage.cancel_job(...)` replaced with `log::warn!` via a shared helper.
+
+### Added
+
+- **`PrometheusMiddleware(task_filter=...)`** -- parity with `OTelMiddleware` and `SentryMiddleware`. A predicate `(task_name: str) -> bool` toggles metric export per task.
+
+### Changed
+
+- **`dagron-core` git dependency pinned** -- `Cargo.toml` now pins `dagron-core` to a specific commit SHA. Upstream pushes no longer cause silent build breakage.
+- **`Storage` trait doc comment** -- now lists all three backends (SQLite, Postgres, Redis) instead of just the two Diesel ones.
+- **`AsyncQueueMixin.metrics_timeseries` stub** -- parameter name corrected from `interval` to `bucket` to match the real sync signature. Call sites typed via the stub were silently wrong at runtime.
+
+---
+
+## 0.11.0
+
+### Features
+
+- **DAG workflows** -- first-class support for directed acyclic graph workflows built on the new [dagron-core](https://github.com/ByteVeda/dagron) engine; `Workflow` builder with `step()`, `gate()`, and `after=` dependencies; `queue.submit_workflow(wf)` launches a run, `WorkflowRun.wait()` blocks until terminal, `run.status()` returns per-node snapshots, `run.cancel()` halts in-flight execution; workflows are persisted across restarts with full node history
+- **Fan-out / fan-in** -- `step(fan_out="each")` expands a list result into N parallel child jobs; `step(fan_in="all")` aggregates all child results into a single downstream step; supports empty lists, single-item lists, and preserves result ordering
+- **Conditional execution** -- per-step `condition="on_success" | "on_failure" | "always"` or a callable `(WorkflowContext) -> bool`; combine with `Workflow(on_failure="continue")` so independent branches keep running after a sibling fails; skip propagation respects `always`
+- **Approval gates** -- `wf.gate("review", after="evaluate", timeout=3600, on_timeout="reject")` pauses the workflow until `queue.approve_gate(run_id, name)` or `queue.reject_gate(run_id, name)`; timeout enforced with a background timer; emits `WORKFLOW_GATE_REACHED` event
+- **Sub-workflows** -- compose workflows by referencing another workflow as a step via `region_etl.as_step(region="eu")`; child workflows have a `parent_run_id` link and propagate cancellation and failure upward; child terminal status feeds into parent DAG evaluation
+- **Cron-scheduled workflows** -- `@queue.periodic(cron=...)` now accepts a `WorkflowProxy`; launcher task is auto-registered and submits a fresh workflow run on every tick
+- **Incremental re-runs** -- `Workflow(cache_ttl=86400)` hashes step results with SHA-256; `queue.submit_workflow(wf, incremental=True, base_run=prev_run.id)` skips completed steps whose inputs are unchanged; failed steps always re-run; dirty propagation cascades to downstream nodes; new `CACHE_HIT` terminal status distinguishes cached steps from freshly executed ones
+- **Graph algorithms** -- `wf.topological_levels()`, `wf.stats()`, `wf.critical_path(durations)`, `wf.bottleneck_analysis(durations)`, and `wf.execution_plan()` for pre-execution analysis; all algorithms operate on the compiled DAG without requiring a live run
+- **Visualization** -- `wf.visualize("mermaid")` and `wf.visualize("dot")` render the DAG; `run.visualize("mermaid")` color-codes live node status (running/completed/failed/cache-hit/waiting-approval)
+- **Workflow events** -- new event types `WORKFLOW_SUBMITTED`, `WORKFLOW_COMPLETED`, `WORKFLOW_FAILED`, `WORKFLOW_CANCELLED`, `WORKFLOW_GATE_REACHED` for observability hooks
+- **Type-safe builder** -- `step()` accepts any object satisfying the `HasTaskName` protocol (runtime-checkable), keeping the builder API strict without coupling to a concrete `TaskWrapper` class
+
+### Internal
+
+- New Rust crate `crates/taskito-workflows/` -- workflow engine with `WorkflowDefinition`, `WorkflowRun`, `WorkflowNode`, node status state machine (including `CacheHit` variant), and storage trait with SQLite/Postgres/Redis backends; feature-gated behind `workflows` cargo feature
+- `dagron-core` added as git dependency (`https://github.com/ByteVeda/dagron.git`) for DAG construction and traversal
+- New PyO3 bindings in `crates/taskito-python/src/py_workflow/` -- `PyWorkflowBuilder`, `PyWorkflowHandle`, `PyWorkflowRunStatus`; `py_queue/workflow_ops.rs` exposes `submit_workflow`, `mark_workflow_node_result`, `expand_fan_out`, `check_fan_out_completion`, `skip_workflow_node`, `set_workflow_node_waiting_approval`, `resolve_workflow_gate`, `finalize_run_if_terminal`, and base-run lookup helpers
+- New Python package `py_src/taskito/workflows/` with 11 modules -- `builder.py` (Workflow, GateConfig, WorkflowProxy), `tracker.py` (cascade evaluator), `run.py` (WorkflowRun), `mixins.py` (QueueWorkflowMixin), `fan_out.py`, `context.py` (WorkflowContext), `incremental.py` (dirty-set computation), `analysis.py` (graph algorithms), `visualization.py`, `types.py`, `__init__.py`
+- `maturin` CI feature list fixed -- `ci.yml` and `publish.yml` now include `workflows` alongside `extension-module,postgres,redis,native-async` (previously missing, which would have shipped broken wheels)
+- CI action versions bumped -- `Swatinem/rust-cache@v2.9.1`, `actions/setup-node@v6` to silence Node.js 20 deprecation warnings
+- 74 new Python tests across 10 files covering linear, fan-out, conditions, gates, sub-workflows, cron, analysis, caching, and visualization
+
+---
+
+## 0.10.1
+
+### Changed
+
+- Repository transferred to [ByteVeda](https://github.com/ByteVeda/taskito) org
+- Documentation URL updated to [docs.byteveda.org/taskito](https://docs.byteveda.org/taskito)
+- All internal links updated from `pratyush618/taskito` to `ByteVeda/taskito`
+
+---
+
+## 0.10.0
+
+### Features
+
+- **Dashboard rebuild** -- full rewrite of the web dashboard using Preact, Vite, and Tailwind CSS; production-grade dark/light UI with lucide icons, toast notifications, loading states, timeseries charts, and 3 new pages (Resources, Queue Management, System Internals); 128KB single-file HTML (32KB gzipped) served from the Python package with zero runtime dependencies
+- **Smart scheduling** -- adaptive backpressure polling (50ms base → 200ms max backoff when idle, instant reset on dispatch); per-task duration cache tracks average execution time in-memory; weighted least-loaded dispatch for prefork pool factors in task duration (`score = in_flight × avg_duration`)
+
+### Internal
+
+- Dashboard frontend source in `dashboard/` (Preact + Vite + Tailwind CSS + TypeScript); build via `cd dashboard && npm run build`; output inlined into `py_src/taskito/templates/dashboard.html`
+- `dashboard.py` simplified to read single pre-built HTML instead of composing from 8 separate template files
+- `Scheduler::run()` uses adaptive polling with exponential backoff (50ms → 200ms max); `tick()` returns `bool` for feedback
+- `TaskDurationCache` in-memory HashMap tracks per-task avg wall_time_ns, updated on every `handle_result()`
+- `weighted_least_loaded()` dispatch strategy in `prefork/dispatch.rs`; `aging_factor` field added to `SchedulerConfig`
+
+---
+
+## 0.9.0
+
+### Features
+
+- **Prefork worker pool** -- `queue.run_worker(pool="prefork", app="myapp:queue")` spawns child Python processes with independent GILs for true CPU parallelism; each child imports the app module, builds its own task registry, and executes tasks in a read-execute-write loop over JSON Lines IPC; the parent Rust scheduler dequeues jobs and dispatches to the least-loaded child via stdin pipes; reader threads parse child stdout and feed results back to the scheduler; graceful shutdown sends shutdown messages to children and waits with timeout before killing
+- **Worker discovery** -- `queue.workers()` now returns `hostname`, `pid`, `pool_type`, and `started_at` for each worker, giving operators visibility into multi-machine deployments
+- **Worker lifecycle events** -- three new event types: `WORKER_ONLINE` (registered in storage), `WORKER_OFFLINE` (dead worker reaped), `WORKER_UNHEALTHY` (resource health degraded); subscribe via `queue.on_event(EventType.WORKER_OFFLINE, callback)`
+- **Worker status transitions** -- workers report `active → draining → stopped` status; shutdown signal sets status to `"draining"` before drain timeout, visible in `queue.workers()` and the dashboard
+- **Orphan rescue prep** -- `list_claims_by_worker` storage method enables future orphaned job rescue when dead workers are detected
+- **Task result streaming** -- `current_job.publish(data)` streams partial results from inside tasks; `job.stream()` / `await job.astream()` iterates partial results as they arrive; built on existing `task_logs` infrastructure with `level="result"` (no new tables or Rust changes); FastAPI SSE endpoint supports `?include_results=true` to stream partial results alongside progress
+
+### Internal
+
+- New Rust module `crates/taskito-python/src/prefork/` with 4 files: `mod.rs` (PreforkPool + WorkerDispatcher impl), `child.rs` (ChildWriter/ChildReader/ChildProcess split handles), `protocol.rs` (ParentMessage/ChildMessage JSON serialization), `dispatch.rs` (least-loaded dispatcher)
+- New Python package `py_src/taskito/prefork/` with `child.py` (child process main loop), `__init__.py` (PreforkConfig), `__main__.py` (entry point)
+- `base64` and `gethostname` crates added to `taskito-python` dependencies
+- `run_worker()` gains `pool` and `app_path` parameters in both Rust (`py_queue/worker.rs`) and Python (`app.py`)
+- `workers` table gains 4 columns: `started_at`, `hostname`, `pid`, `pool_type` (all backends + migrations)
+- `reap_dead_workers` returns `Vec<String>` (reaped worker IDs) instead of `u64`; enables `WORKER_OFFLINE` event emission
+- New storage methods: `update_worker_status`, `list_claims_by_worker` across all 3 backends
+
+---
+
+## 0.8.0
+
+### Features
+
+- **Namespace-based routing** -- `Queue(namespace="team-a")` isolates workloads across teams/services sharing a single database; enqueued jobs carry the namespace, workers only dequeue matching jobs, `list_jobs()` and `list_jobs_filtered()` default to the queue's namespace (pass `namespace=None` for global view); DLQ and archival preserve namespace through the full job lifecycle; periodic tasks inherit namespace from their scheduler; backward compatible (`None` namespace matches only `NULL`-namespace jobs)
+
+### Internal
+
+- `namespace` column added to `dead_letter` and `archived_jobs` tables; `DeadLetterRow`, `NewDeadLetterRow`, `ArchivedJobRow` models updated; Redis `DeadJobEntry` uses `#[serde(default)]` for backward compatibility
+- `Storage` trait: `dequeue`, `dequeue_from`, `list_jobs`, `list_jobs_filtered` signatures gain `namespace: Option<&str>` parameter; all 3 backends + delegate macro updated
+- `Scheduler` struct carries `namespace: Option<String>` field, passes to `dequeue_from` in poller
+- `PyQueue` struct carries `namespace: Option<String>` field; `PyJob` exposes `namespace` to Python
+- `_UNSET` sentinel in `mixins.py` distinguishes "namespace not passed" from explicit `None`
+
+---
+
+## 0.7.0
+
+### Features
+
+- **Async canvas primitives** -- `Signature.apply_async()`, `chain.apply_async()`, `group.apply_async()`, and `chord.apply_async()` for non-blocking workflow execution from async contexts; `chain` uses `aresult()` for truly async step-by-step execution; `group` uses `asyncio.gather` for concurrent wave awaiting; `chord` awaits all group results then enqueues the callback
+- **Sample-based circuit breaker recovery** -- half-open state now allows N probe requests (default 5) instead of a single probe; closes only when the success rate meets a configurable threshold (default 80%); immediately re-opens when the threshold becomes mathematically impossible; timeout safety valve re-opens if probes don't complete within the cooldown period; configure via `circuit_breaker={"half_open_probes": 5, "half_open_success_rate": 0.8}` on `@queue.task()`
+- **`enqueue_many()` parity with `enqueue()`** -- batch enqueue now supports per-job `delay`/`delay_list`, `unique_keys`, `metadata`/`metadata_list`, `expires`/`expires_list`, and `result_ttl`/`result_ttl_list` parameters; also emits `JOB_ENQUEUED` events and dispatches `on_enqueue` middleware hooks, matching single-enqueue behavior
+- **`TaskFailedError` exception** -- new exception type in the hierarchy for tasks that failed (as opposed to cancelled or dead-lettered); `job.result()` now raises `TaskFailedError`, `TaskCancelledError`, `MaxRetriesExceededError`, or `SerializationError` instead of generic `RuntimeError`
+- **`PyResultSender` conditional export** -- `from taskito import PyResultSender` works when built with `native-async` feature; silently unavailable otherwise (no confusing `AttributeError`)
+
+### Fixes
+
+- **Middleware context `queue_name` was `"unknown"`** -- `on_retry`, `on_dead_letter`, `on_cancel`, and `on_timeout` middleware hooks now receive the actual queue name from the job instead of a hardcoded `"unknown"` string
+- **Redis `KEYS *` in lock reaping** -- `reap_expired_locks` replaced `KEYS` (O(N), blocks Redis server) with cursor-based `SCAN` using `COUNT 100`
+- **Redis execution claims never expire** -- `claim_execution` now uses `SET NX PX 86400000` (24-hour TTL); orphaned claims from dead workers auto-expire instead of blocking re-execution forever
+- **`_taskito_is_async` fragility** -- `_taskito_is_async` and `_taskito_async_fn` are now declared fields on `TaskWrapper.__init__` instead of dynamically monkey-patched attributes; prevents silent fallback to sync execution path if attributes are missing
+
+### Internal
+
+- All production Rust `eprintln!` calls replaced with `log` crate macros (`log::info!`, `log::warn!`, `log::error!`); `log` dependency added to `taskito-python` and `taskito-async` crates
+- `ResultOutcome::Retry`, `::DeadLettered`, `::Cancelled` now carry `queue: String` for middleware context
+- Ruff `target-version` updated from `py39` to `py310` to match `requires-python = ">=3.10"`
+- Fixed UP035 (`Callable` import from `collections.abc`) and B905 (`zip()` without `strict=`) lint warnings
+- Circuit breakers schema: 5 new columns on `circuit_breakers` table (`half_open_max_probes`, `half_open_success_rate`, `half_open_probe_count`, `half_open_success_count`, `half_open_failure_count`) with backward-compatible defaults
+
+---
+
+## 0.6.0
+
+### Features
+
+- **Middleware lifecycle hooks wired** -- `on_retry(ctx, error, retry_count)`, `on_dead_letter(ctx, error)`, and `on_cancel(ctx)` are now dispatched from the Rust result handler; they fire for every matching outcome across all registered middleware
+- **Expanded middleware hooks** -- `TaskMiddleware` gains four new hooks: `on_enqueue`, `on_dead_letter`, `on_timeout`, `on_cancel`; `on_enqueue` receives a mutable `options` dict that can modify priority, delay, queue, and other enqueue parameters before the job is written
+- **`JOB_RETRYING`, `JOB_DEAD`, `JOB_CANCELLED` events now emitted** -- these three event types were previously defined but never fired; they are now emitted from the Rust result handler with payloads `{job_id, task_name, error, retry_count}`, `{job_id, task_name, error}`, and `{job_id, task_name}` respectively
+- **Queue-level rate limits** -- `queue.set_queue_rate_limit("name", "100/m")` applies a token-bucket rate limit to an entire queue, checked in the scheduler before per-task limits
+- **Queue-level concurrency caps** -- `queue.set_queue_concurrency("name", 10)` limits how many jobs from a queue run simultaneously across all workers, checked before per-task `max_concurrent`
+- **Worker lifecycle events** -- `EventType.WORKER_STARTED` and `EventType.WORKER_STOPPED` fired when a worker thread comes online or exits; subscribe via `queue.on_event(EventType.WORKER_STARTED, cb)`
+- **Queue pause/resume events** -- `EventType.QUEUE_PAUSED` and `EventType.QUEUE_RESUMED` fired by `queue.pause()` and `queue.resume()`
+- **`event_workers` parameter** -- `Queue(event_workers=N)` configures the event bus thread pool size (default 4); raise for high event volume
+- **Per-webhook delivery options** -- `queue.add_webhook()` now accepts `max_retries`, `timeout`, and `retry_backoff` per endpoint, replacing the previous hardcoded values
+- **OTel customization** -- `OpenTelemetryMiddleware` adds `span_name_fn`, `attribute_prefix`, `extra_attributes_fn`, and `task_filter` parameters
+- **Sentry customization** -- `SentryMiddleware` adds `tag_prefix`, `transaction_name_fn`, `task_filter`, and `extra_tags_fn` parameters
+- **Prometheus customization** -- `PrometheusMiddleware` and `PrometheusStatsCollector` add `namespace`, `extra_labels_fn`, and `disabled_metrics` parameters; metrics grouped by category (`"jobs"`, `"queue"`, `"resource"`, `"proxy"`, `"intercept"`)
+- **FastAPI route selection** -- `TaskitoRouter` adds `include_routes`/`exclude_routes`, `dependencies`, `sse_poll_interval`, `result_timeout`, `default_page_size`, `max_page_size`, and `result_serializer` parameters; new endpoints: `/health`, `/readiness`, `/resources`, `/stats/queues`
+- **Flask CLI group** -- `Taskito(app, cli_group="tasks")` renames the CLI command group; `flask taskito info --format json` outputs machine-readable stats
+- **Django settings** -- `TASKITO_AUTODISCOVER_MODULE`, `TASKITO_ADMIN_PER_PAGE`, `TASKITO_ADMIN_TITLE`, `TASKITO_ADMIN_HEADER`, `TASKITO_DASHBOARD_HOST`, `TASKITO_DASHBOARD_PORT` control autodiscovery, admin pagination, branding, and dashboard bind address
+- **`max_retry_delay` on `@queue.task()`** -- caps exponential backoff at a configurable ceiling in seconds (defaults to 300 s)
+- **`max_concurrent` on `@queue.task()`** -- limits how many instances of a task run simultaneously across all workers
+- **`serializer` on `@queue.task()`** -- per-task serializer override; falls back to queue-level serializer
+- **Per-task serializer full round-trip** -- deserialization now also uses the per-task serializer; previously only enqueue (serialization) did; both the sync and native-async worker paths call `_deserialize_payload(task_name, payload)` instead of cloudpickle directly
+- **`on_timeout` middleware hook wired** -- `on_timeout(ctx)` now fires when the Rust maintenance reaper detects a stale job that exceeded its hard timeout; fires before `on_retry` (if retrying) or `on_dead_letter` (if retries exhausted); previously the hook existed in `TaskMiddleware` but was never called
+- **`QUEUE_PAUSED` / `QUEUE_RESUMED` events emitted** -- `queue.pause()` and `queue.resume()` now emit these events with payload `{"queue": "..."}` after updating storage; previously the event types were defined but never fired
+- **Scheduler tuning** -- `Queue(scheduler_poll_interval_ms=N, scheduler_reap_interval=N, scheduler_cleanup_interval=N)` exposes the three Rust scheduler timing knobs to Python
+
+---
+
+<details>
+<summary>Older releases (0.1.0 – 0.5.0)</summary>
+
+## 0.5.0
+
+### New Features
+
+- **Native async tasks** -- `async def` task functions run natively on a dedicated event loop; no wrapping in `asyncio.run()` or thread bridging; dual-dispatch worker pool routes async jobs to `NativeAsyncPool` and sync jobs to the existing thread pool
+- **`async_concurrency` parameter** -- `Queue(async_concurrency=100)` caps concurrent async tasks on the event loop; independent of the `workers` (sync thread) count
+- **`current_job` in async tasks** -- `current_job.id`, `.log()`, `.update_progress()`, `.check_cancelled()` work inside `async def` tasks via `contextvars`; each concurrent task gets an isolated context
+- **KEDA integration** -- `taskito scaler --app myapp:queue --port 9091` starts a lightweight metrics server; `/api/scaler` returns queue depth for KEDA `metrics-api` trigger; `/metrics` exposes Prometheus text format; `/health` for liveness probes
+- **KEDA deploy templates** -- `deploy/keda/` contains ready-to-use `ScaledObject`, `ScaledObject` (Prometheus), and `ScaledJob` YAML manifests
+- **Argument interception** -- `interception="strict"|"lenient"` on `Queue()` classifies every task argument before serialization; five strategies: PASS, CONVERT, REDIRECT, PROXY, REJECT; built-in rules cover UUID, datetime, Decimal, Pydantic models, dataclasses, SQLAlchemy sessions, Redis clients, file handles, and more
+- **Worker resource runtime** -- `@queue.worker_resource("name")` decorator registers a factory initialized once at worker startup; four scopes: `"worker"` (default), `"task"` (pool), `"thread"` (thread-local), `"request"` (per-task fresh)
+- **Resource injection** -- `@queue.task(inject=["name"])` or `db: Inject["name"]` annotation syntax injects live resources into tasks without serializing them; `from taskito import Inject`
+- **Resource dependencies** -- `depends_on=["other"]` on `@queue.worker_resource()`; topological initialization order, reverse teardown; cycles detected eagerly at registration time (`CircularDependencyError`)
+- **Health checking** -- `health_check=` and `health_check_interval=` on `@queue.worker_resource()`; unhealthy resources are recreated up to `max_recreation_attempts` times; `queue.health_check("name")` for manual checks
+- **Resource pools** -- task-scoped resources get a semaphore-based pool with `pool_size`, `pool_min`, `acquire_timeout`, `max_lifetime`, `idle_timeout`; `pool_min > 0` pre-warms instances at startup
+- **Thread-local resources** -- `scope="thread"` creates one instance per worker thread via `ThreadLocalStore`, torn down on shutdown
+- **Frozen resources** -- `frozen=True` wraps the resource in a `FrozenResource` proxy that raises `AttributeError` on attribute writes
+- **Hot reload** -- `reloadable=True` marks a resource for reload on `SIGHUP`; `taskito reload --app myapp:queue` CLI subcommand; `queue._resource_runtime.reload()` programmatic reload
+- **TOML resource config** -- `queue.load_resources("resources.toml")` loads resource definitions from a TOML file; factory, teardown, and health_check are dotted import paths; Python 3.11+ built-in `tomllib`, older versions need `tomli`
+- **Resource proxies** -- transparent deconstruct/reconstruct of non-serializable objects; built-in handlers: `file`, `logger`, `requests_session`, `httpx_client`, `boto3_client`, `gcs_client`
+- **Proxy security** -- HMAC-SHA256 recipe signing via `recipe_signing_key=` on `Queue()` or `TASKITO_RECIPE_SECRET` env var; reconstruction timeout via `max_reconstruction_timeout=`; file path allowlist via `file_path_allowlist=`; per-handler opt-out via `disabled_proxies=`
+- **`NoProxy` wrapper** -- `from taskito import NoProxy`; opt out of proxy handling for a specific argument, letting the serializer handle it directly
+- **Custom type rules** -- `queue.register_type(MyType, "redirect", resource="my_resource")` registers custom types with any strategy (requires interception enabled)
+- **Interception metrics** -- `queue.interception_stats()` returns total calls, per-strategy counts, average duration, and max depth reached
+- **Proxy metrics** -- `queue.proxy_stats()` returns per-handler deconstruction/reconstruction counts, error counts, and average duration
+- **Resource status** -- `queue.resource_status()` returns per-resource health, scope, init duration, and recreation count
+- **Test mode resources** -- `queue.test_mode(resources={"db": mock_db})` injects mocks during test mode without worker startup; `MockResource(name, return_value=..., wraps=..., track_calls=True)` adds call tracking
+- **Optional cloud dependencies** -- `pip install taskito[aws]` adds boto3>=1.20; `pip install taskito[gcs]` adds google-cloud-storage>=2.0
+
+### Breaking Changes
+
+- **Dropped Python 3.9 support** -- minimum required version is now Python 3.10; Python 3.9 reached EOL in October 2025
+
+---
+
+## 0.4.0
+
+### New Features
+
+- **Distributed locking** — `queue.lock()` / `await queue.alock()` context managers with auto-extend background thread, acquisition timeout, and cross-process support; `LockNotAcquired` exception for failed acquisitions
+- **Exactly-once semantics** — `claim_execution` / `complete_execution` storage layer prevents duplicate task execution across worker restarts
+- **Async worker pool** — `AsyncWorkerPool` with `spawn_blocking` and GIL management; `WorkerDispatcher` trait in `taskito-core` future-proofs for other language bindings
+- **Queue pause/resume** — `queue.pause()`, `queue.resume()`, `queue.paused_queues()` to suspend and restore processing per named queue
+- **Job archival** — `queue.archive()` moves jobs to a persistent archive; `queue.list_archived()` retrieves them
+- **Job revocation** — `queue.purge()` removes jobs by filter; `queue.revoke_task()` prevents all future enqueues of a given task name
+- **Job replay** — `queue.replay()` re-enqueues a completed or failed job; `queue.replay_history()` returns the replay log
+- **Circuit breakers** — `circuit_breaker={"threshold": 5, "window": 60, "cooldown": 120}` on `@queue.task()`; `queue.circuit_breakers()` returns current state of all circuit breakers
+- **Structured task logging** — `current_job.log(message)` from inside tasks; `queue.task_logs(job_id)` and `queue.query_logs()` for retrieval
+- **Cron timezone support** — `timezone="America/New_York"` on `@queue.periodic()`; uses `chrono-tz` under the hood, defaults to UTC
+- **Custom retry delays** — `retry_delays=[1, 5, 30]` on `@queue.task()` for per-attempt delay overrides instead of exponential backoff
+- **Soft timeouts** — `soft_timeout=` on `@queue.task()`; checked cooperatively via `current_job.check_timeout()`
+- **Worker tags/specialization** — `tags=["gpu", "heavy"]` on `queue.run_worker()`; jobs can be routed to workers with matching tags
+- **Worker inspection** — `queue.workers()` / `await queue.aworkers()` return live worker state
+- **Job DAG visualization** — `queue.job_dag(job_id)` returns a dependency graph for a job and its ancestors/descendants
+- **Metrics timeseries** — `queue.metrics_timeseries()` returns historical throughput/latency data; `queue.metrics()` for current snapshot
+- **Extended job filtering** — `queue.list_jobs_filtered()` with `metadata_like`, `error_like`, `created_after`, `created_before` parameters
+- **`MsgPackSerializer`** — built-in, requires `pip install msgpack`; faster than cloudpickle, smaller payloads, cross-language compatible
+- **`EncryptedSerializer`** — AES-256-GCM encryption, requires `pip install cryptography`; wraps another serializer, payloads in DB are opaque ciphertext
+- **`drain_timeout`** — configurable graceful shutdown wait time on `Queue()` constructor (default: 30 seconds)
+- **Per-job `result_ttl`** — `result_ttl` override on `.apply_async()` to set cleanup policy per job
+- **Dashboard enhancements** — workers tab, circuit breakers panel, job archival UI
+
+---
+
+## 0.3.0
+
+### Features
+
+- **Redis storage backend** — optional Redis backend for distributed workloads (`pip install taskito[redis]`); Lua scripts for atomic operations, sorted sets for indexing
+- **Events & webhooks** — event system with webhook delivery support
+- **Flask integration** — contrib integration for Flask applications
+- **Prometheus integration** — contrib stats collector with `PrometheusStatsCollector`
+- **Sentry integration** — contrib middleware for Sentry error tracking
+
+### Fixes
+
+- Guard arithmetic overflow across timeout detection, worker reaping, scheduler cleanup, circuit breaker timing, and Redis TTL purging
+- Treat cancelled jobs as terminal in `_poll_once` so `result()` raises immediately
+- Cap float-to-i64 casts to prevent silent overflow in delay_seconds, expires, retry_delays, retry_backoff
+- Reject negative pagination in list_jobs, dead_letters, list_archived, query_task_logs
+- Replace deprecated `asyncio.get_event_loop()` with `get_running_loop()`
+- Replace Redis `KEYS` with `SCAN` in purge operations
+- Fix Redis `enqueue_unique()` race condition with atomic Lua scripts
+- Only call middleware `after()` for those whose `before()` succeeded
+- Recover from poisoned mutex in scheduler instead of panicking
+- Validate `EncryptedSerializer` key type and size before use
+- Skip webhook retries on 4xx client errors
+
+## 0.2.3
+
+### Features
+
+- **Postgres storage backend** — optional PostgreSQL backend for multi-machine workers and higher write throughput (`pip install taskito[postgres]`); full feature parity with SQLite
+- **Django integration** — `TASKITO_BACKEND`, `TASKITO_DB_URL`, `TASKITO_SCHEMA` settings for configuring the backend from Django projects
+
+### Critical Fixes
+
+- **Dashboard dead routes** — Moved `/logs` and `/replay-history` handlers above the generic catch-all in `dashboard.py`, fixing 404s on these endpoints
+- **Stale `__version__`** — Replaced hardcoded version with `importlib.metadata.version()` with fallback
+- **`retry_dead` non-atomic** — Wrapped enqueue + delete in a single transaction (SQLite & Postgres), preventing ghost dead letters on partial failure
+- **`enqueue_unique` race condition** — Wrapped check + insert in a transaction; catches unique constraint violations to return the existing job instead of erroring
+- **`now_millis()` panic** — Replaced `.expect()` with `.unwrap_or(Duration::ZERO)` to prevent scheduler panic on clock issues
+- **`reap_stale` double error records** — Removed redundant `storage.fail()` call; `handle_result` already records the failure
+
+---
+
+## 0.2.2
+
+- Added `readme` field to `pyproject.toml` so PyPI displays the project description.
+
+---
+
+## 0.2.1
+
+Re-release of 0.2.0 — PyPI does not allow re-uploads of deleted versions.
+
+---
+
+## 0.2.0
+
+### Core Reliability
+
+- **Exception hierarchy** -- `TaskitoError` base class with `TaskTimeoutError`, `SoftTimeoutError`, `TaskCancelledError`, `MaxRetriesExceededError`, `SerializationError`, `CircuitBreakerOpenError`, `RateLimitExceededError`, `JobNotFoundError`, `QueueError`
+- **Pluggable serializers** -- `CloudpickleSerializer` (default), `JsonSerializer`, or custom `Serializer` protocol
+- **Exception filtering** -- `retry_on` and `dont_retry_on` parameters for selective retries
+- **Cancel running tasks** -- cooperative cancellation with `queue.cancel_running_job()` and `current_job.check_cancelled()`
+- **Soft timeouts** -- `soft_timeout` parameter with `current_job.check_timeout()` for cooperative time limits
+
+### Developer Experience
+
+- **Per-task middleware** -- `TaskMiddleware` base class with `before()`, `after()`, `on_retry()` hooks
+- **Worker heartbeat** -- `queue.workers()` / `await queue.aworkers()` to monitor worker health
+- **Job expiration** -- `expires` parameter on `apply_async()` to skip time-sensitive jobs that weren't started in time
+- **Result TTL per job** -- `result_ttl` parameter on `apply_async()` to override global cleanup policy per job
+
+### Power Features
+
+- **chunks / starmap** -- `chunks(task, items, chunk_size)` and `starmap(task, args_list)` canvas primitives
+- **Group concurrency** -- `max_concurrency` parameter on `group()` to limit parallel execution
+- **OpenTelemetry** -- `OpenTelemetryMiddleware` for distributed tracing; install with `pip install taskito[otel]`
+
+---
+
+## 0.1.1
+
+### Features
+
+- **Web dashboard** -- `taskito dashboard --app myapp:queue` serves a built-in monitoring UI with dark mode, auto-refresh, job detail views, and dead letter management
+- **FastAPI integration** -- `TaskitoRouter` provides a pre-built `APIRouter` with endpoints for stats, job status, progress streaming (SSE), and dead letter management
+- **Testing utilities** -- `queue.test_mode()` context manager for running tasks synchronously without a worker
+- **CLI dashboard command** -- `taskito dashboard` command with `--host` and `--port` options
+- **Async result awaiting** -- `await job.aresult()` for non-blocking result fetching
+
+### Changes
+
+- Renamed `python/` to `py_src/` and `rust/` to `crates/` for clearer project structure
+- Default `db_path` now uses `.taskito/` directory, with automatic directory creation
+
+---
+
+## 0.1.0
+
+*Initial release*
+
+### Features
+
+- **Task queue** — `@queue.task()` decorator with `.delay()` and `.apply_async()`
+- **Priority queues** — integer priority levels, higher values processed first
+- **Retry with exponential backoff** — configurable max retries, backoff multiplier, and jitter
+- **Dead letter queue** — failed jobs preserved for inspection and replay
+- **Rate limiting** — token bucket algorithm with `"N/s"`, `"N/m"`, `"N/h"` syntax
+- **Task workflows** — `chain`, `group`, and `chord` primitives
+- **Periodic tasks** — cron-scheduled tasks with 6-field expressions (seconds granularity)
+- **Progress tracking** — `current_job.update_progress()` from inside tasks
+- **Job cancellation** — cancel pending jobs before execution
+- **Unique tasks** — deduplicate active jobs by key
+- **Batch enqueue** — `task.map()` and `queue.enqueue_many()` with single-transaction inserts
+- **Named queues** — route tasks to isolated queues, subscribe workers selectively
+- **Hooks** — `before_task`, `after_task`, `on_success`, `on_failure`
+- **Async support** -- `aresult()`, `astats()`, `arun_worker()`, and more
+- **Job context** -- `current_job.id`, `.task_name`, `.retry_count`, `.queue_name`
+- **Error history** -- per-attempt error tracking via `job.errors`
+- **Result TTL** -- automatic cleanup of completed/dead jobs
+- **CLI** -- `taskito worker` and `taskito info --watch`
+- **Metadata** -- attach arbitrary JSON to jobs
+
+### Architecture
+
+- Rust core with PyO3 bindings
+- SQLite storage with WAL mode and Diesel ORM
+- Tokio async scheduler with 50ms poll interval
+- OS thread worker pool with crossbeam channels
+- cloudpickle serialization for arguments and results
+
+</details>
