@@ -1,10 +1,12 @@
 ---
 title: Extensibility
-description: "Middleware, custom serializers, interception."
+description: "Extend taskito at every stage of the task lifecycle."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+Extend taskito with custom behavior at every stage of the task lifecycle.
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+| Guide | Description |
+|---|---|
+| [Middleware](/docs/guides/extensibility/middleware) | Hook into task execution with `before`, `after`, `on_retry`, and more |
+| [Serializers](/docs/guides/extensibility/serializers) | Custom payload serialization — msgpack, orjson, encryption |
+| [Events & Webhooks](/docs/guides/extensibility/events-webhooks) | React to queue events and push notifications to external services |
