@@ -17,36 +17,14 @@ const RATE_LIMIT_RETRY_DELAY_MS: i64 = 1000;
 /// Delay before re-scheduling a concurrency-limited job (ms).
 const CONCURRENCY_RETRY_DELAY_MS: i64 = 500;
 
+/// Worker identifier recorded on execution claims taken by the scheduler.
+const SCHEDULER_CLAIM_OWNER: &str = "scheduler";
+
 impl Scheduler {
     pub(super) fn try_dispatch(&self, job_tx: &tokio::sync::mpsc::Sender<Job>) -> Result<bool> {
         let now = now_millis();
 
-        // Filter out paused queues (refresh cache every 1s)
-        let active_queues = {
-            let mut cache = self.paused_cache.lock().unwrap_or_else(|poisoned| {
-                warn!("paused_cache mutex was poisoned, recovering");
-                poisoned.into_inner()
-            });
-            if cache.1.elapsed() > Duration::from_secs(1) {
-                cache.0 = self
-                    .storage
-                    .list_paused_queues()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect();
-                cache.1 = std::time::Instant::now();
-            }
-            if cache.0.is_empty() {
-                self.queues.clone()
-            } else {
-                self.queues
-                    .iter()
-                    .filter(|q| !cache.0.contains(*q))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            }
-        };
-
+        let active_queues = self.active_queues();
         if active_queues.is_empty() {
             return Ok(false);
         }
@@ -59,7 +37,72 @@ impl Scheduler {
             None => return Ok(false),
         };
 
-        // Check queue-level limits
+        // Pre-claim soft gates: rate limits and circuit breaker.
+        //
+        // These don't need to be atomic with the claim — if two schedulers
+        // both pass these gates, the gate semantics still hold (each
+        // consumes its own token / observes the breaker independently).
+        if !self.check_pre_claim_gates(&job, now)? {
+            return Ok(false);
+        }
+
+        // Claim exactly-once execution. After this point, the job is reserved
+        // for this scheduler instance.
+        if !self.claim_for_dispatch(&job)? {
+            return Ok(false);
+        }
+
+        // Post-claim hard gate: concurrency caps must be checked AFTER the
+        // claim so two schedulers cannot both pass the cap. Status was
+        // already transitioned to `Running` by `dequeue_from`, so the
+        // running-count includes this job — use strict `>` to allow exactly
+        // `max_concurrent` jobs.
+        //
+        // If we exceed the cap, roll back: clear the claim row and reset
+        // status to `Pending` so the job can be dispatched again later.
+        if !self.check_post_claim_concurrency(&job)? {
+            self.rollback_claim_and_retry(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
+            return Ok(false);
+        }
+
+        if job_tx.try_send(job).is_err() {
+            warn!("worker channel full or closed");
+        }
+
+        Ok(true)
+    }
+
+    /// Snapshot the queue list with paused queues filtered out. The paused
+    /// list is cached for 1s to avoid hammering storage on every tick.
+    fn active_queues(&self) -> Vec<String> {
+        let mut cache = self.paused_cache.lock().unwrap_or_else(|poisoned| {
+            warn!("paused_cache mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
+        if cache.1.elapsed() > Duration::from_secs(1) {
+            cache.0 = self
+                .storage
+                .list_paused_queues()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            cache.1 = std::time::Instant::now();
+        }
+        if cache.0.is_empty() {
+            self.queues.clone()
+        } else {
+            self.queues
+                .iter()
+                .filter(|q| !cache.0.contains(*q))
+                .cloned()
+                .collect()
+        }
+    }
+
+    /// Apply the pre-claim soft gates (queue rate limit, task circuit
+    /// breaker, task rate limit). Returns `Ok(true)` if the job may proceed
+    /// to claim, `Ok(false)` if it was rescheduled.
+    fn check_pre_claim_gates(&self, job: &Job, now: i64) -> Result<bool> {
         if let Some(qcfg) = self.queue_configs.get(&job.queue) {
             if let Some(ref rl_config) = qcfg.rate_limit {
                 let key = format!("queue:{}", job.queue);
@@ -69,17 +112,8 @@ impl Scheduler {
                     return Ok(false);
                 }
             }
-            if let Some(max_conc) = qcfg.max_concurrent {
-                let stats = self.storage.stats_by_queue(&job.queue)?;
-                if stats.running >= max_conc as i64 {
-                    self.storage
-                        .retry(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
-                    return Ok(false);
-                }
-            }
         }
 
-        // Check circuit breaker for this task
         if let Some(config) = self.task_configs.get(&job.task_name) {
             if config.circuit_breaker.is_some() && !self.circuit_breaker.allow(&job.task_name)? {
                 self.storage
@@ -94,36 +128,61 @@ impl Scheduler {
                     return Ok(false);
                 }
             }
+        }
 
-            // Check per-task concurrency limit
-            if let Some(max_conc) = config.max_concurrent {
-                let running = self.storage.count_running_by_task(&job.task_name)?;
-                if running >= max_conc as i64 {
-                    self.storage
-                        .retry(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
+        Ok(true)
+    }
+
+    /// Try to claim exactly-once execution. Returns `Ok(true)` if the claim
+    /// was taken (or recoverably failed and the caller should still attempt
+    /// dispatch), `Ok(false)` if the job was already claimed by another
+    /// scheduler.
+    fn claim_for_dispatch(&self, job: &Job) -> Result<bool> {
+        match self.storage.claim_execution(&job.id, SCHEDULER_CLAIM_OWNER) {
+            Ok(true) => Ok(true),
+            Ok(false) => Ok(false),
+            Err(e) => {
+                // Don't drop the job on a transient claim error — proceed and
+                // let the worker handle the duplicate execution defensively.
+                warn!("claim_execution error for job {}: {e}", job.id);
+                Ok(true)
+            }
+        }
+    }
+
+    /// Apply the post-claim hard gates (per-queue and per-task concurrency
+    /// caps). Returns `Ok(true)` if the job may proceed to dispatch,
+    /// `Ok(false)` if the cap is exceeded — caller is responsible for
+    /// rolling back the claim.
+    fn check_post_claim_concurrency(&self, job: &Job) -> Result<bool> {
+        if let Some(qcfg) = self.queue_configs.get(&job.queue) {
+            if let Some(max_conc) = qcfg.max_concurrent {
+                let stats = self.storage.stats_by_queue(&job.queue)?;
+                if stats.running > max_conc as i64 {
                     return Ok(false);
                 }
             }
         }
 
-        // Claim exactly-once execution
-        match self.storage.claim_execution(&job.id, "scheduler") {
-            Ok(false) => {
-                // Already claimed by another worker — skip
-                return Ok(false);
+        if let Some(config) = self.task_configs.get(&job.task_name) {
+            if let Some(max_conc) = config.max_concurrent {
+                let running = self.storage.count_running_by_task(&job.task_name)?;
+                if running > max_conc as i64 {
+                    return Ok(false);
+                }
             }
-            Ok(true) => {}
-            Err(e) => {
-                warn!("claim_execution error for job {}: {e}", job.id);
-                // Proceed anyway to avoid dropping the job
-            }
-        }
-
-        // Dispatch to worker pool (non-blocking)
-        if job_tx.try_send(job).is_err() {
-            warn!("worker channel full or closed");
         }
 
         Ok(true)
+    }
+
+    /// Reverse a successful `claim_execution` and reschedule the job. Used
+    /// when a post-claim gate rejects the job after the claim row has
+    /// already been written.
+    fn rollback_claim_and_retry(&self, job_id: &str, next_at: i64) -> Result<()> {
+        if let Err(e) = self.storage.complete_execution(job_id) {
+            warn!("failed to clear execution claim during rollback for job {job_id}: {e}");
+        }
+        self.storage.retry(job_id, next_at)
     }
 }

@@ -562,6 +562,131 @@ mod tests {
     }
 
     #[test]
+    fn test_try_dispatch_per_task_concurrency_allows_exactly_max() {
+        // Regression: with `max_concurrent = 2` we expect exactly 2 jobs to
+        // be dispatched, not `max - 1`. The `dequeue_from` step transitions
+        // status to `Running` before the cap check, so the count includes
+        // the just-dequeued job — the gate must use `>` rather than `>=`.
+        let mut scheduler = test_scheduler();
+        scheduler.register_task(
+            "conc_task".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy::default(),
+                rate_limit: None,
+                circuit_breaker: None,
+                max_concurrent: Some(2),
+            },
+        );
+
+        for _ in 0..3 {
+            scheduler.storage.enqueue(make_job("conc_task")).unwrap();
+        }
+
+        let (tx, mut rx) = make_channel(16);
+        let mut counters = TickCounters::default();
+
+        scheduler.tick(&tx, &mut counters);
+        scheduler.tick(&tx, &mut counters);
+        scheduler.tick(&tx, &mut counters);
+
+        let mut dispatched = 0;
+        while rx.try_recv().is_ok() {
+            dispatched += 1;
+        }
+        assert_eq!(
+            dispatched, 2,
+            "expected exactly max_concurrent jobs dispatched"
+        );
+
+        // The rejected job should be back to Pending with a future schedule
+        // and its execution-claim row cleared.
+        let pending = scheduler
+            .storage
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].scheduled_at > now_millis());
+
+        let claims = scheduler
+            .storage
+            .list_claims_by_worker("scheduler")
+            .unwrap();
+        assert_eq!(
+            claims.len(),
+            2,
+            "rejected job's claim row should have been rolled back"
+        );
+        assert!(
+            !claims.contains(&pending[0].id),
+            "rejected job should not have a stale execution claim"
+        );
+    }
+
+    #[test]
+    fn test_try_dispatch_per_task_max_one_dispatches_one() {
+        // Regression: `max_concurrent = 1` must allow exactly one job to
+        // run. With the pre-fix `>=` check the running-count (which already
+        // includes the just-dequeued job) tripped the gate and the job was
+        // rescheduled — effectively `max_concurrent = 0`.
+        let mut scheduler = test_scheduler();
+        scheduler.register_task(
+            "single_task".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy::default(),
+                rate_limit: None,
+                circuit_breaker: None,
+                max_concurrent: Some(1),
+            },
+        );
+
+        scheduler.storage.enqueue(make_job("single_task")).unwrap();
+
+        let (tx, mut rx) = make_channel(16);
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+
+        assert!(
+            rx.try_recv().is_ok(),
+            "the single allowed concurrent job must dispatch"
+        );
+    }
+
+    #[test]
+    fn test_try_dispatch_per_queue_concurrency_allows_exactly_max() {
+        // Same regression for the queue-level cap.
+        let mut scheduler = test_scheduler();
+        scheduler.register_queue_config(
+            "default".to_string(),
+            QueueConfig {
+                rate_limit: None,
+                max_concurrent: Some(2),
+            },
+        );
+
+        for _ in 0..3 {
+            scheduler.storage.enqueue(make_job("queue_capped")).unwrap();
+        }
+
+        let (tx, mut rx) = make_channel(16);
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+        scheduler.tick(&tx, &mut counters);
+        scheduler.tick(&tx, &mut counters);
+
+        let mut dispatched = 0;
+        while rx.try_recv().is_ok() {
+            dispatched += 1;
+        }
+        assert_eq!(dispatched, 2);
+
+        let pending = scheduler
+            .storage
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
     fn test_reap_stale_jobs() {
         let mut scheduler = test_scheduler();
         scheduler.register_task(
