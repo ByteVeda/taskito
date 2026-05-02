@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use log::warn;
+use tokio::sync::mpsc::error::TrySendError;
 
 use crate::error::Result;
 use crate::job::{now_millis, Job};
@@ -16,6 +17,11 @@ const RATE_LIMIT_RETRY_DELAY_MS: i64 = 1000;
 
 /// Delay before re-scheduling a concurrency-limited job (ms).
 const CONCURRENCY_RETRY_DELAY_MS: i64 = 500;
+
+/// Delay before re-scheduling a job whose dispatch was rejected because the
+/// worker channel was full or closed. Short enough that the worker pool
+/// catches up on the next tick rather than waiting for the stale-job reaper.
+const CHANNEL_BACKPRESSURE_RETRY_DELAY_MS: i64 = 100;
 
 /// Worker identifier recorded on execution claims taken by the scheduler.
 const SCHEDULER_CLAIM_OWNER: &str = "scheduler";
@@ -65,11 +71,26 @@ impl Scheduler {
             return Ok(false);
         }
 
-        if job_tx.try_send(job).is_err() {
-            warn!("worker channel full or closed");
+        // Hand the job to the worker pool. If the channel is unavailable we
+        // must reverse the claim — otherwise the job sits in `Running` until
+        // the stale-reaper times it out, which surfaces as a *timeout* in
+        // metrics and middleware (wrong outcome for a job that never ran).
+        let job_id = job.id.clone();
+        match job_tx.try_send(job) {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => {
+                warn!("worker channel full; rescheduling job {job_id} (worker pool is behind)",);
+                self.rollback_claim_and_retry(&job_id, now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS)?;
+                Ok(false)
+            }
+            Err(TrySendError::Closed(_)) => {
+                warn!(
+                    "worker channel closed; rescheduling job {job_id} (worker pool shutting down)",
+                );
+                self.rollback_claim_and_retry(&job_id, now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS)?;
+                Ok(false)
+            }
         }
-
-        Ok(true)
     }
 
     /// Snapshot the queue list with paused queues filtered out. The paused
