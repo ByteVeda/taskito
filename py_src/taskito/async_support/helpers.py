@@ -11,7 +11,23 @@ def run_maybe_async(result: Any) -> Any:
 
     Safe to call from any thread that does **not** already have a running
     event loop (worker threads, main thread, daemon threads).
+
+    Raises:
+        RuntimeError: If called from a thread that already has a running
+            event loop. Use the async API (``a*`` methods, ``await`` the
+            coroutine directly, or run in a separate thread) instead.
     """
-    if asyncio.iscoroutine(result):
+    if not asyncio.iscoroutine(result):
+        return result
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
         return asyncio.run(result)
-    return result
+
+    raise RuntimeError(
+        "Cannot run an async resource factory or callable from a thread that "
+        "already has a running event loop. Use the corresponding async API "
+        "method (e.g. `aresult()`, `aenqueue()`), `await` the coroutine "
+        "directly, or invoke the sync API from a worker thread."
+    )
