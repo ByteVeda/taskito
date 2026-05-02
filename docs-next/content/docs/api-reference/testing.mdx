@@ -1,0 +1,166 @@
+---
+title: Testing
+description: "Test mode, TestResult, and MockResource for unit testing tasks."
+---
+
+## `TestMode`
+
+```python
+from taskito.testing import TestMode
+# or use the shortcut:
+# queue.test_mode()
+```
+
+Context manager that intercepts `enqueue()` to run tasks synchronously. No
+worker, no Rust, no SQLite.
+
+### Constructor
+
+```python
+TestMode(queue: Queue, propagate_errors: bool = False, resources: dict[str, Any] | None = None)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `queue` | `Queue` | *required* | The Queue instance to put into test mode |
+| `propagate_errors` | `bool` | `False` | Re-raise task exceptions immediately instead of capturing them |
+| `resources` | `dict[str, Any] \| None` | `None` | Resource name → mock instance map injected during test mode. `MockResource` values are unwrapped automatically. |
+
+### Usage
+
+```python
+with TestMode(queue) as results:
+    my_task.delay(42)
+    assert results[0].return_value == expected
+
+# Shortcut via Queue:
+with queue.test_mode() as results:
+    my_task.delay(42)
+
+# With mock resources:
+with queue.test_mode(resources={"db": mock_session}) as results:
+    create_user.delay("Alice")
+```
+
+---
+
+## `TestResult`
+
+```python
+from taskito import TestResult
+```
+
+Dataclass capturing the result of a single task execution in test mode.
+
+### Attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+| `job_id` | `str` | Synthetic test ID (e.g. `"test-000001"`) |
+| `task_name` | `str` | Fully qualified name of the task |
+| `args` | `tuple` | Positional arguments the task was called with |
+| `kwargs` | `dict` | Keyword arguments the task was called with |
+| `return_value` | `Any` | Return value of the task (or `None` if it failed) |
+| `error` | `Exception \| None` | Exception instance if the task raised |
+| `traceback` | `str \| None` | Formatted traceback string if the task raised |
+
+### Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `succeeded` | `bool` | `True` if `error is None` |
+| `failed` | `bool` | `True` if `error is not None` |
+
+---
+
+## `TestResults`
+
+```python
+from taskito import TestResults
+```
+
+A `list[TestResult]` subclass with convenience filtering methods.
+
+### Properties
+
+| Property | Returns | Description |
+|---|---|---|
+| `succeeded` | `TestResults` | All results where `succeeded is True` |
+| `failed` | `TestResults` | All results where `failed is True` |
+
+### Methods
+
+#### `.filter()`
+
+```python
+results.filter(task_name: str | None = None, succeeded: bool | None = None) -> TestResults
+```
+
+Filter results by task name and/or outcome.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `task_name` | `str \| None` | `None` | Exact match on task name |
+| `succeeded` | `bool \| None` | `None` | `True` = successes only, `False` = failures only |
+
+Returns a new `TestResults` containing only matching items.
+
+```python
+results.filter(task_name="myapp.send_email")
+results.filter(succeeded=False)
+results.filter(task_name="myapp.process", succeeded=True)
+```
+
+---
+
+## `MockResource`
+
+```python
+from taskito import MockResource
+```
+
+Test double for a worker resource with optional call tracking. Pass instances
+to `queue.test_mode(resources=...)`.
+
+### Constructor
+
+```python
+MockResource(
+    name: str,
+    return_value: Any = None,
+    wraps: Any = None,
+    track_calls: bool = False,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `str` | *required* | Resource name (informational). |
+| `return_value` | `Any` | `None` | Value returned when the resource is accessed via `.get()`. |
+| `wraps` | `Any` | `None` | A real object to wrap — returned as-is from `.get()`. |
+| `track_calls` | `bool` | `False` | Increment `call_count` each time `.get()` is called. |
+
+### Attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+| `call_count` | `int` | Number of times the resource was accessed. |
+| `calls` | `list` | Reserved for future per-call argument tracking. |
+
+### Usage
+
+```python
+from taskito import MockResource
+
+# Simple mock value
+mock_db = MockResource("db", return_value=FakeSessionFactory())
+
+# Wrap a real object with call tracking
+spy = MockResource("db", wraps=real_session_factory, track_calls=True)
+
+with queue.test_mode(resources={"db": spy}) as results:
+    process_order.delay(42)
+
+assert spy.call_count == 1
+assert results[0].succeeded
+```
