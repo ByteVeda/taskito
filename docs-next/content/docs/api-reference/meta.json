@@ -1,4 +1,14 @@
 {
   "title": "API Reference",
-  "pages": ["overview"]
+  "pages": [
+    "overview",
+    "queue",
+    "task",
+    "result",
+    "context",
+    "canvas",
+    "workflows",
+    "testing",
+    "cli"
+  ]
 }
