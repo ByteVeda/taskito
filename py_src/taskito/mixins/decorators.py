@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import functools
+import inspect
 import os
 import sys
 import typing
@@ -196,7 +196,7 @@ class QueueDecoratorMixin:
             functools.update_wrapper(wrapper, fn)
 
             # Mark async status for native async dispatch
-            is_async = asyncio.iscoroutinefunction(fn)
+            is_async = inspect.iscoroutinefunction(fn)
             wrapper._taskito_is_async = is_async
             if is_async:
                 wrapper._taskito_async_fn = fn
