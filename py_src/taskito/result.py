@@ -153,6 +153,12 @@ class JobResult(AsyncJobResultMixin):
             if status == "complete":
                 return value
             if time.monotonic() >= deadline:
+                # A terminal failure can land between the poll and this branch
+                # (or during the storage read itself). Re-poll once so the
+                # caller sees the real exception class, not `TimeoutError`.
+                status, value = self._poll_once()
+                if status == "complete":
+                    return value
                 raise TimeoutError(
                     f"Job {self.id} did not complete within {timeout}s "
                     f"(current status: {self._py_job.status})"
