@@ -1,4 +1,12 @@
 {
   "title": "Reliability",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "retries",
+    "error-handling",
+    "guarantees",
+    "rate-limiting",
+    "circuit-breakers",
+    "locking"
+  ]
 }

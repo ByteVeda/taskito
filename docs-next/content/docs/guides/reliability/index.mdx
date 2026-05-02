@@ -1,10 +1,15 @@
 ---
 title: Reliability
-description: "Retries, timeouts, dead-lettering, circuit breakers."
+description: "Harden your task queue for production workloads."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+Harden your task queue for production workloads.
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+| Guide | Description |
+|---|---|
+| [Retries & Dead Letters](/docs/guides/reliability/retries) | Automatic retries with exponential backoff, dead letter queue |
+| [Error Handling](/docs/guides/reliability/error-handling) | Task failure lifecycle, error inspection, debugging patterns |
+| [Delivery Guarantees](/docs/guides/reliability/guarantees) | At-least-once delivery, idempotency, and exactly-once patterns |
+| [Rate Limiting](/docs/guides/reliability/rate-limiting) | Throttle task execution with token bucket rate limits |
+| [Circuit Breakers](/docs/guides/reliability/circuit-breakers) | Protect downstream services from cascading failures |
+| [Distributed Locking](/docs/guides/reliability/locking) | Mutual exclusion across workers with database-backed locks |
