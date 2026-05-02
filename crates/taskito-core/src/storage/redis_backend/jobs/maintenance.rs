@@ -10,7 +10,7 @@ use crate::storage::redis_backend::{map_err, RedisStorage};
 impl RedisStorage {
     pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
-        let status_key = self.key(&["jobs", "status", "2"]); // Complete
+        let status_key = self.key(&["jobs", "status", &(JobStatus::Complete as i32).to_string()]);
         let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
 
         let mut count = 0u64;
@@ -31,7 +31,7 @@ impl RedisStorage {
     pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
         let now = now_millis();
         let mut conn = self.conn()?;
-        let status_key = self.key(&["jobs", "status", "2"]); // Complete
+        let status_key = self.key(&["jobs", "status", &(JobStatus::Complete as i32).to_string()]);
         let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
 
         let mut count = 0u64;
@@ -56,7 +56,7 @@ impl RedisStorage {
 
     pub fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>> {
         let mut conn = self.conn()?;
-        let status_key = self.key(&["jobs", "status", "1"]); // Running
+        let status_key = self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
         let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
 
         let mut stale = Vec::new();
@@ -79,7 +79,7 @@ impl RedisStorage {
 
     pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
         let mut conn = self.conn()?;
-        let status_key = self.key(&["jobs", "status", "0"]); // Pending
+        let status_key = self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);
         let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
 
         let mut count = 0u64;

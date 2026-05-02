@@ -2,16 +2,18 @@ use redis::Commands;
 
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
-use crate::job::Job;
+use crate::job::{Job, JobStatus};
 
 impl RedisStorage {
     pub fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let mut count = 0u64;
 
-        // Archive completed (2), dead (4), and cancelled (5) jobs
-        for status_int in [2, 4, 5] {
-            let status_key = self.key(&["jobs", "status", &status_int.to_string()]);
+        // Sourcing statuses from the enum guarantees that any future reorder
+        // or insertion in `JobStatus` doesn't silently change which buckets
+        // get archived.
+        for status in [JobStatus::Complete, JobStatus::Dead, JobStatus::Cancelled] {
+            let status_key = self.key(&["jobs", "status", &(status as i32).to_string()]);
             let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
 
             for id in &job_ids {
