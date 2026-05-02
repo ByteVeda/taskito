@@ -1,10 +1,42 @@
 ---
 title: Concepts
-description: "Tasks, queues, workers, results, and how they fit together."
+description: "How taskito's pieces fit together: queues, tasks, workers, and results."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+import { Cards, Card } from "fumadocs-ui/components/card";
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+Get taskito installed and running in under 5 minutes.
+
+<Cards>
+  <Card
+    title="Installation"
+    href="/docs/getting-started/installation"
+    description="Install taskito from PyPI with optional extras for your framework."
+  />
+  <Card
+    title="Quickstart"
+    href="/docs/getting-started/quickstart"
+    description="Define a task, enqueue it, and start a worker — step by step."
+  />
+</Cards>
+
+## The mental model
+
+A **queue** is a SQLite (or Postgres) database that holds enqueued jobs. You instantiate
+one in your application code:
+
+```python
+from taskito import Queue
+queue = Queue(db_path="tasks.db")
+```
+
+A **task** is any function decorated with `@queue.task()`. Calling `.delay(...)` on it
+returns a `JobResult` handle without running the function — the call is enqueued instead.
+
+A **worker** is a process (or thread, or async task) that pulls jobs from the queue and
+runs the corresponding task function. The Rust scheduler handles dispatch, retries, rate
+limits, and cleanup; Python only runs during actual task execution.
+
+A **result** lives in the same database as the job. Calling `job.result(timeout=30)`
+blocks (or `await job.aresult(...)` yields) until the task finishes, raises if it
+failed, and deserializes the return value.
