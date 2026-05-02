@@ -1,4 +1,13 @@
 {
   "title": "Operations",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "testing",
+    "job-management",
+    "troubleshooting",
+    "deployment",
+    "keda",
+    "postgres",
+    "migration"
+  ]
 }

@@ -1,10 +1,16 @@
 ---
 title: Operations
-description: "Workers, pause/resume, namespacing, scaling, deployment."
+description: "Run taskito reliably in production — testing, deployment, scaling, migration."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+Run taskito reliably in production.
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+| Guide | Description |
+|---|---|
+| [Testing](/docs/guides/operations/testing) | Test mode, fixtures, mocking resources, and workflow testing |
+| [Job Management](/docs/guides/operations/job-management) | Cancel, pause, archive, revoke, replay, and clean up jobs |
+| [Troubleshooting](/docs/guides/operations/troubleshooting) | Diagnose stuck jobs, lock contention, and worker issues |
+| [Deployment](/docs/guides/operations/deployment) | systemd, Docker, WAL mode, Postgres, and production checklists |
+| [KEDA Autoscaling](/docs/guides/operations/keda) | Kubernetes event-driven autoscaling for workers |
+| [Postgres Backend](/docs/guides/operations/postgres) | Set up and run taskito with PostgreSQL |
+| [Migrating from Celery](/docs/guides/operations/migration) | Side-by-side comparison and step-by-step migration guide |

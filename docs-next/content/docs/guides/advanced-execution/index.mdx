@@ -1,10 +1,15 @@
 ---
 title: Advanced execution
-description: "Async tasks, native async, prefork pool, batching."
+description: "Patterns for scaling and optimizing task execution."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+Patterns for scaling and optimizing task execution.
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+| Guide | Description |
+|---|---|
+| [Prefork Pool](/docs/guides/advanced-execution/prefork) | Process-based isolation for CPU-bound or memory-leaking tasks |
+| [Native Async Tasks](/docs/guides/advanced-execution/async-tasks) | `async def` tasks with native event loop integration |
+| [Result Streaming](/docs/guides/advanced-execution/streaming) | Stream partial results and progress updates in real time |
+| [Dependencies](/docs/guides/advanced-execution/dependencies) | DAG-based job dependencies — run tasks in order |
+| [Batch Enqueue](/docs/guides/advanced-execution/batch-enqueue) | Enqueue many jobs efficiently with `task.map()` and `enqueue_many()` |
+| [Unique Tasks](/docs/guides/advanced-execution/unique-tasks) | Deduplicate active jobs with unique keys |
