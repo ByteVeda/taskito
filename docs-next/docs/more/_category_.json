@@ -1,0 +1,8 @@
+{
+  "label": "More",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "More — content port pending. See https://github.com/ByteVeda/taskito/tree/master/docs"
+  }
+}
