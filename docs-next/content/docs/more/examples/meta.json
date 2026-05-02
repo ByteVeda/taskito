@@ -1,4 +1,12 @@
 {
   "title": "Examples",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "fastapi-service",
+    "notifications",
+    "web-scraper",
+    "data-pipeline",
+    "workflows",
+    "benchmark"
+  ]
 }
