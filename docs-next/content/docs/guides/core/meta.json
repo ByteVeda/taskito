@@ -1,4 +1,12 @@
 {
   "title": "Core",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "tasks",
+    "queues",
+    "workers",
+    "execution-model",
+    "scheduling",
+    "workflows"
+  ]
 }

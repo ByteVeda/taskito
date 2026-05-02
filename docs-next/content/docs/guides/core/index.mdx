@@ -1,10 +1,15 @@
 ---
 title: Core
-description: "Core taskito features: tasks, queues, results."
+description: "The building blocks of every taskito application."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+The building blocks of every taskito application.
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+| Guide | Description |
+|---|---|
+| [Tasks](/docs/guides/core/tasks) | Define tasks with `@queue.task()`, configure retries, timeouts, and options |
+| [Workers](/docs/guides/core/workers) | Start workers, control concurrency, graceful shutdown |
+| [Execution Models](/docs/guides/core/execution-model) | How tasks move from enqueue to completion |
+| [Queues & Priority](/docs/guides/core/queues) | Named queues, priority levels, and routing |
+| [Scheduling](/docs/guides/core/scheduling) | Periodic tasks with cron expressions |
+| [Workflows](/docs/guides/core/workflows) | Chains, groups, and chords for multi-step pipelines |
