@@ -1,11 +1,14 @@
 name: Deploy Docs
 
 on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
   push:
     branches: [master]
     paths:
       - "docs/**"
-      - "zensical.toml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -21,23 +24,43 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
     steps:
       - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
 
       - name: Install dependencies
-        run: uv sync --extra docs
+        run: pnpm install --frozen-lockfile
 
-      - name: Build docs
-        run: uv run zensical build
+      - name: Type check
+        run: pnpm types:check
 
-      - uses: actions/upload-pages-artifact@v5
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-pages-artifact@v5
         with:
-          path: site
+          path: docs/out
 
   deploy:
     needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

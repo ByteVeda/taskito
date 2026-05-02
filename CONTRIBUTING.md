@@ -93,14 +93,20 @@ cargo clippy --manifest-path crates/taskito-core/Cargo.toml
 
 ## Documentation
 
-Docs use [Zensical](https://zensical.com/). To preview locally:
+Docs are a [Fumadocs](https://fumadocs.dev) site (Next.js + MDX) under `docs/`. To preview locally:
 
 ```bash
-pip install ".[docs]"
-zensical serve
+pnpm --dir docs install
+pnpm --dir docs dev
 ```
 
-Then open http://localhost:8000.
+Then open http://localhost:3000. To validate before opening a PR:
+
+```bash
+pnpm --dir docs types:check
+pnpm --dir docs lint
+pnpm --dir docs build
+```
 
 ## Questions?
 
