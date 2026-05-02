@@ -2,17 +2,55 @@
 
 All notable changes to taskito are documented here.
 
-## Unreleased
+## 0.12.0
+
+### Added
+
+- **Dashboard persistent settings** -- new `/settings` route exposes branding (title + accent), external links (deployment-wide sidebar shortcuts), and integration URLs (Grafana / Sentry / OTel base) backed by four new `Storage` methods (`get_setting`, `set_setting`, `delete_setting`, `list_settings`) on every backend. REST API at `/api/settings` (GET/PUT/DELETE); optimistic TanStack Query mutations with rollback. The dashboard auto-applies the persisted branding and surfaces the configured links on every page load.
+- **CLI `--pool prefork`** -- `taskito worker --pool prefork --app myapp:queue` now selects the prefork worker pool from the command line.
+- **Dead-letter URL state** -- page number and grouping view persist via TanStack Router `validateSearch`, so reloading or sharing a link preserves the user's place.
 
 ### Changed
 
 - **Dashboard rewrite** -- replaced the Preact single-file dashboard with a React + Vite + TanStack Router SPA. Same Python entrypoint (`taskito dashboard --app myapp:queue`), richer UX: cmdk command palette (`⌘K`), URL-synced job filters, optimistic cancel/replay mutations, Recharts metrics (lazy-loaded), virtualized live-tail logs, type-to-confirm destructive actions, keyboard-accessible tables. Assets ship as hashed multi-file output at `py_src/taskito/static/dashboard/`; the legacy single-HTML `templates/dashboard.html` is gone.
 - **Dashboard dead letters** -- grouping now keys on `(task, exception class)` extracted from the traceback (e.g. `hard_fail::ValueError`) instead of the full error string, so runs that differ only in message text collapse into one actionable group. Group header shows the latest failure timestamp and a "Retry all" button.
-- **Dashboard resources** -- `/api/resources` now falls back to worker heartbeat snapshots when the dashboard runs in a different process than the worker, so health surfaces correctly across process boundaries.
+- **Dashboard resources** -- `/api/resources` falls back to worker heartbeat snapshots when the dashboard runs in a different process than the worker, so health surfaces correctly across process boundaries.
+- **Async-separation boundary enforced** -- `import asyncio` now lives only in `py_src/taskito/async_support/` and `contrib/fastapi.py`. `mixins/decorators.py` switched to `inspect.iscoroutinefunction`. The boundary is machine-checkable: `grep -rn "import asyncio" py_src/taskito/ | grep -v -E "(async_support/|contrib/fastapi\.py)"` returns empty.
+- **`run_maybe_async` clear error under a running loop** -- explicit detection of a running event loop with a taskito-specific `RuntimeError` pointing at the async API and `await`, instead of the cryptic `asyncio.run() cannot be called from a running event loop`.
+- **Redis status discriminants** -- `archive_old_jobs`, `purge_completed`, `purge_completed_with_ttl`, `reap_stale_jobs`, and `expire_pending_jobs` now cast `JobStatus::Foo as i32` instead of using magic numbers (`[2, 4, 5]`, `"0"`, `"1"`, `"2"`). Reordering or inserting variants in the enum will fail the build instead of silently archiving the wrong buckets.
+- **`enqueue_batch` Rust signature widened** -- `priorities`, `max_retries_list`, `timeouts` widened from `Option<Vec<i32>>` to `Option<Vec<Option<i32>>>` so callers can omit individual entries (matches the pattern already used by `delay_seconds_list` / `metadata_list` / etc.). Type stub follows; pure Python callers unaffected.
 
 ### Fixed
 
-- **Dashboard timestamps** -- every timestamp field (`created_at`, `last_heartbeat`, `logged_at`, etc.) is now rendered as milliseconds consistent with the backend; previously the frontend applied an extra `× 1000` that pushed dates into year 58282.
+- **Scheduler concurrency cap atomicity** -- a TOCTOU race between the cap check and `claim_execution` allowed two schedulers to both pass the cap and over-dispatch. Also fixed an off-by-one (`>=` against a count that already includes the just-dequeued running job). `try_dispatch` was restructured into named helpers (`active_queues`, `check_pre_claim_gates`, `claim_for_dispatch`, `check_post_claim_concurrency`, `rollback_claim_and_retry`); cap check now runs after `claim_execution` with strict `>`. New regression tests cover exact-cap, max-1, and per-queue caps.
+- **Scheduler reschedule on full or closed worker channel** -- a naive `try_send` swallowed `TrySendError::Full` / `Closed`, leaving the job in `Running` until the stale-reaper timed it out -- surfacing as a *timeout* in metrics and middleware (wrong outcome for a job that never ran). Replaced with a full match: warn, roll back the claim, and reschedule with a 100 ms backoff.
+- **`enqueue_many` middleware contract** -- `on_enqueue` now receives each job's own args and kwargs (was always `args_list[0]`). Mutations to the per-job options dict propagate to the enqueued jobs (was discarded -- middleware ran *after* `enqueue_batch` against a fresh empty dict). Middleware exceptions surface via `logger.exception("middleware on_enqueue() error")` instead of a silent `except: pass`.
+- **`result()` / `aresult()` deadline race** -- could raise `TimeoutError` even when the job had already failed/died/cancelled, when the terminal state landed during the final poll-then-deadline-check window. A defensive re-poll inside the deadline branch lets the caller see the real exception class (`TaskFailedError`, `MaxRetriesExceededError`, `TaskCancelledError`).
+- **`result_handler.rs` triple-fetch** -- the Failure branch fetched `get_job` up to three times per call (queue context + `!should_retry` DLQ + retry-exhausted DLQ). Now fetches once and reuses the same `Option<&Job>` via a small DLQ closure.
+- **`ResourcePool._active_count` underflow** -- the increment moved to *after* the factory call returns successfully. The failure path no longer needs (or has) a decrement, so a wedged factory can't underflow `active` in `stats()`. Failed attempts also stop counting toward `total_acquisitions`.
+- **Prefork timeout** -- children that exceed their per-job timeout are killed; previously could hang indefinitely.
+- **CI PyO3 finalization SIGABRT** -- eliminated; pip cache warning silenced.
+- **Dashboard timestamps** -- every timestamp field (`created_at`, `last_heartbeat`, `logged_at`, etc.) renders as milliseconds consistent with the backend; previously an extra `× 1000` pushed dates into year 58282. The contract is documented at the top of `dashboard/src/lib/api-types.ts` with per-field JSDoc.
+- **Dashboard DAG cycle bound** -- BFS layer assignment now uses a `visited` set + max-iterations break, so an accidental cycle in a workflow definition can't loop forever.
+- **Dashboard settings storage opacity** -- settings PUT bodies are JSON-encoded server-side so callers see structured values, not stringified JSON.
+- **Dashboard dead-letter row keyboard accessibility** -- clickable group rows use `role="button"`, `tabIndex={0}`, and an `onKeyDown` handler that triggers expansion on Enter / Space; `aria-expanded` reflects the open/closed state. Biome `noStaticElementInteractions` and `useKeyWithClickEvents` rules promoted from `off` to `error`.
+
+### Internal
+
+- **`app.py` split into `mixins/` package** -- `QueueInspectionMixin`, `QueueOperationsMixin`, `QueueLockMixin`, `QueueWorkflowMixin`, and the decorator/event/resource modules now live under `py_src/taskito/mixins/`. The `Queue` class is now a thin assembly over the mixins.
+- **`workflows/tracker.py` split into package** -- `WorkflowTracker` decomposed into `_GateManager`, `_FanOutOrchestrator`, `_SubWorkflowCoordinator`.
+- **`redis_backend/jobs.rs` split into submodule** -- separate files for enqueue, query, helpers, maintenance.
+- **`py_queue/workflow_ops.rs` split into submodule**.
+- **`dashboard.py` split into package** -- handler/router separation.
+- **Dashboard health-audit follow-ups** -- extracted `formatAxisTime` shared between metric charts; extracted `job-dag-layout` pure module; centralized log-level color map in `status.ts`; debounced filters via refs (no `eslint-disable`); promoted Biome `useExhaustiveDependencies` from `warn` to `error`; pure helpers (`parseRefreshOption`, `refreshIntervalMs`) extracted from `refresh-interval-provider` for testability; new vitest coverage on `api-client`, `errors`, `settings`, and `refresh-interval-provider` (81 tests at release).
+- **Dependency bumps** -- `redis 0.27 → 1.2`, `libsqlite3-sys 0.30 → 0.37`, `thiserror 1 → 2`, `rand 0.8 → 0.10`, `pq-sys`, `cron`, `tailwind-merge`, `@vitejs/plugin-react`, `react`, and Python dep floors to latest stable.
+- **CI** -- `dorny/paths-filter v3 → v4`; drop `area/` label prefix and skip jobs by path; floating major tags for action references; per-PR Postgres/Redis service containers run the storage contract suite on every change (PR #73, landed in 0.11.1; now exercised across every release).
+
+### Test counts at release
+
+- Rust: 89 tests (up from 78)
+- Python: 496 passed, 9 skipped across 49 files (up from 469 / 46)
+- Dashboard (vitest): 81 tests
 
 ---
 
