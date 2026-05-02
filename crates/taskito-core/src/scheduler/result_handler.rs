@@ -81,20 +81,24 @@ impl Scheduler {
                     cache.record(&task_name, wall_time_ns);
                 }
 
-                // Look up the job to get the queue name for middleware context
-                let queue = self
-                    .storage
-                    .get_job(&job_id)?
-                    .as_ref()
-                    .map(|j| j.queue.clone())
-                    .unwrap_or_default();
+                // One fetch serves both the queue-context lookup and any
+                // subsequent DLQ move — there's no path that needs two reads.
+                let job = self.storage.get_job(&job_id)?;
+                let queue = job.as_ref().map(|j| j.queue.clone()).unwrap_or_default();
+
+                let move_to_dlq = |job: Option<&crate::job::Job>| -> Result<()> {
+                    match job {
+                        Some(j) => self.dlq.move_to_dlq(j, &error, None),
+                        None => {
+                            warn!("job {job_id} disappeared before DLQ move");
+                            Ok(())
+                        }
+                    }
+                };
 
                 // If should_retry is false (exception filtering), skip straight to DLQ
                 if !should_retry {
-                    match self.storage.get_job(&job_id)? {
-                        Some(job) => self.dlq.move_to_dlq(&job, &error, None)?,
-                        None => warn!("job {job_id} disappeared before DLQ move"),
-                    }
+                    move_to_dlq(job.as_ref())?;
                     return Ok(ResultOutcome::DeadLettered {
                         job_id,
                         task_name,
@@ -128,11 +132,7 @@ impl Scheduler {
                         timed_out,
                     })
                 } else {
-                    // Move to DLQ
-                    match self.storage.get_job(&job_id)? {
-                        Some(job) => self.dlq.move_to_dlq(&job, &error, None)?,
-                        None => warn!("job {job_id} disappeared before DLQ move"),
-                    }
+                    move_to_dlq(job.as_ref())?;
                     Ok(ResultOutcome::DeadLettered {
                         job_id,
                         task_name,
