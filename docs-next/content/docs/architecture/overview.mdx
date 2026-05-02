@@ -1,10 +1,46 @@
 ---
 title: Overview
-description: "How taskito is built end to end."
+description: "Hybrid Python/Rust architecture: Python API on top, Rust engine underneath."
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+taskito is a hybrid Python/Rust system. Python provides the user-facing API. Rust
+handles all the heavy lifting: storage, scheduling, dispatch, rate limiting, and
+worker management.
 
-<Callout title="Phase 1 stub" type="info">
-  Content port pending. See the [Zensical source](https://github.com/ByteVeda/taskito/tree/master/docs) for current text.
-</Callout>
+<Mermaid
+  chart={`flowchart TD
+    subgraph py ["Python Layer"]
+        direction LR
+        Q["Queue"] --> IC["ArgumentInterceptor"]
+        TW["@queue.task()"] ~~~ RR["ResourceRuntime"]
+    end
+
+    subgraph rust ["Rust Core — PyO3"]
+        direction LR
+        PQ["PyQueue"] --> SCH["Scheduler"]
+        SCH --> WP["Worker Pool"]
+        SCH --> RL["Rate Limiter"]
+    end
+
+    subgraph storage ["Storage"]
+        direction LR
+        SQ[("SQLite")] ~~~ PG[("PostgreSQL")]
+    end
+
+    IC --> PQ
+    WP -->|"acquire GIL"| TW
+    SCH -->|"poll / update"| SQ
+    PQ -->|"INSERT"| SQ`}
+/>
+
+## Section overview
+
+| Page | What it covers |
+|---|---|
+| [Job Lifecycle](/docs/architecture/job-lifecycle) | State machine, status codes, transitions |
+| [Worker Pool](/docs/architecture/worker-pool) | Thread architecture, async dispatch, GIL management |
+| [Storage Layer](/docs/architecture/storage) | SQLite pragmas, schema, indexes, Postgres differences |
+| [Scheduler](/docs/architecture/scheduler) | Poll loop, dispatch flow, periodic tasks |
+| [Resource System](/docs/architecture/resources) | Argument interception, DI, proxy reconstruction |
+| [Failure Model](/docs/architecture/failure-model) | Crash recovery, duplicate execution, partial writes |
+| [Serialization](/docs/architecture/serialization) | Pluggable serializers, format details |

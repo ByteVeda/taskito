@@ -1,4 +1,13 @@
 {
   "title": "Architecture",
-  "pages": ["overview"]
+  "pages": [
+    "overview",
+    "job-lifecycle",
+    "worker-pool",
+    "scheduler",
+    "storage",
+    "resources",
+    "failure-model",
+    "serialization"
+  ]
 }
