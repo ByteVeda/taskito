@@ -3,13 +3,46 @@ title: Taskito
 description: Rust-powered task queue for Python. No broker required.
 ---
 
-Welcome to the Taskito docs.
+import { Cards, Card } from "fumadocs-ui/components/card";
 
-import { Cards, Card } from 'fumadocs-ui/components/card';
+A brokerless, Rust-powered task queue for Python. Replace Celery without Redis.
+
+Start with SQLite, scale to Postgres. No broker to install, configure, or manage.
+
+```bash
+pip install taskito
+```
+
+Most Python task queues require a separate broker (Redis, RabbitMQ) that you have
+to install, configure, monitor, and keep running. **taskito** embeds everything
+into a single SQLite file — the queue, the results, the rate limits, the
+schedules. Just `pip install` and go.
+
+The core engine is written in **Rust** for performance: job dispatch, retry
+scheduling, rate limiting, and storage all happen in compiled native code.
+Python only runs during actual task execution.
+
+## Browse the docs
 
 <Cards>
-  <Card title="Getting Started" href="/docs/getting-started/installation" description="Install and run your first task in 5 minutes." />
-  <Card title="Guides" href="/docs/guides" description="Core, reliability, advanced execution, operations, observability." />
-  <Card title="Architecture" href="/docs/architecture/overview" description="How taskito is built — Rust core, PyO3 boundary, storage layer." />
-  <Card title="API Reference" href="/docs/api-reference/overview" description="Complete API surface for the Queue, tasks, results, locks, and workflows." />
+  <Card
+    title="Getting Started"
+    href="/docs/getting-started/installation"
+    description="Install and run your first task in 5 minutes."
+  />
+  <Card
+    title="Guides"
+    href="/docs/guides"
+    description="Core, reliability, advanced execution, operations, observability."
+  />
+  <Card
+    title="Architecture"
+    href="/docs/architecture/overview"
+    description="How taskito is built — Rust core, PyO3 boundary, storage layer."
+  />
+  <Card
+    title="API Reference"
+    href="/docs/api-reference/overview"
+    description="Complete API surface for the Queue, tasks, results, locks, and workflows."
+  />
 </Cards>
