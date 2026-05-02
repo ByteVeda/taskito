@@ -1,0 +1,15 @@
+{
+  "title": "Guides",
+  "pages": [
+    "index",
+    "core",
+    "reliability",
+    "advanced-execution",
+    "operations",
+    "observability",
+    "resources",
+    "workflows",
+    "integrations",
+    "extensibility"
+  ]
+}
