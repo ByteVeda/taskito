@@ -1,4 +1,10 @@
 {
   "title": "Observability",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "monitoring",
+    "logging",
+    "dashboard",
+    "dashboard-api"
+  ]
 }
