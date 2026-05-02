@@ -1,4 +1,12 @@
 {
   "title": "Integrations",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "flask",
+    "fastapi",
+    "django",
+    "otel",
+    "prometheus",
+    "sentry"
+  ]
 }
