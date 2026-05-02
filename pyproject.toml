@@ -27,7 +27,7 @@ dependencies = ["cloudpickle>=3.0"]
 Homepage = "https://github.com/ByteVeda/taskito"
 Documentation = "https://docs.byteveda.org/taskito"
 Repository = "https://github.com/ByteVeda/taskito"
-Changelog = "https://github.com/ByteVeda/taskito/blob/master/docs/changelog.md"
+Changelog = "https://docs.byteveda.org/taskito/docs/more/changelog"
 Issues = "https://github.com/ByteVeda/taskito/issues"
 
 [project.optional-dependencies]
@@ -44,7 +44,6 @@ encryption = ["cryptography"]
 flask = ["flask>=3.0"]
 aws = ["boto3>=1.34"]
 gcs = ["google-cloud-storage>=2.10"]
-docs = ["zensical"]
 
 [tool.maturin]
 manifest-path = "crates/taskito-python/Cargo.toml"
