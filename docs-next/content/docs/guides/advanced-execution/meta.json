@@ -1,4 +1,12 @@
 {
   "title": "Advanced execution",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "prefork",
+    "async-tasks",
+    "streaming",
+    "dependencies",
+    "batch-enqueue",
+    "unique-tasks"
+  ]
 }
