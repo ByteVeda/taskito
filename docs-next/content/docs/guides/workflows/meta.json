@@ -1,4 +1,14 @@
 {
   "title": "Workflows",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "building",
+    "fan-out",
+    "conditions",
+    "gates",
+    "composition",
+    "caching",
+    "analysis",
+    "canvas"
+  ]
 }
