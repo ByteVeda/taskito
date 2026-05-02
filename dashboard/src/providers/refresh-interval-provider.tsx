@@ -10,6 +10,7 @@ const REFRESH_MS: Record<RefreshOption, number | false> = {
 };
 
 const STORAGE_KEY = "taskito.refresh";
+const DEFAULT_OPTION: RefreshOption = "5s";
 
 interface RefreshContextValue {
   option: RefreshOption;
@@ -19,10 +20,17 @@ interface RefreshContextValue {
 
 const RefreshContext = createContext<RefreshContextValue | null>(null);
 
-function readStored(): RefreshOption {
-  const stored = localStorage.getItem(STORAGE_KEY);
+export function parseRefreshOption(stored: string | null): RefreshOption {
   if (stored === "2s" || stored === "5s" || stored === "10s" || stored === "off") return stored;
-  return "5s";
+  return DEFAULT_OPTION;
+}
+
+export function refreshIntervalMs(option: RefreshOption): number | false {
+  return REFRESH_MS[option];
+}
+
+function readStored(): RefreshOption {
+  return parseRefreshOption(localStorage.getItem(STORAGE_KEY));
 }
 
 export function RefreshIntervalProvider({ children }: { children: ReactNode }) {
@@ -31,7 +39,7 @@ export function RefreshIntervalProvider({ children }: { children: ReactNode }) {
   const value = useMemo<RefreshContextValue>(
     () => ({
       option,
-      intervalMs: REFRESH_MS[option],
+      intervalMs: refreshIntervalMs(option),
       setOption: (next) => {
         setOptionState(next);
         localStorage.setItem(STORAGE_KEY, next);
