@@ -77,29 +77,36 @@ class ResourcePool:
                 f"Resource '{self._name}' pool timed out after {self._config.acquire_timeout}s"
             )
 
+        # Try to reuse an idle instance under the lock.
         with self._lock:
-            self._total_acquisitions += 1
-            self._active_count += 1
-            self._total_acquire_ms += (time.monotonic() - start) * 1000
-
-            # Try to reuse an idle instance
             while self._idle:
                 instance, created_at = self._idle.popleft()
                 if time.monotonic() - created_at < self._config.max_lifetime:
+                    self._record_acquired(start)
                     return instance
                 # Expired — teardown and try next
                 self._teardown_instance(instance)
 
-        # No idle instance available — create a new one
+        # No idle instance available — create a new one. We hold the
+        # semaphore permit for the whole try; on failure we just release
+        # it. `_active_count` is only incremented after we actually have
+        # an instance to hand out, so factory failure can never underflow
+        # the counter.
         try:
             instance = run_maybe_async(self._factory(**self._dep_kwargs))
-            return instance
         except Exception:
-            # Release semaphore on creation failure
-            with self._lock:
-                self._active_count -= 1
             self._semaphore.release()
             raise
+
+        with self._lock:
+            self._record_acquired(start)
+        return instance
+
+    def _record_acquired(self, start: float) -> None:
+        """Update bookkeeping for a successful acquire. Caller holds `_lock`."""
+        self._total_acquisitions += 1
+        self._active_count += 1
+        self._total_acquire_ms += (time.monotonic() - start) * 1000
 
     def release(self, instance: Any) -> None:
         """Return an instance to the pool."""

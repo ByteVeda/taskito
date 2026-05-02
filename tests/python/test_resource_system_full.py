@@ -260,6 +260,47 @@ class TestResourceScopes:
         assert s2["idle"] == 1
         pool.shutdown()
 
+    def test_pool_factory_failure_does_not_underflow_active_count(self) -> None:
+        """Active count must remain at zero (not negative) when the factory raises.
+
+        Regression: previously the increment ran before the factory call and
+        was decremented in the except branch. Any future re-ordering or
+        intervening release() risked underflowing the counter, surfacing as a
+        negative `active` in `stats()`.
+        """
+
+        def boom() -> None:
+            raise RuntimeError("factory blew up")
+
+        pool = ResourcePool(
+            "test",
+            boom,
+            teardown=None,
+            config=PoolConfig(pool_size=2, acquire_timeout=0.1),
+        )
+
+        for _ in range(3):
+            with pytest.raises(RuntimeError, match="factory blew up"):
+                pool.acquire()
+
+        s = pool.stats()
+        assert s["active"] == 0
+        assert s["total_acquisitions"] == 0  # Failed attempts don't count
+        # Pool capacity must not leak: a fresh acquire after failures still works.
+        # (Use a successful factory now to confirm the semaphore wasn't consumed.)
+        ok_pool = ResourcePool(
+            "test2",
+            lambda: {"ok": True},
+            teardown=None,
+            config=PoolConfig(pool_size=1, acquire_timeout=0.1),
+        )
+        for _ in range(3):
+            inst = ok_pool.acquire()
+            ok_pool.release(inst)
+        assert ok_pool.stats()["active"] == 0
+        ok_pool.shutdown()
+        pool.shutdown()
+
     def test_thread_local_store(self) -> None:
         counter = {"n": 0}
 
