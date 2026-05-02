@@ -687,6 +687,73 @@ mod tests {
     }
 
     #[test]
+    fn test_try_dispatch_reschedules_on_closed_channel() {
+        // Regression: when the worker channel is closed (worker pool
+        // shutting down) the job has already been claimed in storage —
+        // dropping it without rolling back leaves it in `Running` until
+        // the stale-reaper times it out, which surfaces as a *timeout*
+        // in metrics. The poller must clear the claim and reset the job
+        // to `Pending` so the next dispatch attempt picks it up cleanly.
+        let scheduler = test_scheduler();
+        let job = scheduler
+            .storage
+            .enqueue(make_job("ch_closed_task"))
+            .unwrap();
+
+        let (tx, rx) = make_channel(16);
+        drop(rx);
+
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+
+        let after = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(
+            after.status,
+            JobStatus::Pending,
+            "job must be returned to Pending when dispatch fails"
+        );
+        assert!(after.scheduled_at > now_millis());
+
+        let claims = scheduler
+            .storage
+            .list_claims_by_worker("scheduler")
+            .unwrap();
+        assert!(
+            !claims.contains(&job.id),
+            "execution claim must be cleared on dispatch failure"
+        );
+    }
+
+    #[test]
+    fn test_try_dispatch_reschedules_on_full_channel() {
+        // Same regression when the channel is *full* rather than closed —
+        // the worker pool is behind but still alive. The job must come back
+        // to Pending so the next tick has a chance to dispatch it once the
+        // pool drains.
+        let scheduler = test_scheduler();
+        let job = scheduler.storage.enqueue(make_job("ch_full_task")).unwrap();
+
+        // Capacity-1 channel pre-filled with a sentinel job. The poller's
+        // `try_send` will see `TrySendError::Full`.
+        let (tx, _rx) = make_channel(1);
+        let sentinel = scheduler.storage.enqueue(make_job("sentinel")).unwrap();
+        tx.try_send(sentinel).expect("pre-fill should succeed");
+
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+
+        let after = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(after.status, JobStatus::Pending);
+        assert!(after.scheduled_at > now_millis());
+
+        let claims = scheduler
+            .storage
+            .list_claims_by_worker("scheduler")
+            .unwrap();
+        assert!(!claims.contains(&job.id));
+    }
+
+    #[test]
     fn test_reap_stale_jobs() {
         let mut scheduler = test_scheduler();
         scheduler.register_task(
