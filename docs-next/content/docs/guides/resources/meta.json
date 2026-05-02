@@ -1,4 +1,12 @@
 {
   "title": "Resources",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "interception",
+    "dependency-injection",
+    "proxies",
+    "configuration",
+    "testing",
+    "observability"
+  ]
 }
