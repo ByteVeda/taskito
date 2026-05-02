@@ -536,6 +536,48 @@ class Queue(
                 f"args_list length ({len(args_list)})"
             )
         kw_list = kwargs_list or [{}] * count
+
+        # Build a per-job options dict so on_enqueue middleware can mutate
+        # priority/queue/delay/etc. on a per-job basis before the batch is
+        # committed. The dispatch must happen BEFORE enqueue_batch — running
+        # it after (as the previous implementation did) made mutations
+        # impossible to apply.
+        per_job_options: list[dict[str, Any]] = [
+            {
+                "priority": priority,
+                "queue": queue,
+                "max_retries": max_retries,
+                "timeout": timeout,
+                "delay": (delay_list[i] if delay_list is not None else delay),
+                "unique_key": (unique_keys[i] if unique_keys is not None else None),
+                "metadata": (metadata_list[i] if metadata_list is not None else metadata),
+                "expires": (expires_list[i] if expires_list is not None else expires),
+                "result_ttl": (result_ttl_list[i] if result_ttl_list is not None else result_ttl),
+            }
+            for i in range(count)
+        ]
+
+        chain = self._get_middleware_chain(task_name)
+        for i in range(count):
+            for mw in chain:
+                try:
+                    mw.on_enqueue(task_name, args_list[i], kw_list[i], per_job_options[i])
+                except Exception:
+                    logger.exception("middleware on_enqueue() error")
+
+        # Read mutated per-job options back into the per-job lists passed to
+        # the Rust batch enqueue. `None` entries are forwarded so the Rust
+        # side falls back to its defaults.
+        queues_list = [opt["queue"] or "default" for opt in per_job_options]
+        priorities_list = [opt["priority"] for opt in per_job_options]
+        retries_list = [opt["max_retries"] for opt in per_job_options]
+        timeouts_list = [opt["timeout"] for opt in per_job_options]
+        delays = [opt["delay"] for opt in per_job_options]
+        per_job_unique_keys = [opt["unique_key"] for opt in per_job_options]
+        metas = [opt["metadata"] for opt in per_job_options]
+        exp_list = [opt["expires"] for opt in per_job_options]
+        ttl_list = [opt["result_ttl"] for opt in per_job_options]
+
         task_serializer = self._get_serializer(task_name)
         if self._interceptor is not None:
             pairs = [
@@ -549,17 +591,6 @@ class Queue(
             ]
         task_names = [task_name] * count
 
-        queues_list = [queue or "default"] * count if queue else None
-        priorities_list = [priority] * count if priority is not None else None
-        retries_list = [max_retries] * count if max_retries is not None else None
-        timeouts_list = [timeout] * count if timeout is not None else None
-
-        # Build per-job optional lists
-        delays = delay_list or ([delay] * count if delay is not None else None)
-        metas = metadata_list or ([metadata] * count if metadata is not None else None)
-        exp_list = expires_list or ([expires] * count if expires is not None else None)
-        ttl_list = result_ttl_list or ([result_ttl] * count if result_ttl is not None else None)
-
         py_jobs = self._inner.enqueue_batch(
             task_names=task_names,
             payloads=payloads,
@@ -568,7 +599,7 @@ class Queue(
             max_retries_list=retries_list,
             timeouts=timeouts_list,
             delay_seconds_list=delays,
-            unique_keys=unique_keys,
+            unique_keys=per_job_unique_keys,
             metadata_list=metas,
             expires_list=exp_list,
             result_ttl_list=ttl_list,
@@ -576,17 +607,10 @@ class Queue(
 
         results = [JobResult(py_job=pj, queue=self) for pj in py_jobs]
 
-        # Emit events and dispatch on_enqueue middleware
         for job_result in results:
             self._emit_event(
                 EventType.JOB_ENQUEUED,
                 {"job_id": job_result.id, "task_name": task_name},
             )
-            for mw in self._get_middleware_chain(task_name):
-                try:
-                    options: dict[str, Any] = {}
-                    mw.on_enqueue(task_name, args_list[0], {}, options)
-                except Exception:
-                    pass
 
         return results

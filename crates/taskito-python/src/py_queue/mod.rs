@@ -252,9 +252,9 @@ impl PyQueue {
         task_names: Vec<String>,
         payloads: Vec<Vec<u8>>,
         queues: Option<Vec<String>>,
-        priorities: Option<Vec<i32>>,
-        max_retries_list: Option<Vec<i32>>,
-        timeouts: Option<Vec<i64>>,
+        priorities: Option<Vec<Option<i32>>>,
+        max_retries_list: Option<Vec<Option<i32>>>,
+        timeouts: Option<Vec<Option<i64>>>,
         delay_seconds_list: Option<Vec<Option<f64>>>,
         unique_keys: Option<Vec<Option<String>>>,
         metadata_list: Option<Vec<Option<String>>>,
@@ -306,17 +306,20 @@ impl PyQueue {
                 }),
                 task_name: task_names[i].clone(),
                 payload: payloads[i].clone(),
-                priority: priorities.as_ref().map_or(self.default_priority, |p| {
-                    p.get(i).copied().unwrap_or(self.default_priority)
-                }),
+                priority: priorities
+                    .as_ref()
+                    .and_then(|p| p.get(i).copied().flatten())
+                    .unwrap_or(self.default_priority),
                 scheduled_at,
-                max_retries: max_retries_list.as_ref().map_or(self.default_retry, |r| {
-                    r.get(i).copied().unwrap_or(self.default_retry)
-                }),
+                max_retries: max_retries_list
+                    .as_ref()
+                    .and_then(|r| r.get(i).copied().flatten())
+                    .unwrap_or(self.default_retry),
                 timeout_ms: {
-                    let t = timeouts.as_ref().map_or(self.default_timeout, |t| {
-                        t.get(i).copied().unwrap_or(self.default_timeout)
-                    });
+                    let t = timeouts
+                        .as_ref()
+                        .and_then(|t| t.get(i).copied().flatten())
+                        .unwrap_or(self.default_timeout);
                     t.checked_mul(1000).ok_or_else(|| {
                         pyo3::exceptions::PyValueError::new_err("timeout too large, would overflow")
                     })?
