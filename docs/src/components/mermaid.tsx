@@ -3,6 +3,52 @@
 import { useTheme } from "next-themes";
 import { useEffect, useId, useRef, useState } from "react";
 
+const DARK_THEME_VARIABLES = {
+  background: "transparent",
+  primaryColor: "#1f2024",
+  primaryTextColor: "#f5f5f7",
+  primaryBorderColor: "#7a7d85",
+  lineColor: "#9b9ea6",
+  secondaryColor: "#2a2c31",
+  tertiaryColor: "#26282d",
+  mainBkg: "#1f2024",
+  nodeBkg: "#1f2024",
+  nodeBorder: "#7a7d85",
+  clusterBkg: "#1a1b1e",
+  clusterBorder: "#5a5d65",
+  edgeLabelBackground: "#2a2c31",
+  titleColor: "#f5f5f7",
+  labelTextColor: "#f5f5f7",
+  textColor: "#f5f5f7",
+  noteBkgColor: "#3a3c41",
+  noteTextColor: "#f5f5f7",
+  noteBorderColor: "#7a7d85",
+  errorBkgColor: "#4a1d1d",
+  errorTextColor: "#fca5a5",
+} as const;
+
+const LIGHT_THEME_VARIABLES = {
+  background: "transparent",
+  primaryColor: "#ffffff",
+  primaryTextColor: "#1a1a1a",
+  primaryBorderColor: "#3a3a3a",
+  lineColor: "#4a4a4a",
+  secondaryColor: "#f4f4f5",
+  tertiaryColor: "#fafafa",
+  mainBkg: "#ffffff",
+  nodeBkg: "#ffffff",
+  nodeBorder: "#3a3a3a",
+  clusterBkg: "#f4f4f5",
+  clusterBorder: "#a1a1aa",
+  edgeLabelBackground: "#ffffff",
+  titleColor: "#1a1a1a",
+  labelTextColor: "#1a1a1a",
+  textColor: "#1a1a1a",
+  noteBkgColor: "#fef9c3",
+  noteTextColor: "#1a1a1a",
+  noteBorderColor: "#a1a1aa",
+} as const;
+
 export function Mermaid({ chart }: { chart: string }) {
   const id = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -13,11 +59,22 @@ export function Mermaid({ chart }: { chart: string }) {
     let cancelled = false;
     void (async () => {
       const mermaid = (await import("mermaid")).default;
+      if (typeof document !== "undefined" && document.fonts?.ready) {
+        await document.fonts.ready;
+      }
+      const isDark = resolvedTheme === "dark";
       mermaid.initialize({
         startOnLoad: false,
-        theme: resolvedTheme === "dark" ? "dark" : "default",
+        theme: "base",
+        themeVariables: isDark ? DARK_THEME_VARIABLES : LIGHT_THEME_VARIABLES,
         securityLevel: "loose",
-        fontFamily: "inherit",
+        fontFamily: '"IBM Plex Sans", "Inter", system-ui, sans-serif',
+        flowchart: { padding: 18, htmlLabels: true, useMaxWidth: true },
+        sequence: {
+          actorFontFamily: '"IBM Plex Sans", sans-serif',
+          noteFontFamily: '"IBM Plex Sans", sans-serif',
+          messageFontFamily: '"IBM Plex Sans", sans-serif',
+        },
       });
       try {
         const renderId = `m${id.replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -39,7 +96,7 @@ export function Mermaid({ chart }: { chart: string }) {
   return (
     <div
       ref={containerRef}
-      className="my-4 flex justify-center font-handwritten [&_svg]:max-w-full"
+      className="my-6 flex justify-center [&_svg]:max-w-full"
       // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
       dangerouslySetInnerHTML={{ __html: svg }}
     />
