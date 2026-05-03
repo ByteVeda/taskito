@@ -1,3 +1,5 @@
+import { highlight } from "fumadocs-core/highlight";
+
 const TASKITO_CODE = `from taskito import Queue
 
 queue = Queue(db_path="tasks.db")
@@ -59,7 +61,12 @@ const ROWS: { label: string; taskito: string; celery: string }[] = [
   },
 ];
 
-export function Comparison() {
+export async function Comparison() {
+  const [taskitoHighlighted, celeryHighlighted] = await Promise.all([
+    renderHighlighted(TASKITO_CODE),
+    renderHighlighted(CELERY_CODE),
+  ]);
+
   return (
     <div className="space-y-6">
       <div className="grid md:grid-cols-2 gap-4">
@@ -67,30 +74,52 @@ export function Comparison() {
           label="taskito"
           caption="Brokerless · single process"
           tone="primary"
-          code={TASKITO_CODE}
-        />
+        >
+          {taskitoHighlighted}
+        </CodePanel>
         <CodePanel
           label="Celery + Redis"
           caption="Requires Redis · 3 processes"
           tone="muted"
-          code={CELERY_CODE}
-        />
+        >
+          {celeryHighlighted}
+        </CodePanel>
       </div>
       <DifferentiatorTable />
     </div>
   );
 }
 
+async function renderHighlighted(code: string) {
+  return highlight(code, {
+    lang: "python",
+    themes: {
+      light: "github-light",
+      dark: "github-dark",
+    },
+    components: {
+      pre: ({ children, ...props }) => (
+        <pre
+          {...props}
+          className="p-5 text-sm leading-relaxed overflow-x-auto bg-fd-card"
+        >
+          {children}
+        </pre>
+      ),
+    },
+  });
+}
+
 function CodePanel({
   label,
   caption,
   tone,
-  code,
+  children,
 }: {
   label: string;
   caption: string;
   tone: Tone;
-  code: string;
+  children: React.ReactNode;
 }) {
   const accent =
     tone === "primary" ? "border-t-fd-primary" : "border-t-fd-border";
@@ -108,9 +137,7 @@ function CodePanel({
         </span>
         <span className="text-xs text-fd-muted-foreground">{caption}</span>
       </div>
-      <pre className="p-5 text-sm font-mono leading-relaxed overflow-x-auto bg-fd-card">
-        <code>{code}</code>
-      </pre>
+      {children}
     </div>
   );
 }
