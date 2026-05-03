@@ -196,7 +196,7 @@ function ComparisonSection() {
           Less to operate
         </h2>
         <p className="text-fd-muted-foreground text-lg">
-          The same task, two stacks. Pick the one with fewer moving parts.
+          The same task, two stacks. Side by side, with the operational delta.
         </p>
       </div>
       <Comparison />
