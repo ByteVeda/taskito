@@ -25,6 +25,25 @@ const DARK_THEME_VARIABLES = {
   noteBorderColor: "#7a7d85",
   errorBkgColor: "#4a1d1d",
   errorTextColor: "#fca5a5",
+  // erDiagram-specific (entity attribute rows)
+  attributeBackgroundColorOdd: "#1f2024",
+  attributeBackgroundColorEven: "#272a30",
+  // stateDiagram-specific
+  altBackground: "#26282d",
+  // flowchart label colors
+  labelBackground: "#2a2c31",
+  // sequenceDiagram
+  actorBkg: "#1f2024",
+  actorBorder: "#7a7d85",
+  actorTextColor: "#f5f5f7",
+  actorLineColor: "#9b9ea6",
+  signalColor: "#f5f5f7",
+  signalTextColor: "#f5f5f7",
+  labelBoxBkgColor: "#2a2c31",
+  labelBoxBorderColor: "#7a7d85",
+  loopTextColor: "#f5f5f7",
+  activationBkgColor: "#3a3c41",
+  activationBorderColor: "#9b9ea6",
 } as const;
 
 const LIGHT_THEME_VARIABLES = {
@@ -47,6 +66,25 @@ const LIGHT_THEME_VARIABLES = {
   noteBkgColor: "#fef9c3",
   noteTextColor: "#1a1a1a",
   noteBorderColor: "#a1a1aa",
+  // erDiagram-specific (entity attribute rows)
+  attributeBackgroundColorOdd: "#ffffff",
+  attributeBackgroundColorEven: "#f4f4f5",
+  // stateDiagram-specific
+  altBackground: "#f4f4f5",
+  // flowchart label colors
+  labelBackground: "#ffffff",
+  // sequenceDiagram
+  actorBkg: "#ffffff",
+  actorBorder: "#3a3a3a",
+  actorTextColor: "#1a1a1a",
+  actorLineColor: "#4a4a4a",
+  signalColor: "#1a1a1a",
+  signalTextColor: "#1a1a1a",
+  labelBoxBkgColor: "#ffffff",
+  labelBoxBorderColor: "#3a3a3a",
+  loopTextColor: "#1a1a1a",
+  activationBkgColor: "#f4f4f5",
+  activationBorderColor: "#4a4a4a",
 } as const;
 
 export function Mermaid({ chart }: { chart: string }) {
