@@ -4,6 +4,7 @@ import { useTheme } from "next-themes";
 import { useEffect, useId, useRef, useState } from "react";
 
 const DARK_THEME_VARIABLES = {
+  darkMode: true,
   background: "transparent",
   primaryColor: "#1f2024",
   primaryTextColor: "#f5f5f7",
@@ -25,9 +26,9 @@ const DARK_THEME_VARIABLES = {
   noteBorderColor: "#7a7d85",
   errorBkgColor: "#4a1d1d",
   errorTextColor: "#fca5a5",
-  // erDiagram-specific (entity attribute rows)
+  // erDiagram-specific (entity attribute rows) — same color, no zebra stripe
   attributeBackgroundColorOdd: "#1f2024",
-  attributeBackgroundColorEven: "#272a30",
+  attributeBackgroundColorEven: "#1f2024",
   // stateDiagram-specific
   altBackground: "#26282d",
   // flowchart label colors
@@ -46,7 +47,37 @@ const DARK_THEME_VARIABLES = {
   activationBorderColor: "#9b9ea6",
 } as const;
 
+const DARK_THEME_CSS = `
+  .er.entityBox { fill: #1f2024 !important; stroke: #7a7d85 !important; }
+  .er.entityLabel { fill: #f5f5f7 !important; }
+  .er.attributeBoxOdd { fill: #1f2024 !important; }
+  .er.attributeBoxEven { fill: #1f2024 !important; }
+  .er .er.attribute-text,
+  .er .attribute-text,
+  .er text {
+    fill: #f5f5f7 !important;
+  }
+  .er.relationshipLabel,
+  .er.relationshipLabelBox {
+    fill: #f5f5f7 !important;
+  }
+  .er.relationshipLabelBox + text { fill: #1a1a1a !important; }
+`;
+
+const LIGHT_THEME_CSS = `
+  .er.entityBox { fill: #ffffff !important; stroke: #3a3a3a !important; }
+  .er.entityLabel { fill: #1a1a1a !important; }
+  .er.attributeBoxOdd { fill: #ffffff !important; }
+  .er.attributeBoxEven { fill: #f4f4f5 !important; }
+  .er .er.attribute-text,
+  .er .attribute-text,
+  .er text {
+    fill: #1a1a1a !important;
+  }
+`;
+
 const LIGHT_THEME_VARIABLES = {
+  darkMode: false,
   background: "transparent",
   primaryColor: "#ffffff",
   primaryTextColor: "#1a1a1a",
@@ -105,6 +136,7 @@ export function Mermaid({ chart }: { chart: string }) {
         startOnLoad: false,
         theme: "base",
         themeVariables: isDark ? DARK_THEME_VARIABLES : LIGHT_THEME_VARIABLES,
+        themeCSS: isDark ? DARK_THEME_CSS : LIGHT_THEME_CSS,
         securityLevel: "loose",
         fontFamily: '"IBM Plex Sans", "Inter", system-ui, sans-serif',
         flowchart: { padding: 18, htmlLabels: true, useMaxWidth: true },
