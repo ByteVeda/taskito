@@ -3,16 +3,75 @@ title: Guides
 description: Topical guides covering taskito's surface area.
 ---
 
-import { Cards, Card } from 'fumadocs-ui/components/card';
+import { Cards, Card } from "fumadocs-ui/components/card";
+import {
+  Boxes,
+  ShieldCheck,
+  Cpu,
+  Wrench,
+  Activity,
+  Layers,
+  Workflow,
+  Plug,
+  Puzzle,
+} from "lucide-react";
+
+Pick the topic you're working through. Each guide is self-contained, with code
+samples, gotchas, and links to the relevant API reference.
 
 <Cards>
-  <Card title="Core" href="/docs/guides/core" />
-  <Card title="Reliability" href="/docs/guides/reliability" />
-  <Card title="Advanced execution" href="/docs/guides/advanced-execution" />
-  <Card title="Operations" href="/docs/guides/operations" />
-  <Card title="Observability" href="/docs/guides/observability" />
-  <Card title="Resources" href="/docs/guides/resources" />
-  <Card title="Workflows" href="/docs/guides/workflows" />
-  <Card title="Integrations" href="/docs/guides/integrations" />
-  <Card title="Extensibility" href="/docs/guides/extensibility" />
+  <Card
+    icon={<Boxes />}
+    title="Core"
+    href="/docs/guides/core"
+    description="Define tasks, route to queues, run workers, schedule periodics."
+  />
+  <Card
+    icon={<ShieldCheck />}
+    title="Reliability"
+    href="/docs/guides/reliability"
+    description="Retries, dead letters, circuit breakers, idempotency, error handling."
+  />
+  <Card
+    icon={<Cpu />}
+    title="Advanced execution"
+    href="/docs/guides/advanced-execution"
+    description="Prefork pools, native async, streaming, cancellation, soft timeouts."
+  />
+  <Card
+    icon={<Wrench />}
+    title="Operations"
+    href="/docs/guides/operations"
+    description="Deployment, scaling, namespaces, migration from Celery."
+  />
+  <Card
+    icon={<Activity />}
+    title="Observability"
+    href="/docs/guides/observability"
+    description="Metrics, logs, dashboard, OpenTelemetry, Sentry, Prometheus."
+  />
+  <Card
+    icon={<Layers />}
+    title="Resources"
+    href="/docs/guides/resources"
+    description="Inject DB clients, HTTP sessions, and cloud SDKs by name with hot reload."
+  />
+  <Card
+    icon={<Workflow />}
+    title="Workflows"
+    href="/docs/guides/workflows"
+    description="DAGs, fan-out, fan-in, conditions, gates, sub-workflows, incremental re-runs."
+  />
+  <Card
+    icon={<Plug />}
+    title="Integrations"
+    href="/docs/guides/integrations"
+    description="Django, FastAPI, Flask — admin views, REST routers, management commands."
+  />
+  <Card
+    icon={<Puzzle />}
+    title="Extensibility"
+    href="/docs/guides/extensibility"
+    description="Custom serializers, middleware, events, webhooks, proxies."
+  />
 </Cards>

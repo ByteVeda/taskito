@@ -5,7 +5,7 @@ description: "The Tokio-based poll loop that dequeues, dispatches, retries, and 
 
 The scheduler runs in a dedicated Tokio single-threaded async runtime:
 
-```
+```text
 loop {
     sleep(50ms) or shutdown signal
 
@@ -23,6 +23,28 @@ loop {
 }
 ```
 
+> **Why those numbers?** 50 ms is fast enough that dequeue latency is imperceptible
+> but slow enough to leave the CPU 99% idle when the queue is empty. The periodic
+> intervals (~60, ~100, ~1200) are deliberately coprime so the four maintenance
+> tasks rarely fire on the same tick — keeping each individual iteration cheap.
+
+## Polling cycle
+
+<Mermaid
+  chart={`flowchart LR
+    Tick(["loop tick"]) --> Sleep["sleep 50ms"]
+    Sleep --> Dispatch["try_dispatch()"]
+    Dispatch --> Periodic{"iteration<br/>multiple?"}
+    Periodic -->|"every ~60"| CP["check_periodic()"]
+    Periodic -->|"every ~100"| RS["reap_stale()"]
+    Periodic -->|"every ~1200"| AC["auto_cleanup()"]
+    Periodic -->|"otherwise"| Next["next tick"]
+    CP --> Next
+    RS --> Next
+    AC --> Next
+    Next --> Tick`}
+/>
+
 ## Dispatch flow
 
 1. `dequeue_from()` — atomically `SELECT` + `UPDATE` (pending → running) within a transaction.
@@ -30,3 +52,27 @@ loop {
 3. Send job to worker pool via `tokio::sync::mpsc` channel.
 4. Worker executes task, sends result back.
 5. `handle_result()` — mark complete, schedule retry, or move to DLQ.
+
+<Mermaid
+  chart={`sequenceDiagram
+    autonumber
+    participant S as Scheduler
+    participant DB as Storage
+    participant RL as RateLimiter
+    participant WP as WorkerPool
+    participant W as Worker
+
+    S->>DB: dequeue_from()
+    DB-->>S: pending job
+    S->>RL: check(task)
+    alt over limit
+        RL-->>S: limited
+        S->>DB: reschedule +1s
+    else under limit
+        RL-->>S: ok
+        S->>WP: mpsc.send(job)
+        WP->>W: execute()
+        W-->>S: result
+        S->>DB: handle_result()
+    end`}
+/>

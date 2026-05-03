@@ -1,8 +1,11 @@
 import {
   Activity,
+  Clock,
   Cpu,
+  Database,
   Layers,
   type LucideIcon,
+  Mail,
   Shield,
   Workflow,
   Zap,
@@ -198,6 +201,72 @@ send_email.delay("alice@example.com", "Hi", "Body")
     },
   ],
 };
+
+export type UseCase = {
+  icon: LucideIcon;
+  title: string;
+  body: string;
+  href: string;
+};
+
+export const USE_CASES_TITLE = "Built for the jobs you actually have";
+export const USE_CASES_DESCRIPTION =
+  "Pick the workload — taskito ships the primitives.";
+
+export const USE_CASES: UseCase[] = [
+  {
+    icon: Database,
+    title: "ETL pipelines",
+    body: "Chain extract → transform → load as a DAG. Fan out across workers, fan in to aggregate, restart from any node on failure.",
+    href: "/docs/guides/workflows",
+  },
+  {
+    icon: Mail,
+    title: "Email & notifications",
+    body: "Bursty SMTP, push, or webhook delivery. Per-task rate limits keep providers happy; retries with backoff handle transient failures.",
+    href: "/docs/guides/reliability/retries",
+  },
+  {
+    icon: Cpu,
+    title: "ML inference & batch",
+    body: "Long-running model jobs with progress tracking, soft timeouts, and prefork pools for true CPU parallelism without GIL contention.",
+    href: "/docs/guides/advanced-execution/prefork",
+  },
+  {
+    icon: Clock,
+    title: "Scheduled jobs",
+    body: "Six-field cron syntax down to the second. Periodic tasks live in the scheduler — no separate beat daemon to babysit.",
+    href: "/docs/guides/core/scheduling",
+  },
+];
+
+export const INTEGRATIONS_TITLE = "Slots into your stack";
+export const INTEGRATIONS_DESCRIPTION =
+  "First-class support for the tools you already run.";
+
+export type IntegrationGroup = {
+  group: string;
+  items: string[];
+};
+
+export const INTEGRATIONS: IntegrationGroup[] = [
+  {
+    group: "Frameworks",
+    items: ["Django", "FastAPI", "Flask"],
+  },
+  {
+    group: "Storage",
+    items: ["Postgres", "SQLite", "Redis"],
+  },
+  {
+    group: "Observability",
+    items: ["OpenTelemetry", "Sentry", "Prometheus"],
+  },
+  {
+    group: "Serialization",
+    items: ["JSON", "MsgPack", "Cloudpickle"],
+  },
+];
 
 export const CTA: LandingCta = {
   title: "Five minutes from `pip install` to your first job.",

@@ -14,86 +14,122 @@ description: "SQLite pragmas, schema, indexes, connection pooling, and Postgres 
 
 ## Database schema
 
-<Mermaid
-  chart={`erDiagram
-    jobs {
-        TEXT id PK
-        TEXT queue
-        TEXT task_name
-        BLOB payload
-        INTEGER status
-        INTEGER priority
-        INTEGER created_at
-        INTEGER scheduled_at
-        INTEGER started_at
-        INTEGER completed_at
-        INTEGER retry_count
-        INTEGER max_retries
-        BLOB result
-        TEXT error
-        INTEGER timeout_ms
-        TEXT unique_key
-        INTEGER progress
-        TEXT metadata
-        BOOLEAN cancel_requested
-        INTEGER expires_at
-        INTEGER result_ttl_ms
-    }
+Six tables in the SQLite backend. Use the arrows or click a dot to flip between tables; the last slide shows their relationships.
 
-    dead_letter {
-        TEXT id PK
-        TEXT original_job_id
-        TEXT queue
-        TEXT task_name
-        BLOB payload
-        TEXT error
-        INTEGER retry_count
-        INTEGER failed_at
-        TEXT metadata
-        INTEGER priority
-        INTEGER max_retries
-        INTEGER timeout_ms
-        INTEGER result_ttl_ms
-    }
+<DiagramCarousel title="SQLite schema">
+  <DiagramSlide title="jobs">
+    <Mermaid
+      chart={`erDiagram
+        jobs {
+            TEXT id PK
+            TEXT queue
+            TEXT task_name
+            BLOB payload
+            INTEGER status
+            INTEGER priority
+            INTEGER created_at
+            INTEGER scheduled_at
+            INTEGER started_at
+            INTEGER completed_at
+            INTEGER retry_count
+            INTEGER max_retries
+            BLOB result
+            TEXT error
+            INTEGER timeout_ms
+            TEXT unique_key
+            INTEGER progress
+            TEXT metadata
+            BOOLEAN cancel_requested
+            INTEGER expires_at
+            INTEGER result_ttl_ms
+        }`}
+    />
+  </DiagramSlide>
 
-    job_errors {
-        TEXT id PK
-        TEXT job_id FK
-        INTEGER attempt
-        TEXT error
-        INTEGER failed_at
-    }
+  <DiagramSlide title="dead_letter">
+    <Mermaid
+      chart={`erDiagram
+        dead_letter {
+            TEXT id PK
+            TEXT original_job_id
+            TEXT queue
+            TEXT task_name
+            BLOB payload
+            TEXT error
+            INTEGER retry_count
+            INTEGER failed_at
+            TEXT metadata
+            INTEGER priority
+            INTEGER max_retries
+            INTEGER timeout_ms
+            INTEGER result_ttl_ms
+        }`}
+    />
+  </DiagramSlide>
 
-    rate_limits {
-        TEXT key PK
-        REAL tokens
-        REAL max_tokens
-        REAL refill_rate
-        INTEGER last_refill
-    }
+  <DiagramSlide title="job_errors">
+    <Mermaid
+      chart={`erDiagram
+        job_errors {
+            TEXT id PK
+            TEXT job_id FK
+            INTEGER attempt
+            TEXT error
+            INTEGER failed_at
+        }`}
+    />
+  </DiagramSlide>
 
-    periodic_tasks {
-        TEXT name PK
-        TEXT task_name
-        TEXT cron_expr
-        BLOB args
-        BLOB kwargs
-        TEXT queue
-        BOOLEAN enabled
-        INTEGER last_run
-        INTEGER next_run
-    }
+  <DiagramSlide title="rate_limits">
+    <Mermaid
+      chart={`erDiagram
+        rate_limits {
+            TEXT key PK
+            REAL tokens
+            REAL max_tokens
+            REAL refill_rate
+            INTEGER last_refill
+        }`}
+    />
+  </DiagramSlide>
 
-    workers {
-        TEXT worker_id PK
-        INTEGER last_heartbeat
-        TEXT queues
-        TEXT status
-    }
+  <DiagramSlide title="periodic_tasks">
+    <Mermaid
+      chart={`erDiagram
+        periodic_tasks {
+            TEXT name PK
+            TEXT task_name
+            TEXT cron_expr
+            BLOB args
+            BLOB kwargs
+            TEXT queue
+            BOOLEAN enabled
+            INTEGER last_run
+            INTEGER next_run
+        }`}
+    />
+  </DiagramSlide>
 
-    jobs ||--o{ job_errors : "error history"
-    jobs ||--o| dead_letter : "DLQ on exhaustion"`}
-/>
+  <DiagramSlide title="workers">
+    <Mermaid
+      chart={`erDiagram
+        workers {
+            TEXT worker_id PK
+            INTEGER last_heartbeat
+            TEXT queues
+            TEXT status
+        }`}
+    />
+  </DiagramSlide>
+
+  <DiagramSlide title="relationships">
+    <Mermaid
+      chart={`erDiagram
+        jobs ||--o{ job_errors : "error history"
+        jobs ||--o| dead_letter : "DLQ on exhaustion"`}
+    />
+  </DiagramSlide>
+</DiagramCarousel>
 
 ## Key indexes
 

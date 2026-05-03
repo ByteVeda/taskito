@@ -1,0 +1,77 @@
+---
+title: API Reference
+description: Every public class, method, and CLI command in taskito.
+---
+
+import { Cards, Card } from "fumadocs-ui/components/card";
+import {
+  Compass,
+  Inbox,
+  ListTodo,
+  CheckCircle2,
+  Variable,
+  GitFork,
+  Workflow,
+  TestTube,
+  Terminal,
+} from "lucide-react";
+
+Reference docs for everything taskito exposes. Each page lists the full
+signature, parameters, return values, and a short example.
+
+<Cards>
+  <Card
+    icon={<Compass />}
+    title="Overview"
+    href="/docs/api-reference/overview"
+    description="The shape of the public API — what's stable, what's experimental."
+  />
+  <Card
+    icon={<Inbox />}
+    title="Queue"
+    href="/docs/api-reference/queue"
+    description="Construct queues, enqueue jobs, manage workers, inspect state."
+  />
+  <Card
+    icon={<ListTodo />}
+    title="Task"
+    href="/docs/api-reference/task"
+    description="The @queue.task decorator — options, methods, async variants."
+  />
+  <Card
+    icon={<CheckCircle2 />}
+    title="Result"
+    href="/docs/api-reference/result"
+    description="JobResult, polling, awaiting, timeouts, sync and async APIs."
+  />
+  <Card
+    icon={<Variable />}
+    title="Context"
+    href="/docs/api-reference/context"
+    description="current_job — progress, logging, cancellation, timeouts inside a task."
+  />
+  <Card
+    icon={<GitFork />}
+    title="Canvas"
+    href="/docs/api-reference/canvas"
+    description="chain, group, chord — the Celery-compatible composition primitives."
+  />
+  <Card
+    icon={<Workflow />}
+    title="Workflows"
+    href="/docs/api-reference/workflows"
+    description="The DAG builder — fan-out, fan-in, gates, conditions, sub-workflows."
+  />
+  <Card
+    icon={<TestTube />}
+    title="Testing"
+    href="/docs/api-reference/testing"
+    description="test_mode, MockResource, fixtures for synchronous in-process verification."
+  />
+  <Card
+    icon={<Terminal />}
+    title="CLI"
+    href="/docs/api-reference/cli"
+    description="taskito worker, dashboard, info — every flag and subcommand."
+  />
+</Cards>
