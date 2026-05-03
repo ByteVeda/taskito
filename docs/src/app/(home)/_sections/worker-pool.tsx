@@ -1,5 +1,3 @@
-import { SectionHeader } from "@/components/ui";
-
 const WORKERS = [
   { id: 0, x: 0, y: 0, delay: "0s", duration: "2.4s" },
   { id: 1, x: 1, y: 0, delay: "-0.4s", duration: "2.8s" },
@@ -22,12 +20,12 @@ const RESULTS = [
   { delay: "-1.5s" },
 ] as const;
 
-const VIEW_W = 560;
-const VIEW_H = 150;
-const POOL_LEFT = 200;
-const POOL_TOP = 38;
-const WORKER_SIZE = 34;
-const WORKER_GAP = 10;
+const VIEW_W = 580;
+const VIEW_H = 170;
+const POOL_LEFT = 210;
+const POOL_TOP = 50;
+const WORKER_SIZE = 38;
+const WORKER_GAP = 12;
 const POOL_WIDTH = 3 * WORKER_SIZE + 2 * WORKER_GAP;
 const POOL_HEIGHT = 2 * WORKER_SIZE + 1 * WORKER_GAP;
 const POOL_RIGHT = POOL_LEFT + POOL_WIDTH;
@@ -39,10 +37,15 @@ const RESULT_END = VIEW_W - 30;
 export function WorkerPool() {
   return (
     <section className="px-4 pb-24 max-w-3xl mx-auto w-full">
-      <SectionHeader
-        title="Six workers. Constant flow."
-        description="Jobs stream in, workers pick them up, results stream out. No broker between them."
-      />
+      <div className="text-center mb-10">
+        <h2 className="font-handwritten text-3xl sm:text-4xl text-fd-foreground mb-2">
+          six workers, constant flow
+        </h2>
+        <p className="text-sm text-fd-muted-foreground">
+          Jobs stream in, workers pick them up, results stream out. No broker
+          between them.
+        </p>
+      </div>
       <div className="flex justify-center">
         <svg
           role="img"
@@ -50,6 +53,36 @@ export function WorkerPool() {
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           className="w-full max-w-2xl taskito-pool"
         >
+          <defs>
+            <filter id="taskito-pool-sketch">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.04"
+                numOctaves="2"
+                seed="7"
+              />
+              <feDisplacementMap in="SourceGraphic" scale="1.2" />
+            </filter>
+            <marker
+              id="taskito-pool-arrow"
+              viewBox="0 0 12 12"
+              refX="9"
+              refY="6"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto"
+            >
+              <path
+                d="M 1 1 L 10 6 L 1 11"
+                fill="none"
+                stroke="var(--color-fd-sketch-strong)"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </marker>
+          </defs>
+
           <LaneLabels />
           <Lanes />
 
@@ -59,7 +92,7 @@ export function WorkerPool() {
               key={`incoming-${i}`}
               cx={INCOMING_LEFT}
               cy={TRACK_Y}
-              r="3.5"
+              r="4"
               fill="var(--color-fd-primary)"
               className="taskito-incoming-dot"
               style={{ animationDelay: job.delay }}
@@ -79,15 +112,16 @@ export function WorkerPool() {
               style={{ animationDelay: result.delay }}
             >
               <circle
-                r="7"
+                r="8"
                 fill="var(--color-fd-card)"
                 stroke="var(--color-fd-primary)"
-                strokeWidth="1.5"
+                strokeWidth="1.75"
+                filter="url(#taskito-pool-sketch)"
               />
               <path
                 d="m -3.5 0.5 l 2.5 2.5 l 4.5 -4.5"
                 stroke="var(--color-fd-primary)"
-                strokeWidth="1.5"
+                strokeWidth="1.75"
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"
@@ -97,12 +131,12 @@ export function WorkerPool() {
 
           <text
             x={POOL_LEFT + POOL_WIDTH / 2}
-            y={POOL_TOP + POOL_HEIGHT + 22}
+            y={POOL_TOP + POOL_HEIGHT + 28}
             textAnchor="middle"
             fill="var(--color-fd-muted-foreground)"
-            fontSize="9"
-            fontFamily="ui-monospace, SFMono-Regular, monospace"
-            opacity="0.7"
+            fontSize="14"
+            fontFamily="var(--font-handwritten), Caveat, cursive"
+            fontWeight="500"
           >
             6 workers · 0 brokers
           </text>
@@ -114,41 +148,26 @@ export function WorkerPool() {
 }
 
 function LaneLabels() {
+  const labels = [
+    { x: INCOMING_LEFT, text: "incoming" },
+    { x: POOL_LEFT, text: "workers" },
+    { x: RESULT_LEFT, text: "results" },
+  ];
   return (
     <>
-      <text
-        x={INCOMING_LEFT}
-        y="20"
-        fill="var(--color-fd-muted-foreground)"
-        fontSize="9"
-        fontFamily="ui-monospace, SFMono-Regular, monospace"
-        letterSpacing="0.15em"
-        opacity="0.7"
-      >
-        INCOMING
-      </text>
-      <text
-        x={POOL_LEFT}
-        y="20"
-        fill="var(--color-fd-muted-foreground)"
-        fontSize="9"
-        fontFamily="ui-monospace, SFMono-Regular, monospace"
-        letterSpacing="0.15em"
-        opacity="0.7"
-      >
-        WORKERS
-      </text>
-      <text
-        x={RESULT_LEFT}
-        y="20"
-        fill="var(--color-fd-muted-foreground)"
-        fontSize="9"
-        fontFamily="ui-monospace, SFMono-Regular, monospace"
-        letterSpacing="0.15em"
-        opacity="0.7"
-      >
-        RESULTS
-      </text>
+      {labels.map((label) => (
+        <text
+          key={label.text}
+          x={label.x}
+          y="28"
+          fill="var(--color-fd-foreground)"
+          fontSize="17"
+          fontFamily="var(--font-handwritten), Caveat, cursive"
+          fontWeight="600"
+        >
+          {label.text}
+        </text>
+      ))}
     </>
   );
 }
@@ -159,20 +178,26 @@ function Lanes() {
       <line
         x1={INCOMING_LEFT}
         y1={TRACK_Y}
-        x2={POOL_LEFT - 8}
+        x2={POOL_LEFT - 10}
         y2={TRACK_Y}
-        stroke="var(--color-fd-border)"
-        strokeWidth="1"
-        strokeDasharray="2 4"
+        stroke="var(--color-fd-sketch)"
+        strokeWidth="1.5"
+        strokeDasharray="2 6"
+        strokeLinecap="round"
+        markerEnd="url(#taskito-pool-arrow)"
+        filter="url(#taskito-pool-sketch)"
       />
       <line
-        x1={POOL_RIGHT + 8}
+        x1={POOL_RIGHT + 10}
         y1={TRACK_Y}
-        x2={RESULT_END}
+        x2={RESULT_END - 4}
         y2={TRACK_Y}
-        stroke="var(--color-fd-border)"
-        strokeWidth="1"
-        strokeDasharray="2 4"
+        stroke="var(--color-fd-sketch)"
+        strokeWidth="1.5"
+        strokeDasharray="2 6"
+        strokeLinecap="round"
+        markerEnd="url(#taskito-pool-arrow)"
+        filter="url(#taskito-pool-sketch)"
       />
     </>
   );
@@ -198,33 +223,33 @@ function Worker({ worker }: { worker: (typeof WORKERS)[number] }) {
         y={y}
         width={WORKER_SIZE}
         height={WORKER_SIZE}
-        rx="6"
+        rx="7"
         fill="var(--color-fd-card)"
-        stroke="var(--color-fd-border)"
-        strokeWidth="1.5"
+        stroke="var(--color-fd-sketch-strong)"
+        strokeWidth="1.75"
+        filter="url(#taskito-pool-sketch)"
       />
       <circle
         cx={cx}
         cy={cy}
-        r="6"
+        r="7"
         fill="none"
         stroke="var(--color-fd-primary)"
-        strokeWidth="1.25"
+        strokeWidth="1.4"
         className="taskito-worker-ring"
         style={{ transformOrigin: `${cx}px ${cy}px` }}
       />
       <circle
         cx={cx}
         cy={cy}
-        r="2.75"
+        r="3"
         fill="var(--color-fd-muted-foreground)"
-        opacity="0.35"
-        className="taskito-worker-dot-idle"
+        opacity="0.4"
       />
       <circle
         cx={cx}
         cy={cy}
-        r="2.75"
+        r="3"
         fill="var(--color-fd-primary)"
         className="taskito-worker-dot-active"
       />
@@ -238,25 +263,25 @@ function PoolStyles() {
       @keyframes taskito-incoming-flow {
         0%   { cx: ${INCOMING_LEFT}px; opacity: 0; }
         10%  { opacity: 1; }
-        88%  { cx: ${POOL_LEFT - 6}px; opacity: 1; }
-        100% { cx: ${POOL_LEFT - 6}px; opacity: 0; }
+        88%  { cx: ${POOL_LEFT - 8}px; opacity: 1; }
+        100% { cx: ${POOL_LEFT - 8}px; opacity: 0; }
       }
       @keyframes taskito-result-flow {
         0%   { transform: translate(${RESULT_LEFT}px, ${TRACK_Y}px); opacity: 0; }
         10%  { opacity: 1; }
-        90%  { transform: translate(${RESULT_END}px, ${TRACK_Y}px); opacity: 1; }
-        100% { transform: translate(${RESULT_END}px, ${TRACK_Y}px); opacity: 0; }
+        90%  { transform: translate(${RESULT_END - 4}px, ${TRACK_Y}px); opacity: 1; }
+        100% { transform: translate(${RESULT_END - 4}px, ${TRACK_Y}px); opacity: 0; }
       }
       @keyframes taskito-worker-active-pulse {
-        0%, 35%   { opacity: 0; transform: scale(0.7); }
+        0%, 35%   { opacity: 0; transform: scale(0.6); }
         50%       { opacity: 1; transform: scale(1); }
         85%       { opacity: 1; transform: scale(1); }
-        100%      { opacity: 0; transform: scale(0.7); }
+        100%      { opacity: 0; transform: scale(0.6); }
       }
       @keyframes taskito-worker-ring-pulse {
-        0%, 35%   { opacity: 0; transform: scale(0.6); }
-        55%       { opacity: 0.5; transform: scale(1.4); }
-        100%      { opacity: 0; transform: scale(2); }
+        0%, 35%   { opacity: 0; transform: scale(0.55); }
+        55%       { opacity: 0.55; transform: scale(1.5); }
+        100%      { opacity: 0; transform: scale(2.1); }
       }
       .taskito-pool .taskito-worker-dot-active {
         opacity: 0;
@@ -269,11 +294,11 @@ function PoolStyles() {
       }
       @media (prefers-reduced-motion: no-preference) {
         .taskito-pool .taskito-incoming-dot {
-          animation: taskito-incoming-flow 2.2s linear infinite;
-          filter: drop-shadow(0 0 2px var(--color-fd-primary));
+          animation: taskito-incoming-flow 2.4s linear infinite;
+          filter: drop-shadow(0 0 3px var(--color-fd-primary));
         }
         .taskito-pool .taskito-result {
-          animation: taskito-result-flow 2.2s linear infinite;
+          animation: taskito-result-flow 2.4s linear infinite;
         }
         .taskito-pool .taskito-worker-dot-active {
           animation: taskito-worker-active-pulse var(--worker-duration) ease-in-out infinite;

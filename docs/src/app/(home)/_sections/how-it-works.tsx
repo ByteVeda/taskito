@@ -8,53 +8,55 @@ type Station = {
   glyph: ReactNode;
 };
 
-const VIEW_WIDTH = 380;
-const TRACK_Y = 36;
-const STATION_RADIUS = 14;
+const VIEW_W = 460;
+const VIEW_H = 130;
+const TRACK_Y = 50;
+const STATION_W = 56;
+const STATION_H = 44;
 
 const STATIONS: Station[] = [
   {
     id: "enqueue",
     label: "enqueue",
     hint: ".delay()",
-    cx: 40,
+    cx: 56,
     glyph: <CodeGlyph />,
   },
   {
     id: "queue",
     label: "queue",
     hint: "SQLite · Postgres",
-    cx: 145,
+    cx: 184,
     glyph: <DatabaseGlyph />,
   },
   {
     id: "worker",
     label: "worker",
     hint: "Rust pool",
-    cx: 250,
+    cx: 304,
     glyph: <WorkerGlyph />,
   },
   {
     id: "result",
     label: "result",
     hint: ".result()",
-    cx: 340,
+    cx: 412,
     glyph: <CheckGlyph />,
   },
 ];
 
-const JOB_DELAYS = ["0s", "-1.6s", "-3.2s"] as const;
+const JOB_DELAYS = ["0s", "-1.7s", "-3.4s"] as const;
 
 export function HowItWorks() {
   return (
     <section className="px-4 pb-20 max-w-3xl mx-auto w-full">
-      <div className="text-center mb-8">
-        <h2 className="text-xs uppercase tracking-[0.2em] text-fd-muted-foreground font-semibold mb-1">
-          How it works
+      <div className="text-center mb-10">
+        <h2 className="font-handwritten text-3xl sm:text-4xl text-fd-foreground mb-2">
+          how it works
         </h2>
-        <p className="text-sm text-fd-muted-foreground/70">
+        <p className="text-sm text-fd-muted-foreground">
           Your code calls{" "}
-          <code className="font-mono text-fd-primary/80">.delay()</code> · the
+          <code className="font-mono text-fd-primary/90">.delay()</code> · the
           job durably queues · a Rust scheduler routes it · a worker returns the
           result.
         </p>
@@ -63,79 +65,73 @@ export function HowItWorks() {
         <svg
           role="img"
           aria-label="Job lifecycle: enqueue from your code, durable queue, Rust worker pool, result returned"
-          viewBox={`0 0 ${VIEW_WIDTH} 88`}
+          viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           className="w-full max-w-2xl taskito-flow"
         >
           <defs>
-            <linearGradient
-              id="taskito-track-gradient"
-              x1="0"
-              y1="0"
-              x2={VIEW_WIDTH}
-              y2="0"
-              gradientUnits="userSpaceOnUse"
+            <filter id="taskito-flow-sketch">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.04"
+                numOctaves="2"
+                seed="3"
+              />
+              <feDisplacementMap in="SourceGraphic" scale="1.4" />
+            </filter>
+            <marker
+              id="taskito-flow-arrow"
+              viewBox="0 0 12 12"
+              refX="9"
+              refY="6"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto"
             >
-              <stop offset="0" stopColor="var(--color-fd-border)" />
-              <stop
-                offset="0.5"
-                stopColor="var(--color-fd-primary)"
-                stopOpacity="0.4"
+              <path
+                d="M 1 1 L 10 6 L 1 11"
+                fill="none"
+                stroke="var(--color-fd-sketch-strong)"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
-              <stop offset="1" stopColor="var(--color-fd-border)" />
-            </linearGradient>
-            <radialGradient id="taskito-job-aura" cx="0.5" cy="0.5" r="0.5">
-              <stop
-                offset="0"
-                stopColor="var(--color-fd-primary)"
-                stopOpacity="0.7"
-              />
-              <stop
-                offset="1"
-                stopColor="var(--color-fd-primary)"
-                stopOpacity="0"
-              />
-            </radialGradient>
+            </marker>
           </defs>
 
-          <BackgroundGrid />
-
-          <line
-            x1={STATIONS[0].cx}
-            y1={TRACK_Y}
-            x2={STATIONS[STATIONS.length - 1].cx}
-            y2={TRACK_Y}
-            stroke="url(#taskito-track-gradient)"
-            strokeWidth="1.5"
-            strokeDasharray="3 5"
-            className="taskito-track"
-          />
+          {STATIONS.slice(0, -1).map((station, i) => {
+            const next = STATIONS[i + 1];
+            return (
+              <line
+                key={station.id}
+                x1={station.cx + STATION_W / 2 + 4}
+                y1={TRACK_Y}
+                x2={next.cx - STATION_W / 2 - 8}
+                y2={TRACK_Y}
+                stroke="var(--color-fd-sketch)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeDasharray="2 5"
+                markerEnd="url(#taskito-flow-arrow)"
+                filter="url(#taskito-flow-sketch)"
+              />
+            );
+          })}
 
           {STATIONS.map((station) => (
             <StationNode key={station.id} station={station} />
           ))}
 
           {JOB_DELAYS.map((delay, index) => (
-            <g
-              // biome-ignore lint/suspicious/noArrayIndexKey: stable phased delays
+            <circle
+              // biome-ignore lint/suspicious/noArrayIndexKey: stable list
               key={index}
+              cx={STATIONS[0].cx}
+              cy={TRACK_Y}
+              r="4"
+              fill="var(--color-fd-primary)"
+              className="taskito-flow-job"
               style={{ animationDelay: delay }}
-              className="taskito-job"
-            >
-              <circle
-                cx={STATIONS[0].cx}
-                cy={TRACK_Y}
-                r="9"
-                fill="url(#taskito-job-aura)"
-                className="taskito-job-aura"
-              />
-              <circle
-                cx={STATIONS[0].cx}
-                cy={TRACK_Y}
-                r="3.5"
-                fill="var(--color-fd-primary)"
-                className="taskito-job-dot"
-              />
-            </g>
+            />
           ))}
         </svg>
       </div>
@@ -146,66 +142,58 @@ export function HowItWorks() {
 
 function StationNode({ station }: { station: Station }) {
   const isWorker = station.id === "worker";
-  const isResult = station.id === "result";
+  const x = station.cx - STATION_W / 2;
+  const y = TRACK_Y - STATION_H / 2;
   return (
-    <g className="taskito-station">
-      <circle
-        cx={station.cx}
-        cy={TRACK_Y}
-        r={STATION_RADIUS}
+    <g className="taskito-flow-station">
+      <rect
+        x={x}
+        y={y}
+        width={STATION_W}
+        height={STATION_H}
+        rx="6"
         fill="var(--color-fd-card)"
-        stroke="var(--color-fd-border)"
-        strokeWidth="1.5"
+        stroke="var(--color-fd-sketch-strong)"
+        strokeWidth="1.75"
+        filter="url(#taskito-flow-sketch)"
       />
+      <g
+        transform={`translate(${station.cx - 8}, ${TRACK_Y - 8})`}
+        className="taskito-flow-station-glyph"
+      >
+        {station.glyph}
+      </g>
       {isWorker ? (
         <circle
           cx={station.cx}
           cy={TRACK_Y}
-          r={STATION_RADIUS + 3}
+          r={STATION_W / 2 + 4}
           fill="none"
           stroke="var(--color-fd-primary)"
-          strokeWidth="1.5"
-          strokeDasharray="4 6"
-          className="taskito-worker-spinner"
+          strokeWidth="1.4"
+          strokeDasharray="3 6"
+          opacity="0.7"
+          className="taskito-flow-worker-spinner"
           style={{ transformOrigin: `${station.cx}px ${TRACK_Y}px` }}
         />
       ) : null}
-      {isResult ? (
-        <circle
-          cx={station.cx}
-          cy={TRACK_Y}
-          r={STATION_RADIUS + 4}
-          fill="none"
-          stroke="var(--color-fd-primary)"
-          strokeWidth="1"
-          opacity="0"
-          className="taskito-result-pulse"
-        />
-      ) : null}
-      <g
-        transform={`translate(${station.cx - 7}, ${TRACK_Y - 7})`}
-        className="taskito-station-glyph"
-      >
-        {station.glyph}
-      </g>
       <text
         x={station.cx}
-        y={TRACK_Y + 26}
+        y={TRACK_Y + STATION_H / 2 + 18}
         textAnchor="middle"
         fill="var(--color-fd-foreground)"
-        fontSize="10"
+        fontSize="16"
         fontWeight="600"
-        fontFamily="ui-sans-serif, system-ui, sans-serif"
-        className="taskito-station-label"
+        fontFamily="var(--font-handwritten), Caveat, cursive"
       >
         {station.label}
       </text>
       <text
         x={station.cx}
-        y={TRACK_Y + 39}
+        y={TRACK_Y + STATION_H / 2 + 32}
         textAnchor="middle"
         fill="var(--color-fd-muted-foreground)"
-        fontSize="8"
+        fontSize="9"
         fontFamily="ui-monospace, SFMono-Regular, monospace"
         opacity="0.7"
       >
@@ -215,31 +203,11 @@ function StationNode({ station }: { station: Station }) {
   );
 }
 
-function BackgroundGrid() {
-  const dots = [];
-  const step = 14;
-  for (let x = 8; x < VIEW_WIDTH; x += step) {
-    for (let y = 4; y < 84; y += step) {
-      dots.push(
-        <circle
-          key={`${x}-${y}`}
-          cx={x}
-          cy={y}
-          r="0.7"
-          fill="var(--color-fd-muted-foreground)"
-          opacity="0.08"
-        />,
-      );
-    }
-  }
-  return <g aria-hidden>{dots}</g>;
-}
-
 function CodeGlyph() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="var(--color-fd-foreground)"
@@ -258,8 +226,8 @@ function CodeGlyph() {
 function DatabaseGlyph() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="var(--color-fd-foreground)"
@@ -279,8 +247,8 @@ function DatabaseGlyph() {
 function WorkerGlyph() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="var(--color-fd-foreground)"
       role="img"
@@ -296,8 +264,8 @@ function WorkerGlyph() {
 function CheckGlyph() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="var(--color-fd-primary)"
@@ -315,55 +283,34 @@ function CheckGlyph() {
 function FlowStyles() {
   return (
     <style>{`
-      .taskito-flow .taskito-station {
+      .taskito-flow .taskito-flow-station {
         transition: transform 200ms ease;
       }
-      .taskito-flow .taskito-station:hover {
-        transform: translateY(-1px);
+      .taskito-flow .taskito-flow-station:hover {
+        transform: translateY(-1.5px);
       }
-      .taskito-flow .taskito-station:hover .taskito-station-label {
-        fill: var(--color-fd-primary);
-      }
-      @keyframes taskito-job-travel {
-        0%   { cx: 40px;  opacity: 0; }
+      @keyframes taskito-flow-job-travel {
+        0%   { cx: 56px;  opacity: 0; }
         4%   { opacity: 1; }
-        25%  { cx: 145px; opacity: 1; }
-        33%  { cx: 145px; opacity: 1; }
-        50%  { cx: 250px; opacity: 1; }
-        58%  { cx: 250px; opacity: 1; }
-        80%  { cx: 340px; opacity: 1; }
+        24%  { cx: 184px; opacity: 1; }
+        32%  { cx: 184px; opacity: 1; }
+        50%  { cx: 304px; opacity: 1; }
+        58%  { cx: 304px; opacity: 1; }
+        80%  { cx: 412px; opacity: 1; }
         92%  { opacity: 0; }
-        100% { cx: 40px;  opacity: 0; }
+        100% { cx: 56px;  opacity: 0; }
       }
-      @keyframes taskito-worker-spin {
+      @keyframes taskito-flow-worker-spin {
         from { transform: rotate(0deg); }
         to   { transform: rotate(360deg); }
       }
-      @keyframes taskito-result-pulse {
-        0%, 70% { r: 18px; opacity: 0; }
-        80%     { r: 18px; opacity: 0.6; }
-        100%    { r: 26px; opacity: 0; }
-      }
-      @keyframes taskito-track-shimmer {
-        0%   { stroke-dashoffset: 0; }
-        100% { stroke-dashoffset: -16; }
-      }
       @media (prefers-reduced-motion: no-preference) {
-        .taskito-flow .taskito-job-dot {
-          animation: taskito-job-travel 4.8s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
-          filter: drop-shadow(0 0 3px var(--color-fd-primary));
+        .taskito-flow .taskito-flow-job {
+          animation: taskito-flow-job-travel 5.1s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+          filter: drop-shadow(0 0 4px var(--color-fd-primary));
         }
-        .taskito-flow .taskito-job-aura {
-          animation: taskito-job-travel 4.8s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
-        }
-        .taskito-flow .taskito-worker-spinner {
-          animation: taskito-worker-spin 6s linear infinite;
-        }
-        .taskito-flow .taskito-result-pulse {
-          animation: taskito-result-pulse 4.8s ease-out infinite;
-        }
-        .taskito-flow .taskito-track {
-          animation: taskito-track-shimmer 1.6s linear infinite;
+        .taskito-flow .taskito-flow-worker-spinner {
+          animation: taskito-flow-worker-spin 7s linear infinite;
         }
       }
     `}</style>
