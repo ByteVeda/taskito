@@ -1,23 +1,4 @@
-"use client";
-
-import { useState } from "react";
-
-type Stack = "taskito" | "celery";
-
-const STACKS: Record<
-  Stack,
-  {
-    label: string;
-    services: string;
-    install: string;
-    code: string;
-  }
-> = {
-  taskito: {
-    label: "taskito",
-    services: "1 process",
-    install: "pip install taskito",
-    code: `from taskito import Queue
+const TASKITO_CODE = `from taskito import Queue
 
 queue = Queue(db_path="tasks.db")
 
@@ -29,13 +10,9 @@ def send_email(to, subject, body):
 send_email.delay("alice@example.com", "Hi", "Body")
 
 # Run the worker
-# $ taskito worker --app tasks:queue`,
-  },
-  celery: {
-    label: "Celery + Redis",
-    services: "3 processes (Redis + worker + beat)",
-    install: "pip install celery[redis]\n# also: install + run Redis server",
-    code: `from celery import Celery
+# $ taskito worker --app tasks:queue`;
+
+const CELERY_CODE = `from celery import Celery
 
 app = Celery(
     "myapp",
@@ -55,75 +32,139 @@ def send_email(self, to, subject, body):
 send_email.delay("alice@example.com", "Hi", "Body")
 
 # Run the worker (in a separate terminal, plus Redis)
-# $ celery -A myapp worker --loglevel=info`,
+# $ celery -A myapp worker --loglevel=info`;
+
+type Tone = "primary" | "muted";
+
+const ROWS: { label: string; taskito: string; celery: string }[] = [
+  {
+    label: "Install",
+    taskito: "pip install taskito",
+    celery: "pip install celery[redis] + run Redis daemon",
   },
-};
+  {
+    label: "Background services",
+    taskito: "1 (worker)",
+    celery: "3 (worker, beat, Redis)",
+  },
+  {
+    label: "Default storage",
+    taskito: "SQLite file (built-in)",
+    celery: "Redis (separate daemon)",
+  },
+  {
+    label: "Retry config in the example above",
+    taskito: "max_retries=3 decorator arg",
+    celery: "try/except + self.retry(exc=…)",
+  },
+];
 
 export function Comparison() {
-  const [stack, setStack] = useState<Stack>("taskito");
-  const data = STACKS[stack];
-
   return (
-    <div className="rounded-lg border border-fd-border bg-fd-card overflow-hidden">
-      <div className="flex border-b border-fd-border" role="tablist">
-        {(Object.keys(STACKS) as Stack[]).map((key) => {
-          const active = stack === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setStack(key)}
-              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-                active
-                  ? "bg-fd-primary/10 text-fd-foreground border-b-2 border-fd-primary -mb-px"
-                  : "text-fd-muted-foreground hover:text-fd-foreground hover:bg-fd-accent/50"
-              }`}
-            >
-              {STACKS[key].label}
-            </button>
-          );
-        })}
-      </div>
-      <div className="grid sm:grid-cols-3 gap-px bg-fd-border">
-        <Stat label="Install" value={data.install} mono />
-        <Stat label="Services to run" value={data.services} />
-        <Stat
-          label="Background"
-          value={
-            stack === "taskito"
-              ? "Single Python process"
-              : "Worker process + Redis daemon"
-          }
+    <div className="space-y-6">
+      <div className="grid md:grid-cols-2 gap-4">
+        <CodePanel
+          label="taskito"
+          caption="Brokerless · single process"
+          tone="primary"
+          code={TASKITO_CODE}
+        />
+        <CodePanel
+          label="Celery + Redis"
+          caption="Requires Redis · 3 processes"
+          tone="muted"
+          code={CELERY_CODE}
         />
       </div>
+      <DifferentiatorTable />
+    </div>
+  );
+}
+
+function CodePanel({
+  label,
+  caption,
+  tone,
+  code,
+}: {
+  label: string;
+  caption: string;
+  tone: Tone;
+  code: string;
+}) {
+  const accent =
+    tone === "primary" ? "border-t-fd-primary" : "border-t-fd-border";
+  return (
+    <div
+      className={`rounded-lg border border-fd-border border-t-2 bg-fd-card overflow-hidden ${accent}`}
+    >
+      <div className="flex items-baseline justify-between px-4 py-3 border-b border-fd-border bg-fd-muted">
+        <span
+          className={`text-sm font-semibold ${
+            tone === "primary" ? "text-fd-primary" : "text-fd-foreground"
+          }`}
+        >
+          {label}
+        </span>
+        <span className="text-xs text-fd-muted-foreground">{caption}</span>
+      </div>
       <pre className="p-5 text-sm font-mono leading-relaxed overflow-x-auto bg-fd-card">
-        <code>{data.code}</code>
+        <code>{code}</code>
       </pre>
     </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function DifferentiatorTable() {
   return (
-    <div className="bg-fd-card px-4 py-3">
-      <div className="text-xs uppercase tracking-wider text-fd-muted-foreground mb-1">
-        {label}
-      </div>
-      <div
-        className={`text-sm whitespace-pre-line ${mono ? "font-mono" : "font-medium"}`}
-      >
-        {value}
-      </div>
+    <div className="rounded-lg border border-fd-border bg-fd-card overflow-hidden">
+      <table className="w-full border-collapse text-xs sm:text-sm">
+        <thead>
+          <tr className="border-b border-fd-border bg-fd-muted">
+            <th
+              scope="col"
+              className="text-left px-4 py-3 font-medium text-fd-muted-foreground"
+            >
+              <span className="sr-only">Property</span>
+            </th>
+            <th
+              scope="col"
+              className="text-left px-4 py-3 font-semibold text-fd-primary"
+            >
+              taskito
+            </th>
+            <th
+              scope="col"
+              className="text-left px-4 py-3 font-semibold text-fd-foreground"
+            >
+              Celery + Redis
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {ROWS.map((row, i) => (
+            <tr
+              key={row.label}
+              className={
+                i < ROWS.length - 1 ? "border-b border-fd-border" : undefined
+              }
+            >
+              <th
+                scope="row"
+                className="text-left px-4 py-3 font-medium text-fd-muted-foreground align-top"
+              >
+                {row.label}
+              </th>
+              <td className="px-4 py-3 align-top text-fd-foreground">
+                {row.taskito}
+              </td>
+              <td className="px-4 py-3 align-top text-fd-muted-foreground">
+                {row.celery}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
