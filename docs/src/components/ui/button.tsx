@@ -9,8 +9,7 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
     "bg-fd-primary text-fd-primary-foreground hover:opacity-90 transition-opacity",
   secondary:
     "border border-fd-border bg-fd-card hover:bg-fd-accent transition-colors",
-  ghost:
-    "text-fd-muted-foreground hover:text-fd-foreground transition-colors",
+  ghost: "text-fd-muted-foreground hover:text-fd-foreground transition-colors",
 };
 
 const BASE_CLASSES =
@@ -35,13 +34,7 @@ type AsButton = CommonProps & {
   >;
 
 export function Button(props: AsLink | AsButton) {
-  const {
-    variant = "primary",
-    icon,
-    children,
-    className,
-    ...rest
-  } = props;
+  const { variant = "primary", icon, children, className, ...rest } = props;
   const classes = cn(BASE_CLASSES, VARIANT_CLASSES[variant], className);
 
   if ("href" in rest && rest.href !== undefined) {
