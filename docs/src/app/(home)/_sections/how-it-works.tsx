@@ -66,7 +66,7 @@ export function HowItWorks() {
           role="img"
           aria-label="Job lifecycle: enqueue from your code, durable queue, Rust worker pool, result returned"
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-          className="w-full max-w-2xl taskito-flow"
+          className="w-full max-w-2xl font-handwritten taskito-flow"
         >
           <defs>
             <filter id="taskito-flow-sketch">
@@ -184,7 +184,6 @@ function StationNode({ station }: { station: Station }) {
         fill="var(--color-fd-foreground)"
         fontSize="16"
         fontWeight="600"
-        fontFamily="var(--font-handwritten), 'Shantell Sans', cursive"
       >
         {station.label}
       </text>

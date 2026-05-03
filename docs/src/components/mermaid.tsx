@@ -39,7 +39,7 @@ export function Mermaid({ chart }: { chart: string }) {
   return (
     <div
       ref={containerRef}
-      className="my-4 flex justify-center [&_svg]:max-w-full"
+      className="my-4 flex justify-center font-handwritten [&_svg]:max-w-full"
       // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
       dangerouslySetInnerHTML={{ __html: svg }}
     />

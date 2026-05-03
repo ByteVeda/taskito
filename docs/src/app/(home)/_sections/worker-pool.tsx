@@ -51,7 +51,7 @@ export function WorkerPool() {
           role="img"
           aria-label="Six-worker pool with jobs streaming in from the left and results streaming out to the right"
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-          className="w-full max-w-2xl taskito-pool"
+          className="w-full max-w-2xl font-handwritten taskito-pool"
         >
           <defs>
             <filter id="taskito-pool-sketch">
@@ -135,7 +135,6 @@ export function WorkerPool() {
             textAnchor="middle"
             fill="var(--color-fd-muted-foreground)"
             fontSize="14"
-            fontFamily="var(--font-handwritten), 'Shantell Sans', cursive"
             fontWeight="500"
           >
             6 workers · 0 brokers
@@ -162,7 +161,6 @@ function LaneLabels() {
           y="28"
           fill="var(--color-fd-foreground)"
           fontSize="17"
-          fontFamily="var(--font-handwritten), 'Shantell Sans', cursive"
           fontWeight="600"
         >
           {label.text}
