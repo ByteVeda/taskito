@@ -4,6 +4,9 @@ import {
   Features,
   Hero,
   HowItWorks,
+  Integrations,
+  UseCases,
+  WorkerPool,
 } from "./_sections";
 
 export default function HomePage() {
@@ -11,7 +14,10 @@ export default function HomePage() {
     <main className="flex flex-col flex-1">
       <Hero />
       <HowItWorks />
+      <WorkerPool />
       <Features />
+      <UseCases />
+      <Integrations />
       <ComparisonSection />
       <CTA />
     </main>
