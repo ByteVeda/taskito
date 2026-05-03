@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 export type HighlightLang = "python" | "bash" | "tsx" | "ts" | "json" | "yaml";
 
 const DEFAULT_PRE_CLASSES =
-  "p-5 text-sm leading-relaxed overflow-x-auto bg-fd-card";
+  "p-5 text-sm leading-relaxed overflow-x-auto bg-(--shiki-light-bg) dark:bg-(--shiki-dark-bg)";
 
 export async function highlight(
   code: string,
@@ -14,6 +14,7 @@ export async function highlight(
 ): Promise<ReactNode> {
   return fumaHighlight(code, {
     lang,
+    defaultColor: false,
     themes: {
       light: "github-light",
       dark: "github-dark",
