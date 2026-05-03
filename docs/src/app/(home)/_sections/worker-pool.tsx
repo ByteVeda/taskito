@@ -22,15 +22,19 @@ const RESULTS = [
   { delay: "-1.5s" },
 ] as const;
 
-const POOL_LEFT = 180;
-const POOL_TOP = 30;
-const WORKER_SIZE = 32;
+const VIEW_W = 560;
+const VIEW_H = 150;
+const POOL_LEFT = 200;
+const POOL_TOP = 38;
+const WORKER_SIZE = 34;
 const WORKER_GAP = 10;
 const POOL_WIDTH = 3 * WORKER_SIZE + 2 * WORKER_GAP;
 const POOL_HEIGHT = 2 * WORKER_SIZE + 1 * WORKER_GAP;
-const VIEW_W = 560;
-const VIEW_H = 130;
 const POOL_RIGHT = POOL_LEFT + POOL_WIDTH;
+const TRACK_Y = POOL_TOP + POOL_HEIGHT / 2;
+const INCOMING_LEFT = 30;
+const RESULT_LEFT = POOL_RIGHT + 30;
+const RESULT_END = VIEW_W - 30;
 
 export function WorkerPool() {
   return (
@@ -46,149 +50,47 @@ export function WorkerPool() {
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           className="w-full max-w-2xl taskito-pool"
         >
-          <defs>
-            <linearGradient
-              id="taskito-pool-incoming"
-              x1="0"
-              y1="0"
-              x2="1"
-              y2="0"
-            >
-              <stop
-                offset="0"
-                stopColor="var(--color-fd-primary)"
-                stopOpacity="0"
-              />
-              <stop
-                offset="1"
-                stopColor="var(--color-fd-primary)"
-                stopOpacity="0.85"
-              />
-            </linearGradient>
-            <linearGradient
-              id="taskito-pool-outgoing"
-              x1="0"
-              y1="0"
-              x2="1"
-              y2="0"
-            >
-              <stop
-                offset="0"
-                stopColor="var(--color-fd-primary)"
-                stopOpacity="0.85"
-              />
-              <stop
-                offset="1"
-                stopColor="var(--color-fd-primary)"
-                stopOpacity="0"
-              />
-            </linearGradient>
-          </defs>
-
-          <text
-            x="14"
-            y="20"
-            fill="var(--color-fd-muted-foreground)"
-            fontSize="9"
-            fontFamily="ui-monospace, SFMono-Regular, monospace"
-            letterSpacing="0.1em"
-          >
-            INCOMING
-          </text>
-          <text
-            x={POOL_LEFT}
-            y="20"
-            fill="var(--color-fd-muted-foreground)"
-            fontSize="9"
-            fontFamily="ui-monospace, SFMono-Regular, monospace"
-            letterSpacing="0.1em"
-          >
-            WORKERS
-          </text>
-          <text
-            x={POOL_RIGHT + 20}
-            y="20"
-            fill="var(--color-fd-muted-foreground)"
-            fontSize="9"
-            fontFamily="ui-monospace, SFMono-Regular, monospace"
-            letterSpacing="0.1em"
-          >
-            RESULTS
-          </text>
+          <LaneLabels />
+          <Lanes />
 
           {INCOMING_JOBS.map((job, i) => (
             <circle
               // biome-ignore lint/suspicious/noArrayIndexKey: stable list
               key={`incoming-${i}`}
-              cy={POOL_TOP + POOL_HEIGHT / 2}
-              r="4"
-              fill="url(#taskito-pool-incoming)"
-              className="taskito-pool-incoming"
+              cx={INCOMING_LEFT}
+              cy={TRACK_Y}
+              r="3.5"
+              fill="var(--color-fd-primary)"
+              className="taskito-incoming-dot"
               style={{ animationDelay: job.delay }}
             />
           ))}
 
-          {WORKERS.map((worker) => {
-            const x = POOL_LEFT + worker.x * (WORKER_SIZE + WORKER_GAP);
-            const y = POOL_TOP + worker.y * (WORKER_SIZE + WORKER_GAP);
-            return (
-              <g
-                key={worker.id}
-                style={
-                  {
-                    "--worker-delay": worker.delay,
-                    "--worker-duration": worker.duration,
-                  } as React.CSSProperties
-                }
-                className="taskito-worker"
-              >
-                <rect
-                  x={x}
-                  y={y}
-                  width={WORKER_SIZE}
-                  height={WORKER_SIZE}
-                  rx="6"
-                  fill="var(--color-fd-card)"
-                  stroke="var(--color-fd-border)"
-                  strokeWidth="1.5"
-                  className="taskito-worker-base"
-                />
-                <rect
-                  x={x + 4}
-                  y={y + 4}
-                  width={WORKER_SIZE - 8}
-                  height={WORKER_SIZE - 8}
-                  rx="3"
-                  fill="var(--color-fd-primary)"
-                  className="taskito-worker-active"
-                />
-              </g>
-            );
-          })}
+          {WORKERS.map((worker) => (
+            <Worker key={worker.id} worker={worker} />
+          ))}
 
           {RESULTS.map((result, i) => (
             <g
               // biome-ignore lint/suspicious/noArrayIndexKey: stable list
               key={`result-${i}`}
-              className="taskito-pool-result"
+              transform={`translate(${RESULT_LEFT} ${TRACK_Y})`}
+              className="taskito-result"
               style={{ animationDelay: result.delay }}
             >
               <circle
-                cy={POOL_TOP + POOL_HEIGHT / 2}
-                r="6"
+                r="7"
                 fill="var(--color-fd-card)"
                 stroke="var(--color-fd-primary)"
                 strokeWidth="1.5"
               />
               <path
-                d="m -3 0 l 2 2 l 4 -4"
+                d="m -3.5 0.5 l 2.5 2.5 l 4.5 -4.5"
                 stroke="var(--color-fd-primary)"
                 strokeWidth="1.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"
-                transform={`translate(0, ${POOL_TOP + POOL_HEIGHT / 2})`}
-                className="taskito-pool-result-check"
               />
             </g>
           ))}
@@ -211,58 +113,176 @@ export function WorkerPool() {
   );
 }
 
+function LaneLabels() {
+  return (
+    <>
+      <text
+        x={INCOMING_LEFT}
+        y="20"
+        fill="var(--color-fd-muted-foreground)"
+        fontSize="9"
+        fontFamily="ui-monospace, SFMono-Regular, monospace"
+        letterSpacing="0.15em"
+        opacity="0.7"
+      >
+        INCOMING
+      </text>
+      <text
+        x={POOL_LEFT}
+        y="20"
+        fill="var(--color-fd-muted-foreground)"
+        fontSize="9"
+        fontFamily="ui-monospace, SFMono-Regular, monospace"
+        letterSpacing="0.15em"
+        opacity="0.7"
+      >
+        WORKERS
+      </text>
+      <text
+        x={RESULT_LEFT}
+        y="20"
+        fill="var(--color-fd-muted-foreground)"
+        fontSize="9"
+        fontFamily="ui-monospace, SFMono-Regular, monospace"
+        letterSpacing="0.15em"
+        opacity="0.7"
+      >
+        RESULTS
+      </text>
+    </>
+  );
+}
+
+function Lanes() {
+  return (
+    <>
+      <line
+        x1={INCOMING_LEFT}
+        y1={TRACK_Y}
+        x2={POOL_LEFT - 8}
+        y2={TRACK_Y}
+        stroke="var(--color-fd-border)"
+        strokeWidth="1"
+        strokeDasharray="2 4"
+      />
+      <line
+        x1={POOL_RIGHT + 8}
+        y1={TRACK_Y}
+        x2={RESULT_END}
+        y2={TRACK_Y}
+        stroke="var(--color-fd-border)"
+        strokeWidth="1"
+        strokeDasharray="2 4"
+      />
+    </>
+  );
+}
+
+function Worker({ worker }: { worker: (typeof WORKERS)[number] }) {
+  const x = POOL_LEFT + worker.x * (WORKER_SIZE + WORKER_GAP);
+  const y = POOL_TOP + worker.y * (WORKER_SIZE + WORKER_GAP);
+  const cx = x + WORKER_SIZE / 2;
+  const cy = y + WORKER_SIZE / 2;
+  return (
+    <g
+      style={
+        {
+          "--worker-delay": worker.delay,
+          "--worker-duration": worker.duration,
+        } as React.CSSProperties
+      }
+      className="taskito-worker"
+    >
+      <rect
+        x={x}
+        y={y}
+        width={WORKER_SIZE}
+        height={WORKER_SIZE}
+        rx="6"
+        fill="var(--color-fd-card)"
+        stroke="var(--color-fd-border)"
+        strokeWidth="1.5"
+      />
+      <circle
+        cx={cx}
+        cy={cy}
+        r="6"
+        fill="none"
+        stroke="var(--color-fd-primary)"
+        strokeWidth="1.25"
+        className="taskito-worker-ring"
+        style={{ transformOrigin: `${cx}px ${cy}px` }}
+      />
+      <circle
+        cx={cx}
+        cy={cy}
+        r="2.75"
+        fill="var(--color-fd-muted-foreground)"
+        opacity="0.35"
+        className="taskito-worker-dot-idle"
+      />
+      <circle
+        cx={cx}
+        cy={cy}
+        r="2.75"
+        fill="var(--color-fd-primary)"
+        className="taskito-worker-dot-active"
+      />
+    </g>
+  );
+}
+
 function PoolStyles() {
   return (
     <style>{`
-      @keyframes taskito-pool-incoming-flow {
-        0%   { cx: 18px;  opacity: 0; }
+      @keyframes taskito-incoming-flow {
+        0%   { cx: ${INCOMING_LEFT}px; opacity: 0; }
         10%  { opacity: 1; }
-        80%  { cx: ${POOL_LEFT - 8}px; opacity: 1; }
-        100% { cx: ${POOL_LEFT - 8}px; opacity: 0; }
+        88%  { cx: ${POOL_LEFT - 6}px; opacity: 1; }
+        100% { cx: ${POOL_LEFT - 6}px; opacity: 0; }
       }
-      @keyframes taskito-pool-result-flow {
-        0%   { cx: ${POOL_RIGHT + 8}px; opacity: 0; }
+      @keyframes taskito-result-flow {
+        0%   { transform: translate(${RESULT_LEFT}px, ${TRACK_Y}px); opacity: 0; }
         10%  { opacity: 1; }
-        90%  { cx: ${VIEW_W - 16}px; opacity: 1; }
-        100% { cx: ${VIEW_W - 16}px; opacity: 0; }
+        90%  { transform: translate(${RESULT_END}px, ${TRACK_Y}px); opacity: 1; }
+        100% { transform: translate(${RESULT_END}px, ${TRACK_Y}px); opacity: 0; }
       }
-      @keyframes taskito-worker-pulse {
-        0%, 35% {
-          opacity: 0;
-          transform: scale(0.6);
-        }
-        45%     {
-          opacity: 1;
-          transform: scale(1);
-        }
-        80%     {
-          opacity: 1;
-          transform: scale(1);
-        }
-        100%    {
-          opacity: 0;
-          transform: scale(0.6);
-        }
+      @keyframes taskito-worker-active-pulse {
+        0%, 35%   { opacity: 0; transform: scale(0.7); }
+        50%       { opacity: 1; transform: scale(1); }
+        85%       { opacity: 1; transform: scale(1); }
+        100%      { opacity: 0; transform: scale(0.7); }
       }
-      @media (prefers-reduced-motion: no-preference) {
-        .taskito-pool .taskito-pool-incoming {
-          animation: taskito-pool-incoming-flow 2s linear infinite;
-          filter: drop-shadow(0 0 3px var(--color-fd-primary));
-        }
-        .taskito-pool .taskito-pool-result {
-          animation: taskito-pool-result-flow 2s linear infinite;
-        }
-        .taskito-pool .taskito-worker-active {
-          transform-box: fill-box;
-          transform-origin: center;
-          animation: taskito-worker-pulse var(--worker-duration) ease-in-out infinite;
-          animation-delay: var(--worker-delay);
-        }
+      @keyframes taskito-worker-ring-pulse {
+        0%, 35%   { opacity: 0; transform: scale(0.6); }
+        55%       { opacity: 0.5; transform: scale(1.4); }
+        100%      { opacity: 0; transform: scale(2); }
       }
-      .taskito-pool .taskito-worker-active {
+      .taskito-pool .taskito-worker-dot-active {
         opacity: 0;
         transform-box: fill-box;
         transform-origin: center;
+      }
+      .taskito-pool .taskito-worker-ring {
+        opacity: 0;
+        transform-box: fill-box;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .taskito-pool .taskito-incoming-dot {
+          animation: taskito-incoming-flow 2.2s linear infinite;
+          filter: drop-shadow(0 0 2px var(--color-fd-primary));
+        }
+        .taskito-pool .taskito-result {
+          animation: taskito-result-flow 2.2s linear infinite;
+        }
+        .taskito-pool .taskito-worker-dot-active {
+          animation: taskito-worker-active-pulse var(--worker-duration) ease-in-out infinite;
+          animation-delay: var(--worker-delay);
+        }
+        .taskito-pool .taskito-worker-ring {
+          animation: taskito-worker-ring-pulse var(--worker-duration) ease-out infinite;
+          animation-delay: var(--worker-delay);
+        }
       }
     `}</style>
   );
