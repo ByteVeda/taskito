@@ -135,7 +135,7 @@ export function WorkerPool() {
             textAnchor="middle"
             fill="var(--color-fd-muted-foreground)"
             fontSize="14"
-            fontFamily="var(--font-handwritten), Caveat, cursive"
+            fontFamily="var(--font-handwritten), 'Shantell Sans', cursive"
             fontWeight="500"
           >
             6 workers · 0 brokers
@@ -162,7 +162,7 @@ function LaneLabels() {
           y="28"
           fill="var(--color-fd-foreground)"
           fontSize="17"
-          fontFamily="var(--font-handwritten), Caveat, cursive"
+          fontFamily="var(--font-handwritten), 'Shantell Sans', cursive"
           fontWeight="600"
         >
           {label.text}

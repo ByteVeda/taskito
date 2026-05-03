@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Caveat, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Shantell_Sans } from "next/font/google";
 import { Provider } from "@/components/provider";
 import "./global.css";
 
@@ -15,9 +15,8 @@ const ibmPlexMono = IBM_Plex_Mono({
   variable: "--font-mono",
 });
 
-const caveat = Caveat({
+const shantellSans = Shantell_Sans({
   subsets: ["latin"],
-  weight: ["500", "600", "700"],
   variable: "--font-handwritten",
 });
 
@@ -34,7 +33,7 @@ export default function Layout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} ${caveat.variable} font-sans`}
+      className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} ${shantellSans.variable} font-sans`}
       suppressHydrationWarning
     >
       <body className="flex flex-col min-h-screen">

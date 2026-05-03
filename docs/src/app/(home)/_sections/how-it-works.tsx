@@ -184,7 +184,7 @@ function StationNode({ station }: { station: Station }) {
         fill="var(--color-fd-foreground)"
         fontSize="16"
         fontWeight="600"
-        fontFamily="var(--font-handwritten), Caveat, cursive"
+        fontFamily="var(--font-handwritten), 'Shantell Sans', cursive"
       >
         {station.label}
       </text>

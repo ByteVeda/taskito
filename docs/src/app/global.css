@@ -8,7 +8,7 @@
   --font-mono:
     var(--font-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular,
     "Cascadia Mono", monospace;
-  --font-handwritten: var(--font-handwritten), "Caveat", cursive;
+  --font-handwritten: var(--font-handwritten), "Shantell Sans", "Caveat", cursive;
   --color-fd-sketch:
     color-mix(in oklch, var(--color-fd-foreground) 55%, transparent);
   --color-fd-sketch-strong:
