@@ -14,17 +14,17 @@ with less infrastructure and simpler configuration.
 
 | Celery | taskito | Notes |
 |---|---|---|
-| `Celery()` app | `Queue()` | No broker URL needed |
-| `@app.task` | `@queue.task()` | Same decorator pattern |
-| `.apply_async()` | `.apply_async()` | Same name, similar API |
-| `.delay()` | `.delay()` | Identical |
-| `AsyncResult` | `JobResult` | `.result()` instead of `.get()` |
-| Canvas (`chain`, `group`, `chord`) | `chain`, `group`, `chord` | Same names, same concepts |
-| `celery beat` | `@queue.periodic()` | Built-in, no separate process |
-| Result backend (Redis/DB) | Built-in (SQLite) | No configuration needed |
-| Broker (Redis/RabbitMQ) | Not needed | SQLite handles everything |
-| `celery worker` | `taskito worker` | Similar CLI |
-| `celery inspect` | `taskito info` | Similar CLI |
+| `Celery()` app | `Queue()` | `Queue(db_path=...)` replaces `Celery(broker=..., backend=...)` — no broker URL, no result-backend URL, no `app.conf` setup. |
+| `@app.task` | `@queue.task()` | Same decorator shape; `max_retries`, `rate_limit`, `bind=True`, `name=` carry over with identical names. |
+| `.apply_async()` | `.apply_async()` | Same kwargs (`countdown`, `eta`, `priority`, `queue`); taskito adds `delay`, `unique_key`, `expires`, `depends_on`. |
+| `.delay()` | `.delay()` | Drop-in. Returns `JobResult` instead of `AsyncResult`. |
+| `AsyncResult` | `JobResult` | `.result(timeout=...)` replaces `.get(timeout=...)`; async variant `await job.aresult()`. |
+| Canvas (`chain`, `group`, `chord`) | `chain`, `group`, `chord` | API-compatible. taskito adds a DAG `Workflow` builder with conditions, gates, and fan-in. |
+| `celery beat` | `@queue.periodic()` | No separate beat daemon. Cron expressions support seconds (6 fields) and live in the worker process. |
+| Result backend (Redis/DB) | Built-in (SQLite) | Results store in the same SQLite file as jobs. Per-job `result_ttl_ms` controls retention. |
+| Broker (Redis/RabbitMQ) | Not needed | A single SQLite (or Postgres) connection replaces the broker. WAL mode allows concurrent reads. |
+| `celery worker` | `taskito worker` | `--concurrency`, `--queues`, `--loglevel` carry over. taskito adds `--pool prefork` for CPU parallelism. |
+| `celery inspect` | `taskito info` | Covers `inspect active/scheduled/registered`. `taskito dashboard` is the live UI version. |
 
 ## Side-by-side examples
 
