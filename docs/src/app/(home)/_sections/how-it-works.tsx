@@ -72,11 +72,11 @@ export function HowItWorks() {
             <filter id="taskito-flow-sketch">
               <feTurbulence
                 type="fractalNoise"
-                baseFrequency="0.04"
+                baseFrequency="0.025"
                 numOctaves="2"
                 seed="3"
               />
-              <feDisplacementMap in="SourceGraphic" scale="1.4" />
+              <feDisplacementMap in="SourceGraphic" scale="0.7" />
             </filter>
             <marker
               id="taskito-flow-arrow"
@@ -90,8 +90,8 @@ export function HowItWorks() {
               <path
                 d="M 1 1 L 10 6 L 1 11"
                 fill="none"
-                stroke="var(--color-fd-sketch-strong)"
-                strokeWidth="1.6"
+                stroke="var(--color-fd-sketch-accent)"
+                strokeWidth="1.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -107,8 +107,8 @@ export function HowItWorks() {
                 y1={TRACK_Y}
                 x2={next.cx - STATION_W / 2 - 8}
                 y2={TRACK_Y}
-                stroke="var(--color-fd-sketch)"
-                strokeWidth="1.5"
+                stroke="var(--color-fd-sketch-accent)"
+                strokeWidth="1.75"
                 strokeLinecap="round"
                 strokeDasharray="2 5"
                 markerEnd="url(#taskito-flow-arrow)"
@@ -154,7 +154,7 @@ function StationNode({ station }: { station: Station }) {
         rx="6"
         fill="var(--color-fd-card)"
         stroke="var(--color-fd-sketch-strong)"
-        strokeWidth="1.75"
+        strokeWidth="2.25"
         filter="url(#taskito-flow-sketch)"
       />
       <g

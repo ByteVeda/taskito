@@ -10,9 +10,11 @@
     "Cascadia Mono", monospace;
   --font-handwritten: var(--font-handwritten), "Shantell Sans", "Caveat", cursive;
   --color-fd-sketch:
-    color-mix(in oklch, var(--color-fd-foreground) 55%, transparent);
-  --color-fd-sketch-strong:
     color-mix(in oklch, var(--color-fd-foreground) 75%, transparent);
+  --color-fd-sketch-strong:
+    color-mix(in oklch, var(--color-fd-foreground) 92%, transparent);
+  --color-fd-sketch-accent:
+    color-mix(in oklch, var(--color-fd-primary) 80%, transparent);
 }
 
 html {

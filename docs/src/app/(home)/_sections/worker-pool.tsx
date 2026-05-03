@@ -57,11 +57,11 @@ export function WorkerPool() {
             <filter id="taskito-pool-sketch">
               <feTurbulence
                 type="fractalNoise"
-                baseFrequency="0.04"
+                baseFrequency="0.025"
                 numOctaves="2"
                 seed="7"
               />
-              <feDisplacementMap in="SourceGraphic" scale="1.2" />
+              <feDisplacementMap in="SourceGraphic" scale="0.7" />
             </filter>
             <marker
               id="taskito-pool-arrow"
@@ -75,8 +75,8 @@ export function WorkerPool() {
               <path
                 d="M 1 1 L 10 6 L 1 11"
                 fill="none"
-                stroke="var(--color-fd-sketch-strong)"
-                strokeWidth="1.6"
+                stroke="var(--color-fd-sketch-accent)"
+                strokeWidth="1.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -115,7 +115,7 @@ export function WorkerPool() {
                 r="8"
                 fill="var(--color-fd-card)"
                 stroke="var(--color-fd-primary)"
-                strokeWidth="1.75"
+                strokeWidth="2"
                 filter="url(#taskito-pool-sketch)"
               />
               <path
@@ -180,8 +180,8 @@ function Lanes() {
         y1={TRACK_Y}
         x2={POOL_LEFT - 10}
         y2={TRACK_Y}
-        stroke="var(--color-fd-sketch)"
-        strokeWidth="1.5"
+        stroke="var(--color-fd-sketch-accent)"
+        strokeWidth="1.75"
         strokeDasharray="2 6"
         strokeLinecap="round"
         markerEnd="url(#taskito-pool-arrow)"
@@ -192,8 +192,8 @@ function Lanes() {
         y1={TRACK_Y}
         x2={RESULT_END - 4}
         y2={TRACK_Y}
-        stroke="var(--color-fd-sketch)"
-        strokeWidth="1.5"
+        stroke="var(--color-fd-sketch-accent)"
+        strokeWidth="1.75"
         strokeDasharray="2 6"
         strokeLinecap="round"
         markerEnd="url(#taskito-pool-arrow)"
@@ -226,7 +226,7 @@ function Worker({ worker }: { worker: (typeof WORKERS)[number] }) {
         rx="7"
         fill="var(--color-fd-card)"
         stroke="var(--color-fd-sketch-strong)"
-        strokeWidth="1.75"
+        strokeWidth="2.25"
         filter="url(#taskito-pool-sketch)"
       />
       <circle
@@ -244,7 +244,7 @@ function Worker({ worker }: { worker: (typeof WORKERS)[number] }) {
         cy={cy}
         r="3"
         fill="var(--color-fd-muted-foreground)"
-        opacity="0.4"
+        opacity="0.65"
       />
       <circle
         cx={cx}
