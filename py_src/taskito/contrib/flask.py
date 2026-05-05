@@ -23,7 +23,10 @@ Usage::
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
+
+from taskito.app import Queue
 
 if TYPE_CHECKING:
     import flask
@@ -58,8 +61,6 @@ class Taskito:
 
     def init_app(self, app: flask.Flask) -> None:
         """Initialize the extension with a Flask app."""
-        from taskito.app import Queue
-
         self.queue = Queue(
             db_path=app.config.get("TASKITO_DB_PATH", ".taskito/taskito.db"),
             workers=app.config.get("TASKITO_WORKERS", 0),
@@ -102,8 +103,6 @@ class Taskito:
         )
         def info_cmd(output_format: str) -> None:
             """Show queue statistics."""
-            import json
-
             stats = self.queue.stats()
             if output_format == "json":
                 click.echo(json.dumps(stats, indent=2))
