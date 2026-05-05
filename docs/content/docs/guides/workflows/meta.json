@@ -1,7 +1,6 @@
 {
   "title": "Workflows",
   "pages": [
-    "index",
     "building",
     "fan-out",
     "conditions",

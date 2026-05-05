@@ -113,20 +113,18 @@ This creates a `WorkflowRun` handle. Under the hood:
 Each step transitions through these states:
 
 <Mermaid
-  chart={`stateDiagram-v2
-    [*] --> Pending
-    Pending --> Running : job picked up
-    Running --> Completed : success
-    Running --> Failed : error (retries exhausted)
-    Pending --> Skipped : cascade / condition
-    Pending --> WaitingApproval : gate reached
-    WaitingApproval --> Completed : approved
-    WaitingApproval --> Failed : rejected
-    Pending --> CacheHit : incremental reuse
-    Completed --> [*]
-    Failed --> [*]
-    Skipped --> [*]
-    CacheHit --> [*]`}
+  chart={`flowchart TD
+    Start(( )) --> Pending([Pending])
+    Pending -- job picked up --> Running([Running])
+    Pending -- gate reached --> WaitingApproval([WaitingApproval])
+    Pending -- cascade / condition --> Skipped([Skipped])
+    Pending -- incremental reuse --> CacheHit([CacheHit])
+    Running -- success --> Completed([Completed])
+    Running -- retries exhausted --> Failed([Failed])
+    WaitingApproval -- approved --> Completed
+    WaitingApproval -- rejected --> Failed
+    classDef terminal stroke-dasharray: 4 3
+    class Completed,Failed,Skipped,CacheHit terminal`}
 />
 
 | Status | Terminal | Meaning |

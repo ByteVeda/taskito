@@ -1,6 +1,8 @@
 {
   "title": "API Reference",
+  "root": true,
   "pages": [
+    "index",
     "overview",
     "queue",
     "task",

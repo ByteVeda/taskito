@@ -1,7 +1,6 @@
 {
   "title": "Resources",
   "pages": [
-    "index",
     "interception",
     "dependency-injection",
     "proxies",

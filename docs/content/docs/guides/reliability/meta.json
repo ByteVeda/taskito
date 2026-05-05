@@ -1,7 +1,6 @@
 {
   "title": "Reliability",
   "pages": [
-    "index",
     "retries",
     "error-handling",
     "guarantees",

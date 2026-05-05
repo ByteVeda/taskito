@@ -1,7 +1,6 @@
 {
   "title": "Examples",
   "pages": [
-    "index",
     "fastapi-service",
     "notifications",
     "web-scraper",

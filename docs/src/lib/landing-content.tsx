@@ -1,12 +1,15 @@
 import {
   Activity,
+  BookOpen,
   Clock,
+  Code2,
   Cpu,
   Database,
   Layers,
   type LucideIcon,
   Mail,
   Shield,
+  Sparkles,
   Workflow,
   Zap,
 } from "lucide-react";
@@ -34,6 +37,44 @@ export type LandingFeature = {
   title: string;
   body: string;
 };
+
+export type DocSectionCard = {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  href: string;
+};
+
+export const DOC_SECTIONS: DocSectionCard[] = [
+  {
+    icon: BookOpen,
+    title: "Guides",
+    description:
+      "Recipes for tasks, queues, workers, retries, workflows, observability, and integrations.",
+    href: "/docs/guides",
+  },
+  {
+    icon: Layers,
+    title: "Architecture",
+    description:
+      "How the Rust core, scheduler, worker pool, storage, and resource graph fit together.",
+    href: "/docs/architecture/overview",
+  },
+  {
+    icon: Code2,
+    title: "API Reference",
+    description:
+      "Queues, tasks, results, contexts, the canvas, workflows, testing helpers, and the CLI.",
+    href: "/docs/api-reference/overview",
+  },
+  {
+    icon: Sparkles,
+    title: "More",
+    description:
+      "Worked examples, the Celery comparison, FAQ, and the per-release changelog.",
+    href: "/docs/more/examples",
+  },
+];
 
 export type ComparisonRow = {
   label: string;

@@ -1,6 +1,8 @@
 {
   "title": "Architecture",
+  "root": true,
   "pages": [
+    "index",
     "overview",
     "job-lifecycle",
     "worker-pool",

@@ -1,7 +1,6 @@
 {
   "title": "Advanced execution",
   "pages": [
-    "index",
     "prefork",
     "async-tasks",
     "streaming",
