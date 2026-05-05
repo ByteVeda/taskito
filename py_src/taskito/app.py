@@ -25,9 +25,12 @@ from typing import TYPE_CHECKING, Any
 from taskito._taskito import PyQueue
 from taskito.async_support.helpers import run_maybe_async
 from taskito.async_support.mixins import AsyncQueueMixin
+from taskito.context import _clear_context, current_job
 from taskito.events import EventBus, EventType
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
+from taskito.interception.metrics import InterceptionMetrics
+from taskito.interception.reconstruct import reconstruct_args
 from taskito.middleware import TaskMiddleware
 from taskito.mixins import (
     QueueDecoratorMixin,
@@ -48,7 +51,6 @@ from taskito.webhooks import WebhookManager
 
 if TYPE_CHECKING:
     from taskito._taskito import PyTaskConfig
-    from taskito.interception.metrics import InterceptionMetrics
     from taskito.resources.definition import ResourceDefinition
     from taskito.resources.runtime import ResourceRuntime
 
@@ -230,8 +232,6 @@ class Queue(
         # Argument interception
         self._interception_metrics: InterceptionMetrics | None = None
         if interception != "off":
-            from taskito.interception.metrics import InterceptionMetrics
-
             self._interception_metrics = InterceptionMetrics()
             registry = build_default_registry()
             self._interceptor: ArgumentInterceptor | None = ArgumentInterceptor(
@@ -278,9 +278,6 @@ class Queue(
         self, fn: Callable, task_name: str, soft_timeout: float | None = None
     ) -> Callable:
         """Wrap a task function with hooks, middleware, and job context."""
-        from taskito.context import _clear_context, current_job
-        from taskito.interception.reconstruct import reconstruct_args
-
         hooks = self._hooks
         queue_ref = self
 
