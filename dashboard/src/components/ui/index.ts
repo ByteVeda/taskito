@@ -81,7 +81,7 @@ export {
   SheetTitle,
   SheetTrigger,
 } from "./sheet";
-export { Skeleton } from "./skeleton";
+export { Skeleton, TableSkeleton } from "./skeleton";
 export { StatCard } from "./stat-card";
 export {
   Table,
