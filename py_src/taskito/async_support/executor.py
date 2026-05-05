@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import cloudpickle
 
 from taskito.async_support.context import clear_async_context, set_async_context
+from taskito.context import current_job
 from taskito.exceptions import TaskCancelledError
 from taskito.interception.reconstruct import reconstruct_args
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
@@ -130,8 +131,6 @@ class AsyncTaskExecutor:
 
                 # Middleware before hooks
                 middleware_chain = queue._get_middleware_chain(task_name)
-                from taskito.context import current_job
-
                 for mw in middleware_chain:
                     try:
                         mw.before(current_job)
@@ -181,8 +180,6 @@ class AsyncTaskExecutor:
                 cleanup_proxies(proxy_cleanup, metrics=self._queue_ref._proxy_metrics)
 
                 # Middleware after hooks (only those whose before() succeeded)
-                from taskito.context import current_job
-
                 for mw in completed_mw:
                     try:
                         mw.after(current_job, result, error)

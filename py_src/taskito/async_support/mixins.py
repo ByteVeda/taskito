@@ -9,11 +9,12 @@ import signal
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from taskito.async_support.locks import AsyncDistributedLock
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from concurrent.futures import Executor
 
-    from taskito.async_support.locks import AsyncDistributedLock
     from taskito.result import JobResult
 
 logger = logging.getLogger("taskito")
@@ -254,8 +255,6 @@ class AsyncQueueMixin:
             timeout: Max seconds to wait for acquisition. None = fail immediately.
             retry_interval: Seconds between retries when timeout is set.
         """
-        from taskito.async_support.locks import AsyncDistributedLock
-
         return AsyncDistributedLock(
             inner=self._inner,
             name=name,
