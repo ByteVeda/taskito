@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from typing import Any
 
@@ -137,8 +138,6 @@ class QueueInspectionMixin:
             List of dicts with ``timestamp``, ``count``, ``success``,
             ``failure``, ``avg_ms``, ``p50_ms``, ``p95_ms``, ``p99_ms`` keys.
         """
-        import time
-
         raw = self._inner.get_metrics(task_name=task_name, since_seconds=since)
         now_ms = int(time.time() * 1000)
         bucket_ms = bucket * 1000
