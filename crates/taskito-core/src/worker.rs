@@ -13,4 +13,13 @@ pub trait WorkerDispatcher: Send + Sync {
 
     /// Signal the pool to stop accepting new work.
     fn shutdown(&self);
+
+    /// Notify the pool that a running job should be cancelled.
+    ///
+    /// Pools that run tasks in-process (e.g. the thread pool) can rely on the
+    /// storage cancel flag and provide a no-op. Pools that execute tasks in a
+    /// separate process (e.g. the prefork pool) must use this hook to deliver
+    /// a side-channel signal so the worker observes the cancel without polling
+    /// storage.
+    fn notify_cancel(&self, _job_id: &str) {}
 }

@@ -10,6 +10,8 @@
 //! - N reader threads: one per child, reads results from stdout, sends to `result_tx`
 //! - One watchdog thread: enforces per-job timeouts by `SIGKILL`-ing children
 //!   whose deadlines pass
+//! - One cancel-router thread: forwards cooperative-cancel requests from
+//!   `notify_cancel` to the child currently running the named job
 //! - Child processes: run `python -m taskito.prefork <app_path>`
 
 mod child;
@@ -24,7 +26,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender, TrySendError};
 
 use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
@@ -38,12 +40,30 @@ use slot::{ActiveJob, SlotState};
 /// sending `SIGKILL`.
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(30);
 
+/// Bounded capacity for the cancel side-channel. Cancel requests are tiny
+/// and always make progress on the router thread, so this buffer absorbs
+/// realistic bursts (workflow-cascade cancels, retried clicks) without ever
+/// back-pressuring the caller.
+const CANCEL_CHANNEL_CAPACITY: usize = 1024;
+
+/// Per-child writer collection shared between the dispatch thread, the
+/// cancel router, and the restart path. Each slot mirrors the `processes`
+/// vector — `None` while a child is being respawned, `Some(writer)` while
+/// the child is live.
+type WriterPool = Arc<Vec<Mutex<Option<ChildWriter>>>>;
+type ProcessPool = Arc<Vec<Mutex<Option<ChildProcess>>>>;
+type InFlightCounters = Arc<Vec<AtomicU32>>;
+
 /// Multi-process worker pool that dispatches jobs to child Python processes.
 pub struct PreforkPool {
     num_workers: usize,
     app_path: String,
     python: String,
     shutdown: AtomicBool,
+    /// Side-channel for cooperative cancellation. The dispatch loop installs
+    /// the sender when `run()` starts and clears it on shutdown so
+    /// `notify_cancel` becomes a no-op once the pool is no longer running.
+    cancel_tx: Mutex<Option<Sender<String>>>,
 }
 
 impl PreforkPool {
@@ -55,6 +75,7 @@ impl PreforkPool {
             app_path,
             python,
             shutdown: AtomicBool::new(false),
+            cancel_tx: Mutex::new(None),
         }
     }
 }
@@ -68,24 +89,19 @@ impl WorkerDispatcher for PreforkPool {
     ) {
         let num_workers = self.num_workers;
 
-        // Shared per-child state.
         let slots: SlotState = slot::new_slots(num_workers);
-        let in_flight: Arc<Vec<AtomicU32>> =
+        let in_flight: InFlightCounters =
             Arc::new((0..num_workers).map(|_| AtomicU32::new(0)).collect());
-        let processes: Arc<Vec<Mutex<Option<ChildProcess>>>> =
-            Arc::new((0..num_workers).map(|_| Mutex::new(None)).collect());
-
-        // Per-child writers stay on the dispatch thread.
-        let mut writers: Vec<Option<ChildWriter>> = (0..num_workers).map(|_| None).collect();
+        let processes: ProcessPool = Arc::new((0..num_workers).map(|_| Mutex::new(None)).collect());
+        let writers: WriterPool = Arc::new((0..num_workers).map(|_| Mutex::new(None)).collect());
         let mut reader_handles: Vec<JoinHandle<()>> = Vec::new();
 
-        // Initial spawn.
         for idx in 0..num_workers {
             if let Some(handle) = start_child(
                 idx,
                 &self.python,
                 &self.app_path,
-                &mut writers,
+                &writers,
                 &processes,
                 &slots,
                 &in_flight,
@@ -95,17 +111,17 @@ impl WorkerDispatcher for PreforkPool {
             }
         }
 
-        if writers.iter().all(Option::is_none) {
+        let live_children = count_live_writers(&writers);
+        if live_children == 0 {
             log::error!("[taskito] no prefork children started, aborting");
             return;
         }
+        log::info!("[taskito] prefork pool running with {live_children} children");
 
-        log::info!(
-            "[taskito] prefork pool running with {} children",
-            writers.iter().filter(|w| w.is_some()).count()
-        );
+        let (cancel_tx, cancel_rx) = crossbeam_channel::bounded::<String>(CANCEL_CHANNEL_CAPACITY);
+        self.set_cancel_sender(Some(cancel_tx));
+        let cancel_router = spawn_cancel_router(slots.clone(), writers.clone(), cancel_rx);
 
-        // Watchdog: kills children that exceed their per-job timeout.
         let watchdog_shutdown = Arc::new(AtomicBool::new(false));
         let watchdog_handle = watchdog::spawn(
             slots.clone(),
@@ -115,41 +131,32 @@ impl WorkerDispatcher for PreforkPool {
             watchdog_shutdown.clone(),
         );
 
-        // Dispatch loop.
         let mut restart_count: u64 = 0;
         while let Some(job) = job_rx.recv().await {
             if self.shutdown.load(Ordering::Relaxed) {
                 break;
             }
 
-            // Bring back any children that have exited (crashed, killed by
-            // watchdog, OOM, etc.).
             for idx in 0..num_workers {
-                let dead = match processes[idx].lock() {
-                    Ok(mut guard) => match guard.as_mut() {
-                        Some(p) => !p.is_alive(),
-                        None => true,
-                    },
-                    Err(_) => false,
-                };
-                if dead {
-                    log::warn!("[taskito] prefork child {idx} died, restarting");
-                    restart_count += 1;
-                    if let Some(handle) = start_child(
-                        idx,
-                        &self.python,
-                        &self.app_path,
-                        &mut writers,
-                        &processes,
-                        &slots,
-                        &in_flight,
-                        &result_tx,
-                    ) {
-                        reader_handles.push(handle);
-                        log::info!(
-                            "[taskito] prefork child {idx} restarted (total restarts: {restart_count})"
-                        );
-                    }
+                if !is_child_dead(&processes, idx) {
+                    continue;
+                }
+                log::warn!("[taskito] prefork child {idx} died, restarting");
+                restart_count += 1;
+                if let Some(handle) = start_child(
+                    idx,
+                    &self.python,
+                    &self.app_path,
+                    &writers,
+                    &processes,
+                    &slots,
+                    &in_flight,
+                    &result_tx,
+                ) {
+                    reader_handles.push(handle);
+                    log::info!(
+                        "[taskito] prefork child {idx} restarted (total restarts: {restart_count})"
+                    );
                 }
             }
 
@@ -159,59 +166,26 @@ impl WorkerDispatcher for PreforkPool {
                 .collect();
             let idx = dispatch::least_loaded(&counts);
 
-            let Some(writer) = writers[idx].as_mut() else {
-                log::error!(
-                    "[taskito] no live writer for child {idx}, dropping job {}; will be reaped",
-                    job.id
-                );
-                continue;
-            };
-
-            let active = ActiveJob {
-                job_id: job.id.clone(),
-                task_name: job.task_name.clone(),
-                retry_count: job.retry_count,
-                max_retries: job.max_retries,
-                timeout_ms: job.timeout_ms,
-                started_at: Instant::now(),
-                deadline: deadline_from_timeout(job.timeout_ms),
-            };
-
-            // Register *before* sending so a fast child can never publish a
-            // result the reader can't pair with a slot entry.
-            slot::set(&slots, idx, active);
-
-            let msg = ParentMessage::from(&job);
-            match writer.send(&msg) {
-                Ok(()) => {
-                    in_flight[idx].fetch_add(1, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    // Roll back the slot install — neither reader nor watchdog
-                    // should fire for this aborted dispatch.
-                    let _ = slot::take(&slots, idx);
-                    log::error!(
-                        "[taskito] failed to send job {} to child {idx}: {e}",
-                        job.id
-                    );
-                    // Job will be reaped by the scheduler's stale-job reaper.
-                }
-            }
+            dispatch_job(idx, job, &writers, &slots, &in_flight);
         }
+
+        // Stop accepting new cancel requests so the router can drain and exit
+        // cleanly while writers are still alive.
+        self.set_cancel_sender(None);
 
         // Stop the watchdog before sending shutdown so it doesn't race with
         // children draining their final results.
         watchdog_shutdown.store(true, Ordering::SeqCst);
 
-        // Graceful shutdown: tell all live children to stop.
-        for (idx, writer) in writers.iter_mut().enumerate() {
-            if let Some(w) = writer.as_mut() {
-                w.send_shutdown();
-                log::info!("[taskito] sent shutdown to prefork child {idx}");
+        for idx in 0..num_workers {
+            if let Ok(mut guard) = writers[idx].lock() {
+                if let Some(w) = guard.as_mut() {
+                    w.send_shutdown();
+                    log::info!("[taskito] sent shutdown to prefork child {idx}");
+                }
             }
         }
 
-        // Wait for children to exit (or kill after the drain timeout).
         for idx in 0..num_workers {
             if let Ok(mut guard) = processes[idx].lock() {
                 if let Some(process) = guard.as_mut() {
@@ -221,15 +195,123 @@ impl WorkerDispatcher for PreforkPool {
             }
         }
 
-        // Reader threads exit when their child closes stdout.
+        // Drop writers so the cancel router observes `Disconnected` on its
+        // receiver and exits — otherwise the router thread would leak.
+        for slot in writers.iter() {
+            if let Ok(mut guard) = slot.lock() {
+                *guard = None;
+            }
+        }
+
         for handle in reader_handles {
             let _ = handle.join();
         }
         let _ = watchdog_handle.join();
+        let _ = cancel_router.join();
     }
 
     fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    fn notify_cancel(&self, job_id: &str) {
+        let Ok(guard) = self.cancel_tx.lock() else {
+            return;
+        };
+        let Some(tx) = guard.as_ref() else {
+            return;
+        };
+        match tx.try_send(job_id.to_string()) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Full(_)) => {
+                log::warn!("[taskito] prefork cancel channel full, dropping cancel for {job_id}");
+            }
+        }
+    }
+}
+
+impl PreforkPool {
+    fn set_cancel_sender(&self, tx: Option<Sender<String>>) {
+        if let Ok(mut guard) = self.cancel_tx.lock() {
+            *guard = tx;
+        }
+    }
+}
+
+/// Count children with a live writer (i.e. successfully spawned and not
+/// torn down). Used at startup to fail fast if every spawn attempt failed.
+fn count_live_writers(writers: &WriterPool) -> usize {
+    writers
+        .iter()
+        .filter(|slot| slot.lock().map(|g| g.is_some()).unwrap_or(false))
+        .count()
+}
+
+/// Whether the child at `idx` has exited (or never spawned successfully).
+fn is_child_dead(processes: &ProcessPool, idx: usize) -> bool {
+    match processes[idx].lock() {
+        Ok(mut guard) => match guard.as_mut() {
+            Some(p) => !p.is_alive(),
+            None => true,
+        },
+        Err(_) => false,
+    }
+}
+
+/// Push a job to child `idx`. The slot is registered before sending so a
+/// fast child cannot publish a result the reader can't pair with a slot
+/// entry; on send failure the slot is rolled back so neither the reader
+/// nor the watchdog will fire for this aborted dispatch.
+fn dispatch_job(
+    idx: usize,
+    job: Job,
+    writers: &WriterPool,
+    slots: &SlotState,
+    in_flight: &InFlightCounters,
+) {
+    let active = ActiveJob {
+        job_id: job.id.clone(),
+        task_name: job.task_name.clone(),
+        retry_count: job.retry_count,
+        max_retries: job.max_retries,
+        timeout_ms: job.timeout_ms,
+        started_at: Instant::now(),
+        deadline: deadline_from_timeout(job.timeout_ms),
+    };
+    slot::set(slots, idx, active);
+
+    let msg = ParentMessage::from(&job);
+    let send_result = match writers[idx].lock() {
+        Ok(mut guard) => match guard.as_mut() {
+            Some(writer) => writer.send(&msg),
+            None => {
+                drop(guard);
+                let _ = slot::take(slots, idx);
+                log::error!(
+                    "[taskito] no live writer for child {idx}, dropping job {}; will be reaped",
+                    job.id
+                );
+                return;
+            }
+        },
+        Err(_) => {
+            let _ = slot::take(slots, idx);
+            log::error!("[taskito] writer mutex poisoned for child {idx}");
+            return;
+        }
+    };
+
+    match send_result {
+        Ok(()) => {
+            in_flight[idx].fetch_add(1, Ordering::Relaxed);
+        }
+        Err(e) => {
+            let _ = slot::take(slots, idx);
+            log::error!(
+                "[taskito] failed to send job {} to child {idx}: {e}",
+                job.id
+            );
+        }
     }
 }
 
@@ -241,18 +323,20 @@ fn start_child(
     idx: usize,
     python: &str,
     app_path: &str,
-    writers: &mut [Option<ChildWriter>],
-    processes: &Arc<Vec<Mutex<Option<ChildProcess>>>>,
+    writers: &WriterPool,
+    processes: &ProcessPool,
     slots: &SlotState,
-    in_flight: &Arc<Vec<AtomicU32>>,
+    in_flight: &InFlightCounters,
     result_tx: &Sender<JobResult>,
 ) -> Option<JoinHandle<()>> {
     match spawn_child(python, app_path) {
         Ok((writer, reader, process)) => {
             log::info!("[taskito] prefork child {idx} ready");
-            writers[idx] = Some(writer);
-            if let Ok(mut slot) = processes[idx].lock() {
-                *slot = Some(process);
+            if let Ok(mut guard) = writers[idx].lock() {
+                *guard = Some(writer);
+            }
+            if let Ok(mut guard) = processes[idx].lock() {
+                *guard = Some(process);
             }
             // Reset the slot for the new child — the killed/dead one's job (if
             // any) was already completed by the watchdog or shutdown path.
@@ -284,7 +368,7 @@ fn spawn_reader_thread(
     idx: usize,
     mut reader: ChildReader,
     slots: SlotState,
-    in_flight: Arc<Vec<AtomicU32>>,
+    in_flight: InFlightCounters,
     result_tx: Sender<JobResult>,
 ) -> JoinHandle<()> {
     thread::Builder::new()
@@ -302,7 +386,7 @@ fn spawn_reader_thread(
                     }
                     in_flight[idx].fetch_sub(1, Ordering::Relaxed);
                     if result_tx.send(job_result).is_err() {
-                        break; // result channel closed
+                        break;
                     }
                 }
                 Err(e) => {
@@ -312,6 +396,43 @@ fn spawn_reader_thread(
             }
         })
         .expect("failed to spawn prefork reader thread")
+}
+
+/// Cancel router: forwards cooperative-cancel requests to the child
+/// currently running the named job.
+///
+/// The router never owns the slot — it only consults `find_by_job_id` to
+/// route the message. Result/timeout completion still owns the slot
+/// `take()`. If the job is no longer running (already completed, never
+/// dispatched, or just finished between `notify_cancel` and the router
+/// pick-up), the request is dropped silently — the storage cancel flag
+/// set by `Storage::request_cancel` already handles those cases.
+fn spawn_cancel_router(
+    slots: SlotState,
+    writers: WriterPool,
+    cancel_rx: Receiver<String>,
+) -> JoinHandle<()> {
+    thread::Builder::new()
+        .name("taskito-prefork-cancel-router".into())
+        .spawn(move || {
+            for job_id in cancel_rx.iter() {
+                let Some(idx) = slot::find_by_job_id(&slots, &job_id) else {
+                    continue;
+                };
+                let Ok(mut guard) = writers[idx].lock() else {
+                    continue;
+                };
+                let Some(writer) = guard.as_mut() else {
+                    continue;
+                };
+                if let Err(e) = writer.send_cancel(&job_id) {
+                    log::warn!(
+                        "[taskito] failed to forward cancel for {job_id} to child {idx}: {e}"
+                    );
+                }
+            }
+        })
+        .expect("failed to spawn prefork cancel-router thread")
 }
 
 /// Convert a per-task timeout in milliseconds to an absolute `Instant` deadline.

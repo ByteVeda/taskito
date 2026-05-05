@@ -23,6 +23,12 @@ pub enum ParentMessage {
         timeout_ms: i64,
         namespace: Option<String>,
     },
+    /// Cooperative-cancel request for a job currently running (or queued in
+    /// the child's stdin buffer). The child marks `job_id` as cancelled so
+    /// `current_job.check_cancelled()` raises `TaskCancelledError`.
+    Cancel {
+        job_id: String,
+    },
     Shutdown,
 }
 
