@@ -5,22 +5,7 @@ description: "How the scheduler dispatches jobs to Python task functions across 
 
 The worker pool dispatches jobs from the scheduler to Python task functions.
 
-<Mermaid
-  chart={`flowchart TD
-    SCH["Scheduler\nTokio async · 50ms poll"]
-
-    SCH -->|"sync job"| JCH["Job Channel\nbounded: workers×2"]
-    SCH -->|"async job"| AP["Native Async Pool"]
-
-    JCH --> WP["Worker Threads\nGIL per task · N threads"]
-    AP --> EL["Async Executor\ndedicated event loop"]
-
-    WP -->|"Result"| RCH["Result Channel"]
-    EL -->|"PyResultSender"| RCH
-
-    RCH --> ML["Main Loop\npy.allow_threads"]
-    ML -->|"complete / retry / DLQ"| DB[("SQLite")]`}
-/>
+<WorkerDispatch />
 
 ## Design decisions
 

@@ -51,7 +51,7 @@ export function HowItWorks() {
   return (
     <section className="px-4 pb-20 max-w-3xl mx-auto w-full">
       <div className="text-center mb-10">
-        <h2 className="font-handwritten text-3xl sm:text-4xl text-fd-foreground mb-2">
+        <h2 className="font-sans text-3xl sm:text-4xl font-semibold text-fd-foreground mb-2">
           how it works
         </h2>
         <p className="text-sm text-fd-muted-foreground">
@@ -66,7 +66,7 @@ export function HowItWorks() {
           role="img"
           aria-label="Job lifecycle: enqueue from your code, durable queue, Rust worker pool, result returned"
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-          className="w-full max-w-2xl font-handwritten taskito-flow"
+          className="w-full max-w-2xl font-sans taskito-flow"
         >
           <defs>
             <filter id="taskito-flow-sketch">
@@ -193,7 +193,7 @@ function StationNode({ station }: { station: Station }) {
         textAnchor="middle"
         fill="var(--color-fd-muted-foreground)"
         fontSize="9"
-        fontFamily="ui-monospace, SFMono-Regular, monospace"
+        fontFamily='var(--font-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace'
         opacity="0.7"
       >
         {station.hint}

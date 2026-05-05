@@ -5,20 +5,7 @@ description: "Every job moves through a state machine from creation to completio
 
 Every job moves through a state machine from creation to completion (or death).
 
-<Mermaid
-  chart={`stateDiagram-v2
-    [*] --> Pending: enqueue() / delay()
-    Pending --> Running: dequeued by scheduler
-    Pending --> Cancelled: cancel_job()
-    Running --> Complete: task returns successfully
-    Running --> Failed: task raises exception
-    Failed --> Pending: retry (count < max_retries)\nwith exponential backoff
-    Failed --> Dead: retries exhausted\nmoved to DLQ
-    Dead --> Pending: retry_dead()
-    Complete --> [*]
-    Cancelled --> [*]
-    Dead --> [*]: purge_dead()`}
-/>
+<JobStateMachine />
 
 ## Status codes
 
