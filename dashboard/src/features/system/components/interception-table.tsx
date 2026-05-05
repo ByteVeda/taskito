@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
+import { ListFilter } from "lucide-react";
 import { useMemo } from "react";
-import { DataTable, ErrorState, Skeleton } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { InterceptionStats } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 
@@ -64,14 +65,20 @@ export function InterceptionTable({ stats, loading, error, onRetry }: Intercepti
     );
   }
   if (loading && rows.length === 0) {
-    return <Skeleton className="h-40 w-full" />;
+    return <TableSkeleton rows={5} columns={["w-28", "w-16", "w-16"]} />;
   }
   return (
     <DataTable
       columns={columns}
       data={rows}
       rowKey={(r) => r.strategy}
-      empty="No interceptions recorded"
+      empty={
+        <EmptyState
+          icon={ListFilter}
+          title="No interceptions recorded"
+          description="Strategy stats appear once arguments hit interception rules."
+        />
+      }
     />
   );
 }

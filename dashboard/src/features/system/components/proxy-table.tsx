@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
+import { Shuffle } from "lucide-react";
 import { useMemo } from "react";
-import { DataTable, ErrorState, Skeleton } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { ProxyStats } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 
@@ -73,14 +74,20 @@ export function ProxyTable({ stats, loading, error, onRetry }: ProxyTableProps) 
     );
   }
   if (loading && rows.length === 0) {
-    return <Skeleton className="h-40 w-full" />;
+    return <TableSkeleton rows={5} columns={["w-28", "w-24", "w-16", "w-12"]} />;
   }
   return (
     <DataTable
       columns={columns}
       data={rows}
       rowKey={(r) => r.handler}
-      empty="No proxy reconstructions recorded"
+      empty={
+        <EmptyState
+          icon={Shuffle}
+          title="No proxy reconstructions recorded"
+          description="Proxy stats appear once tasks reconstruct non-serializable arguments."
+        />
+      }
     />
   );
 }
