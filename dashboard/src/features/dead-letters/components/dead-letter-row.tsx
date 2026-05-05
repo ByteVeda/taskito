@@ -12,7 +12,7 @@ interface DeadLetterRowProps {
 export function DeadLetterRow({ item }: DeadLetterRowProps) {
   const retry = useRetryDeadLetter();
   return (
-    <div className="flex items-start gap-4 rounded-lg bg-[var(--surface)] p-4 ring-1 ring-inset ring-[var(--border)]">
+    <div className="flex items-start gap-4 rounded-lg bg-[var(--surface)] p-4 ring-1 ring-inset ring-[var(--border)] transition-colors hover:bg-[var(--surface-2)]/40">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <Link
