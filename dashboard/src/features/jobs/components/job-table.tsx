@@ -1,10 +1,19 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import { Badge, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import {
+  Badge,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  TableSkeleton,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui";
 import type { Job } from "@/lib/api-types";
 import { JOB_STATUS_LABEL, JOB_STATUS_TONE } from "@/lib/status";
-import { formatRelative } from "@/lib/time";
+import { formatAbsolute, formatRelative } from "@/lib/time";
 
 interface JobTableProps {
   jobs: Job[] | undefined;
@@ -15,9 +24,10 @@ interface JobTableProps {
 
 export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
   const navigate = useNavigate();
+  const showErrorColumn = !!jobs?.some((j) => j.error);
 
-  const columns = useMemo<ColumnDef<Job>[]>(
-    () => [
+  const columns = useMemo<ColumnDef<Job>[]>(() => {
+    const base: ColumnDef<Job>[] = [
       {
         accessorKey: "id",
         header: "Job",
@@ -66,13 +76,24 @@ export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
       {
         accessorKey: "created_at",
         header: "Created",
-        cell: ({ getValue }) => (
-          <span className="text-xs tabular-nums text-[var(--fg-muted)]">
-            {formatRelative(getValue<number>())}
-          </span>
-        ),
+        cell: ({ getValue }) => {
+          const ms = getValue<number>();
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-xs tabular-nums text-[var(--fg-muted)]">
+                  {formatRelative(ms)}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{formatAbsolute(ms)}</TooltipContent>
+            </Tooltip>
+          );
+        },
       },
-      {
+    ];
+
+    if (showErrorColumn) {
+      base.push({
         accessorKey: "error",
         header: "Error",
         cell: ({ getValue }) => {
@@ -84,17 +105,17 @@ export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
             </span>
           );
         },
-      },
-    ],
-    [],
-  );
+      });
+    }
+    return base;
+  }, [showErrorColumn]);
 
   if (error) {
     return <ErrorState title="Couldn't load jobs" description={error.message} onRetry={onRetry} />;
   }
 
   if (loading && !jobs) {
-    return <Skeleton className="h-96 w-full" />;
+    return <TableSkeleton rows={12} columns={["w-20", "w-40", "w-24", "w-16", "w-12", "w-24"]} />;
   }
 
   if (!jobs || jobs.length === 0) {
