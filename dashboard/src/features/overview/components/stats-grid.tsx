@@ -1,5 +1,5 @@
 import { CheckCircle2, Clock, Pause, Play, Skull } from "lucide-react";
-import { Skeleton, StatCard } from "@/components/ui";
+import { ErrorState, Skeleton, StatCard } from "@/components/ui";
 import type { QueueStats } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 
@@ -7,9 +7,16 @@ interface StatsGridProps {
   stats: QueueStats | undefined;
   pausedCount: number | undefined;
   loading?: boolean;
+  error?: Error | null;
+  onRetry?: () => void;
 }
 
-export function StatsGrid({ stats, pausedCount, loading }: StatsGridProps) {
+export function StatsGrid({ stats, pausedCount, loading, error, onRetry }: StatsGridProps) {
+  if (error) {
+    return (
+      <ErrorState title="Couldn't load queue stats" description={error.message} onRetry={onRetry} />
+    );
+  }
   const failedTotal = (stats?.failed ?? 0) + (stats?.dead ?? 0);
   return (
     <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">

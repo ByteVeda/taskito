@@ -45,9 +45,20 @@ function OverviewPage() {
       />
 
       <div className="flex flex-col gap-6">
-        <StatsGrid stats={stats.data} pausedCount={paused.data?.length} loading={stats.isLoading} />
+        <StatsGrid
+          stats={stats.data}
+          pausedCount={paused.data?.length}
+          loading={stats.isLoading}
+          error={stats.error}
+          onRetry={() => stats.refetch()}
+        />
 
-        <ThroughputSparkline buckets={throughput.data} loading={throughput.isLoading} />
+        <ThroughputSparkline
+          buckets={throughput.data}
+          loading={throughput.isLoading}
+          error={throughput.error}
+          onRetry={() => throughput.refetch()}
+        />
 
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">

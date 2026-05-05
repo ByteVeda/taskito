@@ -1,16 +1,29 @@
-import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@/components/ui";
+import { Card, CardContent, CardHeader, CardTitle, ErrorState, Skeleton } from "@/components/ui";
 import type { TimeseriesBucket } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 
 interface ThroughputSparklineProps {
   buckets: TimeseriesBucket[] | undefined;
   loading?: boolean;
+  error?: Error | null;
+  onRetry?: () => void;
 }
 
-export function ThroughputSparkline({ buckets, loading }: ThroughputSparklineProps) {
+export function ThroughputSparkline({
+  buckets,
+  loading,
+  error,
+  onRetry,
+}: ThroughputSparklineProps) {
   const points = buckets ?? [];
   const total = points.reduce((sum, b) => sum + b.count, 0);
   const peak = points.reduce((max, b) => Math.max(max, b.count), 0);
+
+  if (error) {
+    return (
+      <ErrorState title="Couldn't load throughput" description={error.message} onRetry={onRetry} />
+    );
+  }
 
   return (
     <Card>
