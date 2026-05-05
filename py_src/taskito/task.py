@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from taskito.canvas import Signature
+from taskito.interception import InterceptionReport
+
 if TYPE_CHECKING:
     from taskito.app import Queue
-    from taskito.canvas import Signature
-    from taskito.interception import InterceptionReport
     from taskito.result import JobResult
 
 
@@ -130,14 +131,10 @@ class TaskWrapper:
 
     def s(self, *args: Any, **kwargs: Any) -> Signature:
         """Create a mutable :class:`~taskito.canvas.Signature`."""
-        from taskito.canvas import Signature
-
         return Signature(task=self, args=args, kwargs=kwargs)
 
     def si(self, *args: Any, **kwargs: Any) -> Signature:
         """Create an immutable :class:`~taskito.canvas.Signature`."""
-        from taskito.canvas import Signature
-
         return Signature(task=self, args=args, kwargs=kwargs, immutable=True)
 
     def analyze(self, *args: Any, **kwargs: Any) -> InterceptionReport:
@@ -146,8 +143,6 @@ class TaskWrapper:
         Returns an :class:`~taskito.interception.InterceptionReport` describing
         the strategy for each argument.
         """
-        from taskito.interception import InterceptionReport
-
         interceptor = self._queue._interceptor
         if interceptor is None:
             return InterceptionReport()

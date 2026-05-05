@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import {
   Area,
   AreaChart,
+  Brush,
   CartesianGrid,
   Legend,
   ResponsiveContainer,
@@ -48,7 +49,7 @@ export function ThroughputChart({ buckets, loading }: ThroughputChartProps) {
             No data in the selected window
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={260}>
             <AreaChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="thr-success" x1="0" y1="0" x2="0" y2="1">
@@ -81,6 +82,7 @@ export function ThroughputChart({ buckets, loading }: ThroughputChartProps) {
                 fill="url(#thr-success)"
                 name="Success"
                 stackId="1"
+                isAnimationActive={false}
               />
               <Area
                 type="monotone"
@@ -90,6 +92,15 @@ export function ThroughputChart({ buckets, loading }: ThroughputChartProps) {
                 fill="url(#thr-failure)"
                 name="Failure"
                 stackId="1"
+                isAnimationActive={false}
+              />
+              <Brush
+                dataKey="t"
+                height={20}
+                stroke="var(--border-strong)"
+                fill="var(--surface-2)"
+                tickFormatter={formatAxisTime}
+                travellerWidth={8}
               />
             </AreaChart>
           </ResponsiveContainer>

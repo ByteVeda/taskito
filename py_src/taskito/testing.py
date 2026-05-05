@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
+from taskito.context import _clear_context, _set_context
+from taskito.resources.runtime import ResourceRuntime
+
 if TYPE_CHECKING:
     from taskito.app import Queue
 
@@ -141,8 +144,6 @@ class TestMode:
 
         # Set up test resource runtime if resources provided
         if self._resources is not None:
-            from taskito.resources.runtime import ResourceRuntime
-
             self._prev_runtime = self._queue._resource_runtime
             resolved: dict[str, Any] = {}
             for name, value in self._resources.items():
@@ -195,8 +196,6 @@ class TestMode:
             raise KeyError(f"Task '{task_name}' not found in registry")
 
         # Set up context so current_job works inside tasks
-        from taskito.context import _clear_context, _set_context
-
         queue_name = enqueue_kwargs.get("queue", "default")
         _set_context(
             job_id=job_id,

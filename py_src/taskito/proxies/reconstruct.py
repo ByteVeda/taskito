@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 from taskito.exceptions import ProxyReconstructionError
 from taskito.proxies.handler import ProxyHandler
 from taskito.proxies.registry import ProxyRegistry
+from taskito.proxies.schema import validate_recipe
+from taskito.proxies.signing import verify_recipe
 
 if TYPE_CHECKING:
     from taskito.proxies.metrics import ProxyMetrics
@@ -147,8 +149,6 @@ def _reconstruct_one(
             raise ProxyReconstructionError(
                 f"Recipe for '{handler_name}' is missing checksum (signing is enabled)"
             )
-        from taskito.proxies.signing import verify_recipe
-
         try:
             verify_recipe(handler_name, version, recipe, checksum, signing_secret)
         except ProxyReconstructionError:
@@ -159,8 +159,6 @@ def _reconstruct_one(
     # Schema validation
     handler_schema = getattr(handler, "schema", None)
     if handler_schema is not None:
-        from taskito.proxies.schema import validate_recipe
-
         validate_recipe(handler_name, recipe, handler_schema)
 
     # Version migration

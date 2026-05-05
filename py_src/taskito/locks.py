@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -115,8 +116,6 @@ class DistributedLock:
 
     def __enter__(self) -> DistributedLock:
         if self._timeout is not None:
-            import time
-
             deadline = time.monotonic() + self._timeout
             while True:
                 if self.acquire():

@@ -5,8 +5,16 @@ from __future__ import annotations
 import collections
 import datetime
 import decimal
+import enum
+import importlib
+import io
+import logging as logging_mod
 import pathlib
 import re
+import socket
+import subprocess
+import threading
+import types as builtin_types
 import uuid
 
 from taskito.interception import converters
@@ -34,8 +42,6 @@ _OPTIONAL_TYPES: dict[str, tuple[str, ...]] = {
 def _try_import(module_path: str, class_name: str) -> type | None:
     """Try to import a type, returning None if not available or not a type."""
     try:
-        import importlib
-
         mod = importlib.import_module(module_path)
         obj = getattr(mod, class_name, None)
         # Only return actual types — functions, modules, etc. will break isinstance()
@@ -139,8 +145,6 @@ def build_default_registry() -> TypeRegistry:
         )
 
     # Enum (must be lower priority than specific enum-like types)
-    import enum
-
     reg.register(
         enum.Enum,
         Strategy.CONVERT,
@@ -178,9 +182,6 @@ def build_default_registry() -> TypeRegistry:
 
     # -- PROXY (priority 20) --
     # Types that can be deconstructed into a recipe and reconstructed on the worker.
-
-    import io
-    import logging as logging_mod
 
     reg.register(
         (io.TextIOWrapper, io.BufferedReader, io.BufferedWriter, io.FileIO),
@@ -238,11 +239,6 @@ def build_default_registry() -> TypeRegistry:
             )
 
     # -- REJECT (priority 30, high — catch these before anything else) --
-
-    import socket
-    import subprocess
-    import threading
-    import types as builtin_types
 
     # threading.Lock and threading.RLock are factory functions, not types.
     # Use the actual instance types for isinstance() checks.

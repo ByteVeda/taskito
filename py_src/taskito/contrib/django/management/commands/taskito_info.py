@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 try:
     from django.core.management.base import BaseCommand
 except ImportError as e:
@@ -42,8 +44,6 @@ class Command(BaseCommand):
         self.stdout.write(f"  {'total':<12} {total}")
 
     def _watch(self, queue):  # type: ignore[no-untyped-def]
-        import time
-
         from django.conf import settings
 
         interval = getattr(settings, "TASKITO_WATCH_INTERVAL", 2)

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import collections
 import dataclasses
+import datetime
+import decimal
 import importlib
+import pathlib
+import re
+import uuid
 from typing import Any
 
 
@@ -29,7 +35,6 @@ def convert_uuid(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_uuid(data: dict[str, Any]) -> Any:
-    import uuid
 
     return uuid.UUID(data["value"])
 
@@ -42,7 +47,6 @@ def convert_datetime(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_datetime(data: dict[str, Any]) -> Any:
-    import datetime
 
     return datetime.datetime.fromisoformat(data["value"])
 
@@ -55,7 +59,6 @@ def convert_date(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_date(data: dict[str, Any]) -> Any:
-    import datetime
 
     return datetime.date.fromisoformat(data["value"])
 
@@ -68,7 +71,6 @@ def convert_time(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_time(data: dict[str, Any]) -> Any:
-    import datetime
 
     return datetime.time.fromisoformat(data["value"])
 
@@ -81,7 +83,6 @@ def convert_timedelta(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_timedelta(data: dict[str, Any]) -> Any:
-    import datetime
 
     return datetime.timedelta(seconds=data["value"])
 
@@ -94,7 +95,6 @@ def convert_decimal(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_decimal(data: dict[str, Any]) -> Any:
-    import decimal
 
     return decimal.Decimal(data["value"])
 
@@ -107,7 +107,6 @@ def convert_path(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_path(data: dict[str, Any]) -> Any:
-    import pathlib
 
     return pathlib.Path(data["value"])
 
@@ -176,7 +175,6 @@ def convert_pattern(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_pattern(data: dict[str, Any]) -> Any:
-    import re
 
     return re.compile(data["value"], data["flags"])
 
@@ -210,7 +208,6 @@ def convert_ordered_dict(obj: Any) -> dict[str, Any]:
 
 
 def reconstruct_ordered_dict(data: dict[str, Any]) -> Any:
-    import collections
 
     return collections.OrderedDict(data["pairs"])
 

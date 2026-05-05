@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextvars
 
-from taskito.context import _ActiveContext
+from taskito._active_context import _ActiveContext
 
 _context_var: contextvars.ContextVar[_ActiveContext | None] = contextvars.ContextVar(
     "_taskito_async_context", default=None

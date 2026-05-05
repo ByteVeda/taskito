@@ -1,6 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import { DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { MetricsResponse, TaskMetrics } from "@/lib/api-types";
 import { formatCount, formatPercent } from "@/lib/number";
 
@@ -31,6 +31,7 @@ export function MetricsTable({ metrics, loading, error, onRetry }: MetricsTableP
   const columns = useMemo<ColumnDef<Row>[]>(
     () => [
       {
+        id: "task",
         accessorKey: "task",
         header: "Task",
         cell: ({ getValue }) => (
@@ -38,57 +39,72 @@ export function MetricsTable({ metrics, loading, error, onRetry }: MetricsTableP
         ),
       },
       {
-        accessorKey: "count",
-        header: "Runs",
-        cell: ({ getValue }) => (
-          <span className="tabular-nums">{formatCount(getValue<number>())}</span>
-        ),
+        id: "volume",
+        header: () => <GroupHeader>Volume</GroupHeader>,
+        columns: [
+          {
+            accessorKey: "count",
+            header: "Runs",
+            cell: ({ getValue }) => (
+              <span className="tabular-nums">{formatCount(getValue<number>())}</span>
+            ),
+          },
+          {
+            accessorKey: "successRate",
+            header: "Success",
+            cell: ({ row }) => {
+              const rate = row.original.successRate;
+              const tone =
+                rate >= 0.99 ? "text-success" : rate >= 0.9 ? "text-warning" : "text-danger";
+              return <span className={`tabular-nums ${tone}`}>{formatPercent(rate, 1)}</span>;
+            },
+          },
+          {
+            accessorKey: "failure_count",
+            header: "Failures",
+            cell: ({ getValue }) => {
+              const n = getValue<number>();
+              return (
+                <span
+                  className={`tabular-nums ${n > 0 ? "text-danger" : "text-[var(--fg-muted)]"}`}
+                >
+                  {formatCount(n)}
+                </span>
+              );
+            },
+          },
+        ],
       },
       {
-        accessorKey: "successRate",
-        header: "Success",
-        cell: ({ row }) => {
-          const rate = row.original.successRate;
-          const tone = rate >= 0.99 ? "text-success" : rate >= 0.9 ? "text-warning" : "text-danger";
-          return <span className={`tabular-nums ${tone}`}>{formatPercent(rate, 1)}</span>;
-        },
-      },
-      {
-        accessorKey: "failure_count",
-        header: "Failures",
-        cell: ({ getValue }) => {
-          const n = getValue<number>();
-          return (
-            <span className={`tabular-nums ${n > 0 ? "text-danger" : "text-[var(--fg-muted)]"}`}>
-              {formatCount(n)}
-            </span>
-          );
-        },
-      },
-      {
-        accessorKey: "p50_ms",
-        header: "p50",
-        cell: ({ getValue }) => <Ms value={getValue<number>()} />,
-      },
-      {
-        accessorKey: "p95_ms",
-        header: "p95",
-        cell: ({ getValue }) => <Ms value={getValue<number>()} />,
-      },
-      {
-        accessorKey: "p99_ms",
-        header: "p99",
-        cell: ({ getValue }) => <Ms value={getValue<number>()} />,
-      },
-      {
-        accessorKey: "avg_ms",
-        header: "avg",
-        cell: ({ getValue }) => <Ms value={getValue<number>()} />,
-      },
-      {
-        accessorKey: "max_ms",
-        header: "max",
-        cell: ({ getValue }) => <Ms value={getValue<number>()} />,
+        id: "latency",
+        header: () => <GroupHeader>Latency</GroupHeader>,
+        columns: [
+          {
+            accessorKey: "p50_ms",
+            header: "p50",
+            cell: ({ getValue }) => <Ms value={getValue<number>()} />,
+          },
+          {
+            accessorKey: "p95_ms",
+            header: "p95",
+            cell: ({ getValue }) => <Ms value={getValue<number>()} />,
+          },
+          {
+            accessorKey: "p99_ms",
+            header: "p99",
+            cell: ({ getValue }) => <Ms value={getValue<number>()} />,
+          },
+          {
+            accessorKey: "avg_ms",
+            header: "avg",
+            cell: ({ getValue }) => <Ms value={getValue<number>()} />,
+          },
+          {
+            accessorKey: "max_ms",
+            header: "max",
+            cell: ({ getValue }) => <Ms value={getValue<number>()} />,
+          },
+        ],
       },
     ],
     [],
@@ -101,7 +117,12 @@ export function MetricsTable({ metrics, loading, error, onRetry }: MetricsTableP
   }
 
   if (loading && rows.length === 0) {
-    return <Skeleton className="h-64 w-full" />;
+    return (
+      <TableSkeleton
+        rows={8}
+        columns={["w-32", "w-16", "w-16", "w-16", "w-16", "w-16", "w-16", "w-16", "w-16"]}
+      />
+    );
   }
 
   if (rows.length === 0) {
@@ -114,6 +135,14 @@ export function MetricsTable({ metrics, loading, error, onRetry }: MetricsTableP
   }
 
   return <DataTable columns={columns} data={rows} rowKey={(r) => r.task} />;
+}
+
+function GroupHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
+      {children}
+    </span>
+  );
 }
 
 function Ms({ value }: { value: number | null | undefined }) {

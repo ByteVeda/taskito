@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -13,7 +14,10 @@ from taskito.exceptions import (
     ResourceUnavailableError,
 )
 from taskito.resources.definition import ResourceDefinition, ResourceScope
+from taskito.resources.frozen import FrozenResource
 from taskito.resources.graph import topological_sort
+from taskito.resources.pool import PoolConfig, ResourcePool
+from taskito.resources.thread_local import ThreadLocalStore
 
 logger = logging.getLogger("taskito.resources")
 
@@ -38,12 +42,6 @@ class ResourceRuntime:
 
     def initialize(self) -> None:
         """Create all resources in topological (dependency-first) order."""
-        import time
-
-        from taskito.resources.frozen import FrozenResource
-        from taskito.resources.pool import PoolConfig, ResourcePool
-        from taskito.resources.thread_local import ThreadLocalStore
-
         self._init_order = topological_sort(self._definitions)
         for name in self._init_order:
             defn = self._definitions[name]

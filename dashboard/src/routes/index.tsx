@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout";
+import { Separator } from "@/components/ui";
 import {
   pausedQueuesQuery,
   QueueBreakdown,
@@ -45,11 +46,32 @@ function OverviewPage() {
       />
 
       <div className="flex flex-col gap-6">
-        <StatsGrid stats={stats.data} pausedCount={paused.data?.length} loading={stats.isLoading} />
+        <div className="animate-slide-up" style={{ animationDelay: "0ms" }}>
+          <StatsGrid
+            stats={stats.data}
+            pausedCount={paused.data?.length}
+            throughput={throughput.data}
+            loading={stats.isLoading}
+            error={stats.error}
+            onRetry={() => stats.refetch()}
+          />
+        </div>
 
-        <ThroughputSparkline buckets={throughput.data} loading={throughput.isLoading} />
+        <div className="animate-slide-up" style={{ animationDelay: "60ms" }}>
+          <ThroughputSparkline
+            buckets={throughput.data}
+            loading={throughput.isLoading}
+            error={throughput.error}
+            onRetry={() => throughput.refetch()}
+          />
+        </div>
 
-        <section className="flex flex-col gap-3">
+        <Separator />
+
+        <section
+          className="flex flex-col gap-3 animate-slide-up"
+          style={{ animationDelay: "120ms" }}
+        >
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold tracking-tight text-[var(--fg)]">Queues</h2>
           </div>
@@ -62,7 +84,10 @@ function OverviewPage() {
           />
         </section>
 
-        <section className="flex flex-col gap-3">
+        <section
+          className="flex flex-col gap-3 animate-slide-up"
+          style={{ animationDelay: "180ms" }}
+        >
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold tracking-tight text-[var(--fg)]">Recent jobs</h2>
           </div>

@@ -8,6 +8,10 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from taskito._active_context import _ActiveContext
+from taskito.async_support.context import get_async_context
+from taskito.exceptions import SoftTimeoutError, TaskCancelledError
+
 logger = logging.getLogger("taskito.context")
 
 if TYPE_CHECKING:
@@ -112,8 +116,6 @@ class JobContext:
         Raises:
             TaskCancelledError: If the job has been marked for cancellation.
         """
-        from taskito.exceptions import TaskCancelledError
-
         ctx = self._require_context()
         if _queue_ref is None:
             raise RuntimeError("Queue reference not set.")
@@ -126,8 +128,6 @@ class JobContext:
         Raises:
             SoftTimeoutError: If the soft timeout has elapsed.
         """
-        from taskito.exceptions import SoftTimeoutError
-
         ctx = self._require_context()
         if ctx.soft_timeout is not None and ctx.started_mono is not None:
             elapsed = time.monotonic() - ctx.started_mono
@@ -144,8 +144,6 @@ class JobContext:
     @staticmethod
     def _require_context() -> _ActiveContext:
         # Try contextvars first (async tasks on native executor)
-        from taskito.async_support.context import get_async_context
-
         ctx = get_async_context()
         if ctx is not None:
             return ctx
@@ -156,31 +154,6 @@ class JobContext:
                 "No active job context. current_job can only be used inside a running task."
             )
         return sync_ctx
-
-
-class _ActiveContext:
-    __slots__ = (
-        "job_id",
-        "queue_name",
-        "retry_count",
-        "soft_timeout",
-        "started_mono",
-        "task_name",
-    )
-
-    def __init__(
-        self,
-        job_id: str,
-        task_name: str,
-        retry_count: int,
-        queue_name: str,
-    ):
-        self.job_id = job_id
-        self.task_name = task_name
-        self.retry_count = retry_count
-        self.queue_name = queue_name
-        self.started_mono: float | None = time.monotonic()
-        self.soft_timeout: float | None = None
 
 
 def _set_queue_ref(queue: Any) -> None:

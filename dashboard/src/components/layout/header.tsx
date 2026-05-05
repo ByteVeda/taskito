@@ -3,7 +3,6 @@ import { Button, Kbd } from "@/components/ui";
 import { useCommandPalette } from "@/providers";
 import { LastRefreshed } from "./last-refreshed";
 import { MobileMenu } from "./mobile-menu";
-import { RefreshControl } from "./refresh-control";
 import { ThemeToggle } from "./theme-toggle";
 
 export function Header() {
@@ -37,7 +36,6 @@ export function Header() {
       </Button>
       <div className="ml-auto flex items-center gap-3">
         <LastRefreshed className="hidden sm:inline-flex" />
-        <RefreshControl />
         <ThemeToggle />
       </div>
     </header>

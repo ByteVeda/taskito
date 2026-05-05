@@ -13,6 +13,7 @@ Usage::
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -66,8 +67,6 @@ class OpenTelemetryMiddleware(TaskMiddleware):
                 "opentelemetry-api is required for OpenTelemetryMiddleware. "
                 "Install it with: pip install taskito[otel]"
             )
-        import threading
-
         self._tracer = trace.get_tracer(tracer_name)
         self._span_name_fn = span_name_fn
         self._attr_prefix = attribute_prefix

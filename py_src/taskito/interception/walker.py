@@ -7,6 +7,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from taskito.interception.converters import convert_dataclass, convert_named_tuple
 from taskito.interception.errors import ArgumentFailure
 from taskito.interception.registry import RegistryEntry, TypeRegistry
 from taskito.interception.strategy import Strategy
@@ -151,8 +152,6 @@ class ArgumentWalker:
 
         # NamedTuple detection — must check before registry (tuples are PASS)
         if isinstance(obj, tuple) and hasattr(obj, "_fields") and hasattr(obj, "_asdict"):
-            from taskito.interception.converters import convert_named_tuple
-
             return convert_named_tuple(obj)
 
         # Check dataclass (can't use isinstance, need is_dataclass)
@@ -164,8 +163,6 @@ class ArgumentWalker:
             if entry is not None:
                 return self._apply_strategy(obj, path, entry, result, proxy_identity)
             # Fallback: auto-convert as dataclass
-            from taskito.interception.converters import convert_dataclass
-
             return convert_dataclass(obj)
 
         # Look up in registry

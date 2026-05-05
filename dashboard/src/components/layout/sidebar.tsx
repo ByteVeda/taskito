@@ -91,13 +91,20 @@ export function Sidebar() {
                   <li key={to}>
                     <Link
                       to={to}
+                      aria-current={active ? "page" : undefined}
                       className={cn(
-                        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
+                        "relative flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
                         active
                           ? "bg-[var(--surface-2)] text-[var(--fg)] shadow-xs"
-                          : "text-[var(--fg-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]",
+                          : "text-[var(--fg-muted)] hover:bg-[var(--surface-2)]/60 hover:text-[var(--fg)]",
                       )}
                     >
+                      {active ? (
+                        <span
+                          aria-hidden
+                          className="absolute -left-3 inset-y-1.5 w-0.5 rounded-r-full bg-accent"
+                        />
+                      ) : null}
                       <Icon className={cn("size-4", active && "text-accent")} aria-hidden />
                       <span>{label}</span>
                     </Link>

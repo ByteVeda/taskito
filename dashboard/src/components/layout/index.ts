@@ -7,7 +7,7 @@ export { Header } from "./header";
 export { LastRefreshed } from "./last-refreshed";
 export { MobileMenu } from "./mobile-menu";
 export { PageHeader } from "./page-header";
-export { RefreshControl } from "./refresh-control";
 export { RouteErrorBoundary } from "./route-error-boundary";
 export { Sidebar } from "./sidebar";
 export { ThemeToggle } from "./theme-toggle";
+export { TopProgressBar } from "./top-progress-bar";

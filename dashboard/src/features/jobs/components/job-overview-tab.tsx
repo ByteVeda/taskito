@@ -108,7 +108,7 @@ export function JobOverviewTab({ job }: JobOverviewTabProps) {
 }
 
 function Dl({ children }: { children: ReactNode }) {
-  return <dl className="grid grid-cols-[120px_1fr] gap-y-1.5 text-sm">{children}</dl>;
+  return <dl className="grid grid-cols-[140px_1fr] gap-y-2 text-sm">{children}</dl>;
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {

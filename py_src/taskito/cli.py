@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
+import signal as sig
 import sys
 import time
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from taskito.app import Queue
+from taskito.app import Queue
+from taskito.dashboard import serve_dashboard
+from taskito.scaler import serve_scaler
 
 
 def main() -> None:
@@ -183,8 +185,6 @@ def _load_queue(app_path: str) -> Queue:
         )
         sys.exit(1)
 
-    from taskito.app import Queue
-
     if not isinstance(queue, Queue):
         print(
             f"Error: '{app_path}' is not a Queue instance (got {type(queue).__name__})",
@@ -207,8 +207,6 @@ def run_worker(args: argparse.Namespace) -> None:
 def run_dashboard(args: argparse.Namespace) -> None:
     """Start the web dashboard."""
     queue = _load_queue(args.app)
-    from taskito.dashboard import serve_dashboard
-
     serve_dashboard(queue, host=args.host, port=args.port)
 
 
@@ -257,8 +255,6 @@ def _watch_stats(queue: Queue) -> None:
 def run_scaler(args: argparse.Namespace) -> None:
     """Start the lightweight KEDA metrics server."""
     queue = _load_queue(args.app)
-    from taskito.scaler import serve_scaler
-
     serve_scaler(
         queue,
         host=args.host,
@@ -301,9 +297,6 @@ def run_resources(args: argparse.Namespace) -> None:
 
 def run_reload(args: argparse.Namespace) -> None:
     """Send SIGHUP to a running worker to reload resources."""
-    import os
-    import signal as sig
-
     if not hasattr(sig, "SIGHUP"):
         print("Error: SIGHUP is not available on this platform", file=sys.stderr)
         sys.exit(1)

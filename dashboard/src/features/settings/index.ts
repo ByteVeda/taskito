@@ -1,6 +1,7 @@
 export { BrandingSection } from "./components/branding-section";
 export { ExternalLinksSection } from "./components/external-links-section";
 export { IntegrationsSection } from "./components/integrations-section";
+export { RefreshIntervalSection } from "./components/refresh-interval-section";
 export {
   applyJobContext,
   parseExternalLinks,

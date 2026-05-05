@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 _STATUS_COLORS_MERMAID = {
@@ -124,8 +125,6 @@ def nodes_and_edges_from_dag_bytes(
     dag_bytes: bytes | list[int],
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Extract node list and edge list from serialized DAG JSON."""
-    import json
-
     raw = bytes(dag_bytes) if isinstance(dag_bytes, list) else dag_bytes
     dag = json.loads(raw)
     nodes = [n["name"] for n in dag.get("nodes", [])]

@@ -30,7 +30,7 @@ export function DeadLetterGroupRow({ group }: DeadLetterGroupRowProps) {
   }
 
   return (
-    <div className="rounded-lg bg-[var(--surface)] ring-1 ring-inset ring-[var(--border)]">
+    <div className="rounded-lg bg-[var(--surface)] ring-1 ring-inset ring-[var(--border)] transition-colors hover:bg-[var(--surface-2)]/30">
       <div className="flex items-start gap-3 px-4 py-3">
         <button
           type="button"

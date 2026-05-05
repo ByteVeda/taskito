@@ -131,6 +131,9 @@ export interface TimeseriesBucket {
   success: number;
   failure: number;
   avg_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
 }
 
 export interface Worker {
@@ -171,19 +174,24 @@ export interface ResourceStatus {
   pool?: ResourcePoolStats;
 }
 
-export type ProxyStats = Record<
-  string,
-  {
-    reconstructions: number;
-    avg_ms: number;
-    errors: number;
-  }
->;
+export interface ProxyHandlerStats {
+  handler: string;
+  total_reconstructions: number;
+  total_errors: number;
+  total_cleanup_errors: number;
+  total_checksum_failures: number;
+  total_duration_ms: number;
+  avg_duration_ms: number;
+  max_duration_ms: number;
+  p95_duration_ms: number;
+}
 
-export type InterceptionStats = Record<
-  string,
-  {
-    count: number;
-    avg_ms: number;
-  }
->;
+export type ProxyStats = ProxyHandlerStats[];
+
+export interface InterceptionStats {
+  total_intercepts: number;
+  total_duration_ms: number;
+  avg_duration_ms: number;
+  strategy_counts: Record<string, number>;
+  max_depth_reached: number;
+}

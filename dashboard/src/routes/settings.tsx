@@ -5,6 +5,7 @@ import {
   BrandingSection,
   ExternalLinksSection,
   IntegrationsSection,
+  RefreshIntervalSection,
   settingsQuery,
   useSettings,
 } from "@/features/settings";
@@ -38,6 +39,7 @@ function SettingsPage() {
         />
       ) : (
         <div className="flex flex-col gap-6">
+          <RefreshIntervalSection />
           <BrandingSection settings={data} />
           <ExternalLinksSection settings={data} />
           <IntegrationsSection settings={data} />

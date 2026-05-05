@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses as dc
 import logging
 import time
 from dataclasses import dataclass, field
@@ -130,8 +131,6 @@ class ArgumentInterceptor:
 
     def _analyze_single(self, obj: Any, path: str, report: InterceptionReport) -> None:
         """Analyze a single value for the report."""
-        import dataclasses as dc
-
         if obj is None:
             report.entries.append(
                 ReportEntry(path=path, type_name="NoneType", strategy=Strategy.PASS)

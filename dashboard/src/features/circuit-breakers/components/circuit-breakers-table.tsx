@@ -1,7 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { CircuitBoard } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { Badge, DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { CircuitBreaker } from "@/lib/api-types";
 import { CIRCUIT_LABEL, CIRCUIT_TONE } from "@/lib/status";
 import { formatDuration, formatRelative } from "@/lib/time";
@@ -92,7 +92,7 @@ export function CircuitBreakersTable({
   }
 
   if (loading && !breakers) {
-    return <Skeleton className="h-48 w-full" />;
+    return <TableSkeleton rows={4} columns={["w-32", "w-16", "w-24", "w-16", "w-16", "w-20"]} />;
   }
 
   if (!breakers || breakers.length === 0) {

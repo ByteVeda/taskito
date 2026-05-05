@@ -1,7 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Box, Pause, Play } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, Button, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { Badge, Button, DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { QueueStatsMap } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 import { usePauseQueue, useResumeQueue } from "../hooks";
@@ -114,7 +114,7 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
   }
 
   if (loading && rows.length === 0) {
-    return <Skeleton className="h-64 w-full" />;
+    return <TableSkeleton rows={6} columns={["w-32", "w-16", "w-16", "w-20", "w-20", "w-20"]} />;
   }
 
   if (rows.length === 0) {
