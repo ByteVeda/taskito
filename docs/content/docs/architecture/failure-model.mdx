@@ -35,7 +35,7 @@ Same behavior as database unavailable. The scheduler retries on the next poll cy
 `claim_execution` prevents two workers from picking up the same job simultaneously.
 But if a worker crashes *after* starting execution, the job will be retried —
 potentially executing the same task twice. Design tasks to be
-[idempotent](/docs/guides/reliability) to handle this safely.
+[idempotent](/guides/reliability) to handle this safely.
 
 ## Recovery timeline
 
@@ -46,7 +46,7 @@ potentially executing the same task twice. Design tasks to be
 If a task completes successfully but the result write to the database fails (e.g.,
 database full, connection lost), the job stays in `running` status. The stale reaper
 eventually marks it failed and retries it. The task will execute again — make sure
-it's [idempotent](/docs/guides/reliability).
+it's [idempotent](/guides/reliability).
 
 ## Jobs without timeouts
 

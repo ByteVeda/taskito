@@ -26,7 +26,7 @@ task.delay(*args, **kwargs) -> JobResult
 ```
 
 Enqueue the task for background execution using the decorator's default options.
-Returns a [`JobResult`](/docs/api-reference/result) handle.
+Returns a [`JobResult`](/api-reference/result) handle.
 
 ```python
 @queue.task(priority=5)
@@ -68,7 +68,7 @@ falls back to the decorator's default.
 | `timeout` | `int \| None` | `None` | Override timeout in seconds |
 | `unique_key` | `str \| None` | `None` | Deduplicate active jobs with same key |
 | `metadata` | `str \| None` | `None` | Arbitrary JSON metadata to attach |
-| `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](/docs/guides/advanced-execution). |
+| `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](/guides/advanced-execution). |
 
 ```python
 job = send_email.apply_async(
@@ -102,8 +102,8 @@ print(results)  # [3, 7, 11]
 task.s(*args, **kwargs) -> Signature
 ```
 
-Create a **mutable** [`Signature`](/docs/api-reference/canvas). In a
-[`chain`](/docs/api-reference/canvas), the previous task's return value is
+Create a **mutable** [`Signature`](/api-reference/canvas). In a
+[`chain`](/api-reference/canvas), the previous task's return value is
 prepended to `args`.
 
 ```python
@@ -118,7 +118,7 @@ sig = add.s(10)
 task.si(*args, **kwargs) -> Signature
 ```
 
-Create an **immutable** [`Signature`](/docs/api-reference/canvas). Ignores the
+Create an **immutable** [`Signature`](/api-reference/canvas). Ignores the
 previous task's result — arguments are used as-is.
 
 ```python

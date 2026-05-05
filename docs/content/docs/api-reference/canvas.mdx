@@ -94,7 +94,7 @@ chain.apply(queue: Queue | None = None) -> JobResult
 ```
 
 Execute the chain by enqueuing and waiting for each step sequentially. Returns
-the [`JobResult`](/docs/api-reference/result) of the **last** step.
+the [`JobResult`](/api-reference/result) of the **last** step.
 
 Each step's return value is prepended to the next mutable signature's args.
 Immutable signatures (`task.si()`) receive their args as-is.
@@ -154,7 +154,7 @@ group.apply(queue: Queue | None = None) -> list[JobResult]
 ```
 
 Enqueue all signatures and return a list of
-[`JobResult`](/docs/api-reference/result) handles. Jobs run concurrently
+[`JobResult`](/api-reference/result) handles. Jobs run concurrently
 across available workers.
 
 ```python
@@ -209,7 +209,7 @@ chord.apply(queue: Queue | None = None) -> JobResult
 
 Execute the group, wait for all results, then run the callback with the list
 of results prepended to its args (unless immutable). Returns the
-[`JobResult`](/docs/api-reference/result) of the callback.
+[`JobResult`](/api-reference/result) of the callback.
 
 ```python
 @queue.task()

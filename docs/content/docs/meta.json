@@ -1,7 +1,6 @@
 {
   "title": "Taskito",
   "pages": [
-    "index",
     "getting-started",
     "guides",
     "architecture",

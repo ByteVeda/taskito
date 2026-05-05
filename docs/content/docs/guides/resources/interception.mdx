@@ -92,7 +92,7 @@ These objects are deconstructed to a recipe dict and rebuilt by the worker:
 | boto3 clients (via `botocore.client.BaseClient`) | `"boto3_client"` |
 | `google.cloud.storage.Client` / `Bucket` / `Blob` | `"gcs_client"` |
 
-See [Resource Proxies](/docs/guides/resources/proxies) for security options
+See [Resource Proxies](/guides/resources/proxies) for security options
 and handler details.
 
 ## Built-in REJECT types
@@ -192,5 +192,5 @@ stats = queue.interception_stats()
 # }
 ```
 
-See [Observability](/docs/guides/resources/observability) for Prometheus
+See [Observability](/guides/resources/observability) for Prometheus
 metrics and dashboard endpoints.

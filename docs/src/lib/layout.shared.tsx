@@ -4,23 +4,23 @@ import { appName, gitConfig } from "./shared";
 const PRIMARY_NAV_LINKS = [
   {
     text: "Getting Started",
-    url: "/docs/getting-started/installation",
+    url: "/getting-started/installation",
   },
   {
     text: "Guides",
-    url: "/docs/guides",
+    url: "/guides",
   },
   {
     text: "Architecture",
-    url: "/docs/architecture/overview",
+    url: "/architecture/overview",
   },
   {
     text: "API",
-    url: "/docs/api-reference/overview",
+    url: "/api-reference/overview",
   },
   {
     text: "Changelog",
-    url: "/docs/more/changelog",
+    url: "/more/changelog",
   },
 ];
 
