@@ -38,7 +38,7 @@ export function WorkerPool() {
   return (
     <section className="px-4 pb-24 max-w-3xl mx-auto w-full">
       <div className="text-center mb-10">
-        <h2 className="font-handwritten text-3xl sm:text-4xl text-fd-foreground mb-2">
+        <h2 className="font-sans text-3xl sm:text-4xl font-semibold text-fd-foreground mb-2">
           six workers, constant flow
         </h2>
         <p className="text-sm text-fd-muted-foreground">
@@ -51,7 +51,7 @@ export function WorkerPool() {
           role="img"
           aria-label="Six-worker pool with jobs streaming in from the left and results streaming out to the right"
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-          className="w-full max-w-2xl font-handwritten taskito-pool"
+          className="w-full max-w-2xl font-sans taskito-pool"
         >
           <defs>
             <filter id="taskito-pool-sketch">
