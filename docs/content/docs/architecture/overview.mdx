@@ -7,31 +7,7 @@ taskito is a hybrid Python/Rust system. Python provides the user-facing API. Rus
 handles all the heavy lifting: storage, scheduling, dispatch, rate limiting, and
 worker management.
 
-<Mermaid
-  chart={`flowchart TD
-    subgraph py ["Python Layer"]
-        direction LR
-        Q["Queue"] --> IC["ArgumentInterceptor"]
-        TW["@queue.task()"] ~~~ RR["ResourceRuntime"]
-    end
-
-    subgraph rust ["Rust Core — PyO3"]
-        direction LR
-        PQ["PyQueue"] --> SCH["Scheduler"]
-        SCH --> WP["Worker Pool"]
-        SCH --> RL["Rate Limiter"]
-    end
-
-    subgraph storage ["Storage"]
-        direction LR
-        SQ[("SQLite")] ~~~ PG[("PostgreSQL")]
-    end
-
-    IC --> PQ
-    WP -->|"acquire GIL"| TW
-    SCH -->|"poll / update"| SQ
-    PQ -->|"INSERT"| SQ`}
-/>
+<ArchitectureStack />
 
 ## Section overview
 
