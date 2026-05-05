@@ -1,8 +1,9 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Server } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { Badge, DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { Worker } from "@/lib/api-types";
+import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/time";
 
 const STALE_AFTER_MS = 30_000;
@@ -53,7 +54,10 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
           return (
             <div className="flex items-center gap-2">
               <span
-                className={`size-1.5 rounded-full ${stale ? "bg-warning" : "bg-success"}`}
+                className={cn(
+                  "size-2 rounded-full",
+                  stale ? "bg-warning" : "bg-success animate-pulse",
+                )}
                 aria-hidden
               />
               <span className="text-xs text-[var(--fg-muted)]">{formatRelative(ts)}</span>
@@ -90,7 +94,7 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
   }
 
   if (loading && !workers) {
-    return <Skeleton className="h-48 w-full" />;
+    return <TableSkeleton rows={4} columns={["w-32", "w-40", "w-24", "w-24", "w-20"]} />;
   }
 
   if (!workers || workers.length === 0) {
