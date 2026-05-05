@@ -11,3 +11,4 @@ export { RefreshControl } from "./refresh-control";
 export { RouteErrorBoundary } from "./route-error-boundary";
 export { Sidebar } from "./sidebar";
 export { ThemeToggle } from "./theme-toggle";
+export { TopProgressBar } from "./top-progress-bar";
