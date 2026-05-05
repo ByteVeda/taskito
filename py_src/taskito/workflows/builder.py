@@ -10,6 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from taskito._taskito import PyWorkflowBuilder
+
+from . import analysis as _analysis
+from .visualization import nodes_and_edges_from_steps, render_dot, render_mermaid
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -277,27 +282,19 @@ class Workflow:
 
     def ancestors(self, node: str) -> list[str]:
         """Return all transitive predecessors of *node*."""
-        from .analysis import ancestors
-
-        return ancestors(self._steps, node)
+        return _analysis.ancestors(self._steps, node)
 
     def descendants(self, node: str) -> list[str]:
         """Return all transitive successors of *node*."""
-        from .analysis import descendants
-
-        return descendants(self._steps, node)
+        return _analysis.descendants(self._steps, node)
 
     def topological_levels(self) -> list[list[str]]:
         """Group nodes by topological depth."""
-        from .analysis import topological_levels
-
-        return topological_levels(self._steps)
+        return _analysis.topological_levels(self._steps)
 
     def stats(self) -> dict[str, int | float]:
         """Compute basic DAG statistics (nodes, edges, depth, width, density)."""
-        from .analysis import stats
-
-        return stats(self._steps)
+        return _analysis.stats(self._steps)
 
     def critical_path(self, costs: dict[str, float]) -> tuple[list[str], float]:
         """Find the longest-weighted path through the DAG.
@@ -308,21 +305,15 @@ class Workflow:
         Returns:
             ``(path, total_cost)``
         """
-        from .analysis import critical_path
-
-        return critical_path(self._steps, costs)
+        return _analysis.critical_path(self._steps, costs)
 
     def execution_plan(self, max_workers: int = 1) -> list[list[str]]:
         """Generate a step-by-step execution plan respecting worker limits."""
-        from .analysis import execution_plan
-
-        return execution_plan(self._steps, max_workers)
+        return _analysis.execution_plan(self._steps, max_workers)
 
     def bottleneck_analysis(self, costs: dict[str, float]) -> dict[str, Any]:
         """Identify the bottleneck node on the critical path."""
-        from .analysis import bottleneck_analysis
-
-        return bottleneck_analysis(self._steps, costs)
+        return _analysis.bottleneck_analysis(self._steps, costs)
 
     def visualize(self, fmt: str = "mermaid") -> str:
         """Render the workflow DAG as a diagram string.
@@ -333,12 +324,6 @@ class Workflow:
         Returns:
             The diagram string (no statuses — pre-execution view).
         """
-        from .visualization import (
-            nodes_and_edges_from_steps,
-            render_dot,
-            render_mermaid,
-        )
-
         nodes, edges = nodes_and_edges_from_steps(self._steps)
         if fmt == "dot":
             return render_dot(nodes, edges)
@@ -362,8 +347,6 @@ class Workflow:
             ``(dag_bytes, step_metadata_json, node_payloads, deferred_nodes,
             callable_conditions, on_failure, gate_configs, sub_workflow_refs)``
         """
-        from taskito._taskito import PyWorkflowBuilder
-
         builder = PyWorkflowBuilder()
         node_payloads: dict[str, bytes] = {}
         callable_conditions: dict[str, Any] = {}

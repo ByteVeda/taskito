@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .types import NodeSnapshot, NodeStatus, WorkflowState, WorkflowStatus
+from .visualization import nodes_and_edges_from_dag_bytes, render_dot, render_mermaid
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -99,12 +100,6 @@ class WorkflowRun:
         Args:
             fmt: Output format — ``"mermaid"`` or ``"dot"``.
         """
-        from .visualization import (
-            nodes_and_edges_from_dag_bytes,
-            render_dot,
-            render_mermaid,
-        )
-
         dag_bytes = self._queue._inner.get_workflow_definition_dag(self.id)
         nodes, edges = nodes_and_edges_from_dag_bytes(dag_bytes)
 
