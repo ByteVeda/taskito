@@ -50,6 +50,8 @@ jobs:
         run: pnpm lint
 
       - name: Build
+        env:
+          DOCS_BASE_PATH: /taskito
         run: pnpm build
 
       - name: Upload Pages artifact
