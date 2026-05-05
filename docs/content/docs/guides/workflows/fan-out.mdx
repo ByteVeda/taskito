@@ -8,15 +8,15 @@ into a downstream step.
 
 <Mermaid
   chart={`graph LR
-    fetch --> process_0["process[0]"]
+    fetch:::source --> process_0["process[0]"]
     fetch --> process_1["process[1]"]
     fetch --> process_2["process[2]"]
-    process_0 --> aggregate
+    process_0 --> aggregate:::sink
     process_1 --> aggregate
     process_2 --> aggregate
 
-    style fetch fill:#90EE90
-    style aggregate fill:#87CEEB`}
+    classDef source fill:#bbf7d0,color:#14532d,stroke:#16a34a
+    classDef sink fill:#bfdbfe,color:#1e3a8a,stroke:#3b82f6`}
 />
 
 ## Fan-out with `"each"`

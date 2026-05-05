@@ -61,12 +61,11 @@ One failure skips **all** pending steps. The workflow transitions to `FAILED`.
 
 <Mermaid
   chart={`graph LR
-    A["a ✓"] --> B["b ✗"]
-    B --> C["c ━ SKIPPED"]
-    B --> D["d ━ SKIPPED"]
-    style B fill:#FFB6C1
-    style C fill:#F5F5F5
-    style D fill:#F5F5F5`}
+    A["a ✓"] --> B["b ✗"]:::failed
+    B --> C["c ━ SKIPPED"]:::skipped
+    B --> D["d ━ SKIPPED"]:::skipped
+    classDef failed fill:#fecaca,color:#7f1d1d,stroke:#dc2626
+    classDef skipped fill:#e5e7eb,color:#374151,stroke:#9ca3af`}
 />
 
   </Tab>
@@ -81,13 +80,13 @@ branches keep running**.
 
 <Mermaid
   chart={`graph TD
-    root["root ✓"] --> fail_branch["fail ✗"]
+    root["root ✓"] --> fail_branch["fail ✗"]:::failed
     root --> ok_branch["ok ✓"]
-    fail_branch --> after_fail["after_fail ━ SKIPPED"]
-    ok_branch --> after_ok["after_ok ✓"]
-    style fail_branch fill:#FFB6C1
-    style after_fail fill:#F5F5F5
-    style after_ok fill:#90EE90`}
+    fail_branch --> after_fail["after_fail ━ SKIPPED"]:::skipped
+    ok_branch --> after_ok["after_ok ✓"]:::success
+    classDef failed fill:#fecaca,color:#7f1d1d,stroke:#dc2626
+    classDef skipped fill:#e5e7eb,color:#374151,stroke:#9ca3af
+    classDef success fill:#bbf7d0,color:#14532d,stroke:#16a34a`}
 />
 
   </Tab>
@@ -110,11 +109,11 @@ wf.step("cleanup", cleanup, after="b", condition="always")  # runs even if b is 
 
 <Mermaid
   chart={`graph LR
-    A["a ✗ FAILED"] --> B["b ━ SKIPPED"]
-    B --> C["cleanup ✓ ALWAYS"]
-    style A fill:#FFB6C1
-    style B fill:#F5F5F5
-    style C fill:#90EE90`}
+    A["a ✗ FAILED"]:::failed --> B["b ━ SKIPPED"]:::skipped
+    B --> C["cleanup ✓ ALWAYS"]:::success
+    classDef failed fill:#fecaca,color:#7f1d1d,stroke:#dc2626
+    classDef skipped fill:#e5e7eb,color:#374151,stroke:#9ca3af
+    classDef success fill:#bbf7d0,color:#14532d,stroke:#16a34a`}
 />
 
 ## Combining conditions with fan-out

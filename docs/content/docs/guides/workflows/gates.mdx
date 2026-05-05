@@ -9,10 +9,11 @@ status until explicitly approved or rejected — or until a timeout fires.
 <Mermaid
   chart={`graph LR
     train["train ✓"] --> eval["evaluate ✓"]
-    eval --> gate["approve ⏸"]
+    eval --> gate["approve ⏸"]:::gate
     gate -->|approved| deploy["deploy"]
-    gate -->|rejected| skip["deploy ━ SKIPPED"]
-    style gate fill:#FFFACD`}
+    gate -->|rejected| skip["deploy ━ SKIPPED"]:::skipped
+    classDef gate fill:#fef3c7,color:#78350f,stroke:#d97706
+    classDef skipped fill:#e5e7eb,color:#374151,stroke:#9ca3af`}
 />
 
 ## Adding a gate
