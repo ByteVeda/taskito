@@ -8,7 +8,7 @@ import { formatCount } from "@/lib/number";
 interface Row {
   strategy: string;
   count: number;
-  avg_ms: number;
+  share: number;
 }
 
 interface InterceptionTableProps {
@@ -18,11 +18,25 @@ interface InterceptionTableProps {
   onRetry: () => void;
 }
 
+const STRATEGY_LABEL: Record<string, string> = {
+  pass: "Pass",
+  convert: "Convert",
+  proxy: "Proxy",
+  redirect: "Redirect",
+  reject: "Reject",
+};
+
 export function InterceptionTable({ stats, loading, error, onRetry }: InterceptionTableProps) {
   const rows = useMemo<Row[]>(() => {
-    if (!stats) return [];
-    return Object.entries(stats)
-      .map(([strategy, v]) => ({ strategy, ...v }))
+    if (!stats?.strategy_counts) return [];
+    const total = Object.values(stats.strategy_counts).reduce((sum, n) => sum + n, 0);
+    return Object.entries(stats.strategy_counts)
+      .map(([strategy, count]) => ({
+        strategy,
+        count,
+        share: total > 0 ? count / total : 0,
+      }))
+      .filter((r) => r.count > 0)
       .sort((a, b) => b.count - a.count);
   }, [stats]);
 
@@ -31,9 +45,10 @@ export function InterceptionTable({ stats, loading, error, onRetry }: Intercepti
       {
         accessorKey: "strategy",
         header: "Strategy",
-        cell: ({ getValue }) => (
-          <span className="font-medium text-[var(--fg)]">{getValue<string>()}</span>
-        ),
+        cell: ({ getValue }) => {
+          const key = getValue<string>();
+          return <span className="font-medium text-[var(--fg)]">{STRATEGY_LABEL[key] ?? key}</span>;
+        },
       },
       {
         accessorKey: "count",
@@ -43,11 +58,11 @@ export function InterceptionTable({ stats, loading, error, onRetry }: Intercepti
         ),
       },
       {
-        accessorKey: "avg_ms",
-        header: "Avg",
+        accessorKey: "share",
+        header: "Share",
         cell: ({ getValue }) => (
           <span className="tabular-nums text-[var(--fg-muted)]">
-            {getValue<number>().toFixed(1)}ms
+            {(getValue<number>() * 100).toFixed(1)}%
           </span>
         ),
       },
@@ -64,21 +79,50 @@ export function InterceptionTable({ stats, loading, error, onRetry }: Intercepti
       />
     );
   }
-  if (loading && rows.length === 0) {
-    return <TableSkeleton rows={5} columns={["w-28", "w-16", "w-16"]} />;
+  if (loading && !stats) {
+    return <TableSkeleton rows={4} columns={["w-28", "w-16", "w-16"]} />;
+  }
+  if (!stats || stats.total_intercepts === 0) {
+    return (
+      <EmptyState
+        icon={ListFilter}
+        title="No interceptions recorded"
+        description="Strategy stats appear once arguments hit interception rules."
+      />
+    );
   }
   return (
-    <DataTable
-      columns={columns}
-      data={rows}
-      rowKey={(r) => r.strategy}
-      empty={
-        <EmptyState
-          icon={ListFilter}
-          title="No interceptions recorded"
-          description="Strategy stats appear once arguments hit interception rules."
-        />
-      }
-    />
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-[var(--fg-muted)]">
+        <span>
+          <span className="text-[var(--fg-subtle)]">Total intercepts:</span>{" "}
+          <span className="tabular-nums text-[var(--fg)]">
+            {formatCount(stats.total_intercepts)}
+          </span>
+        </span>
+        <span>
+          <span className="text-[var(--fg-subtle)]">Avg duration:</span>{" "}
+          <span className="tabular-nums text-[var(--fg)]">
+            {stats.avg_duration_ms.toFixed(2)}ms
+          </span>
+        </span>
+        <span>
+          <span className="text-[var(--fg-subtle)]">Max depth:</span>{" "}
+          <span className="tabular-nums text-[var(--fg)]">{stats.max_depth_reached}</span>
+        </span>
+      </div>
+      <DataTable
+        columns={columns}
+        data={rows}
+        rowKey={(r) => r.strategy}
+        empty={
+          <EmptyState
+            icon={ListFilter}
+            title="No strategy hits yet"
+            description="Strategy counts populate as arguments are walked."
+          />
+        }
+      />
+    </div>
   );
 }
