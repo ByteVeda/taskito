@@ -2,16 +2,15 @@ import { createMDX } from "fumadocs-mdx/next";
 
 const withMDX = createMDX();
 
-// `basePath` is only needed for the deployed GH Pages URL
-// (docs.byteveda.org/taskito). In dev (`pnpm dev`) it makes `localhost:3000`
-// 404 because the app moves to `localhost:3000/taskito`. Scope it to
-// production so dev hits the root.
-const isProd = process.env.NODE_ENV === "production";
+// Set `DOCS_BASE_PATH=/taskito` in CI to deploy under github.io/taskito.
+// Local `pnpm build && pnpm start` leaves it unset, so the static export
+// serves cleanly from the root and `serve out` just works.
+const basePath = process.env.DOCS_BASE_PATH ?? "";
 
 /** @type {import('next').NextConfig} */
 const config = {
   output: "export",
-  basePath: isProd ? "/taskito" : "",
+  basePath,
   reactStrictMode: true,
   images: {
     unoptimized: true,
