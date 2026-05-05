@@ -21,6 +21,7 @@ import traceback
 from typing import Any
 
 from taskito.async_support.helpers import run_maybe_async
+from taskito.context import _clear_context, _set_context, _set_queue_ref
 from taskito.exceptions import TaskCancelledError
 
 logger = logging.getLogger("taskito.prefork.child")
@@ -69,8 +70,6 @@ def _execute_job(
         }
 
     # Set job context
-    from taskito.context import _clear_context, _set_context
-
     _set_context(job_id, task_name, retry_count, job.get("queue", "default"))
 
     start_ns = time.monotonic_ns()
@@ -154,8 +153,6 @@ def main() -> None:
 
     # Import the queue and set up context
     queue = _import_queue(app_path)
-    from taskito.context import _set_queue_ref
-
     _set_queue_ref(queue)
 
     # Initialize resources if any are defined
