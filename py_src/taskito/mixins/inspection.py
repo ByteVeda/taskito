@@ -135,7 +135,7 @@ class QueueInspectionMixin:
 
         Returns:
             List of dicts with ``timestamp``, ``count``, ``success``,
-            ``failure``, ``avg_ms`` keys.
+            ``failure``, ``avg_ms``, ``p50_ms``, ``p95_ms``, ``p99_ms`` keys.
         """
         import time
 
@@ -156,7 +156,7 @@ class QueueInspectionMixin:
             records = buckets[ts]
             n = len(records)
             success = sum(1 for r in records if r.get("succeeded"))
-            times = [r["wall_time_ns"] / 1_000_000 for r in records]
+            times = sorted(r["wall_time_ns"] / 1_000_000 for r in records)
             result.append(
                 {
                     "timestamp": ts,
@@ -164,6 +164,9 @@ class QueueInspectionMixin:
                     "success": success,
                     "failure": n - success,
                     "avg_ms": round(sum(times) / n, 2) if n else 0,
+                    "p50_ms": _percentile(times, 0.50),
+                    "p95_ms": _percentile(times, 0.95),
+                    "p99_ms": _percentile(times, 0.99),
                 }
             )
 
@@ -220,11 +223,20 @@ def _aggregate_metrics(raw: list[dict]) -> dict[str, Any]:
             "success_count": success,
             "failure_count": n - success,
             "avg_ms": round(sum(times) / n, 2) if n else 0,
-            "p50_ms": round(times[n // 2], 2) if n else 0,
-            "p95_ms": round(times[min(int(n * 0.95), n - 1)], 2) if n else 0,
-            "p99_ms": round(times[min(int(n * 0.99), n - 1)], 2) if n else 0,
+            "p50_ms": _percentile(times, 0.50),
+            "p95_ms": _percentile(times, 0.95),
+            "p99_ms": _percentile(times, 0.99),
             "min_ms": round(times[0], 2) if n else 0,
             "max_ms": round(times[-1], 2) if n else 0,
         }
 
     return result
+
+
+def _percentile(sorted_values: list[float], q: float) -> float:
+    """Nearest-rank percentile from a sorted list, rounded to 2 decimals."""
+    n = len(sorted_values)
+    if n == 0:
+        return 0
+    idx = min(int(n * q), n - 1)
+    return round(sorted_values[idx], 2)
