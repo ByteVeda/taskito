@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from taskito._active_context import _ActiveContext
@@ -19,6 +20,30 @@ if TYPE_CHECKING:
 
 _local = threading.local()
 _queue_ref: Queue | None = None
+
+# Optional in-process cancel signal. When set, ``check_cancelled()`` consults
+# this hook before falling back to storage. The prefork child installs one
+# that reads a local cancel set populated by the IPC reader thread; the
+# default (None) preserves storage-backed behaviour for the thread pool.
+_local_cancel_check: Callable[[str], bool] | None = None
+
+
+def set_local_cancel_check(fn: Callable[[str], bool]) -> None:
+    """Install a process-local cancel check used by ``check_cancelled()``.
+
+    The callable receives the current ``job_id`` and returns ``True`` if the
+    job has been cancelled. Installed by out-of-process workers (prefork)
+    that receive cancel signals over IPC and want ``check_cancelled()`` to
+    react without polling storage.
+    """
+    global _local_cancel_check
+    _local_cancel_check = fn
+
+
+def clear_local_cancel_check() -> None:
+    """Remove a previously installed local cancel check."""
+    global _local_cancel_check
+    _local_cancel_check = None
 
 
 class JobContext:
@@ -117,6 +142,12 @@ class JobContext:
             TaskCancelledError: If the job has been marked for cancellation.
         """
         ctx = self._require_context()
+        # Fast path: a worker that received an out-of-band cancel signal
+        # (e.g. the prefork child via IPC) installs a local check so we can
+        # observe the cancel without a storage round-trip.
+        local_check = _local_cancel_check
+        if local_check is not None and local_check(ctx.job_id):
+            raise TaskCancelledError(f"Job {ctx.job_id} was cancelled")
         if _queue_ref is None:
             raise RuntimeError("Queue reference not set.")
         if _queue_ref._inner.is_cancel_requested(ctx.job_id):
