@@ -1,7 +1,8 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
+import { ListTree } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, DataTable, ErrorState, Skeleton } from "@/components/ui";
+import { Badge, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { Job } from "@/lib/api-types";
 import { JOB_STATUS_LABEL, JOB_STATUS_TONE } from "@/lib/status";
 import { formatRelative } from "@/lib/time";
@@ -81,7 +82,13 @@ export function RecentJobs({ jobs, loading, error, onRetry }: RecentJobsProps) {
       columns={columns}
       data={jobs ?? []}
       rowKey={(j) => j.id}
-      empty="No jobs yet"
+      empty={
+        <EmptyState
+          icon={ListTree}
+          title="No jobs yet"
+          description="Jobs will appear here as soon as workers start processing them."
+        />
+      }
       onRowClick={(job) => navigate({ to: "/jobs/$id", params: { id: job.id } })}
     />
   );

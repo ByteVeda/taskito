@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
+import { Box } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, DataTable, ErrorState, Skeleton } from "@/components/ui";
+import { Badge, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { QueueStatsMap } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 
@@ -119,7 +120,13 @@ export function QueueBreakdown({
       columns={columns}
       data={rows}
       rowKey={(r) => r.name}
-      empty="No queues with activity yet"
+      empty={
+        <EmptyState
+          icon={Box}
+          title="No queues with activity yet"
+          description="Queues populate as jobs are enqueued."
+        />
+      }
     />
   );
 }
