@@ -1,5 +1,18 @@
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
+import {
+  ArchitectureStack,
+  CrashRecoveryTimeline,
+  DispatchSequence,
+  EntityRelations,
+  EntitySchema,
+  HowItWorks,
+  JobStateMachine,
+  ResourcePipeline,
+  SchedulerPollLoop,
+  WorkerDispatch,
+  WorkerPool,
+} from "./animated";
 import { DiagramCarousel, DiagramSlide } from "./diagram-carousel";
 import { Mermaid } from "./mermaid";
 
@@ -9,6 +22,17 @@ export function getMDXComponents(components?: MDXComponents) {
     Mermaid,
     DiagramCarousel,
     DiagramSlide,
+    ArchitectureStack,
+    CrashRecoveryTimeline,
+    DispatchSequence,
+    EntityRelations,
+    EntitySchema,
+    HowItWorks,
+    JobStateMachine,
+    ResourcePipeline,
+    SchedulerPollLoop,
+    WorkerDispatch,
+    WorkerPool,
     ...components,
   } satisfies MDXComponents;
 }
