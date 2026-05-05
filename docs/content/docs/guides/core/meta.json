@@ -1,7 +1,6 @@
 {
   "title": "Core",
   "pages": [
-    "index",
     "tasks",
     "queues",
     "workers",
