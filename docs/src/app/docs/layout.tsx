@@ -4,7 +4,7 @@ import { source } from "@/lib/source";
 
 export default function Layout({ children }: LayoutProps<"/docs">) {
   return (
-    <DocsLayout tree={source.getPageTree()} {...baseOptions()}>
+    <DocsLayout tabMode="top" tree={source.getPageTree()} {...baseOptions()}>
       {children}
     </DocsLayout>
   );
