@@ -78,6 +78,7 @@ export function useDeleteSetting() {
       if (ctx?.prev) qc.setQueryData(KEY, ctx.prev);
       toast.error("Couldn't delete setting", { description: describeError(error) });
     },
+    onSuccess: () => toast.success("Setting cleared"),
     onSettled: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
