@@ -5,26 +5,7 @@ description: "The three-layer Python pipeline that intercepts arguments, injects
 
 The resource system is a three-layer Python pipeline that runs entirely outside Rust:
 
-<Mermaid
-  chart={`flowchart TD
-    subgraph enqueue ["enqueue()"]
-        ARGS["Task arguments"] --> IC["ArgumentInterceptor"]
-        IC -->|PASS / CONVERT / REDIRECT| SER["Serializer"]
-        IC -->|PROXY| PX["ProxyHandler.deconstruct()"]
-        PX --> SER
-    end
-
-    SER -->|"serialized payload"| QUEUE[("Queue")]
-
-    subgraph worker ["Worker dispatch"]
-        DE["Deserialize"] --> RC["reconstruct_args()"]
-        RC --> FN["Task function"]
-        RT["ResourceRuntime"] -->|"inject"| FN
-        PX2["ProxyHandler.reconstruct()"] --> FN
-    end
-
-    QUEUE --> DE`}
-/>
+<ResourcePipeline />
 
 **Layer 1 — Argument Interception**: the `ArgumentInterceptor` walks every argument
 before serialization, applying the strategy registered for its type. CONVERT types
