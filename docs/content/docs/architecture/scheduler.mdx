@@ -30,20 +30,7 @@ loop {
 
 ## Polling cycle
 
-<Mermaid
-  chart={`flowchart LR
-    Tick(["loop tick"]) --> Sleep["sleep 50ms"]
-    Sleep --> Dispatch["try_dispatch()"]
-    Dispatch --> Periodic{"iteration<br/>multiple?"}
-    Periodic -->|"every ~60"| CP["check_periodic()"]
-    Periodic -->|"every ~100"| RS["reap_stale()"]
-    Periodic -->|"every ~1200"| AC["auto_cleanup()"]
-    Periodic -->|"otherwise"| Next["next tick"]
-    CP --> Next
-    RS --> Next
-    AC --> Next
-    Next --> Tick`}
-/>
+<SchedulerPollLoop />
 
 ## Dispatch flow
 
@@ -53,26 +40,4 @@ loop {
 4. Worker executes task, sends result back.
 5. `handle_result()` — mark complete, schedule retry, or move to DLQ.
 
-<Mermaid
-  chart={`sequenceDiagram
-    autonumber
-    participant S as Scheduler
-    participant DB as Storage
-    participant RL as RateLimiter
-    participant WP as WorkerPool
-    participant W as Worker
-
-    S->>DB: dequeue_from()
-    DB-->>S: pending job
-    S->>RL: check(task)
-    alt over limit
-        RL-->>S: limited
-        S->>DB: reschedule +1s
-    else under limit
-        RL-->>S: ok
-        S->>WP: mpsc.send(job)
-        WP->>W: execute()
-        W-->>S: result
-        S->>DB: handle_result()
-    end`}
-/>
+<DispatchSequence />
