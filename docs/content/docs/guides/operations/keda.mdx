@@ -193,7 +193,7 @@ spec:
         threshold: "0.8"
 ```
 
-See the [Prometheus integration](/docs/guides/integrations) for setting up
+See the [Prometheus integration](/guides/integrations) for setting up
 the metrics collector.
 
 ## Deploy templates
@@ -210,6 +210,6 @@ Ready-to-use YAML templates are included in the repository under
 <Callout type="info">
   When using SQLite, all worker replicas must share the same database
   volume. For multi-replica Kubernetes deployments, use the
-  [Postgres backend](/docs/guides/operations/postgres) — workers connect
+  [Postgres backend](/guides/operations/postgres) — workers connect
   over the network and there's no shared-file constraint.
 </Callout>

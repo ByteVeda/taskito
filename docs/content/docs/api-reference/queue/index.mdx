@@ -10,11 +10,11 @@ The central class for creating and managing a task queue.
 <Callout type="info" title="Sub-pages">
   The Queue API is split across several pages for readability:
 
-  - **[Job Management](/docs/api-reference/queue/jobs)** — get, list, cancel, archive, replay jobs
-  - **[Queue & Stats](/docs/api-reference/queue/queues)** — rate limits, concurrency, pause/resume, statistics, dead letters
-  - **[Workers & Hooks](/docs/api-reference/queue/workers)** — run workers, lifecycle hooks, circuit breakers, async methods
-  - **[Resources & Locking](/docs/api-reference/queue/resources)** — resource system, distributed locks
-  - **[Events & Logs](/docs/api-reference/queue/events)** — event callbacks, webhooks, structured logs
+  - **[Job Management](/api-reference/queue/jobs)** — get, list, cancel, archive, replay jobs
+  - **[Queue & Stats](/api-reference/queue/queues)** — rate limits, concurrency, pause/resume, statistics, dead letters
+  - **[Workers & Hooks](/api-reference/queue/workers)** — run workers, lifecycle hooks, circuit breakers, async methods
+  - **[Resources & Locking](/api-reference/queue/resources)** — resource system, distributed locks
+  - **[Events & Logs](/api-reference/queue/events)** — event callbacks, webhooks, structured logs
 </Callout>
 
 ## Constructor
@@ -54,7 +54,7 @@ Queue(
 | `result_ttl` | `int \| None` | `None` | Auto-cleanup completed/dead jobs older than this many seconds. `None` disables. |
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Queue-level middleware applied to all tasks. |
 | `drain_timeout` | `int` | `30` | Seconds to wait for in-flight tasks during graceful shutdown. |
-| `interception` | `str` | `"off"` | Argument interception mode: `"strict"`, `"lenient"`, or `"off"`. See [Resource System](/docs/guides/resources). |
+| `interception` | `str` | `"off"` | Argument interception mode: `"strict"`, `"lenient"`, or `"off"`. See [Resource System](/guides/resources). |
 | `max_intercept_depth` | `int` | `10` | Max recursion depth for argument walking. |
 | `recipe_signing_key` | `str \| None` | `None` | HMAC-SHA256 key for proxy recipe integrity. Falls back to `TASKITO_RECIPE_SECRET` env var. |
 | `max_reconstruction_timeout` | `int` | `10` | Max seconds allowed for proxy reconstruction. |
@@ -92,7 +92,7 @@ Queue(
 ) -> TaskWrapper
 ```
 
-Register a function as a background task. Returns a [`TaskWrapper`](/docs/api-reference/task).
+Register a function as a background task. Returns a [`TaskWrapper`](/api-reference/task).
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -109,7 +109,7 @@ Register a function as a background task. Returns a [`TaskWrapper`](/docs/api-re
 | `circuit_breaker` | `dict \| None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
 | `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
-| `inject` | `list[str] \| None` | `None` | Resource names to inject as keyword arguments. See [Resource System](/docs/guides/resources). |
+| `inject` | `list[str] \| None` | `None` | Resource names to inject as keyword arguments. See [Resource System](/guides/resources). |
 | `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to queue-level serializer. |
 | `max_concurrent` | `int \| None` | `None` | Max concurrent running instances. `None` = no limit. |
 
@@ -157,11 +157,11 @@ queue.enqueue(
 ) -> JobResult
 ```
 
-Enqueue a task for execution. Returns a [`JobResult`](/docs/api-reference/result) handle.
+Enqueue a task for execution. Returns a [`JobResult`](/api-reference/result) handle.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](/docs/guides/advanced-execution). |
+| `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](/guides/advanced-execution). |
 
 ### `queue.enqueue_many()`
 

@@ -51,28 +51,28 @@ export const DOC_SECTIONS: DocSectionCard[] = [
     title: "Guides",
     description:
       "Recipes for tasks, queues, workers, retries, workflows, observability, and integrations.",
-    href: "/docs/guides",
+    href: "/guides",
   },
   {
     icon: Layers,
     title: "Architecture",
     description:
       "How the Rust core, scheduler, worker pool, storage, and resource graph fit together.",
-    href: "/docs/architecture/overview",
+    href: "/architecture/overview",
   },
   {
     icon: Code2,
     title: "API Reference",
     description:
       "Queues, tasks, results, contexts, the canvas, workflows, testing helpers, and the CLI.",
-    href: "/docs/api-reference/overview",
+    href: "/api-reference/overview",
   },
   {
     icon: Sparkles,
     title: "More",
     description:
       "Worked examples, the Celery comparison, FAQ, and the per-release changelog.",
-    href: "/docs/more/examples",
+    href: "/more/examples",
   },
 ];
 
@@ -109,11 +109,11 @@ export const HERO: LandingHero = {
   description:
     "Rust-powered task queue for Python. Replace Celery without Redis or RabbitMQ. Start with SQLite, scale to Postgres.",
   primaryCta: {
-    href: "/docs/getting-started/quickstart",
+    href: "/getting-started/quickstart",
     label: "Quickstart",
   },
   secondaryCta: {
-    href: "/docs/getting-started/installation",
+    href: "/getting-started/installation",
     label: "Install",
   },
   ghostCta: {
@@ -259,25 +259,25 @@ export const USE_CASES: UseCase[] = [
     icon: Database,
     title: "ETL pipelines",
     body: "Chain extract → transform → load as a DAG. Fan out across workers, fan in to aggregate, restart from any node on failure.",
-    href: "/docs/guides/workflows",
+    href: "/guides/workflows",
   },
   {
     icon: Mail,
     title: "Email & notifications",
     body: "Bursty SMTP, push, or webhook delivery. Per-task rate limits keep providers happy; retries with backoff handle transient failures.",
-    href: "/docs/guides/reliability/retries",
+    href: "/guides/reliability/retries",
   },
   {
     icon: Cpu,
     title: "ML inference & batch",
     body: "Long-running model jobs with progress tracking, soft timeouts, and prefork pools for true CPU parallelism without GIL contention.",
-    href: "/docs/guides/advanced-execution/prefork",
+    href: "/guides/advanced-execution/prefork",
   },
   {
     icon: Clock,
     title: "Scheduled jobs",
     body: "Six-field cron syntax down to the second. Periodic tasks live in the scheduler — no separate beat daemon to babysit.",
-    href: "/docs/guides/core/scheduling",
+    href: "/guides/core/scheduling",
   },
 ];
 
@@ -314,11 +314,11 @@ export const CTA: LandingCta = {
   description:
     "The quickstart walks you through defining a task, enqueuing it, and watching the worker run it — no Redis, no broker, no config.",
   primary: {
-    href: "/docs/getting-started/quickstart",
+    href: "/getting-started/quickstart",
     label: "Start the quickstart",
   },
   secondary: {
-    href: "/docs/more/comparison",
+    href: "/more/comparison",
     label: "See the full comparison",
   },
 };

@@ -5,7 +5,7 @@ export const revalidate = false;
 
 export async function GET(
   _req: Request,
-  { params }: RouteContext<"/llms.mdx/docs/[[...slug]]">,
+  { params }: RouteContext<"/llms.mdx/[[...slug]]">,
 ) {
   const { slug } = await params;
   // remove the appended "content.md"

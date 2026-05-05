@@ -120,7 +120,7 @@ workers = await queue.aworkers()
 
 The worker heartbeat is also available via the dashboard REST API at
 `GET /api/workers`. See the
-[Dashboard](/docs/guides/observability/dashboard) guide for details.
+[Dashboard](/guides/observability/dashboard) guide for details.
 
 ## Events system
 
@@ -129,7 +129,7 @@ events (`JOB_ENQUEUED`, `JOB_COMPLETED`, `JOB_FAILED`, `JOB_RETRYING`,
 `JOB_DEAD`, `JOB_CANCELLED`). Events can also be delivered as signed HTTP
 webhooks to external systems.
 
-[Events & Webhooks guide →](/docs/guides/extensibility)
+[Events & Webhooks guide →](/guides/extensibility)
 
 ## Prometheus metrics
 
@@ -140,7 +140,7 @@ counters, histograms, and gauges for task execution:
 pip install taskito[prometheus]
 ```
 
-[Prometheus integration →](/docs/guides/integrations)
+[Prometheus integration →](/guides/integrations)
 
 ## Hooks
 

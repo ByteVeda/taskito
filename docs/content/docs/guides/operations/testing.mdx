@@ -53,7 +53,7 @@ with queue.test_mode(propagate_errors=False, resources=None) as results:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `propagate_errors` | `bool` | `False` | If `True`, task exceptions are re-raised immediately instead of being captured in `TestResult.error` |
-| `resources` | `dict[str, Any] \| None` | `None` | Map of resource name → mock instance or `MockResource` for injection. See [Resource System](/docs/guides/resources). |
+| `resources` | `dict[str, Any] \| None` | `None` | Map of resource name → mock instance or `MockResource` for injection. See [Resource System](/guides/resources). |
 
 The context manager yields a `TestResults` list that accumulates results as
 tasks execute.
@@ -272,7 +272,7 @@ async def test_async_enqueue(task_results):
 
 ## Testing with worker resources
 
-If your tasks use [worker resources](/docs/guides/resources) (injected via
+If your tasks use [worker resources](/guides/resources) (injected via
 `inject=` or `Inject["name"]`), pass mock instances through `resources=`:
 
 ```python

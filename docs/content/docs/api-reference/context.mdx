@@ -86,8 +86,8 @@ current_job.update_progress(progress: int) -> None
 ```
 
 Update the job's progress percentage (0–100). The value is written directly to
-the database and can be read via [`job.progress`](/docs/api-reference/result)
-or [`queue.get_job()`](/docs/api-reference/queue/jobs).
+the database and can be read via [`job.progress`](/api-reference/result)
+or [`queue.get_job()`](/api-reference/queue/jobs).
 
 ```python
 @queue.task()
@@ -116,7 +116,7 @@ current_job.publish(data: Any) -> None
 ```
 
 Publish a partial result visible to
-[`job.stream()`](/docs/api-reference/result) consumers. Use this to stream
+[`job.stream()`](/api-reference/result) consumers. Use this to stream
 intermediate data from long-running tasks.
 
 `data` must be JSON-serializable. It is stored as a task log entry with

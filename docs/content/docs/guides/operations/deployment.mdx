@@ -160,7 +160,7 @@ Both methods are safe while the worker is running.
 
 ## Postgres deployment
 
-If you're using the [Postgres backend](/docs/guides/operations/postgres),
+If you're using the [Postgres backend](/guides/operations/postgres),
 deployment is simpler in several ways:
 
 - **No shared-file constraints** — workers connect over the network, no need for shared volumes or local storage
@@ -204,7 +204,7 @@ pg_dump -h localhost -U taskito -d myapp -n taskito > backup.sql
 psql -h localhost -U taskito -d myapp < backup.sql
 ```
 
-See the [Postgres Backend guide](/docs/guides/operations/postgres) for full
+See the [Postgres Backend guide](/guides/operations/postgres) for full
 configuration details.
 
 ## Database maintenance
@@ -324,7 +324,7 @@ queue = Queue(
 ```
 
 If you need distributed workers across multiple machines, use the
-[Postgres backend](/docs/guides/operations/postgres) which removes the
+[Postgres backend](/guides/operations/postgres) which removes the
 single-writer constraint and supports multi-machine deployments.
 
 ## SQLite scaling limits
@@ -349,7 +349,7 @@ are serialized. This is the primary throughput ceiling.
 - Multiple processes contend heavily for writes (high lock wait times)
 - You need sub-millisecond dequeue latency under high load
 
-taskito's [Postgres backend](/docs/guides/operations/postgres) addresses all
+taskito's [Postgres backend](/guides/operations/postgres) addresses all
 of these limitations while keeping the same API.
 
 ## Sizing your deployment
