@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, ErrorState, Skeleton } from "@/components/ui";
 import type { TimeseriesBucket } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
+import { formatRelative } from "@/lib/time";
 
 interface ThroughputSparklineProps {
   buckets: TimeseriesBucket[] | undefined;
@@ -57,6 +59,7 @@ function Sparkline({ buckets }: { buckets: TimeseriesBucket[] }) {
   const height = 80;
   const maxCount = Math.max(1, ...buckets.map((b) => b.count));
   const step = buckets.length > 1 ? width / (buckets.length - 1) : 0;
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const areaPath = buckets
     .map((b, i) => {
@@ -75,28 +78,75 @@ function Sparkline({ buckets }: { buckets: TimeseriesBucket[] }) {
     })
     .join(" ");
 
+  const startLabel = buckets[0] ? formatRelative(buckets[0].timestamp) : "";
+  const endLabel = "now";
+  const midBucket = buckets[Math.floor(buckets.length / 2)];
+  const midLabel = midBucket ? formatRelative(midBucket.timestamp) : "";
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (buckets.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const idx = Math.round(ratio * (buckets.length - 1));
+    setHoverIdx(Math.max(0, Math.min(buckets.length - 1, idx)));
+  }
+
+  const hovered = hoverIdx != null ? buckets[hoverIdx] : null;
+  const hoverX = hoverIdx != null ? (hoverIdx / Math.max(1, buckets.length - 1)) * 100 : 0;
+
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
+    <div
       role="img"
-      aria-label="Throughput over the last hour"
-      className="h-20 w-full"
-      preserveAspectRatio="none"
+      aria-label="Throughput chart with hover details"
+      className="relative"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => setHoverIdx(null)}
     >
-      <defs>
-        <linearGradient id="sparkline-fill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.3" />
-          <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill="url(#sparkline-fill)" />
-      <path
-        d={linePath}
-        fill="none"
-        stroke="var(--color-accent)"
-        strokeWidth="1.5"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Throughput over the last hour"
+        className="h-20 w-full"
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id="sparkline-fill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill="url(#sparkline-fill)" />
+        <path
+          d={linePath}
+          fill="none"
+          stroke="var(--color-accent)"
+          strokeWidth="1.5"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      {hovered ? (
+        <>
+          <div
+            className="pointer-events-none absolute inset-y-0 w-px bg-[var(--border-strong)]"
+            style={{ left: `${hoverX}%` }}
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute -top-1 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-[var(--surface-3)] px-2 py-1 text-[11px] text-[var(--fg)] shadow-sm ring-1 ring-inset ring-[var(--border)]"
+            style={{ left: `${hoverX}%` }}
+          >
+            <div className="text-[var(--fg-subtle)]">{formatRelative(hovered.timestamp)}</div>
+            <div className="font-mono tabular-nums">
+              {formatCount(hovered.count)} runs · {formatCount(hovered.failure)} failed
+            </div>
+          </div>
+        </>
+      ) : null}
+      <div className="mt-1 flex justify-between text-[10px] uppercase tracking-wider text-[var(--fg-subtle)]">
+        <span>{startLabel}</span>
+        <span>{midLabel}</span>
+        <span>{endLabel}</span>
+      </div>
+    </div>
   );
 }
