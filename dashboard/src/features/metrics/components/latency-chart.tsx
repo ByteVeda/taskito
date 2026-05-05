@@ -119,8 +119,7 @@ export function LatencyChart({ buckets, loading }: LatencyChartProps) {
                   dot={false}
                   activeDot={{ r: 3 }}
                   hide={hidden.has(s.key)}
-                  isAnimationActive={true}
-                  animationDuration={400}
+                  isAnimationActive={false}
                 />
               ))}
               <Brush

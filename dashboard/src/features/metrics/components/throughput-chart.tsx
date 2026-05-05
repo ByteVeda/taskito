@@ -82,8 +82,7 @@ export function ThroughputChart({ buckets, loading }: ThroughputChartProps) {
                 fill="url(#thr-success)"
                 name="Success"
                 stackId="1"
-                isAnimationActive={true}
-                animationDuration={400}
+                isAnimationActive={false}
               />
               <Area
                 type="monotone"
@@ -93,8 +92,7 @@ export function ThroughputChart({ buckets, loading }: ThroughputChartProps) {
                 fill="url(#thr-failure)"
                 name="Failure"
                 stackId="1"
-                isAnimationActive={true}
-                animationDuration={400}
+                isAnimationActive={false}
               />
               <Brush
                 dataKey="t"
