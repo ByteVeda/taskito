@@ -7,7 +7,7 @@ mod worker;
 mod workflow_ops;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -21,6 +21,7 @@ use taskito_core::storage::postgres::PostgresStorage;
 use taskito_core::storage::redis_backend::RedisStorage;
 use taskito_core::storage::sqlite::SqliteStorage;
 use taskito_core::storage::{Storage, StorageBackend};
+use taskito_core::worker::WorkerDispatcher;
 
 use crate::py_job::PyJob;
 
@@ -39,6 +40,11 @@ pub struct PyQueue {
     pub(crate) scheduler_reap_interval: u32,
     pub(crate) scheduler_cleanup_interval: u32,
     pub(crate) namespace: Option<String>,
+    /// Active worker dispatcher, set while `run_worker` is executing. Used by
+    /// `request_cancel` to deliver a side-channel signal to pools that run
+    /// tasks out-of-process (prefork). For in-process pools the trait's
+    /// default no-op makes this a free notification.
+    pub(crate) dispatcher: Arc<Mutex<Option<Arc<dyn WorkerDispatcher>>>>,
     /// Cached workflow storage handle. Lazily initialized on first workflow API
     /// call; migrations run exactly once per `PyQueue` instance instead of
     /// per-call.
@@ -137,6 +143,7 @@ impl PyQueue {
             scheduler_reap_interval,
             scheduler_cleanup_interval,
             namespace,
+            dispatcher: Arc::new(Mutex::new(None)),
             #[cfg(feature = "workflows")]
             workflow_storage: std::sync::OnceLock::new(),
         })
@@ -362,10 +369,19 @@ impl PyQueue {
     }
 
     /// Request cancellation of a running job. Returns True if cancel was requested.
+    ///
+    /// Sets the storage cancel flag and, if a worker pool is currently running,
+    /// notifies it via a side channel so out-of-process pools (prefork) can
+    /// observe the cancel without polling storage.
     pub fn request_cancel(&self, job_id: &str) -> PyResult<bool> {
-        self.storage
+        let requested = self
+            .storage
             .request_cancel(job_id)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        if requested {
+            self.notify_dispatcher_cancel(job_id);
+        }
+        Ok(requested)
     }
 
     /// Check if cancellation has been requested for a job.
@@ -600,5 +616,26 @@ impl PyQueue {
             "PyQueue(db_path='{}', workers={})",
             self.db_path, self.num_workers
         )
+    }
+}
+
+impl PyQueue {
+    /// Install the active worker dispatcher. Called by `run_worker` before
+    /// the dispatch loop starts so `request_cancel` can deliver out-of-band
+    /// cancel signals to the running pool. Pass `None` on shutdown.
+    pub(crate) fn set_dispatcher(&self, dispatcher: Option<Arc<dyn WorkerDispatcher>>) {
+        if let Ok(mut guard) = self.dispatcher.lock() {
+            *guard = dispatcher;
+        }
+    }
+
+    fn notify_dispatcher_cancel(&self, job_id: &str) {
+        let dispatcher = match self.dispatcher.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => return,
+        };
+        if let Some(d) = dispatcher {
+            d.notify_cancel(job_id);
+        }
     }
 }

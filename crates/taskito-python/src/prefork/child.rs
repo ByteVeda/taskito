@@ -29,6 +29,15 @@ impl ChildWriter {
     pub fn send_shutdown(&mut self) {
         let _ = self.send(&ParentMessage::Shutdown);
     }
+
+    /// Send a cooperative-cancel request for `job_id`. Returns the underlying
+    /// I/O error if the pipe is broken so the caller can decide whether to
+    /// retry or drop the request.
+    pub fn send_cancel(&mut self, job_id: &str) -> std::io::Result<()> {
+        self.send(&ParentMessage::Cancel {
+            job_id: job_id.to_string(),
+        })
+    }
 }
 
 /// Reader half — reads result messages from the child process via stdout.

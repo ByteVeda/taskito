@@ -326,7 +326,7 @@ impl PyQueue {
         let (result_tx, result_rx) = crossbeam_channel::bounded(self.num_workers * 2);
 
         let registry_arc = Arc::new(task_registry);
-        let filters_arc = Arc::new(retry_filters.into());
+        let filters_arc: Arc<PyObject> = Arc::new(retry_filters.into());
 
         let scheduler_arc = Arc::new(scheduler);
         let scheduler_for_dispatch = scheduler_arc.clone();
@@ -368,10 +368,49 @@ impl PyQueue {
             })?
         };
 
-        // Create multi-threaded tokio runtime for scheduler + worker pool
+        // Build the dispatcher up front for the prefork case so we can install
+        // it on the queue before the run loop starts — request_cancel relies on
+        // the install to deliver out-of-band cancel signals to child processes.
+        //
+        // For in-process pools (native-async, classic async) `notify_cancel` is
+        // a no-op — running tasks observe cancellation via the storage flag —
+        // so we deliberately do NOT install the dispatcher on `self`.
+        // Installing it would keep an `Arc<PyObject>` reference (the async
+        // executor / PyResultSender chain) alive on the parent thread until
+        // `set_dispatcher(None)` runs after `runtime_handle.join()`, deadlocking
+        // shutdown: the drain loop waits for the result channel to disconnect,
+        // which can't happen until PyResultSender drops, which can't happen
+        // until both `async_executor` Arc refs drop — and the second ref is
+        // exactly what `self.dispatcher` was holding.
         let num_workers = self.num_workers;
         let use_prefork = pool.as_deref() == Some("prefork");
-        let prefork_app_path = app_path;
+        let dispatcher_for_run: Arc<dyn taskito_core::worker::WorkerDispatcher> = if use_prefork {
+            let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> = Arc::new(
+                crate::prefork::PreforkPool::new(num_workers, app_path.unwrap_or_default()),
+            );
+            self.set_dispatcher(Some(pool_arc.clone()));
+            pool_arc
+        } else {
+            #[cfg(feature = "native-async")]
+            {
+                let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> =
+                    Arc::new(taskito_async::NativeAsyncPool::new(
+                        num_workers,
+                        registry_arc.clone(),
+                        filters_arc.clone(),
+                        async_executor,
+                    ));
+                pool_arc
+            }
+            #[cfg(not(feature = "native-async"))]
+            {
+                let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> = Arc::new(
+                    AsyncWorkerPool::new(num_workers, registry_arc.clone(), filters_arc.clone()),
+                );
+                pool_arc
+            }
+        };
+
         // Move result_tx into the runtime — don't keep a copy in the main thread
         // so result_rx disconnects when all workers are done.
         let runtime_handle = std::thread::spawn(move || {
@@ -393,30 +432,7 @@ impl PyQueue {
                 });
 
                 let worker_task = tokio::spawn(async move {
-                    use taskito_core::worker::WorkerDispatcher;
-
-                    if use_prefork {
-                        let app = prefork_app_path.unwrap_or_default();
-                        let pool = crate::prefork::PreforkPool::new(num_workers, app);
-                        pool.run(job_rx, result_tx).await;
-                    } else {
-                        #[cfg(feature = "native-async")]
-                        {
-                            let pool = taskito_async::NativeAsyncPool::new(
-                                num_workers,
-                                registry_arc,
-                                filters_arc,
-                                async_executor,
-                            );
-                            pool.run(job_rx, result_tx).await;
-                        }
-
-                        #[cfg(not(feature = "native-async"))]
-                        {
-                            let pool = AsyncWorkerPool::new(num_workers, registry_arc, filters_arc);
-                            pool.run(job_rx, result_tx).await;
-                        }
-                    }
+                    dispatcher_for_run.run(job_rx, result_tx).await;
                 });
 
                 let _ = tokio::join!(scheduler_task, worker_task);
@@ -507,6 +523,10 @@ impl PyQueue {
         }
 
         let _ = runtime_handle.join();
+
+        // Clear the dispatcher reference so post-shutdown cancel requests
+        // become no-ops instead of forwarding to a torn-down pool.
+        self.set_dispatcher(None);
 
         // Unregister worker on shutdown
         let _ = self.storage.unregister_worker(&worker_id);

@@ -213,3 +213,104 @@ def test_prefork_finishes_before_deadline(timeout_app: object) -> None:
 
     result = job.result(timeout=15)
     assert result == "done"
+
+
+# ---------------------------------------------------------------------------
+# Cooperative cancellation propagation (issue #82)
+# ---------------------------------------------------------------------------
+
+CANCEL_APP_PATH = "prefork_apps.cancel_app:queue"
+
+
+@pytest.fixture
+def cancel_app(tmp_path: Path) -> Iterator[object]:
+    """Set up the module-level cancel-test app with a per-test DB path.
+
+    Mirrors ``timeout_app`` — must set the env var before the import so the
+    parent's Queue construction and the child's re-import see the same DB.
+    """
+    db_path = str(tmp_path / "cancel.db")
+    prev_db = os.environ.get("TASKITO_CANCEL_TEST_DB")
+    prev_pythonpath = os.environ.get("PYTHONPATH")
+
+    os.environ["TASKITO_CANCEL_TEST_DB"] = db_path
+    os.environ["PYTHONPATH"] = (
+        f"{PREFORK_APP_DIR}{os.pathsep}{prev_pythonpath}" if prev_pythonpath else PREFORK_APP_DIR
+    )
+    if PREFORK_APP_DIR not in sys.path:
+        sys.path.insert(0, PREFORK_APP_DIR)
+
+    sys.modules.pop("prefork_apps.cancel_app", None)
+    sys.modules.pop("prefork_apps", None)
+    module = importlib.import_module("prefork_apps.cancel_app")
+
+    try:
+        yield module
+    finally:
+        with contextlib.suppress(Exception):
+            module.queue._inner.request_shutdown()
+        if prev_db is None:
+            os.environ.pop("TASKITO_CANCEL_TEST_DB", None)
+        else:
+            os.environ["TASKITO_CANCEL_TEST_DB"] = prev_db
+        if prev_pythonpath is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = prev_pythonpath
+
+
+def _start_cancel_worker(queue: Queue) -> threading.Thread:
+    thread = threading.Thread(
+        target=queue.run_worker,
+        kwargs={"pool": "prefork", "app": CANCEL_APP_PATH},
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+@prefork_unix_only
+def test_prefork_cancel_running_job_stops_quickly(cancel_app: object) -> None:
+    """``cancel_running_job`` propagates to the prefork child and stops a
+    cooperative task within a small budget — the regression test for #82."""
+    queue: Queue = cancel_app.queue  # type: ignore[attr-defined]
+
+    cancels_seen: list[str] = []
+
+    class CancelSpy(TaskMiddleware):
+        def on_cancel(self, ctx: JobContext) -> None:
+            cancels_seen.append(ctx.id)
+
+    queue._global_middleware.append(CancelSpy())
+
+    job = cancel_app.cooperative_loop.delay(600)  # type: ignore[attr-defined]
+    _start_cancel_worker(queue)
+
+    # Give the worker time to dispatch the job to a child and let the loop
+    # start spinning before we cancel.
+    time.sleep(1.0)
+
+    assert queue.cancel_running_job(job.id) is True
+
+    status = _wait_for_terminal(job, timeout=10)
+    assert status == "cancelled", f"expected 'cancelled', got {status!r} (error={job.error!r})"
+    assert job.id in cancels_seen, "on_cancel middleware did not fire"
+
+
+@prefork_unix_only
+def test_prefork_cancel_does_not_kill_child(cancel_app: object) -> None:
+    """A cancel must stop the running task without killing the child — the
+    next job dispatched to the same pool should still complete normally."""
+    queue: Queue = cancel_app.queue  # type: ignore[attr-defined]
+
+    long_job = cancel_app.cooperative_loop.delay(600)  # type: ignore[attr-defined]
+    _start_cancel_worker(queue)
+
+    time.sleep(1.0)
+    assert queue.cancel_running_job(long_job.id) is True
+    status = _wait_for_terminal(long_job, timeout=10)
+    assert status == "cancelled"
+
+    follow_up = cancel_app.quick.delay(21)  # type: ignore[attr-defined]
+    result = follow_up.result(timeout=15)
+    assert result == 42

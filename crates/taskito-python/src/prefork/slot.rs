@@ -60,3 +60,18 @@ pub fn take_if_expired(slots: &SlotState, idx: usize, now: Instant) -> Option<Ac
         None
     }
 }
+
+/// Find the slot index whose active job has the given `job_id`, if any.
+///
+/// Used by the cancel router to locate the child currently running a job.
+/// Each slot lock is held only for the duration of a single comparison, so
+/// the scan never serialises with dispatch or completion.
+pub fn find_by_job_id(slots: &SlotState, job_id: &str) -> Option<usize> {
+    for (idx, slot) in slots.iter().enumerate() {
+        let guard = slot.lock().expect("slot mutex poisoned");
+        if guard.as_ref().is_some_and(|j| j.job_id == job_id) {
+            return Some(idx);
+        }
+    }
+    None
+}
