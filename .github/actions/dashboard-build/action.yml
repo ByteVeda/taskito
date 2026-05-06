@@ -5,11 +5,6 @@ description: >-
   written to `py_src/taskito/static/dashboard/` for packaging into the
   Python wheel.
 
-# Single source of truth for dashboard build tooling versions. Both the
-# release pipeline (`publish.yml`) and the dashboard CI (`dashboard.yml`)
-# consume this action so the assets shipped in wheels are byte-identical
-# to what CI tests.
-
 runs:
   using: composite
   steps:
