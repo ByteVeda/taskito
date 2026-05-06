@@ -5,6 +5,18 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.12.1
+
+### Fixed
+
+- **PyPI wheels and sdist now bundle the compiled dashboard.** A regression in 0.12.0 shipped wheels with an empty `taskito/static/` directory because the release pipeline ran `maturin build` without first building the dashboard frontend. End users hit `Dashboard assets not bundled` when running `taskito dashboard`. The release pipeline now builds the dashboard once in a dedicated job, distributes it to every wheel/sdist job as a build artifact, and verifies `static/dashboard/index.html` is present before each `maturin build` invocation — preventing the regression class entirely.
+
+### Internal
+
+- **`.github/actions/dashboard-build/`** — composite action centralizing pnpm/Node toolchain versions and the dashboard build steps. Consumed by both `publish.yml` (release) and `dashboard.yml` (CI), so the assets shipped in a wheel are produced by the exact same build path that CI tests on every PR.
+
+---
+
 ## 0.12.0
 
 ### Added
