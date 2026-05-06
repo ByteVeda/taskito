@@ -368,38 +368,48 @@ impl PyQueue {
             })?
         };
 
-        // Create multi-threaded tokio runtime for scheduler + worker pool.
-        // Build the dispatcher up front so we can install it on the queue
-        // before the run loop starts — request_cancel relies on the install
-        // to deliver out-of-band cancel signals.
+        // Build the dispatcher up front for the prefork case so we can install
+        // it on the queue before the run loop starts — request_cancel relies on
+        // the install to deliver out-of-band cancel signals to child processes.
+        //
+        // For in-process pools (native-async, classic async) `notify_cancel` is
+        // a no-op — running tasks observe cancellation via the storage flag —
+        // so we deliberately do NOT install the dispatcher on `self`.
+        // Installing it would keep an `Arc<PyObject>` reference (the async
+        // executor / PyResultSender chain) alive on the parent thread until
+        // `set_dispatcher(None)` runs after `runtime_handle.join()`, deadlocking
+        // shutdown: the drain loop waits for the result channel to disconnect,
+        // which can't happen until PyResultSender drops, which can't happen
+        // until both `async_executor` Arc refs drop — and the second ref is
+        // exactly what `self.dispatcher` was holding.
         let num_workers = self.num_workers;
         let use_prefork = pool.as_deref() == Some("prefork");
-        let dispatcher: Arc<dyn taskito_core::worker::WorkerDispatcher> = if use_prefork {
-            Arc::new(crate::prefork::PreforkPool::new(
-                num_workers,
-                app_path.unwrap_or_default(),
-            ))
+        let dispatcher_for_run: Arc<dyn taskito_core::worker::WorkerDispatcher> = if use_prefork {
+            let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> = Arc::new(
+                crate::prefork::PreforkPool::new(num_workers, app_path.unwrap_or_default()),
+            );
+            self.set_dispatcher(Some(pool_arc.clone()));
+            pool_arc
         } else {
             #[cfg(feature = "native-async")]
             {
-                Arc::new(taskito_async::NativeAsyncPool::new(
-                    num_workers,
-                    registry_arc.clone(),
-                    filters_arc.clone(),
-                    async_executor.clone(),
-                ))
+                let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> =
+                    Arc::new(taskito_async::NativeAsyncPool::new(
+                        num_workers,
+                        registry_arc.clone(),
+                        filters_arc.clone(),
+                        async_executor,
+                    ));
+                pool_arc
             }
             #[cfg(not(feature = "native-async"))]
             {
-                Arc::new(AsyncWorkerPool::new(
-                    num_workers,
-                    registry_arc.clone(),
-                    filters_arc.clone(),
-                ))
+                let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> = Arc::new(
+                    AsyncWorkerPool::new(num_workers, registry_arc.clone(), filters_arc.clone()),
+                );
+                pool_arc
             }
         };
-        self.set_dispatcher(Some(dispatcher.clone()));
-        let dispatcher_for_run = dispatcher.clone();
 
         // Move result_tx into the runtime — don't keep a copy in the main thread
         // so result_rx disconnects when all workers are done.
