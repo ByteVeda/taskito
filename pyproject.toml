@@ -50,6 +50,12 @@ manifest-path = "crates/taskito-python/Cargo.toml"
 python-source = "py_src"
 module-name = "taskito._taskito"
 features = ["extension-module", "postgres", "redis", "workflows"]
+# Maturin's `python-source` only auto-packages Python sources (`.py`, `.pyi`,
+# `py.typed`). The compiled dashboard SPA must be opted in explicitly so it
+# ships in both the wheel and the sdist.
+include = [
+    { path = "py_src/taskito/static/dashboard/**/*", format = ["wheel", "sdist"] },
+]
 
 [project.scripts]
 taskito = "taskito.cli:main"    
