@@ -28,11 +28,6 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v6
-
-      # The composite action handles pnpm + Node setup, install, route-tree
-      # generation, and the Vite build. It is the same action used by the
-      # release pipeline, so dashboard CI exercises the exact build path
-      # whose output ships in the wheel.
       - uses: ./.github/actions/dashboard-build
 
       - name: Biome (lint + format)
