@@ -8,7 +8,24 @@ permissions:
   contents: read
 
 jobs:
+  build-dashboard:
+    name: Build dashboard assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/dashboard-build
+
+      - name: Upload dashboard artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dashboard-dist
+          path: py_src/taskito/static/dashboard
+          if-no-files-found: error
+          retention-days: 1
+
   build-wheels-linux:
+    needs: build-dashboard
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -19,6 +36,16 @@ jobs:
             target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download dashboard assets
+        uses: actions/download-artifact@v8
+        with:
+          name: dashboard-dist
+          path: py_src/taskito/static/dashboard
+
+      - name: Verify dashboard assets present
+        shell: bash
+        run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -34,8 +61,10 @@ jobs:
         with:
           name: wheels-linux-${{ matrix.target }}
           path: dist/*.whl
+          if-no-files-found: error
 
   build-wheels-musllinux:
+    needs: build-dashboard
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -46,6 +75,16 @@ jobs:
             target: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download dashboard assets
+        uses: actions/download-artifact@v8
+        with:
+          name: dashboard-dist
+          path: py_src/taskito/static/dashboard
+
+      - name: Verify dashboard assets present
+        shell: bash
+        run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -61,8 +100,10 @@ jobs:
         with:
           name: wheels-musllinux-${{ matrix.target }}
           path: dist/*.whl
+          if-no-files-found: error
 
   build-wheels-macos:
+    needs: build-dashboard
     runs-on: macos-latest
     strategy:
       matrix:
@@ -71,6 +112,16 @@ jobs:
           - aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download dashboard assets
+        uses: actions/download-artifact@v8
+        with:
+          name: dashboard-dist
+          path: py_src/taskito/static/dashboard
+
+      - name: Verify dashboard assets present
+        shell: bash
+        run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v6
@@ -103,8 +154,10 @@ jobs:
         with:
           name: wheels-macos-${{ matrix.target }}
           path: dist/*.whl
+          if-no-files-found: error
 
   build-wheels-windows:
+    needs: build-dashboard
     runs-on: windows-latest
     strategy:
       matrix:
@@ -112,6 +165,16 @@ jobs:
           - target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download dashboard assets
+        uses: actions/download-artifact@v8
+        with:
+          name: dashboard-dist
+          path: py_src/taskito/static/dashboard
+
+      - name: Verify dashboard assets present
+        shell: bash
+        run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v6
@@ -144,11 +207,23 @@ jobs:
         with:
           name: wheels-windows-${{ matrix.target }}
           path: dist/*.whl
+          if-no-files-found: error
 
   build-sdist:
+    needs: build-dashboard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download dashboard assets
+        uses: actions/download-artifact@v8
+        with:
+          name: dashboard-dist
+          path: py_src/taskito/static/dashboard
+
+      - name: Verify dashboard assets present
+        shell: bash
+        run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Build sdist
         uses: PyO3/maturin-action@v1
@@ -161,6 +236,7 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+          if-no-files-found: error
 
   publish:
     needs: [build-wheels-linux, build-wheels-musllinux, build-wheels-macos, build-wheels-windows, build-sdist]
@@ -169,9 +245,10 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - name: Download all artifacts
+      - name: Download wheel and sdist artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: "{wheels-*,sdist}"
           path: dist
           merge-multiple: true
 
