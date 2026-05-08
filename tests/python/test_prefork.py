@@ -270,7 +270,7 @@ def _start_cancel_worker(queue: Queue) -> threading.Thread:
 
 
 @prefork_unix_only
-def test_prefork_cancel_running_job_stops_quickly(cancel_app: object) -> None:
+def test_prefork_cancel_running_job_stops_quickly(cancel_app: object, poll_until: Any) -> None:
     """``cancel_running_job`` propagates to the prefork child and stops a
     cooperative task within a small budget — the regression test for #82."""
     queue: Queue = cancel_app.queue  # type: ignore[attr-defined]
@@ -286,9 +286,12 @@ def test_prefork_cancel_running_job_stops_quickly(cancel_app: object) -> None:
     job = cancel_app.cooperative_loop.delay(600)  # type: ignore[attr-defined]
     _start_cancel_worker(queue)
 
-    # Give the worker time to dispatch the job to a child and let the loop
-    # start spinning before we cancel.
-    time.sleep(1.0)
+    # Wait until the job is actually running on a child before cancelling.
+    def _running() -> bool:
+        job.refresh()
+        return bool(job.status == "running")
+
+    poll_until(_running, timeout=10, message="job never reached running state")
 
     assert queue.cancel_running_job(job.id) is True
 
@@ -298,7 +301,7 @@ def test_prefork_cancel_running_job_stops_quickly(cancel_app: object) -> None:
 
 
 @prefork_unix_only
-def test_prefork_cancel_does_not_kill_child(cancel_app: object) -> None:
+def test_prefork_cancel_does_not_kill_child(cancel_app: object, poll_until: Any) -> None:
     """A cancel must stop the running task without killing the child — the
     next job dispatched to the same pool should still complete normally."""
     queue: Queue = cancel_app.queue  # type: ignore[attr-defined]
@@ -306,7 +309,11 @@ def test_prefork_cancel_does_not_kill_child(cancel_app: object) -> None:
     long_job = cancel_app.cooperative_loop.delay(600)  # type: ignore[attr-defined]
     _start_cancel_worker(queue)
 
-    time.sleep(1.0)
+    def _running() -> bool:
+        long_job.refresh()
+        return bool(long_job.status == "running")
+
+    poll_until(_running, timeout=10, message="long_job never reached running state")
     assert queue.cancel_running_job(long_job.id) is True
     status = _wait_for_terminal(long_job, timeout=10)
     assert status == "cancelled"

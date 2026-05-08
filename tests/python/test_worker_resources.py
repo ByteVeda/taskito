@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from typing import Any
 
 from taskito import Queue
@@ -84,7 +83,7 @@ class TestWorkerAdvertisement:
 
 
 class TestWorkerResourceIntegration:
-    def test_worker_advertises_resources_and_threads(self, tmp_path: Any) -> None:
+    def test_worker_advertises_resources_and_threads(self, tmp_path: Any, poll_until: Any) -> None:
         """A running worker stores resources and threads in storage."""
         queue = Queue(db_path=str(tmp_path / "q.db"), workers=2)
 
@@ -102,15 +101,13 @@ class TestWorkerResourceIntegration:
 
         try:
             # Poll until a worker appears with resource_health populated
-            # (initial registration has None; first heartbeat sets it)
-            deadline = time.monotonic() + 15
-            workers: list[dict[str, Any]] = []
-            while time.monotonic() < deadline:
-                workers = queue.workers()
-                if workers and workers[0].get("resource_health") is not None:
-                    break
-                time.sleep(0.5)
-
+            # (initial registration has None; first heartbeat sets it).
+            poll_until(
+                lambda: bool((ws := queue.workers()) and ws[0].get("resource_health") is not None),
+                timeout=15,
+                message="worker did not publish resource_health",
+            )
+            workers: list[dict[str, Any]] = queue.workers()
             assert len(workers) >= 1
             w = workers[0]
             assert "resources" in w
@@ -129,7 +126,7 @@ class TestWorkerResourceIntegration:
             queue._inner.request_shutdown()
             thread.join(timeout=10)
 
-    def test_worker_no_resources(self, tmp_path: Any) -> None:
+    def test_worker_no_resources(self, tmp_path: Any, poll_until: Any) -> None:
         """Worker without resources stores None for resource fields."""
         queue = Queue(db_path=str(tmp_path / "q.db"), workers=1)
 
@@ -141,14 +138,10 @@ class TestWorkerResourceIntegration:
         thread.start()
 
         try:
-            deadline = time.monotonic() + 10
-            workers: list[dict[str, Any]] = []
-            while time.monotonic() < deadline:
-                workers = queue.workers()
-                if workers:
-                    break
-                time.sleep(0.2)
-
+            poll_until(
+                lambda: bool(queue.workers()), timeout=10, message="worker did not register"
+            )
+            workers: list[dict[str, Any]] = queue.workers()
             assert len(workers) >= 1
             w = workers[0]
             assert w["resources"] is None
@@ -157,7 +150,7 @@ class TestWorkerResourceIntegration:
             queue._inner.request_shutdown()
             thread.join(timeout=10)
 
-    def test_heartbeat_updates_health(self, tmp_path: Any) -> None:
+    def test_heartbeat_updates_health(self, tmp_path: Any, poll_until: Any) -> None:
         """Heartbeat thread updates resource_health in storage."""
         queue = Queue(db_path=str(tmp_path / "q.db"), workers=1)
 
@@ -174,14 +167,12 @@ class TestWorkerResourceIntegration:
 
         try:
             # Wait for worker + first heartbeat
-            deadline = time.monotonic() + 10
-            workers: list[dict[str, Any]] = []
-            while time.monotonic() < deadline:
-                workers = queue.workers()
-                if workers and workers[0].get("resource_health"):
-                    break
-                time.sleep(0.5)
-
+            poll_until(
+                lambda: bool((ws := queue.workers()) and ws[0].get("resource_health")),
+                timeout=10,
+                message="heartbeat never published resource_health",
+            )
+            workers: list[dict[str, Any]] = queue.workers()
             assert len(workers) >= 1
             health = json.loads(workers[0]["resource_health"])
             assert "db" in health

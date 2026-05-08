@@ -5,22 +5,24 @@ from typing import Any
 
 from taskito.events import EventBus, EventType
 
+PollUntil = Any  # the conftest fixture's runtime type
 
-def test_callback_receives_event() -> None:
+
+def test_callback_receives_event(poll_until: PollUntil) -> None:
     """Registered callbacks receive emitted events."""
     received: list[tuple[EventType, dict[str, Any]]] = []
     bus = EventBus()
     bus.on(EventType.JOB_COMPLETED, lambda et, p: received.append((et, p)))
 
     bus.emit(EventType.JOB_COMPLETED, {"job_id": "123"})
-    time.sleep(0.5)
+    poll_until(lambda: len(received) >= 1, message="event was not delivered")
 
     assert len(received) == 1
     assert received[0][0] == EventType.JOB_COMPLETED
     assert received[0][1]["job_id"] == "123"
 
 
-def test_multiple_callbacks() -> None:
+def test_multiple_callbacks(poll_until: PollUntil) -> None:
     """Multiple callbacks for the same event type all fire."""
     counts = {"a": 0, "b": 0}
     bus = EventBus()
@@ -28,7 +30,10 @@ def test_multiple_callbacks() -> None:
     bus.on(EventType.JOB_FAILED, lambda et, p: counts.__setitem__("b", counts["b"] + 1))
 
     bus.emit(EventType.JOB_FAILED, {"error": "boom"})
-    time.sleep(0.5)
+    poll_until(
+        lambda: counts["a"] == 1 and counts["b"] == 1,
+        message="not all callbacks fired",
+    )
 
     assert counts["a"] == 1
     assert counts["b"] == 1
@@ -41,12 +46,13 @@ def test_event_filtering() -> None:
     bus.on(EventType.JOB_COMPLETED, lambda et, p: received.append("completed"))
 
     bus.emit(EventType.JOB_FAILED, {"error": "boom"})
-    time.sleep(0.5)
+    # Brief settle so a (would-be incorrect) cross-type dispatch could land.
+    time.sleep(0.2)
 
     assert received == []
 
 
-def test_exception_in_callback_does_not_crash() -> None:
+def test_exception_in_callback_does_not_crash(poll_until: PollUntil) -> None:
     """A raising callback doesn't prevent other events from processing."""
     results: list[str] = []
     bus = EventBus()
@@ -61,7 +67,7 @@ def test_exception_in_callback_does_not_crash() -> None:
     bus.on(EventType.JOB_ENQUEUED, good_callback)
 
     bus.emit(EventType.JOB_ENQUEUED, {})
-    time.sleep(0.5)
+    poll_until(lambda: results == ["ok"], message="good_callback did not run")
 
     assert results == ["ok"]
 

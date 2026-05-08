@@ -2,16 +2,21 @@
 
 import threading
 import time
+from typing import Any
 
 from taskito import Queue
 
+PollUntil = Any  # the conftest fixture's runtime type
 
-def test_graceful_shutdown_completes_inflight(queue: Queue) -> None:
+
+def test_graceful_shutdown_completes_inflight(queue: Queue, poll_until: PollUntil) -> None:
     """Graceful shutdown waits for in-flight tasks to complete."""
     completed = threading.Event()
 
     @queue.task()
     def slow_task() -> str:
+        # Intentional pacing — the test asserts the worker waits for this
+        # to finish before shutting down.
         time.sleep(1)
         completed.set()
         return "done"
@@ -21,8 +26,11 @@ def test_graceful_shutdown_completes_inflight(queue: Queue) -> None:
     worker_thread = threading.Thread(target=queue.run_worker, daemon=True)
     worker_thread.start()
 
-    # Wait a bit for the task to start
-    time.sleep(0.3)
+    # Wait for the task to actually start running before triggering shutdown.
+    poll_until(
+        lambda: (j := queue.get_job(job.id)) is not None and j.status == "running",
+        message="slow_task never reached running state",
+    )
 
     # Request graceful shutdown
     queue._inner.request_shutdown()
@@ -46,7 +54,8 @@ def test_shutdown_stops_worker(queue: Queue) -> None:
     worker_thread = threading.Thread(target=queue.run_worker, daemon=True)
     worker_thread.start()
 
-    time.sleep(0.3)
+    # Tiny grace window so the worker reaches its poll loop before shutdown.
+    time.sleep(0.1)
     queue._inner.request_shutdown()
 
     worker_thread.join(timeout=10)

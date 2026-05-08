@@ -1,8 +1,8 @@
 """Tests for periodic (cron-scheduled) tasks."""
 
 import threading
-import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -38,7 +38,7 @@ def test_periodic_task_direct_call(queue: Queue) -> None:
     assert add(3, 4) == 7
 
 
-def test_periodic_task_triggers(queue: Queue) -> None:
+def test_periodic_task_triggers(queue: Queue, poll_until: Any) -> None:
     """Periodic task gets enqueued by the scheduler when due."""
     results: list[int] = []
 
@@ -50,12 +50,10 @@ def test_periodic_task_triggers(queue: Queue) -> None:
     worker_thread = threading.Thread(target=queue.run_worker, daemon=True)
     worker_thread.start()
 
-    # Wait for the periodic task to trigger at least once
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        stats = queue.stats()
-        if stats["completed"] >= 1:
-            break
-        time.sleep(0.5)
+    poll_until(
+        lambda: queue.stats()["completed"] >= 1,
+        timeout=15,
+        message="periodic task never triggered",
+    )
 
     assert queue.stats()["completed"] >= 1

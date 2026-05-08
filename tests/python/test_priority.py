@@ -1,8 +1,8 @@
 """Tests for priority scheduling."""
 
 import threading
-import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,7 +15,7 @@ def queue(tmp_path: Path) -> Queue:
     return Queue(db_path=db_path, workers=1)  # 1 worker for ordering
 
 
-def test_priority_ordering(queue: Queue) -> None:
+def test_priority_ordering(queue: Queue, poll_until: Any) -> None:
     """Higher priority jobs should be processed first."""
     results: list[str] = []
 
@@ -24,13 +24,12 @@ def test_priority_ordering(queue: Queue) -> None:
         results.append(label)
         return label
 
-    # Enqueue low priority first, then high priority
+    # Enqueue low priority first, then high priority. All three jobs are
+    # synchronously visible after `apply_async` returns, so no pre-worker
+    # delay is needed.
     record_task.apply_async(args=("low",), priority=1)
     record_task.apply_async(args=("medium",), priority=5)
     record_task.apply_async(args=("high",), priority=10)
-
-    # Small delay to ensure all are enqueued before worker starts
-    time.sleep(0.1)
 
     worker_thread = threading.Thread(
         target=queue.run_worker,
@@ -38,8 +37,11 @@ def test_priority_ordering(queue: Queue) -> None:
     )
     worker_thread.start()
 
-    # Wait for all to complete
-    time.sleep(3)
+    poll_until(
+        lambda: len(results) >= 3,
+        timeout=10,
+        message="not all priority jobs completed",
+    )
 
     # High priority should have been processed first
     assert len(results) == 3

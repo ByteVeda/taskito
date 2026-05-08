@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -93,7 +92,7 @@ class TestEventSystem:
         q = Queue(db_path=str(tmp_path / "test.db"), event_workers=2)
         assert q._event_bus._executor._max_workers == 2
 
-    def test_on_event_public_api(self, tmp_path: Any) -> None:
+    def test_on_event_public_api(self, tmp_path: Any, poll_until: Any) -> None:
         q = Queue(db_path=str(tmp_path / "test.db"))
         received: list[Any] = []
 
@@ -107,7 +106,7 @@ class TestEventSystem:
             pass
 
         my_task.delay()
-        time.sleep(0.2)
+        poll_until(lambda: len(received) >= 1, message="JOB_ENQUEUED event not delivered")
         assert len(received) == 1
         assert received[0][0] == EventType.JOB_ENQUEUED
 

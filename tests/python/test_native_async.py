@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -16,6 +15,8 @@ from taskito.async_support.context import (
     set_async_context,
 )
 from taskito.middleware import TaskMiddleware
+
+PollUntil = Any  # the conftest fixture's runtime type
 
 # ── Async detection ──────────────────────────────────────────────
 
@@ -132,7 +133,7 @@ def test_async_executor_lifecycle() -> None:
     executor.stop()
 
 
-def test_async_executor_submit_and_execute() -> None:
+def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
     """Basic async task produces correct result via executor."""
     import cloudpickle
 
@@ -164,7 +165,7 @@ def test_async_executor_submit_and_execute() -> None:
 
     payload = cloudpickle.dumps(((2, 3), {}))
     executor.submit_job("job-1", "test_mod.my_task", payload, 0, 3, "default")
-    time.sleep(0.5)
+    poll_until(lambda: sender.report_success.called, message="job-1 result not reported")
     executor.stop()
 
     sender.report_success.assert_called_once()
@@ -175,7 +176,7 @@ def test_async_executor_submit_and_execute() -> None:
     assert result == 5
 
 
-def test_async_exception_reported() -> None:
+def test_async_exception_reported(poll_until: PollUntil) -> None:
     """Exception in async task → failure result with traceback."""
     import cloudpickle
 
@@ -206,7 +207,7 @@ def test_async_exception_reported() -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("job-2", "mod.failing_task", payload, 0, 3, "default")
-    time.sleep(0.5)
+    poll_until(lambda: sender.report_failure.called, message="job-2 failure not reported")
     executor.stop()
 
     sender.report_failure.assert_called_once()
@@ -216,7 +217,7 @@ def test_async_exception_reported() -> None:
     assert call_args[0][6] is True  # should_retry
 
 
-def test_async_cancellation() -> None:
+def test_async_cancellation(poll_until: PollUntil) -> None:
     """TaskCancelledError → cancelled result."""
     import cloudpickle
 
@@ -247,14 +248,14 @@ def test_async_cancellation() -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("job-3", "mod.cancelling_task", payload, 0, 3, "default")
-    time.sleep(0.5)
+    poll_until(lambda: sender.report_cancelled.called, message="job-3 cancellation not reported")
     executor.stop()
 
     sender.report_cancelled.assert_called_once()
     assert sender.report_cancelled.call_args[0][0] == "job-3"
 
 
-def test_async_retry_filter() -> None:
+def test_async_retry_filter(poll_until: PollUntil) -> None:
     """Failed async task respects retry_on filter."""
     import cloudpickle
 
@@ -288,14 +289,14 @@ def test_async_retry_filter() -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("job-4", "mod.flaky_task", payload, 0, 3, "default")
-    time.sleep(0.5)
+    poll_until(lambda: sender.report_failure.called, message="job-4 failure not reported")
     executor.stop()
 
     sender.report_failure.assert_called_once()
     assert sender.report_failure.call_args[0][6] is False  # should_retry = False
 
 
-def test_async_concurrency_limit() -> None:
+def test_async_concurrency_limit(poll_until: PollUntil) -> None:
     """Semaphore bounds concurrent async tasks."""
     import cloudpickle
 
@@ -338,14 +339,18 @@ def test_async_concurrency_limit() -> None:
     for i in range(5):
         executor.submit_job(f"job-{i}", "mod.slow_task", payload, 0, 3, "default")
 
-    time.sleep(1.0)
+    poll_until(
+        lambda: sender.report_success.call_count >= 5,
+        timeout=10,
+        message="not all 5 slow_task jobs reported success",
+    )
     executor.stop()
 
     assert max_concurrent <= 2
     assert sender.report_success.call_count == 5
 
 
-def test_async_middleware_hooks() -> None:
+def test_async_middleware_hooks(poll_until: PollUntil) -> None:
     """Middleware before/after called for async tasks."""
     import cloudpickle
 
@@ -386,14 +391,14 @@ def test_async_middleware_hooks() -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("mw-job", "mod.simple_task", payload, 0, 3, "default")
-    time.sleep(0.5)
+    poll_until(lambda: "mw-job" in after_called, message="middleware after hook not called")
     executor.stop()
 
     assert "mw-job" in before_called
     assert "mw-job" in after_called
 
 
-def test_async_task_with_injection() -> None:
+def test_async_task_with_injection(poll_until: PollUntil) -> None:
     """inject=["db"] works for async tasks via executor."""
     import cloudpickle
 
@@ -430,7 +435,7 @@ def test_async_task_with_injection() -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("inj-job", "mod.db_task", payload, 0, 3, "default")
-    time.sleep(0.5)
+    poll_until(lambda: sender.report_success.called, message="inj-job result not reported")
     executor.stop()
 
     sender.report_success.assert_called_once()
@@ -438,7 +443,7 @@ def test_async_task_with_injection() -> None:
     assert result == "got-fake-conn"
 
 
-def test_async_context_available_inside_task() -> None:
+def test_async_context_available_inside_task(poll_until: PollUntil) -> None:
     """current_job.id works inside an async task via contextvars."""
     import cloudpickle
 
@@ -471,7 +476,7 @@ def test_async_context_available_inside_task() -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("ctx-job", "mod.ctx_task", payload, 0, 3, "default")
-    time.sleep(0.5)
+    poll_until(lambda: captured_id == ["ctx-job"], message="ctx-job context not captured")
     executor.stop()
 
     assert captured_id == ["ctx-job"]
