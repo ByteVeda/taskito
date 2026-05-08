@@ -3,12 +3,19 @@
 import os
 import sys
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
 import pytest
 
 from taskito import Queue
+
+# Public type alias used by workflow test files for the ``workflow_worker``
+# fixture parameter (mypy requires annotated test parameters under
+# ``disallow_untyped_defs``). Importing this from conftest keeps the type
+# definition in one place.
+WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
 
 
 @pytest.fixture
@@ -26,6 +33,29 @@ def run_worker(queue: Queue) -> Generator[threading.Thread]:
     yield thread
     queue._inner.request_shutdown()
     thread.join(timeout=5)
+
+
+@pytest.fixture
+def workflow_worker(queue: Queue) -> WorkflowWorkerFactory:
+    """Context-manager factory that starts and stops a worker thread.
+
+    Workflow tests typically run several short worker sessions per test
+    (start, submit workflow, wait, stop — repeated). Returning a context
+    manager from one fixture replaces the per-file ``_start_worker`` /
+    ``_stop_worker`` helpers without changing test semantics.
+    """
+
+    @contextmanager
+    def _ctx() -> Generator[threading.Thread]:
+        thread = threading.Thread(target=queue.run_worker, daemon=True)
+        thread.start()
+        try:
+            yield thread
+        finally:
+            queue._inner.request_shutdown()
+            thread.join(timeout=5)
+
+    return _ctx
 
 
 _PYTEST_EXIT_STATUS: int = 0

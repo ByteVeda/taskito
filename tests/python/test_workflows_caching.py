@@ -3,23 +3,16 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 from taskito import Queue
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 
-
-def _start_worker(queue: Queue) -> threading.Thread:
-    thread = threading.Thread(target=queue.run_worker, daemon=True)
-    thread.start()
-    return thread
+WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
 
 
-def _stop_worker(queue: Queue, thread: threading.Thread) -> None:
-    queue._inner.request_shutdown()
-    thread.join(timeout=5)
-
-
-def test_result_hash_stored(queue: Queue) -> None:
+def test_result_hash_stored(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Completed nodes have a non-None result_hash."""
 
     @queue.task()
@@ -29,12 +22,9 @@ def test_result_hash_stored(queue: Queue) -> None:
     wf = Workflow(name="hash_stored")
     wf.step("a", ok_task)
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         run.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     # Check the node data via base_run_node_data
     nodes = queue._inner.get_base_run_node_data(run.id)
@@ -46,7 +36,7 @@ def test_result_hash_stored(queue: Queue) -> None:
     # In practice it's usually populated.
 
 
-def test_incremental_skips_completed(queue: Queue) -> None:
+def test_incremental_skips_completed(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Incremental run marks base-completed nodes as CACHE_HIT."""
 
     executed: list[str] = []
@@ -66,23 +56,17 @@ def test_incremental_skips_completed(queue: Queue) -> None:
     wf.step("b", step_b, after="a")
 
     # First run: everything executes.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run1 = queue.submit_workflow(wf)
         run1.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert run1.status().state == WorkflowState.COMPLETED
     executed.clear()
 
     # Second run: incremental.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run2 = queue.submit_workflow(wf, incremental=True, base_run=run1.id)
         run2.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     final = run2.status()
     assert final.state == WorkflowState.COMPLETED
@@ -94,7 +78,7 @@ def test_incremental_skips_completed(queue: Queue) -> None:
         assert executed == []  # nothing re-executed
 
 
-def test_incremental_reruns_failed(queue: Queue) -> None:
+def test_incremental_reruns_failed(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Failed nodes in the base run get re-executed."""
 
     call_count = {"n": 0}
@@ -110,22 +94,16 @@ def test_incremental_reruns_failed(queue: Queue) -> None:
     wf.step("a", flaky)
 
     # First run: fails.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run1 = queue.submit_workflow(wf)
         run1.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert run1.status().state == WorkflowState.FAILED
 
     # Second run incremental: failed node re-executes.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run2 = queue.submit_workflow(wf, incremental=True, base_run=run1.id)
         run2.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert run2.status().state == WorkflowState.COMPLETED
     assert call_count["n"] == 2
@@ -157,7 +135,7 @@ def test_dirty_propagation(queue: Queue) -> None:
     assert not cached
 
 
-def test_cache_hit_is_terminal(queue: Queue) -> None:
+def test_cache_hit_is_terminal(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """CACHE_HIT nodes are terminal and don't block the workflow."""
 
     @queue.task()
@@ -169,26 +147,20 @@ def test_cache_hit_is_terminal(queue: Queue) -> None:
     wf.step("b", ok_task, after="a")
 
     # First run.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run1 = queue.submit_workflow(wf)
         run1.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     # Second incremental run.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run2 = queue.submit_workflow(wf, incremental=True, base_run=run1.id)
         final = run2.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     # Workflow should complete (CACHE_HIT is terminal).
     assert final.state == WorkflowState.COMPLETED
 
 
-def test_full_refresh_ignores_cache(queue: Queue) -> None:
+def test_full_refresh_ignores_cache(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """incremental=False always re-runs everything."""
 
     executed: list[str] = []
@@ -202,22 +174,16 @@ def test_full_refresh_ignores_cache(queue: Queue) -> None:
     wf.step("a", step_a)
 
     # First run.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run1 = queue.submit_workflow(wf)
         run1.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     executed.clear()
 
     # Second run without incremental — should re-execute.
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run2 = queue.submit_workflow(wf)
         run2.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert executed == ["a"]
 

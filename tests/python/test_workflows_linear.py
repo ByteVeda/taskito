@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 import pytest
 
@@ -11,19 +13,10 @@ from taskito import Queue
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 from taskito.workflows.run import WorkflowTimeoutError
 
-
-def _start_worker(queue: Queue) -> threading.Thread:
-    thread = threading.Thread(target=queue.run_worker, daemon=True)
-    thread.start()
-    return thread
+WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
 
 
-def _stop_worker(queue: Queue, thread: threading.Thread) -> None:
-    queue._inner.request_shutdown()
-    thread.join(timeout=5)
-
-
-def test_linear_three_step_workflow(queue: Queue) -> None:
+def test_linear_three_step_workflow(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """A→B→C runs in order and the workflow reaches COMPLETED."""
 
     order: list[str] = []
@@ -48,12 +41,9 @@ def test_linear_three_step_workflow(queue: Queue) -> None:
     wf.step("b", step_b, after="a")
     wf.step("c", step_c, after="b")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert order == ["a", "b", "c"]
@@ -61,7 +51,9 @@ def test_linear_three_step_workflow(queue: Queue) -> None:
     assert set(final.nodes.keys()) == {"a", "b", "c"}
 
 
-def test_workflow_with_args_and_kwargs(queue: Queue) -> None:
+def test_workflow_with_args_and_kwargs(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
     """Step args and kwargs round-trip through the queue serializer."""
 
     received: list[tuple] = []
@@ -75,19 +67,18 @@ def test_workflow_with_args_and_kwargs(queue: Queue) -> None:
     wf.step("first", collect, args=(2, 3), kwargs={"label": "a"})
     wf.step("second", collect, args=(10, 20), kwargs={"label": "b"}, after="first")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert (2, 3, "a") in received
     assert (10, 20, "b") in received
 
 
-def test_workflow_decorator_registration(queue: Queue) -> None:
+def test_workflow_decorator_registration(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
     """@queue.workflow() stores a proxy that can build and submit."""
 
     @queue.task()
@@ -105,12 +96,9 @@ def test_workflow_decorator_registration(queue: Queue) -> None:
     assert built.name == "nightly"
     assert built.step_names == ["x"]
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = build.submit()
         final = run.wait(timeout=10)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
 
@@ -170,7 +158,7 @@ def test_workflow_cancellation(queue: Queue) -> None:
         assert node.status == NodeStatus.SKIPPED
 
 
-def test_workflow_failing_step(queue: Queue) -> None:
+def test_workflow_failing_step(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """A failing step fails the workflow and skips downstream steps."""
 
     @queue.task(max_retries=0)
@@ -186,12 +174,9 @@ def test_workflow_failing_step(queue: Queue) -> None:
     wf.step("b", boom, after="a")
     wf.step("c", good, after="b")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.FAILED
     assert final.nodes["a"].status == NodeStatus.COMPLETED
@@ -281,7 +266,9 @@ def test_workflow_definition_reuse(queue: Queue) -> None:
     # (verified indirectly: second submit succeeds without duplicate-key errors)
 
 
-def test_workflow_emits_completed_event(queue: Queue) -> None:
+def test_workflow_emits_completed_event(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
     """WORKFLOW_COMPLETED event fires on successful run completion."""
     from taskito.events import EventType
 
@@ -301,14 +288,11 @@ def test_workflow_emits_completed_event(queue: Queue) -> None:
     wf = Workflow(name="event_pipe")
     wf.step("x", noop)
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         run.wait(timeout=10)
         # Give event bus thread a moment to dispatch
         event_received.wait(timeout=5)
-    finally:
-        _stop_worker(queue, worker)
 
     assert any(e.get("run_id") == run.id for e in events)
     assert any(e.get("state") == "completed" for e in events)
@@ -331,7 +315,7 @@ def test_workflow_run_repr(queue: Queue) -> None:
 
 
 @pytest.mark.asyncio
-async def test_workflow_async_step(queue: Queue) -> None:
+async def test_workflow_async_step(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """An async @queue.task() step works inside a workflow."""
 
     @queue.task()
@@ -346,8 +330,7 @@ async def test_workflow_async_step(queue: Queue) -> None:
     wf.step("a", async_step)
     wf.step("b", sync_step, after="a")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         # Poll instead of blocking wait to play nicely with asyncio
         deadline = time.monotonic() + 15
@@ -355,8 +338,6 @@ async def test_workflow_async_step(queue: Queue) -> None:
         while not final.state.is_terminal() and time.monotonic() < deadline:
             await _async_sleep(0.1)
             final = run.status()
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
 
