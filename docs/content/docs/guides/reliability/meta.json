@@ -4,6 +4,7 @@
     "retries",
     "error-handling",
     "guarantees",
+    "idempotency",
     "rate-limiting",
     "circuit-breakers",
     "locking"
