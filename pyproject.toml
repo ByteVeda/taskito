@@ -62,7 +62,7 @@ taskito = "taskito.cli:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests/python"]
+testpaths = ["tests"]
 
 # -- Ruff --
 

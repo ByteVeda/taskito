@@ -34,7 +34,7 @@ jobs:
               - '.github/workflows/ci.yml'
             python:
               - 'py_src/**'
-              - 'tests/python/**'
+              - 'tests/**'
               - 'pyproject.toml'
               - 'uv.lock'
               - 'crates/**'
@@ -84,7 +84,7 @@ jobs:
         run: uv run ruff format --check py_src/ tests/
 
       - name: Type-check Python with mypy
-        run: uv run mypy py_src/taskito/ tests/python/ --no-incremental
+        run: uv run mypy py_src/taskito/ tests/ --no-incremental
 
   rust-test:
     name: Rust Tests (SQLite)
@@ -254,10 +254,10 @@ jobs:
           args: --release --features extension-module,postgres,redis,native-async,workflows
 
       - name: Run Python test suite
-        # The pytest_unconfigure hook in tests/python/conftest.py calls
+        # The pytest_unconfigure hook in tests/conftest.py calls
         # ``os._exit(0)`` on a clean run to bypass CPython finalization and
         # avoid the PyO3 daemon-thread SIGABRT we used to paper over here.
-        run: uv run python -m pytest tests/python/ -v --junitxml=test-results.xml
+        run: uv run python -m pytest tests/ -v --junitxml=test-results.xml
 
   ci-status:
     name: CI status

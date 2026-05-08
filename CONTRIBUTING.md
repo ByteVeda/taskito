@@ -43,7 +43,7 @@ Python-only changes don't require a rebuild.
 ### Python Tests
 
 ```bash
-pytest tests/python/
+pytest tests/
 ```
 
 ### Rust Tests
