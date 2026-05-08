@@ -31,7 +31,7 @@ repos:
 
       - id: mypy
         name: mypy (py_src + tests)
-        entry: uv run mypy py_src/taskito/ tests/python/ --no-incremental
+        entry: uv run mypy py_src/taskito/ tests/ --no-incremental
         language: system
         types: [python]
         pass_filenames: false
