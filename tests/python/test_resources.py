@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import pytest
@@ -274,7 +273,7 @@ def test_test_mode_restores_previous_runtime(queue: Queue) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_health_check_recreation() -> None:
+def test_health_check_recreation(poll_until: Any) -> None:
     """Unhealthy resource is recreated; permanent failure marks it unavailable."""
     from taskito.exceptions import ResourceUnavailableError
     from taskito.resources.health import HealthChecker
@@ -307,11 +306,13 @@ def test_health_check_recreation() -> None:
 
     checker = HealthChecker(rt)
     checker.start()
-    # Wait for health checks to run and exhaust recreation attempts
-    time.sleep(1.5)
+    poll_until(
+        lambda: "svc" in rt._unhealthy,
+        timeout=5,
+        message="resource never marked unhealthy after exhausting attempts",
+    )
     checker.stop()
 
-    # After exhausting attempts, resource should be marked unhealthy
     assert "svc" in rt._unhealthy
     with pytest.raises(ResourceUnavailableError):
         rt.resolve("svc")

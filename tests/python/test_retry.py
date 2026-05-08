@@ -1,9 +1,11 @@
 """Tests for retry logic and dead letter queue."""
 
 import threading
-import time
+from typing import Any
 
 from taskito import Queue
+
+PollUntil = Any  # the conftest fixture's runtime type
 
 
 def test_failing_task_retries(queue: Queue) -> None:
@@ -31,7 +33,7 @@ def test_failing_task_retries(queue: Queue) -> None:
     assert call_count == 3
 
 
-def test_exhausted_retries_goes_to_dlq(queue: Queue) -> None:
+def test_exhausted_retries_goes_to_dlq(queue: Queue, poll_until: PollUntil) -> None:
     """A task that always fails should end up in the dead letter queue."""
 
     @queue.task(max_retries=2, retry_backoff=0.1)
@@ -46,16 +48,18 @@ def test_exhausted_retries_goes_to_dlq(queue: Queue) -> None:
     )
     worker_thread.start()
 
-    # Wait for the job to exhaust retries and move to DLQ
-    time.sleep(5)
+    poll_until(
+        lambda: len(queue.dead_letters()) >= 1,
+        timeout=15,
+        message="job did not reach DLQ after exhausting retries",
+    )
 
-    # Check that it's in the DLQ
     dead = queue.dead_letters()
     assert len(dead) >= 1
     assert dead[0]["task_name"].endswith("always_fails")
 
 
-def test_retry_dead_letter(queue: Queue) -> None:
+def test_retry_dead_letter(queue: Queue, poll_until: PollUntil) -> None:
     """A dead letter job can be re-enqueued."""
 
     @queue.task(max_retries=1, retry_backoff=0.1)
@@ -70,7 +74,11 @@ def test_retry_dead_letter(queue: Queue) -> None:
     )
     worker_thread.start()
 
-    time.sleep(3)
+    poll_until(
+        lambda: len(queue.dead_letters()) >= 1,
+        timeout=10,
+        message="job did not reach DLQ",
+    )
 
     dead = queue.dead_letters()
     if dead:

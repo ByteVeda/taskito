@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import threading
-import time
 from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
@@ -13,6 +12,8 @@ import pytest
 
 from taskito.events import EventType
 from taskito.webhooks import WebhookManager
+
+PollUntil = Any  # the conftest fixture's runtime type
 
 
 @pytest.fixture
@@ -46,21 +47,25 @@ def webhook_server() -> Generator[tuple[str, list[dict[str, Any]]]]:
     server.shutdown()
 
 
-def test_webhook_delivery(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
+def test_webhook_delivery(
+    webhook_server: tuple[str, list[dict[str, Any]]], poll_until: PollUntil
+) -> None:
     """Webhooks are delivered to registered URLs."""
     url, received = webhook_server
     mgr = WebhookManager()
     mgr.add_webhook(url)
 
     mgr.notify(EventType.JOB_COMPLETED, {"job_id": "abc"})
-    time.sleep(1)
+    poll_until(lambda: len(received) >= 1, message="webhook not delivered")
 
     assert len(received) == 1
     assert received[0]["body"]["event"] == "job.completed"
     assert received[0]["body"]["job_id"] == "abc"
 
 
-def test_webhook_event_filtering(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
+def test_webhook_event_filtering(
+    webhook_server: tuple[str, list[dict[str, Any]]], poll_until: PollUntil
+) -> None:
     """Webhooks with event filters only receive matching events."""
     url, received = webhook_server
     mgr = WebhookManager()
@@ -68,13 +73,15 @@ def test_webhook_event_filtering(webhook_server: tuple[str, list[dict[str, Any]]
 
     mgr.notify(EventType.JOB_COMPLETED, {"job_id": "1"})
     mgr.notify(EventType.JOB_FAILED, {"job_id": "2", "error": "boom"})
-    time.sleep(1)
+    poll_until(lambda: len(received) >= 1, message="filtered webhook not delivered")
 
     assert len(received) == 1
     assert received[0]["body"]["event"] == "job.failed"
 
 
-def test_webhook_hmac_signing(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
+def test_webhook_hmac_signing(
+    webhook_server: tuple[str, list[dict[str, Any]]], poll_until: PollUntil
+) -> None:
     """Webhooks with a secret include a valid HMAC signature."""
     url, received = webhook_server
     secret = "my-secret-key"
@@ -82,7 +89,7 @@ def test_webhook_hmac_signing(webhook_server: tuple[str, list[dict[str, Any]]]) 
     mgr.add_webhook(url, secret=secret)
 
     mgr.notify(EventType.JOB_ENQUEUED, {"job_id": "xyz"})
-    time.sleep(1)
+    poll_until(lambda: len(received) >= 1, message="signed webhook not delivered")
 
     assert len(received) == 1
     sig_header = received[0]["headers"].get("X-Taskito-Signature")
@@ -110,14 +117,16 @@ def test_webhook_url_validation() -> None:
     mgr.add_webhook("https://example.com/hook")
 
 
-def test_webhook_custom_headers(webhook_server: tuple[str, list[dict[str, Any]]]) -> None:
+def test_webhook_custom_headers(
+    webhook_server: tuple[str, list[dict[str, Any]]], poll_until: PollUntil
+) -> None:
     """Custom headers are included in webhook requests."""
     url, received = webhook_server
     mgr = WebhookManager()
     mgr.add_webhook(url, headers={"X-Custom": "test-value"})
 
     mgr.notify(EventType.JOB_COMPLETED, {"job_id": "1"})
-    time.sleep(1)
+    poll_until(lambda: len(received) >= 1, message="custom-headers webhook not delivered")
 
     assert len(received) == 1
     assert received[0]["headers"].get("X-Custom") == "test-value"

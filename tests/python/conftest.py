@@ -3,6 +3,7 @@
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -16,6 +17,41 @@ from taskito import Queue
 # ``disallow_untyped_defs``). Importing this from conftest keeps the type
 # definition in one place.
 WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
+
+PollUntil = Callable[..., None]
+
+
+@pytest.fixture
+def poll_until() -> PollUntil:
+    """Poll a predicate until it returns truthy, or fail on timeout.
+
+    Replaces ``time.sleep(N)`` followed by an assertion in tests that wait
+    for a background event (event-bus dispatch, webhook delivery, async
+    executor completion). Polling shortens the typical wait while keeping
+    a hard timeout for slow CI runners.
+
+    Usage::
+
+        poll_until(lambda: len(received) == 1)
+        poll_until(lambda: counts["a"] == 1, timeout=10, message="callback never fired")
+    """
+
+    def _poll_until(
+        predicate: Callable[[], bool],
+        *,
+        timeout: float = 5.0,
+        interval: float = 0.05,
+        message: str = "predicate did not become true",
+    ) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(interval)
+        if not predicate():
+            raise AssertionError(f"{message} (timeout {timeout}s)")
+
+    return _poll_until
 
 
 @pytest.fixture

@@ -1,9 +1,11 @@
 """Tests for dead letter queue management."""
 
 import threading
-import time
+from typing import Any
 
 from taskito import Queue
+
+PollUntil = Any  # the conftest fixture's runtime type
 
 
 def test_dead_letters_empty(queue: Queue) -> None:
@@ -12,7 +14,7 @@ def test_dead_letters_empty(queue: Queue) -> None:
     assert dead == []
 
 
-def test_purge_dead(queue: Queue) -> None:
+def test_purge_dead(queue: Queue, poll_until: PollUntil) -> None:
     """Purging removes old dead letter entries."""
 
     @queue.task(max_retries=0, retry_backoff=0.1)
@@ -27,11 +29,12 @@ def test_purge_dead(queue: Queue) -> None:
     )
     worker_thread.start()
 
-    for _ in range(20):
-        time.sleep(0.5)
-        dead = queue.dead_letters()
-        if len(dead) >= 1:
-            break
+    poll_until(
+        lambda: len(queue.dead_letters()) >= 1,
+        timeout=10,
+        message="failed job did not reach DLQ",
+    )
+    dead = queue.dead_letters()
     assert len(dead) >= 1
 
     # Purge entries older than 0 seconds (purge everything)
