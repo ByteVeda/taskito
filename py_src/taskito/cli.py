@@ -11,11 +11,16 @@ import time
 
 from taskito.app import Queue
 from taskito.dashboard import serve_dashboard
+from taskito.log_config import configure as configure_logging
 from taskito.scaler import serve_scaler
 
 
 def main() -> None:
     """Parse CLI arguments and dispatch to the appropriate subcommand."""
+    # Configure the central taskito logger before any subcommand runs so
+    # ``info``, ``dashboard``, ``scaler``, etc. all share the same sink.
+    configure_logging()
+
     parser = argparse.ArgumentParser(
         prog="taskito",
         description="taskito — Rust-powered task queue for Python",

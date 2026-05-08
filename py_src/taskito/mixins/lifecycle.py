@@ -17,6 +17,7 @@ import taskito
 from taskito._taskito import PyQueue, PyTaskConfig
 from taskito.context import _set_queue_ref
 from taskito.events import EventType
+from taskito.log_config import configure as configure_logging
 from taskito.resources.health import HealthChecker
 from taskito.resources.runtime import ResourceRuntime
 from taskito.testing import TestMode
@@ -142,12 +143,7 @@ class QueueLifecycleMixin:
                 timezone=pc.get("timezone"),
             )
 
-        if not logging.root.handlers:
-            logging.basicConfig(
-                level=logging.INFO,
-                format="[%(asctime)s] %(levelname)s %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
+        configure_logging()
 
         worker_queues = queue_list or ["default"]
         self._print_banner(worker_queues)
