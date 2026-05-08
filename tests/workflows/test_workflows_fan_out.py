@@ -14,6 +14,7 @@ from taskito import Queue
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 
 WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
+PollUntil = Any  # the conftest fixture's runtime type
 
 
 def test_fan_out_each(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
@@ -214,7 +215,9 @@ def test_fan_out_source_failure(queue: Queue, workflow_worker: WorkflowWorkerFac
     assert final.nodes["collect"].status == NodeStatus.SKIPPED
 
 
-def test_fan_out_cancellation(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
+def test_fan_out_cancellation(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory, poll_until: PollUntil
+) -> None:
     """Cancelling a workflow mid-fan-out skips pending children."""
 
     @queue.task()
@@ -223,7 +226,9 @@ def test_fan_out_cancellation(queue: Queue, workflow_worker: WorkflowWorkerFacto
 
     @queue.task()
     def slow_process(x: int) -> int:
-        time.sleep(10)  # will be cancelled
+        # Intentional pacing — the test needs the children to be running so the
+        # cancel happens mid-fan-out.
+        time.sleep(10)
         return x
 
     @queue.task()
@@ -237,8 +242,11 @@ def test_fan_out_cancellation(queue: Queue, workflow_worker: WorkflowWorkerFacto
 
     with workflow_worker():
         run = queue.submit_workflow(wf)
-        # Wait for source to complete and fan-out to expand
-        time.sleep(2)
+        poll_until(
+            lambda: run.node_status("fetch") == NodeStatus.COMPLETED,
+            timeout=10,
+            message="source did not complete; fan-out never expanded",
+        )
         run.cancel()
         snapshot = run.status()
 

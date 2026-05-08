@@ -5,11 +5,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from typing import Any
 
 from taskito import Queue
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 
 WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
+PollUntil = Any  # the conftest fixture's runtime type
 
 
 def test_sub_workflow_executes(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
@@ -119,13 +121,17 @@ def test_sub_workflow_compile_failure_marks_parent_failed(
     assert final.nodes["after"].status == NodeStatus.SKIPPED
 
 
-def test_cancel_parent_cascades(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
+def test_cancel_parent_cascades(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory, poll_until: PollUntil
+) -> None:
     """Cancelling a parent workflow cancels the child sub-workflow too."""
 
     import time
 
     @queue.task()
     def slow_task() -> str:
+        # Intentional pacing — keeps the child running so the cancel cascades
+        # mid-flight rather than after natural completion.
         time.sleep(30)
         return "slow"
 
@@ -140,7 +146,11 @@ def test_cancel_parent_cascades(queue: Queue, workflow_worker: WorkflowWorkerFac
 
     with workflow_worker():
         run = queue.submit_workflow(wf)
-        time.sleep(2)  # Let sub-workflow submit
+        poll_until(
+            lambda: run.node_status("sub") == NodeStatus.RUNNING,
+            timeout=10,
+            message="sub-workflow did not reach RUNNING",
+        )
         run.cancel()
         snapshot = run.status()
 

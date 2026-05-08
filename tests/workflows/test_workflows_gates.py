@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from typing import Any
 
 from taskito import Queue
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 
 WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
+PollUntil = Any  # the conftest fixture's runtime type
 
 
-def test_gate_pauses_workflow(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
+def test_gate_pauses_workflow(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory, poll_until: PollUntil
+) -> None:
     """A gate node enters WAITING_APPROVAL and blocks downstream."""
 
     @queue.task()
@@ -27,7 +30,11 @@ def test_gate_pauses_workflow(queue: Queue, workflow_worker: WorkflowWorkerFacto
 
     with workflow_worker():
         run = queue.submit_workflow(wf)
-        time.sleep(3)  # Let "a" complete
+        poll_until(
+            lambda: run.node_status("approve") == NodeStatus.WAITING_APPROVAL,
+            timeout=10,
+            message="gate did not reach WAITING_APPROVAL",
+        )
         snapshot = run.status()
 
     assert snapshot.state == WorkflowState.RUNNING
@@ -36,7 +43,9 @@ def test_gate_pauses_workflow(queue: Queue, workflow_worker: WorkflowWorkerFacto
     assert snapshot.nodes["b"].status == NodeStatus.PENDING
 
 
-def test_approve_gate_resumes(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
+def test_approve_gate_resumes(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory, poll_until: PollUntil
+) -> None:
     """Approving a gate lets downstream steps run to completion."""
 
     collected: list[str] = []
@@ -53,7 +62,11 @@ def test_approve_gate_resumes(queue: Queue, workflow_worker: WorkflowWorkerFacto
 
     with workflow_worker():
         run = queue.submit_workflow(wf)
-        time.sleep(2)  # Let "a" complete and gate enter WAITING_APPROVAL
+        poll_until(
+            lambda: run.node_status("approve") == NodeStatus.WAITING_APPROVAL,
+            timeout=10,
+            message="gate did not reach WAITING_APPROVAL",
+        )
         queue.approve_gate(run.id, "approve")
         final = run.wait(timeout=15)
 
@@ -63,7 +76,9 @@ def test_approve_gate_resumes(queue: Queue, workflow_worker: WorkflowWorkerFacto
     assert len(collected) == 2  # "a" and "b"
 
 
-def test_reject_gate_fails(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
+def test_reject_gate_fails(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory, poll_until: PollUntil
+) -> None:
     """Rejecting a gate fails it and skips downstream."""
 
     @queue.task()
@@ -77,7 +92,11 @@ def test_reject_gate_fails(queue: Queue, workflow_worker: WorkflowWorkerFactory)
 
     with workflow_worker():
         run = queue.submit_workflow(wf)
-        time.sleep(2)
+        poll_until(
+            lambda: run.node_status("approve") == NodeStatus.WAITING_APPROVAL,
+            timeout=10,
+            message="gate did not reach WAITING_APPROVAL",
+        )
         queue.reject_gate(run.id, "approve", error="not approved")
         final = run.wait(timeout=15)
 
