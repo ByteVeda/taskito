@@ -28,4 +28,5 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 base64 = "0.22"
 log = { workspace = true }
+pyo3-log = "0.11"
 gethostname = "1.1.0"

@@ -63,6 +63,7 @@ impl PyQueue {
     #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200, namespace=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        py: Python<'_>,
         db_path: &str,
         workers: usize,
         default_retry: i32,
@@ -78,49 +79,57 @@ impl PyQueue {
         scheduler_cleanup_interval: u32,
         namespace: Option<String>,
     ) -> PyResult<Self> {
-        let storage = match backend {
-            "sqlite" => {
-                let s = SqliteStorage::new(db_path)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                StorageBackend::Sqlite(s)
-            }
-            #[cfg(feature = "postgres")]
-            "postgres" | "postgresql" => {
-                let url = db_url.ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "db_url is required for postgres backend",
-                    )
-                })?;
-                let s = PostgresStorage::with_schema_and_pool_size(
-                    url,
-                    schema,
-                    pool_size.unwrap_or(10),
-                )
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                StorageBackend::Postgres(s)
-            }
-            #[cfg(feature = "redis")]
-            "redis" => {
-                let url = db_url.ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("db_url is required for redis backend")
-                })?;
-                let s = RedisStorage::new(url)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                StorageBackend::Redis(s)
-            }
-            _ => {
-                #[allow(unused_mut, clippy::useless_vec)]
-                let mut available = vec!["sqlite"];
+        // Storage init blocks on connection-pool builders that may emit
+        // `log::*` records from worker threads. With the pyo3-log bridge
+        // active, those records need the GIL to deliver to Python — so we
+        // must release it here to avoid a deadlock.
+        let storage = py.allow_threads(|| -> PyResult<StorageBackend> {
+            match backend {
+                "sqlite" => {
+                    let s = SqliteStorage::new(db_path)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                    Ok(StorageBackend::Sqlite(s))
+                }
                 #[cfg(feature = "postgres")]
-                available.push("postgres");
+                "postgres" | "postgresql" => {
+                    let url = db_url.ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "db_url is required for postgres backend",
+                        )
+                    })?;
+                    let s = PostgresStorage::with_schema_and_pool_size(
+                        url,
+                        schema,
+                        pool_size.unwrap_or(10),
+                    )
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                    Ok(StorageBackend::Postgres(s))
+                }
                 #[cfg(feature = "redis")]
-                available.push("redis");
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Unknown backend: '{backend}'. Available backends: {}.",
-                    available.join(", ")
-                )));
+                "redis" => {
+                    let url = db_url.ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "db_url is required for redis backend",
+                        )
+                    })?;
+                    let s = RedisStorage::new(url)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                    Ok(StorageBackend::Redis(s))
+                }
+                _ => {
+                    #[allow(unused_mut, clippy::useless_vec)]
+                    let mut available = vec!["sqlite"];
+                    #[cfg(feature = "postgres")]
+                    available.push("postgres");
+                    #[cfg(feature = "redis")]
+                    available.push("redis");
+                    Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Unknown backend: '{backend}'. Available backends: {}.",
+                        available.join(", ")
+                    )))
+                }
             }
-        };
+        })?;
 
         let num_workers = if workers == 0 {
             std::thread::available_parallelism()

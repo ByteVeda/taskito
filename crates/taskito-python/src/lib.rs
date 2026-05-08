@@ -14,8 +14,19 @@ use py_config::PyTaskConfig;
 use py_job::PyJob;
 use py_queue::PyQueue;
 
+/// Activate the Rust → Python logging bridge.
+///
+/// Called explicitly from `taskito.log_config.configure()` rather than from
+/// module init so that cold imports (which can run while a connection pool
+/// is blocking the GIL on retries) don't trip pyo3-log's flush path.
+#[pyfunction]
+fn _init_rust_logging() {
+    let _ = pyo3_log::try_init();
+}
+
 #[pymodule]
 fn _taskito(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(_init_rust_logging, m)?)?;
     m.add_class::<PyQueue>()?;
     m.add_class::<PyJob>()?;
     m.add_class::<PyTaskConfig>()?;
