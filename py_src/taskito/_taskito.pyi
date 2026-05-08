@@ -385,3 +385,7 @@ class PyResultSender:
         task_name: str,
         wall_time_ns: int,
     ) -> None: ...
+
+def _init_rust_logging() -> None:
+    """Activate the Rust → Python `logging` bridge (idempotent)."""
+    ...
