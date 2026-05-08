@@ -30,6 +30,15 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/dashboard-build
 
+      - name: Verify routeTree.gen.ts is regenerated
+        working-directory: ${{ github.workspace }}
+        run: |
+          if ! git diff --exit-code --quiet dashboard/src/routeTree.gen.ts; then
+            echo "::error::dashboard/src/routeTree.gen.ts is stale. Run 'pnpm --dir dashboard exec tsr generate' and commit the result."
+            git --no-pager diff dashboard/src/routeTree.gen.ts
+            exit 1
+          fi
+
       - name: Biome (lint + format)
         run: pnpm exec biome ci src/
 
