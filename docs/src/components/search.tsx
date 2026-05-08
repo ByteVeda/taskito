@@ -22,12 +22,15 @@ function initOrama() {
   });
 }
 
+const basePath = process.env.NEXT_PUBLIC_DOCS_BASE_PATH ?? "";
+
 export default function DefaultSearchDialog(props: SharedProps) {
   const { locale } = useI18n(); // (optional) for i18n
   const { search, setSearch, query } = useDocsSearch({
     type: "static",
     initOrama,
     locale,
+    from: `${basePath}/api/search`,
   });
 
   return (
