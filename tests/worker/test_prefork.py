@@ -161,7 +161,7 @@ def _wait_for_terminal(job: Any, timeout: float) -> str:
 
 
 @prefork_unix_only
-def test_prefork_kills_hung_task(timeout_app: object) -> None:
+def test_prefork_kills_hung_task(timeout_app: object, poll_until: Any) -> None:
     """A task that hangs past its `timeout=` is SIGKILLed by the watchdog and
     reported as a timeout failure within the timeout + watchdog tick budget."""
     timeouts_seen: list[str] = []
@@ -185,7 +185,14 @@ def test_prefork_kills_hung_task(timeout_app: object) -> None:
     assert status == "dead", f"expected 'dead', got {status!r} (error={job.error!r})"
     assert "timed out" in (job.error or "").lower()
     assert elapsed < 12, f"hung task took {elapsed:.1f}s to be killed (expected < 12s)"
-    assert job.id in timeouts_seen, "on_timeout middleware did not fire"
+    # The DB status flips to 'dead' inside `handle_result()`, but `on_timeout`
+    # fires a moment later in `dispatch_outcome` on the worker thread — poll
+    # rather than asserting on a single observation to avoid that race.
+    poll_until(
+        lambda: job.id in timeouts_seen,
+        timeout=5,
+        message="on_timeout middleware did not fire",
+    )
 
 
 @prefork_unix_only
