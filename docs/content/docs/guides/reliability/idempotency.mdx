@@ -1,0 +1,85 @@
+---
+title: Idempotency
+description: "Auto-derived deduplication keys — declare a task idempotent and identical calls coalesce to a single execution."
+---
+
+When a task represents an action that **must not run twice** (charging a card,
+sending a webhook, applying a credit), set `idempotent=True` on the task.
+Taskito derives a deduplication key from the task name and serialized arguments.
+Two enqueues with identical arguments while the first job is pending or running
+return the **same job ID** — the second call becomes a no-op.
+
+## Declaring an idempotent task
+
+```python
+@queue.task(idempotent=True)
+def charge_customer(customer_id: int, amount_cents: int) -> str:
+    return payment_provider.charge(customer_id, amount_cents)
+
+job1 = charge_customer.delay(42, 1000)
+job2 = charge_customer.delay(42, 1000)
+
+assert job1.id == job2.id  # second call coalesced into the first
+```
+
+## How the key is derived
+
+Auto-keys follow the format `auto:<sha256(task_name|payload)[:32]>`. Hashing
+happens *after* serialization, so two calls with logically equal but
+type-different arguments collide only when the serializer emits identical bytes
+— the same contract that the wire payload uses.
+
+The dedup slot is held while the job is `pending` or `running`. Once the job
+reaches a terminal state (`completed`, `failed`, `dead`), the slot is freed and
+a fresh call with the same arguments creates a new job.
+
+## Per-call overrides
+
+```python
+# Custom semantic key (overrides the auto-derived hash)
+charge_customer.apply_async(
+    args=(42, 1000),
+    idempotency_key="invoice-2026-05-08-42",
+)
+
+# Force a fresh execution even on an idempotent task
+charge_customer.apply_async(args=(42, 1000), idempotent=False)
+```
+
+| Parameter | Type | Effect |
+|-----------|------|--------|
+| `idempotent=True` (decorator) | `bool` | Default for every `delay()` / `apply_async()` |
+| `idempotency_key="…"` (call) | `str` | Explicit key. Overrides auto-derivation. |
+| `idempotent=False` (call) | `bool` | Disable auto-derivation for this submission |
+| `unique_key="…"` (call) | `str` | Backwards-compat alias of `idempotency_key` |
+
+Precedence (high to low): `unique_key` → `idempotency_key` → auto-derivation.
+
+## Pitfalls
+
+- **Don't pass moving values as arguments.** `datetime.now()`, `uuid4()`, and
+  similar will produce a different hash on every call, so dedup never triggers.
+  Move them inside the task body or pass a stable identifier instead.
+- **Argument order matters** — `charge(42, 1000)` and `charge(amount=1000, customer_id=42)`
+  serialize differently and therefore hash differently. Be consistent at the
+  call site or use an explicit `idempotency_key`.
+- **Serializer matters.** If you change the per-task serializer between
+  releases, hashes change and in-flight jobs from the old release won't dedupe
+  against new submissions. Use explicit `idempotency_key` for keys that must
+  survive deploys.
+- **Test mode skips dedup.** `queue.test_mode()` runs tasks synchronously
+  without storage, so idempotency is a no-op there.
+
+## Bulk submissions
+
+`enqueue_many()` accepts a per-job `idempotency_keys` list, or a uniform
+`idempotent=True` that auto-derives a key per row:
+
+```python
+queue.enqueue_many(
+    task_name="myapp.charge_customer",
+    args_list=[(42, 1000), (43, 2000), (42, 1000)],
+    idempotent=True,
+)
+# Third entry collides with the first → only two distinct jobs created.
+```
