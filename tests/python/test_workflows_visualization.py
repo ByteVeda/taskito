@@ -3,24 +3,17 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 from taskito import Queue
 from taskito.workflows import Workflow
 
+WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
+
 
 class _FakeTask:
     _task_name = "fake"
-
-
-def _start_worker(queue: Queue) -> threading.Thread:
-    thread = threading.Thread(target=queue.run_worker, daemon=True)
-    thread.start()
-    return thread
-
-
-def _stop_worker(queue: Queue, thread: threading.Thread) -> None:
-    queue._inner.request_shutdown()
-    thread.join(timeout=5)
 
 
 def test_mermaid_linear() -> None:
@@ -80,7 +73,7 @@ def test_dot_linear() -> None:
     assert "a -> b" in output
 
 
-def test_visualize_live_run(queue: Queue) -> None:
+def test_visualize_live_run(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """WorkflowRun.visualize() shows live statuses."""
 
     @queue.task()
@@ -91,13 +84,10 @@ def test_visualize_live_run(queue: Queue) -> None:
     wf.step("a", ok_task)
     wf.step("b", ok_task, after="a")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=15)
         output = run.visualize("mermaid")
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state.value == "completed"
     assert "graph LR" in output

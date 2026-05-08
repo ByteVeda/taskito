@@ -3,23 +3,16 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 from taskito import Queue
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 
-
-def _start_worker(queue: Queue) -> threading.Thread:
-    thread = threading.Thread(target=queue.run_worker, daemon=True)
-    thread.start()
-    return thread
+WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
 
 
-def _stop_worker(queue: Queue, thread: threading.Thread) -> None:
-    queue._inner.request_shutdown()
-    thread.join(timeout=5)
-
-
-def test_sub_workflow_executes(queue: Queue) -> None:
+def test_sub_workflow_executes(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """A sub-workflow step runs the child workflow, parent continues after."""
 
     order: list[str] = []
@@ -50,12 +43,9 @@ def test_sub_workflow_executes(queue: Queue) -> None:
     wf.step("etl", etl_pipeline.as_step())
     wf.step("report", report, after="etl")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert "extract" in order
@@ -64,7 +54,7 @@ def test_sub_workflow_executes(queue: Queue) -> None:
     assert order.index("load") < order.index("report")
 
 
-def test_sub_workflow_failure(queue: Queue) -> None:
+def test_sub_workflow_failure(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """A failing sub-workflow fails the parent node."""
 
     @queue.task(max_retries=0)
@@ -85,19 +75,18 @@ def test_sub_workflow_failure(queue: Queue) -> None:
     wf.step("sub", failing_sub.as_step())
     wf.step("after", ok_task, after="sub")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.FAILED
     assert final.nodes["sub"].status == NodeStatus.FAILED
     assert final.nodes["after"].status == NodeStatus.SKIPPED
 
 
-def test_sub_workflow_compile_failure_marks_parent_failed(queue: Queue) -> None:
+def test_sub_workflow_compile_failure_marks_parent_failed(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
     """Regression: a factory that raises during `build()` must not leave the
     parent node Skipped forever — it must be marked Failed so the outer run
     can finalize. Before the fix, the tracker called `skip_workflow_node`
@@ -116,12 +105,9 @@ def test_sub_workflow_compile_failure_marks_parent_failed(queue: Queue) -> None:
     wf.step("sub", broken_sub.as_step())
     wf.step("after", downstream, after="sub")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.FAILED, (
         f"outer run must finalize as FAILED, got {final.state}"
@@ -133,7 +119,7 @@ def test_sub_workflow_compile_failure_marks_parent_failed(queue: Queue) -> None:
     assert final.nodes["after"].status == NodeStatus.SKIPPED
 
 
-def test_cancel_parent_cascades(queue: Queue) -> None:
+def test_cancel_parent_cascades(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Cancelling a parent workflow cancels the child sub-workflow too."""
 
     import time
@@ -152,19 +138,16 @@ def test_cancel_parent_cascades(queue: Queue) -> None:
     wf = Workflow(name="parent_cancel")
     wf.step("sub", slow_sub.as_step())
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         time.sleep(2)  # Let sub-workflow submit
         run.cancel()
         snapshot = run.status()
-    finally:
-        _stop_worker(queue, worker)
 
     assert snapshot.state == WorkflowState.CANCELLED
 
 
-def test_parallel_sub_workflows(queue: Queue) -> None:
+def test_parallel_sub_workflows(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Two sub-workflows can run concurrently."""
 
     order: list[str] = []
@@ -201,12 +184,9 @@ def test_parallel_sub_workflows(queue: Queue) -> None:
     wf.step("sb", sub_b.as_step())
     wf.step("reconcile", reconcile, after=["sa", "sb"])
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert "a" in order

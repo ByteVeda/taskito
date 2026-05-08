@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Any
 
 import pytest
@@ -11,19 +13,10 @@ import pytest
 from taskito import Queue
 from taskito.workflows import NodeStatus, Workflow, WorkflowState
 
-
-def _start_worker(queue: Queue) -> threading.Thread:
-    thread = threading.Thread(target=queue.run_worker, daemon=True)
-    thread.start()
-    return thread
+WorkflowWorkerFactory = Callable[[], AbstractContextManager[threading.Thread]]
 
 
-def _stop_worker(queue: Queue, thread: threading.Thread) -> None:
-    queue._inner.request_shutdown()
-    thread.join(timeout=5)
-
-
-def test_fan_out_each(queue: Queue) -> None:
+def test_fan_out_each(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """fan_out='each' splits a list into N parallel jobs, fan_in='all' collects."""
 
     @queue.task()
@@ -46,18 +39,15 @@ def test_fan_out_each(queue: Queue) -> None:
     wf.step("process", double, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert sorted(collected) == [20, 40, 60]
 
 
-def test_fan_out_empty_list(queue: Queue) -> None:
+def test_fan_out_empty_list(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Fan-out over an empty list → fan-in receives []."""
 
     @queue.task()
@@ -80,18 +70,15 @@ def test_fan_out_empty_list(queue: Queue) -> None:
     wf.step("process", process, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert collected == []
 
 
-def test_fan_out_single_item(queue: Queue) -> None:
+def test_fan_out_single_item(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Fan-out with a single-element list → 1 child → fan-in gets [result]."""
 
     @queue.task()
@@ -114,18 +101,15 @@ def test_fan_out_single_item(queue: Queue) -> None:
     wf.step("process", add_one, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert collected == [43]
 
 
-def test_fan_out_with_downstream(queue: Queue) -> None:
+def test_fan_out_with_downstream(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Full pipeline: source → fan_out → fan_in → downstream static step."""
 
     order: list[str] = []
@@ -156,12 +140,9 @@ def test_fan_out_with_downstream(queue: Queue) -> None:
     wf.step("agg", aggregate, after="process", fan_in="all")
     wf.step("report", report, after="agg")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert "source" in order
@@ -172,7 +153,7 @@ def test_fan_out_with_downstream(queue: Queue) -> None:
     assert order.index("aggregate") < order.index("report")
 
 
-def test_fan_out_child_failure(queue: Queue) -> None:
+def test_fan_out_child_failure(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """A failing fan-out child triggers fail-fast, workflow fails."""
 
     @queue.task()
@@ -194,19 +175,16 @@ def test_fan_out_child_failure(queue: Queue) -> None:
     wf.step("process", maybe_fail, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.FAILED
     # The aggregate node should be skipped
     assert final.nodes["collect"].status == NodeStatus.SKIPPED
 
 
-def test_fan_out_source_failure(queue: Queue) -> None:
+def test_fan_out_source_failure(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """If the fan-out source step fails, all deferred nodes are SKIPPED."""
 
     @queue.task(max_retries=0)
@@ -226,12 +204,9 @@ def test_fan_out_source_failure(queue: Queue) -> None:
     wf.step("process", process, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.FAILED
     assert final.nodes["fetch"].status == NodeStatus.FAILED
@@ -239,7 +214,7 @@ def test_fan_out_source_failure(queue: Queue) -> None:
     assert final.nodes["collect"].status == NodeStatus.SKIPPED
 
 
-def test_fan_out_cancellation(queue: Queue) -> None:
+def test_fan_out_cancellation(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Cancelling a workflow mid-fan-out skips pending children."""
 
     @queue.task()
@@ -260,20 +235,19 @@ def test_fan_out_cancellation(queue: Queue) -> None:
     wf.step("process", slow_process, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         # Wait for source to complete and fan-out to expand
         time.sleep(2)
         run.cancel()
         snapshot = run.status()
-    finally:
-        _stop_worker(queue, worker)
 
     assert snapshot.state == WorkflowState.CANCELLED
 
 
-def test_fan_out_status_shows_children(queue: Queue) -> None:
+def test_fan_out_status_shows_children(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
     """status() returns child node snapshots like process[0], process[1]."""
 
     @queue.task()
@@ -293,12 +267,9 @@ def test_fan_out_status_shows_children(queue: Queue) -> None:
     wf.step("process", process, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     # Children should appear in the node map
@@ -310,7 +281,9 @@ def test_fan_out_status_shows_children(queue: Queue) -> None:
         assert final.nodes[f"process[{i}]"].job_id is not None
 
 
-def test_fan_out_preserves_result_order(queue: Queue) -> None:
+def test_fan_out_preserves_result_order(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
     """Fan-in results maintain the order of child indices."""
 
     @queue.task()
@@ -333,12 +306,9 @@ def test_fan_out_preserves_result_order(queue: Queue) -> None:
     wf.step("process", identity, after="fetch", fan_out="each")
     wf.step("collect", aggregate, after="process", fan_in="all")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=20)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     # Results should be in child index order (same as input order)
@@ -356,7 +326,7 @@ def test_step_name_bracket_validation() -> None:
         wf.step("bad[0]", _FakeTask())
 
 
-def test_linear_workflow_still_works(queue: Queue) -> None:
+def test_linear_workflow_still_works(queue: Queue, workflow_worker: WorkflowWorkerFactory) -> None:
     """Phase 2 regression: a linear workflow without fan-out still works."""
 
     order: list[str] = []
@@ -381,12 +351,9 @@ def test_linear_workflow_still_works(queue: Queue) -> None:
     wf.step("b", step_b, after="a")
     wf.step("c", step_c, after="b")
 
-    worker = _start_worker(queue)
-    try:
+    with workflow_worker():
         run = queue.submit_workflow(wf)
         final = run.wait(timeout=15)
-    finally:
-        _stop_worker(queue, worker)
 
     assert final.state == WorkflowState.COMPLETED
     assert order == ["a", "b", "c"]
