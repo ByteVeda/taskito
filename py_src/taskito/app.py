@@ -16,6 +16,7 @@ The Queue class itself (this file) handles only:
 from __future__ import annotations
 
 import functools
+import hashlib
 import logging
 import os
 from collections.abc import Callable
@@ -210,6 +211,7 @@ class Queue(
         }
         self._serializer: Serializer = serializer or CloudpickleSerializer()
         self._task_serializers: dict[str, Serializer] = {}
+        self._task_idempotent: dict[str, bool] = {}
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
@@ -264,6 +266,37 @@ class Queue(
     def _get_serializer(self, task_name: str) -> Serializer:
         """Get the serializer for a task (per-task or queue-level fallback)."""
         return self._task_serializers.get(task_name, self._serializer)
+
+    @staticmethod
+    def _auto_idempotency_key(task_name: str, payload: bytes) -> str:
+        """Derive a deterministic dedup key from task name + serialized payload."""
+        digest = hashlib.sha256(task_name.encode("utf-8") + b"|" + payload).hexdigest()
+        return f"auto:{digest[:32]}"
+
+    def _resolve_unique_key(
+        self,
+        task_name: str,
+        payload: bytes,
+        unique_key: str | None,
+        idempotency_key: str | None,
+        idempotent: bool | None,
+    ) -> str | None:
+        """Resolve which dedup key (if any) to send to storage.
+
+        Precedence: explicit unique_key > explicit idempotency_key > auto-key
+        when the per-call ``idempotent`` flag (or per-task default) is True.
+        A per-call ``idempotent=False`` disables auto-derivation even if the
+        task is registered as idempotent.
+        """
+        if unique_key is not None:
+            return unique_key
+        if idempotency_key is not None:
+            return idempotency_key
+        if idempotent is False:
+            return None
+        if idempotent or self._task_idempotent.get(task_name, False):
+            return self._auto_idempotency_key(task_name, payload)
+        return None
 
     def _deserialize_payload(self, task_name: str, payload: bytes) -> tuple:
         """Deserialize a job payload using the per-task or queue-level serializer."""
@@ -397,6 +430,8 @@ class Queue(
         depends_on: str | list[str] | None = None,
         expires: float | None = None,
         result_ttl: int | None = None,
+        idempotency_key: str | None = None,
+        idempotent: bool | None = None,
     ) -> JobResult:
         """Enqueue a task for background execution.
 
@@ -409,11 +444,19 @@ class Queue(
             queue: Target queue name.
             max_retries: Max retry attempts.
             timeout: Timeout in seconds.
-            unique_key: Deduplication key.
+            unique_key: Deduplication key (alias of ``idempotency_key`` — wins
+                if both are set, kept for backwards compatibility).
             metadata: Arbitrary JSON string to attach to the job.
             depends_on: Job ID or list of job IDs that must complete first.
             expires: Seconds until the job expires (skipped if not started by then).
             result_ttl: Per-job result TTL in seconds. Overrides global result_ttl.
+            idempotency_key: Explicit dedup key. A second enqueue with the same
+                key while the first job is pending or running returns the
+                existing job's ID instead of creating a duplicate.
+            idempotent: Force-on (``True``) or force-off (``False``) the
+                auto-derived dedup key for this single call. ``None`` (the
+                default) falls back to the per-task setting from
+                ``@queue.task(idempotent=True)``.
         """
         final_args = args
         final_kwargs = kwargs or {}
@@ -430,6 +473,8 @@ class Queue(
             "depends_on": depends_on,
             "expires": expires,
             "result_ttl": result_ttl,
+            "idempotency_key": idempotency_key,
+            "idempotent": idempotent,
         }
         for mw in self._global_middleware:
             try:
@@ -448,11 +493,21 @@ class Queue(
         depends_on = enqueue_options.get("depends_on")
         expires = enqueue_options.get("expires")
         result_ttl = enqueue_options.get("result_ttl")
+        idempotency_key = enqueue_options.get("idempotency_key")
+        idempotent = enqueue_options.get("idempotent")
 
         if self._interceptor is not None and not self._test_mode_active:
             final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
         task_serializer = self._get_serializer(task_name)
         payload = task_serializer.dumps((final_args, final_kwargs))
+
+        unique_key = self._resolve_unique_key(
+            task_name=task_name,
+            payload=payload,
+            unique_key=unique_key,
+            idempotency_key=idempotency_key,
+            idempotent=idempotent,
+        )
 
         dep_ids = None
         if depends_on is not None:
@@ -502,6 +557,8 @@ class Queue(
         expires_list: list[float | None] | None = None,
         result_ttl: int | None = None,
         result_ttl_list: list[int | None] | None = None,
+        idempotency_keys: list[str | None] | None = None,
+        idempotent: bool | None = None,
     ) -> list[JobResult]:
         """Enqueue multiple jobs for the same task in a single transaction.
 
@@ -515,13 +572,22 @@ class Queue(
             timeout: Timeout in seconds for all jobs (uses default if None).
             delay: Uniform delay in seconds for all jobs.
             delay_list: Per-job delays in seconds.
-            unique_keys: Per-job deduplication keys.
+            unique_keys: Per-job deduplication keys (alias of
+                ``idempotency_keys`` for backwards compatibility — wins per-job
+                if both are set).
             metadata: Uniform metadata JSON string for all jobs.
             metadata_list: Per-job metadata JSON strings.
             expires: Uniform expiry in seconds for all jobs.
             expires_list: Per-job expiry in seconds.
             result_ttl: Uniform result TTL in seconds for all jobs.
             result_ttl_list: Per-job result TTL in seconds.
+            idempotency_keys: Per-job explicit dedup keys. Falls back to
+                auto-derivation when an entry is ``None`` and the task is
+                idempotent.
+            idempotent: Force-on (``True``) or force-off (``False``)
+                auto-derived dedup keys for this batch. ``None`` (the default)
+                falls back to the per-task setting from
+                ``@queue.task(idempotent=True)``.
 
         Returns:
             List of JobResult handles, one per enqueued job.
@@ -550,6 +616,8 @@ class Queue(
                 "metadata": (metadata_list[i] if metadata_list is not None else metadata),
                 "expires": (expires_list[i] if expires_list is not None else expires),
                 "result_ttl": (result_ttl_list[i] if result_ttl_list is not None else result_ttl),
+                "idempotency_key": (idempotency_keys[i] if idempotency_keys is not None else None),
+                "idempotent": idempotent,
             }
             for i in range(count)
         ]
@@ -570,7 +638,6 @@ class Queue(
         retries_list = [opt["max_retries"] for opt in per_job_options]
         timeouts_list = [opt["timeout"] for opt in per_job_options]
         delays = [opt["delay"] for opt in per_job_options]
-        per_job_unique_keys = [opt["unique_key"] for opt in per_job_options]
         metas = [opt["metadata"] for opt in per_job_options]
         exp_list = [opt["expires"] for opt in per_job_options]
         ttl_list = [opt["result_ttl"] for opt in per_job_options]
@@ -587,6 +654,17 @@ class Queue(
                 task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list, strict=True)
             ]
         task_names = [task_name] * count
+
+        per_job_unique_keys = [
+            self._resolve_unique_key(
+                task_name=task_name,
+                payload=payloads[i],
+                unique_key=per_job_options[i]["unique_key"],
+                idempotency_key=per_job_options[i]["idempotency_key"],
+                idempotent=per_job_options[i]["idempotent"],
+            )
+            for i in range(count)
+        ]
 
         py_jobs = self._inner.enqueue_batch(
             task_names=task_names,

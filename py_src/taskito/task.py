@@ -85,6 +85,8 @@ class TaskWrapper:
         depends_on: str | list[str] | None = None,
         expires: float | None = None,
         result_ttl: int | None = None,
+        idempotency_key: str | None = None,
+        idempotent: bool | None = None,
     ) -> JobResult:
         """Enqueue with full control over submission options.
 
@@ -96,11 +98,18 @@ class TaskWrapper:
             queue: Override the default queue name.
             max_retries: Override the default max retry count.
             timeout: Override the default timeout in seconds.
-            unique_key: Deduplication key.
+            unique_key: Deduplication key (alias of ``idempotency_key``).
             metadata: Arbitrary JSON string to attach to the job.
             depends_on: Job ID or list of job IDs that must complete first.
             expires: Seconds until the job expires (skipped if not started by then).
             result_ttl: Per-job result TTL in seconds.
+            idempotency_key: Explicit dedup key. A second submission with the
+                same key while the first job is pending or running returns the
+                existing job's ID.
+            idempotent: ``True`` forces auto-derivation of a key from the
+                serialized payload; ``False`` disables it for this call (useful
+                when the task is registered with ``idempotent=True`` but a
+                particular submission must run again).
         """
         return self._queue.enqueue(
             task_name=self._task_name,
@@ -116,6 +125,8 @@ class TaskWrapper:
             depends_on=depends_on,
             expires=expires,
             result_ttl=result_ttl,
+            idempotency_key=idempotency_key,
+            idempotent=idempotent,
         )
 
     def map(self, iterable: list[tuple]) -> list[JobResult]:

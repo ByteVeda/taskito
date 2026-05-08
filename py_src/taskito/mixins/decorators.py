@@ -46,6 +46,7 @@ class QueueDecoratorMixin:
     _periodic_configs: list[dict[str, Any]]
     _hooks: dict[str, list[Callable]]
     _task_serializers: dict[str, Serializer]
+    _task_idempotent: dict[str, bool]
     _task_middleware: dict[str, list[TaskMiddleware]]
     _task_retry_filters: dict[str, dict[str, list[type[Exception]]]]
     _task_inject_map: dict[str, list[str]]
@@ -71,6 +72,7 @@ class QueueDecoratorMixin:
         serializer: Serializer | None = None,
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
+        idempotent: bool = False,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -95,6 +97,15 @@ class QueueDecoratorMixin:
                 (5 minutes) if not set.
             max_concurrent: Maximum number of concurrent running instances of
                 this task. ``None`` means no limit.
+            idempotent: When ``True``, ``.delay()``/``.apply_async()`` calls
+                automatically derive a deduplication key from
+                ``sha256(task_name|serialized_payload)``. Two calls with
+                identical arguments while a job is pending or running return
+                the same job ID instead of producing a duplicate. The slot is
+                released once the job leaves the active state. Per-call
+                ``idempotency_key="..."`` overrides the derived key; per-call
+                ``idempotent=False`` disables auto-derivation for that one
+                submission.
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
@@ -139,6 +150,10 @@ class QueueDecoratorMixin:
             # Store per-task serializer
             if serializer is not None:
                 self._task_serializers[task_name] = serializer
+
+            # Store per-task idempotency flag (auto-derives unique_key on enqueue)
+            if idempotent:
+                self._task_idempotent[task_name] = True
 
             # Store inject map for resource injection
             if final_inject:
