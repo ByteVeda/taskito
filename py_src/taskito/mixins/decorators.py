@@ -85,6 +85,10 @@ class QueueDecoratorMixin:
     # lets mypy see it from this mixin without overriding the real
     # implementation through MRO.
     _emit_event: Callable[..., None]
+    # ``_apply_dispatch_predicate`` is defined on the Queue itself
+    # (alongside enqueue) since it needs ``_inner`` and the task
+    # serializer. Declared here so mypy sees it through the mixin.
+    _apply_dispatch_predicate: Callable[..., None]
 
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list."""
@@ -100,6 +104,19 @@ class QueueDecoratorMixin:
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Worker-dispatch predicate gate. Evaluated on the raw
+            # deserialized payload (before arg/proxy reconstruction) so
+            # re-enqueue on defer can round-trip cleanly.
+            if task_name in queue_ref._task_predicates:
+                queue_ref._apply_dispatch_predicate(
+                    task_name=task_name,
+                    args=args,
+                    kwargs=kwargs,
+                    job_id=current_job.id,
+                    queue_name=current_job.queue_name,
+                    retry_count=current_job.retry_count,
+                )
+
             # Reconstruct intercepted arguments (CONVERT markers → original types)
             redirects: dict[str, str] = {}
             if queue_ref._interceptor is not None:

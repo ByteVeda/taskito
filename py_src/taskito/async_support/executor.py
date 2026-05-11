@@ -98,6 +98,17 @@ class AsyncTaskExecutor:
                 args, kwargs = cloudpickle.loads(payload_bytes)
                 queue = self._queue_ref
 
+                # Worker-dispatch predicate gate (raw args, pre-reconstruction).
+                if task_name in queue._task_predicates:
+                    queue._apply_dispatch_predicate(
+                        task_name=task_name,
+                        args=args,
+                        kwargs=kwargs,
+                        job_id=job_id,
+                        queue_name=queue_name,
+                        retry_count=retry_count,
+                    )
+
                 # Reconstruct intercepted arguments
                 redirects: dict[str, str] = {}
                 if queue._interceptor is not None:

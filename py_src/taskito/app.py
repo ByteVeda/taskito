@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.events import EventBus, EventType
-from taskito.exceptions import PredicateRejectedError
+from taskito.exceptions import PredicateRejectedError, TaskCancelledError
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
 from taskito.interception.metrics import InterceptionMetrics
@@ -310,6 +310,104 @@ class Queue(
     def _deserialize_payload(self, task_name: str, payload: bytes) -> tuple:
         """Deserialize a job payload using the per-task or queue-level serializer."""
         return self._get_serializer(task_name).loads(payload)  # type: ignore[no-any-return]
+
+    def _apply_dispatch_predicate(
+        self,
+        *,
+        task_name: str,
+        args: tuple,
+        kwargs: dict,
+        job_id: str,
+        queue_name: str,
+        priority: int = 0,
+        retry_count: int = 0,
+    ) -> None:
+        """Evaluate the worker-dispatch predicate; defer or cancel as needed.
+
+        ``Defer`` (or ``False`` with ``on_false="defer"``) re-enqueues a
+        fresh job with the same payload and a delay, then raises
+        :class:`TaskCancelledError` so the current execution is marked
+        cancelled by the Rust runner. ``Cancel`` (or ``False`` with
+        ``on_false="cancel"``) raises :class:`TaskCancelledError` directly
+        without re-enqueueing.
+
+        Returns silently when the predicate allows.
+        """
+        predicate = self._task_predicates.get(task_name)
+        if predicate is None:
+            return
+
+        ctx = PredicateContext.for_dispatch(
+            task_name=task_name,
+            queue=queue_name,
+            priority=priority,
+            retry_count=retry_count,
+            args=tuple(args),
+            kwargs=dict(kwargs),
+            job_id=job_id,
+            payload_size=0,
+            extras=self._task_predicate_extras.get(task_name),
+            queue_ref=self,
+        )
+        outcome = evaluate_predicate(predicate, ctx, metrics=self._predicate_metrics)
+
+        if outcome is True:
+            return
+
+        if isinstance(outcome, Cancel):
+            raise TaskCancelledError(
+                f"predicate cancelled job {job_id}: {outcome.reason}"
+                if outcome.reason
+                else f"predicate cancelled job {job_id}"
+            )
+
+        if isinstance(outcome, Defer):
+            self._reenqueue_after_defer(
+                task_name=task_name,
+                args=args,
+                kwargs=kwargs,
+                queue_name=queue_name,
+                delay_seconds=outcome.seconds,
+            )
+            raise TaskCancelledError(f"predicate deferred job {job_id} by {outcome.seconds:.1f}s")
+
+        # Plain False — branch on on_false.
+        action = self._task_predicate_on_false.get(task_name, "defer")
+        if action == "cancel":
+            raise TaskCancelledError(f"predicate rejected job {job_id}")
+        self._reenqueue_after_defer(
+            task_name=task_name,
+            args=args,
+            kwargs=kwargs,
+            queue_name=queue_name,
+            delay_seconds=self._task_default_defer.get(task_name, 60.0),
+        )
+        raise TaskCancelledError(f"predicate deferred job {job_id}")
+
+    def _reenqueue_after_defer(
+        self,
+        *,
+        task_name: str,
+        args: tuple,
+        kwargs: dict,
+        queue_name: str,
+        delay_seconds: float,
+    ) -> None:
+        """Re-enqueue a job with a delay, bypassing predicate re-evaluation.
+
+        Args/kwargs are serialized fresh via the task's serializer. We go
+        straight to the Rust queue to avoid running enqueue-time
+        middleware or re-evaluating the predicate (which would create an
+        infinite ping-pong).
+        """
+        serializer = self._get_serializer(task_name)
+        payload = serializer.dumps((tuple(args), dict(kwargs)))
+        self._inner.enqueue(
+            task_name=task_name,
+            payload=payload,
+            queue=queue_name,
+            delay_seconds=delay_seconds,
+        )
 
     def _apply_enqueue_predicate(
         self,
