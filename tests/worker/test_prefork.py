@@ -304,7 +304,15 @@ def test_prefork_cancel_running_job_stops_quickly(cancel_app: object, poll_until
 
     status = _wait_for_terminal(job, timeout=10)
     assert status == "cancelled", f"expected 'cancelled', got {status!r} (error={job.error!r})"
-    assert job.id in cancels_seen, "on_cancel middleware did not fire"
+    # Same race as `on_timeout` in #154: handle_result flips the DB status to
+    # 'cancelled' before dispatch_outcome fires on_cancel on a separate
+    # thread, so a fast assertion can race past the middleware call. Poll
+    # for the spy with a small budget instead.
+    poll_until(
+        lambda: job.id in cancels_seen,
+        timeout=5,
+        message="on_cancel middleware did not fire",
+    )
 
 
 @prefork_unix_only
