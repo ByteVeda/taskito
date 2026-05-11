@@ -19,12 +19,15 @@ from taskito.events import EventType
 from taskito.inject import Inject, _InjectAlias
 from taskito.interception.reconstruct import reconstruct_args
 from taskito.interception.strategy import Strategy as S
+from taskito.predicates.core import coerce_predicate
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
 from taskito.task import TaskWrapper
 
 if TYPE_CHECKING:
     from taskito.interception import ArgumentInterceptor
     from taskito.middleware import TaskMiddleware
+    from taskito.predicates import Predicate
+    from taskito.predicates.metrics import PredicateMetrics
     from taskito.proxies import ProxyRegistry
     from taskito.proxies.metrics import ProxyMetrics
     from taskito.resources.runtime import ResourceRuntime
@@ -62,6 +65,11 @@ class QueueDecoratorMixin:
     _task_middleware: dict[str, list[TaskMiddleware]]
     _task_retry_filters: dict[str, dict[str, list[type[Exception]]]]
     _task_inject_map: dict[str, list[str]]
+    _task_predicates: dict[str, Predicate]
+    _task_predicate_on_false: dict[str, str]
+    _task_predicate_extras: dict[str, dict[str, Any]]
+    _task_default_defer: dict[str, float]
+    _predicate_metrics: PredicateMetrics
     _interceptor: ArgumentInterceptor | None
     _proxy_registry: ProxyRegistry | None
     _proxy_metrics: ProxyMetrics
@@ -211,6 +219,10 @@ class QueueDecoratorMixin:
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
         idempotent: bool = False,
+        predicate: Predicate | Callable[..., Any] | None = None,
+        on_false: str = "defer",
+        predicate_extras: dict[str, Any] | None = None,
+        default_defer_seconds: float = 60.0,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -244,7 +256,24 @@ class QueueDecoratorMixin:
                 ``idempotency_key="..."`` overrides the derived key; per-call
                 ``idempotent=False`` disables auto-derivation for that one
                 submission.
+            predicate: A :class:`~taskito.predicates.Predicate` (or plain
+                callable receiving a :class:`~taskito.predicates.PredicateContext`)
+                evaluated both at enqueue time and at worker-dispatch time
+                to decide whether the job runs.
+            on_false: What to do when the predicate returns ``False`` —
+                ``"defer"`` (re-schedule with ``default_defer_seconds``),
+                ``"cancel"`` (terminally skip).
+            predicate_extras: Arbitrary dict forwarded to the predicate via
+                ``PredicateContext.extras``. Useful for passing static
+                config without re-instantiating the predicate.
+            default_defer_seconds: Default delay when ``on_false="defer"``
+                and the predicate returns plain ``False`` (no explicit
+                ``Defer(seconds=...)``). Ignored otherwise.
         """
+        if on_false not in {"defer", "cancel"}:
+            raise ValueError(f"on_false must be 'defer' or 'cancel', got {on_false!r}")
+        if default_defer_seconds < 0:
+            raise ValueError("default_defer_seconds must be >= 0")
 
         def decorator(fn: Callable) -> TaskWrapper:
             task_name = name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}"
@@ -292,6 +321,16 @@ class QueueDecoratorMixin:
             # Store per-task idempotency flag (auto-derives unique_key on enqueue)
             if idempotent:
                 self._task_idempotent[task_name] = True
+
+            # Store predicate (and its on_false/extras/default_defer)
+            if predicate is not None:
+                coerced = coerce_predicate(predicate)
+                if coerced is not None:
+                    self._task_predicates[task_name] = coerced
+                    self._task_predicate_on_false[task_name] = on_false
+                    if predicate_extras:
+                        self._task_predicate_extras[task_name] = dict(predicate_extras)
+                    self._task_default_defer[task_name] = default_defer_seconds
 
             # Store inject map for resource injection
             if final_inject:

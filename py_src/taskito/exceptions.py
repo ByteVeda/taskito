@@ -71,3 +71,20 @@ class ProxyReconstructionError(ResourceError):
 
 class ProxyCleanupError(ResourceError):
     """Raised when a proxy handler fails during cleanup."""
+
+
+class PredicateRejectedError(TaskitoError):
+    """Raised when an enqueue-time predicate cancels the submission.
+
+    The ``reason`` attribute carries the message attached to
+    :class:`~taskito.predicates.Cancel` (or an empty string when a plain
+    ``False`` outcome triggers cancellation under ``on_false="cancel"``).
+    """
+
+    def __init__(self, task_name: str, reason: str = "") -> None:
+        self.task_name = task_name
+        self.reason = reason
+        msg = f"predicate rejected enqueue of {task_name!r}"
+        if reason:
+            msg = f"{msg}: {reason}"
+        super().__init__(msg)

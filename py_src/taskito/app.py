@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.events import EventBus, EventType
+from taskito.exceptions import PredicateRejectedError
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
 from taskito.interception.metrics import InterceptionMetrics
@@ -42,6 +43,10 @@ from taskito.mixins import (
     QueueResourceMixin,
     QueueSettingsMixin,
 )
+from taskito.predicates.context import PredicateContext
+from taskito.predicates.evaluate import evaluate_predicate
+from taskito.predicates.metrics import PredicateMetrics
+from taskito.predicates.outcomes import Cancel, Defer
 from taskito.proxies import ProxyRegistry
 from taskito.proxies.built_in import register_builtin_handlers
 from taskito.proxies.metrics import ProxyMetrics
@@ -214,6 +219,11 @@ class Queue(
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
+        self._task_predicates: dict[str, Any] = {}
+        self._task_predicate_on_false: dict[str, str] = {}
+        self._task_predicate_extras: dict[str, dict[str, Any]] = {}
+        self._task_default_defer: dict[str, float] = {}
+        self._predicate_metrics = PredicateMetrics()
         self._drain_timeout = drain_timeout
         self._queue_configs: dict[str, dict[str, Any]] = {}
         self._event_bus = EventBus(max_workers=event_workers)
@@ -301,6 +311,53 @@ class Queue(
         """Deserialize a job payload using the per-task or queue-level serializer."""
         return self._get_serializer(task_name).loads(payload)  # type: ignore[no-any-return]
 
+    def _apply_enqueue_predicate(
+        self,
+        *,
+        predicate: Any,
+        task_name: str,
+        queue_name: str,
+        priority: int | None,
+        args: tuple,
+        kwargs: dict,
+        payload_size: int,
+        delay: float | None,
+    ) -> float | None:
+        """Evaluate an enqueue-time predicate; return adjusted ``delay``.
+
+        Raises :class:`~taskito.exceptions.PredicateRejectedError` when the
+        outcome is a :class:`~taskito.predicates.Cancel`, or a plain
+        ``False`` paired with ``on_false="cancel"``. Returns the (possibly
+        bumped) ``delay`` for the caller to pass through to the Rust
+        ``enqueue``.
+        """
+        ctx = PredicateContext.for_enqueue(
+            task_name=task_name,
+            queue=queue_name,
+            priority=priority,
+            args=tuple(args),
+            kwargs=dict(kwargs),
+            payload_size=payload_size,
+            delay_seconds=delay,
+            extras=self._task_predicate_extras.get(task_name),
+            queue_ref=self,
+        )
+        outcome = evaluate_predicate(predicate, ctx, metrics=self._predicate_metrics)
+
+        if outcome is True:
+            return delay
+        if isinstance(outcome, Defer):
+            return (delay or 0.0) + outcome.seconds
+        if isinstance(outcome, Cancel):
+            raise PredicateRejectedError(task_name, outcome.reason)
+
+        # Plain False — branch on the task's on_false setting.
+        action = self._task_predicate_on_false.get(task_name, "defer")
+        if action == "cancel":
+            raise PredicateRejectedError(task_name)
+        # defer
+        return (delay or 0.0) + self._task_default_defer.get(task_name, 60.0)
+
     def enqueue(
         self,
         task_name: str,
@@ -386,6 +443,22 @@ class Queue(
             final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
         task_serializer = self._get_serializer(task_name)
         payload = task_serializer.dumps((final_args, final_kwargs))
+
+        # Evaluate enqueue-time predicate (if registered). Outcome may
+        # adjust the delay (Defer / False+defer), raise (Cancel /
+        # False+cancel), or pass through unchanged.
+        predicate = self._task_predicates.get(task_name)
+        if predicate is not None:
+            delay = self._apply_enqueue_predicate(
+                predicate=predicate,
+                task_name=task_name,
+                queue_name=queue or "default",
+                priority=priority,
+                args=final_args,
+                kwargs=final_kwargs,
+                payload_size=len(payload),
+                delay=delay,
+            )
 
         unique_key = self._resolve_unique_key(
             task_name=task_name,
@@ -551,6 +624,23 @@ class Queue(
             )
             for i in range(count)
         ]
+
+        # Evaluate enqueue-time predicate per row. Cancel raises for the
+        # whole batch — all-or-nothing semantics. Defer adjusts that row's
+        # delay only.
+        predicate = self._task_predicates.get(task_name)
+        if predicate is not None:
+            for i in range(count):
+                delays[i] = self._apply_enqueue_predicate(
+                    predicate=predicate,
+                    task_name=task_name,
+                    queue_name=queues_list[i],
+                    priority=priorities_list[i],
+                    args=args_list[i],
+                    kwargs=kw_list[i],
+                    payload_size=len(payloads[i]),
+                    delay=delays[i],
+                )
 
         py_jobs = self._inner.enqueue_batch(
             task_names=task_names,
