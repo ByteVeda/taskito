@@ -33,6 +33,9 @@ class EventType(enum.Enum):
     WORKFLOW_FAILED = "workflow.failed"
     WORKFLOW_CANCELLED = "workflow.cancelled"
     WORKFLOW_GATE_REACHED = "workflow.gate_reached"
+    PREDICATE_DEFERRED = "predicate.deferred"
+    PREDICATE_CANCELLED = "predicate.cancelled"
+    PREDICATE_REJECTED = "predicate.rejected"
 
 
 class EventBus:

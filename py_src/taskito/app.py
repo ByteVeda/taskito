@@ -355,6 +355,16 @@ class Queue(
             return
 
         if isinstance(outcome, Cancel):
+            self._emit_event(
+                EventType.PREDICATE_CANCELLED,
+                {
+                    "task_name": task_name,
+                    "job_id": job_id,
+                    "queue": queue_name,
+                    "reason": outcome.reason,
+                    "phase": "dispatch",
+                },
+            )
             raise TaskCancelledError(
                 f"predicate cancelled job {job_id}: {outcome.reason}"
                 if outcome.reason
@@ -369,18 +379,49 @@ class Queue(
                 queue_name=queue_name,
                 delay_seconds=outcome.seconds,
             )
+            self._emit_event(
+                EventType.PREDICATE_DEFERRED,
+                {
+                    "task_name": task_name,
+                    "job_id": job_id,
+                    "queue": queue_name,
+                    "defer_seconds": outcome.seconds,
+                    "phase": "dispatch",
+                },
+            )
             raise TaskCancelledError(f"predicate deferred job {job_id} by {outcome.seconds:.1f}s")
 
         # Plain False — branch on on_false.
         action = self._task_predicate_on_false.get(task_name, "defer")
         if action == "cancel":
+            self._emit_event(
+                EventType.PREDICATE_CANCELLED,
+                {
+                    "task_name": task_name,
+                    "job_id": job_id,
+                    "queue": queue_name,
+                    "phase": "dispatch",
+                },
+            )
             raise TaskCancelledError(f"predicate rejected job {job_id}")
+
+        defer_seconds = self._task_default_defer.get(task_name, 60.0)
         self._reenqueue_after_defer(
             task_name=task_name,
             args=args,
             kwargs=kwargs,
             queue_name=queue_name,
-            delay_seconds=self._task_default_defer.get(task_name, 60.0),
+            delay_seconds=defer_seconds,
+        )
+        self._emit_event(
+            EventType.PREDICATE_DEFERRED,
+            {
+                "task_name": task_name,
+                "job_id": job_id,
+                "queue": queue_name,
+                "defer_seconds": defer_seconds,
+                "phase": "dispatch",
+            },
         )
         raise TaskCancelledError(f"predicate deferred job {job_id}")
 
@@ -445,16 +486,48 @@ class Queue(
         if outcome is True:
             return delay
         if isinstance(outcome, Defer):
+            self._emit_event(
+                EventType.PREDICATE_DEFERRED,
+                {
+                    "task_name": task_name,
+                    "queue": queue_name,
+                    "defer_seconds": outcome.seconds,
+                    "phase": "enqueue",
+                },
+            )
             return (delay or 0.0) + outcome.seconds
         if isinstance(outcome, Cancel):
+            self._emit_event(
+                EventType.PREDICATE_REJECTED,
+                {
+                    "task_name": task_name,
+                    "queue": queue_name,
+                    "reason": outcome.reason,
+                    "phase": "enqueue",
+                },
+            )
             raise PredicateRejectedError(task_name, outcome.reason)
 
         # Plain False — branch on the task's on_false setting.
         action = self._task_predicate_on_false.get(task_name, "defer")
         if action == "cancel":
+            self._emit_event(
+                EventType.PREDICATE_REJECTED,
+                {"task_name": task_name, "queue": queue_name, "phase": "enqueue"},
+            )
             raise PredicateRejectedError(task_name)
         # defer
-        return (delay or 0.0) + self._task_default_defer.get(task_name, 60.0)
+        defer_seconds = self._task_default_defer.get(task_name, 60.0)
+        self._emit_event(
+            EventType.PREDICATE_DEFERRED,
+            {
+                "task_name": task_name,
+                "queue": queue_name,
+                "defer_seconds": defer_seconds,
+                "phase": "enqueue",
+            },
+        )
+        return (delay or 0.0) + defer_seconds
 
     def enqueue(
         self,

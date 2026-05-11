@@ -149,3 +149,47 @@ def test_metrics_record_outcomes(queue: Queue) -> None:
     snap = queue._predicate_metrics.snapshot()
     assert snap["allowed"] == 2
     assert snap["deferred"] == 1
+
+
+def test_defer_emits_predicate_deferred_event(queue: Queue) -> None:
+    from taskito.events import EventType
+
+    received: list[dict] = []
+    queue._event_bus.on(EventType.PREDICATE_DEFERRED, lambda _e, p: received.append(p))
+
+    @queue.task(predicate=_Const(Defer(seconds=99.0)))
+    def t() -> str:
+        return "ran"
+
+    t.delay()
+    # Event bus dispatches in a thread pool — give it a moment.
+    import time
+
+    for _ in range(20):
+        if received:
+            break
+        time.sleep(0.05)
+    assert received and received[0]["defer_seconds"] == 99.0
+    assert received[0]["phase"] == "enqueue"
+
+
+def test_cancel_emits_predicate_rejected_event(queue: Queue) -> None:
+    from taskito.events import EventType
+
+    received: list[dict] = []
+    queue._event_bus.on(EventType.PREDICATE_REJECTED, lambda _e, p: received.append(p))
+
+    @queue.task(predicate=_Const(Cancel(reason="no good")))
+    def t() -> str:
+        return "ran"
+
+    with pytest.raises(PredicateRejectedError):
+        t.delay()
+
+    import time
+
+    for _ in range(20):
+        if received:
+            break
+        time.sleep(0.05)
+    assert received and received[0]["reason"] == "no good"
