@@ -99,5 +99,8 @@ def test_all_event_types_exist() -> None:
         "workflow.failed",
         "workflow.cancelled",
         "workflow.gate_reached",
+        "predicate.deferred",
+        "predicate.cancelled",
+        "predicate.rejected",
     }
     assert {e.value for e in EventType} == expected

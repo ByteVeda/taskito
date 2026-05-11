@@ -19,12 +19,15 @@ from taskito.events import EventType
 from taskito.inject import Inject, _InjectAlias
 from taskito.interception.reconstruct import reconstruct_args
 from taskito.interception.strategy import Strategy as S
+from taskito.predicates.core import coerce_predicate
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
 from taskito.task import TaskWrapper
 
 if TYPE_CHECKING:
     from taskito.interception import ArgumentInterceptor
     from taskito.middleware import TaskMiddleware
+    from taskito.predicates import Predicate
+    from taskito.predicates.metrics import PredicateMetrics
     from taskito.proxies import ProxyRegistry
     from taskito.proxies.metrics import ProxyMetrics
     from taskito.resources.runtime import ResourceRuntime
@@ -62,6 +65,12 @@ class QueueDecoratorMixin:
     _task_middleware: dict[str, list[TaskMiddleware]]
     _task_retry_filters: dict[str, dict[str, list[type[Exception]]]]
     _task_inject_map: dict[str, list[str]]
+    _task_predicates: dict[str, Predicate]
+    _task_predicate_on_false: dict[str, str]
+    _task_predicate_extras: dict[str, dict[str, Any]]
+    _task_default_defer: dict[str, float]
+    _task_predicate_serialized: dict[str, dict[str, Any] | None]
+    _predicate_metrics: PredicateMetrics
     _interceptor: ArgumentInterceptor | None
     _proxy_registry: ProxyRegistry | None
     _proxy_metrics: ProxyMetrics
@@ -77,6 +86,10 @@ class QueueDecoratorMixin:
     # lets mypy see it from this mixin without overriding the real
     # implementation through MRO.
     _emit_event: Callable[..., None]
+    # ``_apply_dispatch_predicate`` is defined on the Queue itself
+    # (alongside enqueue) since it needs ``_inner`` and the task
+    # serializer. Declared here so mypy sees it through the mixin.
+    _apply_dispatch_predicate: Callable[..., None]
 
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list."""
@@ -92,6 +105,19 @@ class QueueDecoratorMixin:
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Worker-dispatch predicate gate. Evaluated on the raw
+            # deserialized payload (before arg/proxy reconstruction) so
+            # re-enqueue on defer can round-trip cleanly.
+            if task_name in queue_ref._task_predicates:
+                queue_ref._apply_dispatch_predicate(
+                    task_name=task_name,
+                    args=args,
+                    kwargs=kwargs,
+                    job_id=current_job.id,
+                    queue_name=current_job.queue_name,
+                    retry_count=current_job.retry_count,
+                )
+
             # Reconstruct intercepted arguments (CONVERT markers → original types)
             redirects: dict[str, str] = {}
             if queue_ref._interceptor is not None:
@@ -133,9 +159,12 @@ class QueueDecoratorMixin:
             if soft_timeout is not None:
                 current_job._set_soft_timeout(soft_timeout)
 
-            # Run middleware before hooks
+            # Run middleware before hooks (skipping middlewares whose
+            # predicate filter excludes this job)
             completed_mw: list[Any] = []
             for mw in middleware_chain:
+                if not mw._should_apply(current_job):
+                    continue
                 try:
                     mw.before(current_job)
                     completed_mw.append(mw)
@@ -211,6 +240,10 @@ class QueueDecoratorMixin:
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
         idempotent: bool = False,
+        predicate: Predicate | Callable[..., Any] | None = None,
+        on_false: str = "defer",
+        predicate_extras: dict[str, Any] | None = None,
+        default_defer_seconds: float = 60.0,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -244,7 +277,24 @@ class QueueDecoratorMixin:
                 ``idempotency_key="..."`` overrides the derived key; per-call
                 ``idempotent=False`` disables auto-derivation for that one
                 submission.
+            predicate: A :class:`~taskito.predicates.Predicate` (or plain
+                callable receiving a :class:`~taskito.predicates.PredicateContext`)
+                evaluated both at enqueue time and at worker-dispatch time
+                to decide whether the job runs.
+            on_false: What to do when the predicate returns ``False`` —
+                ``"defer"`` (re-schedule with ``default_defer_seconds``),
+                ``"cancel"`` (terminally skip).
+            predicate_extras: Arbitrary dict forwarded to the predicate via
+                ``PredicateContext.extras``. Useful for passing static
+                config without re-instantiating the predicate.
+            default_defer_seconds: Default delay when ``on_false="defer"``
+                and the predicate returns plain ``False`` (no explicit
+                ``Defer(seconds=...)``). Ignored otherwise.
         """
+        if on_false not in {"defer", "cancel"}:
+            raise ValueError(f"on_false must be 'defer' or 'cancel', got {on_false!r}")
+        if default_defer_seconds < 0:
+            raise ValueError("default_defer_seconds must be >= 0")
 
         def decorator(fn: Callable) -> TaskWrapper:
             task_name = name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}"
@@ -292,6 +342,24 @@ class QueueDecoratorMixin:
             # Store per-task idempotency flag (auto-derives unique_key on enqueue)
             if idempotent:
                 self._task_idempotent[task_name] = True
+
+            # Store predicate (and its on_false/extras/default_defer).
+            # Also serialize a JSON snapshot so the inspection API and
+            # dashboard can show "gated by: ..." without keeping a live
+            # Python reference. Bare callables can't be serialized; the
+            # snapshot is None in that case.
+            if predicate is not None:
+                coerced = coerce_predicate(predicate)
+                if coerced is not None:
+                    self._task_predicates[task_name] = coerced
+                    self._task_predicate_on_false[task_name] = on_false
+                    if predicate_extras:
+                        self._task_predicate_extras[task_name] = dict(predicate_extras)
+                    self._task_default_defer[task_name] = default_defer_seconds
+                    try:
+                        self._task_predicate_serialized[task_name] = coerced.to_dict()
+                    except Exception:
+                        self._task_predicate_serialized[task_name] = None
 
             # Store inject map for resource injection
             if final_inject:

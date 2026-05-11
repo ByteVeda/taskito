@@ -98,6 +98,17 @@ class AsyncTaskExecutor:
                 args, kwargs = cloudpickle.loads(payload_bytes)
                 queue = self._queue_ref
 
+                # Worker-dispatch predicate gate (raw args, pre-reconstruction).
+                if task_name in queue._task_predicates:
+                    queue._apply_dispatch_predicate(
+                        task_name=task_name,
+                        args=args,
+                        kwargs=kwargs,
+                        job_id=job_id,
+                        queue_name=queue_name,
+                        retry_count=retry_count,
+                    )
+
                 # Reconstruct intercepted arguments
                 redirects: dict[str, str] = {}
                 if queue._interceptor is not None:
@@ -129,9 +140,11 @@ class AsyncTaskExecutor:
                         if release is not None:
                             release_callbacks.append(release)
 
-                # Middleware before hooks
+                # Middleware before hooks (skipping filtered middlewares)
                 middleware_chain = queue._get_middleware_chain(task_name)
                 for mw in middleware_chain:
+                    if not mw._should_apply(current_job):
+                        continue
                     try:
                         mw.before(current_job)
                         completed_mw.append(mw)

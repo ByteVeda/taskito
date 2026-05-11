@@ -6,6 +6,7 @@
     "web-scraper",
     "data-pipeline",
     "workflows",
+    "predicate-gated-jobs",
     "benchmark"
   ]
 }
