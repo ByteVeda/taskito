@@ -518,6 +518,8 @@ class Queue(
             "idempotent": idempotent,
         }
         for mw in self._global_middleware:
+            if not mw._should_apply(None, task_name=task_name):
+                continue
             try:
                 mw.on_enqueue(task_name, final_args, final_kwargs, enqueue_options)
             except Exception:
@@ -682,6 +684,8 @@ class Queue(
         chain = self._get_middleware_chain(task_name)
         for i in range(count):
             for mw in chain:
+                if not mw._should_apply(None, task_name=task_name):
+                    continue
                 try:
                     mw.on_enqueue(task_name, args_list[i], kw_list[i], per_job_options[i])
                 except Exception:

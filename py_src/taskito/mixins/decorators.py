@@ -158,9 +158,12 @@ class QueueDecoratorMixin:
             if soft_timeout is not None:
                 current_job._set_soft_timeout(soft_timeout)
 
-            # Run middleware before hooks
+            # Run middleware before hooks (skipping middlewares whose
+            # predicate filter excludes this job)
             completed_mw: list[Any] = []
             for mw in middleware_chain:
+                if not mw._should_apply(current_job):
+                    continue
                 try:
                     mw.before(current_job)
                     completed_mw.append(mw)

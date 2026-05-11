@@ -140,9 +140,11 @@ class AsyncTaskExecutor:
                         if release is not None:
                             release_callbacks.append(release)
 
-                # Middleware before hooks
+                # Middleware before hooks (skipping filtered middlewares)
                 middleware_chain = queue._get_middleware_chain(task_name)
                 for mw in middleware_chain:
+                    if not mw._should_apply(current_job):
+                        continue
                     try:
                         mw.before(current_job)
                         completed_mw.append(mw)

@@ -16,10 +16,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from taskito.middleware import TaskMiddleware
+from taskito.middleware import TaskMiddleware, legacy_task_filter_to_predicate
 
 if TYPE_CHECKING:
     from taskito.context import JobContext
+    from taskito.predicates import Predicate
 
 try:
     import sentry_sdk
@@ -52,24 +53,19 @@ class SentryMiddleware(TaskMiddleware):
         transaction_name_fn: Callable[[JobContext], str] | None = None,
         task_filter: Callable[[str], bool] | None = None,
         extra_tags_fn: Callable[[JobContext], dict[str, str]] | None = None,
+        predicate: Predicate | Callable[..., Any] | None = None,
     ) -> None:
         if sentry_sdk is None:
             raise ImportError(
                 "sentry-sdk is required for SentryMiddleware. "
                 "Install it with: pip install taskito[sentry]"
             )
+        super().__init__(predicate=legacy_task_filter_to_predicate(task_filter, predicate))
         self._tag_prefix = tag_prefix
         self._transaction_name_fn = transaction_name_fn
-        self._task_filter = task_filter
         self._extra_tags_fn = extra_tags_fn
 
-    def _should_report(self, task_name: str) -> bool:
-        return self._task_filter is None or self._task_filter(task_name)
-
     def before(self, ctx: JobContext) -> None:
-        if not self._should_report(ctx.task_name):
-            return
-
         sentry_sdk.push_scope()
         try:
             scope = sentry_sdk.get_current_scope()
@@ -90,8 +86,6 @@ class SentryMiddleware(TaskMiddleware):
             raise
 
     def after(self, ctx: JobContext, result: Any, error: Exception | None) -> None:
-        if not self._should_report(ctx.task_name):
-            return
         if error is not None:
             sentry_sdk.capture_exception(error)
         sentry_sdk.pop_scope_unsafe()

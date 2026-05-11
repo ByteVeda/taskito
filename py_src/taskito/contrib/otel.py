@@ -17,10 +17,11 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from taskito.middleware import TaskMiddleware
+from taskito.middleware import TaskMiddleware, legacy_task_filter_to_predicate
 
 if TYPE_CHECKING:
     from taskito.context import JobContext
+    from taskito.predicates import Predicate
 
 try:
     from opentelemetry import trace
@@ -49,8 +50,12 @@ class OpenTelemetryMiddleware(TaskMiddleware):
         attribute_prefix: Prefix for span attribute keys (default ``"taskito"``).
         extra_attributes_fn: Callable that returns extra attributes to add to
             each span. Receives a :class:`~taskito.context.JobContext`.
-        task_filter: Predicate that receives a task name and returns ``True``
-            to trace the task. ``None`` traces all tasks.
+        task_filter: Legacy ``Callable[[task_name], bool]`` filter. Kept for
+            back-compat — prefer ``predicate=`` which accepts richer
+            :class:`~taskito.predicates.Predicate` objects.
+        predicate: Optional :class:`~taskito.predicates.Predicate` (or
+            callable taking a :class:`~taskito.predicates.PredicateContext`)
+            controlling which tasks this middleware applies to.
     """
 
     def __init__(
@@ -61,22 +66,20 @@ class OpenTelemetryMiddleware(TaskMiddleware):
         attribute_prefix: str = "taskito",
         extra_attributes_fn: Callable[[JobContext], dict[str, Any]] | None = None,
         task_filter: Callable[[str], bool] | None = None,
+        predicate: Predicate | Callable[..., Any] | None = None,
     ):
         if trace is None:
             raise ImportError(
                 "opentelemetry-api is required for OpenTelemetryMiddleware. "
                 "Install it with: pip install taskito[otel]"
             )
+        super().__init__(predicate=legacy_task_filter_to_predicate(task_filter, predicate))
         self._tracer = trace.get_tracer(tracer_name)
         self._span_name_fn = span_name_fn
         self._attr_prefix = attribute_prefix
         self._extra_attributes_fn = extra_attributes_fn
-        self._task_filter = task_filter
         self._spans: dict[str, Any] = {}
         self._lock = threading.Lock()
-
-    def _should_trace(self, task_name: str) -> bool:
-        return self._task_filter is None or self._task_filter(task_name)
 
     def _span_name(self, ctx: JobContext) -> str:
         if self._span_name_fn is not None:
@@ -84,9 +87,6 @@ class OpenTelemetryMiddleware(TaskMiddleware):
         return f"{self._attr_prefix}.execute.{ctx.task_name}"
 
     def before(self, ctx: JobContext) -> None:
-        if not self._should_trace(ctx.task_name):
-            return
-
         prefix = self._attr_prefix
         attributes: dict[str, Any] = {
             f"{prefix}.job_id": ctx.id,
@@ -105,7 +105,7 @@ class OpenTelemetryMiddleware(TaskMiddleware):
         with self._lock:
             span = self._spans.pop(ctx.id, None)
         if span is None:
-            return
+            return  # before() didn't emit a span (predicate filtered, or error)
 
         try:
             if error is not None:
