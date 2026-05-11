@@ -1,35 +1,25 @@
-"""Predefined predicate recipes.
+"""Built-in predicate recipes.
 
-Recipes are factory functions that return :class:`~taskito.predicates.Predicate`
-instances. Each recipe accepts plain Python values so it can be used in
-decorator declarations::
+Each recipe is a factory function returning a
+:class:`~taskito.predicates.Predicate`. Every recipe is a registered AST
+node (`OP` declared) so it round-trips through JSON and the string DSL.
 
-    @queue.task(
-        predicate=is_business_hours(tz="US/Pacific")
-                  & ~queue_paused()
-                  | by_priority_at_least(8),
-    )
-    def send_report(): ...
+Recipes that duplicated Rust-side enforcement (``by_queue``,
+``by_task``, ``queue_size_under``, ``error_rate_under``,
+``retry_count_under``, ``by_priority_at_least``) were intentionally
+removed in v2 — use the corresponding ``@queue.task`` / ``Queue.set_*``
+options instead.
 """
 
 from __future__ import annotations
 
-from taskito.predicates.recipes.attributes import (
-    by_priority_at_least,
-    by_queue,
-    by_task,
-    payload_matches,
-    retry_count_under,
-)
+from taskito.predicates.recipes.attributes import payload_matches
 from taskito.predicates.recipes.config import (
     env_var_truthy,
     feature_flag,
+    register_feature_flag_provider,
 )
-from taskito.predicates.recipes.system import (
-    error_rate_under,
-    queue_paused,
-    queue_size_under,
-)
+from taskito.predicates.recipes.system import queue_paused
 from taskito.predicates.recipes.time import (
     after,
     before,
@@ -42,11 +32,7 @@ from taskito.predicates.recipes.time import (
 __all__ = [
     "after",
     "before",
-    "by_priority_at_least",
-    "by_queue",
-    "by_task",
     "env_var_truthy",
-    "error_rate_under",
     "feature_flag",
     "in_time_window",
     "in_timezone",
@@ -54,6 +40,5 @@ __all__ = [
     "is_weekend",
     "payload_matches",
     "queue_paused",
-    "queue_size_under",
-    "retry_count_under",
+    "register_feature_flag_provider",
 ]

@@ -69,6 +69,7 @@ class QueueDecoratorMixin:
     _task_predicate_on_false: dict[str, str]
     _task_predicate_extras: dict[str, dict[str, Any]]
     _task_default_defer: dict[str, float]
+    _task_predicate_serialized: dict[str, dict[str, Any] | None]
     _predicate_metrics: PredicateMetrics
     _interceptor: ArgumentInterceptor | None
     _proxy_registry: ProxyRegistry | None
@@ -342,7 +343,11 @@ class QueueDecoratorMixin:
             if idempotent:
                 self._task_idempotent[task_name] = True
 
-            # Store predicate (and its on_false/extras/default_defer)
+            # Store predicate (and its on_false/extras/default_defer).
+            # Also serialize a JSON snapshot so the inspection API and
+            # dashboard can show "gated by: ..." without keeping a live
+            # Python reference. Bare callables can't be serialized; the
+            # snapshot is None in that case.
             if predicate is not None:
                 coerced = coerce_predicate(predicate)
                 if coerced is not None:
@@ -351,6 +356,10 @@ class QueueDecoratorMixin:
                     if predicate_extras:
                         self._task_predicate_extras[task_name] = dict(predicate_extras)
                     self._task_default_defer[task_name] = default_defer_seconds
+                    try:
+                        self._task_predicate_serialized[task_name] = coerced.to_dict()
+                    except Exception:
+                        self._task_predicate_serialized[task_name] = None
 
             # Store inject map for resource injection
             if final_inject:

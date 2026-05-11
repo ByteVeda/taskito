@@ -1,17 +1,18 @@
 """Time-based predicates.
 
-All recipes work with timezone-aware datetimes. ``tz`` arguments accept an
-IANA timezone string (e.g. ``"US/Pacific"``); ``None`` means UTC.
+All recipes work with timezone-aware datetimes. ``tz`` arguments accept
+an IANA timezone string (e.g. ``"US/Pacific"``); ``None`` means UTC.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from datetime import datetime, timedelta, timezone, tzinfo
+from typing import TYPE_CHECKING, ClassVar
 
 from taskito.predicates.core import Predicate
 from taskito.predicates.outcomes import Defer
+from taskito.predicates.registry import PredicateValidationError
 
 if TYPE_CHECKING:
     from taskito.predicates.context import PredicateContext
@@ -30,52 +31,83 @@ except ImportError:  # pragma: no cover - zoneinfo is stdlib on 3.9+
 _ONE_DAY = timedelta(days=1)
 
 
-def _resolve_tz(tz: str | None) -> timezone:
-    """Resolve a tz string to a ``tzinfo``-compatible object."""
+def _resolve_tz(tz: str | None) -> tzinfo:
     if tz is None:
         return timezone.utc
     if not _HAS_ZONEINFO:
-        raise RuntimeError("zoneinfo is not available; pass tz=None or install Python 3.9+")
+        raise PredicateValidationError(
+            "zoneinfo is not available; pass tz=None or install Python 3.9+"
+        )
     try:
-        return ZoneInfo(tz)  # type: ignore[return-value]
+        return ZoneInfo(tz)
     except ZoneInfoNotFoundError as exc:
-        raise ValueError(f"unknown timezone: {tz!r}") from exc
+        raise PredicateValidationError(f"unknown timezone: {tz!r}") from exc
 
 
-def _seconds_until_window(now_local: datetime, start_hour: int, start_minute: int) -> float:
-    """Seconds from ``now_local`` until the next occurrence of (h, m)."""
-    target = now_local.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
-    if target <= now_local:
-        target = target + _ONE_DAY
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise PredicateValidationError(f"expected 'HH:MM', got {value!r}")
+    try:
+        h, m = int(parts[0]), int(parts[1])
+    except ValueError as exc:
+        raise PredicateValidationError(f"expected 'HH:MM', got {value!r}") from exc
+    if not 0 <= h <= 23 or not 0 <= m <= 59:
+        raise PredicateValidationError(f"hour/minute out of range: {value!r}")
+    return h, m
+
+
+def _seconds_until(now_local: datetime, target: datetime) -> float:
     return max(1.0, (target - now_local).total_seconds())
 
 
+# -- is_business_hours ---------------------------------------------------
+
+
 @dataclass(frozen=True)
-class _IsBusinessHours(Predicate):
-    """True Mon-Fri between 09:00 and 17:00 in the configured timezone."""
+class IsBusinessHours(Predicate):
+    """Allow only Mon-Fri ``start_hour..end_hour`` in the configured tz.
+
+    Outside the window the predicate returns :class:`Defer` aimed at the
+    next opening, so jobs land neatly at the next business start.
+    """
+
+    OP: ClassVar[str | None] = "is_business_hours"
 
     start_hour: int = 9
     end_hour: int = 17
     tz: str | None = None
     weekdays_only: bool = True
 
+    def __post_init__(self) -> None:
+        if not (0 <= self.start_hour < 24 and 0 < self.end_hour <= 24):
+            raise PredicateValidationError(
+                f"is_business_hours: hours out of range ({self.start_hour}, {self.end_hour})"
+            )
+        if self.start_hour >= self.end_hour:
+            raise PredicateValidationError(
+                f"is_business_hours: start_hour ({self.start_hour}) must be < "
+                f"end_hour ({self.end_hour})"
+            )
+        # Validate tz at construction.
+        _resolve_tz(self.tz)
+
     def evaluate(self, ctx: PredicateContext) -> bool | Defer:
-        tz_info = _resolve_tz(self.tz)
-        local = ctx.now().astimezone(tz_info)
+        local = ctx.now().astimezone(_resolve_tz(self.tz))
         if self.weekdays_only and local.weekday() >= 5:
-            # Sat / Sun → defer until Monday at start_hour
             days_to_monday = 7 - local.weekday()
-            defer = local.replace(
+            target = (local + timedelta(days=days_to_monday)).replace(
                 hour=self.start_hour, minute=0, second=0, microsecond=0
-            ) + timedelta(days=days_to_monday)
-            return Defer(seconds=max(1.0, (defer - local).total_seconds()))
+            )
+            return Defer(seconds=_seconds_until(local, target))
         if local.hour < self.start_hour:
-            return Defer(seconds=_seconds_until_window(local, self.start_hour, 0))
+            target = local.replace(hour=self.start_hour, minute=0, second=0, microsecond=0)
+            return Defer(seconds=_seconds_until(local, target))
         if local.hour >= self.end_hour:
-            # Defer to next day at start_hour
-            next_day = local + _ONE_DAY
-            target = next_day.replace(hour=self.start_hour, minute=0, second=0, microsecond=0)
-            return Defer(seconds=max(1.0, (target - local).total_seconds()))
+            target = (local + _ONE_DAY).replace(
+                hour=self.start_hour, minute=0, second=0, microsecond=0
+            )
+            return Defer(seconds=_seconds_until(local, target))
         return True
 
 
@@ -86,138 +118,168 @@ def is_business_hours(
     tz: str | None = None,
     weekdays_only: bool = True,
 ) -> Predicate:
-    """Allow only during business hours; otherwise :class:`Defer` to the next window.
-
-    Defaults to 09:00-17:00 Mon-Fri in UTC. Pass ``tz="US/Pacific"`` (or
-    any IANA name) for a local-time window.
-    """
-    if not 0 <= start_hour < 24 or not 0 < end_hour <= 24 or start_hour >= end_hour:
-        raise ValueError(f"invalid business-hours window: {start_hour}-{end_hour}")
-    return _IsBusinessHours(
+    """Allow during business hours; defer to the next window otherwise."""
+    return IsBusinessHours(
         start_hour=start_hour, end_hour=end_hour, tz=tz, weekdays_only=weekdays_only
     )
 
 
+# -- is_weekend ----------------------------------------------------------
+
+
 @dataclass(frozen=True)
-class _IsWeekend(Predicate):
+class IsWeekend(Predicate):
+    """True on Saturday or Sunday in the configured timezone."""
+
+    OP: ClassVar[str | None] = "is_weekend"
+
     tz: str | None = None
 
+    def __post_init__(self) -> None:
+        _resolve_tz(self.tz)
+
     def evaluate(self, ctx: PredicateContext) -> bool:
-        tz_info = _resolve_tz(self.tz)
-        local = ctx.now().astimezone(tz_info)
+        local = ctx.now().astimezone(_resolve_tz(self.tz))
         return local.weekday() >= 5
 
 
 def is_weekend(*, tz: str | None = None) -> Predicate:
-    """True on Saturday or Sunday in the configured timezone."""
-    return _IsWeekend(tz=tz)
+    """True when the current local day is Saturday or Sunday."""
+    return IsWeekend(tz=tz)
+
+
+# -- in_time_window ------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class _InTimeWindow(Predicate):
-    start_hour: int
-    start_minute: int
-    end_hour: int
-    end_minute: int
+class InTimeWindow(Predicate):
+    """Allow during ``[start, end)``; defer otherwise.
+
+    Stored as ``"HH:MM"`` strings so the AST serializes cleanly.
+    """
+
+    OP: ClassVar[str | None] = "in_time_window"
+
+    start: str = "00:00"
+    end: str = "23:59"
     tz: str | None = None
 
+    def __post_init__(self) -> None:
+        sh, sm = _parse_hhmm(self.start)
+        eh, em = _parse_hhmm(self.end)
+        if (sh, sm) >= (eh, em):
+            raise PredicateValidationError(
+                f"in_time_window: start ({self.start}) must be before end ({self.end})"
+            )
+        _resolve_tz(self.tz)
+
     def evaluate(self, ctx: PredicateContext) -> bool | Defer:
-        tz_info = _resolve_tz(self.tz)
-        local = ctx.now().astimezone(tz_info)
-        start_minutes = self.start_hour * 60 + self.start_minute
-        end_minutes = self.end_hour * 60 + self.end_minute
-        cur_minutes = local.hour * 60 + local.minute
-        if start_minutes <= cur_minutes < end_minutes:
+        sh, sm = _parse_hhmm(self.start)
+        eh, em = _parse_hhmm(self.end)
+        local = ctx.now().astimezone(_resolve_tz(self.tz))
+        cur = local.hour * 60 + local.minute
+        start_m = sh * 60 + sm
+        end_m = eh * 60 + em
+        if start_m <= cur < end_m:
             return True
-        if cur_minutes < start_minutes:
-            return Defer(seconds=(start_minutes - cur_minutes) * 60.0)
-        # past end — defer to tomorrow's start
-        next_day = local + _ONE_DAY
-        target = next_day.replace(
-            hour=self.start_hour, minute=self.start_minute, second=0, microsecond=0
-        )
-        return Defer(seconds=max(1.0, (target - local).total_seconds()))
+        if cur < start_m:
+            return Defer(seconds=(start_m - cur) * 60.0)
+        target = (local + _ONE_DAY).replace(hour=sh, minute=sm, second=0, microsecond=0)
+        return Defer(seconds=_seconds_until(local, target))
 
 
 def in_time_window(start: str, end: str, *, tz: str | None = None) -> Predicate:
-    """Allow during ``[start, end)`` in the configured timezone; defer otherwise.
-
-    ``start`` and ``end`` are ``"HH:MM"`` strings. End is exclusive.
-    """
-    sh, sm = _parse_hhmm(start)
-    eh, em = _parse_hhmm(end)
-    if (sh, sm) >= (eh, em):
-        raise ValueError(f"start ({start}) must be before end ({end})")
-    return _InTimeWindow(start_hour=sh, start_minute=sm, end_hour=eh, end_minute=em, tz=tz)
+    """Allow during ``[start, end)`` in the configured timezone."""
+    return InTimeWindow(start=start, end=end, tz=tz)
 
 
-def _parse_hhmm(value: str) -> tuple[int, int]:
-    parts = value.split(":")
-    if len(parts) != 2:
-        raise ValueError(f"expected 'HH:MM', got {value!r}")
+# -- after / before ------------------------------------------------------
+
+
+def _iso(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
+def _parse_iso(value: str) -> datetime:
     try:
-        h, m = int(parts[0]), int(parts[1])
+        dt = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise ValueError(f"expected 'HH:MM', got {value!r}") from exc
-    if not 0 <= h <= 23 or not 0 <= m <= 59:
-        raise ValueError(f"hour/minute out of range: {value!r}")
-    return h, m
+        raise PredicateValidationError(f"invalid ISO datetime: {value!r}") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 @dataclass(frozen=True)
-class _After(Predicate):
-    target: datetime
+class After(Predicate):
+    """Allow only when wall-clock time is at or past ``target``."""
+
+    OP: ClassVar[str | None] = "after"
+
+    target: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.target:
+            raise PredicateValidationError("after: target must be non-empty")
+        _parse_iso(self.target)
 
     def evaluate(self, ctx: PredicateContext) -> bool | Defer:
+        target = _parse_iso(self.target)
         now = ctx.now()
-        if now >= self.target:
+        if now >= target:
             return True
-        return Defer(seconds=(self.target - now).total_seconds())
+        return Defer(seconds=max(1.0, (target - now).total_seconds()))
 
 
-def after(target: datetime) -> Predicate:
-    """Allow only when wall-clock time is at or past ``target``."""
-    if target.tzinfo is None:
-        target = target.replace(tzinfo=timezone.utc)
-    return _After(target=target)
+def after(target: datetime | str) -> Predicate:
+    """Allow only at or after ``target`` (datetime or ISO string)."""
+    iso = _iso(target) if isinstance(target, datetime) else target
+    return After(target=iso)
 
 
 @dataclass(frozen=True)
-class _Before(Predicate):
-    target: datetime
+class Before(Predicate):
+    """Allow only when wall-clock time is strictly before ``target``."""
+
+    OP: ClassVar[str | None] = "before"
+
+    target: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.target:
+            raise PredicateValidationError("before: target must be non-empty")
+        _parse_iso(self.target)
 
     def evaluate(self, ctx: PredicateContext) -> bool:
-        return ctx.now() < self.target
+        return ctx.now() < _parse_iso(self.target)
 
 
-def before(target: datetime) -> Predicate:
-    """Allow only when wall-clock time is strictly before ``target``."""
-    if target.tzinfo is None:
-        target = target.replace(tzinfo=timezone.utc)
-    return _Before(target=target)
+def before(target: datetime | str) -> Predicate:
+    """Allow only strictly before ``target`` (datetime or ISO string)."""
+    iso = _iso(target) if isinstance(target, datetime) else target
+    return Before(target=iso)
+
+
+# -- in_timezone ---------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class _InTimezone(Predicate):
-    """Validates that the recipe-configured timezone resolves on this host.
+class InTimezone(Predicate):
+    """No-op predicate that validates ``tz`` resolves on this host."""
 
-    Returns ``True`` unconditionally — useful as a composable building
-    block when paired with other time predicates. The cheaper alternative
-    is to call :func:`_resolve_tz` at recipe-construction time, which is
-    what this does.
-    """
+    OP: ClassVar[str | None] = "in_timezone"
 
-    tz: str
+    tz: str = "UTC"
+
+    def __post_init__(self) -> None:
+        _resolve_tz(self.tz)
 
     def evaluate(self, ctx: PredicateContext) -> bool:
         return True
 
 
 def in_timezone(tz: str) -> Predicate:
-    """No-op predicate that validates ``tz`` resolves on this host.
-
-    Mostly useful as a guard at decoration time: passing an unknown tz
-    here raises immediately rather than at first execution.
-    """
-    _resolve_tz(tz)
-    return _InTimezone(tz=tz)
+    """Validate ``tz`` is installed; always allows at runtime."""
+    return InTimezone(tz=tz)

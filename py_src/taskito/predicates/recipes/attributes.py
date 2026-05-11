@@ -1,86 +1,28 @@
-"""Predicates that read job metadata."""
+"""Predicates that read job payload fields.
+
+The other "attribute"-flavoured recipes (``by_queue``, ``by_task``,
+``by_priority_at_least``, ``retry_count_under``) were intentionally
+removed in v2: each duplicated a gate the Rust scheduler already
+enforces (per-task queue routing, ``priority`` ordering,
+``max_concurrent``/``rate_limit``, ``max_retries``). Restating those
+inside a Python predicate produces weaker, non-atomic gates that race
+with the authoritative enforcement path.
+
+What remains here is :func:`payload_matches` — a genuinely new
+capability that lets predicates branch on the deserialized argument
+graph at runtime.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from taskito.predicates.core import Predicate
+from taskito.predicates.registry import PredicateValidationError
 
 if TYPE_CHECKING:
     from taskito.predicates.context import PredicateContext
-
-
-@dataclass(frozen=True)
-class _ByQueue(Predicate):
-    name: str
-
-    def evaluate(self, ctx: PredicateContext) -> bool:
-        return ctx.queue == self.name
-
-
-def by_queue(name: str) -> Predicate:
-    """Allow only jobs whose target queue equals ``name``."""
-    if not name:
-        raise ValueError("queue name must be non-empty")
-    return _ByQueue(name=name)
-
-
-@dataclass(frozen=True)
-class _ByTask(Predicate):
-    name: str
-
-    def evaluate(self, ctx: PredicateContext) -> bool:
-        return ctx.task_name == self.name
-
-
-def by_task(name: str) -> Predicate:
-    """Allow only jobs for the given task name (full module-qualified)."""
-    if not name:
-        raise ValueError("task name must be non-empty")
-    return _ByTask(name=name)
-
-
-@dataclass(frozen=True)
-class _ByPriorityAtLeast(Predicate):
-    threshold: int
-
-    def evaluate(self, ctx: PredicateContext) -> bool:
-        return ctx.priority >= self.threshold
-
-
-def by_priority_at_least(threshold: int) -> Predicate:
-    """Allow jobs whose priority is ``>= threshold``."""
-    return _ByPriorityAtLeast(threshold=threshold)
-
-
-@dataclass(frozen=True)
-class _RetryCountUnder(Predicate):
-    limit: int
-
-    def evaluate(self, ctx: PredicateContext) -> bool:
-        return ctx.retry_count < self.limit
-
-
-def retry_count_under(limit: int) -> Predicate:
-    """Allow jobs whose retry counter is strictly less than ``limit``."""
-    if limit < 0:
-        raise ValueError("limit must be >= 0")
-    return _RetryCountUnder(limit=limit)
-
-
-@dataclass(frozen=True)
-class _PayloadMatches(Predicate):
-    path: tuple[str, ...]
-    expected: Any
-
-    def evaluate(self, ctx: PredicateContext) -> bool:
-        node: Any = {"args": ctx.args, "kwargs": ctx.kwargs}
-        for segment in self.path:
-            node = _safe_lookup(node, segment)
-            if node is _MISSING:
-                return False
-        return bool(node == self.expected)
 
 
 _MISSING = object()
@@ -97,6 +39,30 @@ def _safe_lookup(node: Any, key: str) -> Any:
     return getattr(node, key, _MISSING)
 
 
+@dataclass(frozen=True)
+class PayloadMatches(Predicate):
+    """Match a value in ``args``/``kwargs`` by dotted path."""
+
+    OP: ClassVar[str | None] = "payload_matches"
+
+    path: str = ""
+    expected: Any = None
+    _segments: tuple[str, ...] = field(default=(), init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise PredicateValidationError("payload_matches: path must be non-empty")
+        object.__setattr__(self, "_segments", tuple(self.path.split(".")))
+
+    def evaluate(self, ctx: PredicateContext) -> bool:
+        node: Any = {"args": ctx.args, "kwargs": ctx.kwargs}
+        for segment in self._segments:
+            node = _safe_lookup(node, segment)
+            if node is _MISSING:
+                return False
+        return bool(node == self.expected)
+
+
 def payload_matches(path: str, expected: Any) -> Predicate:
     """Match a value in args/kwargs by dotted path.
 
@@ -107,6 +73,4 @@ def payload_matches(path: str, expected: Any) -> Predicate:
     * ``"args.0"`` → ``ctx.args[0]``
     * ``"kwargs.config.region"`` → ``ctx.kwargs["config"]["region"]``
     """
-    if not path:
-        raise ValueError("path must be non-empty")
-    return _PayloadMatches(path=tuple(path.split(".")), expected=expected)
+    return PayloadMatches(path=path, expected=expected)

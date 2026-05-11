@@ -44,9 +44,16 @@ from taskito.mixins import (
     QueueSettingsMixin,
 )
 from taskito.predicates.context import PredicateContext
+from taskito.predicates.core import Predicate as _Predicate
 from taskito.predicates.evaluate import evaluate_predicate
 from taskito.predicates.metrics import PredicateMetrics
 from taskito.predicates.outcomes import Cancel, Defer
+from taskito.predicates.registry import (
+    PredicateValidationError,
+)
+from taskito.predicates.registry import (
+    register_predicate as _register_predicate,
+)
 from taskito.proxies import ProxyRegistry
 from taskito.proxies.built_in import register_builtin_handlers
 from taskito.proxies.metrics import ProxyMetrics
@@ -223,6 +230,7 @@ class Queue(
         self._task_predicate_on_false: dict[str, str] = {}
         self._task_predicate_extras: dict[str, dict[str, Any]] = {}
         self._task_default_defer: dict[str, float] = {}
+        self._task_predicate_serialized: dict[str, dict[str, Any] | None] = {}
         self._predicate_metrics = PredicateMetrics()
         self._drain_timeout = drain_timeout
         self._queue_configs: dict[str, dict[str, Any]] = {}
@@ -310,6 +318,56 @@ class Queue(
     def _deserialize_payload(self, task_name: str, payload: bytes) -> tuple:
         """Deserialize a job payload using the per-task or queue-level serializer."""
         return self._get_serializer(task_name).loads(payload)  # type: ignore[no-any-return]
+
+    # -- Predicate inspection / registration -----------------------------
+
+    def list_predicates(self) -> dict[str, dict[str, Any] | None]:
+        """Return the serialized predicate (or ``None`` for bare callables)
+        registered for every task that has one.
+
+        The values are JSON-safe dicts produced by
+        :meth:`Predicate.to_dict`. Consumers (dashboard, audit logs) can
+        feed each value back through :meth:`Predicate.from_dict` to
+        rebuild the AST.
+        """
+        return dict(self._task_predicate_serialized)
+
+    def predicate_for(self, task_name: str) -> dict[str, Any] | None:
+        """Return the serialized predicate for ``task_name`` or ``None``."""
+        return self._task_predicate_serialized.get(task_name)
+
+    def register_predicate(self, op: str, *, replace: bool = False) -> Callable[[type], type]:
+        """Class decorator: register a custom :class:`Predicate` subclass.
+
+        Example::
+
+            from taskito.predicates import Predicate
+
+            @queue.register_predicate("tenant_quota_under")
+            class TenantQuotaUnder(Predicate):
+                OP = "tenant_quota_under"
+                ...
+
+        The ``OP`` set on the class must match ``op``. Once registered,
+        the predicate participates in JSON serialization and the string
+        DSL just like a built-in recipe.
+        """
+
+        def decorator(cls: type) -> type:
+            if not isinstance(cls, type) or not issubclass(cls, _Predicate):
+                raise PredicateValidationError(
+                    f"register_predicate target must subclass Predicate; got {cls!r}"
+                )
+            declared = cls.__dict__.get("OP")
+            if declared and declared != op:
+                raise PredicateValidationError(
+                    f"OP mismatch: decorator says {op!r}, class declares {declared!r}"
+                )
+            cls.OP = op
+            _register_predicate(op, cls, replace=replace)
+            return cls
+
+        return decorator
 
     def _apply_dispatch_predicate(
         self,

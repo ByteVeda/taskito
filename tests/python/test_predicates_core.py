@@ -129,7 +129,7 @@ def test_repr_uses_operator_syntax() -> None:
     text = repr(expr)
     assert "&" in text
     assert "|" in text
-    assert "~" in text
+    assert "!" in text  # DSL uses ! for negation
 
 
 # -- Fail-closed -----------------------------------------------------------

@@ -1,9 +1,21 @@
-"""Predicates that read live system state from the queue."""
+"""Observational predicates over live queue state.
+
+These recipes **read** state the Rust scheduler maintains. They are not
+primary enforcement: hard backpressure belongs in
+``@queue.task(max_concurrent=...)``, ``rate_limit=...``, or
+``circuit_breaker=...`` — all enforced atomically in the Rust poller.
+
+``queue_paused`` is kept as a *defensive* composable: e.g.
+``~queue_paused() & is_business_hours()`` lets a middleware skip a
+gauge update when the queue is administratively paused. It does not
+replace ``Queue.pause()`` / ``Queue.resume()``, which are the
+authoritative pause mechanism.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from taskito.predicates.core import Predicate
 
@@ -12,66 +24,21 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class _QueueSizeUnder(Predicate):
-    limit: int
-    queue_name: str | None
+class QueuePaused(Predicate):
+    """True when the given queue is currently paused.
 
-    def evaluate(self, ctx: PredicateContext) -> bool:
-        return ctx.queue_size(self.queue_name) < self.limit
-
-
-def queue_size_under(limit: int, *, queue: str | None = None) -> Predicate:
-    """Allow only when the queue has fewer than ``limit`` pending jobs.
-
-    ``queue=None`` (the default) inspects the job's own queue. Pass an
-    explicit name to gate based on a different queue.
+    Reads ``list_paused_queues()`` from storage. Typically used
+    inverted: ``~queue_paused()``.
     """
-    if limit <= 0:
-        raise ValueError("limit must be > 0")
-    return _QueueSizeUnder(limit=limit, queue_name=queue)
 
+    OP: ClassVar[str | None] = "queue_paused"
 
-@dataclass(frozen=True)
-class _QueuePaused(Predicate):
-    queue_name: str | None
+    queue: str | None = None
 
     def evaluate(self, ctx: PredicateContext) -> bool:
-        return ctx.queue_paused(self.queue_name)
+        return ctx.queue_paused(self.queue)
 
 
 def queue_paused(queue: str | None = None) -> Predicate:
-    """True when the queue is currently paused.
-
-    Typically used inverted: ``~queue_paused()``.
-    """
-    return _QueuePaused(queue_name=queue)
-
-
-@dataclass(frozen=True)
-class _ErrorRateUnder(Predicate):
-    max_rate: float
-
-    def evaluate(self, ctx: PredicateContext) -> bool:
-        stats = ctx.stats()
-        if not stats:
-            return True
-        completed = int(stats.get("completed", 0))
-        failed = int(stats.get("failed", 0))
-        dead = int(stats.get("dead", 0))
-        total = completed + failed + dead
-        if total <= 0:
-            return True
-        rate = (failed + dead) / total
-        return rate < self.max_rate
-
-
-def error_rate_under(max_rate: float) -> Predicate:
-    """Allow only when the global failure ratio is below ``max_rate``.
-
-    ``max_rate`` is a fraction in (0, 1]. The metric is computed from
-    backend-wide stats: ``(failed + dead) / (completed + failed + dead)``.
-    When no jobs have run yet, the predicate allows.
-    """
-    if not 0.0 < max_rate <= 1.0:
-        raise ValueError("max_rate must be in (0, 1]")
-    return _ErrorRateUnder(max_rate=max_rate)
+    """True when ``queue`` (defaults to the job's own queue) is paused."""
+    return QueuePaused(queue=queue)
