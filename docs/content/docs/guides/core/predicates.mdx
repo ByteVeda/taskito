@@ -151,3 +151,162 @@ Three events are emitted on the queue's event bus:
 * `EventType.PREDICATE_DEFERRED` — payload includes `task_name`, `defer_seconds`, `phase` (`"enqueue"` or `"dispatch"`).
 * `EventType.PREDICATE_CANCELLED` — worker-dispatch cancellations.
 * `EventType.PREDICATE_REJECTED` — enqueue-time rejections that raised `PredicateRejectedError`.
+
+## Examples
+
+### Business-hours-only report
+
+Run a report task only between 09:00–17:00 Pacific on weekdays; defer to the next window otherwise. Urgent jobs (priority ≥ 8) bypass the window.
+
+```python
+from taskito import Queue
+from taskito.predicates import is_business_hours, by_priority_at_least
+
+queue = Queue()
+
+@queue.task(
+    predicate=is_business_hours(tz="US/Pacific") | by_priority_at_least(8),
+)
+def send_daily_report(team_id: str) -> None:
+    ...
+
+# At 02:00 PT → enqueued with delay until 09:00 PT
+send_daily_report.delay("alpha")
+
+# Same task, urgent → runs immediately regardless of hour
+queue.enqueue(send_daily_report.name, args=("alpha",), priority=10)
+```
+
+### Drop jobs when the system is under load
+
+Use `queue_size_under` and `error_rate_under` to shed load. Compose them with `&` so a single backpressure breach denies.
+
+```python
+from taskito.predicates import queue_size_under, error_rate_under, queue_paused
+
+healthy = (
+    queue_size_under(1_000, queue="default")
+    & error_rate_under(0.1)
+    & ~queue_paused()
+)
+
+@queue.task(predicate=healthy, on_false="defer", default_defer_seconds=30.0)
+def import_csv(path: str) -> int:
+    ...
+```
+
+### Feature-flag rollout
+
+Gate a new code path behind a flag. The default provider reads `FF_<NAME>` from the environment; swap in LaunchDarkly with a 5-line adapter.
+
+```python
+import os
+from taskito.predicates import feature_flag, FeatureFlagProvider, PredicateContext
+
+
+class LaunchDarklyProvider:
+    """Adapter for the LaunchDarkly SDK."""
+
+    def __init__(self, client: object, user_attr: str = "tenant_id") -> None:
+        self._client = client
+        self._user_attr = user_attr
+
+    def is_enabled(self, name: str, ctx: PredicateContext) -> bool:
+        user = {"key": ctx.kwargs.get(self._user_attr, "anon")}
+        return bool(self._client.variation(name, user, False))
+
+
+# In production: provider = LaunchDarklyProvider(ldclient.get())
+# In dev: default env-var provider, FF_NEW_BILLING=1 enables it.
+@queue.task(predicate=feature_flag("new_billing"))
+def charge_card(tenant_id: str, amount_cents: int) -> str:
+    ...
+```
+
+### Tenant allowlist with `payload_matches`
+
+```python
+from taskito.predicates import Predicate, PredicateContext
+
+class TenantIn(Predicate):
+    def __init__(self, *tenants: str) -> None:
+        self._tenants = frozenset(tenants)
+
+    def evaluate(self, ctx: PredicateContext) -> bool:
+        return ctx.kwargs.get("tenant_id") in self._tenants
+
+
+@queue.task(predicate=TenantIn("acme", "globex"), on_false="cancel")
+def reindex_search(tenant_id: str) -> None:
+    ...
+
+# raises PredicateRejectedError — never enqueued
+queue.enqueue(reindex_search.name, kwargs={"tenant_id": "initech"})
+```
+
+### Async predicate with quota service
+
+`evaluate` may be a coroutine — it's awaited transparently.
+
+```python
+import httpx
+from taskito.predicates import Predicate, PredicateContext, Defer
+
+
+class QuotaAvailable(Predicate):
+    def __init__(self, url: str) -> None:
+        self._url = url
+
+    async def evaluate(self, ctx: PredicateContext) -> bool | Defer:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get(f"{self._url}/quota/{ctx.kwargs['tenant']}")
+        remaining = r.json()["remaining"]
+        if remaining > 0:
+            return True
+        return Defer(seconds=60.0)
+
+
+@queue.task(predicate=QuotaAvailable("http://quota.internal"))
+async def index_document(tenant: str, doc_id: str) -> None:
+    ...
+```
+
+### Per-middleware filtering
+
+Route a single middleware to only one queue without touching the queue-level middleware list.
+
+```python
+from taskito.contrib.sentry import SentryMiddleware
+from taskito.contrib.prometheus import PrometheusMiddleware
+from taskito.predicates import by_queue
+
+queue = Queue(middleware=[
+    # Sentry only for the "critical" queue
+    SentryMiddleware(predicate=by_queue("critical")),
+    # Prometheus everywhere
+    PrometheusMiddleware(),
+])
+```
+
+### Listening for predicate events
+
+Wire dashboards or alerts by subscribing to the predicate event types.
+
+```python
+from taskito.events import EventType
+
+def on_predicate_event(event_type: EventType, payload: dict) -> None:
+    if event_type is EventType.PREDICATE_DEFERRED:
+        print(f"{payload['task_name']} deferred {payload['defer_seconds']}s "
+              f"at {payload['phase']}")
+    elif event_type is EventType.PREDICATE_CANCELLED:
+        print(f"{payload['task_name']} cancelled at dispatch: "
+              f"{payload.get('reason', '')}")
+
+for event in (
+    EventType.PREDICATE_DEFERRED,
+    EventType.PREDICATE_CANCELLED,
+    EventType.PREDICATE_REJECTED,
+):
+    queue._event_bus.on(event, on_predicate_event)
+```

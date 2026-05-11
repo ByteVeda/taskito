@@ -1,0 +1,244 @@
+---
+title: Predicate-Gated Jobs
+description: "End-to-end example of using Predicate objects to gate task execution by business hours, system load, feature flags, and per-tenant quotas."
+---
+
+A small reporting service that uses predicates to gate when tasks may run. It demonstrates every layer of the predicate system: enqueue-time rejection, worker-dispatch defer-and-retry, composable recipes, custom predicates, async predicates, and middleware filtering.
+
+## What the service does
+
+* Sends per-tenant **daily reports** during business hours only.
+* Defers heavy **reindex jobs** when the queue is backed up or the error rate is high.
+* Gates a new **billing workflow** behind a feature flag.
+* Routes Sentry alerts only for the `critical` queue.
+
+## Project structure
+
+```
+predicate_gated/
+  app.py        # Queue + tasks
+  predicates.py # Custom predicates
+  main.py       # Submit jobs
+  worker.py     # Run the worker
+```
+
+## predicates.py
+
+A custom predicate that consults an HTTP quota service. Async — taskito awaits it transparently.
+
+```python
+"""Custom predicates for the example service."""
+
+from __future__ import annotations
+
+import httpx
+
+from taskito.predicates import Defer, Predicate, PredicateContext
+
+
+class TenantQuotaUnder(Predicate):
+    """Defer until the tenant has quota remaining."""
+
+    def __init__(self, url: str, limit: int) -> None:
+        self._url = url
+        self._limit = limit
+
+    async def evaluate(self, ctx: PredicateContext) -> bool | Defer:
+        tenant = ctx.kwargs.get("tenant")
+        if tenant is None:
+            return False
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get(f"{self._url}/quota/{tenant}")
+        used = r.json()["used"]
+        if used < self._limit:
+            return True
+        # Quota busts → re-check in 5 minutes.
+        return Defer(seconds=300.0)
+
+
+class TenantIn(Predicate):
+    """Hard allowlist; rejects at enqueue time."""
+
+    def __init__(self, *tenants: str) -> None:
+        self._tenants = frozenset(tenants)
+
+    def evaluate(self, ctx: PredicateContext) -> bool:
+        return ctx.kwargs.get("tenant") in self._tenants
+```
+
+## app.py
+
+Composes built-in recipes with the custom predicates. Each task gets a different predicate shape.
+
+```python
+"""Queue, tasks, and predicate wiring."""
+
+from taskito import Queue
+from taskito.contrib.sentry import SentryMiddleware
+from taskito.predicates import (
+    by_priority_at_least,
+    by_queue,
+    error_rate_under,
+    feature_flag,
+    is_business_hours,
+    queue_paused,
+    queue_size_under,
+)
+
+from .predicates import TenantIn, TenantQuotaUnder
+
+queue = Queue(
+    db_path=".taskito/predicate_gated.db",
+    workers=4,
+    middleware=[
+        # Sentry only for the "critical" queue.
+        SentryMiddleware(predicate=by_queue("critical")),
+    ],
+)
+
+
+# ── Reports: business hours + tenant allowlist ────────────────
+@queue.task(
+    predicate=is_business_hours(tz="US/Pacific") & TenantIn("acme", "globex"),
+    on_false="defer",
+    default_defer_seconds=900.0,  # 15 minutes
+)
+def send_daily_report(tenant: str) -> str:
+    """Defers outside Mon–Fri 09:00–17:00 Pacific.
+    Cancels at enqueue if tenant is not in the allowlist."""
+    return f"report sent for {tenant}"
+
+
+# ── Reindex: load-shed + bypass when urgent ───────────────────
+healthy = (
+    queue_size_under(1_000, queue="bulk")
+    & error_rate_under(0.1)
+    & ~queue_paused("bulk")
+)
+
+@queue.task(
+    queue="bulk",
+    predicate=healthy | by_priority_at_least(8),
+    on_false="defer",
+    default_defer_seconds=30.0,
+)
+def reindex_search(tenant: str) -> int:
+    """Skipped when default queue is over 1k pending or error_rate > 10%,
+    unless explicitly enqueued with priority>=8."""
+    return 42  # rows indexed
+
+
+# ── Billing: gated by FF_NEW_BILLING env var ──────────────────
+@queue.task(
+    queue="critical",
+    predicate=feature_flag("new_billing"),
+    on_false="cancel",
+)
+def charge_card(tenant: str, amount_cents: int) -> str:
+    return f"charged {amount_cents}c to {tenant}"
+
+
+# ── Async + quota-bound indexer ───────────────────────────────
+@queue.task(
+    predicate=TenantQuotaUnder("http://quota.internal", limit=10_000),
+    on_false="defer",
+)
+async def index_document(tenant: str, doc_id: str) -> str:
+    return f"indexed {doc_id}"
+```
+
+## main.py
+
+Submitting jobs. Demonstrates each outcome.
+
+```python
+"""Submit some jobs and watch the predicates kick in."""
+
+from taskito.exceptions import PredicateRejectedError
+
+from .app import (
+    charge_card,
+    index_document,
+    queue,
+    reindex_search,
+    send_daily_report,
+)
+
+
+def main() -> None:
+    # 1. send_daily_report: allowed for "acme"; deferred to 09:00 PT outside hours.
+    send_daily_report.delay(tenant="acme")
+
+    # 2. send_daily_report: cancel at enqueue — tenant not in allowlist.
+    try:
+        send_daily_report.delay(tenant="initech")
+    except PredicateRejectedError as exc:
+        print(f"rejected: {exc.task_name} — {exc.reason}")
+
+    # 3. reindex_search: normal path
+    reindex_search.delay(tenant="acme")
+
+    # 4. reindex_search: bypass backpressure with priority
+    queue.enqueue(reindex_search.name, kwargs={"tenant": "acme"}, priority=9)
+
+    # 5. charge_card: gated behind FF_NEW_BILLING; cancels if flag is off.
+    try:
+        charge_card.delay(tenant="acme", amount_cents=4200)
+    except PredicateRejectedError:
+        print("billing flag is off")
+
+    # 6. async predicate + async task — both are awaited transparently
+    index_document.delay(tenant="acme", doc_id="doc-1")
+
+    # Watch metrics live
+    print(queue._predicate_metrics.snapshot())
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## worker.py
+
+```python
+from .app import queue
+
+if __name__ == "__main__":
+    queue.run_worker()
+```
+
+## Subscribing to events
+
+Plug predicate outcomes into your alerting or dashboards.
+
+```python
+from taskito.events import EventType
+
+def on_predicate_event(event_type: EventType, payload: dict) -> None:
+    match event_type:
+        case EventType.PREDICATE_DEFERRED:
+            print(
+                f"[defer] {payload['task_name']} +{payload['defer_seconds']}s "
+                f"phase={payload['phase']}"
+            )
+        case EventType.PREDICATE_CANCELLED:
+            print(f"[cancel] {payload['task_name']} reason={payload.get('reason', '')}")
+        case EventType.PREDICATE_REJECTED:
+            print(f"[reject] {payload['task_name']} reason={payload.get('reason', '')}")
+
+for event in (
+    EventType.PREDICATE_DEFERRED,
+    EventType.PREDICATE_CANCELLED,
+    EventType.PREDICATE_REJECTED,
+):
+    queue._event_bus.on(event, on_predicate_event)
+```
+
+## Notes
+
+* Predicates are evaluated **twice** for each job (once at enqueue, once at dispatch). Use `ctx.job_id` to tell the phases apart inside a custom predicate.
+* `on_false` only controls what happens when the predicate returns a plain `False`. Returning `Defer(seconds=...)` or `Cancel(reason=...)` is honored regardless.
+* System-state recipes (`queue_size_under`, `error_rate_under`, `queue_paused`) memoize within a single evaluation, so composing them is cheap.
+* A predicate that raises is treated as `False` (fail-closed) — the error is logged and `PredicateMetrics.errors` is incremented.
+
+See the [Predicates guide](/docs/guides/core/predicates) for the full API reference.
