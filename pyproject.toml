@@ -22,7 +22,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Distributed Computing",
 ]
-dependencies = ["cloudpickle>=3.0"]
+dependencies = [
+    "cloudpickle>=3.0",
+    'tzdata; platform_system == "Windows"',
+]
 [project.urls]
 Homepage = "https://github.com/ByteVeda/taskito"
 Documentation = "https://docs.byteveda.org/taskito"

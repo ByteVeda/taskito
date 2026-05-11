@@ -34,6 +34,10 @@ _ONE_DAY = timedelta(days=1)
 def _resolve_tz(tz: str | None) -> tzinfo:
     if tz is None:
         return timezone.utc
+    # Fast-path UTC so the predicate works on hosts that lack an IANA tz
+    # database (notably Windows without the ``tzdata`` package).
+    if tz.upper() == "UTC":
+        return timezone.utc
     if not _HAS_ZONEINFO:
         raise PredicateValidationError(
             "zoneinfo is not available; pass tz=None or install Python 3.9+"
@@ -41,7 +45,10 @@ def _resolve_tz(tz: str | None) -> tzinfo:
     try:
         return ZoneInfo(tz)
     except ZoneInfoNotFoundError as exc:
-        raise PredicateValidationError(f"unknown timezone: {tz!r}") from exc
+        raise PredicateValidationError(
+            f"unknown timezone: {tz!r} "
+            "(on Windows, install the `tzdata` package for IANA timezone support)"
+        ) from exc
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
