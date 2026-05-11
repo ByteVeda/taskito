@@ -1,0 +1,153 @@
+---
+title: Predicates
+description: "Compose Predicate objects to gate when a task is enqueued or dispatched, with built-in recipes for time windows, queue health, feature flags, and more."
+---
+
+A **predicate** is a composable, fail-closed gate attached to a task. It decides — at enqueue time and again at worker dispatch — whether the job runs, is deferred, or is cancelled. The same predicates also filter which middlewares see a given job.
+
+```python
+from taskito import Queue
+from taskito.predicates import (
+    is_business_hours,
+    queue_paused,
+    by_priority_at_least,
+)
+
+queue = Queue()
+
+@queue.task(
+    predicate=is_business_hours(tz="US/Pacific")
+              & ~queue_paused()
+              | by_priority_at_least(8),
+    on_false="defer",
+)
+def send_report(): ...
+```
+
+## Outcomes
+
+A predicate's `evaluate` returns one of four values:
+
+| Outcome | Meaning |
+|---|---|
+| `True` | Allow the job to proceed. |
+| `False` | Deny. The task's `on_false` action decides what happens — `"defer"` (default) or `"cancel"`. |
+| `Defer(seconds=N)` | Skip now, retry after `N` seconds. At enqueue time the delay is added; at dispatch time the job is re-enqueued with the delay. |
+| `Cancel(reason="...")` | Permanently skip. At enqueue time raises `PredicateRejectedError`; at dispatch time marks the job cancelled. |
+
+A predicate that raises an exception is treated as `False` (fail-closed). The error is logged and counted in `PredicateMetrics`.
+
+## Composition
+
+`Predicate` overloads `&`, `|`, and `~` with short-circuit semantics:
+
+```python
+allow = is_business_hours() & ~queue_paused()
+allow |= by_priority_at_least(8)  # urgent jobs bypass both gates
+```
+
+* `A & B` — both must allow; short-circuits if `A` denies.
+* `A | B` — either can allow; short-circuits if `A` allows. If both deny, the most informative outcome wins (`Cancel` > `Defer` > `False`).
+* `~A` — inverts `True`/`False`. `Defer` and `Cancel` pass through unchanged.
+
+## `@queue.task` options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `predicate` | `Predicate \| Callable \| None` | `None` | The predicate to evaluate. Plain callables receiving a `PredicateContext` are accepted. |
+| `on_false` | `"defer" \| "cancel"` | `"defer"` | What to do when the predicate returns plain `False`. |
+| `predicate_extras` | `dict \| None` | `None` | Static dict forwarded to the predicate via `ctx.extras`. |
+| `default_defer_seconds` | `float` | `60.0` | Delay applied when `on_false="defer"` and the predicate returns plain `False`. |
+
+## Built-in recipes
+
+All recipes are factory functions returning a `Predicate`. Import from `taskito.predicates`.
+
+### Time-based
+
+* `is_business_hours(start=9, end=17, *, tz=None, weekdays_only=True)` — defers to the next window when outside.
+* `is_weekend(*, tz=None)`
+* `in_time_window("09:00", "17:00", *, tz=None)` — `HH:MM` strings; end exclusive; defers when outside.
+* `after(target_datetime)` — defers until `target`.
+* `before(target_datetime)`
+* `in_timezone(tz)` — no-op at runtime; validates the tz string at construction.
+
+### Job-attribute
+
+* `by_queue(name)` / `by_task(name)`
+* `by_priority_at_least(n)`
+* `retry_count_under(n)`
+* `payload_matches("kwargs.tenant", "acme")` — dotted-path lookup into `{"args": ..., "kwargs": ...}`.
+
+### System-state
+
+* `queue_size_under(limit, *, queue=None)` — reads `stats_by_queue()`.
+* `queue_paused(queue=None)`
+* `error_rate_under(max_rate)` — `(failed + dead) / (completed + failed + dead)` over backend-wide stats.
+
+System-state recipes are memoised within a single evaluation, so `queue_size_under(100) & queue_size_under(200)` only reads stats once.
+
+### External-config
+
+* `env_var_truthy("MY_FLAG")` — truthy values: `1`, `true`, `t`, `yes`, `y`, `on` (case-insensitive).
+* `feature_flag("billing", provider=...)` — defaults to env-var provider reading `FF_<NAME>`. Pass a custom `FeatureFlagProvider` to integrate LaunchDarkly/Statsig/etc.
+
+## Where predicates run
+
+A predicate registered on a task is evaluated **twice**:
+
+1. **Enqueue time** — inside `Queue.enqueue()` / `enqueue_many()`. `Defer` adjusts the caller's `delay=` value. `Cancel` raises `PredicateRejectedError` immediately. The job is never saved when cancelled.
+2. **Worker-dispatch time** — just before the task body executes (sync and async paths). `Cancel` raises `TaskCancelledError`, which Rust records as `cancelled`. `Defer` re-enqueues a fresh job with the same payload + delay, and the current job is marked cancelled.
+
+The `PredicateContext` passed to `evaluate` distinguishes the two phases: `ctx.job_id is None` at enqueue time, set at dispatch time.
+
+## Writing a custom predicate
+
+```python
+from taskito.predicates import Predicate, PredicateContext, Defer
+
+class TenantQuotaUnder(Predicate):
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+
+    def evaluate(self, ctx: PredicateContext) -> bool | Defer:
+        tenant = ctx.kwargs.get("tenant")
+        if tenant is None:
+            return False
+        used = my_quota_service.usage(tenant)
+        if used < self.limit:
+            return True
+        return Defer(seconds=300.0)  # check again in 5 minutes
+```
+
+Predicates may be **async**: return a coroutine and it will be awaited transparently.
+
+## Middleware filtering
+
+`TaskMiddleware` accepts `predicate=` to gate which jobs the middleware applies to. The legacy contrib `task_filter=Callable[[str], bool]` kwarg is still supported and translates internally to a predicate.
+
+```python
+from taskito.contrib.sentry import SentryMiddleware
+from taskito.predicates import by_queue
+
+queue = Queue(middleware=[
+    SentryMiddleware(predicate=by_queue("critical")),
+])
+```
+
+When the middleware predicate denies, **only that middleware** is skipped for the current job — job dispatch is unaffected.
+
+## Metrics and events
+
+Each `Queue` carries a `PredicateMetrics` instance at `queue._predicate_metrics`:
+
+```python
+queue._predicate_metrics.snapshot()
+# {"allowed": 412, "denied": 3, "deferred": 8, "cancelled": 1, "errors": 0}
+```
+
+Three events are emitted on the queue's event bus:
+
+* `EventType.PREDICATE_DEFERRED` — payload includes `task_name`, `defer_seconds`, `phase` (`"enqueue"` or `"dispatch"`).
+* `EventType.PREDICATE_CANCELLED` — worker-dispatch cancellations.
+* `EventType.PREDICATE_REJECTED` — enqueue-time rejections that raised `PredicateRejectedError`.

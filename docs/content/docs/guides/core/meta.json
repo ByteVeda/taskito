@@ -6,6 +6,7 @@
     "workers",
     "execution-model",
     "scheduling",
+    "predicates",
     "workflows"
   ]
 }
