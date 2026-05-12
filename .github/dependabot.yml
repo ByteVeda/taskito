@@ -16,7 +16,7 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
-      - area/rust
+      - rust
     commit-message:
       prefix: chore
       include: scope
@@ -36,7 +36,7 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
-      - area/python
+      - python
     commit-message:
       prefix: chore
       include: scope
@@ -56,7 +56,7 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
-      - area/dashboard
+      - dashboard
     commit-message:
       prefix: chore
       include: scope
@@ -83,7 +83,7 @@ updates:
     open-pull-requests-limit: 3
     labels:
       - dependencies
-      - area/ci
+      - ci
     commit-message:
       prefix: chore(ci)
     groups:
