@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from taskito.predicates.evaluate import _resolve_outcome
 from taskito.predicates.outcomes import Cancel, Defer
 from taskito.predicates.registry import (
     PredicateValidationError,
@@ -204,8 +205,6 @@ class AndPredicate(Predicate):
         self._right = right
 
     def evaluate(self, ctx: PredicateContext) -> PredicateReturn:
-        from taskito.predicates.evaluate import _resolve_outcome
-
         left = _resolve_outcome(self._left, ctx)
         if isinstance(left, (Defer, Cancel)) or left is False:
             return left
@@ -237,8 +236,6 @@ class OrPredicate(Predicate):
         self._right = right
 
     def evaluate(self, ctx: PredicateContext) -> PredicateReturn:
-        from taskito.predicates.evaluate import _resolve_outcome
-
         left = _resolve_outcome(self._left, ctx)
         if left is True:
             return True
@@ -281,8 +278,6 @@ class NotPredicate(Predicate):
         self._inner = inner
 
     def evaluate(self, ctx: PredicateContext) -> PredicateReturn:
-        from taskito.predicates.evaluate import _resolve_outcome
-
         outcome = _resolve_outcome(self._inner, ctx)
         if isinstance(outcome, (Defer, Cancel)):
             return outcome

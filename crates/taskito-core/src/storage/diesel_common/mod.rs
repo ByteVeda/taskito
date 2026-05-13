@@ -7,6 +7,7 @@ mod jobs;
 mod locks;
 mod logs;
 mod metrics;
+pub(crate) mod migrations;
 
 pub(crate) use jobs::impl_diesel_job_ops;
 pub(crate) use locks::impl_diesel_lock_ops;

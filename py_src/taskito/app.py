@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING, Any
 from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.events import EventBus, EventType
-from taskito.exceptions import PredicateRejectedError, TaskCancelledError
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
 from taskito.interception.metrics import InterceptionMetrics
@@ -40,19 +39,10 @@ from taskito.mixins import (
     QueueLifecycleMixin,
     QueueLockMixin,
     QueueOperationsMixin,
+    QueuePredicateMixin,
     QueueResourceMixin,
+    QueueRuntimeConfigMixin,
     QueueSettingsMixin,
-)
-from taskito.predicates.context import PredicateContext
-from taskito.predicates.core import Predicate as _Predicate
-from taskito.predicates.evaluate import evaluate_predicate
-from taskito.predicates.metrics import PredicateMetrics
-from taskito.predicates.outcomes import Cancel, Defer
-from taskito.predicates.registry import (
-    PredicateValidationError,
-)
-from taskito.predicates.registry import (
-    register_predicate as _register_predicate,
 )
 from taskito.proxies import ProxyRegistry
 from taskito.proxies.built_in import register_builtin_handlers
@@ -84,6 +74,8 @@ logger = logging.getLogger("taskito")
 
 class Queue(
     QueueDecoratorMixin,
+    QueuePredicateMixin,
+    QueueRuntimeConfigMixin,
     QueueResourceMixin,
     QueueEventsMixin,
     QueueLifecycleMixin,
@@ -226,12 +218,7 @@ class Queue(
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
-        self._task_predicates: dict[str, Any] = {}
-        self._task_predicate_on_false: dict[str, str] = {}
-        self._task_predicate_extras: dict[str, dict[str, Any]] = {}
-        self._task_default_defer: dict[str, float] = {}
-        self._task_predicate_serialized: dict[str, dict[str, Any] | None] = {}
-        self._predicate_metrics = PredicateMetrics()
+        self._init_predicate_state()
         self._drain_timeout = drain_timeout
         self._queue_configs: dict[str, dict[str, Any]] = {}
         self._event_bus = EventBus(max_workers=event_workers)
@@ -318,274 +305,6 @@ class Queue(
     def _deserialize_payload(self, task_name: str, payload: bytes) -> tuple:
         """Deserialize a job payload using the per-task or queue-level serializer."""
         return self._get_serializer(task_name).loads(payload)  # type: ignore[no-any-return]
-
-    # -- Predicate inspection / registration -----------------------------
-
-    def list_predicates(self) -> dict[str, dict[str, Any] | None]:
-        """Return the serialized predicate (or ``None`` for bare callables)
-        registered for every task that has one.
-
-        The values are JSON-safe dicts produced by
-        :meth:`Predicate.to_dict`. Consumers (dashboard, audit logs) can
-        feed each value back through :meth:`Predicate.from_dict` to
-        rebuild the AST.
-        """
-        return dict(self._task_predicate_serialized)
-
-    def predicate_for(self, task_name: str) -> dict[str, Any] | None:
-        """Return the serialized predicate for ``task_name`` or ``None``."""
-        return self._task_predicate_serialized.get(task_name)
-
-    def register_predicate(self, op: str, *, replace: bool = False) -> Callable[[type], type]:
-        """Class decorator: register a custom :class:`Predicate` subclass.
-
-        Example::
-
-            from taskito.predicates import Predicate
-
-            @queue.register_predicate("tenant_quota_under")
-            class TenantQuotaUnder(Predicate):
-                OP = "tenant_quota_under"
-                ...
-
-        The ``OP`` set on the class must match ``op``. Once registered,
-        the predicate participates in JSON serialization and the string
-        DSL just like a built-in recipe.
-        """
-
-        def decorator(cls: type) -> type:
-            if not isinstance(cls, type) or not issubclass(cls, _Predicate):
-                raise PredicateValidationError(
-                    f"register_predicate target must subclass Predicate; got {cls!r}"
-                )
-            declared = cls.__dict__.get("OP")
-            if declared and declared != op:
-                raise PredicateValidationError(
-                    f"OP mismatch: decorator says {op!r}, class declares {declared!r}"
-                )
-            cls.OP = op
-            _register_predicate(op, cls, replace=replace)
-            return cls
-
-        return decorator
-
-    def _apply_dispatch_predicate(
-        self,
-        *,
-        task_name: str,
-        args: tuple,
-        kwargs: dict,
-        job_id: str,
-        queue_name: str,
-        priority: int = 0,
-        retry_count: int = 0,
-    ) -> None:
-        """Evaluate the worker-dispatch predicate; defer or cancel as needed.
-
-        ``Defer`` (or ``False`` with ``on_false="defer"``) re-enqueues a
-        fresh job with the same payload and a delay, then raises
-        :class:`TaskCancelledError` so the current execution is marked
-        cancelled by the Rust runner. ``Cancel`` (or ``False`` with
-        ``on_false="cancel"``) raises :class:`TaskCancelledError` directly
-        without re-enqueueing.
-
-        Returns silently when the predicate allows.
-        """
-        predicate = self._task_predicates.get(task_name)
-        if predicate is None:
-            return
-
-        ctx = PredicateContext.for_dispatch(
-            task_name=task_name,
-            queue=queue_name,
-            priority=priority,
-            retry_count=retry_count,
-            args=tuple(args),
-            kwargs=dict(kwargs),
-            job_id=job_id,
-            payload_size=0,
-            extras=self._task_predicate_extras.get(task_name),
-            queue_ref=self,
-        )
-        outcome = evaluate_predicate(predicate, ctx, metrics=self._predicate_metrics)
-
-        if outcome is True:
-            return
-
-        if isinstance(outcome, Cancel):
-            self._emit_event(
-                EventType.PREDICATE_CANCELLED,
-                {
-                    "task_name": task_name,
-                    "job_id": job_id,
-                    "queue": queue_name,
-                    "reason": outcome.reason,
-                    "phase": "dispatch",
-                },
-            )
-            raise TaskCancelledError(
-                f"predicate cancelled job {job_id}: {outcome.reason}"
-                if outcome.reason
-                else f"predicate cancelled job {job_id}"
-            )
-
-        if isinstance(outcome, Defer):
-            self._reenqueue_after_defer(
-                task_name=task_name,
-                args=args,
-                kwargs=kwargs,
-                queue_name=queue_name,
-                delay_seconds=outcome.seconds,
-            )
-            self._emit_event(
-                EventType.PREDICATE_DEFERRED,
-                {
-                    "task_name": task_name,
-                    "job_id": job_id,
-                    "queue": queue_name,
-                    "defer_seconds": outcome.seconds,
-                    "phase": "dispatch",
-                },
-            )
-            raise TaskCancelledError(f"predicate deferred job {job_id} by {outcome.seconds:.1f}s")
-
-        # Plain False — branch on on_false.
-        action = self._task_predicate_on_false.get(task_name, "defer")
-        if action == "cancel":
-            self._emit_event(
-                EventType.PREDICATE_CANCELLED,
-                {
-                    "task_name": task_name,
-                    "job_id": job_id,
-                    "queue": queue_name,
-                    "phase": "dispatch",
-                },
-            )
-            raise TaskCancelledError(f"predicate rejected job {job_id}")
-
-        defer_seconds = self._task_default_defer.get(task_name, 60.0)
-        self._reenqueue_after_defer(
-            task_name=task_name,
-            args=args,
-            kwargs=kwargs,
-            queue_name=queue_name,
-            delay_seconds=defer_seconds,
-        )
-        self._emit_event(
-            EventType.PREDICATE_DEFERRED,
-            {
-                "task_name": task_name,
-                "job_id": job_id,
-                "queue": queue_name,
-                "defer_seconds": defer_seconds,
-                "phase": "dispatch",
-            },
-        )
-        raise TaskCancelledError(f"predicate deferred job {job_id}")
-
-    def _reenqueue_after_defer(
-        self,
-        *,
-        task_name: str,
-        args: tuple,
-        kwargs: dict,
-        queue_name: str,
-        delay_seconds: float,
-    ) -> None:
-        """Re-enqueue a job with a delay, bypassing predicate re-evaluation.
-
-        Args/kwargs are serialized fresh via the task's serializer. We go
-        straight to the Rust queue to avoid running enqueue-time
-        middleware or re-evaluating the predicate (which would create an
-        infinite ping-pong).
-        """
-        serializer = self._get_serializer(task_name)
-        payload = serializer.dumps((tuple(args), dict(kwargs)))
-        self._inner.enqueue(
-            task_name=task_name,
-            payload=payload,
-            queue=queue_name,
-            delay_seconds=delay_seconds,
-        )
-
-    def _apply_enqueue_predicate(
-        self,
-        *,
-        predicate: Any,
-        task_name: str,
-        queue_name: str,
-        priority: int | None,
-        args: tuple,
-        kwargs: dict,
-        payload_size: int,
-        delay: float | None,
-    ) -> float | None:
-        """Evaluate an enqueue-time predicate; return adjusted ``delay``.
-
-        Raises :class:`~taskito.exceptions.PredicateRejectedError` when the
-        outcome is a :class:`~taskito.predicates.Cancel`, or a plain
-        ``False`` paired with ``on_false="cancel"``. Returns the (possibly
-        bumped) ``delay`` for the caller to pass through to the Rust
-        ``enqueue``.
-        """
-        ctx = PredicateContext.for_enqueue(
-            task_name=task_name,
-            queue=queue_name,
-            priority=priority,
-            args=tuple(args),
-            kwargs=dict(kwargs),
-            payload_size=payload_size,
-            delay_seconds=delay,
-            extras=self._task_predicate_extras.get(task_name),
-            queue_ref=self,
-        )
-        outcome = evaluate_predicate(predicate, ctx, metrics=self._predicate_metrics)
-
-        if outcome is True:
-            return delay
-        if isinstance(outcome, Defer):
-            self._emit_event(
-                EventType.PREDICATE_DEFERRED,
-                {
-                    "task_name": task_name,
-                    "queue": queue_name,
-                    "defer_seconds": outcome.seconds,
-                    "phase": "enqueue",
-                },
-            )
-            return (delay or 0.0) + outcome.seconds
-        if isinstance(outcome, Cancel):
-            self._emit_event(
-                EventType.PREDICATE_REJECTED,
-                {
-                    "task_name": task_name,
-                    "queue": queue_name,
-                    "reason": outcome.reason,
-                    "phase": "enqueue",
-                },
-            )
-            raise PredicateRejectedError(task_name, outcome.reason)
-
-        # Plain False — branch on the task's on_false setting.
-        action = self._task_predicate_on_false.get(task_name, "defer")
-        if action == "cancel":
-            self._emit_event(
-                EventType.PREDICATE_REJECTED,
-                {"task_name": task_name, "queue": queue_name, "phase": "enqueue"},
-            )
-            raise PredicateRejectedError(task_name)
-        # defer
-        defer_seconds = self._task_default_defer.get(task_name, 60.0)
-        self._emit_event(
-            EventType.PREDICATE_DEFERRED,
-            {
-                "task_name": task_name,
-                "queue": queue_name,
-                "defer_seconds": defer_seconds,
-                "phase": "enqueue",
-            },
-        )
-        return (delay or 0.0) + defer_seconds
 
     def enqueue(
         self,
