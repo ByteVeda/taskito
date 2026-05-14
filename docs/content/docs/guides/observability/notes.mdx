@@ -1,0 +1,120 @@
+---
+title: Structured Notes
+description: "Attach a bounded dict of annotations to a job at enqueue time — capped at 15 fields, dashboard-rendered."
+---
+
+`notes` is a structured annotation field on every job. It's a small dict
+(at most **15** top-level keys) that you attach when enqueuing and read
+back from `JobResult.notes`. Unlike `metadata` — which is a free-form
+JSON string blob — `notes` is validated at the Python boundary and
+rendered by the dashboard as a key/value table.
+
+## When to use `notes` vs `metadata`
+
+| | `notes` | `metadata` |
+|---|---|---|
+| Type at enqueue | `dict[str, Any]` | `str` (pre-encoded JSON) |
+| Top-level fields | ≤ 15 | unbounded |
+| Validation | At the Python boundary | None |
+| Dashboard render | Key/value table | Raw JSON dump |
+| Survives DLQ retry | Yes | Yes |
+| Best for | User-visible annotations | Operational/debug context |
+
+Use **`notes`** for short, user-readable annotations a human or
+dashboard would want to scan: customer IDs, business priority reasons,
+short comments. Use **`metadata`** when you need to attach an opaque
+JSON blob without size constraints (trace IDs, request envelopes, etc.).
+
+## Writing notes
+
+Pass a dict to `notes=` on any enqueue call:
+
+```python
+from taskito import Queue
+
+queue = Queue()
+
+@queue.task()
+def process_order(order_id: int) -> None: ...
+
+job = process_order.apply_async(
+    args=(42,),
+    notes={
+        "customer_id": "cus_abc",
+        "tier": "gold",
+        "priority_reason": "VIP onboarding",
+    },
+)
+```
+
+The same kwarg is accepted on `Queue.enqueue()`, `TaskWrapper.apply_async()`,
+and `Queue.enqueue_many()` (both uniform `notes=` and per-job `notes_list=`).
+
+## Reading notes back
+
+```python
+result = process_order.apply_async(args=(42,), notes={"customer_id": "cus_abc"})
+result.refresh()
+print(result.notes)  # {'customer_id': 'cus_abc'}
+```
+
+`JobResult.notes` returns the parsed dict (or `None` if no notes were
+attached). The raw stored JSON string is also available on the underlying
+`PyJob` via `result._py_job.notes` if you need it untouched.
+
+## Validation rules
+
+Validation runs at the Python boundary; the Rust storage layer receives an
+already-encoded JSON string and stores it verbatim. The exact contract is
+defined in [`taskito.notes`](https://github.com/your-org/taskito/blob/master/py_src/taskito/notes.py):
+
+| Constraint | Default | Constant |
+|---|---|---|
+| Max top-level fields | 15 | `MAX_NOTE_FIELDS` |
+| Max key length | 64 chars | `MAX_NOTE_KEY_LENGTH` |
+| Max string value length | 500 chars | `MAX_NOTE_VALUE_LENGTH` |
+| Max nesting depth | 3 | `MAX_NOTE_DEPTH` |
+| Max encoded size | 4096 bytes | `MAX_NOTE_BYTES` |
+
+Values may be any JSON-serializable primitive (`str`, `int`, `float`,
+`bool`, `None`), plus `list` or `dict` within the depth cap.
+
+Violations raise [`NotesValidationError`](#errors), a subclass of both
+`TaskitoError` and `ValueError`, so existing `except ValueError` handlers
+keep working:
+
+```python
+from taskito import NotesValidationError
+
+try:
+    process_order.apply_async(args=(42,), notes={f"k{i}": i for i in range(20)})
+except NotesValidationError as e:
+    print(e)  # notes may not have more than 15 fields, got 20
+```
+
+## Dashboard rendering
+
+Notes are surfaced on the job detail page as a fixed-size key/value
+table next to the Metadata card. Because the field is capped at 15
+entries, the table is always small enough to scan without scrolling.
+
+## Cross-backend behavior
+
+The `notes` column lives on the `jobs`, `dead_letter`, and `archived_jobs`
+tables on SQLite and PostgreSQL, and rides along with the job's JSON
+representation on Redis. Notes survive:
+
+- DLQ moves and DLQ retries (the original notes are restored on the
+  re-enqueued job).
+- Job replay via `queue.replay_job(...)`.
+- Job archival.
+
+## Errors
+
+```python
+from taskito import NotesValidationError
+```
+
+Subclasses `TaskitoError` and `ValueError`. The exception message names
+the offending key or constraint so it can be surfaced directly to end
+users.
