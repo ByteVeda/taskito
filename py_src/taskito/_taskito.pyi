@@ -62,6 +62,7 @@ class PyJob:
     unique_key: str | None
     progress: int | None
     metadata: str | None
+    notes: str | None
     namespace: str | None
 
     @property
@@ -102,6 +103,7 @@ class PyQueue:
         timeout: int | None = None,
         unique_key: str | None = None,
         metadata: str | None = None,
+        notes: str | None = None,
         depends_on: list[str] | None = None,
         expires: float | None = None,
         result_ttl: int | None = None,
@@ -117,6 +119,7 @@ class PyQueue:
         delay_seconds_list: list[float | None] | None = None,
         unique_keys: list[str | None] | None = None,
         metadata_list: list[str | None] | None = None,
+        notes_list: list[str | None] | None = None,
         expires_list: list[float | None] | None = None,
         result_ttl_list: list[int | None] | None = None,
     ) -> list[PyJob]: ...

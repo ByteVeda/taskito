@@ -164,7 +164,8 @@ impl PyQueue {
     }
 
     /// Enqueue a job.
-    #[pyo3(signature = (task_name, payload, queue="default", priority=None, delay_seconds=None, max_retries=None, timeout=None, unique_key=None, metadata=None, depends_on=None, expires=None, result_ttl=None))]
+    #[pyo3(signature = (task_name, payload, queue="default", priority=None, delay_seconds=None, max_retries=None, timeout=None, unique_key=None, metadata=None, notes=None, depends_on=None, expires=None, result_ttl=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn enqueue(
         &self,
         task_name: &str,
@@ -176,6 +177,7 @@ impl PyQueue {
         timeout: Option<i64>,
         unique_key: Option<String>,
         metadata: Option<String>,
+        notes: Option<String>,
         depends_on: Option<Vec<String>>,
         expires: Option<f64>,
         result_ttl: Option<i64>,
@@ -244,6 +246,7 @@ impl PyQueue {
             timeout_ms,
             unique_key: unique_key.clone(),
             metadata,
+            notes,
             depends_on: depends_on.unwrap_or_default(),
             expires_at,
             result_ttl_ms,
@@ -261,7 +264,7 @@ impl PyQueue {
     }
 
     /// Enqueue multiple jobs in a single transaction.
-    #[pyo3(signature = (task_names, payloads, queues=None, priorities=None, max_retries_list=None, timeouts=None, delay_seconds_list=None, unique_keys=None, metadata_list=None, expires_list=None, result_ttl_list=None))]
+    #[pyo3(signature = (task_names, payloads, queues=None, priorities=None, max_retries_list=None, timeouts=None, delay_seconds_list=None, unique_keys=None, metadata_list=None, notes_list=None, expires_list=None, result_ttl_list=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn enqueue_batch(
         &self,
@@ -274,6 +277,7 @@ impl PyQueue {
         delay_seconds_list: Option<Vec<Option<f64>>>,
         unique_keys: Option<Vec<Option<String>>>,
         metadata_list: Option<Vec<Option<String>>>,
+        notes_list: Option<Vec<Option<String>>>,
         expires_list: Option<Vec<Option<f64>>>,
         result_ttl_list: Option<Vec<Option<i64>>>,
     ) -> PyResult<Vec<PyJob>> {
@@ -346,6 +350,9 @@ impl PyQueue {
                 metadata: metadata_list
                     .as_ref()
                     .and_then(|m| m.get(i).cloned().flatten()),
+                notes: notes_list
+                    .as_ref()
+                    .and_then(|n| n.get(i).cloned().flatten()),
                 depends_on: vec![],
                 expires_at,
                 result_ttl_ms,

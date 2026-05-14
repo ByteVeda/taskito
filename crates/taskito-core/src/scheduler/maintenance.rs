@@ -96,6 +96,7 @@ impl Scheduler {
                 timeout_ms: PERIODIC_DEFAULT_TIMEOUT_MS,
                 unique_key,
                 metadata: None,
+                notes: None,
                 depends_on: vec![],
                 expires_at: None,
                 result_ttl_ms: None,

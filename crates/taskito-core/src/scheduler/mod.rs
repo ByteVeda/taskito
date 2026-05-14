@@ -332,6 +332,7 @@ mod tests {
             timeout_ms: 300_000,
             unique_key: None,
             metadata: None,
+            notes: None,
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: None,

@@ -79,6 +79,12 @@ pub struct Job {
     pub unique_key: Option<String>,
     pub progress: Option<i32>,
     pub metadata: Option<String>,
+    /// Structured, user-readable annotations attached to the job (canonical
+    /// JSON object, ≤ 15 top-level fields). Validated at the Python
+    /// boundary by `taskito.notes.validate_and_encode_notes`; stored as the
+    /// already-encoded JSON string here.
+    #[serde(default)]
+    pub notes: Option<String>,
     pub cancel_requested: bool,
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
@@ -106,6 +112,7 @@ impl From<JobRow> for Job {
             unique_key: row.unique_key,
             progress: row.progress,
             metadata: row.metadata,
+            notes: row.notes,
             cancel_requested: row.cancel_requested != 0,
             expires_at: row.expires_at,
             result_ttl_ms: row.result_ttl_ms,
@@ -125,6 +132,8 @@ pub struct NewJob {
     pub timeout_ms: i64,
     pub unique_key: Option<String>,
     pub metadata: Option<String>,
+    /// Pre-encoded canonical JSON object (≤ 15 fields). See [`Job::notes`].
+    pub notes: Option<String>,
     pub depends_on: Vec<String>,
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
@@ -153,6 +162,7 @@ impl NewJob {
             unique_key: self.unique_key,
             progress: None,
             metadata: self.metadata,
+            notes: self.notes,
             cancel_requested: false,
             expires_at: self.expires_at,
             result_ttl_ms: self.result_ttl_ms,

@@ -200,6 +200,7 @@ impl PyQueue {
             timeout_ms: original.timeout_ms,
             unique_key: None,
             metadata: Some(format!("{{\"replayed_from\":\"{job_id}\"}}")),
+            notes: original.notes,
             depends_on: vec![],
             expires_at: None,
             result_ttl_ms: original.result_ttl_ms,
