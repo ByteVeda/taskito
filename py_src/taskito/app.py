@@ -44,6 +44,7 @@ from taskito.mixins import (
     QueueRuntimeConfigMixin,
     QueueSettingsMixin,
 )
+from taskito.notes import validate_and_encode_notes
 from taskito.proxies import ProxyRegistry
 from taskito.proxies.built_in import register_builtin_handlers
 from taskito.proxies.metrics import ProxyMetrics
@@ -318,6 +319,7 @@ class Queue(
         timeout: int | None = None,
         unique_key: str | None = None,
         metadata: str | None = None,
+        notes: dict[str, Any] | None = None,
         depends_on: str | list[str] | None = None,
         expires: float | None = None,
         result_ttl: int | None = None,
@@ -338,6 +340,10 @@ class Queue(
             unique_key: Deduplication key (alias of ``idempotency_key`` — wins
                 if both are set, kept for backwards compatibility).
             metadata: Arbitrary JSON string to attach to the job.
+            notes: Structured annotations dict (≤ 15 top-level fields). See
+                :mod:`taskito.notes` for the validation contract. Use this
+                instead of ``metadata`` when you want dashboard-renderable
+                key/value annotations with bounded size.
             depends_on: Job ID or list of job IDs that must complete first.
             expires: Seconds until the job expires (skipped if not started by then).
             result_ttl: Per-job result TTL in seconds. Overrides global result_ttl.
@@ -361,6 +367,7 @@ class Queue(
             "timeout": timeout,
             "unique_key": unique_key,
             "metadata": metadata,
+            "notes": notes,
             "depends_on": depends_on,
             "expires": expires,
             "result_ttl": result_ttl,
@@ -383,11 +390,16 @@ class Queue(
         timeout = enqueue_options.get("timeout")
         unique_key = enqueue_options.get("unique_key")
         metadata = enqueue_options.get("metadata")
+        notes = enqueue_options.get("notes")
         depends_on = enqueue_options.get("depends_on")
         expires = enqueue_options.get("expires")
         result_ttl = enqueue_options.get("result_ttl")
         idempotency_key = enqueue_options.get("idempotency_key")
         idempotent = enqueue_options.get("idempotent")
+
+        # Validation runs *after* middleware so a mutating hook still gets
+        # the chance to reshape notes before we reject them.
+        notes_encoded = validate_and_encode_notes(notes)
 
         if self._interceptor is not None and not self._test_mode_active:
             final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
@@ -432,6 +444,7 @@ class Queue(
             timeout=timeout,
             unique_key=unique_key,
             metadata=metadata,
+            notes=notes_encoded,
             depends_on=dep_ids,
             expires=expires,
             result_ttl=result_ttl,
@@ -462,6 +475,8 @@ class Queue(
         unique_keys: list[str | None] | None = None,
         metadata: str | None = None,
         metadata_list: list[str | None] | None = None,
+        notes: dict[str, Any] | None = None,
+        notes_list: list[dict[str, Any] | None] | None = None,
         expires: float | None = None,
         expires_list: list[float | None] | None = None,
         result_ttl: int | None = None,
@@ -486,6 +501,10 @@ class Queue(
                 if both are set).
             metadata: Uniform metadata JSON string for all jobs.
             metadata_list: Per-job metadata JSON strings.
+            notes: Uniform structured-notes dict for all jobs (see
+                :mod:`taskito.notes`).
+            notes_list: Per-job notes dicts. Takes precedence over ``notes``
+                when both are supplied.
             expires: Uniform expiry in seconds for all jobs.
             expires_list: Per-job expiry in seconds.
             result_ttl: Uniform result TTL in seconds for all jobs.
@@ -523,6 +542,7 @@ class Queue(
                 "delay": (delay_list[i] if delay_list is not None else delay),
                 "unique_key": (unique_keys[i] if unique_keys is not None else None),
                 "metadata": (metadata_list[i] if metadata_list is not None else metadata),
+                "notes": (notes_list[i] if notes_list is not None else notes),
                 "expires": (expires_list[i] if expires_list is not None else expires),
                 "result_ttl": (result_ttl_list[i] if result_ttl_list is not None else result_ttl),
                 "idempotency_key": (idempotency_keys[i] if idempotency_keys is not None else None),
@@ -550,6 +570,7 @@ class Queue(
         timeouts_list = [opt["timeout"] for opt in per_job_options]
         delays = [opt["delay"] for opt in per_job_options]
         metas = [opt["metadata"] for opt in per_job_options]
+        notes_encoded = [validate_and_encode_notes(opt["notes"]) for opt in per_job_options]
         exp_list = [opt["expires"] for opt in per_job_options]
         ttl_list = [opt["result_ttl"] for opt in per_job_options]
 
@@ -604,6 +625,7 @@ class Queue(
             delay_seconds_list=delays,
             unique_keys=per_job_unique_keys,
             metadata_list=metas,
+            notes_list=notes_encoded,
             expires_list=exp_list,
             result_ttl_list=ttl_list,
         )

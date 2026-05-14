@@ -82,6 +82,7 @@ class TaskWrapper:
         timeout: int | None = None,
         unique_key: str | None = None,
         metadata: str | None = None,
+        notes: dict[str, Any] | None = None,
         depends_on: str | list[str] | None = None,
         expires: float | None = None,
         result_ttl: int | None = None,
@@ -100,6 +101,8 @@ class TaskWrapper:
             timeout: Override the default timeout in seconds.
             unique_key: Deduplication key (alias of ``idempotency_key``).
             metadata: Arbitrary JSON string to attach to the job.
+            notes: Structured annotations dict (≤ 15 top-level fields). See
+                :mod:`taskito.notes`.
             depends_on: Job ID or list of job IDs that must complete first.
             expires: Seconds until the job expires (skipped if not started by then).
             result_ttl: Per-job result TTL in seconds.
@@ -122,6 +125,7 @@ class TaskWrapper:
             timeout=timeout if timeout is not None else self._default_timeout,
             unique_key=unique_key,
             metadata=metadata,
+            notes=notes,
             depends_on=depends_on,
             expires=expires,
             result_ttl=result_ttl,

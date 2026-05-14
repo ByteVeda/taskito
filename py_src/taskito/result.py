@@ -79,6 +79,33 @@ class JobResult(AsyncJobResultMixin):
         return self._queue.job_errors(self.id)
 
     @property
+    def metadata(self) -> str | None:
+        """Raw metadata JSON string set at enqueue time (free-form blob)."""
+        return self._py_job.metadata
+
+    @property
+    def notes(self) -> dict[str, Any] | None:
+        """Structured notes set at enqueue time, parsed back to a dict.
+
+        Returns ``None`` if no notes were attached. Decoding errors are
+        treated as missing — the stored string was validated on the way
+        in, so this branch only fires if the column was corrupted out of
+        band.
+        """
+        raw = self._py_job.notes
+        if raw is None:
+            return None
+        try:
+            decoded = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            log.warning("failed to decode notes JSON for job %s", self.id)
+            return None
+        if not isinstance(decoded, dict):
+            log.warning("notes for job %s is not a JSON object", self.id)
+            return None
+        return decoded
+
+    @property
     def dependencies(self) -> list[str]:
         """IDs of jobs this job depends on."""
         return self._queue._inner.get_dependencies(self.id)
@@ -237,6 +264,7 @@ class JobResult(AsyncJobResultMixin):
             "timeout_ms": self._py_job.timeout_ms,
             "unique_key": self._py_job.unique_key,
             "metadata": self._py_job.metadata,
+            "notes": self.notes,
             "namespace": self._py_job.namespace,
         }
 
