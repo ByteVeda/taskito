@@ -61,6 +61,15 @@ jobs:
 
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
+        with:
+          # Skip caching ~/.cargo/bin/ — rustup 1.28's multicall binary
+          # interacts badly with this action's cache-clean step and ends up
+          # restoring a `cargo` that responds as `rustup-init`. Proxies are
+          # reinstalled on every run by dtolnay/rust-toolchain.
+          # See: https://github.com/Swatinem/rust-cache/issues/16
+          cache-bin: false
+          # Bump to evict any v0-* caches that already contain the corrupted bin dir.
+          prefix-key: v1-rust-bin-fix
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
@@ -107,6 +116,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           save-if: false
+          cache-bin: false
+          prefix-key: v1-rust-bin-fix
 
       - name: Run Rust test suite
         run: cargo test --workspace
@@ -151,6 +162,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           save-if: false
+          cache-bin: false
+          prefix-key: v1-rust-bin-fix
 
       - name: Run Rust test suite (PostgreSQL backend)
         run: cargo test --workspace --features postgres
@@ -189,6 +202,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           save-if: false
+          cache-bin: false
+          prefix-key: v1-rust-bin-fix
 
       - name: Run Rust test suite (Redis backend)
         run: cargo test --workspace --features redis
@@ -237,6 +252,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
+          cache-bin: false
+          prefix-key: v1-rust-bin-fix
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
