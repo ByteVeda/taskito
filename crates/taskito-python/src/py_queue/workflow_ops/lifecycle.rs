@@ -183,6 +183,7 @@ impl PyQueue {
                 timeout_ms,
                 unique_key: None,
                 metadata: Some(build_metadata_json(&run_id, &topo.name)),
+                notes: None,
                 depends_on,
                 expires_at: None,
                 result_ttl_ms: self.result_ttl_ms,

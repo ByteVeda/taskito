@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 import threading
@@ -14,6 +15,18 @@ from taskito.async_support.context import get_async_context
 from taskito.exceptions import SoftTimeoutError, TaskCancelledError
 
 logger = logging.getLogger("taskito.context")
+
+
+class LogLevel(str, enum.Enum):
+    """Severity levels for structured task logs written via :meth:`JobContext.log`."""
+
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+    RESULT = "result"
+
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -56,7 +69,7 @@ class JobContext:
         @queue.task()
         def process(data):
             current_job.update_progress(50)
-            current_job.log("Processing started", level="info")
+            current_job.log("Processing started", level=LogLevel.INFO)
             current_job.check_cancelled()  # raises TaskCancelledError if cancelled
             current_job.check_timeout()    # raises SoftTimeoutError if exceeded
             ...
@@ -93,14 +106,14 @@ class JobContext:
     def log(
         self,
         message: str,
-        level: str = "info",
+        level: LogLevel = LogLevel.INFO,
         extra: dict | None = None,
     ) -> None:
         """Write a structured log entry for this job.
 
         Args:
             message: The log message.
-            level: Log level (``"debug"``, ``"info"``, ``"warning"``, ``"error"``).
+            level: A :class:`LogLevel` member (e.g. ``LogLevel.INFO``).
             extra: Optional dict of structured data to attach.
         """
         ctx = self._require_context()
@@ -114,7 +127,9 @@ class JobContext:
                 extra_str = str(extra)
         else:
             extra_str = None
-        _queue_ref._inner.write_task_log(ctx.job_id, ctx.task_name, level, message, extra_str)
+        _queue_ref._inner.write_task_log(
+            ctx.job_id, ctx.task_name, level.value, message, extra_str
+        )
 
     def publish(self, data: Any) -> None:
         """Publish a partial result visible to ``job.stream()`` consumers.
@@ -124,7 +139,8 @@ class JobContext:
 
         Args:
             data: Any JSON-serializable value. Stored as a task log entry
-                with ``level="result"`` so it can be filtered from regular logs.
+                with level :attr:`LogLevel.RESULT` so it can be filtered from
+                regular logs.
         """
         ctx = self._require_context()
         if _queue_ref is None:
@@ -133,7 +149,9 @@ class JobContext:
             extra_str = json.dumps(data)
         except (TypeError, ValueError):
             extra_str = str(data)
-        _queue_ref._inner.write_task_log(ctx.job_id, ctx.task_name, "result", "", extra_str)
+        _queue_ref._inner.write_task_log(
+            ctx.job_id, ctx.task_name, LogLevel.RESULT.value, "", extra_str
+        )
 
     def check_cancelled(self) -> None:
         """Check if cancellation has been requested for this job.

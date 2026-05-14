@@ -36,6 +36,10 @@ pub struct PyJob {
     pub progress: Option<i32>,
     #[pyo3(get)]
     pub metadata: Option<String>,
+    /// Pre-encoded canonical JSON for structured notes (≤ 15 fields).
+    /// Python wraps this with `json.loads` via `JobResult.notes`.
+    #[pyo3(get)]
+    pub notes: Option<String>,
     #[pyo3(get)]
     pub namespace: Option<String>,
 
@@ -86,6 +90,7 @@ impl From<Job> for PyJob {
             unique_key: job.unique_key,
             progress: job.progress,
             metadata: job.metadata,
+            notes: job.notes,
             namespace: job.namespace,
             status_val: job.status as i32,
             result_bytes: job.result,

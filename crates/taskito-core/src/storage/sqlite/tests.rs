@@ -16,6 +16,7 @@ fn make_job(task_name: &str) -> NewJob {
         timeout_ms: 300_000,
         unique_key: None,
         metadata: None,
+        notes: None,
         depends_on: vec![],
         expires_at: None,
         result_ttl_ms: None,
@@ -31,6 +32,51 @@ fn test_enqueue_and_get() {
     let fetched = storage.get_job(&job.id).unwrap().unwrap();
     assert_eq!(fetched.task_name, "test_task");
     assert_eq!(fetched.status, JobStatus::Pending);
+}
+
+#[test]
+fn test_notes_round_trip() {
+    let storage = test_storage();
+    let mut new_job = make_job("notes_task");
+    new_job.notes = Some(r#"{"customer_id":"cus_abc","tier":"gold"}"#.to_string());
+
+    let job = storage.enqueue(new_job).unwrap();
+    let fetched = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(
+        fetched.notes.as_deref(),
+        Some(r#"{"customer_id":"cus_abc","tier":"gold"}"#)
+    );
+
+    // Absence round-trips as None.
+    let plain = storage.enqueue(make_job("plain_task")).unwrap();
+    let plain_fetched = storage.get_job(&plain.id).unwrap().unwrap();
+    assert!(plain_fetched.notes.is_none());
+}
+
+#[test]
+fn test_notes_survive_dlq_round_trip() {
+    let storage = test_storage();
+    let mut new_job = make_job("dlq_notes_task");
+    new_job.notes = Some(r#"{"customer_id":"cus_xyz"}"#.to_string());
+    let job = storage.enqueue(new_job).unwrap();
+
+    storage
+        .move_to_dlq(&job, "boom", None)
+        .expect("move_to_dlq");
+
+    let dead = storage.list_dead(10, 0).unwrap();
+    let entry = dead
+        .iter()
+        .find(|d| d.original_job_id == job.id)
+        .expect("dead entry");
+    assert_eq!(entry.notes.as_deref(), Some(r#"{"customer_id":"cus_xyz"}"#));
+
+    let new_id = storage.retry_dead(&entry.id).expect("retry_dead");
+    let retried = storage.get_job(&new_id).unwrap().unwrap();
+    assert_eq!(
+        retried.notes.as_deref(),
+        Some(r#"{"customer_id":"cus_xyz"}"#)
+    );
 }
 
 #[test]

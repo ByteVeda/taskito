@@ -153,6 +153,7 @@ queue.enqueue(
     timeout: int | None = None,
     unique_key: str | None = None,
     metadata: str | None = None,
+    notes: dict[str, Any] | None = None,
     depends_on: str | list[str] | None = None,
 ) -> JobResult
 ```
@@ -161,6 +162,8 @@ Enqueue a task for execution. Returns a [`JobResult`](/api-reference/result) han
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `metadata` | `str \| None` | `None` | Free-form JSON string blob. No size or shape constraint. |
+| `notes` | `dict \| None` | `None` | Structured annotations, max **15** top-level keys. See [Structured notes](/guides/observability/notes). |
 | `depends_on` | `str \| list[str] \| None` | `None` | Job ID(s) this job depends on. See [Dependencies](/guides/advanced-execution). |
 
 ### `queue.enqueue_many()`
@@ -179,6 +182,8 @@ queue.enqueue_many(
     unique_keys: list[str | None] | None = None,
     metadata: str | None = None,
     metadata_list: list[str | None] | None = None,
+    notes: dict[str, Any] | None = None,
+    notes_list: list[dict[str, Any] | None] | None = None,
     expires: float | None = None,
     expires_list: list[float | None] | None = None,
     result_ttl: int | None = None,
@@ -196,6 +201,8 @@ uniform parameters (applied to all jobs) and per-job lists.
 | `unique_keys` | `list[str \| None] \| None` | `None` | Per-job deduplication keys |
 | `metadata` | `str \| None` | `None` | Uniform metadata JSON for all jobs |
 | `metadata_list` | `list[str \| None] \| None` | `None` | Per-job metadata JSON |
+| `notes` | `dict \| None` | `None` | Uniform [structured notes](/guides/observability/notes) for all jobs (≤ 15 keys) |
+| `notes_list` | `list[dict \| None] \| None` | `None` | Per-job structured notes (takes precedence over `notes`) |
 | `expires` | `float \| None` | `None` | Uniform expiry in seconds for all jobs |
 | `expires_list` | `list[float \| None] \| None` | `None` | Per-job expiry in seconds |
 | `result_ttl` | `int \| None` | `None` | Uniform result TTL in seconds |

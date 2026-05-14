@@ -9,23 +9,28 @@ making them queryable and visible in the dashboard.
 
 ## Writing logs
 
-Use `current_job.log()` inside any task:
+Use `current_job.log()` inside any task. Levels are members of the
+`LogLevel` enum — `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`, `RESULT`:
 
 ```python
-from taskito import current_job
+from taskito import LogLevel, current_job
 
 @queue.task()
 def process_order(order_id: int):
     current_job.log("Starting order processing", extra={"order_id": order_id})
 
     items = fetch_items(order_id)
-    current_job.log(f"Found {len(items)} items", level="debug")
+    current_job.log(f"Found {len(items)} items", level=LogLevel.DEBUG)
 
     for item in items:
         try:
             process_item(item)
         except ValueError as e:
-            current_job.log(f"Skipping invalid item: {e}", level="warning", extra={"item": item})
+            current_job.log(
+                f"Skipping invalid item: {e}",
+                level=LogLevel.WARNING,
+                extra={"item": item},
+            )
 
     current_job.log("Order processing complete")
 ```
@@ -35,7 +40,7 @@ def process_order(order_id: int):
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `message` | `str` | *required* | The log message |
-| `level` | `str` | `"info"` | Log level: `"debug"`, `"info"`, `"warning"`, `"error"` |
+| `level` | `LogLevel` | `LogLevel.INFO` | One of `LogLevel.DEBUG`, `LogLevel.INFO`, `LogLevel.WARNING`, `LogLevel.ERROR`, `LogLevel.CRITICAL`, `LogLevel.RESULT` |
 | `extra` | `dict \| None` | `None` | Structured data to attach as JSON |
 
 ## Querying logs
@@ -51,9 +56,11 @@ for log in logs:
 ### Cross-job log query
 
 ```python
+from taskito import LogLevel
+
 logs = queue.query_logs(
     task_name="myapp.tasks.process_order",
-    level="error",
+    level=LogLevel.ERROR,
     since=1700000000,
     limit=50,
 )
@@ -62,7 +69,7 @@ logs = queue.query_logs(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `task_name` | `str \| None` | Filter by task name |
-| `level` | `str \| None` | Filter by log level |
+| `level` | `LogLevel \| None` | Filter by log level |
 | `since` | `int \| None` | Unix timestamp — only logs after this time |
 | `limit` | `int` | Maximum number of logs to return |
 
@@ -86,14 +93,14 @@ curl http://localhost:8080/api/logs?limit=20
 ### ETL pipeline with progress logging
 
 ```python
-from taskito import current_job
+from taskito import LogLevel, current_job
 
 @queue.task()
 def etl_pipeline(source: str, destination: str):
     current_job.log("Starting extraction", extra={"source": source})
 
     records = extract(source)
-    current_job.log(f"Extracted {len(records)} records", level="info")
+    current_job.log(f"Extracted {len(records)} records", level=LogLevel.INFO)
     current_job.update_progress(33)
 
     transformed = []
@@ -103,7 +110,7 @@ def etl_pipeline(source: str, destination: str):
         except Exception as e:
             current_job.log(
                 f"Transform failed for record {i}",
-                level="warning",
+                level=LogLevel.WARNING,
                 extra={"record_id": record.get("id"), "error": str(e)},
             )
     current_job.update_progress(66)

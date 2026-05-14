@@ -73,6 +73,14 @@ class ProxyCleanupError(ResourceError):
     """Raised when a proxy handler fails during cleanup."""
 
 
+class NotesValidationError(TaskitoError, ValueError):
+    """Raised when a ``notes`` dict violates the structured-notes contract.
+
+    Subclasses :class:`ValueError` so existing ``except ValueError`` clauses
+    keep working when validation fails inside enqueue paths.
+    """
+
+
 class PredicateRejectedError(TaskitoError):
     """Raised when an enqueue-time predicate cancels the submission.
 

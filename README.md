@@ -78,7 +78,7 @@ The heavy lifting runs in Rust: a Tokio async scheduler, OS thread worker pool w
 - **Job archival** — `queue.archive(older_than=86400)`, `queue.list_archived()`
 - **Queue pause/resume** — `queue.pause()`, `queue.resume()`, `queue.paused_queues()`
 - **Circuit breakers** — `circuit_breaker={"threshold": 5, "window": 60, "cooldown": 300}`
-- **Structured logging** — `current_job.log("msg", level="info", extra={...})`
+- **Structured logging** — `current_job.log("msg", level=LogLevel.INFO, extra={...})`
 - **CLI** — `taskito worker`, `taskito info --watch`, `taskito dashboard`
 
 ## Integrations

@@ -56,6 +56,12 @@ export interface Job {
   error: string | null;
   unique_key: string | null;
   metadata: string | null;
+  /**
+   * Structured notes JSON string (canonical encoding, ≤ 15 top-level fields).
+   * Parse with `JSON.parse` for a dict suitable for key/value rendering.
+   * `null` when no notes were attached at enqueue time.
+   */
+  notes: string | null;
 }
 
 export interface JobError {

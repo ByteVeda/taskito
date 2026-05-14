@@ -91,6 +91,8 @@ export function JobOverviewTab({ job }: JobOverviewTabProps) {
         </Card>
       ) : null}
 
+      <NotesCard raw={job.notes} />
+
       {job.error ? (
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
@@ -135,6 +137,67 @@ function tryPrettyJson(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+/**
+ * Render the structured ``notes`` blob as a fixed-size key/value table.
+ *
+ * The contract on the server side caps notes at 15 top-level keys, so this
+ * always fits in a card. Non-string leaves are stringified via
+ * ``JSON.stringify`` to keep the renderer total. If the raw payload
+ * can't be parsed (e.g. the column was tampered with out of band), we
+ * fall back to the raw text in a `<pre>` so the operator can still see
+ * something useful.
+ */
+function NotesCard({ raw }: { raw: string | null }) {
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle>Notes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <pre className="max-h-60 overflow-auto rounded-md bg-[var(--surface-2)] p-3 font-mono text-[11px] text-[var(--fg)]">
+            {raw}
+          </pre>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    Object.keys(parsed).length === 0
+  ) {
+    return null;
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle>Notes</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Dl>
+          {entries.map(([key, value]) => (
+            <Row key={key} label={key}>
+              <span className="break-all">
+                {typeof value === "string" ? value : JSON.stringify(value)}
+              </span>
+            </Row>
+          ))}
+        </Dl>
+      </CardContent>
+    </Card>
+  );
 }
 
 /**

@@ -2,13 +2,14 @@
 
 from taskito.app import Queue
 from taskito.canvas import Signature, chain, chord, chunks, group, starmap
-from taskito.context import current_job
+from taskito.context import LogLevel, current_job
 from taskito.events import EventType
 from taskito.exceptions import (
     CircuitBreakerOpenError,
     CircularDependencyError,
     JobNotFoundError,
     MaxRetriesExceededError,
+    NotesValidationError,
     PredicateRejectedError,
     ProxyCleanupError,
     ProxyReconstructionError,
@@ -29,6 +30,7 @@ from taskito.inject import Inject
 from taskito.interception import InterceptionError, InterceptionReport
 from taskito.log_config import configure as configure_logging
 from taskito.middleware import TaskMiddleware
+from taskito.notes import MAX_NOTE_FIELDS
 from taskito.proxies.no_proxy import NoProxy
 from taskito.result import JobResult
 from taskito.serializers import (
@@ -42,6 +44,7 @@ from taskito.task import TaskWrapper
 from taskito.testing import MockResource, TestMode, TestResult, TestResults
 
 __all__ = [
+    "MAX_NOTE_FIELDS",
     "CircuitBreakerOpenError",
     "CircularDependencyError",
     "CloudpickleSerializer",
@@ -53,10 +56,12 @@ __all__ = [
     "JobNotFoundError",
     "JobResult",
     "JsonSerializer",
+    "LogLevel",
     "MaxRetriesExceededError",
     "MockResource",
     "MsgPackSerializer",
     "NoProxy",
+    "NotesValidationError",
     "PredicateRejectedError",
     "ProxyCleanupError",
     "ProxyReconstructionError",

@@ -67,6 +67,7 @@ impl PostgresStorage {
                 unique_key: row.unique_key,
                 progress: row.progress,
                 metadata: row.metadata,
+                notes: row.notes,
                 cancel_requested: row.cancel_requested != 0,
                 expires_at: row.expires_at,
                 result_ttl_ms: row.result_ttl_ms,

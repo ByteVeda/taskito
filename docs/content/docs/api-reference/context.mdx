@@ -120,7 +120,7 @@ Publish a partial result visible to
 intermediate data from long-running tasks.
 
 `data` must be JSON-serializable. It is stored as a task log entry with
-`level="result"`, distinguishing it from regular logs.
+level `LogLevel.RESULT`, distinguishing it from regular logs.
 
 ```python
 @queue.task()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from taskito.context import LogLevel
 from taskito.events import EventType
 from taskito.result import JobResult
 
@@ -53,13 +54,16 @@ class QueueOperationsMixin:
     def query_logs(
         self,
         task_name: str | None = None,
-        level: str | None = None,
+        level: LogLevel | None = None,
         since: int = 3600,
         limit: int = 100,
     ) -> list[dict]:
         """Query structured task logs with filters."""
         return self._inner.query_task_logs(  # type: ignore[no-any-return]
-            task_name=task_name, level=level, since_seconds=since, limit=limit
+            task_name=task_name,
+            level=level.value if level is not None else None,
+            since_seconds=since,
+            limit=limit,
         )
 
     # -- Workers --

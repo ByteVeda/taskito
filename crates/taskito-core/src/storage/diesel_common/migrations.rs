@@ -88,6 +88,7 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
                 unique_key   TEXT,
                 progress     INTEGER,
                 metadata     TEXT,
+                notes        TEXT,
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
                 expires_at   {bi},
                 result_ttl_ms {bi}
@@ -104,6 +105,7 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
                 retry_count     INTEGER NOT NULL,
                 failed_at       {bi} NOT NULL,
                 metadata        TEXT,
+                notes           TEXT,
                 priority        INTEGER NOT NULL DEFAULT 0,
                 max_retries     INTEGER NOT NULL DEFAULT 3,
                 timeout_ms      {bi} NOT NULL DEFAULT 300000,
@@ -234,6 +236,7 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
                 unique_key   TEXT,
                 progress     INTEGER,
                 metadata     TEXT,
+                notes        TEXT,
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
                 expires_at   {bi},
                 result_ttl_ms {bi}
@@ -338,5 +341,9 @@ pub fn alter_statements(d: &Dialect) -> Vec<String> {
         // namespace backfill on dead_letter / archived_jobs (after circuit-breaker columns)
         format!("ALTER TABLE dead_letter ADD COLUMN {ife}namespace TEXT"),
         format!("ALTER TABLE archived_jobs ADD COLUMN {ife}namespace TEXT"),
+        // structured notes (≤15 fields, validated at the Python boundary)
+        format!("ALTER TABLE jobs ADD COLUMN {ife}notes TEXT"),
+        format!("ALTER TABLE dead_letter ADD COLUMN {ife}notes TEXT"),
+        format!("ALTER TABLE archived_jobs ADD COLUMN {ife}notes TEXT"),
     ]
 }
