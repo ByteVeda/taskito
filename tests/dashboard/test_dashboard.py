@@ -143,6 +143,7 @@ def test_to_dict_fields(queue: Queue) -> None:
         "timeout_ms",
         "unique_key",
         "metadata",
+        "notes",
         "namespace",
     }
     assert set(d.keys()) == expected_keys
