@@ -5,6 +5,27 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.12.2
+
+### Fixed
+
+- **Inline imports inside the predicate boolean combinators.** `AndPredicate.evaluate`, `OrPredicate.evaluate`, and `NotPredicate.evaluate` were each importing `_resolve_outcome` from `taskito.predicates.evaluate` *inside* the method body. The cycle they were defending against doesn't exist at runtime — `evaluate.py` only references `core` under `TYPE_CHECKING` — so the import was hoisted to module scope, satisfying the project's no-inline-imports rule.
+
+### Internal
+
+- **`QueuePredicateMixin` extracted from `app.py`.** Predicate state (six instance dicts and `PredicateMetrics`) plus the three gating methods (`_apply_enqueue_predicate`, `_apply_dispatch_predicate`, `_reenqueue_after_defer`) and the public inspection / registration API (`list_predicates`, `predicate_for`, `register_predicate`) now live on a dedicated mixin under `py_src/taskito/mixins/predicates.py`. Repeated `_emit_event(...)` blocks consolidated into small helpers. `app.py` drops from 901 to 619 LOC.
+- **`QueueRuntimeConfigMixin` split from `mixins/decorators.py`.** `register_type`, `set_queue_rate_limit`, and `set_queue_concurrency` are runtime configuration knobs, not decorator surface — they moved to a new mixin alongside the existing `QueueSettingsMixin` (which manages dashboard key/value state). `mixins/decorators.py` drops from 597 to 533 LOC.
+- **Migration DDL deduplicated via `diesel_common/migrations.rs`.** The `run_migrations()` methods on `SqliteStorage` and `PostgresStorage` shared ~750 LOC of nearly-identical `CREATE TABLE` / `CREATE INDEX` / `ALTER TABLE` statements. The shared module now exposes `create_tables(&dialect)`, `create_indexes()`, and `alter_statements(&dialect)`; a `Dialect` struct holds per-backend type substitutions (`BLOB`/`BYTEA`, `INTEGER`/`BIGINT`, `REAL`/`DOUBLE PRECISION`, boolean defaults, and the `IF NOT EXISTS` prefix on `ALTER`). Each backend's `run_migrations()` is now a ~10-line driver. `sqlite/mod.rs` drops 502 → 126 LOC; `postgres/mod.rs` drops 508 → 130 LOC.
+- **`tests/core/test_predicates.py`** — 30 focused tests covering AST short-circuit semantics, fail-closed evaluation + metric recording, JSON and string-DSL round-trips, recipe behaviour (`after`/`before`/`in_time_window`/`payload_matches`/`env_var_truthy`), the callable adapter, custom predicate registration, and three queue integration tests for enqueue-time cancel/defer.
+
+### Test counts at release
+
+- Rust: 95 tests (default), 107 with `--features workflows`
+- Python: 592 passed, 9 skipped across 58 files
+- Dashboard (vitest): 121 tests across 9 files
+
+---
+
 ## 0.12.1
 
 ### Fixed
