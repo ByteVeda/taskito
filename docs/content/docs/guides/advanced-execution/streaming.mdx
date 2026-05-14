@@ -127,9 +127,11 @@ def process_orders(order_ids):
 
 ## How it works
 
-`publish()` stores data as a task log entry with `level="result"`, reusing
-the existing `task_logs` table. No new tables or Rust changes are needed.
+`publish()` stores data as a task log entry with level `LogLevel.RESULT`,
+reusing the existing `task_logs` table. No new tables or Rust changes are
+needed.
 
-`stream()` polls `get_task_logs(job_id)`, filters for `level == "result"`,
-tracks the last-seen timestamp, and yields only new entries. It stops when
-the job's status becomes terminal.
+`stream()` polls `get_task_logs(job_id)`, filters for entries whose level
+matches `LogLevel.RESULT` (stored as `"result"`), tracks the last-seen
+timestamp, and yields only new entries. It stops when the job's status
+becomes terminal.
