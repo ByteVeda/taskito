@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from concurrent.futures import Executor
 
+    from taskito.context import LogLevel
     from taskito.result import JobResult
 
 logger = logging.getLogger("taskito")
@@ -73,7 +74,7 @@ class AsyncQueueMixin:
         def query_logs(
             self,
             task_name: str | None = ...,
-            level: str | None = ...,
+            level: LogLevel | None = ...,
             since: int = ...,
             limit: int = ...,
         ) -> list[dict]: ...

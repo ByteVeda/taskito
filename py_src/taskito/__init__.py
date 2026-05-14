@@ -2,7 +2,7 @@
 
 from taskito.app import Queue
 from taskito.canvas import Signature, chain, chord, chunks, group, starmap
-from taskito.context import current_job
+from taskito.context import LogLevel, current_job
 from taskito.events import EventType
 from taskito.exceptions import (
     CircuitBreakerOpenError,
@@ -53,6 +53,7 @@ __all__ = [
     "JobNotFoundError",
     "JobResult",
     "JsonSerializer",
+    "LogLevel",
     "MaxRetriesExceededError",
     "MockResource",
     "MsgPackSerializer",
