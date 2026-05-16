@@ -10,9 +10,12 @@ import pytest
 
 from taskito import log_config
 from taskito.log_config import (
+    _PIPE_CLOSED_FILTER,
     DEFAULT_DATEFMT,
     DEFAULT_FORMAT,
     configure,
+    restore_asyncio_pipe_noise,
+    silence_asyncio_pipe_noise,
 )
 
 _MANAGED_LOGGERS = (
@@ -124,3 +127,79 @@ def test_format_constants_are_stable() -> None:
     # the public surface (downstream tools that grep logs may rely on them).
     assert DEFAULT_FORMAT == "[%(asctime)s] %(levelname)s %(message)s"
     assert "%p" in DEFAULT_DATEFMT
+
+
+# --- asyncio pipe-noise filter ------------------------------------------------
+
+
+@pytest.fixture
+def _cleanup_pipe_filter() -> Iterator[None]:
+    """Ensure each filter test starts and ends with the filter detached."""
+    restore_asyncio_pipe_noise()
+    yield
+    restore_asyncio_pipe_noise()
+
+
+def _asyncio_record(message: str, level: int = logging.WARNING) -> logging.LogRecord:
+    return logging.LogRecord(
+        name="asyncio",
+        level=level,
+        pathname=__file__,
+        lineno=0,
+        msg=message,
+        args=None,
+        exc_info=None,
+    )
+
+
+def test_pipe_filter_demotes_spurious_warning_to_debug() -> None:
+    record = _asyncio_record("pipe closed by peer or os.write(pipe, data) raised exception.")
+
+    assert _PIPE_CLOSED_FILTER.filter(record) is True
+    assert record.levelno == logging.DEBUG
+    assert record.levelname == "DEBUG"
+
+
+def test_pipe_filter_passes_other_asyncio_warnings_unchanged() -> None:
+    record = _asyncio_record("socket.send() raised exception.")
+
+    assert _PIPE_CLOSED_FILTER.filter(record) is True
+    assert record.levelno == logging.WARNING
+    assert record.levelname == "WARNING"
+
+
+def test_pipe_filter_does_not_touch_non_warning_records() -> None:
+    record = _asyncio_record(
+        "pipe closed by peer or os.write(pipe, data) raised exception.",
+        level=logging.ERROR,
+    )
+
+    assert _PIPE_CLOSED_FILTER.filter(record) is True
+    assert record.levelno == logging.ERROR
+
+
+def test_silence_and_restore_are_idempotent(_cleanup_pipe_filter: None) -> None:
+    asyncio_logger = logging.getLogger("asyncio")
+
+    silence_asyncio_pipe_noise()
+    silence_asyncio_pipe_noise()
+    assert asyncio_logger.filters.count(_PIPE_CLOSED_FILTER) == 1
+
+    restore_asyncio_pipe_noise()
+    restore_asyncio_pipe_noise()
+    assert _PIPE_CLOSED_FILTER not in asyncio_logger.filters
+
+
+def test_silence_suppresses_warning_end_to_end(
+    caplog: pytest.LogCaptureFixture,
+    _cleanup_pipe_filter: None,
+) -> None:
+    asyncio_logger = logging.getLogger("asyncio")
+    silence_asyncio_pipe_noise()
+
+    with caplog.at_level(logging.WARNING, logger="asyncio"):
+        asyncio_logger.warning("pipe closed by peer or os.write(pipe, data) raised exception.")
+        asyncio_logger.warning("a different asyncio warning")
+
+    warning_messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_messages == ["a different asyncio warning"]

@@ -22,7 +22,13 @@ from typing import TextIO
 
 from taskito._taskito import _init_rust_logging
 
-__all__ = ["DEFAULT_DATEFMT", "DEFAULT_FORMAT", "configure"]
+__all__ = [
+    "DEFAULT_DATEFMT",
+    "DEFAULT_FORMAT",
+    "configure",
+    "restore_asyncio_pipe_noise",
+    "silence_asyncio_pipe_noise",
+]
 
 DEFAULT_FORMAT = "[%(asctime)s] %(levelname)s %(message)s"
 DEFAULT_DATEFMT = "%Y-%m-%d %I:%M:%S %p"
@@ -128,3 +134,55 @@ def configure(
 
         _LAST_CONFIG = signature
         return logging.getLogger(_PY_LOGGER)
+
+
+# --- asyncio shutdown noise suppression ---------------------------------------
+#
+# When a taskito worker receives SIGINT (Ctrl+C in a terminal), the kernel
+# broadcasts the signal to every process in the foreground process group,
+# including subprocesses the user task spawned (Playwright browsers, ffmpeg,
+# any asyncio.create_subprocess_exec child). Those subprocesses exit and close
+# their stdin pipes. Asyncio's _UnixWritePipeTransport.write() silently
+# tolerates the first 5 failed writes, then emits a WARNING on every write
+# thereafter — flooding the drain window with messages whose underlying error
+# was already lost. The filter demotes that specific record to DEBUG so it
+# stops drowning out the legitimate "Warm shutdown" / "Worker stopped" lines,
+# while still being recoverable by anyone running the asyncio logger at DEBUG.
+
+
+_ASYNCIO_LOGGER_NAME = "asyncio"
+
+
+class _AsyncioPipeClosedFilter(logging.Filter):
+    """Demote asyncio's spurious 'pipe closed by peer' WARNING to DEBUG."""
+
+    _NEEDLE = "pipe closed by peer or os.write"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno == logging.WARNING and self._NEEDLE in record.getMessage():
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
+_PIPE_CLOSED_FILTER = _AsyncioPipeClosedFilter()
+
+
+def silence_asyncio_pipe_noise() -> None:
+    """Demote the spurious asyncio 'pipe closed by peer' warning to DEBUG.
+
+    Idempotent — attaches the filter only once per process. Pair with
+    :func:`restore_asyncio_pipe_noise` when the noisy window ends so unrelated
+    asyncio activity is unaffected.
+    """
+    logger = logging.getLogger(_ASYNCIO_LOGGER_NAME)
+    if _PIPE_CLOSED_FILTER not in logger.filters:
+        logger.addFilter(_PIPE_CLOSED_FILTER)
+
+
+def restore_asyncio_pipe_noise() -> None:
+    """Detach the filter installed by :func:`silence_asyncio_pipe_noise`.
+
+    Safe to call when the filter is not attached.
+    """
+    logging.getLogger(_ASYNCIO_LOGGER_NAME).removeFilter(_PIPE_CLOSED_FILTER)

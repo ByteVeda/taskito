@@ -18,6 +18,7 @@ from taskito._taskito import PyQueue, PyTaskConfig
 from taskito.context import _set_queue_ref
 from taskito.events import EventType
 from taskito.log_config import configure as configure_logging
+from taskito.log_config import restore_asyncio_pipe_noise, silence_asyncio_pipe_noise
 from taskito.resources.health import HealthChecker
 from taskito.resources.runtime import ResourceRuntime
 from taskito.testing import TestMode
@@ -172,6 +173,12 @@ class QueueLifecycleMixin:
 
             def shutdown_handler(signum: int, frame: Any) -> None:
                 logger.info("Warm shutdown (waiting for running tasks to finish)...")
+                # Subprocesses spawned by user tasks (e.g. Playwright browsers)
+                # receive the same SIGINT via the foreground process group; the
+                # resulting broken-pipe spam from asyncio would otherwise drown
+                # out the drain window. Suppressed only for the drain — the
+                # filter is removed in the finally block below.
+                silence_asyncio_pipe_noise()
                 with contextlib.suppress(Exception):
                     self._inner.set_worker_status(worker_id, "draining")
                 self._inner.request_shutdown()
@@ -254,6 +261,7 @@ class QueueLifecycleMixin:
             if self._resource_runtime is not None:
                 self._resource_runtime.teardown()
                 self._resource_runtime = None
+            restore_asyncio_pipe_noise()
             logger.info("Worker stopped.")
             if is_main:
                 if original_sigint is not None:
