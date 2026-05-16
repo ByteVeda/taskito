@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import queue as _queue_mod
+import signal
 import sys
 import threading
 import time
@@ -36,6 +37,7 @@ from taskito.context import (
     set_local_cancel_check,
 )
 from taskito.exceptions import TaskCancelledError
+from taskito.log_config import silence_asyncio_pipe_noise
 
 logger = logging.getLogger("taskito.prefork.child")
 
@@ -219,11 +221,31 @@ def _spawn_stdin_reader(
     return thread
 
 
+def _install_shutdown_signal_handler() -> None:
+    """Mute asyncio's spurious 'pipe closed by peer' WARNING when SIGINT
+    arrives, then re-raise ``KeyboardInterrupt`` so the main loop's existing
+    cleanup path still runs. Subprocesses the user task spawned (Playwright
+    browsers etc.) get the same SIGINT via the foreground process group and
+    flood the asyncio logger as they die; the warning is informational only
+    (asyncio already swallowed the underlying error) so demoting it to DEBUG
+    keeps the child's output readable."""
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    def handler(signum: int, frame: Any) -> None:
+        silence_asyncio_pipe_noise()
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, handler)
+
+
 def main() -> None:
     """Child process main loop. Called via ``python -m taskito.prefork <app_path>``."""
     if len(sys.argv) < 2:
         sys.stderr.write("Usage: python -m taskito.prefork <app_path>\n")
         sys.exit(1)
+
+    _install_shutdown_signal_handler()
 
     app_path = sys.argv[1]
 
