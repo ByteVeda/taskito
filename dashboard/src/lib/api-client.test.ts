@@ -162,3 +162,47 @@ describe("ApiError", () => {
     expect(err).toBeInstanceOf(Error);
   });
 });
+
+describe("CSRF cookie forwarding", () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+    // Vitest's default env is node; api-client falls back to "no cookie" when
+    // ``document`` is undefined, so stub a minimal document object here.
+    vi.stubGlobal("document", { cookie: "taskito_csrf=test-csrf-token; path=/" });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("attaches X-CSRF-Token to POST when the cookie is set", async () => {
+    await api.post("/api/auth/logout");
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    expect(init?.headers).toMatchObject({ "X-CSRF-Token": "test-csrf-token" });
+  });
+
+  it("attaches X-CSRF-Token to PUT", async () => {
+    await api.put("/api/settings/k", { value: "v" });
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    expect(init?.headers).toMatchObject({ "X-CSRF-Token": "test-csrf-token" });
+  });
+
+  it("attaches X-CSRF-Token to DELETE", async () => {
+    await api.delete("/api/settings/k");
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    expect(init?.headers).toMatchObject({ "X-CSRF-Token": "test-csrf-token" });
+  });
+
+  it("does NOT attach X-CSRF-Token to GET", async () => {
+    await api.get("/api/stats");
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    expect(init?.headers).not.toHaveProperty("X-CSRF-Token");
+  });
+
+  it("uses same-origin credentials so cookies are sent", async () => {
+    await api.get("/api/stats");
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    expect(init?.credentials).toBe("same-origin");
+  });
+});
