@@ -136,6 +136,10 @@ class Workflow:
                 return value into one job per element.
             fan_in: Fan-in strategy. ``"all"`` collects all fan-out children's
                 results into a list passed to this step.
+            condition: Optional gate expression evaluated against upstream
+                results. Either a string DSL expression or a callable
+                receiving the workflow context; when it returns falsy the
+                step (and its descendants) are skipped.
 
         Returns:
             ``self`` for chaining.
