@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from taskito import Queue
+from taskito.dashboard._testing import AuthedClient, seed_admin_and_session
 
 
 @pytest.fixture
@@ -189,100 +190,103 @@ def _start_dashboard(queue: Queue, *, static_assets: Any = None) -> tuple[str, A
 @pytest.fixture
 def dashboard_server(
     populated_queue: tuple[Queue, list[Any]],
-) -> Generator[tuple[str, Queue, list[Any]]]:
-    """Start a dashboard server on a random port."""
+) -> Generator[tuple[AuthedClient, Queue, list[Any]]]:
+    """Start a dashboard server on a random port and pre-seed an admin session.
+
+    Yields ``(client, queue, jobs)`` — the client transparently attaches the
+    session cookie and CSRF header to every request.
+    """
     queue, jobs = populated_queue
     url, server = _start_dashboard(queue)
+    session = seed_admin_and_session(queue)
+    client = AuthedClient(base=url, session=session)
     try:
-        yield url, queue, jobs
+        yield client, queue, jobs
     finally:
         server.shutdown()
 
 
-def _get(url: str) -> Any:
-    """GET request and parse JSON."""
-    with urllib.request.urlopen(url) as resp:
-        return json.loads(resp.read())
-
-
-def _post(url: str) -> Any:
-    """POST request and parse JSON."""
-    req = urllib.request.Request(url, method="POST", data=b"")
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
-
-
-def test_api_stats(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_stats(dashboard_server: tuple[AuthedClient, Queue, list[Any]]) -> None:
     """GET /api/stats returns valid stats dict."""
-    base, _, __ = dashboard_server
-    data = _get(f"{base}/api/stats")
+    client, _, __ = dashboard_server
+    data = client.get("/api/stats")
     assert "pending" in data
     assert data["pending"] == 8
 
 
-def test_api_jobs_list(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_jobs_list(dashboard_server: tuple[AuthedClient, Queue, list[Any]]) -> None:
     """GET /api/jobs returns job list."""
-    base, _, __ = dashboard_server
-    data = _get(f"{base}/api/jobs")
+    client, _, __ = dashboard_server
+    data = client.get("/api/jobs")
     assert isinstance(data, list)
     assert len(data) == 8
 
 
-def test_api_jobs_filter_status(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_jobs_filter_status(
+    dashboard_server: tuple[AuthedClient, Queue, list[Any]],
+) -> None:
     """GET /api/jobs?status=pending filters correctly."""
-    base, _, __ = dashboard_server
-    data = _get(f"{base}/api/jobs?status=pending")
+    client, _, __ = dashboard_server
+    data = client.get("/api/jobs?status=pending")
     assert len(data) == 8
 
-    data = _get(f"{base}/api/jobs?status=running")
+    data = client.get("/api/jobs?status=running")
     assert len(data) == 0
 
 
-def test_api_jobs_filter_queue(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_jobs_filter_queue(
+    dashboard_server: tuple[AuthedClient, Queue, list[Any]],
+) -> None:
     """GET /api/jobs?queue=email filters correctly."""
-    base, _, __ = dashboard_server
-    data = _get(f"{base}/api/jobs?queue=email")
+    client, _, __ = dashboard_server
+    data = client.get("/api/jobs?queue=email")
     assert len(data) == 3
 
 
-def test_api_jobs_pagination(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_jobs_pagination(
+    dashboard_server: tuple[AuthedClient, Queue, list[Any]],
+) -> None:
     """GET /api/jobs?limit=3&offset=0 paginates."""
-    base, _, __ = dashboard_server
-    data = _get(f"{base}/api/jobs?limit=3&offset=0")
+    client, _, __ = dashboard_server
+    data = client.get("/api/jobs?limit=3&offset=0")
     assert len(data) == 3
 
 
-def test_api_job_detail(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_job_detail(dashboard_server: tuple[AuthedClient, Queue, list[Any]]) -> None:
     """GET /api/jobs/{id} returns job dict."""
-    base, _, jobs = dashboard_server
+    client, _, jobs = dashboard_server
     job_id = jobs[0].id
-    data = _get(f"{base}/api/jobs/{job_id}")
+    data = client.get(f"/api/jobs/{job_id}")
     assert data["id"] == job_id
     assert "status" in data
 
 
-def test_api_job_not_found(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_job_not_found(
+    dashboard_server: tuple[AuthedClient, Queue, list[Any]],
+) -> None:
     """GET /api/jobs/nonexistent returns 404."""
-    base, _, __ = dashboard_server
+    client, _, __ = dashboard_server
     try:
-        _get(f"{base}/api/jobs/nonexistent-id")
+        client.get("/api/jobs/nonexistent-id")
         raise AssertionError("Expected 404")
     except urllib.error.HTTPError as e:
         assert e.code == 404
 
 
-def test_api_cancel_job(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_cancel_job(dashboard_server: tuple[AuthedClient, Queue, list[Any]]) -> None:
     """POST /api/jobs/{id}/cancel cancels a pending job."""
-    base, _, jobs = dashboard_server
+    client, _, jobs = dashboard_server
     job_id = jobs[0].id
-    data = _post(f"{base}/api/jobs/{job_id}/cancel")
+    data = client.post(f"/api/jobs/{job_id}/cancel")
     assert data["cancelled"] is True
 
 
-def test_api_dead_letters_empty(dashboard_server: tuple[str, Queue, list[Any]]) -> None:
+def test_api_dead_letters_empty(
+    dashboard_server: tuple[AuthedClient, Queue, list[Any]],
+) -> None:
     """GET /api/dead-letters returns empty list initially."""
-    base, _, __ = dashboard_server
-    data = _get(f"{base}/api/dead-letters")
+    client, _, __ = dashboard_server
+    data = client.get("/api/dead-letters")
     assert data == []
 
 

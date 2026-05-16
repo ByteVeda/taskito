@@ -13,38 +13,16 @@ import urllib.error
 import urllib.request
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from taskito import Queue
+from taskito.dashboard._testing import AuthedClient, seed_admin_and_session
 
 
 @pytest.fixture
 def queue(tmp_path: Path) -> Queue:
     return Queue(db_path=str(tmp_path / "settings.db"))
-
-
-def _put(url: str, body: dict) -> Any:
-    req = urllib.request.Request(
-        url,
-        method="PUT",
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
-
-
-def _delete(url: str) -> Any:
-    req = urllib.request.Request(url, method="DELETE")
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
-
-
-def _get(url: str) -> Any:
-    with urllib.request.urlopen(url) as resp:
-        return json.loads(resp.read())
 
 
 # ── Python API ──────────────────────────────────────────
@@ -98,7 +76,7 @@ def test_setting_preserves_json(queue: Queue) -> None:
 
 
 @pytest.fixture
-def dashboard_server(queue: Queue) -> Generator[tuple[str, Queue]]:
+def dashboard_server(queue: Queue) -> Generator[tuple[AuthedClient, Queue]]:
     from http.server import ThreadingHTTPServer
 
     from taskito.dashboard import _make_handler
@@ -108,65 +86,79 @@ def dashboard_server(queue: Queue) -> Generator[tuple[str, Queue]]:
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    session = seed_admin_and_session(queue)
+    client = AuthedClient(base=f"http://127.0.0.1:{port}", session=session)
     try:
-        yield f"http://127.0.0.1:{port}", queue
+        yield client, queue
     finally:
         server.shutdown()
 
 
-def test_get_settings_returns_empty_dict(dashboard_server: tuple[str, Queue]) -> None:
-    base, _ = dashboard_server
-    assert _get(f"{base}/api/settings") == {}
+def test_get_settings_returns_empty_dict(dashboard_server: tuple[AuthedClient, Queue]) -> None:
+    client, _ = dashboard_server
+    # The admin user setting is the only one populated by the seed helper.
+    snapshot = client.get("/api/settings")
+    assert "auth:users" in snapshot
+    # No dashboard.* keys yet.
+    assert not any(k.startswith("dashboard.") for k in snapshot)
 
 
-def test_put_then_get_setting(dashboard_server: tuple[str, Queue]) -> None:
-    base, _ = dashboard_server
-    _put(f"{base}/api/settings/dashboard.title", {"value": "My Queue"})
+def test_put_then_get_setting(dashboard_server: tuple[AuthedClient, Queue]) -> None:
+    client, _ = dashboard_server
+    client.put("/api/settings/dashboard.title", {"value": "My Queue"})
 
-    data = _get(f"{base}/api/settings/dashboard.title")
+    data = client.get("/api/settings/dashboard.title")
     assert data == {"key": "dashboard.title", "value": "My Queue"}
 
-    snapshot = _get(f"{base}/api/settings")
-    assert snapshot == {"dashboard.title": "My Queue"}
+    snapshot = client.get("/api/settings")
+    assert snapshot["dashboard.title"] == "My Queue"
 
 
-def test_put_setting_with_json_value(dashboard_server: tuple[str, Queue]) -> None:
+def test_put_setting_with_json_value(dashboard_server: tuple[AuthedClient, Queue]) -> None:
     """Non-string ``value`` is JSON-encoded before persistence."""
-    base, queue = dashboard_server
+    client, queue = dashboard_server
     payload = [
         {"label": "Grafana", "url": "https://grafana.example/d/abc"},
         {"label": "Sentry", "url": "https://sentry.example/issues"},
     ]
-    _put(f"{base}/api/settings/dashboard.external_links", {"value": payload})
+    client.put("/api/settings/dashboard.external_links", {"value": payload})
 
     stored = queue.get_setting("dashboard.external_links")
     assert stored is not None
     assert json.loads(stored) == payload
 
 
-def test_get_unknown_setting_returns_404(dashboard_server: tuple[str, Queue]) -> None:
-    base, _ = dashboard_server
+def test_get_unknown_setting_returns_404(dashboard_server: tuple[AuthedClient, Queue]) -> None:
+    client, _ = dashboard_server
     with pytest.raises(urllib.error.HTTPError) as exc_info:
-        _get(f"{base}/api/settings/missing.key")
+        client.get("/api/settings/missing.key")
     assert exc_info.value.code == 404
 
 
 def test_put_setting_with_missing_value_field_returns_400(
-    dashboard_server: tuple[str, Queue],
+    dashboard_server: tuple[AuthedClient, Queue],
 ) -> None:
-    base, _ = dashboard_server
+    client, _ = dashboard_server
     with pytest.raises(urllib.error.HTTPError) as exc_info:
-        _put(f"{base}/api/settings/k", {"not_value": 1})
+        client.put("/api/settings/k", {"not_value": 1})
     assert exc_info.value.code == 400
 
 
-def test_put_setting_rejects_invalid_json_body(dashboard_server: tuple[str, Queue]) -> None:
-    base, _ = dashboard_server
+def test_put_setting_rejects_invalid_json_body(
+    dashboard_server: tuple[AuthedClient, Queue],
+) -> None:
+    client, _ = dashboard_server
     req = urllib.request.Request(
-        f"{base}/api/settings/k",
+        f"{client.base}/api/settings/k",
         method="PUT",
         data=b"{not json",
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Cookie": (
+                f"taskito_session={client.session.token}; taskito_csrf={client.session.csrf_token}"
+            ),
+            "X-CSRF-Token": client.session.csrf_token,
+        },
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(req)
@@ -174,19 +166,19 @@ def test_put_setting_rejects_invalid_json_body(dashboard_server: tuple[str, Queu
 
 
 def test_delete_setting_returns_true_when_exists(
-    dashboard_server: tuple[str, Queue],
+    dashboard_server: tuple[AuthedClient, Queue],
 ) -> None:
-    base, queue = dashboard_server
+    client, queue = dashboard_server
     queue.set_setting("k", "v")
-    assert _delete(f"{base}/api/settings/k") == {"deleted": True}
+    assert client.delete("/api/settings/k") == {"deleted": True}
     assert queue.get_setting("k") is None
 
 
 def test_delete_missing_setting_returns_false(
-    dashboard_server: tuple[str, Queue],
+    dashboard_server: tuple[AuthedClient, Queue],
 ) -> None:
-    base, _ = dashboard_server
-    assert _delete(f"{base}/api/settings/missing") == {"deleted": False}
+    client, _ = dashboard_server
+    assert client.delete("/api/settings/missing") == {"deleted": False}
 
 
 def test_settings_persist_across_queue_instances(tmp_path: Path) -> None:

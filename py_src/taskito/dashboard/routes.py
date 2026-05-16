@@ -4,6 +4,17 @@ Each entry maps a path (or path pattern) to a callable that produces
 JSON-serializable data. Handlers may raise
 :class:`~taskito.dashboard.errors._BadRequest` (→ 400) or
 :class:`~taskito.dashboard.errors._NotFound` (→ 404).
+
+Authentication and authorization:
+
+- ``PUBLIC_PATHS`` — exact paths that bypass auth entirely. Used for the
+  setup/login/status endpoints, health checks, and Prometheus metrics.
+- Routes outside ``PUBLIC_PATHS`` require a valid session cookie when at
+  least one user exists in the auth store. Without users, the server
+  returns ``503 setup_required`` for every API route so the SPA can show
+  the setup flow.
+- State-changing routes (POST/PUT/DELETE) additionally require a valid
+  CSRF token. Login and setup are exempt because no session exists yet.
 """
 
 from __future__ import annotations
@@ -11,6 +22,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from taskito.dashboard.handlers.auth import (
+    handle_auth_status,
+    handle_change_password,
+    handle_login,
+    handle_logout,
+    handle_setup,
+    handle_whoami,
+)
 from taskito.dashboard.handlers.dead_letters import _handle_dead_letters
 from taskito.dashboard.handlers.jobs import (
     _handle_get_job,
@@ -27,6 +46,29 @@ from taskito.dashboard.handlers.settings import (
     _handle_list_settings,
     _handle_set_setting,
 )
+
+# ── Auth-exempt paths ──────────────────────────────────────────────────
+#
+# These bypass the session check. Static SPA files are also exempt but
+# they are served outside the API dispatcher.
+PUBLIC_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/auth/status",
+        "/api/auth/login",
+        "/api/auth/setup",
+        "/health",
+        "/readiness",
+        "/metrics",
+    }
+)
+
+# Paths handled directly by the server (live outside the regular dispatch
+# tables because they take a RequestContext as well as the queue).
+AUTH_CONTEXT_GET_PATHS: frozenset[str] = frozenset({"/api/auth/whoami"})
+AUTH_CONTEXT_POST_PATHS: frozenset[str] = frozenset(
+    {"/api/auth/logout", "/api/auth/change-password"}
+)
+
 
 # ── Exact-match GET routes: path → handler(queue, qs) → JSON data ──
 GET_ROUTES: dict[str, Any] = {
@@ -45,6 +87,7 @@ GET_ROUTES: dict[str, Any] = {
     "/api/stats/queues": _handle_stats_queues,
     "/api/scaler": lambda q, qs: build_scaler_response(q, queue_name=qs.get("queue", [None])[0]),
     "/api/settings": _handle_list_settings,
+    "/api/auth/status": handle_auth_status,
 }
 
 # ── Parameterized GET routes: regex → handler(queue, qs, captured_id) ──
@@ -64,6 +107,27 @@ GET_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
 # ── Exact-match POST routes: path → handler(queue) → JSON data ──
 POST_ROUTES: dict[str, Any] = {
     "/api/dead-letters/purge": lambda q: {"purged": q.purge_dead(0)},
+}
+
+# Exact-match POST routes that take a body (path → handler(queue, body))
+POST_BODY_ROUTES: dict[str, Any] = {
+    "/api/auth/login": handle_login,
+    "/api/auth/setup": handle_setup,
+}
+
+# Auth-context POST routes: path → handler(queue, ctx) — no body
+POST_CTX_ROUTES: dict[str, Any] = {
+    "/api/auth/logout": handle_logout,
+}
+
+# Auth-context POST routes with body: path → handler(queue, body, ctx)
+POST_CTX_BODY_ROUTES: dict[str, Any] = {
+    "/api/auth/change-password": handle_change_password,
+}
+
+# Auth-context GET routes: path → handler(queue, ctx)
+GET_CTX_ROUTES: dict[str, Any] = {
+    "/api/auth/whoami": handle_whoami,
 }
 
 # ── Parameterized POST routes: regex → handler(queue, captured_id) ──
@@ -93,3 +157,17 @@ PUT_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
 DELETE_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/settings/(.+)$"), _handle_delete_setting),
 ]
+
+
+def is_state_changing_method(method: str) -> bool:
+    """POST/PUT/DELETE/PATCH all require a CSRF token."""
+    return method in {"POST", "PUT", "DELETE", "PATCH"}
+
+
+def is_csrf_exempt(path: str) -> bool:
+    """Login and setup happen before a session exists, so they're CSRF-exempt.
+
+    Every other state-changing endpoint requires a valid CSRF token even
+    though the session cookie is enforced — defense in depth.
+    """
+    return path in {"/api/auth/login", "/api/auth/setup"}
