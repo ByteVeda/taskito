@@ -5,13 +5,15 @@ import {
   createWebhook,
   deleteWebhook,
   getWebhook,
+  listDeliveries,
   listEventTypes,
   listWebhooks,
+  replayDelivery,
   rotateWebhookSecret,
   testWebhook,
   updateWebhook,
 } from "./api";
-import type { CreateWebhookInput, UpdateWebhookInput, Webhook } from "./types";
+import type { CreateWebhookInput, DeliveryStatus, UpdateWebhookInput, Webhook } from "./types";
 
 const KEY = ["webhooks"] as const;
 const EVENT_TYPES_KEY = ["webhooks", "event-types"] as const;
@@ -110,6 +112,45 @@ export function useRotateSecret() {
     mutationFn: (id: string) => rotateWebhookSecret(id),
     onError: (error) =>
       toast.error("Failed to rotate secret", { description: describeError(error) }),
+  });
+}
+
+export function deliveriesQuery(
+  subscriptionId: string,
+  options: { status?: DeliveryStatus; limit?: number; offset?: number } = {},
+) {
+  return queryOptions({
+    queryKey: [...KEY, subscriptionId, "deliveries", options] as const,
+    queryFn: ({ signal }) => listDeliveries(subscriptionId, { ...options, signal }),
+  });
+}
+
+export function useDeliveries(
+  subscriptionId: string,
+  options: { status?: DeliveryStatus; limit?: number; offset?: number } = {},
+) {
+  return useQuery(deliveriesQuery(subscriptionId, options));
+}
+
+export function useReplayDelivery(subscriptionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (deliveryId: string) => replayDelivery(subscriptionId, deliveryId),
+    onSuccess: async (result) => {
+      await qc.invalidateQueries({ queryKey: [...KEY, subscriptionId, "deliveries"] });
+      if (result.delivered) {
+        toast.success("Delivery replayed", {
+          description: `Endpoint returned ${result.status}`,
+        });
+      } else {
+        toast.error("Replay failed", {
+          description: result.status
+            ? `Endpoint returned ${result.status}`
+            : "No response received from endpoint",
+        });
+      }
+    },
+    onError: (error) => toast.error("Replay failed", { description: describeError(error) }),
   });
 }
 
