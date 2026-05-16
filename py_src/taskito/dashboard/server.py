@@ -240,6 +240,14 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                 self._dispatch_with_handler(handler, lambda h: h(queue))
                 return
 
+            body_handler = POST_BODY_ROUTES.get(path)
+            if body_handler:
+                body = self._read_json_body()
+                if body is None:
+                    return
+                self._dispatch_with_handler(body_handler, lambda h, body=body: h(queue, body))
+                return
+
             for pattern, param_handler in POST_PARAM_ROUTES:
                 m = pattern.match(path)
                 if m:

@@ -223,7 +223,7 @@ class Queue(
         self._drain_timeout = drain_timeout
         self._queue_configs: dict[str, dict[str, Any]] = {}
         self._event_bus = EventBus(max_workers=event_workers)
-        self._webhook_manager = WebhookManager()
+        self._webhook_manager = WebhookManager(queue_ref=self)
 
         # Proxy handlers
         self._proxy_registry = ProxyRegistry()

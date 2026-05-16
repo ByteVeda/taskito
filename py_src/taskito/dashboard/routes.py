@@ -46,6 +46,16 @@ from taskito.dashboard.handlers.settings import (
     _handle_list_settings,
     _handle_set_setting,
 )
+from taskito.dashboard.handlers.webhooks import (
+    handle_create_webhook,
+    handle_delete_webhook,
+    handle_get_webhook,
+    handle_list_event_types,
+    handle_list_webhooks,
+    handle_rotate_secret,
+    handle_test_webhook,
+    handle_update_webhook,
+)
 
 # ── Auth-exempt paths ──────────────────────────────────────────────────
 #
@@ -88,6 +98,8 @@ GET_ROUTES: dict[str, Any] = {
     "/api/scaler": lambda q, qs: build_scaler_response(q, queue_name=qs.get("queue", [None])[0]),
     "/api/settings": _handle_list_settings,
     "/api/auth/status": handle_auth_status,
+    "/api/webhooks": handle_list_webhooks,
+    "/api/event-types": handle_list_event_types,
 }
 
 # ── Parameterized GET routes: regex → handler(queue, qs, captured_id) ──
@@ -102,6 +114,7 @@ GET_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/jobs/([^/]+)/dag$"), lambda q, qs, jid: q.job_dag(jid)),
     (re.compile(r"^/api/jobs/([^/]+)$"), _handle_get_job),
     (re.compile(r"^/api/settings/(.+)$"), _handle_get_setting),
+    (re.compile(r"^/api/webhooks/([^/]+)$"), handle_get_webhook),
 ]
 
 # ── Exact-match POST routes: path → handler(queue) → JSON data ──
@@ -113,6 +126,7 @@ POST_ROUTES: dict[str, Any] = {
 POST_BODY_ROUTES: dict[str, Any] = {
     "/api/auth/login": handle_login,
     "/api/auth/setup": handle_setup,
+    "/api/webhooks": handle_create_webhook,
 }
 
 # Auth-context POST routes: path → handler(queue, ctx) — no body
@@ -146,16 +160,20 @@ POST_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
         re.compile(r"^/api/queues/([^/]+)/resume$"),
         lambda q, n: (q.resume(n), {"resumed": n})[1],
     ),
+    (re.compile(r"^/api/webhooks/([^/]+)/test$"), handle_test_webhook),
+    (re.compile(r"^/api/webhooks/([^/]+)/rotate-secret$"), handle_rotate_secret),
 ]
 
 # ── Parameterized PUT routes: regex → handler(queue, body, captured_id) ──
 PUT_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/settings/(.+)$"), _handle_set_setting),
+    (re.compile(r"^/api/webhooks/([^/]+)$"), handle_update_webhook),
 ]
 
 # ── Parameterized DELETE routes: regex → handler(queue, captured_id) ──
 DELETE_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/settings/(.+)$"), _handle_delete_setting),
+    (re.compile(r"^/api/webhooks/([^/]+)$"), handle_delete_webhook),
 ]
 
 
