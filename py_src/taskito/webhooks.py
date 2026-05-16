@@ -27,6 +27,7 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
+from taskito.dashboard.delivery_store import DeliveryStore
 from taskito.events import EventType
 
 if TYPE_CHECKING:
@@ -75,6 +76,7 @@ class WebhookManager:
     @staticmethod
     def _subscription_to_runtime(sub: WebhookSubscription) -> dict[str, Any]:
         return {
+            "subscription_id": sub.id,
             "url": sub.url,
             "events": set(sub.events) if sub.events else None,
             "task_filter": set(sub.task_filter) if sub.task_filter is not None else None,
@@ -109,6 +111,7 @@ class WebhookManager:
         with self._lock:
             self._webhooks.append(
                 {
+                    "subscription_id": None,
                     "url": url,
                     "events": {e.value for e in events} if events else None,
                     "task_filter": None,
@@ -172,7 +175,13 @@ class WebhookManager:
     ) -> int | None:
         """Deliver ``payload`` to ``wh`` with retries. Returns the last HTTP
         status code observed (after retries) or ``None`` if every attempt
-        failed at the transport level."""
+        failed at the transport level.
+
+        When ``write_to_log`` is true AND the subscription is persisted
+        (``wh["subscription_id"]`` is not ``None``), a record of the final
+        outcome is appended to the delivery log so the dashboard can
+        replay it later.
+        """
         body = json.dumps(payload, default=str).encode("utf-8")
 
         headers: dict[str, str] = {
@@ -189,21 +198,37 @@ class WebhookManager:
         retry_backoff: float = wh.get("retry_backoff", 2.0)
 
         last_status: int | None = None
+        last_response_body: str | None = None
+        last_error: str | None = None
+        started_at = time.monotonic()
+        attempt_count = 0
+
         for attempt in range(max_retries):
+            attempt_count = attempt + 1
             try:
                 req = urllib.request.Request(wh["url"], data=body, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     last_status = int(resp.status)
+                    last_response_body = self._read_response_body(resp)
                     if last_status < 400:
+                        self._record(
+                            wh,
+                            payload,
+                            status="delivered",
+                            attempts=attempt_count,
+                            response_code=last_status,
+                            response_body=last_response_body,
+                            latency_ms=int((time.monotonic() - started_at) * 1000),
+                            write_to_log=write_to_log,
+                        )
                         return last_status
-                    # urllib only enters this branch for 2xx/3xx; 4xx/5xx
-                    # surface as HTTPError below.
                     if write_to_log:
                         logger.warning(
                             "Webhook %s returned server error %d", wh["url"], resp.status
                         )
             except urllib.error.HTTPError as e:
                 last_status = e.code
+                last_response_body = self._read_response_body(e)
                 if e.code < 500:
                     if write_to_log:
                         logger.warning(
@@ -211,10 +236,21 @@ class WebhookManager:
                             wh["url"],
                             e.code,
                         )
+                    self._record(
+                        wh,
+                        payload,
+                        status="failed",
+                        attempts=attempt_count,
+                        response_code=last_status,
+                        response_body=last_response_body,
+                        latency_ms=int((time.monotonic() - started_at) * 1000),
+                        write_to_log=write_to_log,
+                    )
                     return e.code
                 if write_to_log:
                     logger.warning("Webhook %s returned server error %d", wh["url"], e.code)
-            except Exception:
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
                 if write_to_log:
                     logger.debug(
                         "Webhook %s attempt %d failed",
@@ -231,4 +267,64 @@ class WebhookManager:
                     )
             else:
                 time.sleep(retry_backoff**attempt)
+
+        # Out of retries — record as dead.
+        self._record(
+            wh,
+            payload,
+            status="dead",
+            attempts=attempt_count,
+            response_code=last_status,
+            response_body=last_response_body,
+            latency_ms=int((time.monotonic() - started_at) * 1000),
+            error=last_error,
+            write_to_log=write_to_log,
+        )
         return last_status
+
+    def _record(
+        self,
+        wh: dict[str, Any],
+        payload: dict[str, Any],
+        *,
+        status: str,
+        attempts: int,
+        response_code: int | None = None,
+        response_body: str | None = None,
+        latency_ms: int | None = None,
+        error: str | None = None,
+        write_to_log: bool = True,
+    ) -> None:
+        """Persist a delivery outcome to the dashboard log."""
+        if not write_to_log:
+            return
+        subscription_id = wh.get("subscription_id")
+        if not subscription_id or self._queue is None:
+            return
+        try:
+            DeliveryStore(self._queue).record_attempt(
+                subscription_id,
+                event=str(payload.get("event", "")),
+                payload=payload,
+                status=status,
+                attempts=attempts,
+                response_code=response_code,
+                response_body=response_body,
+                latency_ms=latency_ms,
+                error=error,
+                task_name=payload.get("task_name"),
+                job_id=payload.get("job_id"),
+            )
+        except Exception:
+            logger.exception("Failed to record webhook delivery")
+
+    @staticmethod
+    def _read_response_body(resp: Any) -> str | None:
+        """Read up to a few KiB from a response/HTTPError object."""
+        try:
+            data = resp.read(4096)  # limit even before truncation in DeliveryStore
+        except Exception:
+            return None
+        if not data:
+            return None
+        return str(data.decode("utf-8", errors="replace"))

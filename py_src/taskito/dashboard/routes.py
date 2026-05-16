@@ -46,6 +46,11 @@ from taskito.dashboard.handlers.settings import (
     _handle_list_settings,
     _handle_set_setting,
 )
+from taskito.dashboard.handlers.webhook_deliveries import (
+    handle_get_delivery,
+    handle_list_deliveries,
+    handle_replay_delivery,
+)
 from taskito.dashboard.handlers.webhooks import (
     handle_create_webhook,
     handle_delete_webhook,
@@ -114,7 +119,19 @@ GET_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/jobs/([^/]+)/dag$"), lambda q, qs, jid: q.job_dag(jid)),
     (re.compile(r"^/api/jobs/([^/]+)$"), _handle_get_job),
     (re.compile(r"^/api/settings/(.+)$"), _handle_get_setting),
+    (
+        re.compile(r"^/api/webhooks/([^/]+)/deliveries$"),
+        handle_list_deliveries,
+    ),
     (re.compile(r"^/api/webhooks/([^/]+)$"), handle_get_webhook),
+]
+
+# GET routes with 2 captured groups (handler signature: queue, qs, (g1, g2))
+GET_PARAM2_ROUTES: list[tuple[re.Pattern, Any]] = [
+    (
+        re.compile(r"^/api/webhooks/([^/]+)/deliveries/([^/]+)$"),
+        handle_get_delivery,
+    ),
 ]
 
 # ── Exact-match POST routes: path → handler(queue) → JSON data ──
@@ -162,6 +179,15 @@ POST_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     ),
     (re.compile(r"^/api/webhooks/([^/]+)/test$"), handle_test_webhook),
     (re.compile(r"^/api/webhooks/([^/]+)/rotate-secret$"), handle_rotate_secret),
+]
+
+# Routes with two captures (sub_id + delivery_id) — handled by the POST
+# dispatcher when patterns yield 2 groups.
+POST_PARAM2_ROUTES: list[tuple[re.Pattern, Any]] = [
+    (
+        re.compile(r"^/api/webhooks/([^/]+)/deliveries/([^/]+)/replay$"),
+        handle_replay_delivery,
+    ),
 ]
 
 # ── Parameterized PUT routes: regex → handler(queue, body, captured_id) ──

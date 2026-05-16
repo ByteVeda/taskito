@@ -33,11 +33,13 @@ from taskito.dashboard.routes import (
     AUTH_CONTEXT_POST_PATHS,
     DELETE_PARAM_ROUTES,
     GET_CTX_ROUTES,
+    GET_PARAM2_ROUTES,
     GET_PARAM_ROUTES,
     GET_ROUTES,
     POST_BODY_ROUTES,
     POST_CTX_BODY_ROUTES,
     POST_CTX_ROUTES,
+    POST_PARAM2_ROUTES,
     POST_PARAM_ROUTES,
     POST_ROUTES,
     PUBLIC_PATHS,
@@ -183,6 +185,15 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                     )
                     return
 
+            for pattern, param_handler in GET_PARAM2_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    self._dispatch_with_handler(
+                        param_handler,
+                        lambda h, m=m: h(queue, qs, (m.group(1), m.group(2))),
+                    )
+                    return
+
             if path == "/health":
                 self._json_response(check_health())
             elif path == "/readiness":
@@ -252,6 +263,15 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                 m = pattern.match(path)
                 if m:
                     self._dispatch_with_handler(param_handler, lambda h, m=m: h(queue, m.group(1)))
+                    return
+
+            for pattern, param_handler in POST_PARAM2_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    self._dispatch_with_handler(
+                        param_handler,
+                        lambda h, m=m: h(queue, (m.group(1), m.group(2))),
+                    )
                     return
 
             self._json_response({"error": "Not found"}, status=404)
