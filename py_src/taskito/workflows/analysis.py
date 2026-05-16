@@ -112,6 +112,7 @@ def critical_path(steps: dict[str, _Step], costs: dict[str, float]) -> tuple[lis
     Uses dynamic programming on topological order.
 
     Args:
+        steps: Mapping of step name → ``_Step`` carrying its predecessors.
         costs: Mapping of step name → estimated duration.
 
     Returns:
