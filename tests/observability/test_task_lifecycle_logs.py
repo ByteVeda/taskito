@@ -1,0 +1,120 @@
+"""Tests for the Celery-style ``Task X[id] received|succeeded|raised`` logs."""
+
+from __future__ import annotations
+
+import logging
+import re
+
+import pytest
+
+from taskito import Queue
+from taskito.exceptions import TaskCancelledError
+from taskito.mixins.decorators import _MAX_RESULT_REPR, _safe_result_repr
+
+_RECEIVED = re.compile(r"^Task (\S+)\[(\S+)\] received$")
+_SUCCEEDED = re.compile(r"^Task (\S+)\[(\S+)\] succeeded in \d+\.\d{3}s: (.+)$")
+_RAISED = re.compile(r"^Task (\S+)\[(\S+)\] raised (\w+) in \d+\.\d{3}s: (.+)$")
+_CANCELLED = re.compile(r"^Task (\S+)\[(\S+)\] cancelled in \d+\.\d{3}s: (.+)$")
+
+
+def _taskito_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.name == "taskito"]
+
+
+def test_safe_result_repr_truncates_long_values() -> None:
+    long = "x" * (_MAX_RESULT_REPR * 2)
+    rendered = _safe_result_repr(long)
+    assert len(rendered) == _MAX_RESULT_REPR
+    assert rendered.endswith("…")
+
+
+def test_safe_result_repr_handles_none() -> None:
+    assert _safe_result_repr(None) == "None"
+
+
+def test_safe_result_repr_survives_broken_repr() -> None:
+    class Boom:
+        def __repr__(self) -> str:
+            raise RuntimeError("nope")
+
+    assert _safe_result_repr(Boom()) == "<unrepresentable>"
+
+
+def _invoke_registered(queue: Queue, task_name: str, *args: object, **kwargs: object) -> object:
+    """Drive the wrapped task through the same path the Rust worker uses.
+
+    Sets up a job context, calls the registered wrapper, then tears the
+    context down — exercising the full ``_wrap_task`` lifecycle (hooks,
+    middleware, lifecycle logs) without booting an actual worker.
+    """
+    from taskito.context import _clear_context, _set_context
+
+    _set_context("job-" + task_name, task_name, 0, "default")
+    try:
+        return queue._task_registry[task_name](*args, **kwargs)
+    finally:
+        _clear_context()
+
+
+def test_received_and_succeeded_logged_for_successful_task(
+    queue: Queue, caplog: pytest.LogCaptureFixture
+) -> None:
+    @queue.task()
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    caplog.set_level(logging.INFO, logger="taskito")
+    assert _invoke_registered(queue, add.name, 2, 3) == 5
+
+    messages = [r.getMessage() for r in _taskito_records(caplog) if r.levelno == logging.INFO]
+    received = [m for m in messages if _RECEIVED.match(m)]
+    succeeded = [m for m in messages if _SUCCEEDED.match(m)]
+
+    assert len(received) == 1, messages
+    assert len(succeeded) == 1, messages
+    m = _SUCCEEDED.match(succeeded[0])
+    assert m is not None
+    assert m.group(1) == add.name
+    assert m.group(3) == "5"
+
+
+def test_raised_logged_at_error_for_failing_task(
+    queue: Queue, caplog: pytest.LogCaptureFixture
+) -> None:
+    @queue.task()
+    def boom() -> None:
+        raise ValueError("bad input")
+
+    caplog.set_level(logging.INFO, logger="taskito")
+    with pytest.raises(ValueError):
+        _invoke_registered(queue, boom.name)
+
+    raised = [
+        r
+        for r in _taskito_records(caplog)
+        if r.levelno == logging.ERROR and _RAISED.match(r.getMessage())
+    ]
+    assert len(raised) == 1
+    m = _RAISED.match(raised[0].getMessage())
+    assert m is not None
+    assert m.group(3) == "ValueError"
+    assert "bad input" in m.group(4)
+
+
+def test_cancelled_logged_at_info_for_task_cancelled(
+    queue: Queue, caplog: pytest.LogCaptureFixture
+) -> None:
+    @queue.task()
+    def stoppable() -> None:
+        raise TaskCancelledError("user pulled the plug")
+
+    caplog.set_level(logging.INFO, logger="taskito")
+    with pytest.raises(TaskCancelledError):
+        _invoke_registered(queue, stoppable.name)
+
+    cancel_records = [r for r in _taskito_records(caplog) if _CANCELLED.match(r.getMessage())]
+    assert len(cancel_records) == 1
+    assert cancel_records[0].levelno == logging.INFO
+
+    error_records = [r for r in _taskito_records(caplog) if r.levelno == logging.ERROR]
+    assert error_records == []

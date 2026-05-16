@@ -8,6 +8,7 @@ import inspect
 import logging
 import os
 import sys
+import time
 import typing
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ from taskito._taskito import PyTaskConfig
 from taskito.async_support.helpers import run_maybe_async
 from taskito.context import _clear_context, current_job
 from taskito.events import EventType
+from taskito.exceptions import TaskCancelledError
 from taskito.inject import Inject, _InjectAlias
 from taskito.interception.reconstruct import reconstruct_args
 from taskito.predicates.core import coerce_predicate
@@ -34,6 +36,24 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("taskito")
+
+# Cap the result repr length in the "succeeded" log so a task returning a
+# large structure can't blow out the worker output. Matches Celery's
+# `CELERYD_TASK_LOG_FORMAT` truncation in spirit.
+_MAX_RESULT_REPR = 80
+
+
+def _safe_result_repr(value: Any) -> str:
+    """Render a task return value for the success log, bounded and crash-proof."""
+    if value is None:
+        return "None"
+    try:
+        text = repr(value)
+    except Exception:
+        return "<unrepresentable>"
+    if len(text) > _MAX_RESULT_REPR:
+        return text[: _MAX_RESULT_REPR - 1] + "…"
+    return text
 
 
 def _resolve_module_name(module_name: str) -> str:
@@ -104,6 +124,10 @@ class QueueDecoratorMixin:
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            job_id = current_job.id
+            logger.info("Task %s[%s] received", task_name, job_id)
+            started_at = time.perf_counter()
+
             # Worker-dispatch predicate gate. Evaluated on the raw
             # deserialized payload (before arg/proxy reconstruction) so
             # re-enqueue on defer can round-trip cleanly.
@@ -180,10 +204,36 @@ class QueueDecoratorMixin:
                 result = ret
             except Exception as exc:
                 error = exc
+                elapsed = time.perf_counter() - started_at
+                if isinstance(exc, TaskCancelledError):
+                    logger.info(
+                        "Task %s[%s] cancelled in %.3fs: %s",
+                        task_name,
+                        job_id,
+                        elapsed,
+                        exc,
+                    )
+                else:
+                    logger.error(
+                        "Task %s[%s] raised %s in %.3fs: %r",
+                        task_name,
+                        job_id,
+                        type(exc).__name__,
+                        elapsed,
+                        exc,
+                    )
                 for hook in hooks["on_failure"]:
                     hook(task_name, args, kwargs, exc)
                 raise
             else:
+                elapsed = time.perf_counter() - started_at
+                logger.info(
+                    "Task %s[%s] succeeded in %.3fs: %s",
+                    task_name,
+                    job_id,
+                    elapsed,
+                    _safe_result_repr(result),
+                )
                 for hook in hooks["on_success"]:
                     hook(task_name, args, kwargs, result)
                 return result
@@ -261,6 +311,10 @@ class QueueDecoratorMixin:
             dont_retry_on: List of exception classes that should never be retried.
             soft_timeout: Soft timeout in seconds. Checked via ``current_job.check_timeout()``.
             middleware: Per-task middleware instances (in addition to global middleware).
+            retry_delays: Explicit per-attempt delay schedule in seconds, e.g.
+                ``[1.0, 5.0, 30.0]``. Overrides ``retry_backoff`` when set; the
+                final value is reused for any further retries up to
+                ``max_retries``.
             inject: List of resource names to inject as keyword arguments.
             serializer: Per-task serializer. Falls back to the queue-level serializer.
             max_retry_delay: Maximum backoff delay in seconds. Defaults to 300
@@ -289,6 +343,15 @@ class QueueDecoratorMixin:
             default_defer_seconds: Default delay when ``on_false="defer"``
                 and the predicate returns plain ``False`` (no explicit
                 ``Defer(seconds=...)``). Ignored otherwise.
+
+        Returns:
+            A decorator that wraps the function in a :class:`~taskito.task.TaskWrapper`
+            exposing ``.delay(*args, **kwargs)`` and
+            ``.apply_async(args=..., kwargs=..., ...)`` for enqueueing.
+
+        Raises:
+            ValueError: ``on_false`` is not ``"defer"`` or ``"cancel"``, or
+                ``default_defer_seconds`` is negative.
         """
         if on_false not in {"defer", "cancel"}:
             raise ValueError(f"on_false must be 'defer' or 'cancel', got {on_false!r}")
@@ -443,6 +506,13 @@ class QueueDecoratorMixin:
             args: Positional arguments to pass to the task on each run.
             kwargs: Keyword arguments to pass to the task on each run.
             queue: Named queue to submit to.
+            timezone: IANA timezone name (e.g. ``"America/New_York"``) the cron
+                expression is evaluated in. Defaults to UTC.
+
+        Returns:
+            A decorator that registers the function as both a normal task and
+            a periodic schedule entry, returning the underlying
+            :class:`~taskito.task.TaskWrapper`.
         """
 
         def decorator(fn: Callable) -> TaskWrapper:
