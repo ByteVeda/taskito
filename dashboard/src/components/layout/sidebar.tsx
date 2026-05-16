@@ -14,6 +14,7 @@ import {
   Server,
   Settings2,
   Skull,
+  Webhook as WebhookIcon,
 } from "lucide-react";
 import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
@@ -57,7 +58,10 @@ const NAV: NavGroup[] = [
   },
   {
     title: "Configuration",
-    items: [{ to: "/settings", label: "Settings", icon: Cog }],
+    items: [
+      { to: "/webhooks", label: "Webhooks", icon: WebhookIcon },
+      { to: "/settings", label: "Settings", icon: Cog },
+    ],
   },
 ];
 
