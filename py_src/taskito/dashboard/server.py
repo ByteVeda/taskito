@@ -33,14 +33,17 @@ from taskito.dashboard.routes import (
     AUTH_CONTEXT_POST_PATHS,
     DELETE_PARAM_ROUTES,
     GET_CTX_ROUTES,
+    GET_PARAM2_ROUTES,
     GET_PARAM_ROUTES,
     GET_ROUTES,
     POST_BODY_ROUTES,
     POST_CTX_BODY_ROUTES,
     POST_CTX_ROUTES,
+    POST_PARAM2_ROUTES,
     POST_PARAM_ROUTES,
     POST_ROUTES,
     PUBLIC_PATHS,
+    PUT_PARAM2_ROUTES,
     PUT_PARAM_ROUTES,
     is_csrf_exempt,
     is_state_changing_method,
@@ -183,6 +186,15 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                     )
                     return
 
+            for pattern, param_handler in GET_PARAM2_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    self._dispatch_with_handler(
+                        param_handler,
+                        lambda h, m=m: h(queue, qs, (m.group(1), m.group(2))),
+                    )
+                    return
+
             if path == "/health":
                 self._json_response(check_health())
             elif path == "/readiness":
@@ -240,10 +252,27 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                 self._dispatch_with_handler(handler, lambda h: h(queue))
                 return
 
+            body_handler = POST_BODY_ROUTES.get(path)
+            if body_handler:
+                body = self._read_json_body()
+                if body is None:
+                    return
+                self._dispatch_with_handler(body_handler, lambda h, body=body: h(queue, body))
+                return
+
             for pattern, param_handler in POST_PARAM_ROUTES:
                 m = pattern.match(path)
                 if m:
                     self._dispatch_with_handler(param_handler, lambda h, m=m: h(queue, m.group(1)))
+                    return
+
+            for pattern, param_handler in POST_PARAM2_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    self._dispatch_with_handler(
+                        param_handler,
+                        lambda h, m=m: h(queue, (m.group(1), m.group(2))),
+                    )
                     return
 
             self._json_response({"error": "Not found"}, status=404)
@@ -262,6 +291,17 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                         return
                     self._dispatch_with_handler(
                         param_handler, lambda h, m=m, body=body: h(queue, body, m.group(1))
+                    )
+                    return
+            for pattern, param_handler in PUT_PARAM2_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    body = self._read_json_body()
+                    if body is None:
+                        return
+                    self._dispatch_with_handler(
+                        param_handler,
+                        lambda h, m=m, body=body: h(queue, body, (m.group(1), m.group(2))),
                     )
                     return
             self._json_response({"error": "Not found"}, status=404)

@@ -5,7 +5,9 @@ from taskito.mixins.events import QueueEventsMixin
 from taskito.mixins.inspection import QueueInspectionMixin
 from taskito.mixins.lifecycle import QueueLifecycleMixin
 from taskito.mixins.locks import QueueLockMixin
+from taskito.mixins.middleware_admin import QueueMiddlewareAdminMixin
 from taskito.mixins.operations import QueueOperationsMixin
+from taskito.mixins.overrides import QueueOverridesMixin
 from taskito.mixins.predicates import QueuePredicateMixin
 from taskito.mixins.resources import QueueResourceMixin
 from taskito.mixins.runtime_config import QueueRuntimeConfigMixin
@@ -17,7 +19,9 @@ __all__ = [
     "QueueInspectionMixin",
     "QueueLifecycleMixin",
     "QueueLockMixin",
+    "QueueMiddlewareAdminMixin",
     "QueueOperationsMixin",
+    "QueueOverridesMixin",
     "QueuePredicateMixin",
     "QueueResourceMixin",
     "QueueRuntimeConfigMixin",
