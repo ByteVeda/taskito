@@ -5,6 +5,36 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.12.3
+
+### Added
+
+- **Dashboard SSO (OAuth & OIDC).** Native sign-in for Google, GitHub, and any OIDC-compliant provider (Okta, Auth0, Keycloak, Microsoft Entra) sits alongside the existing password login. Multiple named OIDC providers run side-by-side, each rendered as its own button on the login screen. Configuration is env-var driven (`TASKITO_DASHBOARD_OAUTH_*`); the `oauth` extra (`pip install 'taskito[oauth]'`) pulls in `authlib`, `joserfc`, and `requests`. Security: PKCE S256, single-use server-side `state` (5-min TTL), nonce verification, JWKS-validated ID tokens, issuer/audience/expiry checks, open-redirect protection on the post-login `next` URL, HTTPS-only redirect URIs outside `localhost`. Allowlists by Google Workspace domain, GitHub org, or OIDC email domain. Promote OAuth users to `admin` via an explicit `TASKITO_DASHBOARD_OAUTH_ADMIN_EMAILS` list, with a first-user-wins fallback for empty deployments. Password login can be disabled entirely with `TASKITO_DASHBOARD_PASSWORD_AUTH_ENABLED=false`.
+- **Dashboard SSO operator guide.** New `Dashboard › SSO (OAuth & OIDC)` doc walks through registering OAuth clients with Google, GitHub, and generic OIDC providers, plus the full env-var reference, allowlist semantics, security model, and troubleshooting cookbook. Includes a Mermaid sequence diagram of the end-to-end flow.
+
+### Changed
+
+- **Docs nav: dedicated `Dashboard` section.** The dashboard documentation outgrew `Observability` — five pages (overview, authentication, SSO, task overrides, REST API) versus three actual observability topics. Moved them into their own top-level Guides section and stripped redundant prefixes from page titles (`Dashboard Authentication` → `Authentication`, etc.). All cross-section links updated.
+
+### Fixed
+
+- **`WebhookManager` delivery thread leak.** `reload()` unconditionally spawned a daemon thread on every `Queue` construction. With ~800 tests each creating a fresh `Queue`, macOS CI runners blew through the per-process thread limit and panicked in `r2d2`'s reaper / tokio's worker-thread spawn (`Resource temporarily unavailable`). The thread now starts only when at least one subscription exists, matching the pre-0.12.2 behaviour.
+- **`EncryptedSerializer.loads` exception handling.** A blanket `except Exception` re-wrapped *every* failure as `ValueError`, including programmer errors like `MemoryError` that should propagate untouched. The catch is now narrowed to `cryptography.exceptions.InvalidTag` (the one expected failure mode); the original exception is preserved on `__cause__` for debugging. The `InvalidTag` class is also pre-cached on `__init__` so `loads` avoids a per-call import. This also fixed two latent test failures (`test_wrong_key_fails`, `test_tampered_ciphertext_fails`) that only surfaced once a release pulled in `cryptography` via the OAuth extra.
+
+### Internal
+
+- **`HttpClient` Protocol for OAuth providers.** `GoogleProvider` / `GitHubProvider` / `GenericOIDCProvider` previously typed their `http` parameter as `requests.Session`, forcing every test to use `# type: ignore[arg-type]` to inject a stub. The Protocol captures the small subset of `Session` actually used (one `get` method) so production code passes a `requests.Session` and tests pass an in-memory stub — no nominal-type fight, no runtime casts.
+- **CI installs the `oauth` extra.** `uv sync --extra dev` was leaving `authlib` / `joserfc` / `requests` uninstalled, so the OAuth test modules failed collection with `ModuleNotFoundError` once they shipped. Both lint and test jobs now sync `--extra dev --extra oauth`. `requests` is also pinned explicitly in the `oauth` extra (Authlib does not declare it as a hard dep).
+- **Cross-version mypy compatibility on JWKS decoding.** `joserfc.jwk.KeySet.import_key_set` was widened to accept dict-shaped JWKS in mypy 2.x; mypy 1.x still requires the `KeySetSerialization` TypedDict. Suppressed with the standard `# type: ignore[arg-type, unused-ignore]` dual pattern so the file lints under both versions.
+
+### Test counts at release
+
+- Rust: 95 tests (default), 107 with `--features workflows`
+- Python: 896 collected across 74 files (up from 592 / 58 at 0.12.2)
+- Dashboard (vitest): 106 tests across 10 files
+
+---
+
 ## 0.12.2
 
 ### Fixed
