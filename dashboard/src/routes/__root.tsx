@@ -1,8 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext, Link, Outlet } from "@tanstack/react-router";
+import { createRootRouteWithContext, Link, Outlet, useLocation } from "@tanstack/react-router";
 import { AlertTriangle, ArrowLeft, Home } from "lucide-react";
 import { AppShell, BackendOffline } from "@/components/layout";
 import { Button, buttonVariants } from "@/components/ui";
+import { AuthGate } from "@/features/auth";
 import { cn } from "@/lib/cn";
 import { isBackendUnreachable } from "@/lib/errors";
 
@@ -16,11 +17,23 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   notFoundComponent: NotFoundView,
 });
 
+/**
+ * Public routes that render without the AppShell or the auth gate. The
+ * login route handles its own redirect when a session is already active.
+ */
+const UNAUTHED_ROUTES = new Set<string>(["/login"]);
+
 function RootLayout() {
+  const { pathname } = useLocation();
+  if (UNAUTHED_ROUTES.has(pathname)) {
+    return <Outlet />;
+  }
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <AuthGate>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </AuthGate>
   );
 }
 

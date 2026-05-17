@@ -1,0 +1,88 @@
+"""Per-task middleware disable list.
+
+Operators turn individual middlewares off for individual tasks from the
+dashboard. The disable list is persisted under
+``middleware:disabled:<task_name>`` as a JSON array of middleware names,
+read by :meth:`~taskito.mixins.decorators.QueueDecoratorMixin._get_middleware_chain`
+at every task invocation so changes take effect immediately on the next
+job without a worker restart.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from taskito.app import Queue
+
+
+DISABLE_PREFIX = "middleware:disabled:"
+
+logger = logging.getLogger("taskito.dashboard.middleware")
+
+
+def _parse(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("middleware disable list is not valid JSON; treating as empty")
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(x) for x in data if isinstance(x, str)]
+
+
+class MiddlewareDisableStore:
+    """List/set/clear per-task middleware disables."""
+
+    def __init__(self, queue: Queue) -> None:
+        self._queue = queue
+
+    def _key(self, task_name: str) -> str:
+        return DISABLE_PREFIX + task_name
+
+    def list_all(self) -> dict[str, list[str]]:
+        """Return ``{task_name: [disabled_mw_name, ...]}`` for every task that
+        has at least one disabled middleware."""
+        out: dict[str, list[str]] = {}
+        for key, raw in self._queue.list_settings().items():
+            if not key.startswith(DISABLE_PREFIX):
+                continue
+            task_name = key[len(DISABLE_PREFIX) :]
+            names = _parse(raw)
+            if names:
+                out[task_name] = names
+        return out
+
+    def get_for(self, task_name: str) -> list[str]:
+        return _parse(self._queue.get_setting(self._key(task_name)))
+
+    def is_disabled(self, task_name: str, mw_name: str) -> bool:
+        return mw_name in self.get_for(task_name)
+
+    def set_disabled(self, task_name: str, mw_name: str, disabled: bool) -> list[str]:
+        """Flip a middleware on/off for a task and return the new disable list."""
+        if not task_name:
+            raise ValueError("task_name must not be empty")
+        if not mw_name:
+            raise ValueError("mw_name must not be empty")
+        current = self.get_for(task_name)
+        if disabled:
+            if mw_name not in current:
+                current.append(mw_name)
+        else:
+            current = [n for n in current if n != mw_name]
+        if current:
+            self._queue.set_setting(
+                self._key(task_name), json.dumps(current, separators=(",", ":"))
+            )
+        else:
+            self._queue.delete_setting(self._key(task_name))
+        return current
+
+    def clear_for(self, task_name: str) -> bool:
+        return self._queue.delete_setting(self._key(task_name))

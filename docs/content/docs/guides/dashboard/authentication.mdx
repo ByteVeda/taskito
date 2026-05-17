@@ -1,0 +1,163 @@
+---
+title: Authentication
+description: "Session-based login, CSRF, env-var bootstrap, and the setup-required flow."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+
+The taskito dashboard is auth-gated by default. Until the first admin
+exists, every protected API route returns `503 setup_required` and the
+SPA shows the one-time setup form. Once an admin is registered the
+dashboard requires a valid session cookie on every API call and a CSRF
+token on every state-changing request.
+
+## How auth works
+
+- **Users + sessions** live in the existing `dashboard_settings`
+  key/value table — no new schema, so SQLite, PostgreSQL, and Redis
+  backends are supported uniformly.
+- **Passwords** are hashed with stdlib `hashlib.pbkdf2_hmac` (SHA-256,
+  600,000 iterations, 16-byte random salt — the OWASP 2023+ PBKDF2
+  baseline). No third-party crypto dependency.
+- **Sessions** are stored server-side under
+  `auth:session:<random_token>` with a 24-hour TTL. The token rides in
+  an `HttpOnly` + `SameSite=Strict` cookie named `taskito_session`.
+- **CSRF** uses the double-submit pattern: a non-HttpOnly cookie named
+  `taskito_csrf` carries a per-session token that the SPA reads and
+  echoes back via the `X-CSRF-Token` header on POST/PUT/DELETE. The
+  server rejects any state-changing request whose header doesn't match
+  both the cookie and the session-bound token.
+
+## First-run setup
+
+On a fresh database the dashboard refuses to do anything else until an
+admin exists.
+
+![First-run setup form](/screenshots/dashboard/auth-setup.png)
+
+The form submits to `POST /api/auth/setup`, which is allowed to run
+exactly once — it returns `400 setup already complete` after the first
+user is created. The new admin is signed in automatically.
+
+### Bootstrap via environment variables
+
+For headless deployments (Docker, Kubernetes, systemd) you usually don't
+want to visit a browser just to register the first user. Set both env
+vars before starting the dashboard:
+
+```bash
+export TASKITO_DASHBOARD_ADMIN_USER=admin
+export TASKITO_DASHBOARD_ADMIN_PASSWORD='change-me-on-first-login'
+taskito dashboard --app myapp:queue
+```
+
+The bootstrap is **idempotent** — once a user with that name exists,
+subsequent dashboard restarts read the env vars but skip creation.
+
+<Callout type="warn" title="Treat the env password as a one-time bootstrap">
+  Rotate the password after first login (use ``POST /api/auth/change-password``
+  or the future UI). Leaving the env var in your deployment is fine for
+  recovery, but anyone with access to the env can re-bootstrap a fresh
+  install — keep it scoped accordingly.
+</Callout>
+
+## Sign in
+
+After setup, every visit routes through the sign-in form.
+
+![Sign-in form](/screenshots/dashboard/auth-login.png)
+
+```bash
+# Login from the CLI — note the cookie jar so subsequent requests
+# carry the session.
+curl -c jar -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"change-me-on-first-login"}'
+
+# The CSRF token comes back in a non-HttpOnly cookie. Read it and
+# echo it on writes.
+CSRF=$(grep taskito_csrf jar | awk '{print $7}')
+curl -b jar -H "X-CSRF-Token: $CSRF" -X POST \
+  http://localhost:8080/api/queues/default/pause
+```
+
+The browser SPA does this automatically — the `api-client.ts` wrapper
+reads `document.cookie` and attaches the header on POST/PUT/DELETE.
+
+## API surface
+
+All routes live under `/api/auth/`:
+
+| Method | Path | What it does |
+|---|---|---|
+| `GET` | `/api/auth/status` | Public. Returns `{setup_required: bool}` |
+| `POST` | `/api/auth/setup` | Public, locks itself after the first user |
+| `POST` | `/api/auth/login` | Returns the user + session and sets cookies |
+| `POST` | `/api/auth/logout` | Invalidates the current session, clears cookies |
+| `GET` | `/api/auth/whoami` | Returns the current user + CSRF token + expiry |
+| `POST` | `/api/auth/change-password` | Requires the current password |
+
+Every other route under `/api/` is auth-gated. Public exceptions:
+`/health`, `/readiness`, `/metrics` (Prometheus), and the static SPA
+assets.
+
+## Headless requests
+
+The same endpoints work for any HTTP client — Slack bots,
+deployment scripts, custom dashboards. The minimal workflow:
+
+1. `POST /api/auth/login` — save the `Set-Cookie` values
+2. For every read: send the `taskito_session` cookie
+3. For every write: send the `taskito_session` cookie + `taskito_csrf`
+   cookie + matching `X-CSRF-Token` header
+
+```python
+import requests
+
+s = requests.Session()
+s.post(
+    "http://localhost:8080/api/auth/login",
+    json={"username": "admin", "password": "..."},
+)
+csrf = s.cookies.get("taskito_csrf")
+s.headers["X-CSRF-Token"] = csrf
+
+# Reads — no CSRF needed.
+stats = s.get("http://localhost:8080/api/stats").json()
+
+# Writes — CSRF auto-attached via session headers.
+s.post("http://localhost:8080/api/queues/default/pause")
+```
+
+## SSRF guard for outbound URLs
+
+Webhook URLs entered through the dashboard are vetted before any
+delivery happens. By default the server rejects:
+
+- Non-`http`/`https` schemes
+- `localhost`, `*.localhost`, `*.local`, `*.internal`, `*.intranet`,
+  `*.lan`, `*.private`
+- Resolved addresses in any RFC1918 / loopback / link-local /
+  multicast range (including the AWS metadata service at
+  `169.254.169.254`)
+
+Set `TASKITO_WEBHOOKS_ALLOW_PRIVATE=1` to disable the guard for local
+development against `http://localhost`. Production should keep the
+guard on.
+
+## SSO / OAuth login
+
+Native sign-in with Google, GitHub, and any OIDC-compliant provider
+(Okta, Auth0, Keycloak, Microsoft Entra) is available alongside
+password auth — see [SSO (OAuth & OIDC)](/guides/dashboard/sso).
+Operators can mix-and-match providers or run an OAuth-only deployment
+by setting `TASKITO_DASHBOARD_PASSWORD_AUTH_ENABLED=false`.
+
+## Limitations
+
+- **One role** today (`admin`). Read-only viewers and per-route
+  permissions are planned; the column already exists on the user
+  record.
+- **Password rotation** has an endpoint but no UI yet — invoke
+  `POST /api/auth/change-password` directly.

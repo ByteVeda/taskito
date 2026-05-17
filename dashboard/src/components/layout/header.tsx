@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { Button, Kbd } from "@/components/ui";
+import { UserMenu } from "@/features/auth";
 import { useCommandPalette } from "@/providers";
 import { LastRefreshed } from "./last-refreshed";
 import { MobileMenu } from "./mobile-menu";
@@ -37,6 +38,7 @@ export function Header() {
       <div className="ml-auto flex items-center gap-3">
         <LastRefreshed className="hidden sm:inline-flex" />
         <ThemeToggle />
+        <UserMenu />
       </div>
     </header>
   );

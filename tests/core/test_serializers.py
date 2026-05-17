@@ -103,27 +103,48 @@ class TestEncryptedSerializer:
         pytest.importorskip("cryptography")
         import os
 
+        from cryptography.exceptions import InvalidTag
+
         from taskito.serializers import EncryptedSerializer
 
         s1 = EncryptedSerializer(JsonSerializer(), os.urandom(32))
         s2 = EncryptedSerializer(JsonSerializer(), os.urandom(32))
-        from cryptography.exceptions import InvalidTag
 
         encrypted = s1.dumps({"data": 1})
-        with pytest.raises(InvalidTag):
+        with pytest.raises(ValueError, match="Decryption failed") as excinfo:
             s2.loads(encrypted)
+        # The original cryptography exception is preserved on the cause
+        # chain so debugging surfaces still know it was a tag-validation
+        # failure rather than a malformed-input ValueError.
+        assert isinstance(excinfo.value.__cause__, InvalidTag)
 
     def test_tampered_ciphertext_fails(self) -> None:
         pytest.importorskip("cryptography")
         import os
+
+        from cryptography.exceptions import InvalidTag
 
         from taskito.serializers import EncryptedSerializer
 
         key = os.urandom(32)
         s = EncryptedSerializer(JsonSerializer(), key)
         encrypted = s.dumps("hello")
-        from cryptography.exceptions import InvalidTag
 
         tampered = encrypted[:-1] + bytes([encrypted[-1] ^ 0xFF])
-        with pytest.raises(InvalidTag):
+        with pytest.raises(ValueError, match="Decryption failed") as excinfo:
             s.loads(tampered)
+        assert isinstance(excinfo.value.__cause__, InvalidTag)
+
+    def test_short_ciphertext_fails(self) -> None:
+        """Inputs shorter than the AES-GCM nonce (12B) + tag (≥1B) are
+        rejected before the cipher is ever consulted, with a distinct
+        message so operators can tell parsing errors from key/tag failures.
+        """
+        pytest.importorskip("cryptography")
+        import os
+
+        from taskito.serializers import EncryptedSerializer
+
+        s = EncryptedSerializer(JsonSerializer(), os.urandom(32))
+        with pytest.raises(ValueError, match="too short"):
+            s.loads(b"only-twelve-")

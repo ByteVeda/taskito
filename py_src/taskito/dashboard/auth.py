@@ -1,0 +1,453 @@
+"""Authentication primitives for the dashboard.
+
+Users and sessions are persisted through ``Queue.set_setting`` / ``get_setting``
+— the same key/value store that already backs dashboard branding and
+integration settings. This avoids new database tables and keeps the auth
+feature working uniformly across SQLite, Postgres, and Redis backends.
+
+Key layout in ``dashboard_settings``:
+
+- ``auth:users`` — JSON object ``{username: {password_hash, role, ...}}``
+- ``auth:session:<token>`` — JSON object describing one active session
+- ``auth:csrf_secret`` — random secret used as a HMAC key for CSRF tokens
+
+Password hashes use PBKDF2-HMAC-SHA256 (stdlib ``hashlib``) with
+600,000 iterations — the OWASP 2023+ baseline for PBKDF2. No third-party
+crypto dependency is required.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import logging
+import secrets
+import time
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from taskito.app import Queue
+
+
+logger = logging.getLogger("taskito.dashboard.auth")
+
+# ── Storage keys ───────────────────────────────────────────────────────
+
+USERS_KEY = "auth:users"
+SESSION_PREFIX = "auth:session:"
+CSRF_SECRET_KEY = "auth:csrf_secret"
+
+# ── Crypto parameters ──────────────────────────────────────────────────
+
+PBKDF2_ITERATIONS = 600_000
+PBKDF2_SALT_BYTES = 16
+PBKDF2_HASH_BYTES = 32
+SESSION_TOKEN_BYTES = 32
+
+# ── Session lifetime ───────────────────────────────────────────────────
+
+DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60  # 24h
+
+# ── Validation ─────────────────────────────────────────────────────────
+
+USERNAME_MAX_LEN = 64
+PASSWORD_MIN_LEN = 8
+PASSWORD_MAX_LEN = 256
+VALID_ROLES = frozenset({"admin", "viewer"})
+
+# Sentinel prefix used in ``password_hash`` for OAuth-only users so
+# ``verify_password`` can short-circuit-reject any password attempt.
+OAUTH_PASSWORD_HASH_PREFIX = "oauth:"
+
+
+# ── Password hashing ───────────────────────────────────────────────────
+
+
+def hash_password(password: str) -> str:
+    """Hash a password with PBKDF2-HMAC-SHA256.
+
+    Returns a self-describing string of the form
+    ``pbkdf2_sha256$<iters>$<salt_b64>$<hash_b64>`` so the verifier can
+    parse out the salt and iteration count without separate columns.
+    """
+    salt = secrets.token_bytes(PBKDF2_SALT_BYTES)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS, PBKDF2_HASH_BYTES
+    )
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    """Constant-time verify a password against the encoded hash."""
+    # Sentinel for OAuth-only users — they have no real password and must
+    # never authenticate via the password endpoint.
+    if encoded.startswith(OAUTH_PASSWORD_HASH_PREFIX):
+        return False
+    try:
+        scheme, iters_str, salt_hex, hash_hex = encoded.split("$")
+    except ValueError:
+        return False
+    if scheme != "pbkdf2_sha256":
+        return False
+    try:
+        iters = int(iters_str)
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(hash_hex)
+    except ValueError:
+        return False
+    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iters, len(expected))
+    return hmac.compare_digest(candidate, expected)
+
+
+# ── Tokens ─────────────────────────────────────────────────────────────
+
+
+def generate_session_token() -> str:
+    """Cryptographically secure URL-safe session token."""
+    return secrets.token_urlsafe(SESSION_TOKEN_BYTES)
+
+
+# ── Data classes ───────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class User:
+    """A persisted dashboard user.
+
+    ``email`` and ``display_name`` are populated for users created via the
+    OAuth flow; for password users they are typically ``None`` until set
+    by an admin.
+    """
+
+    username: str
+    password_hash: str
+    role: str
+    created_at: int
+    last_login_at: int | None = None
+    email: str | None = None
+    display_name: str | None = None
+
+    @property
+    def is_oauth(self) -> bool:
+        return self.password_hash.startswith(OAUTH_PASSWORD_HASH_PREFIX)
+
+
+@dataclass(frozen=True)
+class Session:
+    """An active dashboard session."""
+
+    token: str
+    username: str
+    role: str
+    created_at: int
+    expires_at: int
+    csrf_token: str
+
+    def is_expired(self, now: int | None = None) -> bool:
+        return (now if now is not None else int(time.time())) >= self.expires_at
+
+
+# ── Validation helpers ─────────────────────────────────────────────────
+
+
+def _validate_username(username: str) -> None:
+    if not username:
+        raise ValueError("username must not be empty")
+    if len(username) > USERNAME_MAX_LEN:
+        raise ValueError(f"username must be <= {USERNAME_MAX_LEN} chars")
+    if not all(c.isalnum() or c in "._-" for c in username):
+        raise ValueError("username may only contain letters, digits, '.', '_', or '-'")
+
+
+def _validate_password(password: str) -> None:
+    if len(password) < PASSWORD_MIN_LEN:
+        raise ValueError(f"password must be >= {PASSWORD_MIN_LEN} chars")
+    if len(password) > PASSWORD_MAX_LEN:
+        raise ValueError(f"password must be <= {PASSWORD_MAX_LEN} chars")
+
+
+def _validate_role(role: str) -> None:
+    if role not in VALID_ROLES:
+        raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
+
+
+def _oauth_bootstrap_role(
+    *,
+    email: str | None,
+    email_verified: bool,
+    admin_emails: tuple[str, ...],
+    user_table_empty: bool,
+) -> str:
+    """Decide the role for a freshly-created OAuth user.
+
+    Order: any path to ``admin`` requires a verified email (defence against
+    spoofed claims). If an explicit admin list is configured, only listed
+    emails get ``admin`` — the first-user-wins fallback is skipped. With no
+    admin list, the very first user (empty table) gets ``admin``, everyone
+    else gets ``viewer``.
+    """
+    if not email_verified or not email:
+        return "viewer"
+    normalised = email.lower()
+    if admin_emails:
+        if normalised in {e.lower() for e in admin_emails}:
+            return "admin"
+        return "viewer"
+    if user_table_empty:
+        return "admin"
+    return "viewer"
+
+
+# ── Auth store ─────────────────────────────────────────────────────────
+
+
+class AuthStore:
+    """Read/write users and sessions through ``Queue``'s settings store."""
+
+    def __init__(self, queue: Queue) -> None:
+        self._queue = queue
+
+    # ── Users ──────────────────────────────────────────────────────
+
+    def _load_users(self) -> dict[str, dict[str, object]]:
+        raw = self._queue.get_setting(USERS_KEY)
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("auth:users entry is not valid JSON; treating as empty")
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_users(self, users: dict[str, dict[str, object]]) -> None:
+        self._queue.set_setting(USERS_KEY, json.dumps(users, separators=(",", ":")))
+
+    def count_users(self) -> int:
+        return len(self._load_users())
+
+    def list_users(self) -> list[User]:
+        return [self._row_to_user(name, row) for name, row in self._load_users().items()]
+
+    def get_user(self, username: str) -> User | None:
+        row = self._load_users().get(username)
+        return self._row_to_user(username, row) if row else None
+
+    def create_user(self, username: str, password: str, role: str = "admin") -> User:
+        _validate_username(username)
+        _validate_password(password)
+        _validate_role(role)
+        users = self._load_users()
+        if username in users:
+            raise ValueError(f"user '{username}' already exists")
+        now = int(time.time())
+        users[username] = {
+            "password_hash": hash_password(password),
+            "role": role,
+            "created_at": now,
+            "last_login_at": None,
+        }
+        self._save_users(users)
+        return self._row_to_user(username, users[username])
+
+    def update_password(self, username: str, new_password: str) -> None:
+        _validate_password(new_password)
+        users = self._load_users()
+        if username not in users:
+            raise ValueError(f"user '{username}' does not exist")
+        users[username]["password_hash"] = hash_password(new_password)
+        self._save_users(users)
+
+    def delete_user(self, username: str) -> bool:
+        users = self._load_users()
+        if username not in users:
+            return False
+        del users[username]
+        self._save_users(users)
+        return True
+
+    def authenticate(self, username: str, password: str) -> User | None:
+        """Return the user iff username+password match; updates last_login_at."""
+        users = self._load_users()
+        row = users.get(username)
+        if not row:
+            # Run a dummy verify against a fixed hash to keep timing constant
+            # for unknown vs. known usernames.
+            verify_password(password, _DUMMY_HASH)
+            return None
+        if not verify_password(password, str(row["password_hash"])):
+            return None
+        row["last_login_at"] = int(time.time())
+        users[username] = row
+        self._save_users(users)
+        return self._row_to_user(username, row)
+
+    @staticmethod
+    def _row_to_user(username: str, row: dict[str, object] | None) -> User:
+        assert row is not None
+        created_raw = row["created_at"]
+        last_raw = row.get("last_login_at")
+        email_raw = row.get("email")
+        name_raw = row.get("display_name")
+        return User(
+            username=username,
+            password_hash=str(row["password_hash"]),
+            role=str(row["role"]),
+            created_at=int(created_raw) if isinstance(created_raw, (int, float, str)) else 0,
+            last_login_at=(int(last_raw) if isinstance(last_raw, (int, float, str)) else None),
+            email=str(email_raw) if isinstance(email_raw, str) and email_raw else None,
+            display_name=str(name_raw) if isinstance(name_raw, str) and name_raw else None,
+        )
+
+    # ── OAuth users ────────────────────────────────────────────────
+
+    def get_or_create_oauth_user(
+        self,
+        slot: str,
+        subject: str,
+        email: str | None,
+        name: str | None,
+        email_verified: bool,
+        admin_emails: tuple[str, ...] = (),
+    ) -> User:
+        """Look up or create the User row backing an OAuth identity.
+
+        Username is ``f"{slot}:{subject}"``. On first sight, the role is
+        assigned by :func:`_oauth_bootstrap_role`. On subsequent logins,
+        the role is left alone but ``email`` / ``display_name`` are refreshed
+        from the latest provider claims.
+        """
+        username = f"{slot}:{subject}"
+        users = self._load_users()
+        existing = users.get(username)
+        if existing is not None:
+            if email and existing.get("email") != email:
+                existing["email"] = email
+            if name and existing.get("display_name") != name:
+                existing["display_name"] = name
+            existing["last_login_at"] = int(time.time())
+            users[username] = existing
+            self._save_users(users)
+            return self._row_to_user(username, existing)
+
+        role = _oauth_bootstrap_role(
+            email=email,
+            email_verified=email_verified,
+            admin_emails=admin_emails,
+            user_table_empty=not users,
+        )
+        now = int(time.time())
+        users[username] = {
+            "password_hash": f"{OAUTH_PASSWORD_HASH_PREFIX}{slot}",
+            "role": role,
+            "created_at": now,
+            "last_login_at": now,
+            "email": email,
+            "display_name": name,
+        }
+        self._save_users(users)
+        return self._row_to_user(username, users[username])
+
+    # ── Sessions ───────────────────────────────────────────────────
+
+    def create_session(
+        self, user: User, ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS
+    ) -> Session:
+        now = int(time.time())
+        token = generate_session_token()
+        session = Session(
+            token=token,
+            username=user.username,
+            role=user.role,
+            created_at=now,
+            expires_at=now + ttl_seconds,
+            csrf_token=generate_session_token(),
+        )
+        self._queue.set_setting(
+            SESSION_PREFIX + token,
+            json.dumps(
+                {k: v for k, v in asdict(session).items() if k != "token"},
+                separators=(",", ":"),
+            ),
+        )
+        return session
+
+    def get_session(self, token: str) -> Session | None:
+        if not token:
+            return None
+        raw = self._queue.get_setting(SESSION_PREFIX + token)
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        try:
+            session = Session(token=token, **data)
+        except TypeError:
+            return None
+        if session.is_expired():
+            self.delete_session(token)
+            return None
+        return session
+
+    def delete_session(self, token: str) -> bool:
+        if not token:
+            return False
+        return self._queue.delete_setting(SESSION_PREFIX + token)
+
+    def prune_expired_sessions(self) -> int:
+        """Best-effort cleanup of expired session entries. Returns count removed."""
+        now = int(time.time())
+        removed = 0
+        for key, value in self._queue.list_settings().items():
+            if not key.startswith(SESSION_PREFIX):
+                continue
+            try:
+                data = json.loads(value)
+                expires_at = int(data.get("expires_at", 0))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if expires_at <= now:
+                self._queue.delete_setting(key)
+                removed += 1
+        return removed
+
+
+# Fixed hash used to keep authentication timing constant for unknown users.
+# Value computed once with a throw-away password — never used for real auth.
+_DUMMY_HASH = (
+    "pbkdf2_sha256$600000$"
+    "00000000000000000000000000000000$"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+
+# ── Bootstrap from environment ─────────────────────────────────────────
+
+
+def bootstrap_admin_from_env(queue: Queue) -> User | None:
+    """Idempotently create the first admin from environment variables.
+
+    If ``TASKITO_DASHBOARD_ADMIN_USER`` and ``TASKITO_DASHBOARD_ADMIN_PASSWORD``
+    are set AND the user does not exist yet, create it. Safe to call on every
+    startup — does nothing if the user already exists.
+    """
+    import os
+
+    username = os.environ.get("TASKITO_DASHBOARD_ADMIN_USER")
+    password = os.environ.get("TASKITO_DASHBOARD_ADMIN_PASSWORD")
+    if not username or not password:
+        return None
+    store = AuthStore(queue)
+    if store.get_user(username):
+        return None
+    try:
+        user = store.create_user(username, password, role="admin")
+    except ValueError as e:
+        logger.warning("Failed to bootstrap admin %r from env: %s", username, e)
+        return None
+    logger.info("Bootstrapped admin user %r from environment", username)
+    return user
