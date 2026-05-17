@@ -55,12 +55,20 @@ class TaskMiddleware:
                 print(f"Finished {ctx.task_name}: {status}")
     """
 
+    #: Stable identifier used to refer to this middleware from the dashboard
+    #: when toggling it on/off per task. Defaults to the class' fully-qualified
+    #: name so it survives restarts. Override on a subclass to pin a
+    #: shorter / more user-facing name.
+    name: str = ""
+
     def __init__(
         self,
         *,
         predicate: Predicate | Callable[..., Any] | None = None,
     ) -> None:
         self._predicate = coerce_predicate(predicate)
+        if not type(self).name:
+            type(self).name = f"{type(self).__module__}.{type(self).__qualname__}"
 
     def _should_apply(self, ctx: JobContext | None, task_name: str = "") -> bool:
         """Decide whether this middleware's hooks should fire for ``ctx``.
