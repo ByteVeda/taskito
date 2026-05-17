@@ -146,13 +146,18 @@ Set `TASKITO_WEBHOOKS_ALLOW_PRIVATE=1` to disable the guard for local
 development against `http://localhost`. Production should keep the
 guard on.
 
+## SSO / OAuth login
+
+Native sign-in with Google, GitHub, and any OIDC-compliant provider
+(Okta, Auth0, Keycloak, Microsoft Entra) is available alongside
+password auth — see [Dashboard SSO (OAuth & OIDC)](./dashboard-oauth).
+Operators can mix-and-match providers or run an OAuth-only deployment
+by setting `TASKITO_DASHBOARD_PASSWORD_AUTH_ENABLED=false`.
+
 ## Limitations
 
 - **One role** today (`admin`). Read-only viewers and per-route
   permissions are planned; the column already exists on the user
   record.
-- **No SSO / OIDC** out of the box. Put the dashboard behind a reverse
-  proxy (oauth2-proxy, Cloudflare Access) if your team uses SSO; the
-  built-in auth then becomes a fallback for service accounts.
 - **Password rotation** has an endpoint but no UI yet — invoke
   `POST /api/auth/change-password` directly.

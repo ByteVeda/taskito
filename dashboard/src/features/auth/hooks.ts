@@ -1,10 +1,19 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api-client";
-import { changePassword, fetchAuthStatus, fetchWhoami, login, logout, setup } from "./api";
+import {
+  changePassword,
+  fetchAuthStatus,
+  fetchProviders,
+  fetchWhoami,
+  login,
+  logout,
+  setup,
+} from "./api";
 import type { WhoamiResponse } from "./types";
 
 export const AUTH_STATUS_KEY = ["auth", "status"] as const;
 export const WHOAMI_KEY = ["auth", "whoami"] as const;
+export const PROVIDERS_KEY = ["auth", "providers"] as const;
 
 export function authStatusQuery() {
   return queryOptions({
@@ -42,12 +51,25 @@ export function whoamiQuery() {
   });
 }
 
+/** List of OAuth providers exposed by the server. */
+export function providersQuery() {
+  return queryOptions({
+    queryKey: PROVIDERS_KEY,
+    queryFn: ({ signal }) => fetchProviders(signal),
+    staleTime: 60_000,
+  });
+}
+
 export function useAuthStatus() {
   return useQuery(authStatusQuery());
 }
 
 export function useWhoami() {
   return useQuery(whoamiQuery());
+}
+
+export function useAuthProviders() {
+  return useQuery(providersQuery());
 }
 
 export function useLogin() {
