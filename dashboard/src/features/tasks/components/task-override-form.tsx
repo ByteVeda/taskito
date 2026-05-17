@@ -1,8 +1,9 @@
 import { Save, Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Button, Input } from "@/components/ui";
+import { Button, Input, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
 import { useClearTaskOverride, useSetTaskOverride } from "../hooks";
 import type { TaskEntry, TaskOverridePatch } from "../types";
+import { MiddlewareToggles } from "./middleware-toggles";
 
 interface Props {
   task: TaskEntry;
@@ -58,15 +59,89 @@ export function TaskOverrideForm({ task, onDone }: Props) {
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
       <div>
         <h2 className="text-base font-semibold">{task.name}</h2>
         <p className="mt-1 text-xs text-[var(--fg-muted)]">Queue · {task.queue}</p>
-        <p className="mt-1 text-[11px] text-[var(--fg-subtle)]">
-          Overrides apply on the next worker restart; pausing takes effect immediately.
-        </p>
       </div>
+      <Tabs defaultValue="overrides">
+        <TabsList>
+          <TabsTrigger value="overrides">Overrides</TabsTrigger>
+          <TabsTrigger value="middleware">Middleware</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overrides">
+          <OverrideForm
+            task={task}
+            onSubmit={onSubmit}
+            rateLimit={rateLimit}
+            setRateLimit={setRateLimit}
+            maxConcurrent={maxConcurrent}
+            setMaxConcurrent={setMaxConcurrent}
+            maxRetries={maxRetries}
+            setMaxRetries={setMaxRetries}
+            timeoutValue={timeout}
+            setTimeoutValue={setTimeoutValue}
+            priority={priority}
+            setPriority={setPriority}
+            paused={paused}
+            setPaused={setPaused}
+            saving={setOverride.isPending}
+            clearing={clearOverride.isPending}
+            onClear={() => clearOverride.mutate(task.name, { onSuccess: () => onDone?.() })}
+          />
+        </TabsContent>
+        <TabsContent value="middleware">
+          <MiddlewareToggles taskName={task.name} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
 
+interface OverrideFormProps {
+  task: TaskEntry;
+  onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  rateLimit: string;
+  setRateLimit: (v: string) => void;
+  maxConcurrent: string;
+  setMaxConcurrent: (v: string) => void;
+  maxRetries: string;
+  setMaxRetries: (v: string) => void;
+  timeoutValue: string;
+  setTimeoutValue: (v: string) => void;
+  priority: string;
+  setPriority: (v: string) => void;
+  paused: boolean;
+  setPaused: (v: boolean) => void;
+  saving: boolean;
+  clearing: boolean;
+  onClear: () => void;
+}
+
+function OverrideForm({
+  task,
+  onSubmit,
+  rateLimit,
+  setRateLimit,
+  maxConcurrent,
+  setMaxConcurrent,
+  maxRetries,
+  setMaxRetries,
+  timeoutValue,
+  setTimeoutValue,
+  priority,
+  setPriority,
+  paused,
+  setPaused,
+  saving,
+  clearing,
+  onClear,
+}: OverrideFormProps) {
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-4 pt-4">
+      <p className="text-[11px] text-[var(--fg-subtle)]">
+        Overrides apply on the next worker restart; pausing takes effect immediately.
+      </p>
       <NumberField
         id="o-rate-limit"
         label="Rate limit"
@@ -97,7 +172,7 @@ export function TaskOverrideForm({ task, onDone }: Props) {
       <NumberField
         id="o-timeout"
         label="Timeout (s)"
-        value={timeout}
+        value={timeoutValue}
         onChange={setTimeoutValue}
         defaultValue={String(task.defaults.timeout)}
         type="number"
@@ -110,23 +185,21 @@ export function TaskOverrideForm({ task, onDone }: Props) {
         defaultValue={String(task.defaults.priority)}
         type="number"
       />
-
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={paused} onChange={(e) => setPaused(e.target.checked)} />
         Pause this task — new jobs will not be dequeued
       </label>
-
       <div className="mt-2 flex justify-between gap-2">
         <Button
           type="button"
           variant="ghost"
-          disabled={clearOverride.isPending || !task.override}
-          onClick={() => clearOverride.mutate(task.name, { onSuccess: () => onDone?.() })}
+          disabled={clearing || !task.override}
+          onClick={onClear}
         >
           <Trash2 aria-hidden /> Clear override
         </Button>
-        <Button type="submit" disabled={setOverride.isPending}>
-          <Save aria-hidden /> {setOverride.isPending ? "Saving…" : "Save"}
+        <Button type="submit" disabled={saving}>
+          <Save aria-hidden /> {saving ? "Saving…" : "Save"}
         </Button>
       </div>
     </form>

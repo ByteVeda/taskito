@@ -38,6 +38,12 @@ from taskito.dashboard.handlers.jobs import (
 )
 from taskito.dashboard.handlers.logs import _handle_logs
 from taskito.dashboard.handlers.metrics import _handle_metrics, _handle_metrics_timeseries
+from taskito.dashboard.handlers.middleware import (
+    handle_delete_task_middleware,
+    handle_get_task_middleware,
+    handle_list_middleware,
+    handle_put_task_middleware,
+)
 from taskito.dashboard.handlers.overrides import (
     handle_delete_queue_override,
     handle_delete_task_override,
@@ -117,6 +123,7 @@ GET_ROUTES: dict[str, Any] = {
     "/api/event-types": handle_list_event_types,
     "/api/tasks": handle_list_tasks,
     "/api/queues": handle_list_queues,
+    "/api/middleware": handle_list_middleware,
 }
 
 # ── Parameterized GET routes: regex → handler(queue, qs, captured_id) ──
@@ -138,6 +145,7 @@ GET_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/webhooks/([^/]+)$"), handle_get_webhook),
     (re.compile(r"^/api/tasks/([^/]+)/override$"), handle_get_task_override),
     (re.compile(r"^/api/queues/([^/]+)/override$"), handle_get_queue_override),
+    (re.compile(r"^/api/tasks/([^/]+)/middleware$"), handle_get_task_middleware),
 ]
 
 # GET routes with 2 captured groups (handler signature: queue, qs, (g1, g2))
@@ -212,12 +220,21 @@ PUT_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/queues/([^/]+)/override$"), handle_put_queue_override),
 ]
 
+# PUT routes with 2 captured groups (handler signature: queue, body, (g1, g2))
+PUT_PARAM2_ROUTES: list[tuple[re.Pattern, Any]] = [
+    (
+        re.compile(r"^/api/tasks/([^/]+)/middleware/([^/]+)$"),
+        handle_put_task_middleware,
+    ),
+]
+
 # ── Parameterized DELETE routes: regex → handler(queue, captured_id) ──
 DELETE_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/settings/(.+)$"), _handle_delete_setting),
     (re.compile(r"^/api/webhooks/([^/]+)$"), handle_delete_webhook),
     (re.compile(r"^/api/tasks/([^/]+)/override$"), handle_delete_task_override),
     (re.compile(r"^/api/queues/([^/]+)/override$"), handle_delete_queue_override),
+    (re.compile(r"^/api/tasks/([^/]+)/middleware$"), handle_delete_task_middleware),
 ]
 
 

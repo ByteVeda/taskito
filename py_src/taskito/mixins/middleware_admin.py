@@ -1,0 +1,70 @@
+"""Middleware discovery and per-task disable management on :class:`Queue`."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from taskito.dashboard.middleware_store import MiddlewareDisableStore
+
+if TYPE_CHECKING:
+    from taskito.middleware import TaskMiddleware
+
+
+class QueueMiddlewareAdminMixin:
+    """Discovery + per-task enable/disable for registered middlewares."""
+
+    _global_middleware: list[TaskMiddleware]
+    _task_middleware: dict[str, list[TaskMiddleware]]
+
+    # ── Discovery ──────────────────────────────────────────────────
+
+    def list_middleware(self) -> list[dict[str, Any]]:
+        """Return every registered middleware (global + per-task) with its
+        name, source ("global" or task name), and Python class path. The
+        ``name`` is the value the disable list keys on."""
+        seen: dict[str, dict[str, Any]] = {}
+        for mw in self._global_middleware:
+            name = getattr(mw, "name", "") or f"{type(mw).__module__}.{type(mw).__qualname__}"
+            seen.setdefault(
+                name,
+                {
+                    "name": name,
+                    "class_path": f"{type(mw).__module__}.{type(mw).__qualname__}",
+                    "scopes": [],
+                },
+            )["scopes"].append({"kind": "global"})
+        for task_name, mws in self._task_middleware.items():
+            for mw in mws:
+                name = getattr(mw, "name", "") or f"{type(mw).__module__}.{type(mw).__qualname__}"
+                entry = seen.setdefault(
+                    name,
+                    {
+                        "name": name,
+                        "class_path": f"{type(mw).__module__}.{type(mw).__qualname__}",
+                        "scopes": [],
+                    },
+                )
+                entry["scopes"].append({"kind": "task", "task": task_name})
+        return sorted(seen.values(), key=lambda x: x["name"])
+
+    # ── Disable management ─────────────────────────────────────────
+
+    def list_middleware_disables(self) -> dict[str, list[str]]:
+        """Return every task that has at least one disabled middleware."""
+        return MiddlewareDisableStore(self).list_all()  # type: ignore[arg-type]
+
+    def get_disabled_middleware_for(self, task_name: str) -> list[str]:
+        return MiddlewareDisableStore(self).get_for(task_name)  # type: ignore[arg-type]
+
+    def disable_middleware_for_task(self, task_name: str, mw_name: str) -> list[str]:
+        return MiddlewareDisableStore(self).set_disabled(  # type: ignore[arg-type]
+            task_name, mw_name, disabled=True
+        )
+
+    def enable_middleware_for_task(self, task_name: str, mw_name: str) -> list[str]:
+        return MiddlewareDisableStore(self).set_disabled(  # type: ignore[arg-type]
+            task_name, mw_name, disabled=False
+        )
+
+    def clear_middleware_disables(self, task_name: str) -> bool:
+        return MiddlewareDisableStore(self).clear_for(task_name)  # type: ignore[arg-type]
