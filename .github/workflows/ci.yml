@@ -84,7 +84,7 @@ jobs:
           cache-dependency-glob: pyproject.toml
 
       - name: Install Python dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra oauth
 
       - name: Lint Python with Ruff
         run: uv run ruff check py_src/ tests/
@@ -262,7 +262,7 @@ jobs:
           cache-dependency-glob: pyproject.toml
 
       - name: Install Python dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra oauth
 
       - name: Build native extension with maturin
         uses: PyO3/maturin-action@v1

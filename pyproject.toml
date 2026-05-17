@@ -48,7 +48,7 @@ flask = ["flask>=3.0"]
 aws = ["boto3>=1.34"]
 gcs = ["google-cloud-storage>=2.10"]
 docs = ["playwright>=1.59"]
-oauth = ["authlib>=1.7,<2"]
+oauth = ["authlib>=1.7,<2", "requests>=2.31"]
 
 [tool.maturin]
 manifest-path = "crates/taskito-python/Cargo.toml"
