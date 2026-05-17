@@ -95,3 +95,21 @@ def validate_webhook_url(url: str) -> None:
     for ip in addresses:
         if _is_private_ip(ip):
             raise UnsafeWebhookUrl(f"URL host {hostname!r} resolves to private address {ip}")
+
+
+def is_safe_redirect(path: str | None) -> bool:
+    """Whether ``path`` is safe to use as a post-login same-origin redirect target.
+
+    Accepts only relative paths rooted at ``/``. Rejects absolute URLs
+    (``http://evil.com/x``), protocol-relative URLs (``//evil.com/x``),
+    and anything without a leading slash. Empty / ``None`` is rejected so
+    the caller can fall back to a default explicitly.
+    """
+    if not path:
+        return False
+    if not path.startswith("/"):
+        return False
+    if path.startswith("//") or path.startswith("/\\"):
+        return False
+    parsed = urllib.parse.urlparse(path)
+    return not (parsed.scheme or parsed.netloc)

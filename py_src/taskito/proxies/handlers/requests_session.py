@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    import requests  # type: ignore[import-untyped]
+    import requests
 
     _HAS_REQUESTS = True
 except ImportError:

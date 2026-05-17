@@ -57,6 +57,10 @@ PASSWORD_MIN_LEN = 8
 PASSWORD_MAX_LEN = 256
 VALID_ROLES = frozenset({"admin", "viewer"})
 
+# Sentinel prefix used in ``password_hash`` for OAuth-only users so
+# ``verify_password`` can short-circuit-reject any password attempt.
+OAUTH_PASSWORD_HASH_PREFIX = "oauth:"
+
 
 # ── Password hashing ───────────────────────────────────────────────────
 
@@ -77,6 +81,10 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, encoded: str) -> bool:
     """Constant-time verify a password against the encoded hash."""
+    # Sentinel for OAuth-only users — they have no real password and must
+    # never authenticate via the password endpoint.
+    if encoded.startswith(OAUTH_PASSWORD_HASH_PREFIX):
+        return False
     try:
         scheme, iters_str, salt_hex, hash_hex = encoded.split("$")
     except ValueError:
@@ -106,13 +114,24 @@ def generate_session_token() -> str:
 
 @dataclass(frozen=True)
 class User:
-    """A persisted dashboard user."""
+    """A persisted dashboard user.
+
+    ``email`` and ``display_name`` are populated for users created via the
+    OAuth flow; for password users they are typically ``None`` until set
+    by an admin.
+    """
 
     username: str
     password_hash: str
     role: str
     created_at: int
     last_login_at: int | None = None
+    email: str | None = None
+    display_name: str | None = None
+
+    @property
+    def is_oauth(self) -> bool:
+        return self.password_hash.startswith(OAUTH_PASSWORD_HASH_PREFIX)
 
 
 @dataclass(frozen=True)
@@ -152,6 +171,33 @@ def _validate_password(password: str) -> None:
 def _validate_role(role: str) -> None:
     if role not in VALID_ROLES:
         raise ValueError(f"role must be one of {sorted(VALID_ROLES)}")
+
+
+def _oauth_bootstrap_role(
+    *,
+    email: str | None,
+    email_verified: bool,
+    admin_emails: tuple[str, ...],
+    user_table_empty: bool,
+) -> str:
+    """Decide the role for a freshly-created OAuth user.
+
+    Order: any path to ``admin`` requires a verified email (defence against
+    spoofed claims). If an explicit admin list is configured, only listed
+    emails get ``admin`` — the first-user-wins fallback is skipped. With no
+    admin list, the very first user (empty table) gets ``admin``, everyone
+    else gets ``viewer``.
+    """
+    if not email_verified or not email:
+        return "viewer"
+    normalised = email.lower()
+    if admin_emails:
+        if normalised in {e.lower() for e in admin_emails}:
+            return "admin"
+        return "viewer"
+    if user_table_empty:
+        return "admin"
+    return "viewer"
 
 
 # ── Auth store ─────────────────────────────────────────────────────────
@@ -243,13 +289,66 @@ class AuthStore:
         assert row is not None
         created_raw = row["created_at"]
         last_raw = row.get("last_login_at")
+        email_raw = row.get("email")
+        name_raw = row.get("display_name")
         return User(
             username=username,
             password_hash=str(row["password_hash"]),
             role=str(row["role"]),
             created_at=int(created_raw) if isinstance(created_raw, (int, float, str)) else 0,
             last_login_at=(int(last_raw) if isinstance(last_raw, (int, float, str)) else None),
+            email=str(email_raw) if isinstance(email_raw, str) and email_raw else None,
+            display_name=str(name_raw) if isinstance(name_raw, str) and name_raw else None,
         )
+
+    # ── OAuth users ────────────────────────────────────────────────
+
+    def get_or_create_oauth_user(
+        self,
+        slot: str,
+        subject: str,
+        email: str | None,
+        name: str | None,
+        email_verified: bool,
+        admin_emails: tuple[str, ...] = (),
+    ) -> User:
+        """Look up or create the User row backing an OAuth identity.
+
+        Username is ``f"{slot}:{subject}"``. On first sight, the role is
+        assigned by :func:`_oauth_bootstrap_role`. On subsequent logins,
+        the role is left alone but ``email`` / ``display_name`` are refreshed
+        from the latest provider claims.
+        """
+        username = f"{slot}:{subject}"
+        users = self._load_users()
+        existing = users.get(username)
+        if existing is not None:
+            if email and existing.get("email") != email:
+                existing["email"] = email
+            if name and existing.get("display_name") != name:
+                existing["display_name"] = name
+            existing["last_login_at"] = int(time.time())
+            users[username] = existing
+            self._save_users(users)
+            return self._row_to_user(username, existing)
+
+        role = _oauth_bootstrap_role(
+            email=email,
+            email_verified=email_verified,
+            admin_emails=admin_emails,
+            user_table_empty=not users,
+        )
+        now = int(time.time())
+        users[username] = {
+            "password_hash": f"{OAUTH_PASSWORD_HASH_PREFIX}{slot}",
+            "role": role,
+            "created_at": now,
+            "last_login_at": now,
+            "email": email,
+            "display_name": name,
+        }
+        self._save_users(users)
+        return self._row_to_user(username, users[username])
 
     # ── Sessions ───────────────────────────────────────────────────
 

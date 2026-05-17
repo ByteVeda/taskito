@@ -37,11 +37,13 @@ def _serialize_session(session: Any) -> dict[str, Any]:
     }
 
 
-def handle_auth_status(queue: Queue, _qs: dict) -> dict[str, bool]:
+def handle_auth_status(queue: Queue, _qs: dict) -> dict[str, Any]:
     """Public endpoint: tells the SPA whether setup is required.
 
     Returns ``{setup_required: bool}``. The SPA uses this on cold-load to
-    decide between showing the setup page and the login page.
+    decide between showing the setup page and the login page. Provider
+    listing is fetched separately via ``GET /api/auth/providers`` so this
+    endpoint stays free of any OAuth dependency.
     """
     return {"setup_required": AuthStore(queue).count_users() == 0}
 
