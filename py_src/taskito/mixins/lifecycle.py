@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import taskito
 from taskito._taskito import PyQueue, PyTaskConfig
 from taskito.context import _set_queue_ref
+from taskito.dashboard.overrides_store import OverridesStore
 from taskito.events import EventType
 from taskito.log_config import configure as configure_logging
 from taskito.log_config import restore_asyncio_pipe_noise, silence_asyncio_pipe_noise
@@ -231,7 +232,24 @@ class QueueLifecycleMixin:
         )
 
         try:
-            queue_configs_json = json.dumps(self._queue_configs) if self._queue_configs else None
+            overrides = OverridesStore(self)  # type: ignore[arg-type]
+            # Mutate the in-memory PyTaskConfig list so the Rust scheduler
+            # sees the override values; merge queue-level overrides into
+            # the JSON blob passed to run_worker. Paused tasks/queues get
+            # their pause state propagated to the existing paused_queues
+            # mechanism for tasks-by-queue, but per-task pause is left to
+            # the application-level guard in enqueue (out of scope here).
+            paused_tasks = overrides.apply_task_overrides(self._task_configs)
+            if paused_tasks:
+                logger.info("Paused task overrides in effect: %s", paused_tasks)
+            merged_queue_configs = overrides.apply_queue_overrides(self._queue_configs)
+            for queue_name, slot in merged_queue_configs.items():
+                if slot.get("paused"):
+                    try:
+                        self.pause(queue_name)  # type: ignore[attr-defined]
+                    except Exception:
+                        logger.exception("Failed to apply paused state for queue %s", queue_name)
+            queue_configs_json = json.dumps(merged_queue_configs) if merged_queue_configs else None
             self._inner.run_worker(
                 task_registry=self._task_registry,
                 task_configs=self._task_configs,

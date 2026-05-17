@@ -43,6 +43,7 @@ from taskito.dashboard.routes import (
     POST_PARAM_ROUTES,
     POST_ROUTES,
     PUBLIC_PATHS,
+    PUT_PARAM2_ROUTES,
     PUT_PARAM_ROUTES,
     is_csrf_exempt,
     is_state_changing_method,
@@ -290,6 +291,17 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                         return
                     self._dispatch_with_handler(
                         param_handler, lambda h, m=m, body=body: h(queue, body, m.group(1))
+                    )
+                    return
+            for pattern, param_handler in PUT_PARAM2_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    body = self._read_json_body()
+                    if body is None:
+                        return
+                    self._dispatch_with_handler(
+                        param_handler,
+                        lambda h, m=m, body=body: h(queue, body, (m.group(1), m.group(2))),
                     )
                     return
             self._json_response({"error": "Not found"}, status=404)
