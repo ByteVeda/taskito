@@ -1,10 +1,55 @@
 ---
 title: Dashboard REST API
-description: "JSON endpoints for stats, jobs, dead letters, metrics, logs, infrastructure, observability."
+description: "JSON endpoints for stats, jobs, dead letters, metrics, logs, infrastructure, observability, webhooks, and runtime overrides."
 ---
 
-The dashboard exposes a JSON API you can use independently of the UI. All
-endpoints return `application/json` with `Access-Control-Allow-Origin: *`.
+import { Callout } from "fumadocs-ui/components/callout";
+
+The dashboard exposes a JSON API you can use independently of the UI.
+All endpoints return `application/json` and live under the same origin
+as the dashboard itself.
+
+<Callout type="warn" title="All API routes are auth-gated">
+  Every `/api/*` endpoint except the public set (`/api/auth/status`,
+  `/api/auth/login`, `/api/auth/setup`) requires a valid session cookie
+  obtained from `POST /api/auth/login`. State-changing requests
+  (POST/PUT/DELETE) additionally require a CSRF header. See
+  [Dashboard Authentication](/guides/observability/dashboard-auth) for
+  the login flow and headless usage examples.
+</Callout>
+
+## Auth
+
+### `GET /api/auth/status`
+
+Public. Returns whether the dashboard needs first-run setup.
+
+```json
+{ "setup_required": false }
+```
+
+### `POST /api/auth/setup`
+
+Public, but locks itself after the first user is created. Body:
+`{"username": "...", "password": "..."}`. Returns the new user.
+
+### `POST /api/auth/login`
+
+Body: `{"username": "...", "password": "..."}`. Sets the
+`taskito_session` (HttpOnly) and `taskito_csrf` cookies on success.
+Returns `400 invalid_credentials` on failure.
+
+### `POST /api/auth/logout`
+
+Invalidates the current session and clears cookies.
+
+### `GET /api/auth/whoami`
+
+Returns the current user, CSRF token, and expiry. `401` when no session.
+
+### `POST /api/auth/change-password`
+
+Body: `{"old_password": "...", "new_password": "..."}`.
 
 ## Stats
 
@@ -25,13 +70,8 @@ Queue statistics snapshot.
 
 ### `GET /api/stats/queues`
 
-Per-queue statistics. Pass `?queue=name` for a single queue, or omit for all
-queues.
-
-```bash
-curl http://localhost:8080/api/stats/queues
-curl http://localhost:8080/api/stats/queues?queue=emails
-```
+Per-queue statistics. Pass `?queue=name` for a single queue, or omit
+for all queues.
 
 ## Jobs
 
@@ -50,10 +90,6 @@ Paginated list of jobs with filtering.
 | `created_before` | `int` | — | Unix ms timestamp |
 | `limit` | `int` | `20` | Page size |
 | `offset` | `int` | `0` | Pagination offset |
-
-```bash
-curl http://localhost:8080/api/jobs?status=running&limit=10
-```
 
 ### `GET /api/jobs/{id}`
 
@@ -79,40 +115,262 @@ Dependency graph for a job (nodes and edges).
 
 Cancel a pending job.
 
-```json
-{ "cancelled": true }
-```
-
 ### `POST /api/jobs/{id}/replay`
 
 Replay a completed or failed job with the same payload.
-
-```json
-{ "replay_job_id": "01H5K7Y..." }
-```
 
 ## Dead letters
 
 ### `GET /api/dead-letters`
 
-Paginated list of dead letter entries. Supports `limit` and `offset`
-parameters.
+Paginated list of dead letter entries. Supports `limit` and `offset`.
 
 ### `POST /api/dead-letters/{id}/retry`
 
 Re-enqueue a dead letter job.
 
-```json
-{ "new_job_id": "01H5K7Y..." }
-```
-
 ### `POST /api/dead-letters/purge`
 
 Purge all dead letters.
 
+## Webhooks
+
+Full guide: [Events & Webhooks](/guides/extensibility/events-webhooks).
+
+### `GET /api/webhooks`
+
+List all subscriptions. The `secret` field is **never** returned — only
+a `has_secret` boolean. The secret is only included on the response to
+`POST /api/webhooks` (create) and `POST /api/webhooks/{id}/rotate-secret`,
+exactly once.
+
 ```json
-{ "purged": 42 }
+[
+  {
+    "id": "f00563cbbb1a4200bb461f83d1db47bf",
+    "url": "https://hooks.example.com/ops-failures",
+    "events": ["job.failed", "job.dead"],
+    "task_filter": null,
+    "headers": {},
+    "has_secret": true,
+    "max_retries": 5,
+    "timeout_seconds": 8.0,
+    "retry_backoff": 2.0,
+    "enabled": true,
+    "description": "Page ops on permanent failures",
+    "created_at": 1716000000,
+    "updated_at": 1716000000
+  }
+]
 ```
+
+### `POST /api/webhooks`
+
+Create a subscription.
+
+| Field | Type | Description |
+|---|---|---|
+| `url` | `string` | Required. http/https URL, SSRF-vetted |
+| `events` | `string[]` | Event types (`job.failed`, etc.). Empty/missing → all |
+| `task_filter` | `string[] \| null` | Restrict to specific task names. `null` → all tasks |
+| `headers` | `object` | Extra HTTP headers |
+| `secret` | `string \| null` | Explicit signing key |
+| `generate_secret` | `bool` | If true, server generates a fresh secret |
+| `max_retries` | `int` | Default 3 |
+| `timeout_seconds` | `float` | Default 10.0 |
+| `retry_backoff` | `float` | Default 2.0 |
+| `description` | `string \| null` | Free-form label |
+
+Response includes the secret **once** if one was set or generated.
+
+### `GET /api/webhooks/{id}`
+
+Single subscription (secret redacted).
+
+### `PUT /api/webhooks/{id}`
+
+Partial update. Only fields you include are touched. Same field set as
+create.
+
+### `DELETE /api/webhooks/{id}`
+
+Delete the subscription.
+
+### `POST /api/webhooks/{id}/test`
+
+Synchronously POST a synthetic `test.ping` event and return the
+result inline.
+
+```json
+{ "status": 200, "delivered": true }
+```
+
+### `POST /api/webhooks/{id}/rotate-secret`
+
+Generate a fresh HMAC secret. Returns `{id, secret}` — the only time
+the new value is visible.
+
+### `GET /api/event-types`
+
+Sorted list of every valid event type value. Used by the dashboard's
+event multi-select.
+
+```json
+["job.cancelled", "job.completed", "job.dead", ...]
+```
+
+## Webhook deliveries
+
+### `GET /api/webhooks/{id}/deliveries`
+
+Persistent log of attempts for the subscription. Supports filters:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `status` | `delivered \| failed \| dead \| pending` | all | Filter by outcome |
+| `event` | `string` | all | Filter by event type |
+| `limit` | `int` | `50` | Page size (max 200) |
+| `offset` | `int` | `0` | Pagination offset |
+
+```json
+{
+  "items": [
+    {
+      "id": "01H...",
+      "subscription_id": "f00563cb...",
+      "event": "job.failed",
+      "payload": { "job_id": "...", "task_name": "...", "error": "..." },
+      "task_name": "myapp.tasks.process_image",
+      "job_id": "01H...",
+      "status": "dead",
+      "attempts": 3,
+      "response_code": 500,
+      "response_body": "Internal Server Error",
+      "latency_ms": 30000,
+      "error": null,
+      "created_at": 1716000000000,
+      "completed_at": 1716000030000
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### `GET /api/webhooks/{id}/deliveries/{delivery_id}`
+
+Single delivery record.
+
+### `POST /api/webhooks/{id}/deliveries/{delivery_id}/replay`
+
+Re-fire the stored payload synchronously. Records the outcome as a
+fresh delivery on top of the original (audit trail preserved).
+
+```json
+{ "replayed_of": "01H...", "status": 200, "delivered": true }
+```
+
+## Tasks and overrides
+
+Full guide: [Task & Queue Overrides](/guides/observability/task-overrides).
+
+### `GET /api/tasks`
+
+List every registered task with decorator defaults, override, and
+effective values.
+
+```json
+[
+  {
+    "name": "myapp.tasks.send_email",
+    "queue": "default",
+    "defaults": {
+      "max_retries": 3,
+      "retry_backoff": 1.0,
+      "timeout": 300,
+      "priority": 0,
+      "rate_limit": null,
+      "max_concurrent": null
+    },
+    "override": { "rate_limit": "200/m", "max_retries": 10 },
+    "effective": {
+      "max_retries": 10,
+      "retry_backoff": 1.0,
+      "timeout": 300,
+      "priority": 0,
+      "rate_limit": "200/m",
+      "max_concurrent": null
+    },
+    "paused": false
+  }
+]
+```
+
+### `GET /api/tasks/{name}/override`
+
+Single task's override row. `404` if none set.
+
+### `PUT /api/tasks/{name}/override`
+
+Upsert the override. Body keys must be in the allow-list:
+`rate_limit`, `max_concurrent`, `max_retries`, `retry_backoff`,
+`timeout`, `priority`, `paused`. Passing `null` for a field removes
+just that field. Unknown fields → `400`.
+
+### `DELETE /api/tasks/{name}/override`
+
+Remove the override entirely. Returns `{cleared: bool}`.
+
+### `GET /api/queues`
+
+List every queue mentioned by a task config with defaults, override,
+effective, and paused state.
+
+### `GET /api/queues/{name}/override` / `PUT` / `DELETE`
+
+Same shape as tasks. Allow-list for queue overrides:
+`rate_limit`, `max_concurrent`, `paused`. The `paused` flag also flips
+the live `paused_queues` table so it takes effect on running workers
+immediately.
+
+## Middleware
+
+### `GET /api/middleware`
+
+List every registered middleware (global + per-task) with its scopes.
+
+```json
+[
+  { "name": "sentry", "class_path": "myapp.middleware.SentryMiddleware", "scopes": [{"kind": "global"}] }
+]
+```
+
+### `GET /api/tasks/{name}/middleware`
+
+The middleware chain that fires for a task, with each entry's
+`disabled` and `effective` flags.
+
+```json
+{
+  "task": "myapp.tasks.send_email",
+  "middleware": [
+    { "name": "demo.logging", "class_path": "...", "disabled": false, "effective": true },
+    { "name": "demo.metrics", "class_path": "...", "disabled": true,  "effective": false }
+  ]
+}
+```
+
+### `PUT /api/tasks/{name}/middleware/{mw_name}`
+
+Body: `{"enabled": bool}`. Returns `{task, disabled: [...]}` reflecting
+the new disable list. `404` if the middleware name isn't registered on
+the task — typos can't write no-op disables.
+
+### `DELETE /api/tasks/{name}/middleware`
+
+Clear all middleware disables for a task — every middleware fires
+again.
 
 ## Metrics
 
@@ -128,12 +386,6 @@ Per-task execution metrics.
 ### `GET /api/metrics/timeseries`
 
 Time-bucketed metrics for charts.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `task` | `string` | all | Filter by task name |
-| `since` | `int` | `3600` | Lookback window in seconds |
-| `bucket` | `int` | `60` | Bucket size in seconds |
 
 ## Logs
 
@@ -166,13 +418,9 @@ Worker resource health and pool status.
 
 List paused queue names.
 
-### `POST /api/queues/{name}/pause`
+### `POST /api/queues/{name}/pause` / `POST /api/queues/{name}/resume`
 
-Pause a queue (jobs stop being dequeued).
-
-### `POST /api/queues/{name}/resume`
-
-Resume a paused queue.
+Pause or resume a queue. Takes effect immediately.
 
 ## Observability
 
@@ -190,45 +438,57 @@ KEDA-compatible autoscaler payload. Pass `?queue=name` for a specific queue.
 
 ### `GET /health`
 
-Liveness check. Always returns `{"status": "ok"}`.
+Public liveness check. Always returns `{"status": "ok"}`.
 
 ### `GET /readiness`
 
-Readiness check with storage, worker, and resource health.
+Public readiness check with storage, worker, and resource health.
 
 ### `GET /metrics`
 
-Prometheus metrics endpoint (requires `prometheus-client` package).
+Public Prometheus metrics endpoint (requires `prometheus-client` package).
+
+## Settings
+
+### `GET /api/settings`
+
+Dump of every dashboard setting key/value.
+
+### `GET /api/settings/{key}` / `PUT` / `DELETE`
+
+Read, set, or delete a single dashboard setting. Used by the dashboard
+itself for branding, external links, and integration URLs — but you
+can write your own keys here too. Note that this is the same store
+where authentication, webhook subscriptions, delivery logs, and
+runtime overrides live, all under namespaced prefixes (`auth:*`,
+`webhooks:*`, `overrides:*`, etc.).
 
 ## Using the API programmatically
 
 ```python
 import requests
 
-# Health check script
-stats = requests.get("http://localhost:8080/api/stats").json()
+s = requests.Session()
+s.post(
+    "http://localhost:8080/api/auth/login",
+    json={"username": "admin", "password": "..."},
+)
+csrf = s.cookies.get("taskito_csrf")
+s.headers["X-CSRF-Token"] = csrf
 
+# Health check script.
+stats = s.get("http://localhost:8080/api/stats").json()
 if stats["dead"] > 0:
     print(f"WARNING: {stats['dead']} dead letter(s)")
 
-if stats["running"] > 100:
-    print(f"WARNING: {stats['running']} jobs running, possible backlog")
-```
+# Tune a task's rate limit during an incident.
+s.put(
+    "http://localhost:8080/api/tasks/myapp.tasks.send_email/override",
+    json={"rate_limit": "30/m"},
+)
 
-```python
-# Pause a queue during deployment
-requests.post("http://localhost:8080/api/queues/default/pause")
-
+# Pause a queue during deployment.
+s.post("http://localhost:8080/api/queues/default/pause")
 # ... deploy ...
-
-# Resume after deployment
-requests.post("http://localhost:8080/api/queues/default/resume")
-```
-
-```python
-# Retry all dead letters
-dead = requests.get("http://localhost:8080/api/dead-letters?limit=100").json()
-for entry in dead:
-    requests.post(f"http://localhost:8080/api/dead-letters/{entry['id']}/retry")
-    print(f"Retried {entry['task_name']}")
+s.post("http://localhost:8080/api/queues/default/resume")
 ```

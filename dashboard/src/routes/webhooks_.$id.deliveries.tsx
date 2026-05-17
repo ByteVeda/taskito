@@ -15,7 +15,7 @@ import {
 import type { DeliveryStatus } from "@/features/webhooks";
 import { DeliveryListTable, useDeliveries, useWebhooks } from "@/features/webhooks";
 
-export const Route = createFileRoute("/webhooks/$id/deliveries")({
+export const Route = createFileRoute("/webhooks_/$id/deliveries")({
   component: DeliveriesPage,
 });
 

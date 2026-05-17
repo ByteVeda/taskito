@@ -196,6 +196,28 @@ def test_put_task_middleware_rejects_bad_body(
     assert exc_info.value.code == 400
 
 
+def test_put_task_middleware_handles_url_encoded_name(
+    dashboard: tuple[AuthedClient, Queue],
+) -> None:
+    """Browser clients ``encodeURIComponent`` task names containing
+    ``<``, ``>``, ``/`` etc. The server has to decode the captured
+    group before looking up the disable list — otherwise the toggle
+    silently no-ops because the disable is keyed by one name but the
+    chain lookup uses another. Regression test for that path."""
+    import urllib.parse
+
+    client, queue = dashboard
+    name = next(c.name for c in queue._task_configs if c.name.endswith("alpha"))
+    encoded = urllib.parse.quote(name, safe="")
+    assert "%" in encoded, "test setup: pick a task whose qualname needs encoding"
+    result = client.put(f"/api/tasks/{encoded}/middleware/test.other", {"enabled": False})
+    assert "test.other" in result["disabled"]
+    # The chain lookup uses the decoded name, so it must reflect the
+    # disable that was written by the encoded URL.
+    chain_names = {mw.name for mw in queue._get_middleware_chain(name)}
+    assert "test.other" not in chain_names
+
+
 def test_delete_task_middleware_clears_all(
     dashboard: tuple[AuthedClient, Queue],
 ) -> None:

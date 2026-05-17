@@ -47,6 +47,7 @@ encryption = ["cryptography"]
 flask = ["flask>=3.0"]
 aws = ["boto3>=1.34"]
 gcs = ["google-cloud-storage>=2.10"]
+docs = ["playwright>=1.59"]
 
 [tool.maturin]
 manifest-path = "crates/taskito-python/Cargo.toml"
@@ -148,3 +149,4 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "click"
 ignore_missing_imports = true
+
