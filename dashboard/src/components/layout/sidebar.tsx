@@ -59,6 +59,7 @@ const NAV: NavGroup[] = [
   {
     title: "Configuration",
     items: [
+      { to: "/tasks", label: "Tasks", icon: ListTree },
       { to: "/webhooks", label: "Webhooks", icon: WebhookIcon },
       { to: "/settings", label: "Settings", icon: Cog },
     ],

@@ -59,3 +59,35 @@ export interface RotateSecretResult {
   id: string;
   secret: string;
 }
+
+export type DeliveryStatus = "delivered" | "failed" | "dead" | "pending";
+
+export interface WebhookDelivery {
+  id: string;
+  subscription_id: string;
+  event: string;
+  payload: Record<string, unknown>;
+  task_name: string | null;
+  job_id: string | null;
+  status: DeliveryStatus;
+  attempts: number;
+  response_code: number | null;
+  response_body: string | null;
+  latency_ms: number | null;
+  error: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
+export interface DeliveryListPage {
+  items: WebhookDelivery[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ReplayDeliveryResult {
+  replayed_of: string;
+  status: number | null;
+  delivered: boolean;
+}

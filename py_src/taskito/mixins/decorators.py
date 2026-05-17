@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from taskito._taskito import PyTaskConfig
 from taskito.async_support.helpers import run_maybe_async
 from taskito.context import _clear_context, current_job
+from taskito.dashboard.middleware_store import MiddlewareDisableStore
 from taskito.events import EventType
 from taskito.exceptions import TaskCancelledError
 from taskito.inject import Inject, _InjectAlias
@@ -111,9 +112,18 @@ class QueueDecoratorMixin:
     _apply_dispatch_predicate: Callable[..., None]
 
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
-        """Get the combined global + per-task middleware list."""
+        """Get the combined global + per-task middleware list, minus any
+        middleware the operator has disabled for this task from the dashboard."""
         per_task = self._task_middleware.get(task_name, [])
-        return self._global_middleware + per_task
+        chain = self._global_middleware + per_task
+        try:
+            disabled = MiddlewareDisableStore(self).get_for(task_name)  # type: ignore[arg-type]
+        except Exception:  # pragma: no cover - storage read failure is non-fatal
+            disabled = []
+        if not disabled:
+            return chain
+        disabled_set = set(disabled)
+        return [mw for mw in chain if getattr(mw, "name", "") not in disabled_set]
 
     def _wrap_task(
         self, fn: Callable, task_name: str, soft_timeout: float | None = None

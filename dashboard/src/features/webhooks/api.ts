@@ -1,10 +1,14 @@
 import { api } from "@/lib/api-client";
 import type {
   CreateWebhookInput,
+  DeliveryListPage,
+  DeliveryStatus,
+  ReplayDeliveryResult,
   RotateSecretResult,
   TestWebhookResult,
   UpdateWebhookInput,
   Webhook,
+  WebhookDelivery,
 } from "./types";
 
 export function listWebhooks(signal?: AbortSignal): Promise<Webhook[]> {
@@ -37,4 +41,37 @@ export function testWebhook(id: string): Promise<TestWebhookResult> {
 
 export function listEventTypes(signal?: AbortSignal): Promise<string[]> {
   return api.get<string[]>("/api/event-types", { signal });
+}
+
+export function listDeliveries(
+  subscriptionId: string,
+  options: { status?: DeliveryStatus; limit?: number; offset?: number; signal?: AbortSignal } = {},
+): Promise<DeliveryListPage> {
+  return api.get<DeliveryListPage>(`/api/webhooks/${subscriptionId}/deliveries`, {
+    signal: options.signal,
+    params: {
+      status: options.status,
+      limit: options.limit,
+      offset: options.offset,
+    },
+  });
+}
+
+export function getDelivery(
+  subscriptionId: string,
+  deliveryId: string,
+  signal?: AbortSignal,
+): Promise<WebhookDelivery> {
+  return api.get<WebhookDelivery>(`/api/webhooks/${subscriptionId}/deliveries/${deliveryId}`, {
+    signal,
+  });
+}
+
+export function replayDelivery(
+  subscriptionId: string,
+  deliveryId: string,
+): Promise<ReplayDeliveryResult> {
+  return api.post<ReplayDeliveryResult>(
+    `/api/webhooks/${subscriptionId}/deliveries/${deliveryId}/replay`,
+  );
 }

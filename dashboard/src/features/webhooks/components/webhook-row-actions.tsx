@@ -1,4 +1,14 @@
-import { Eye, MoreHorizontal, Power, PowerOff, RotateCcw, Send, Trash2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import {
+  Eye,
+  History,
+  MoreHorizontal,
+  Power,
+  PowerOff,
+  RotateCcw,
+  Send,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import {
   Button,
@@ -56,7 +66,16 @@ export function WebhookRowActions({ webhook }: Props) {
             <MoreHorizontal className="size-4" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem asChild>
+            <Link
+              to="/webhooks/$id/deliveries"
+              params={{ id: webhook.id }}
+              className="flex w-full cursor-default items-center gap-2"
+            >
+              <History aria-hidden /> View deliveries
+            </Link>
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => test.mutate(webhook.id)}
             disabled={test.isPending || !webhook.enabled}
