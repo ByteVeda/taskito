@@ -88,12 +88,15 @@ class EncryptedSerializer:
                 f"key must be 16, 24, or 32 bytes for AES-128/192/256, got {len(key)} bytes"
             )
 
+        from cryptography.exceptions import InvalidTag
         from cryptography.hazmat.primitives.ciphers.aead import (
             AESGCM,
         )
 
         self._inner = inner
         self._aesgcm = AESGCM(key)
+        # Cache the exception class so ``loads`` doesn't re-import per call.
+        self._invalid_tag = InvalidTag
 
     def dumps(self, obj: Any) -> bytes:
         import os
@@ -108,6 +111,9 @@ class EncryptedSerializer:
         nonce, ciphertext = data[:12], data[12:]
         try:
             plaintext = self._aesgcm.decrypt(nonce, ciphertext, None)
-        except Exception as exc:
-            raise ValueError(f"Decryption failed: {exc}") from exc
+        except self._invalid_tag as exc:
+            # Wrap so callers don't need to import cryptography.exceptions
+            # to handle decryption failures. The original ``InvalidTag`` is
+            # preserved in ``__cause__`` for debugging.
+            raise ValueError("Decryption failed: invalid authentication tag") from exc
         return self._inner.loads(plaintext)
