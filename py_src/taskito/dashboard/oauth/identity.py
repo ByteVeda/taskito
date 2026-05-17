@@ -28,6 +28,10 @@ class AllowlistDenied(OAuthError):
     """Raised when a verified identity is rejected by a configured allowlist."""
 
 
+class ProviderNotConfigured(OAuthError):
+    """Raised when a request references an OAuth slot that is not registered."""
+
+
 @dataclass(frozen=True)
 class ProviderIdentity:
     """Normalised identity returned by every provider after a successful flow.

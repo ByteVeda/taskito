@@ -22,6 +22,16 @@ from taskito.dashboard.auth import (
     bootstrap_admin_from_env,
 )
 from taskito.dashboard.errors import _BadRequest, _NotFound
+from taskito.dashboard.handlers.oauth import (
+    OAuthRedirect,
+    handle_providers,
+)
+from taskito.dashboard.handlers.oauth import (
+    handle_callback as handle_oauth_callback,
+)
+from taskito.dashboard.handlers.oauth import (
+    handle_start as handle_oauth_start,
+)
 from taskito.dashboard.request_context import (
     CSRF_COOKIE,
     SESSION_COOKIE,
@@ -42,10 +52,10 @@ from taskito.dashboard.routes import (
     POST_PARAM2_ROUTES,
     POST_PARAM_ROUTES,
     POST_ROUTES,
-    PUBLIC_PATHS,
     PUT_PARAM2_ROUTES,
     PUT_PARAM_ROUTES,
     is_csrf_exempt,
+    is_public_path,
     is_state_changing_method,
 )
 from taskito.dashboard.static import (
@@ -59,6 +69,7 @@ from taskito.health import check_health, check_readiness
 
 if TYPE_CHECKING:
     from taskito.app import Queue
+    from taskito.dashboard.oauth.flow import OAuthFlow
 
 
 logger = logging.getLogger("taskito.dashboard")
@@ -80,12 +91,27 @@ def _safe_path(path: str) -> str:
     return path.translate(_LOG_UNSAFE_CHARS)[:_LOG_PATH_MAX]
 
 
+def _session_cookies(session: Any) -> tuple[str, ...]:
+    """Build the standard ``Set-Cookie`` headers for a freshly-created session.
+
+    Used by both password login and OAuth callback so the cookie shape
+    stays in lockstep across login methods.
+    """
+    return (
+        f"{SESSION_COOKIE}={session.token}; HttpOnly; SameSite=Strict; Path=/; "
+        f"Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
+        f"{CSRF_COOKIE}={session.csrf_token}; SameSite=Strict; Path=/; "
+        f"Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
+    )
+
+
 def serve_dashboard(
     queue: Queue,
     host: str = "127.0.0.1",
     port: int = 8080,
     *,
     static_assets: StaticAssets | None = None,
+    oauth_flow: OAuthFlow | None = None,
 ) -> None:
     """Start the dashboard HTTP server (blocking).
 
@@ -96,9 +122,14 @@ def serve_dashboard(
         static_assets: Override the default SPA asset source. Mainly a
             test seam; downstream embedders can also use it to ship a
             customised dashboard bundle from a different location.
+        oauth_flow: Configured :class:`OAuthFlow` to enable social login.
+            When unset, OAuth endpoints respond 404 and the providers list
+            is empty.
     """
     bootstrap_admin_from_env(queue)
-    handler = _make_handler(queue, static_assets=static_assets)
+    if oauth_flow is None:
+        oauth_flow = _build_oauth_flow_from_env(queue)
+    handler = _make_handler(queue, static_assets=static_assets, oauth_flow=oauth_flow)
     server = ThreadingHTTPServer((host, port), handler)
     print(f"taskito dashboard → http://{host}:{port}")
     print("Press Ctrl+C to stop")
@@ -111,7 +142,31 @@ def serve_dashboard(
         server.server_close()
 
 
-def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) -> type:
+def _build_oauth_flow_from_env(queue: Queue) -> OAuthFlow | None:
+    """Build :class:`OAuthFlow` from environment variables, or ``None``.
+
+    Failures in the env-var config are logged and treated as "OAuth not
+    configured" — the dashboard still starts with password auth only.
+    """
+    try:
+        from taskito.dashboard.oauth.config import from_env as oauth_from_env
+        from taskito.dashboard.oauth.flow import OAuthFlow
+
+        config = oauth_from_env()
+        if config is None or not config.is_enabled:
+            return None
+        return OAuthFlow(queue, config)
+    except Exception:
+        logger.exception("OAuth env-var configuration is invalid; OAuth disabled")
+        return None
+
+
+def _make_handler(
+    queue: Queue,
+    *,
+    static_assets: StaticAssets | None = None,
+    oauth_flow: OAuthFlow | None = None,
+) -> type:
     """Create a request handler class bound to the given queue."""
     assets = static_assets if static_assets is not None else _get_default_assets()
 
@@ -167,6 +222,19 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
 
             ctx, denied = self._authorize(path, "GET")
             if denied:
+                return
+
+            # ── OAuth flow paths (public, redirect-emitting) ────────
+            if path == "/api/auth/providers":
+                self._dispatch_with_handler(handle_providers, lambda h: h(queue, qs, oauth_flow))
+                return
+            if path.startswith("/api/auth/oauth/start/"):
+                slot = unquote(path[len("/api/auth/oauth/start/") :])
+                self._dispatch_oauth_redirect(handle_oauth_start, queue, qs, slot, oauth_flow)
+                return
+            if path.startswith("/api/auth/oauth/callback/"):
+                slot = unquote(path[len("/api/auth/oauth/callback/") :])
+                self._dispatch_oauth_redirect(handle_oauth_callback, queue, qs, slot, oauth_flow)
                 return
 
             if path in AUTH_CONTEXT_GET_PATHS:
@@ -336,13 +404,13 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
             # SPA can show the setup page.
             if (
                 path.startswith("/api/")
-                and path not in PUBLIC_PATHS
+                and not is_public_path(path)
                 and AuthStore(queue).count_users() == 0
             ):
                 self._json_response({"error": "setup_required"}, status=503)
                 return ctx, True
 
-            if path in PUBLIC_PATHS or not path.startswith("/api/"):
+            if is_public_path(path) or not path.startswith("/api/"):
                 # CSRF still applies to public state-changing routes that are
                 # NOT exempt — but login/setup are the only public POSTs and
                 # they're exempt.
@@ -422,6 +490,33 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
             if on_success is not None:
                 on_success(result)
             self._json_response(result)
+
+        def _dispatch_oauth_redirect(
+            self,
+            handler: Any,
+            queue: Any,
+            qs: dict[str, list[str]],
+            slot: str,
+            flow: OAuthFlow | None,
+        ) -> None:
+            try:
+                redirect: OAuthRedirect = handler(queue, qs, slot, flow)
+            except _BadRequest as e:
+                self._json_response({"error": e.message}, status=400)
+                return
+            except _NotFound as e:
+                self._json_response({"error": e.message}, status=404)
+                return
+            cookies: list[str] = []
+            if redirect.session is not None:
+                cookies = list(_session_cookies(redirect.session))
+            self.send_response(redirect.status)
+            self.send_header("Location", redirect.url)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            for cookie in cookies:
+                self.send_header("Set-Cookie", cookie)
+            self.end_headers()
 
         # ── Body / response helpers ─────────────────────────────────
 
