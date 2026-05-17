@@ -197,6 +197,141 @@ def test_bootstrap_admin_noop_without_env(queue: Queue, monkeypatch: pytest.Monk
     assert AuthStore(queue).count_users() == 0
 
 
+# ── OAuth users ────────────────────────────────────────────────────────
+
+
+def test_verify_password_rejects_oauth_sentinel_hash() -> None:
+    assert verify_password("anything", "oauth:google") is False
+    assert verify_password("anything", "oauth:okta") is False
+
+
+def test_get_or_create_oauth_user_creates_user_with_admin_when_table_empty(
+    queue: Queue,
+) -> None:
+    store = AuthStore(queue)
+    user = store.get_or_create_oauth_user(
+        slot="google",
+        subject="1184283742",
+        email="alice@acme.com",
+        name="Alice Example",
+        email_verified=True,
+    )
+    assert user.username == "google:1184283742"
+    assert user.role == "admin"
+    assert user.email == "alice@acme.com"
+    assert user.display_name == "Alice Example"
+    assert user.is_oauth is True
+
+
+def test_get_or_create_oauth_user_subsequent_user_is_viewer(queue: Queue) -> None:
+    store = AuthStore(queue)
+    store.get_or_create_oauth_user(
+        slot="google",
+        subject="111",
+        email="alice@acme.com",
+        name="Alice",
+        email_verified=True,
+    )
+    second = store.get_or_create_oauth_user(
+        slot="google",
+        subject="222",
+        email="bob@acme.com",
+        name="Bob",
+        email_verified=True,
+    )
+    assert second.role == "viewer"
+
+
+def test_get_or_create_oauth_user_admin_emails_take_precedence(queue: Queue) -> None:
+    store = AuthStore(queue)
+    # Pre-seed a password user so the table is not empty.
+    store.create_user("primary", "hunter2-secret")
+    listed = store.get_or_create_oauth_user(
+        slot="google",
+        subject="111",
+        email="alice@acme.com",
+        name="Alice",
+        email_verified=True,
+        admin_emails=("alice@acme.com",),
+    )
+    assert listed.role == "admin"
+
+    unlisted = store.get_or_create_oauth_user(
+        slot="google",
+        subject="222",
+        email="eve@evil.com",
+        name="Eve",
+        email_verified=True,
+        admin_emails=("alice@acme.com",),
+    )
+    assert unlisted.role == "viewer"
+
+
+def test_get_or_create_oauth_user_unverified_email_never_gets_admin(queue: Queue) -> None:
+    store = AuthStore(queue)
+    # Even on empty table, an unverified email cannot become admin.
+    user = store.get_or_create_oauth_user(
+        slot="github",
+        subject="42",
+        email="claimed@acme.com",
+        name=None,
+        email_verified=False,
+        admin_emails=("claimed@acme.com",),
+    )
+    assert user.role == "viewer"
+
+
+def test_get_or_create_oauth_user_email_match_is_case_insensitive(queue: Queue) -> None:
+    store = AuthStore(queue)
+    store.create_user("primary", "hunter2-secret")
+    user = store.get_or_create_oauth_user(
+        slot="google",
+        subject="123",
+        email="Alice@ACME.com",
+        name=None,
+        email_verified=True,
+        admin_emails=("alice@acme.com",),
+    )
+    assert user.role == "admin"
+
+
+def test_get_or_create_oauth_user_returning_user_refreshes_display_fields(
+    queue: Queue,
+) -> None:
+    store = AuthStore(queue)
+    first = store.get_or_create_oauth_user(
+        slot="google",
+        subject="555",
+        email="alice@acme.com",
+        name="Alice",
+        email_verified=True,
+    )
+    again = store.get_or_create_oauth_user(
+        slot="google",
+        subject="555",
+        email="alice-new@acme.com",
+        name="Alice Renamed",
+        email_verified=True,
+    )
+    assert again.username == first.username
+    assert again.email == "alice-new@acme.com"
+    assert again.display_name == "Alice Renamed"
+    # Role is not re-evaluated on subsequent logins.
+    assert again.role == first.role
+
+
+def test_oauth_users_namespace_by_slot(queue: Queue) -> None:
+    store = AuthStore(queue)
+    a = store.get_or_create_oauth_user(
+        slot="okta", subject="abc", email=None, name=None, email_verified=False
+    )
+    b = store.get_or_create_oauth_user(
+        slot="microsoft", subject="abc", email=None, name=None, email_verified=False
+    )
+    assert a.username != b.username
+    assert store.count_users() == 2
+
+
 # ── HTTP endpoints ─────────────────────────────────────────────────────
 
 
