@@ -5,14 +5,17 @@ Every provider satisfies :class:`OAuthProvider`. The split between
 ``check_allowlist`` (pure-data permission check) is deliberate so tests
 can drive either path in isolation.
 
-Tests stub the network boundary via the ``_fetch_token`` and HTTP
-session attributes on each provider.
+Providers depend on :class:`HttpClient`, a structural Protocol over
+the small subset of ``requests.Session`` they actually use (one ``get``
+method). Production code passes a ``requests.Session``; tests pass an
+in-memory stub. The Protocol keeps the provider layer framework-free
+and test-friendly without runtime ``cast`` calls at either boundary.
 """
 
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlencode
 
 import requests
@@ -33,6 +36,29 @@ if TYPE_CHECKING:
         GoogleConfig,
         OIDCConfig,
     )
+
+
+class HttpResponse(Protocol):
+    """Minimal response shape a provider consumes from its HTTP client."""
+
+    status_code: int
+    text: str
+
+    def json(self) -> Any: ...
+
+    def raise_for_status(self) -> None: ...
+
+
+class HttpClient(Protocol):
+    """Minimal HTTP client shape — ``requests.Session`` satisfies this."""
+
+    def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = ...,
+        timeout: float = ...,
+    ) -> HttpResponse: ...
 
 
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
@@ -71,7 +97,7 @@ class _OIDCProviderBase:
     discovery_url: str
     scope: str = "openid email profile"
 
-    def __init__(self, *, http: requests.Session | None = None) -> None:
+    def __init__(self, *, http: HttpClient | None = None) -> None:
         self._http = http or requests.Session()
         self._discovery: dict[str, Any] | None = None
         self._jwks: dict[str, Any] | None = None
@@ -158,7 +184,11 @@ class _OIDCProviderBase:
             raise IdentityFetchError("no id_token in token response")
 
         try:
-            key_set = KeySet.import_key_set(self._get_jwks())  # type: ignore[arg-type]
+            # joserfc's KeySet.import_key_set is typed as accepting its own
+            # KeySetSerialization TypedDict, but operationally it accepts any
+            # standard JWKS dict. Mypy 2.x widened the stub; 1.x still
+            # complains. The dual code suppresses both directions.
+            key_set = KeySet.import_key_set(self._get_jwks())  # type: ignore[arg-type, unused-ignore]
             decoded = jwt.decode(id_token, key_set)
             claims = decoded.claims
         except JoseError as e:
@@ -198,7 +228,7 @@ class GoogleProvider(_OIDCProviderBase):
     type = "google"
     discovery_url = GOOGLE_DISCOVERY_URL
 
-    def __init__(self, config: GoogleConfig, *, http: requests.Session | None = None) -> None:
+    def __init__(self, config: GoogleConfig, *, http: HttpClient | None = None) -> None:
         super().__init__(http=http)
         self.config = config
         self.label = config.label
@@ -228,7 +258,7 @@ class GoogleProvider(_OIDCProviderBase):
 class GenericOIDCProvider(_OIDCProviderBase):
     type = "oidc"
 
-    def __init__(self, config: OIDCConfig, *, http: requests.Session | None = None) -> None:
+    def __init__(self, config: OIDCConfig, *, http: HttpClient | None = None) -> None:
         super().__init__(http=http)
         self.config = config
         self.slot = config.slot
@@ -256,7 +286,7 @@ class GitHubProvider:
     type = "github"
     scope = "read:user user:email"
 
-    def __init__(self, config: GitHubConfig, *, http: requests.Session | None = None) -> None:
+    def __init__(self, config: GitHubConfig, *, http: HttpClient | None = None) -> None:
         self.config = config
         self.label = config.label
         self._http = http or requests.Session()

@@ -106,7 +106,7 @@ def _make_google_provider(
             client_secret="test-client-secret",
             allowed_domains=allowed_domains,
         ),
-        http=StubSession(routes),  # type: ignore[arg-type]
+        http=StubSession(routes),
     )
     return provider
 
@@ -138,7 +138,8 @@ def _make_id_token(
     if extra_claims:
         claims.update(extra_claims)
     header = {"alg": "RS256", "kid": key.kid}
-    return joserfc_jwt.encode(header, claims, key)
+    encoded: str = joserfc_jwt.encode(header, claims, key)
+    return encoded
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -429,7 +430,7 @@ def test_generic_oidc_uses_provided_discovery_url(rsa_key: RSAKey) -> None:
             discovery_url="https://acme.okta.com/.well-known/openid-configuration",
             label="Acme SSO",
         ),
-        http=StubSession(routes),  # type: ignore[arg-type]
+        http=StubSession(routes),
     )
     url = provider.authorization_url(
         state="s", nonce="n", code_challenge="c", redirect_uri="https://taskito.x/cb"
@@ -454,7 +455,7 @@ def _gh_provider(
             client_secret="gh-secret",
             allowed_orgs=allowed_orgs,
         ),
-        http=StubSession(routes or {}),  # type: ignore[arg-type]
+        http=StubSession(routes or {}),
     )
 
 
