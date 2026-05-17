@@ -6,6 +6,7 @@
     "notes",
     "dashboard",
     "dashboard-auth",
+    "dashboard-oauth",
     "task-overrides",
     "dashboard-api"
   ]

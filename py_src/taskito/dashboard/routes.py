@@ -87,11 +87,25 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
         "/api/auth/status",
         "/api/auth/login",
         "/api/auth/setup",
+        "/api/auth/providers",
         "/health",
         "/readiness",
         "/metrics",
     }
 )
+
+# Path prefixes that bypass auth — used by the OAuth flow whose paths
+# contain a provider slot in the URL (e.g. ``/api/auth/oauth/start/google``).
+PUBLIC_PATH_PREFIXES: tuple[str, ...] = (
+    "/api/auth/oauth/start/",
+    "/api/auth/oauth/callback/",
+)
+
+
+def is_public_path(path: str) -> bool:
+    """Whether ``path`` should bypass the session/CSRF gate."""
+    return path in PUBLIC_PATHS or any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
+
 
 # Paths handled directly by the server (live outside the regular dispatch
 # tables because they take a RequestContext as well as the queue).

@@ -23,6 +23,7 @@ from taskito.dashboard.oauth.identity import (
     OAuthError,
     OAuthProvider,
     ProviderIdentity,
+    ProviderNotConfigured,
     StateValidationError,
 )
 from taskito.dashboard.oauth.state_store import OAuthState, OAuthStateStore
@@ -40,5 +41,6 @@ __all__ = [
     "OAuthStateStore",
     "OIDCConfig",
     "ProviderIdentity",
+    "ProviderNotConfigured",
     "StateValidationError",
 ]
