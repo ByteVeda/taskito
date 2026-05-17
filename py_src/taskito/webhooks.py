@@ -71,7 +71,8 @@ class WebhookManager:
         snapshot = [self._subscription_to_runtime(s) for s in store.list_all()]
         with self._lock:
             self._webhooks = snapshot
-        self._ensure_thread()
+        if snapshot:
+            self._ensure_thread()
 
     @staticmethod
     def _subscription_to_runtime(sub: WebhookSubscription) -> dict[str, Any]:
