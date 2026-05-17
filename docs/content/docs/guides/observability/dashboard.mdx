@@ -1,15 +1,18 @@
 ---
 title: Web Dashboard
-description: "Zero-dependency built-in web UI for browsing jobs, metrics, workers, and managing the queue."
+description: "Zero-dependency built-in web UI for browsing jobs, configuring webhooks, tuning per-task runtime limits, and managing the queue."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 import { Tab, Tabs } from "fumadocs-ui/components/tabs";
 
 taskito ships with a built-in web dashboard for monitoring jobs, inspecting
-dead letters, and managing your task queue in real time. The dashboard is a
-single-page application served directly from the Python package — **zero
-extra dependencies required**.
+dead letters, configuring webhooks, tuning per-task runtime limits, and
+managing your task queue in real time. The dashboard is a single-page
+application served directly from the Python package — **zero extra
+dependencies required**.
+
+![Overview page with stats cards, throughput chart, and recent activity](/screenshots/dashboard/overview.png)
 
 ## Launching the dashboard
 
@@ -51,8 +54,8 @@ taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
 ```
 
 <Callout type="info" title="Running alongside the worker">
-  The dashboard reads directly from the same SQLite database as the worker.
-  You can run them side by side without any coordination:
+  The dashboard reads directly from the same database as the worker. You
+  can run them side by side without any coordination:
 
   ```bash
   # Terminal 1
@@ -63,172 +66,128 @@ taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
   ```
 </Callout>
 
-## Dashboard features
+<Callout type="warn" title="Authentication is required out of the box">
+  On a fresh database the dashboard refuses every API request with
+  ``503 setup_required`` until you create the first admin. See
+  [Authentication](/guides/observability/dashboard-auth) for the full
+  flow, including the env-var bootstrap path useful for managed
+  deployments.
+</Callout>
 
-The dashboard is a React + Vite + TypeScript SPA routed via TanStack Router,
-styled with Tailwind v4 and shadcn/ui, and shipped as hash-busted multi-file
-assets under `py_src/taskito/static/dashboard/`.
+## Pages
 
-### Design
+The dashboard is grouped by intent — Monitoring (what's happening),
+Infrastructure (where it runs), Reliability (when it goes wrong), and
+Configuration (how to change it):
 
-- **Dark and light mode** — Toggle between themes via the sun/moon button in the header. Preference is stored in `localStorage` and follows the system scheme by default.
-- **Auto-refresh** — Configurable refresh interval (2s, 5s, 10s, or off) via the header dropdown. All pages auto-refresh at the selected interval; TanStack Query handles caching and background revalidation.
-- **Command palette** — `⌘K` / `Ctrl+K` opens a cmdk palette for route navigation and common actions.
-- **Icons** — Lucide icons throughout for visual clarity.
-- **Toast notifications** — Every action shows a success or error toast via sonner. Optimistic mutations update the UI immediately and roll back on error.
-- **Destructive confirms** — Irreversible actions (purge, retry all) use a type-to-confirm dialog.
-- **Loading states** — Skeleton screens for tables and cards, error boundaries with retry.
-- **Responsive layout** — Sidebar navigation with grouped sections (Monitoring, Infrastructure, Advanced). The main content area scrolls independently.
+| Group | Page | What it does |
+|---|---|---|
+| Monitoring | **Overview** | Stats cards, throughput sparkline, queue-by-queue table |
+| Monitoring | **Jobs** | Filterable job listing (status, queue, task, metadata, error, date range) |
+| Monitoring | **Job Detail** | Full job info, error history, task logs, replay history, dependency DAG |
+| Monitoring | **Metrics** | Per-task performance (avg, P50, P95, P99) with timeseries chart |
+| Monitoring | **Logs** | Structured task execution logs with task/level filters |
+| Infrastructure | **Queues** | Per-queue stats, pause and resume controls |
+| Infrastructure | **Workers** | Worker cards with heartbeat status and queue assignments |
+| Infrastructure | **Resources** | Worker DI runtime status — health, scope, init duration |
+| Reliability | **Dead Letters** | Failed jobs that exhausted retries — retry or purge |
+| Reliability | **Circuit Breakers** | Automatic failure protection state, thresholds, cooldowns |
+| Reliability | **System** | Proxy reconstruction and interception strategy metrics |
+| Configuration | **Tasks** | Decorator defaults + runtime overrides per task ([guide](/guides/observability/task-overrides)) |
+| Configuration | **Webhooks** | HTTP event subscriptions with delivery history + replay ([guide](/guides/extensibility/events-webhooks)) |
+| Configuration | **Settings** | Dashboard branding, external links, integrations |
 
-### Pages
+The full REST API surface is documented at
+[Dashboard REST API](/guides/observability/dashboard-api).
 
-| Page | Description |
-|---|---|
-| **Overview** | Stats cards with status icons, throughput sparkline chart, recent jobs table |
-| **Jobs** | Filterable job listing (status, queue, task, metadata, error, date range) with pagination |
-| **Job Detail** | Full job info, error history, task logs, replay history, dependency DAG visualization |
-| **Metrics** | Per-task performance table (avg, P50, P95, P99) with timeseries chart and time range selector |
-| **Logs** | Structured task execution logs with task/level filters |
-| **Workers** | Worker cards with heartbeat status, queue assignments, and tags |
-| **Queues** | Per-queue stats (pending/running), pause and resume controls |
-| **Resources** | Worker DI runtime status — health, scope, init duration, pool stats, dependencies |
-| **Circuit Breakers** | Automatic failure protection state (closed/open/half_open), thresholds, cooldowns |
-| **Dead Letters** | Failed jobs that exhausted retries — retry individual entries or purge all |
-| **System** | Proxy reconstruction and interception strategy metrics |
+## Design
+
+The dashboard is a React 19 + Vite 8 + TypeScript SPA routed via TanStack
+Router, styled with Tailwind v4 and shadcn/ui, and shipped as
+hash-busted multi-file assets under `py_src/taskito/static/dashboard/`.
+
+- **Dark and light mode** — Toggle via the sun/moon button in the header.
+  Preference is stored in `localStorage` and follows the system scheme by
+  default.
+- **Auto-refresh** — Configurable interval (2s, 5s, 10s, or off) via the
+  header dropdown. TanStack Query handles caching and background
+  revalidation.
+- **Command palette** — `⌘K` / `Ctrl+K` opens a `cmdk` palette for route
+  navigation.
+- **Toast notifications** — Every action shows a success or error toast.
+  Optimistic mutations update the UI immediately and roll back on error.
+- **Destructive confirms** — Irreversible actions (purge, delete) use a
+  type-to-confirm dialog.
+- **Loading + error states** — Skeleton screens for tables and cards;
+  error boundaries with retry.
 
 <Callout type="info" title="Zero extra dependencies at runtime">
   The built SPA ships inside the Python wheel under
-  `py_src/taskito/static/dashboard/` and is served by the Python dashboard
-  process. No Node.js, no pnpm, no CDN at runtime — just `pip install
-  taskito`. Node.js and pnpm are only needed by contributors rebuilding the
-  dashboard source in `dashboard/`.
+  `py_src/taskito/static/dashboard/` and is served by the Python
+  dashboard process. No Node.js, no pnpm, no CDN at runtime — just
+  `pip install taskito`. Node.js and pnpm are only needed by
+  contributors rebuilding the dashboard source.
 </Callout>
 
-## Tutorial
+## Walkthrough
 
-This walkthrough covers every dashboard page and how to use it.
+### Sign in
 
-### Step 1: start the dashboard
+On the first visit you'll see the setup form. After you create the
+first admin, every subsequent visit shows the sign-in form.
 
-Start a worker and the dashboard in two terminals:
+![First-run setup form for the initial admin](/screenshots/dashboard/auth-setup.png)
 
-```bash
-# Terminal 1 — start the worker
-taskito worker --app myapp:queue
+See [Authentication](/guides/observability/dashboard-auth) for the env
+var-based bootstrap (`TASKITO_DASHBOARD_ADMIN_USER` /
+`TASKITO_DASHBOARD_ADMIN_PASSWORD`) and the CSRF model.
 
-# Terminal 2 — start the dashboard
-taskito dashboard --app myapp:queue
-```
+### Browse jobs and dig into one
 
-You should see:
+The **Jobs** page shows a filterable, paginated table. Filters live in
+the sidebar panel: status, queue, task name, metadata search, error
+text, date range. Click any row to open the detail view with the full
+job state, error history, task logs, replay history, and a dependency
+DAG for jobs with relationships.
 
-```
-taskito dashboard → http://127.0.0.1:8080
-Press Ctrl+C to stop
-```
+![Jobs page with filter panel and paginated list](/screenshots/dashboard/jobs.png)
 
-Open `http://localhost:8080` in your browser.
+### Configure webhooks
 
-### Step 2: Overview page
+The **Webhooks** page lists every HTTP endpoint subscribed to job
+events. Add new endpoints with the **+ New webhook** button. Each row
+has a dropdown menu — send a test event, enable/disable, rotate the
+signing secret, or view the delivery history. Full guide:
+[Events & Webhooks](/guides/extensibility/events-webhooks).
 
-The first page you see is the **Overview**. It shows:
+![Webhooks page with three subscriptions in different states](/screenshots/dashboard/webhooks-list.png)
 
-- **Stats cards** — Six cards at the top showing pending, running, completed, failed, dead, and cancelled job counts.
-- **Throughput chart** — A green sparkline showing jobs processed per second over the last 60 refresh intervals.
-- **Recent jobs table** — The 10 most recent jobs. Click any row to open its detail view.
+### Tune per-task limits
 
-The stats update automatically based on the refresh interval you select in
-the header (default: 5 seconds).
+The **Tasks** page lists every registered task with its decorator
+defaults and any active runtime override. Click **Edit** to open a
+side sheet with two tabs: **Overrides** (rate limit, concurrency,
+retries, timeout, priority, paused) and **Middleware** (toggle each
+middleware on or off for the task). Full guide:
+[Task & Queue Overrides](/guides/observability/task-overrides).
 
-### Step 3: browsing and filtering jobs
+![Tasks page with one task overridden in accent](/screenshots/dashboard/tasks-list.png)
 
-Click **Jobs** in the sidebar. This page shows:
+### Manage queues
 
-- **Stats grid** — Same six stat cards as the overview.
-- **Filter panel** — Status dropdown, queue, task, metadata, error text, created-after/before pickers.
-- **Results table** — Paginated list showing ID, task, queue, status, priority, progress, retries, and created time.
+The **Queues** page lists every queue mentioned by a registered task,
+showing pending/running counts and the current pause state. Pause and
+resume buttons take effect immediately on the running worker.
 
-Use the **Prev / Next** buttons at the bottom to paginate.
+![Queues page with per-queue controls](/screenshots/dashboard/queues.png)
 
-### Step 4: inspecting a job
+### Inspect workers
 
-Click any job row to open the **Job Detail** page. The detail card shows:
+The **Workers** page lists every registered worker with heartbeat
+status, the queues it consumes from, tags, and registration time. Stale
+workers (no heartbeat for 30s) automatically transition to "offline".
 
-- A colored top border matching the job status (green for complete, red for failed, etc.)
-- Full job ID, status badge, task name, queue, priority, progress bar, retries, timestamps
-- **Error** field (if the job failed) displayed in a red-highlighted box
-- Unique key and metadata (if set)
-
-**Actions:**
-
-- **Cancel Job** — Visible only for pending jobs. Sends a cancel request and shows a toast.
-- **Replay** — Re-enqueue the job with the same payload. Navigates to the new job's detail page.
-
-**Sections below the detail card:** Error History, Task Logs, Replay
-History, and a Dependency Graph visualization for jobs with dependencies.
-
-### Step 5: monitoring metrics
-
-Click **Metrics** in the sidebar. This page shows a time-range selector (1h
-/ 6h / 24h), a stacked bar chart of success/failure counts per time bucket,
-and a per-task table with avg / P50 / P95 / P99 / min / max latency.
-
-### Step 6: viewing logs
-
-Click **Logs** in the sidebar. Filter by task name or level. Each log entry
-shows time, level badge, task name, job ID, message, and structured extra
-data.
-
-### Step 7: workers
-
-Click **Workers**. Each active worker is displayed as a card showing the
-green dot for liveness, worker ID, queues consumed, last heartbeat,
-registration time, and tags.
-
-### Step 8: managing queues
-
-Click **Queues**. Per-queue table with pending/running counts, pause/resume
-buttons, and status badges.
-
-<Callout type="info" title="What pausing does">
-  Pausing a queue prevents the scheduler from dequeuing new jobs from it.
-  Jobs already running will complete normally. Enqueuing new jobs still
-  works — they'll be picked up when the queue is resumed.
-</Callout>
-
-### Step 9: resources
-
-Click **Resources**. Shows registered worker DI runtime entries (name,
-scope, health, init duration, recreations, dependencies, pool stats).
-
-### Step 10: circuit breakers
-
-Click **Circuit Breakers**. State badge (closed/open/half_open), failure
-count, threshold, window, cooldown.
-
-### Step 11: dead letter queue
-
-Click **Dead Letters**. Retry individual entries with the **Retry** button,
-or purge all with the type-to-confirm **Purge All** in the header.
-
-### Step 12: system internals
-
-Click **System**. Two tables: Proxy Reconstruction (per-handler metrics)
-and Interception (per-strategy metrics).
-
-### Step 13: switching themes
-
-Click the sun/moon icon in the top-right of the header.
-
-### Step 14: changing refresh rate
-
-Use the **Refresh** dropdown in the header — 2s, 5s, 10s, or off.
-
-<Callout type="info" title="REST API">
-  The dashboard also exposes a full JSON API. See the
-  [Dashboard REST API](/guides/observability/dashboard-api) reference
-  for all endpoints.
-</Callout>
+![Workers page showing a single active worker](/screenshots/dashboard/workers.png)
 
 ## Development
 
@@ -253,13 +212,23 @@ pnpm run build
   automatically from the version pinned in `dashboard/package.json`.
 </Callout>
 
-The build produces a static `index.html` plus hashed JS/CSS chunks under
-`py_src/taskito/static/dashboard/`. The built assets aren't committed —
-release tooling runs `pnpm -C dashboard build` before packaging so the
-wheel ships them.
+The build produces a static `index.html` plus hashed JS/CSS chunks
+under `py_src/taskito/static/dashboard/`. The built assets aren't
+committed — release tooling runs `pnpm -C dashboard build` before
+packaging so the wheel ships them.
 
-<Callout type="warn" title="Authentication">
-  The dashboard does not include authentication. If you expose it beyond
-  `localhost`, place it behind a reverse proxy with authentication (e.g.
-  nginx with basic auth, or an OAuth2 proxy).
-</Callout>
+### Regenerating screenshots
+
+Every dashboard screenshot in this documentation is produced by a
+reproducible script that seeds a fresh queue, walks the UI in headless
+Chrome via Playwright, and writes PNGs into `docs/public/screenshots/dashboard/`:
+
+```bash
+uv sync --extra docs                                       # one-time
+uv run python -m playwright install chromium               # one-time
+uv run python scripts/capture_docs_screenshots.py
+```
+
+Pass `--skip-capture` to start the seeded demo dashboard in a browser
+without running Playwright — useful when iterating on UI changes
+locally.

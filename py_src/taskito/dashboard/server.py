@@ -14,7 +14,7 @@ import json
 import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from taskito.dashboard.auth import (
     DEFAULT_SESSION_TTL_SECONDS,
@@ -181,17 +181,17 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
             for pattern, param_handler in GET_PARAM_ROUTES:
                 m = pattern.match(path)
                 if m:
-                    self._dispatch_with_handler(
-                        param_handler, lambda h, m=m: h(queue, qs, m.group(1))
-                    )
+                    g1 = unquote(m.group(1))
+                    self._dispatch_with_handler(param_handler, lambda h, g1=g1: h(queue, qs, g1))
                     return
 
             for pattern, param_handler in GET_PARAM2_ROUTES:
                 m = pattern.match(path)
                 if m:
+                    g1, g2 = unquote(m.group(1)), unquote(m.group(2))
                     self._dispatch_with_handler(
                         param_handler,
-                        lambda h, m=m: h(queue, qs, (m.group(1), m.group(2))),
+                        lambda h, g1=g1, g2=g2: h(queue, qs, (g1, g2)),
                     )
                     return
 
@@ -263,15 +263,17 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
             for pattern, param_handler in POST_PARAM_ROUTES:
                 m = pattern.match(path)
                 if m:
-                    self._dispatch_with_handler(param_handler, lambda h, m=m: h(queue, m.group(1)))
+                    g1 = unquote(m.group(1))
+                    self._dispatch_with_handler(param_handler, lambda h, g1=g1: h(queue, g1))
                     return
 
             for pattern, param_handler in POST_PARAM2_ROUTES:
                 m = pattern.match(path)
                 if m:
+                    g1, g2 = unquote(m.group(1)), unquote(m.group(2))
                     self._dispatch_with_handler(
                         param_handler,
-                        lambda h, m=m: h(queue, (m.group(1), m.group(2))),
+                        lambda h, g1=g1, g2=g2: h(queue, (g1, g2)),
                     )
                     return
 
@@ -289,8 +291,9 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                     body = self._read_json_body()
                     if body is None:
                         return
+                    g1 = unquote(m.group(1))
                     self._dispatch_with_handler(
-                        param_handler, lambda h, m=m, body=body: h(queue, body, m.group(1))
+                        param_handler, lambda h, g1=g1, body=body: h(queue, body, g1)
                     )
                     return
             for pattern, param_handler in PUT_PARAM2_ROUTES:
@@ -299,9 +302,10 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
                     body = self._read_json_body()
                     if body is None:
                         return
+                    g1, g2 = unquote(m.group(1)), unquote(m.group(2))
                     self._dispatch_with_handler(
                         param_handler,
-                        lambda h, m=m, body=body: h(queue, body, (m.group(1), m.group(2))),
+                        lambda h, g1=g1, g2=g2, body=body: h(queue, body, (g1, g2)),
                     )
                     return
             self._json_response({"error": "Not found"}, status=404)
@@ -315,7 +319,8 @@ def _make_handler(queue: Queue, *, static_assets: StaticAssets | None = None) ->
             for pattern, param_handler in DELETE_PARAM_ROUTES:
                 m = pattern.match(path)
                 if m:
-                    self._dispatch_with_handler(param_handler, lambda h, m=m: h(queue, m.group(1)))
+                    g1 = unquote(m.group(1))
+                    self._dispatch_with_handler(param_handler, lambda h, g1=g1: h(queue, g1))
                     return
             self._json_response({"error": "Not found"}, status=404)
 
