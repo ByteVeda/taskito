@@ -30,3 +30,18 @@ export interface WhoamiResponse {
   csrf_token: string;
   expires_at: number;
 }
+
+/** One entry in the providers listing response. */
+export interface AuthProvider {
+  /** Stable URL-safe identifier used in the callback path. */
+  slot: string;
+  /** Human-readable button label. */
+  label: string;
+  /** Provider type, drives which icon is rendered. */
+  type: "google" | "github" | "oidc";
+}
+
+export interface ProvidersResponse {
+  password_enabled: boolean;
+  providers: AuthProvider[];
+}

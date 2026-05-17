@@ -1,8 +1,30 @@
 import { api } from "@/lib/api-client";
-import type { AuthStatus, LoginResponse, SetupResponse, WhoamiResponse } from "./types";
+import type {
+  AuthStatus,
+  LoginResponse,
+  ProvidersResponse,
+  SetupResponse,
+  WhoamiResponse,
+} from "./types";
 
 export function fetchAuthStatus(signal?: AbortSignal): Promise<AuthStatus> {
   return api.get<AuthStatus>("/api/auth/status", { signal });
+}
+
+export function fetchProviders(signal?: AbortSignal): Promise<ProvidersResponse> {
+  return api.get<ProvidersResponse>("/api/auth/providers", { signal });
+}
+
+/** Browser URL the user is sent to when they click an OAuth provider button.
+ *
+ * The server's ``/api/auth/oauth/start/{slot}`` endpoint will mint state and
+ * 302 to the provider. We append ``next`` so the post-login callback can
+ * land the user back where they were trying to go.
+ */
+export function oauthStartUrl(slot: string, next?: string): string {
+  const base = `/api/auth/oauth/start/${encodeURIComponent(slot)}`;
+  if (!next) return base;
+  return `${base}?next=${encodeURIComponent(next)}`;
 }
 
 export function fetchWhoami(signal?: AbortSignal): Promise<WhoamiResponse> {
