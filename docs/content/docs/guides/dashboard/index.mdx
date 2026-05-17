@@ -1,5 +1,5 @@
 ---
-title: Web Dashboard
+title: Overview
 description: "Zero-dependency built-in web UI for browsing jobs, configuring webhooks, tuning per-task runtime limits, and managing the queue."
 ---
 
@@ -69,7 +69,7 @@ taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
 <Callout type="warn" title="Authentication is required out of the box">
   On a fresh database the dashboard refuses every API request with
   ``503 setup_required`` until you create the first admin. See
-  [Authentication](/guides/observability/dashboard-auth) for the full
+  [Authentication](/guides/dashboard/authentication) for the full
   flow, including the env-var bootstrap path useful for managed
   deployments.
 </Callout>
@@ -93,12 +93,12 @@ Configuration (how to change it):
 | Reliability | **Dead Letters** | Failed jobs that exhausted retries — retry or purge |
 | Reliability | **Circuit Breakers** | Automatic failure protection state, thresholds, cooldowns |
 | Reliability | **System** | Proxy reconstruction and interception strategy metrics |
-| Configuration | **Tasks** | Decorator defaults + runtime overrides per task ([guide](/guides/observability/task-overrides)) |
+| Configuration | **Tasks** | Decorator defaults + runtime overrides per task ([guide](/guides/dashboard/task-overrides)) |
 | Configuration | **Webhooks** | HTTP event subscriptions with delivery history + replay ([guide](/guides/extensibility/events-webhooks)) |
 | Configuration | **Settings** | Dashboard branding, external links, integrations |
 
 The full REST API surface is documented at
-[Dashboard REST API](/guides/observability/dashboard-api).
+[Dashboard REST API](/guides/dashboard/rest-api).
 
 ## Design
 
@@ -138,7 +138,7 @@ first admin, every subsequent visit shows the sign-in form.
 
 ![First-run setup form for the initial admin](/screenshots/dashboard/auth-setup.png)
 
-See [Authentication](/guides/observability/dashboard-auth) for the env
+See [Authentication](/guides/dashboard/authentication) for the env
 var-based bootstrap (`TASKITO_DASHBOARD_ADMIN_USER` /
 `TASKITO_DASHBOARD_ADMIN_PASSWORD`) and the CSRF model.
 
@@ -169,7 +169,7 @@ defaults and any active runtime override. Click **Edit** to open a
 side sheet with two tabs: **Overrides** (rate limit, concurrency,
 retries, timeout, priority, paused) and **Middleware** (toggle each
 middleware on or off for the task). Full guide:
-[Task & Queue Overrides](/guides/observability/task-overrides).
+[Task & Queue Overrides](/guides/dashboard/task-overrides).
 
 ![Tasks page with one task overridden in accent](/screenshots/dashboard/tasks-list.png)
 

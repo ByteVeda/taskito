@@ -1,5 +1,5 @@
 ---
-title: Dashboard REST API
+title: REST API
 description: "JSON endpoints for stats, jobs, dead letters, metrics, logs, infrastructure, observability, webhooks, and runtime overrides."
 ---
 
@@ -14,7 +14,7 @@ as the dashboard itself.
   `/api/auth/login`, `/api/auth/setup`) requires a valid session cookie
   obtained from `POST /api/auth/login`. State-changing requests
   (POST/PUT/DELETE) additionally require a CSRF header. See
-  [Dashboard Authentication](/guides/observability/dashboard-auth) for
+  [Dashboard Authentication](/guides/dashboard/authentication) for
   the login flow and headless usage examples.
 </Callout>
 
@@ -273,7 +273,7 @@ fresh delivery on top of the original (audit trail preserved).
 
 ## Tasks and overrides
 
-Full guide: [Task & Queue Overrides](/guides/observability/task-overrides).
+Full guide: [Task & Queue Overrides](/guides/dashboard/task-overrides).
 
 ### `GET /api/tasks`
 

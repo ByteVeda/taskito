@@ -1,13 +1,4 @@
 {
   "title": "Observability",
-  "pages": [
-    "monitoring",
-    "logging",
-    "notes",
-    "dashboard",
-    "dashboard-auth",
-    "dashboard-oauth",
-    "task-overrides",
-    "dashboard-api"
-  ]
+  "pages": ["monitoring", "logging", "notes"]
 }

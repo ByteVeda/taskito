@@ -1,5 +1,5 @@
 ---
-title: Dashboard SSO (OAuth & OIDC)
+title: SSO (OAuth & OIDC)
 description: "Sign in with Google, GitHub, or any OIDC provider. Per-domain / per-org allowlists, OAuth-only mode."
 ---
 
@@ -28,37 +28,33 @@ on; password login remains enabled unless you opt out explicitly.
 
 ## How it works
 
-```
-Browser           Dashboard            Provider
-   │                  │                    │
-   │ GET /login       │                    │
-   ├─────────────────►│                    │
-   │ GET /api/auth/providers               │
-   ├─────────────────►│                    │
-   │ {providers, password_enabled}         │
-   │◄─────────────────┤                    │
-   │ click "Continue with Google"          │
-   │ GET /api/auth/oauth/start/google      │
-   ├─────────────────►│ mint state+nonce+PKCE
-   │                  │ persist state row  │
-   │ 302 Location: <google authorize URL>  │
-   │◄─────────────────┤                    │
-   │ GET <provider>   ─────────────────────►
-   │ user consents on Google               │
-   │◄──────────────────────────────────────┤
-   │ GET /api/auth/oauth/callback/google?code=…&state=…
-   ├─────────────────►│ validate state     │
-   │                  │ POST /token        │
-   │                  ├───────────────────►│
-   │                  │ {id_token, access_token}
-   │                  │◄───────────────────┤
-   │                  │ verify JWKS / nonce / aud / iss
-   │                  │ check allowlist    │
-   │                  │ get_or_create User │
-   │                  │ create Session     │
-   │ 302 Location: /  + taskito_session cookie + taskito_csrf cookie
-   │◄─────────────────┤                    │
-```
+<Mermaid
+  chart={`sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant D as Dashboard
+    participant P as Provider
+
+    B->>D: GET /login
+    B->>D: GET /api/auth/providers
+    D-->>B: { providers, password_enabled }
+
+    Note over B: user clicks "Continue with Google"
+    B->>D: GET /api/auth/oauth/start/google
+    Note over D: mint state + nonce + PKCE<br/>persist state row (5-min TTL)
+    D-->>B: 302 to provider authorize URL
+
+    B->>P: GET /authorize?...
+    Note over P: user consents
+    P-->>B: 302 to /api/auth/oauth/callback/google?code=...&state=...
+
+    B->>D: GET /api/auth/oauth/callback/google
+    Note over D: validate + consume state (single-use)
+    D->>P: POST /token (code + code_verifier)
+    P-->>D: { id_token, access_token }
+    Note over D: verify JWKS / nonce / aud / iss<br/>enforce allowlist<br/>get_or_create User<br/>create Session
+    D-->>B: 302 to /<br/>Set-Cookie: taskito_session, taskito_csrf`}
+/>
 
 State is **single-use** and **time-bounded** (5-min default TTL). PKCE
 S256, OIDC nonce, ID-token signature (via the provider's JWKS),
