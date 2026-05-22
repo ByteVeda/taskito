@@ -3,6 +3,10 @@ name = "taskito-workflows"
 version = "0.12.3"
 edition = "2021"
 
+[features]
+default = []
+postgres = ["taskito-core/postgres", "diesel/postgres"]
+
 [dependencies]
 taskito-core = { path = "../taskito-core" }
 dagron-core = { workspace = true }
