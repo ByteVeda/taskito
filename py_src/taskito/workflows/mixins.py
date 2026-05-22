@@ -92,6 +92,7 @@ class QueueWorkflowMixin:
 
         # Register with the tracker when the workflow needs Python-side
         # orchestration (deferred nodes, conditions, gates, or continue mode).
+        compensation_map = getattr(workflow, "_compiled_compensation_map", {}) or {}
         tracker = getattr(self, "_workflow_tracker", None)
         needs_tracker = (
             bool(deferred_nodes)
@@ -99,6 +100,7 @@ class QueueWorkflowMixin:
             or bool(gate_configs)
             or bool(sub_workflow_refs)
             or on_failure != "fail_fast"
+            or bool(compensation_map)
         )
         if tracker is not None and needs_tracker:
             deferred_payloads = {
@@ -114,6 +116,8 @@ class QueueWorkflowMixin:
                 callable_conditions=callable_conditions,
                 gate_configs=gate_configs,
                 sub_workflow_refs=sub_workflow_refs,
+                compensation_map=compensation_map,
+                steps=getattr(workflow, "_steps", None),
             )
 
         return WorkflowRun(self, handle.run_id, handle.name)  # type: ignore[arg-type]
