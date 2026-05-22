@@ -220,6 +220,7 @@ class Queue(
         self._serializer: Serializer = serializer or CloudpickleSerializer()
         self._task_serializers: dict[str, Serializer] = {}
         self._task_idempotent: dict[str, bool] = {}
+        self._task_compensates: dict[str, str] = {}
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}

@@ -33,6 +33,13 @@ class EventType(enum.Enum):
     WORKFLOW_FAILED = "workflow.failed"
     WORKFLOW_CANCELLED = "workflow.cancelled"
     WORKFLOW_GATE_REACHED = "workflow.gate_reached"
+    # Saga lifecycle (set when @task(compensates=...) is in play).
+    WORKFLOW_COMPENSATING = "workflow.compensating"
+    WORKFLOW_COMPENSATED = "workflow.compensated"
+    WORKFLOW_COMPENSATION_FAILED = "workflow.compensation_failed"
+    NODE_COMPENSATING = "workflow.node_compensating"
+    NODE_COMPENSATED = "workflow.node_compensated"
+    NODE_COMPENSATION_FAILED = "workflow.node_compensation_failed"
     PREDICATE_DEFERRED = "predicate.deferred"
     PREDICATE_CANCELLED = "predicate.cancelled"
     PREDICATE_REJECTED = "predicate.rejected"
