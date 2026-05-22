@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = []
 postgres = ["taskito-core/postgres", "diesel/postgres"]
+redis = ["taskito-core/redis", "dep:redis"]
 
 [dependencies]
 taskito-core = { path = "../taskito-core" }
@@ -15,3 +16,4 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 diesel = { workspace = true }
 log = { workspace = true }
+redis = { workspace = true, optional = true }

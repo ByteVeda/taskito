@@ -5,6 +5,8 @@ mod error;
 mod node;
 #[cfg(feature = "postgres")]
 pub mod postgres_store;
+#[cfg(feature = "redis")]
+pub mod redis_store;
 mod run;
 pub mod sqlite_store;
 mod state;
@@ -19,6 +21,8 @@ pub use error::WorkflowError;
 pub use node::{WorkflowNode, WorkflowNodeStatus};
 #[cfg(feature = "postgres")]
 pub use postgres_store::WorkflowPostgresStorage;
+#[cfg(feature = "redis")]
+pub use redis_store::WorkflowRedisStorage;
 pub use run::WorkflowRun;
 pub use sqlite_store::WorkflowSqliteStorage;
 pub use state::WorkflowState;
@@ -40,6 +44,8 @@ pub enum WorkflowStorageBackend {
     Sqlite(WorkflowSqliteStorage),
     #[cfg(feature = "postgres")]
     Postgres(WorkflowPostgresStorage),
+    #[cfg(feature = "redis")]
+    Redis(WorkflowRedisStorage),
 }
 
 /// Dispatch a `WorkflowStorage` method across every enum variant.
@@ -52,6 +58,8 @@ macro_rules! delegate {
             Self::Sqlite(s) => s.$method($($arg),*),
             #[cfg(feature = "postgres")]
             Self::Postgres(s) => s.$method($($arg),*),
+            #[cfg(feature = "redis")]
+            Self::Redis(s) => s.$method($($arg),*),
         }
     };
 }
