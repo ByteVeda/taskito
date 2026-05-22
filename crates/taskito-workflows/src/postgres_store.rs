@@ -80,6 +80,17 @@ fn run_workflow_migrations(conn: &mut PgConnection) -> Result<()> {
     )
     .execute(conn)?;
 
+    // Saga columns — added in 0.13. Postgres supports `ADD COLUMN IF NOT
+    // EXISTS`, so this is naturally idempotent.
+    for stmt in [
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_job_id TEXT",
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_started_at BIGINT",
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_completed_at BIGINT",
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_error TEXT",
+    ] {
+        diesel::sql_query(stmt).execute(conn)?;
+    }
+
     Ok(())
 }
 

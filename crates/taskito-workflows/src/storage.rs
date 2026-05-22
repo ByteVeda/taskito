@@ -121,4 +121,35 @@ pub trait WorkflowStorage: Send + Sync {
 
     /// Return all child workflow runs of a parent run.
     fn get_child_workflow_runs(&self, parent_run_id: &str) -> Result<Vec<WorkflowRun>>;
+
+    // ── Saga compensation ─────────────────────────────────────────
+
+    /// Mark a node as `Compensating`, record the compensation job id and
+    /// start timestamp. Used by the saga orchestrator when it enqueues the
+    /// rollback job for a previously-completed node.
+    fn set_workflow_node_compensation_job(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        compensation_job_id: &str,
+        started_at: i64,
+    ) -> Result<()>;
+
+    /// Mark a node as `Compensated` and record the completion timestamp.
+    fn set_workflow_node_compensated(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        completed_at: i64,
+    ) -> Result<()>;
+
+    /// Mark a node as `CompensationFailed`, recording the error and
+    /// completion timestamp.
+    fn set_workflow_node_compensation_failed(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        error: &str,
+        completed_at: i64,
+    ) -> Result<()>;
 }

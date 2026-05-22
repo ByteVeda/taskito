@@ -28,6 +28,10 @@ fn make_node(run_id: &str, name: &str) -> WorkflowNode {
         started_at: None,
         completed_at: None,
         error: None,
+        compensation_job_id: None,
+        compensation_started_at: None,
+        compensation_completed_at: None,
+        compensation_error: None,
     }
 }
 

@@ -119,6 +119,14 @@ pub(crate) struct NodeRow {
     pub completed_at: Option<i64>,
     #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
     pub error: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
+    pub compensation_job_id: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+    pub compensation_started_at: Option<i64>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+    pub compensation_completed_at: Option<i64>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
+    pub compensation_error: Option<String>,
 }
 
 pub(crate) fn definition_from_row(row: DefinitionRow) -> Result<WorkflowDefinition> {
@@ -165,6 +173,10 @@ pub(crate) fn node_from_row(row: NodeRow) -> WorkflowNode {
         started_at: row.started_at,
         completed_at: row.completed_at,
         error: row.error,
+        compensation_job_id: row.compensation_job_id,
+        compensation_started_at: row.compensation_started_at,
+        compensation_completed_at: row.compensation_completed_at,
+        compensation_error: row.compensation_error,
     }
 }
 
@@ -412,8 +424,10 @@ macro_rules! impl_workflow_diesel_ops {
                 ::diesel::sql_query(
                     &$prep_sql("INSERT INTO workflow_nodes
                         (id, run_id, node_name, job_id, status, result_hash,
-                         fan_out_count, fan_in_data, started_at, completed_at, error)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+                         fan_out_count, fan_in_data, started_at, completed_at, error,
+                         compensation_job_id, compensation_started_at,
+                         compensation_completed_at, compensation_error)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(&node.id)
                 .bind::<::diesel::sql_types::Text, _>(&node.run_id)
@@ -426,6 +440,10 @@ macro_rules! impl_workflow_diesel_ops {
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.started_at)
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.completed_at)
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.error)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_job_id)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_started_at)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_completed_at)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_error)
                 .execute(&mut *conn)?;
                 Ok(())
             }
@@ -441,8 +459,10 @@ macro_rules! impl_workflow_diesel_ops {
                         ::diesel::sql_query(
                             &$prep_sql("INSERT INTO workflow_nodes
                                 (id, run_id, node_name, job_id, status, result_hash,
-                                 fan_out_count, fan_in_data, started_at, completed_at, error)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+                                 fan_out_count, fan_in_data, started_at, completed_at, error,
+                                 compensation_job_id, compensation_started_at,
+                                 compensation_completed_at, compensation_error)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
                         )
                         .bind::<::diesel::sql_types::Text, _>(&node.id)
                         .bind::<::diesel::sql_types::Text, _>(&node.run_id)
@@ -455,6 +475,10 @@ macro_rules! impl_workflow_diesel_ops {
                         .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.started_at)
                         .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.completed_at)
                         .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.error)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_job_id)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_started_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_completed_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_error)
                         .execute(conn)?;
                     }
                     Ok(())
@@ -469,7 +493,9 @@ macro_rules! impl_workflow_diesel_ops {
                 let mut conn = self.inner.conn()?;
                 let rows: Vec<$crate::diesel_common::NodeRow> = ::diesel::sql_query(
                     &$prep_sql("SELECT id, run_id, node_name, job_id, status, result_hash,
-                            fan_out_count, fan_in_data, started_at, completed_at, error
+                            fan_out_count, fan_in_data, started_at, completed_at, error,
+                            compensation_job_id, compensation_started_at,
+                            compensation_completed_at, compensation_error
                      FROM workflow_nodes WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -489,7 +515,9 @@ macro_rules! impl_workflow_diesel_ops {
                 let mut conn = self.inner.conn()?;
                 let rows: Vec<$crate::diesel_common::NodeRow> = ::diesel::sql_query(
                     &$prep_sql("SELECT id, run_id, node_name, job_id, status, result_hash,
-                            fan_out_count, fan_in_data, started_at, completed_at, error
+                            fan_out_count, fan_in_data, started_at, completed_at, error,
+                            compensation_job_id, compensation_started_at,
+                            compensation_completed_at, compensation_error
                      FROM workflow_nodes WHERE run_id = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -671,7 +699,9 @@ macro_rules! impl_workflow_diesel_ops {
                 let pattern = format!("{prefix}%");
                 let rows: Vec<$crate::diesel_common::NodeRow> = ::diesel::sql_query(
                     &$prep_sql("SELECT id, run_id, node_name, job_id, status, result_hash,
-                            fan_out_count, fan_in_data, started_at, completed_at, error
+                            fan_out_count, fan_in_data, started_at, completed_at, error,
+                            compensation_job_id, compensation_started_at,
+                            compensation_completed_at, compensation_error
                      FROM workflow_nodes WHERE run_id = ? AND node_name LIKE ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -711,6 +741,72 @@ macro_rules! impl_workflow_diesel_ops {
                     .into_iter()
                     .map($crate::diesel_common::run_from_row)
                     .collect())
+            }
+
+            fn set_workflow_node_compensation_job(
+                &self,
+                run_id: &str,
+                node_name: &str,
+                compensation_job_id: &str,
+                started_at: i64,
+            ) -> ::taskito_core::error::Result<()> {
+                let mut conn = self.inner.conn()?;
+                ::diesel::sql_query(
+                    &$prep_sql("UPDATE workflow_nodes
+                       SET status = 'compensating',
+                           compensation_job_id = ?,
+                           compensation_started_at = ?
+                     WHERE run_id = ? AND node_name = ?"),
+                )
+                .bind::<::diesel::sql_types::Text, _>(compensation_job_id)
+                .bind::<::diesel::sql_types::BigInt, _>(started_at)
+                .bind::<::diesel::sql_types::Text, _>(run_id)
+                .bind::<::diesel::sql_types::Text, _>(node_name)
+                .execute(&mut *conn)?;
+                Ok(())
+            }
+
+            fn set_workflow_node_compensated(
+                &self,
+                run_id: &str,
+                node_name: &str,
+                completed_at: i64,
+            ) -> ::taskito_core::error::Result<()> {
+                let mut conn = self.inner.conn()?;
+                ::diesel::sql_query(
+                    &$prep_sql("UPDATE workflow_nodes
+                       SET status = 'compensated',
+                           compensation_completed_at = ?
+                     WHERE run_id = ? AND node_name = ?"),
+                )
+                .bind::<::diesel::sql_types::BigInt, _>(completed_at)
+                .bind::<::diesel::sql_types::Text, _>(run_id)
+                .bind::<::diesel::sql_types::Text, _>(node_name)
+                .execute(&mut *conn)?;
+                Ok(())
+            }
+
+            fn set_workflow_node_compensation_failed(
+                &self,
+                run_id: &str,
+                node_name: &str,
+                error: &str,
+                completed_at: i64,
+            ) -> ::taskito_core::error::Result<()> {
+                let mut conn = self.inner.conn()?;
+                ::diesel::sql_query(
+                    &$prep_sql("UPDATE workflow_nodes
+                       SET status = 'compensation_failed',
+                           compensation_completed_at = ?,
+                           compensation_error = ?
+                     WHERE run_id = ? AND node_name = ?"),
+                )
+                .bind::<::diesel::sql_types::BigInt, _>(completed_at)
+                .bind::<::diesel::sql_types::Text, _>(error)
+                .bind::<::diesel::sql_types::Text, _>(run_id)
+                .bind::<::diesel::sql_types::Text, _>(node_name)
+                .execute(&mut *conn)?;
+                Ok(())
             }
         }
     };

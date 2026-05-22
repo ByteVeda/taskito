@@ -90,6 +90,10 @@ fn make_node(run_id: &str, name: &str) -> WorkflowNode {
         started_at: None,
         completed_at: None,
         error: None,
+        compensation_job_id: None,
+        compensation_started_at: None,
+        compensation_completed_at: None,
+        compensation_error: None,
     }
 }
 
@@ -556,6 +560,68 @@ fn case_finalize_fan_out_parent_no_op_on_terminal_node(s: &impl WorkflowStorage)
     assert_eq!(node.status, WorkflowNodeStatus::Skipped);
 }
 
+fn case_set_workflow_node_compensation_job(s: &impl WorkflowStorage) {
+    let def = make_definition("saga_compensation_job");
+    s.create_workflow_definition(&def).unwrap();
+    let run = make_run(&def.id);
+    let run_id = run.id.clone();
+    s.create_workflow_run(&run).unwrap();
+    s.create_workflow_node(&make_node(&run_id, "charge"))
+        .unwrap();
+    s.set_workflow_node_completed(&run_id, "charge", now_millis(), Some("h"))
+        .unwrap();
+
+    let started = now_millis();
+    s.set_workflow_node_compensation_job(&run_id, "charge", "comp-job-123", started)
+        .unwrap();
+
+    let node = s.get_workflow_node(&run_id, "charge").unwrap().unwrap();
+    assert_eq!(node.status, WorkflowNodeStatus::Compensating);
+    assert_eq!(node.compensation_job_id.as_deref(), Some("comp-job-123"));
+    assert_eq!(node.compensation_started_at, Some(started));
+}
+
+fn case_set_workflow_node_compensated(s: &impl WorkflowStorage) {
+    let def = make_definition("saga_compensated");
+    s.create_workflow_definition(&def).unwrap();
+    let run = make_run(&def.id);
+    let run_id = run.id.clone();
+    s.create_workflow_run(&run).unwrap();
+    s.create_workflow_node(&make_node(&run_id, "charge"))
+        .unwrap();
+    s.set_workflow_node_compensation_job(&run_id, "charge", "comp-1", now_millis())
+        .unwrap();
+
+    let completed = now_millis();
+    s.set_workflow_node_compensated(&run_id, "charge", completed)
+        .unwrap();
+
+    let node = s.get_workflow_node(&run_id, "charge").unwrap().unwrap();
+    assert_eq!(node.status, WorkflowNodeStatus::Compensated);
+    assert_eq!(node.compensation_completed_at, Some(completed));
+}
+
+fn case_set_workflow_node_compensation_failed(s: &impl WorkflowStorage) {
+    let def = make_definition("saga_compensation_failed");
+    s.create_workflow_definition(&def).unwrap();
+    let run = make_run(&def.id);
+    let run_id = run.id.clone();
+    s.create_workflow_run(&run).unwrap();
+    s.create_workflow_node(&make_node(&run_id, "charge"))
+        .unwrap();
+    s.set_workflow_node_compensation_job(&run_id, "charge", "comp-2", now_millis())
+        .unwrap();
+
+    let completed = now_millis();
+    s.set_workflow_node_compensation_failed(&run_id, "charge", "refund api down", completed)
+        .unwrap();
+
+    let node = s.get_workflow_node(&run_id, "charge").unwrap().unwrap();
+    assert_eq!(node.status, WorkflowNodeStatus::CompensationFailed);
+    assert_eq!(node.compensation_completed_at, Some(completed));
+    assert_eq!(node.compensation_error.as_deref(), Some("refund api down"));
+}
+
 fn case_get_child_workflow_runs(s: &impl WorkflowStorage) {
     let def = make_definition("parent_def");
     s.create_workflow_definition(&def).unwrap();
@@ -601,6 +667,9 @@ fn run_contract(s: &impl WorkflowStorage) {
     case_finalize_fan_out_parent_is_idempotent(s);
     case_finalize_fan_out_parent_failure_branch(s);
     case_finalize_fan_out_parent_no_op_on_terminal_node(s);
+    case_set_workflow_node_compensation_job(s);
+    case_set_workflow_node_compensated(s);
+    case_set_workflow_node_compensation_failed(s);
     case_get_child_workflow_runs(s);
 }
 

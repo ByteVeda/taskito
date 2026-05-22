@@ -78,6 +78,23 @@ fn run_workflow_migrations(conn: &mut SqliteConnection) -> Result<()> {
     )
     .execute(conn)?;
 
+    // Saga columns — added in 0.13 alongside the saga feature. SQLite has no
+    // `ADD COLUMN IF NOT EXISTS`, so we swallow `duplicate column` errors to
+    // make this idempotent across restarts.
+    for stmt in [
+        "ALTER TABLE workflow_nodes ADD COLUMN compensation_job_id TEXT",
+        "ALTER TABLE workflow_nodes ADD COLUMN compensation_started_at INTEGER",
+        "ALTER TABLE workflow_nodes ADD COLUMN compensation_completed_at INTEGER",
+        "ALTER TABLE workflow_nodes ADD COLUMN compensation_error TEXT",
+    ] {
+        if let Err(e) = diesel::sql_query(stmt).execute(conn) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(e.into());
+            }
+        }
+    }
+
     Ok(())
 }
 

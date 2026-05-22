@@ -252,4 +252,53 @@ impl WorkflowStorage for WorkflowStorageBackend {
     fn get_child_workflow_runs(&self, parent_run_id: &str) -> Result<Vec<WorkflowRun>> {
         delegate!(self, get_child_workflow_runs, parent_run_id)
     }
+
+    fn set_workflow_node_compensation_job(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        compensation_job_id: &str,
+        started_at: i64,
+    ) -> Result<()> {
+        delegate!(
+            self,
+            set_workflow_node_compensation_job,
+            run_id,
+            node_name,
+            compensation_job_id,
+            started_at
+        )
+    }
+
+    fn set_workflow_node_compensated(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        completed_at: i64,
+    ) -> Result<()> {
+        delegate!(
+            self,
+            set_workflow_node_compensated,
+            run_id,
+            node_name,
+            completed_at
+        )
+    }
+
+    fn set_workflow_node_compensation_failed(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        error: &str,
+        completed_at: i64,
+    ) -> Result<()> {
+        delegate!(
+            self,
+            set_workflow_node_compensation_failed,
+            run_id,
+            node_name,
+            error,
+            completed_at
+        )
+    }
 }

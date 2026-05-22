@@ -274,6 +274,18 @@ fn map_to_node(map: HashMap<String, Value>) -> Result<WorkflowNode> {
         _ => None,
     };
     let error = val_to_opt_string(map.get("error").unwrap_or(&Value::Nil))?;
+    let compensation_job_id =
+        val_to_opt_string(map.get("compensation_job_id").unwrap_or(&Value::Nil))?;
+    let compensation_started_at = match map.get("compensation_started_at") {
+        Some(v) if !matches!(v, Value::Nil) => Some(parse_i64(&val_to_string(v)?)?),
+        _ => None,
+    };
+    let compensation_completed_at = match map.get("compensation_completed_at") {
+        Some(v) if !matches!(v, Value::Nil) => Some(parse_i64(&val_to_string(v)?)?),
+        _ => None,
+    };
+    let compensation_error =
+        val_to_opt_string(map.get("compensation_error").unwrap_or(&Value::Nil))?;
     Ok(WorkflowNode {
         id,
         run_id,
@@ -286,6 +298,10 @@ fn map_to_node(map: HashMap<String, Value>) -> Result<WorkflowNode> {
         started_at,
         completed_at,
         error,
+        compensation_job_id,
+        compensation_started_at,
+        compensation_completed_at,
+        compensation_error,
     })
 }
 
@@ -560,6 +576,18 @@ impl WorkflowStorage for WorkflowRedisStorage {
             if let Some(e) = &node.error {
                 pipe.hset(&key, "error", e);
             }
+            if let Some(j) = &node.compensation_job_id {
+                pipe.hset(&key, "compensation_job_id", j);
+            }
+            if let Some(s) = opt_i64(node.compensation_started_at) {
+                pipe.hset(&key, "compensation_started_at", s);
+            }
+            if let Some(c) = opt_i64(node.compensation_completed_at) {
+                pipe.hset(&key, "compensation_completed_at", c);
+            }
+            if let Some(e) = &node.compensation_error {
+                pipe.hset(&key, "compensation_error", e);
+            }
             pipe.sadd(k_run_nodes(&self.prefix, &node.run_id), &node.node_name);
         }
         pipe.query::<()>(&mut conn).map_err(into_other)?;
@@ -750,6 +778,61 @@ impl WorkflowStorage for WorkflowRedisStorage {
         }
         Ok(runs)
     }
+
+    fn set_workflow_node_compensation_job(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        compensation_job_id: &str,
+        started_at: i64,
+    ) -> Result<()> {
+        let mut conn = self.conn()?;
+        let key = k_node(&self.prefix, run_id, node_name);
+        redis::pipe()
+            .atomic()
+            .hset(&key, "status", "compensating")
+            .hset(&key, "compensation_job_id", compensation_job_id)
+            .hset(&key, "compensation_started_at", started_at)
+            .query::<()>(&mut conn)
+            .map_err(into_other)?;
+        Ok(())
+    }
+
+    fn set_workflow_node_compensated(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        completed_at: i64,
+    ) -> Result<()> {
+        let mut conn = self.conn()?;
+        let key = k_node(&self.prefix, run_id, node_name);
+        redis::pipe()
+            .atomic()
+            .hset(&key, "status", "compensated")
+            .hset(&key, "compensation_completed_at", completed_at)
+            .query::<()>(&mut conn)
+            .map_err(into_other)?;
+        Ok(())
+    }
+
+    fn set_workflow_node_compensation_failed(
+        &self,
+        run_id: &str,
+        node_name: &str,
+        error: &str,
+        completed_at: i64,
+    ) -> Result<()> {
+        let mut conn = self.conn()?;
+        let key = k_node(&self.prefix, run_id, node_name);
+        redis::pipe()
+            .atomic()
+            .hset(&key, "status", "compensation_failed")
+            .hset(&key, "compensation_completed_at", completed_at)
+            .hset(&key, "compensation_error", error)
+            .query::<()>(&mut conn)
+            .map_err(into_other)?;
+        Ok(())
+    }
 }
 
 fn write_node_pipeline(
@@ -784,6 +867,18 @@ fn write_node_pipeline(
     }
     if let Some(e) = &node.error {
         pipe.hset(&key, "error", e);
+    }
+    if let Some(j) = &node.compensation_job_id {
+        pipe.hset(&key, "compensation_job_id", j);
+    }
+    if let Some(s) = opt_i64(node.compensation_started_at) {
+        pipe.hset(&key, "compensation_started_at", s);
+    }
+    if let Some(c) = opt_i64(node.compensation_completed_at) {
+        pipe.hset(&key, "compensation_completed_at", c);
+    }
+    if let Some(e) = &node.compensation_error {
+        pipe.hset(&key, "compensation_error", e);
     }
     pipe.sadd(k_run_nodes(prefix, &node.run_id), &node.node_name);
     pipe.query::<()>(conn).map_err(into_other)?;
