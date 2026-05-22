@@ -400,28 +400,31 @@ macro_rules! impl_workflow_diesel_ops {
                 &self,
                 nodes: &[$crate::WorkflowNode],
             ) -> ::taskito_core::error::Result<()> {
+                use ::diesel::connection::Connection;
                 let mut conn = self.inner.conn()?;
-                for node in nodes {
-                    ::diesel::sql_query(
-                        "INSERT INTO workflow_nodes
-                            (id, run_id, node_name, job_id, status, result_hash,
-                             fan_out_count, fan_in_data, started_at, completed_at, error)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    )
-                    .bind::<::diesel::sql_types::Text, _>(&node.id)
-                    .bind::<::diesel::sql_types::Text, _>(&node.run_id)
-                    .bind::<::diesel::sql_types::Text, _>(&node.node_name)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.job_id)
-                    .bind::<::diesel::sql_types::Text, _>(node.status.as_str())
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.result_hash)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Integer>, _>(node.fan_out_count)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.fan_in_data)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.started_at)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.completed_at)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.error)
-                    .execute(&mut *conn)?;
-                }
-                Ok(())
+                conn.transaction::<_, ::taskito_core::error::QueueError, _>(|conn| {
+                    for node in nodes {
+                        ::diesel::sql_query(
+                            "INSERT INTO workflow_nodes
+                                (id, run_id, node_name, job_id, status, result_hash,
+                                 fan_out_count, fan_in_data, started_at, completed_at, error)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        )
+                        .bind::<::diesel::sql_types::Text, _>(&node.id)
+                        .bind::<::diesel::sql_types::Text, _>(&node.run_id)
+                        .bind::<::diesel::sql_types::Text, _>(&node.node_name)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.job_id)
+                        .bind::<::diesel::sql_types::Text, _>(node.status.as_str())
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.result_hash)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Integer>, _>(node.fan_out_count)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.fan_in_data)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.started_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.completed_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.error)
+                        .execute(conn)?;
+                    }
+                    Ok(())
+                })
             }
 
             fn get_workflow_node(
