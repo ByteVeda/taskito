@@ -38,6 +38,7 @@ pub(crate) fn sql_as_is(sql: &str) -> String {
 /// uses `$1`, `$2`, …; SQLite uses `?`. Doing the rewrite once at query time
 /// (a handful of µs for the short SQL bodies used here) lets the workflow
 /// crate keep a single canonical SQL string per query.
+#[cfg(feature = "postgres")]
 pub(crate) fn pg_rewrite(sql: &str) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(sql.len() + 8);
