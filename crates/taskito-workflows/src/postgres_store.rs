@@ -107,4 +107,8 @@ impl WorkflowPostgresStorage {
     }
 }
 
-impl_workflow_diesel_ops!(WorkflowPostgresStorage, PgConnection);
+impl_workflow_diesel_ops!(
+    WorkflowPostgresStorage,
+    PgConnection,
+    crate::diesel_common::pg_rewrite
+);

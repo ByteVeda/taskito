@@ -104,4 +104,8 @@ impl WorkflowSqliteStorage {
     }
 }
 
-impl_workflow_diesel_ops!(WorkflowSqliteStorage, SqliteConnection);
+impl_workflow_diesel_ops!(
+    WorkflowSqliteStorage,
+    SqliteConnection,
+    crate::diesel_common::sql_as_is
+);
