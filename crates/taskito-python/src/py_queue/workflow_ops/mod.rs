@@ -21,6 +21,8 @@ use taskito_core::error::Result as CoreResult;
 use taskito_core::storage::{Storage, StorageBackend};
 #[cfg(feature = "postgres")]
 use taskito_workflows::WorkflowPostgresStorage;
+#[cfg(feature = "redis")]
+use taskito_workflows::WorkflowRedisStorage;
 use taskito_workflows::{
     StepMetadata, WorkflowNode, WorkflowNodeStatus, WorkflowSqliteStorage, WorkflowState,
     WorkflowStorage, WorkflowStorageBackend,
@@ -47,11 +49,9 @@ pub(super) fn workflow_storage(queue: &PyQueue) -> PyResult<WorkflowStorageBacke
             .map(WorkflowStorageBackend::Postgres)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
         #[cfg(feature = "redis")]
-        StorageBackend::Redis(_) => {
-            return Err(PyRuntimeError::new_err(
-                "workflows are currently only supported on the SQLite and PostgreSQL backends",
-            ))
-        }
+        StorageBackend::Redis(s) => WorkflowRedisStorage::new(s.clone())
+            .map(WorkflowStorageBackend::Redis)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
     };
     // If another thread raced us to initialize, our value is ignored — either
     // handle is equivalent because the underlying pool is shared.
