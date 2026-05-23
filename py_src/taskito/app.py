@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
+from taskito.batching import BatchAccumulator, BatchConfig, BatchedJobResult
 from taskito.events import EventBus, EventType
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
@@ -221,6 +222,8 @@ class Queue(
         self._task_serializers: dict[str, Serializer] = {}
         self._task_idempotent: dict[str, bool] = {}
         self._task_compensates: dict[str, str] = {}
+        self._task_batch_configs: dict[str, BatchConfig] = {}
+        self._batch_accumulator: BatchAccumulator | None = None
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
@@ -307,6 +310,66 @@ class Queue(
         if idempotent or self._task_idempotent.get(task_name, False):
             return self._auto_idempotency_key(task_name, payload)
         return None
+
+    # ── Batching ──────────────────────────────────────────────────────
+
+    def _ensure_batch_accumulator(self) -> BatchAccumulator:
+        """Construct the accumulator on first use (lazy thread startup)."""
+        if self._batch_accumulator is None:
+            self._batch_accumulator = BatchAccumulator(dispatch=self._dispatch_batched_payload)
+        return self._batch_accumulator
+
+    def _dispatch_batched_payload(
+        self,
+        task_name: str,
+        items: list[Any],
+        config: BatchConfig,
+    ) -> None:
+        """Callback the accumulator invokes when a batch reaches its limit.
+
+        Serializes the list of items as a single ``(args, kwargs)`` payload
+        where ``args=(items,)`` and ``kwargs={}``, then enqueues a normal job.
+        The worker dispatch path is unchanged — the task function simply
+        receives a list as its first positional arg.
+        """
+        del config  # currently unused at dispatch time; reserved for telemetry
+        task_serializer = self._get_serializer(task_name)
+        payload = task_serializer.dumps(((items,), {}))
+        py_job = self._inner.enqueue(
+            task_name=task_name,
+            payload=payload,
+            queue="default",
+            priority=None,
+            delay_seconds=None,
+            max_retries=None,
+            timeout=None,
+            unique_key=None,
+            metadata=None,
+            notes=None,
+            depends_on=None,
+            expires=None,
+            result_ttl=None,
+        )
+        self._emit_event(
+            EventType.JOB_ENQUEUED,
+            {
+                "task_name": task_name,
+                "job_id": py_job.id,
+                "queue": "default",
+                "batch_size": len(items),
+            },
+        )
+
+    def close(self) -> None:
+        """Flush in-memory batches and shut down background helpers.
+
+        Safe to call multiple times. If batched tasks have unflushed items
+        when ``close`` is called, those items are dispatched as a final batch
+        before the accumulator thread exits.
+        """
+        if self._batch_accumulator is not None:
+            self._batch_accumulator.shutdown(flush=True)
+            self._batch_accumulator = None
 
     def _deserialize_payload(self, task_name: str, payload: bytes) -> tuple:
         """Deserialize a job payload using the per-task or queue-level serializer."""
@@ -408,6 +471,26 @@ class Queue(
 
         if self._interceptor is not None and not self._test_mode_active:
             final_args, final_kwargs = self._interceptor.intercept(final_args, final_kwargs)
+
+        # Producer-side batching: instead of enqueueing one job, push the
+        # call's first positional arg into the per-task accumulator. The
+        # batch flushes as a single job whose payload is the list of
+        # accumulated items.
+        batch_cfg = self._task_batch_configs.get(task_name)
+        if batch_cfg is not None:
+            if final_kwargs:
+                raise ValueError(
+                    f"batched task {task_name!r} does not accept kwargs — "
+                    "pass each item as the first positional arg only"
+                )
+            if len(final_args) != 1:
+                raise ValueError(
+                    f"batched task {task_name!r} expects exactly one positional "
+                    f"arg per call (the item), got {len(final_args)}"
+                )
+            self._ensure_batch_accumulator().add(task_name, final_args[0], batch_cfg)
+            return BatchedJobResult(task_name=task_name)  # type: ignore[return-value]
+
         task_serializer = self._get_serializer(task_name)
         payload = task_serializer.dumps((final_args, final_kwargs))
 
