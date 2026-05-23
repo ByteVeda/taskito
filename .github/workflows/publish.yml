@@ -28,6 +28,7 @@ jobs:
     needs: build-dashboard
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -68,6 +69,7 @@ jobs:
     needs: build-dashboard
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -108,6 +110,7 @@ jobs:
     needs: build-dashboard
     runs-on: macos-latest
     strategy:
+      fail-fast: false
       matrix:
         target:
           - x86_64-apple-darwin
@@ -163,6 +166,7 @@ jobs:
     needs: build-dashboard
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-pc-windows-msvc
