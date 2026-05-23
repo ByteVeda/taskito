@@ -79,13 +79,17 @@ def submit_sub_workflow(
             node_name,
         )
 
-    # Register child with tracker if it has deferred nodes.
+    # Register child with tracker if it has deferred nodes OR if it has
+    # registered compensators (so the saga orchestrator can propagate into
+    # it on parent failure).
+    child_compensation_map = getattr(child_wf, "_compiled_compensation_map", {}) or {}
     needs_child_tracker = (
         bool(deferred)
         or bool(callables)
         or bool(gates)
         or bool(sub_refs)
         or on_failure != "fail_fast"
+        or bool(child_compensation_map)
     )
     if needs_child_tracker:
         child_payloads = {n: payloads[n] for n in deferred if n in payloads}
@@ -99,6 +103,8 @@ def submit_sub_workflow(
             callable_conditions=callables,
             gate_configs=gates,
             sub_workflow_refs=sub_refs,
+            compensation_map=child_compensation_map,
+            steps=getattr(child_wf, "_steps", None),
         )
 
     config.deferred_nodes.discard(node_name)

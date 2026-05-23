@@ -231,14 +231,15 @@ class WorkflowTracker:
         run_id, node_name, terminal_state = result
 
         if terminal_state is not None:
-            # If the run ended in failure AND the workflow has a saga
-            # (non-empty compensation_map), hand off to the orchestrator
-            # before emitting the terminal event — the saga will emit its
-            # own terminal event when compensation finishes.
+            # If the run ended in failure AND the workflow has a saga in any
+            # form — an explicit ``compensation_map`` OR a sub-workflow node
+            # whose child has its own compensators (propagation) — hand off
+            # to the saga orchestrator before emitting the terminal event.
+            # The orchestrator emits its own terminal event when compensation
+            # finishes; ``start_compensation`` decides eligibility internally.
             if (
                 terminal_state == "failed"
                 and config is not None
-                and config.compensation_map
                 and config.on_failure == "fail_fast"
             ):
                 steps = self._run_steps.get(run_id, {})
@@ -324,8 +325,36 @@ class WorkflowTracker:
         self._release_waiters(run_id)
 
     def _cleanup_run(self, run_id: str) -> None:
-        """Drop all tracker state tied to ``run_id`` and cancel any live timers."""
+        """Drop all tracker state tied to ``run_id`` and cancel any live timers.
+
+        When the run is a sub-workflow child whose parent is still being
+        tracked, ``_run_configs`` and ``_run_steps`` are *retained* so the
+        parent's saga orchestrator can propagate compensation into the
+        child later. The parent's own cleanup sweeps these entries when it
+        finalises (see ``stale_child_ids`` below).
+        """
         with self._state_lock:
+            parent_still_alive = False
+            parent_link = self._child_to_parent.get(run_id)
+            if parent_link is not None:
+                parent_run_id = parent_link[0]
+                parent_still_alive = parent_run_id in self._run_configs
+
+            if parent_still_alive:
+                # Keep config + steps so the parent can propagate compensation.
+                # Drop transient state (job→run map entries, gate timers) so
+                # the worker doesn't keep routing fan-out / gate events to a
+                # finished child.
+                self._job_to_run = {
+                    jid: rid for jid, rid in self._job_to_run.items() if rid != run_id
+                }
+                stale_timer_keys = [k for k in self._gate_timers if k[0] == run_id]
+                for key in stale_timer_keys:
+                    timer = self._gate_timers.pop(key, None)
+                    if timer is not None:
+                        timer.cancel()
+                return
+
             self._run_configs.pop(run_id, None)
             self._run_steps.pop(run_id, None)
             self._job_to_run = {jid: rid for jid, rid in self._job_to_run.items() if rid != run_id}
@@ -339,6 +368,10 @@ class WorkflowTracker:
             ]
             for cid in stale_child_ids:
                 self._child_to_parent.pop(cid, None)
+                # Children whose cleanup we deferred (because the parent was
+                # still alive) get swept here on parent finalization.
+                self._run_configs.pop(cid, None)
+                self._run_steps.pop(cid, None)
 
     def _try_finalize(self, run_id: str) -> None:
         """If all nodes are terminal, finalize the run and emit the event."""
@@ -381,12 +414,18 @@ class WorkflowTracker:
     # ── Sub-workflow listener ──────────────────────────────────────
 
     def _on_child_workflow_terminal(self, _event_type: EventType, payload: dict[str, Any]) -> None:
-        """Handle child workflow completion → update parent node."""
+        """Handle child workflow completion → update parent node.
+
+        The ``_child_to_parent`` link is *not* popped here — it stays in
+        place until the parent run finalises (or until the parent's saga
+        orchestrator has had a chance to propagate compensation into the
+        child). The parent's ``_cleanup_run`` sweeps stale links.
+        """
         child_run_id = payload.get("run_id")
         if not child_run_id:
             return
         with self._state_lock:
-            parent_info = self._child_to_parent.pop(child_run_id, None)
+            parent_info = self._child_to_parent.get(child_run_id)
         if parent_info is None:
             return  # Not a sub-workflow child.
 
