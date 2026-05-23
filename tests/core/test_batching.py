@@ -151,7 +151,12 @@ def test_concurrent_adds_no_loss(queue: Queue, run_worker: threading.Thread) -> 
 
 
 def test_batched_returns_batchedjobresult(queue: Queue) -> None:
-    """`Queue.enqueue` returns a sentinel JobResult-like object for batched calls."""
+    """`Queue.enqueue` returns a per-item handle for batched calls.
+
+    Before the batch flushes, ``id`` is None and ``result(timeout=...)``
+    times out (the flush event hasn't fired). After flush, ``id`` resolves
+    to the underlying batch job ID.
+    """
 
     @queue.task(batch=True, max_retries=0)
     def some_batched(items: list[int]) -> None:  # pragma: no cover
@@ -161,8 +166,9 @@ def test_batched_returns_batchedjobresult(queue: Queue) -> None:
     assert isinstance(result, BatchedJobResult)
     assert result.id is None
     assert result.batched is True
-    with pytest.raises(NotImplementedError):
-        result.result()
+    # No flush yet → result() blocks until timeout fires.
+    with pytest.raises(TimeoutError):
+        result.result(timeout=0.05)
 
     # Stop the accumulator without flushing (the no-op task would error if invoked).
     assert queue._batch_accumulator is not None

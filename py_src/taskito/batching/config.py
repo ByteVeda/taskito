@@ -16,10 +16,20 @@ class BatchConfig:
         max_wait_ms: Flush an idle batch after this many milliseconds even if
             ``max_size`` has not been reached. Bounds the worst-case latency
             of any single batched call.
+        per_item_results: When True, the task is expected to return
+            ``list[BatchItemResult]`` (one entry per input item). The worker
+            enforces this contract — a wrong return type raises
+            ``BatchResultTypeError``. Any item with ``status="failure"``
+            triggers a partial-batch retry via ``BatchPartialFailureError``,
+            and ``BatchedJobResult.result()`` resolves to the per-item value
+            (or raises ``TaskFailedError`` if that item failed). When False
+            (default), the task's return value is stored as-is and
+            ``BatchedJobResult.result()`` returns the whole batch result.
     """
 
     max_size: int = 100
     max_wait_ms: int = 500
+    per_item_results: bool = False
 
     def __post_init__(self) -> None:
         if self.max_size < 1:
@@ -46,6 +56,8 @@ class BatchConfig:
                 kwargs["max_size"] = int(value["max_size"])
             if "max_wait_ms" in value:
                 kwargs["max_wait_ms"] = int(value["max_wait_ms"])
+            if "per_item_results" in value:
+                kwargs["per_item_results"] = bool(value["per_item_results"])
             return cls(**kwargs)
         raise TypeError(
             f"batch= must be bool, dict, BatchConfig, or None — got {type(value).__name__}"
