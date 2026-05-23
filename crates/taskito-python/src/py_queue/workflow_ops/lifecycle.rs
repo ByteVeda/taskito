@@ -288,6 +288,26 @@ impl PyQueue {
         result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Override a run that finalized as `Failed` to `CompletedWithFailures`.
+    ///
+    /// Used by the Python tracker for `on_failure="continue"` runs that
+    /// finished with a mix of completed and failed nodes when the workflow
+    /// was constructed with `compensate_on_continue=True`. The Python
+    /// tracker calls this after `mark_workflow_node_result` returns
+    /// `Failed`, BEFORE handing off to the saga orchestrator.
+    pub fn set_workflow_run_completed_with_failures(
+        &self,
+        py: Python<'_>,
+        run_id: &str,
+    ) -> PyResult<()> {
+        let wf = workflow_storage(self)?;
+        let rid = run_id.to_string();
+        py.allow_threads(|| {
+            wf.update_workflow_run_state(&rid, WorkflowState::CompletedWithFailures, None)
+        })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Check whether all workflow nodes are terminal and finalize the run.
     ///
     /// Called by the Python tracker after updating the fan-out parent status
