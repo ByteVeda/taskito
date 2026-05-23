@@ -5,6 +5,7 @@
     "job-management",
     "troubleshooting",
     "deployment",
+    "autoscaler",
     "keda",
     "postgres",
     "migration"
