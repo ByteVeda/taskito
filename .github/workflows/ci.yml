@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Allow manual re-triggers from the GitHub UI or `gh workflow run` —
+  # useful when master squash-merges arrive back-to-back and concurrency
+  # cancellations leave the latest master HEAD without a CI run.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
