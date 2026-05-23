@@ -3,6 +3,8 @@ title: Sagas
 description: Reverse-order compensation when a workflow step fails
 ---
 
+import { Callout } from "fumadocs-ui/components/callout";
+
 A saga is a workflow where each step has a registered **compensator** — a task that undoes the step's side effect. If a later step fails, taskito automatically runs the compensators of every already-completed step, in reverse topological order, so the system ends up in a consistent state.
 
 ```python
@@ -45,12 +47,11 @@ def compensator(forward_args: tuple, forward_kwargs: dict, forward_result: Any) 
 
 That's the **only** signature taskito calls compensators with. It lets one compensator service multiple workflows without coupling to specific step shapes.
 
-<Callout type="info" title="v1 limitations">
-For the initial saga release:
-
-- `forward_args` / `forward_kwargs` are populated only for *deferred* nodes (fan-out, fan-in, conditional, gate, sub-workflow). Static steps currently pass empty tuples/dicts. Look up state yourself if you need the originals.
-- `forward_result` is always `None` in v1.
-- Sagas trigger only when `on_failure="fail_fast"` (the default). `on_failure="continue"` workflows do not compensate.
+<Callout type="info">
+  `forward_args`, `forward_kwargs`, and `forward_result` are fully populated
+  for both static and deferred workflow nodes. Use
+  `current_compensation_context()` inside a compensator body to access the
+  workflow run ID, node name, forward job ID, and forward result.
 </Callout>
 
 ## Declaring compensators
@@ -89,16 +90,46 @@ When a workflow step's forward execution fails with retries exhausted:
    - All compensators succeeded → next wave starts.
    - Any failed → the run terminates as `CompensationFailed`. **Subsequent waves are not dispatched** because downstream rollback may depend on the failed step.
 
+## Compensating on `on_failure="continue"` workflows
+
+By default, `on_failure="continue"` workflows never trigger compensation —
+they collect failures and always complete. Set `compensate_on_continue=True`
+to opt in:
+
+```python
+wf = Workflow(
+    name="resilient_checkout",
+    on_failure="continue",
+    compensate_on_continue=True,
+)
+wf.step("charge", charge, args=(100, "c1"))
+wf.step("ship",   ship,   args=(42,), after="charge")
+
+run = queue.submit_workflow(wf)
+```
+
+With `compensate_on_continue=True`:
+
+- The run completes all steps regardless of individual failures (continue semantics).
+- When the run terminates, if any steps failed, the run transitions to
+  `CompletedWithFailures` before entering `Compensating`.
+- Compensators for every *succeeded* step then run in reverse topological order.
+- Final state is `Compensated` or `CompensationFailed` (same as fail-fast sagas).
+
+Without `compensate_on_continue=True`, a `continue`-mode run with failures
+ends in `CompletedWithFailures` and no compensation runs.
+
 ## Final run states
 
-| State                 | Meaning                                                                   |
-|-----------------------|---------------------------------------------------------------------------|
-| `COMPLETED`           | Run finished normally — no compensation ran                               |
-| `FAILED`              | Forward failure with no registered compensators                           |
-| `COMPENSATED`         | Forward failed, every applicable compensator succeeded                    |
-| `COMPENSATION_FAILED` | Forward failed, and one or more compensators failed during rollback       |
+| State | Meaning |
+|---|---|
+| `COMPLETED` | Run finished normally — no compensation ran |
+| `FAILED` | Forward failure with no registered compensators (`fail_fast` mode) |
+| `COMPLETED_WITH_FAILURES` | `continue` mode completed with some step failures |
+| `COMPENSATED` | Every applicable compensator succeeded |
+| `COMPENSATION_FAILED` | One or more compensators failed during rollback |
 
-`WorkflowState.is_terminal()` returns `True` for all four.
+`WorkflowState.is_terminal()` returns `True` for all five.
 
 ## Idempotency
 
@@ -110,6 +141,7 @@ Saga lifecycle emits dedicated events on the queue's event bus:
 
 | Event                                  | Fires when                                              |
 |----------------------------------------|---------------------------------------------------------|
+| `WORKFLOW_COMPLETED_WITH_FAILURES`     | `continue`-mode run finished with at least one failure  |
 | `WORKFLOW_COMPENSATING`                | Run enters the compensation phase                       |
 | `WORKFLOW_COMPENSATED`                 | All compensators succeeded                              |
 | `WORKFLOW_COMPENSATION_FAILED`         | At least one compensator failed                         |

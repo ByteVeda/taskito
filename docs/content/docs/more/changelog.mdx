@@ -5,6 +5,17 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.14.0
+
+### Added
+
+- **Bare-metal autoscaler.** `taskito.autoscale` provides an in-process HPA-style control loop that spawns and drains `taskito worker` subprocesses based on queue depth and utilisation. Mirrors the Kubernetes HPA dual-signal formula (`depth_desired` + `util_desired`). Configurable stabilisation windows (default: scale-up immediate, scale-down 5 minutes), tolerance band (10%), overload override, and crash recovery. Use `serve_autoscaler(queue, AutoscaleConfig(...))` as the entry point. See the [Bare-Metal Autoscaler guide](/guides/operations/autoscaler).
+- **Dashboard `/api/workflows` backend.** Four new REST endpoints expose workflow run data: `GET /api/workflows/runs` (paginated list, filterable by definition name and state), `GET /api/workflows/runs/{id}` (run header + per-node detail with compensation fields), `GET /api/workflows/runs/{id}/dag` (DAG JSON), and `GET /api/workflows/runs/{id}/children` (sub-workflow runs). All timestamps are Unix milliseconds.
+- **Canvas saga compensation.** `chain`, `group`, and `chord` support `.with_compensation([...])`. On failure, compensators for completed steps are enqueued with a deterministic `canvas_compensation:{run_id}:{slot}` idempotency key. Dispatch order: chain → reverse-sequential, group → parallel, chord → callback compensator first then group members. `Signature.with_compensation(compensator)` lets individual signatures carry their own compensator.
+- **Per-item batch results.** `@queue.task(batch={"per_item_results": True})` enables per-item tracking for batched tasks. The task returns `list[BatchItemResult]`; each caller's `BatchedJobResult.result()` returns **only that caller's value**. `BatchItemResult.success(item_index, result)` and `BatchItemResult.failure(item_index, error)` are the constructors. `partial_failures()` returns failed items after a successful batch. `BatchPartialFailureError` and `BatchResultTypeError` are the new exception types. Cannot be combined with `idempotent=True`.
+- **Saga `compensate_on_continue`.** `Workflow(on_failure="continue", compensate_on_continue=True)` triggers compensation after a continue-mode run terminates with failures. The run transitions through `CompletedWithFailures` before entering `Compensating`, then ends in `Compensated` or `CompensationFailed`. Without the flag, continue-mode runs end in `CompletedWithFailures` with no compensation.
+- **`COMPLETED_WITH_FAILURES` workflow state.** New `WorkflowState` variant for `on_failure="continue"` runs that finished with at least one step failure. Emits `WORKFLOW_COMPLETED_WITH_FAILURES` event. Accessible as `"completed_with_failures"` in the REST API `state` field.
+
 ## 0.13.0
 
 ### Added

@@ -1,6 +1,6 @@
 ---
 title: Canvas Primitives
-description: "Lightweight chain / group / chord composition for simpler pipelines."
+description: "Lightweight chain / group / chord composition for simpler pipelines, with optional saga compensation."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
@@ -91,6 +91,140 @@ result = chord(
 ).apply(queue)
 ```
 
+## Saga compensation
+
+Canvas primitives support in-thread saga compensation via `.with_compensation()`.
+When a step fails, taskito dispatches the compensators for the steps that already
+succeeded — no workflow engine required.
+
+<Callout type="info">
+  Canvas compensation is in-thread: compensators are enqueued synchronously
+  during the `apply()` call that raised. For DAG-level sagas with full
+  observability and sub-workflow propagation, see the
+  [Sagas guide](/guides/workflows/sagas).
+</Callout>
+
+### chain compensation
+
+Attach one compensator per chain step. `None` skips a slot. On failure,
+compensators for completed steps run in **reverse order**:
+
+```python
+from taskito import chain
+
+@queue.task()
+def step_a(x: int) -> int:
+    return charge_payment(x)
+
+@queue.task()
+def step_b(x: int) -> str:
+    return create_order(x)
+
+@queue.task()
+def refund(forward_args, forward_kwargs, forward_result):
+    payment_id = forward_result
+    payment_api.refund(payment_id)
+
+@queue.task()
+def cancel_order(forward_args, forward_kwargs, forward_result):
+    order_id = forward_result
+    order_api.cancel(order_id)
+
+result = chain(
+    step_a.s(100),
+    step_b.s(),
+).with_compensation([refund, cancel_order]).apply(queue)
+```
+
+`with_compensation` requires exactly one entry per chain step. If `step_b`
+fails after `step_a` succeeded, `cancel_order` then `refund` are enqueued —
+reverse order, one at a time.
+
+### group compensation
+
+One compensator per group member. On failure of any member, compensators for
+the **succeeded** members dispatch in parallel. The failed member is not
+compensated:
+
+```python
+from taskito import group
+
+g = group(
+    debit_account.s(100),
+    reserve_inventory.s("item-7"),
+    notify_warehouse.s(42),
+).with_compensation([
+    refund_account,
+    release_inventory,
+    cancel_notification,
+])
+
+g.apply(queue)
+```
+
+### chord compensation
+
+`chord.with_compensation` takes separate `group=` and `callback=` arguments:
+
+```python
+from taskito import chord, group
+
+ch = chord(
+    group(fetch.s("url1"), fetch.s("url2")),
+    merge.s(),
+).with_compensation(
+    group=[rollback_fetch1, rollback_fetch2],
+    callback=rollback_merge,
+)
+
+ch.apply(queue)
+```
+
+Compensation order:
+
+- Group member fails before callback runs → group compensators dispatch, callback compensator does **not** run.
+- Callback fails after group succeeded → callback compensator dispatches first, then group compensators in parallel.
+
+### Compensator contract
+
+Every compensator receives three positional args — the same contract as
+DAG-level saga compensators:
+
+```python
+@queue.task()
+def my_compensator(forward_args: tuple, forward_kwargs: dict, forward_result: object) -> None:
+    # forward_result is the return value of the step being compensated.
+    ...
+```
+
+### Idempotency
+
+Each compensator is enqueued with a deterministic unique key of the form
+`canvas_compensation:{run_id}:{slot}`. A second call to `apply()` on the
+same canvas object (e.g. inside a retry loop) never double-dispatches a
+compensator for the same `(run, slot)` pair.
+
+### Passing `None` to disable compensation
+
+```python
+# Disables all compensation (equivalent to not calling with_compensation).
+chain(a.si(), b.si()).with_compensation(None).apply(queue)
+
+# Disables compensation for one specific slot.
+chain(a.si(), b.si()).with_compensation([compensate_a, None]).apply(queue)
+```
+
+### Per-signature compensator
+
+A single `Signature` can also carry its own compensator:
+
+```python
+sig = step_a.si().with_compensation(refund)
+```
+
+This is useful when the same signature is reused across several chains with
+different compensators.
+
 ## chunks / starmap
 
 ```python
@@ -118,6 +252,7 @@ results = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply(queue)
 | Fan-out | Static (known at build time) | Dynamic (from return values) |
 | Conditions | None | `on_success`, `on_failure`, `always`, callables |
 | Error handling | Per-task retries only | Workflow-level strategies |
+| Saga compensation | `chain` / `group` / `chord` | DAG-level, with sub-workflow propagation |
 | Approval gates | No | Yes |
 | Sub-workflows | No | Yes |
 | Incremental runs | No | Yes |
