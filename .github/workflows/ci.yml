@@ -265,10 +265,11 @@ jobs:
         run: uv sync --extra dev --extra oauth
 
       - name: Build native extension with maturin
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.51.0
         with:
           command: develop
           args: --release --features extension-module,postgres,redis,native-async,workflows
+          maturin-version: v1.13.3
 
       - name: Run Python test suite
         # The pytest_unconfigure hook in tests/conftest.py calls
