@@ -448,6 +448,112 @@ Public readiness check with storage, worker, and resource health.
 
 Public Prometheus metrics endpoint (requires `prometheus-client` package).
 
+## Workflows
+
+These endpoints expose workflow run data for dashboards and external tooling.
+All timestamps are Unix milliseconds.
+
+### `GET /api/workflows/runs`
+
+Paginated list of workflow runs.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `definition_name` | `string` | all | Filter by workflow name |
+| `state` | `string` | all | Filter by run state (e.g. `running`, `completed`, `failed`) |
+| `limit` | `int` | `50` | Page size |
+| `offset` | `int` | `0` | Pagination offset |
+
+```json
+{
+  "runs": [
+    {
+      "id": "01H...",
+      "definition_id": "checkout-v1",
+      "state": "completed",
+      "params": null,
+      "started_at": 1716000000000,
+      "completed_at": 1716000030000,
+      "error": null,
+      "parent_run_id": null,
+      "parent_node_name": null,
+      "created_at": 1716000000000
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### `GET /api/workflows/runs/{run_id}`
+
+Full detail for a single run: the run header plus per-node status.
+
+```json
+{
+  "run": {
+    "id": "01H...",
+    "definition_id": "checkout-v1",
+    "state": "compensated",
+    "params": null,
+    "started_at": 1716000000000,
+    "completed_at": 1716000060000,
+    "error": null,
+    "parent_run_id": null,
+    "parent_node_name": null,
+    "created_at": 1716000000000
+  },
+  "nodes": [
+    {
+      "node_name": "charge",
+      "status": "completed",
+      "job_id": "01H...",
+      "result_hash": "abc123",
+      "fan_out_count": null,
+      "started_at": 1716000001000,
+      "completed_at": 1716000005000,
+      "error": null,
+      "compensation_job_id": "01H...",
+      "compensation_started_at": 1716000050000,
+      "compensation_completed_at": 1716000055000,
+      "compensation_error": null
+    }
+  ]
+}
+```
+
+Returns `404` when the run ID doesn't exist.
+
+### `GET /api/workflows/runs/{run_id}/dag`
+
+DAG definition for the workflow that produced this run, as a JSON string.
+
+```json
+{
+  "dag": "{\"nodes\": [{\"name\": \"charge\", ...}], \"edges\": [...]}"
+}
+```
+
+Returns `404` when the run ID doesn't exist.
+
+### `GET /api/workflows/runs/{run_id}/children`
+
+Child sub-workflow runs spawned by this run. Returns an empty list for
+top-level runs.
+
+```json
+{
+  "children": [
+    {
+      "id": "01H...",
+      "definition_id": "notify-v1",
+      "state": "completed",
+      ...
+    }
+  ]
+}
+```
+
 ## Settings
 
 ### `GET /api/settings`

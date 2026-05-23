@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
-from taskito.batching import BatchAccumulator, BatchConfig, BatchedJobResult
+from taskito.batching import BatchAccumulator, BatchConfig
 from taskito.events import EventBus, EventType
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
@@ -316,7 +316,10 @@ class Queue(
     def _ensure_batch_accumulator(self) -> BatchAccumulator:
         """Construct the accumulator on first use (lazy thread startup)."""
         if self._batch_accumulator is None:
-            self._batch_accumulator = BatchAccumulator(dispatch=self._dispatch_batched_payload)
+            self._batch_accumulator = BatchAccumulator(
+                dispatch=self._dispatch_batched_payload,
+                queue=self,
+            )
         return self._batch_accumulator
 
     def _dispatch_batched_payload(
@@ -324,13 +327,17 @@ class Queue(
         task_name: str,
         items: list[Any],
         config: BatchConfig,
-    ) -> None:
+    ) -> JobResult:
         """Callback the accumulator invokes when a batch reaches its limit.
 
         Serializes the list of items as a single ``(args, kwargs)`` payload
         where ``args=(items,)`` and ``kwargs={}``, then enqueues a normal job.
         The worker dispatch path is unchanged — the task function simply
         receives a list as its first positional arg.
+
+        Returns the :class:`JobResult` for the enqueued batch job so the
+        accumulator can stamp it onto every pending ``BatchedJobResult``
+        handle (one per item that landed in this batch).
         """
         del config  # currently unused at dispatch time; reserved for telemetry
         task_serializer = self._get_serializer(task_name)
@@ -359,6 +366,7 @@ class Queue(
                 "batch_size": len(items),
             },
         )
+        return JobResult(py_job=py_job, queue=self)
 
     def close(self) -> None:
         """Flush in-memory batches and shut down background helpers.
@@ -488,8 +496,8 @@ class Queue(
                     f"batched task {task_name!r} expects exactly one positional "
                     f"arg per call (the item), got {len(final_args)}"
                 )
-            self._ensure_batch_accumulator().add(task_name, final_args[0], batch_cfg)
-            return BatchedJobResult(task_name=task_name)  # type: ignore[return-value]
+            handle = self._ensure_batch_accumulator().add(task_name, final_args[0], batch_cfg)
+            return handle  # type: ignore[return-value]
 
         task_serializer = self._get_serializer(task_name)
         payload = task_serializer.dumps((final_args, final_kwargs))

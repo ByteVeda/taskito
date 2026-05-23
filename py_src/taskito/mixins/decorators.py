@@ -16,6 +16,11 @@ from typing import TYPE_CHECKING, Any
 from taskito._taskito import PyTaskConfig
 from taskito.async_support.helpers import run_maybe_async
 from taskito.batching.config import BatchConfig
+from taskito.batching.item_result import (
+    BatchPartialFailureError,
+    BatchResultTypeError,
+    is_batch_item_result_list,
+)
 from taskito.context import _clear_context, current_job
 from taskito.dashboard.middleware_store import MiddlewareDisableStore
 from taskito.events import EventType
@@ -231,6 +236,25 @@ class QueueDecoratorMixin:
             result = None
             try:
                 ret = run_maybe_async(fn(*args, **kwargs))
+                # Per-item batch result: when the task is batched with
+                # per_item_results=True, enforce the return type contract
+                # and surface partial failures via BatchPartialFailureError
+                # so the existing retry/DLQ machinery applies.
+                batch_cfg = queue_ref._task_batch_configs.get(task_name)
+                if batch_cfg is not None and getattr(batch_cfg, "per_item_results", False):
+                    if not is_batch_item_result_list(ret):
+                        raise BatchResultTypeError(
+                            f"task {task_name!r} declares per_item_results=True but "
+                            f"returned {type(ret).__name__} instead of "
+                            f"list[BatchItemResult]"
+                        )
+                    failed = [item for item in ret if item.status == "failure"]
+                    if failed:
+                        # Pass the result through so the worker can still
+                        # store it (per-item outcomes are stored verbatim);
+                        # the existing on_failure path emits JOB_FAILED.
+                        result = ret
+                        raise BatchPartialFailureError(failed_items=failed)
                 result = ret
             except Exception as exc:
                 error = exc
