@@ -112,6 +112,71 @@ def main() -> None:
         help="Scaling target hint for KEDA (default: 10)",
     )
 
+    # autoscale subcommand
+    autoscale_parser = subparsers.add_parser(
+        "autoscale",
+        help="Start the bare-metal autoscaler daemon (spawns/drains worker processes)",
+    )
+    autoscale_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
+    )
+    autoscale_parser.add_argument(
+        "--min-workers", type=int, default=1, help="Minimum worker processes (default: 1)"
+    )
+    autoscale_parser.add_argument(
+        "--max-workers", type=int, default=10, help="Maximum worker processes (default: 10)"
+    )
+    autoscale_parser.add_argument(
+        "--target-queue-depth",
+        type=int,
+        default=15,
+        help="Target pending jobs per worker (default: 15)",
+    )
+    autoscale_parser.add_argument(
+        "--target-utilisation",
+        type=float,
+        default=0.75,
+        help="Target running / capacity ratio (default: 0.75)",
+    )
+    autoscale_parser.add_argument(
+        "--scale-up-window",
+        type=int,
+        default=0,
+        help="Stabilisation window for scale-up in seconds (default: 0, immediate)",
+    )
+    autoscale_parser.add_argument(
+        "--scale-down-window",
+        type=int,
+        default=300,
+        help="Stabilisation window for scale-down in seconds (default: 300, matches K8s HPA)",
+    )
+    autoscale_parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.1,
+        help="Skip churn if |desired - current| / current < this (default: 0.1)",
+    )
+    autoscale_parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=5,
+        help="Seconds between decision ticks (default: 5)",
+    )
+    autoscale_parser.add_argument(
+        "--drain-timeout",
+        type=int,
+        default=30,
+        help="Per-worker graceful drain budget in seconds (default: 30)",
+    )
+    autoscale_parser.add_argument(
+        "--threads-per-worker",
+        type=int,
+        default=4,
+        help="Concurrency configured on each spawned worker (default: 4)",
+    )
+
     # resources subcommand
     res_parser = subparsers.add_parser("resources", help="Show registered resources")
     res_parser.add_argument(
@@ -151,6 +216,8 @@ def main() -> None:
         print(f"Queue '{args.queue_name}' resumed")
     elif args.command == "scaler":
         run_scaler(args)
+    elif args.command == "autoscale":
+        run_autoscale(args)
     elif args.command == "resources":
         run_resources(args)
     elif args.command == "reload":
@@ -266,6 +333,33 @@ def run_scaler(args: argparse.Namespace) -> None:
         port=args.port,
         target_queue_depth=args.target_queue_depth,
     )
+
+
+def run_autoscale(args: argparse.Namespace) -> None:
+    """Start the bare-metal autoscaler control loop."""
+    from taskito.autoscale import AutoscaleConfig, serve_autoscaler
+
+    queue = _load_queue(args.app)
+    try:
+        config = AutoscaleConfig(
+            app_path=args.app,
+            min_workers=args.min_workers,
+            max_workers=args.max_workers,
+            target_queue_depth_per_worker=args.target_queue_depth,
+            target_utilisation=args.target_utilisation,
+            scale_up_window_sec=args.scale_up_window,
+            scale_down_window_sec=args.scale_down_window,
+            tolerance=args.tolerance,
+            poll_interval_sec=args.poll_interval,
+            drain_timeout_sec=args.drain_timeout,
+            threads_per_worker=args.threads_per_worker,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"taskito autoscale -> app={args.app} min={args.min_workers} max={args.max_workers}")
+    print("Press Ctrl+C to stop")
+    serve_autoscaler(queue, config)
 
 
 def run_resources(args: argparse.Namespace) -> None:

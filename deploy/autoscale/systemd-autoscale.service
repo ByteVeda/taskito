@@ -1,0 +1,61 @@
+# systemd unit for the taskito bare-metal autoscaler.
+#
+# Drop this file at /etc/systemd/system/taskito-autoscale.service,
+# adjust the EnvironmentFile / ExecStart paths to match your deployment,
+# then:
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now taskito-autoscale
+#
+# The unit relies on the `taskito` console script being on PATH (installed
+# via `pip install taskito`). The autoscaler spawns child `taskito worker`
+# processes; systemd will SIGTERM the whole process group when the unit is
+# stopped, which the autoscaler converts into a graceful drain of every
+# worker before exiting.
+
+[Unit]
+Description=Taskito bare-metal autoscaler
+After=network.target
+
+[Service]
+Type=simple
+User=taskito
+Group=taskito
+WorkingDirectory=/opt/myapp
+Environment="PYTHONPATH=/opt/myapp"
+# Optional: load app-specific env (DB URL, secrets, etc.)
+# EnvironmentFile=/etc/default/taskito
+
+ExecStart=/usr/local/bin/taskito autoscale \
+    --app myapp.tasks:queue \
+    --min-workers 1 \
+    --max-workers 20 \
+    --target-queue-depth 15 \
+    --target-utilisation 0.75 \
+    --scale-up-window 0 \
+    --scale-down-window 300 \
+    --tolerance 0.1 \
+    --poll-interval 5 \
+    --drain-timeout 30 \
+    --threads-per-worker 4
+
+# Send SIGTERM, then give the autoscaler enough time to drain every worker.
+# TimeoutStopSec must exceed drain_timeout + a small grace + per-worker
+# parallel-drain overhead. With drain_timeout=30 and up to max_workers=20,
+# the parallel shutdown still completes in ~35 seconds; 60 is comfortable.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# Restart on crash but not on intentional shutdown.
+Restart=on-failure
+RestartSec=5
+
+# Recommended hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/taskito
+
+[Install]
+WantedBy=multi-user.target

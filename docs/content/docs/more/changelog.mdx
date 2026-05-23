@@ -5,6 +5,16 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## Unreleased
+
+### Added
+
+- **`compensate_on_continue=True`.** Opt-in flag on `Workflow.__init__()` that lets `on_failure="continue"` runs trigger saga compensation when the run terminates with at least one failed and one completed node. New `CompletedWithFailures` workflow state and `WORKFLOW_COMPLETED_WITH_FAILURES` event distinguish partial-failure runs from clean completions.
+- **`BatchItemResult` + per-item batch results.** Batched tasks configured with `per_item_results=True` return `list[BatchItemResult]`. The worker enforces the type contract (`BatchResultTypeError`) and surfaces partial failures via `BatchPartialFailureError` — which feeds the existing retry/DLQ path. `BatchedJobResult.result(timeout=...)` now actually returns the per-item value instead of raising `NotImplementedError`.
+- **Canvas-level sagas.** `chain.with_compensation([...])`, `group(...).with_compensation([...])`, and `chord(...).with_compensation(group=[...], callback=...)` attach compensators to canvas primitives. On failure during `apply()` the framework synchronously enqueues compensators for the steps that already succeeded (reverse order for chains; parallel for groups). Each compensator gets a deterministic `canvas_compensation:{run_id}:{slot}` unique key.
+- **Dashboard workflows UI.** New `/workflows` list and `/workflows/$runId` detail routes. The detail page renders the DAG as an in-house SVG layout coloured by per-node status, plus a compensation panel that surfaces compensation job IDs and timestamps when the run is in any saga state. New backend endpoints: `GET /api/workflows/runs`, `GET /api/workflows/runs/{id}`, `GET /api/workflows/runs/{id}/dag`, `GET /api/workflows/runs/{id}/children`.
+- **Bare-metal autoscaler.** `taskito autoscale` daemon spawns/drains worker subprocesses using a Kubernetes-HPA-style decision formula. New `py_src/taskito/autoscale/` module with `AutoscaleConfig`, `AutoscaleController`, `ProcessManager`, and `compute_desired_workers`. Supports stabilisation windows (default: 0s scale-up, 300s scale-down — matches HPA), tolerance band (default 10%), and overload bypass. systemd + docker-compose templates in `deploy/autoscale/`. See `/docs/guides/operations/autoscaling`.
+
 ## 0.13.0
 
 ### Added

@@ -1,0 +1,158 @@
+---
+title: Bare-metal Autoscaling
+description: "HPA-style worker autoscaling for non-Kubernetes deployments — systemd, Docker, plain Linux."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+If you're not on Kubernetes, the [KEDA path](./keda) doesn't apply — but
+you still want your worker pool to grow under load and shrink when idle.
+Taskito ships a built-in control loop that does exactly that.
+
+## What it does
+
+`taskito autoscale` is a long-running daemon that:
+
+1. Polls `queue.stats()` every few seconds.
+2. Decides how many worker processes you should have using a formula that
+   mirrors Kubernetes HPA.
+3. Spawns or drains worker subprocesses (`subprocess.Popen` under the
+   hood) to converge.
+
+It's a single Python process — no extra infrastructure.
+
+## Quickstart
+
+```bash
+taskito autoscale \
+    --app myapp.tasks:queue \
+    --min-workers 1 \
+    --max-workers 10 \
+    --target-queue-depth 15 \
+    --target-utilisation 0.75 \
+    --drain-timeout 30
+```
+
+The autoscaler imports your Queue, then spawns child workers via
+`python -m taskito worker --app myapp.tasks:queue --drain-timeout 30`.
+Each child runs the normal Taskito worker loop.
+
+## The scaling formula
+
+Each tick combines two signals:
+
+| Signal | Formula | When it dominates |
+|---|---|---|
+| **Queue depth** | `ceil(pending / target_queue_depth)` | Backlog is growing |
+| **Utilisation** | `ceil(current * util / target_util)` | Workers are saturated |
+
+The controller takes the **max** of the two — biasing toward more capacity
+under uncertainty.
+
+An **overload bypass** kicks in when `running > capacity` (i.e. a worker
+just claimed work but every thread is already busy): the controller adds
+one worker immediately, ignoring tolerance and stabilisation windows. This
+catches the case where a sudden burst lands faster than the scale-up
+signal can react.
+
+The decision is then **clamped** to `[min_workers, max_workers]` and
+filtered through a **tolerance band** (default 10%): if the desired count
+is within ±10% of the current count, no change is applied. Prevents
+single-tick noise from churning processes.
+
+## Stabilisation windows
+
+Mirrors [Kubernetes HPA's downscale stabilisation](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#flapping):
+
+- **`--scale-up-window`** (default 0s) — the controller is allowed to
+  scale up immediately. Within the window, it takes the *minimum* recent
+  recommendation, so any tick that agrees we should grow wins.
+- **`--scale-down-window`** (default 300s, matches K8s HPA) — the
+  controller takes the *maximum* recent recommendation, so a brief lull
+  doesn't tear workers down. Five minutes is conservative — operators
+  on bursty workloads sometimes raise this to 600–900 seconds.
+
+## Graceful shutdown
+
+`SIGTERM` and `SIGINT` are caught by the controller:
+
+1. The decision loop stops accepting new ticks.
+2. Every live worker is sent `SIGTERM` in parallel.
+3. The controller waits up to `drain_timeout + 5s` per worker for a
+   graceful exit; stragglers are `SIGKILL`ed.
+
+Use systemd's `TimeoutStopSec=60` (or Compose's `stop_grace_period: 60s`)
+to give the parallel drain enough headroom. Examples are in
+[`deploy/autoscale/`](https://github.com/ByteVeda/taskito/tree/master/deploy/autoscale).
+
+## Programmatic API
+
+```python
+from taskito import Queue
+from taskito.autoscale import AutoscaleConfig, serve_autoscaler
+
+queue = Queue()
+
+config = AutoscaleConfig(
+    app_path="myapp.tasks:queue",
+    min_workers=2,
+    max_workers=20,
+    target_queue_depth_per_worker=15,
+    target_utilisation=0.75,
+    scale_up_window_sec=0,
+    scale_down_window_sec=300,
+    tolerance=0.1,
+    poll_interval_sec=5,
+    drain_timeout_sec=30,
+    threads_per_worker=4,
+)
+
+serve_autoscaler(queue, config)  # blocks until SIGTERM
+```
+
+For testing or custom polling, use `AutoscaleController` directly:
+
+```python
+from taskito.autoscale import AutoscaleController
+
+controller = AutoscaleController(queue, config)
+# Manual single-step:
+decision = controller.tick()
+print(decision.rationale)
+# Or the full daemon:
+controller.serve_forever()
+```
+
+## CLI reference
+
+| Flag | Default | Description |
+|---|---|---|
+| `--app` | — | Python path to the Queue instance, e.g. `myapp.tasks:queue` |
+| `--min-workers` | `1` | Never scale below this count |
+| `--max-workers` | `10` | Never scale above this count |
+| `--target-queue-depth` | `15` | Target pending jobs per worker |
+| `--target-utilisation` | `0.75` | Target `running / capacity` ratio |
+| `--scale-up-window` | `0` | Stabilisation window for scale-up (seconds) |
+| `--scale-down-window` | `300` | Stabilisation window for scale-down (seconds) |
+| `--tolerance` | `0.1` | Skip churn if `\|desired - current\| / current` < this |
+| `--poll-interval` | `5` | Seconds between decision ticks |
+| `--drain-timeout` | `30` | Per-worker graceful drain budget (seconds) |
+| `--threads-per-worker` | `4` | Concurrency configured on each spawned worker |
+
+<Callout type="info">
+  The autoscaler's `--app` value must be importable from its own
+  PYTHONPATH. If you see `Error: could not import module 'myapp.tasks'`,
+  add your project root to `PYTHONPATH` in the systemd unit / Compose env.
+</Callout>
+
+## When to use this vs KEDA
+
+| | Bare-metal autoscaler | KEDA |
+|---|---|---|
+| Runtime | Single Python daemon | Kubernetes operator |
+| Scaling unit | OS process | Pod replica |
+| Configuration | CLI flags | `ScaledObject` CRD |
+| Best for | Bare metal, Docker, systemd | Kubernetes clusters |
+
+Both share the same scaling formula, so operators moving between
+deployment models don't have to rethink their targets.

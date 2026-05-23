@@ -1,0 +1,49 @@
+# docker-compose example: run a taskito Queue + the bare-metal autoscaler
+# in two containers. The autoscaler container imports your app's Queue and
+# spawns/drains worker subprocesses inside itself.
+#
+# Run with:
+#   docker compose -f docker-compose-autoscale.yml up
+#
+# Adjust the volumes / build context to match where your app lives.
+
+services:
+  # One container that holds the SQLite DB (or replace with a Postgres /
+  # Redis container if you're not on SQLite).
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: taskito
+      POSTGRES_DB: taskito
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # The autoscaler container — runs the control loop + child workers.
+  # All workers share this container's PID namespace so the autoscaler
+  # can SIGTERM / SIGKILL them through subprocess.Popen handles.
+  autoscaler:
+    build:
+      context: ../..  # path to your taskito + app source
+    command: >-
+      taskito autoscale
+      --app myapp.tasks:queue
+      --min-workers 2
+      --max-workers 20
+      --target-queue-depth 15
+      --target-utilisation 0.75
+      --drain-timeout 30
+      --threads-per-worker 4
+    environment:
+      TASKITO_BACKEND: postgres
+      TASKITO_DB_URL: postgres://postgres:taskito@db:5432/taskito
+    depends_on:
+      - db
+    # Give the autoscaler enough time to drain every child worker on
+    # docker compose down. 60s comfortably covers max-workers=20 with
+    # drain_timeout=30 (workers drain in parallel).
+    stop_grace_period: 60s
+
+volumes:
+  db-data: {}

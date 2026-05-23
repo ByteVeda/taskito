@@ -6,6 +6,7 @@
     "troubleshooting",
     "deployment",
     "keda",
+    "autoscaling",
     "postgres",
     "migration"
   ]
