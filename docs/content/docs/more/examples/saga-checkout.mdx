@@ -1,0 +1,150 @@
+---
+title: Saga — e-commerce checkout
+description: A multi-step checkout workflow with automatic reverse-order compensation
+---
+
+A realistic saga: reserve inventory, charge payment, ship the order, and notify the customer. If any step fails after another has succeeded, taskito runs the compensators of the completed steps in reverse topological order.
+
+## Tasks
+
+Each forward step has a compensator declared via `@queue.task(compensates=...)`:
+
+```python
+from taskito import Queue
+from taskito.workflows import Workflow
+
+queue = Queue()
+
+# ── Forward + compensator pairs ────────────────────────────────────────
+
+@queue.task(max_retries=2)
+def release_inventory(
+    forward_args: tuple, forward_kwargs: dict, forward_result: dict
+) -> None:
+    """Compensator for `reserve_inventory`. forward_result is the reservation
+    dict the forward task returned."""
+    reservation_id = forward_result["reservation_id"]
+    inventory.release(reservation_id)
+
+@queue.task(max_retries=2, compensates=release_inventory)
+def reserve_inventory(sku: str, qty: int) -> dict:
+    return {
+        "reservation_id": inventory.reserve(sku, qty),
+        "sku": sku,
+        "qty": qty,
+    }
+
+
+@queue.task(max_retries=2)
+def refund_payment(
+    forward_args: tuple, forward_kwargs: dict, forward_result: dict
+) -> None:
+    payments.refund(forward_result["charge_id"])
+
+@queue.task(max_retries=2, compensates=refund_payment)
+def charge_payment(amount_cents: int, customer_id: str) -> dict:
+    return {"charge_id": payments.charge(amount_cents, customer_id)}
+
+
+@queue.task(max_retries=2)
+def cancel_shipment(
+    forward_args: tuple, forward_kwargs: dict, forward_result: dict
+) -> None:
+    shipping.cancel(forward_result["tracking_number"])
+
+@queue.task(max_retries=2, compensates=cancel_shipment)
+def ship_order(order_id: int, address: str) -> dict:
+    return {"tracking_number": shipping.dispatch(order_id, address)}
+
+
+# Idempotent notification — no compensator needed (sending one extra email
+# is acceptable; not sending one is the failure mode worth avoiding).
+@queue.task(max_retries=3)
+def notify_customer(customer_id: str, tracking_number: str) -> None:
+    mailer.send_shipping_email(customer_id, tracking_number)
+```
+
+## Workflow
+
+```python
+def build_checkout(sku: str, qty: int, amount_cents: int, customer_id: str) -> Workflow:
+    wf = Workflow(name="checkout", version=1)
+    wf.step("reserve", reserve_inventory, args=(sku, qty))
+    wf.step(
+        "charge",
+        charge_payment,
+        args=(amount_cents, customer_id),
+        after="reserve",
+    )
+    wf.step(
+        "ship",
+        ship_order,
+        args=(123, "1 Main St"),
+        after="charge",
+    )
+    wf.step(
+        "notify",
+        notify_customer,
+        args=(customer_id,),
+        after="ship",
+    )
+    return wf
+```
+
+## Running it
+
+```python
+run = queue.submit_workflow(build_checkout("ABC", 2, 5000, "cust-42"))
+final = run.wait(timeout=60)
+
+if final.state == WorkflowState.COMPLETED:
+    print("Checkout succeeded:", final.nodes["ship"].result_hash)
+elif final.state == WorkflowState.COMPENSATED:
+    print("Checkout failed but rolled back cleanly")
+elif final.state == WorkflowState.COMPENSATION_FAILED:
+    print("Manual cleanup needed — some compensators failed")
+    for name, node in final.nodes.items():
+        if node.status.value == "compensation_failed":
+            print(f"  - {name}: {node.compensation_error}")
+```
+
+## What happens on failure
+
+Forward order: `reserve → charge → ship → notify`.
+
+Say the shipping carrier API is down. `ship_order` exhausts retries and the saga kicks in:
+
+1. **Run state becomes `Compensating`**. A `WORKFLOW_COMPENSATING` event fires.
+2. Compensable nodes: `reserve` and `charge` both completed successfully and have registered compensators. `ship` failed so it's not compensable. `notify` never ran.
+3. **Reverse topological waves**: `[charge]` first, then `[reserve]`. Within a wave, compensators run in parallel — here each wave has one node so it's serial.
+4. `refund_payment` is enqueued with `idempotency_key=compensation:<run_id>:charge` and args `((5000, "cust-42"), {}, {"charge_id": "ch_abc"})`.
+5. After `refund_payment` succeeds, `release_inventory` runs with args `(("ABC", 2), {}, {"reservation_id": "...", "sku": "ABC", "qty": 2})`.
+6. **Run state becomes `Compensated`**.
+
+If `refund_payment` itself failed (max retries exhausted), the run terminates as `COMPENSATION_FAILED` and `release_inventory` does **not** run — subsequent waves are skipped because downstream rollback may depend on the failed step.
+
+## Looking up forward state from inside a compensator
+
+You can use `current_compensation_context()` instead of unpacking positional args:
+
+```python
+from taskito.workflows.saga import current_compensation_context
+
+@queue.task
+def refund_payment(forward_args: tuple, forward_kwargs: dict, forward_result: dict) -> None:
+    ctx = current_compensation_context()
+    # ctx.workflow_run_id, ctx.workflow_node_name, ctx.forward_job_id
+    audit_log.write(
+        run_id=ctx.workflow_run_id,
+        node=ctx.workflow_node_name,
+        charge_id=ctx.forward_result["charge_id"],
+        action="refund",
+    )
+    payments.refund(ctx.forward_result["charge_id"])
+```
+
+The context is automatically populated by the framework for the duration of the compensator call. Outside a compensator (in a regular task body), `current_compensation_context()` returns `None`.
+
+## Idempotency
+
+Compensators **must** be idempotent. taskito guarantees at-most-one compensation per `(run, node)` pair via the `compensation:{run_id}:{node_name}` idempotency key, but the worker can still retry the compensator on transient failures (network glitches) before exhaustion. Design the rollback to be safe to retry — e.g. `payments.refund(charge_id)` should silently no-op if the charge was already refunded.

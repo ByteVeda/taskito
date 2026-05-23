@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from taskito._taskito import PyTaskConfig
 from taskito.async_support.helpers import run_maybe_async
+from taskito.batching.config import BatchConfig
 from taskito.context import _clear_context, current_job
 from taskito.dashboard.middleware_store import MiddlewareDisableStore
 from taskito.events import EventType
@@ -24,6 +25,10 @@ from taskito.interception.reconstruct import reconstruct_args
 from taskito.predicates.core import coerce_predicate
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
 from taskito.task import TaskWrapper
+from taskito.workflows.saga.context import (
+    _reset_compensation_context,
+    _set_compensation_context,
+)
 
 if TYPE_CHECKING:
     from taskito.interception import ArgumentInterceptor
@@ -83,6 +88,7 @@ class QueueDecoratorMixin:
     _task_serializers: dict[str, Serializer]
     _task_idempotent: dict[str, bool]
     _task_compensates: dict[str, str]
+    _task_batch_configs: dict[str, Any]
     _task_middleware: dict[str, list[TaskMiddleware]]
     _task_retry_filters: dict[str, dict[str, list[type[Exception]]]]
     _task_inject_map: dict[str, list[str]]
@@ -208,6 +214,19 @@ class QueueDecoratorMixin:
             for hook in hooks["before_task"]:
                 hook(task_name, args, kwargs)
 
+            # Saga compensation context: if this job was dispatched by the
+            # saga orchestrator, look up the in-memory CompensationContext
+            # and push it onto a contextvar so the compensator body can
+            # call ``current_compensation_context()`` to introspect the
+            # forward execution. Pop in the ``finally`` below.
+            comp_ctx_token = None
+            tracker = getattr(queue_ref, "_workflow_tracker", None)
+            saga = getattr(tracker, "_saga", None) if tracker is not None else None
+            if saga is not None and saga.is_compensation_job(job_id):
+                comp_ctx = saga.take_compensation_context(job_id)
+                if comp_ctx is not None:
+                    comp_ctx_token = _set_compensation_context(comp_ctx)
+
             error = None
             result = None
             try:
@@ -249,6 +268,9 @@ class QueueDecoratorMixin:
                     hook(task_name, args, kwargs, result)
                 return result
             finally:
+                # Pop the saga compensation context (no-op outside saga flow).
+                if comp_ctx_token is not None:
+                    _reset_compensation_context(comp_ctx_token)
                 # Release task/request-scoped resources
                 for release_fn in release_callbacks:
                     try:
@@ -301,6 +323,7 @@ class QueueDecoratorMixin:
         max_concurrent: int | None = None,
         idempotent: bool = False,
         compensates: TaskWrapper | str | None = None,
+        batch: bool | dict[str, Any] | None = None,
         predicate: Predicate | Callable[..., Any] | None = None,
         on_false: str = "defer",
         predicate_extras: dict[str, Any] | None = None,
@@ -351,6 +374,15 @@ class QueueDecoratorMixin:
                 ``idempotency_key="..."`` overrides the derived key; per-call
                 ``idempotent=False`` disables auto-derivation for that one
                 submission.
+            batch: Enable producer-side batching. ``True`` uses defaults
+                (max_size=100, max_wait_ms=500); a dict overrides specific
+                fields (e.g., ``batch={"max_size": 50, "max_wait_ms": 200}``).
+                The task function must accept a ``list`` as its first
+                positional arg — each ``.delay(item)`` adds one item to the
+                in-memory buffer; the worker eventually runs the function
+                once with the full list. Items in the buffer at process
+                crash are lost; do not use for critical tasks. Cannot be
+                combined with ``idempotent=True`` (rejected at decoration).
             predicate: A :class:`~taskito.predicates.Predicate` (or plain
                 callable receiving a :class:`~taskito.predicates.PredicateContext`)
                 evaluated both at enqueue time and at worker-dispatch time
@@ -378,6 +410,13 @@ class QueueDecoratorMixin:
             raise ValueError(f"on_false must be 'defer' or 'cancel', got {on_false!r}")
         if default_defer_seconds < 0:
             raise ValueError("default_defer_seconds must be >= 0")
+        batch_config = BatchConfig.normalize(batch)
+        if batch_config is not None and idempotent:
+            raise ValueError(
+                "batch=... is incompatible with idempotent=True — the auto-derived "
+                "dedup key would change for every batch flush. Use an explicit "
+                "idempotency_key per .delay() call if you need dedup."
+            )
 
         def decorator(fn: Callable) -> TaskWrapper:
             task_name = name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}"
@@ -439,6 +478,12 @@ class QueueDecoratorMixin:
                         f"string, got {type(compensates).__name__}"
                     )
                 self._task_compensates[task_name] = comp_name
+
+            # Store per-task batch config — producer-side accumulation enabled
+            # for this task name; Queue.enqueue() routes items into the
+            # accumulator instead of calling the Rust enqueue directly.
+            if batch_config is not None:
+                self._task_batch_configs[task_name] = batch_config
 
             # Store predicate (and its on_false/extras/default_defer).
             # Also serialize a JSON snapshot so the inspection API and

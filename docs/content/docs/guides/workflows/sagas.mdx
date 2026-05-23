@@ -1,0 +1,120 @@
+---
+title: Sagas
+description: Reverse-order compensation when a workflow step fails
+---
+
+A saga is a workflow where each step has a registered **compensator** — a task that undoes the step's side effect. If a later step fails, taskito automatically runs the compensators of every already-completed step, in reverse topological order, so the system ends up in a consistent state.
+
+```python
+from taskito import Queue
+from taskito.workflows import Workflow
+
+queue = Queue()
+
+@queue.task
+def refund(forward_args, forward_kwargs, forward_result):
+    charge_id = forward_result  # the id returned by charge()
+    payment_api.refund(charge_id)
+
+@queue.task(compensates=refund)
+def charge(amount: int, customer_id: str) -> str:
+    return payment_api.charge(amount, customer_id)
+
+@queue.task
+def ship(order_id: int):
+    shipping_api.ship(order_id)
+
+wf = Workflow(name="checkout")
+wf.step("charge",  charge, args=(100, "c1"))
+wf.step("ship",    ship,   args=(42,),  after="charge")
+
+run = queue.submit_workflow(wf)
+final = run.wait()
+```
+
+If `ship` fails after `charge` succeeded, taskito enqueues `refund` automatically. The final run state is `COMPENSATED` (every compensator succeeded) or `COMPENSATION_FAILED` (one or more failed).
+
+## Compensation contract
+
+Every compensator receives three positional args:
+
+```python
+def compensator(forward_args: tuple, forward_kwargs: dict, forward_result: Any) -> None:
+    ...
+```
+
+That's the **only** signature taskito calls compensators with. It lets one compensator service multiple workflows without coupling to specific step shapes.
+
+<Callout type="info" title="v1 limitations">
+For the initial saga release:
+
+- `forward_args` / `forward_kwargs` are populated only for *deferred* nodes (fan-out, fan-in, conditional, gate, sub-workflow). Static steps currently pass empty tuples/dicts. Look up state yourself if you need the originals.
+- `forward_result` is always `None` in v1.
+- Sagas trigger only when `on_failure="fail_fast"` (the default). `on_failure="continue"` workflows do not compensate.
+</Callout>
+
+## Declaring compensators
+
+There are two places you can declare a compensator. The step-level setting always wins.
+
+**Decorator-level** — the default compensator for this task wherever it's used:
+
+```python
+@queue.task(compensates=refund)
+def charge(amount: int, customer_id: str) -> str:
+    ...
+```
+
+**Step-level** — override or add the compensator for one specific workflow step:
+
+```python
+wf.step("charge", charge, args=(100, "c1"), compensates=refund_v2)
+```
+
+To explicitly disable compensation for a specific step (even when the task has a decorator-level default):
+
+```python
+wf.step("charge", charge, args=(100, "c1"), compensates=None)
+```
+
+## Execution model
+
+When a workflow step's forward execution fails with retries exhausted:
+
+1. The run transitions to state `Compensating`. A `WORKFLOW_COMPENSATING` event fires.
+2. taskito collects every step that **completed successfully** AND has a registered compensator. Failed, skipped, pending, and ready nodes are not compensated.
+3. Those steps are grouped into **reverse topological waves**: leaves first, roots last. Within a wave, compensators run in parallel.
+4. Each compensator is enqueued with an idempotency key of `compensation:{run_id}:{node_name}` — re-triggering compensation (e.g. after a tracker restart) is safe.
+5. After a wave finishes:
+   - All compensators succeeded → next wave starts.
+   - Any failed → the run terminates as `CompensationFailed`. **Subsequent waves are not dispatched** because downstream rollback may depend on the failed step.
+
+## Final run states
+
+| State                 | Meaning                                                                   |
+|-----------------------|---------------------------------------------------------------------------|
+| `COMPLETED`           | Run finished normally — no compensation ran                               |
+| `FAILED`              | Forward failure with no registered compensators                           |
+| `COMPENSATED`         | Forward failed, every applicable compensator succeeded                    |
+| `COMPENSATION_FAILED` | Forward failed, and one or more compensators failed during rollback       |
+
+`WorkflowState.is_terminal()` returns `True` for all four.
+
+## Idempotency
+
+Compensators **must** be idempotent: taskito guarantees at-most-one compensation per `(run, node)` pair via the idempotency key, but the underlying network/database call can still be retried by the worker before reaching exhaustion. Treat the compensator like any other worker task — write it to be safe to retry.
+
+## Events
+
+Saga lifecycle emits dedicated events on the queue's event bus:
+
+| Event                                  | Fires when                                              |
+|----------------------------------------|---------------------------------------------------------|
+| `WORKFLOW_COMPENSATING`                | Run enters the compensation phase                       |
+| `WORKFLOW_COMPENSATED`                 | All compensators succeeded                              |
+| `WORKFLOW_COMPENSATION_FAILED`         | At least one compensator failed                         |
+| `NODE_COMPENSATING`                    | A node's compensator was enqueued                       |
+| `NODE_COMPENSATED`                     | A node's compensator finished successfully              |
+| `NODE_COMPENSATION_FAILED`             | A node's compensator failed after retries               |
+
+Subscribe via `queue.on(EventType.WORKFLOW_COMPENSATED, callback)` like any other workflow event.
