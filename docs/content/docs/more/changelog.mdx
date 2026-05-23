@@ -5,6 +5,21 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## Unreleased
+
+### Added
+
+- **Workflow PostgreSQL backend.** `WorkflowPostgresStorage` mirrors the SQLite implementation through the shared `impl_workflow_diesel_ops!` macro. Workflows now run on Postgres-backed queues — the previous `PyRuntimeError` on non-SQLite backends is gone.
+- **Workflow Redis backend.** `WorkflowRedisStorage` (in `crates/taskito-workflows/src/redis_store.rs`) stores definitions, runs, and nodes as hashes under a `wf:` prefix, with sorted-set indexes for state/definition lookup and a Lua `FINALIZE_FAN_OUT` script for atomic fan-in CAS.
+- **Multi-backend workflow contract suite** (`crates/taskito-workflows/tests/storage_contract.rs`). 27 cases run against every workflow backend. CI now verifies parity on every PR for SQLite, PostgreSQL, and Redis.
+- **`@queue.task(batch=...)`.** Producer-side task batching collects per-call items in memory and dispatches them as a single job whose payload is the list. Tunable `max_size` / `max_wait_ms`. See `/docs/guides/core/batching`.
+- **Saga compensation.** `@queue.task(compensates=...)` and `Workflow.step(..., compensates=...)` declare a compensator. On forward failure (in `fail_fast` mode) taskito runs the registered compensators in reverse topological order, with idempotency guaranteed via `compensation:{run_id}:{node_name}` dedup keys. New workflow states: `Compensating`, `Compensated`, `CompensationFailed`. See `/docs/guides/workflows/sagas`.
+
+### Fixed
+
+- **Atomic fan-out node creation.** `expand_fan_out` now uses the transactional `create_workflow_nodes_batch` to insert all child workflow nodes in one transaction. A crash partway through fan-out expansion no longer leaves half-tracked children.
+- **Diesel `?`-placeholder rewriting for Postgres.** `sql_query` does not auto-rewrite `?` → `$N` for PostgreSQL; the workflow crate's macro now does it explicitly via the `pg_rewrite` helper.
+
 ## 0.12.3
 
 ### Added

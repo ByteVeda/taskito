@@ -7,6 +7,7 @@
     "execution-model",
     "scheduling",
     "predicates",
+    "batching",
     "workflows"
   ]
 }
