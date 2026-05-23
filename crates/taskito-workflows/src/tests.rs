@@ -54,11 +54,13 @@ fn make_run(definition_id: &str) -> WorkflowRun {
 fn test_state_transitions() {
     assert!(WorkflowState::Pending.can_transition_to(WorkflowState::Running));
     assert!(WorkflowState::Running.can_transition_to(WorkflowState::Completed));
+    assert!(WorkflowState::Running.can_transition_to(WorkflowState::CompletedWithFailures));
     assert!(WorkflowState::Running.can_transition_to(WorkflowState::Failed));
     assert!(WorkflowState::Running.can_transition_to(WorkflowState::Cancelled));
     assert!(WorkflowState::Running.can_transition_to(WorkflowState::Paused));
     assert!(WorkflowState::Paused.can_transition_to(WorkflowState::Running));
     assert!(WorkflowState::Paused.can_transition_to(WorkflowState::Cancelled));
+    assert!(WorkflowState::CompletedWithFailures.can_transition_to(WorkflowState::Compensating));
 
     assert!(!WorkflowState::Pending.can_transition_to(WorkflowState::Completed));
     assert!(!WorkflowState::Completed.can_transition_to(WorkflowState::Running));
@@ -68,11 +70,31 @@ fn test_state_transitions() {
 #[test]
 fn test_state_is_terminal() {
     assert!(WorkflowState::Completed.is_terminal());
+    assert!(WorkflowState::CompletedWithFailures.is_terminal());
     assert!(WorkflowState::Failed.is_terminal());
     assert!(WorkflowState::Cancelled.is_terminal());
     assert!(!WorkflowState::Pending.is_terminal());
     assert!(!WorkflowState::Running.is_terminal());
     assert!(!WorkflowState::Paused.is_terminal());
+}
+
+#[test]
+fn test_state_round_trip() {
+    for s in [
+        WorkflowState::Pending,
+        WorkflowState::Running,
+        WorkflowState::Paused,
+        WorkflowState::Completed,
+        WorkflowState::CompletedWithFailures,
+        WorkflowState::Failed,
+        WorkflowState::Cancelled,
+        WorkflowState::Compensating,
+        WorkflowState::Compensated,
+        WorkflowState::CompensationFailed,
+    ] {
+        assert_eq!(WorkflowState::from_str_val(s.as_str()), Some(s));
+    }
+    assert_eq!(WorkflowState::from_str_val("unknown"), None);
 }
 
 /// Diamond DAG (a → b, a → c, b → d, c → d) is not covered by the linear
