@@ -30,6 +30,9 @@ class EventType(enum.Enum):
     QUEUE_RESUMED = "queue.resumed"
     WORKFLOW_SUBMITTED = "workflow.submitted"
     WORKFLOW_COMPLETED = "workflow.completed"
+    # on_failure="continue" run reached terminal with mixed success/failure
+    # (at least one node completed and at least one node failed).
+    WORKFLOW_COMPLETED_WITH_FAILURES = "workflow.completed_with_failures"
     WORKFLOW_FAILED = "workflow.failed"
     WORKFLOW_CANCELLED = "workflow.cancelled"
     WORKFLOW_GATE_REACHED = "workflow.gate_reached"
