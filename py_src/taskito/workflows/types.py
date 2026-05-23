@@ -15,9 +15,19 @@ class WorkflowState(str, enum.Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     PAUSED = "paused"
+    # Saga states — used when @task(compensates=...) is in play.
+    COMPENSATING = "compensating"
+    COMPENSATED = "compensated"
+    COMPENSATION_FAILED = "compensation_failed"
 
     def is_terminal(self) -> bool:
-        return self in (WorkflowState.COMPLETED, WorkflowState.FAILED, WorkflowState.CANCELLED)
+        return self in (
+            WorkflowState.COMPLETED,
+            WorkflowState.FAILED,
+            WorkflowState.CANCELLED,
+            WorkflowState.COMPENSATED,
+            WorkflowState.COMPENSATION_FAILED,
+        )
 
 
 class NodeStatus(str, enum.Enum):
@@ -31,6 +41,10 @@ class NodeStatus(str, enum.Enum):
     SKIPPED = "skipped"
     WAITING_APPROVAL = "waiting_approval"
     CACHE_HIT = "cache_hit"
+    # Saga states.
+    COMPENSATING = "compensating"
+    COMPENSATED = "compensated"
+    COMPENSATION_FAILED = "compensation_failed"
 
     def is_terminal(self) -> bool:
         return self in (
@@ -38,6 +52,8 @@ class NodeStatus(str, enum.Enum):
             NodeStatus.FAILED,
             NodeStatus.SKIPPED,
             NodeStatus.CACHE_HIT,
+            NodeStatus.COMPENSATED,
+            NodeStatus.COMPENSATION_FAILED,
         )
 
 

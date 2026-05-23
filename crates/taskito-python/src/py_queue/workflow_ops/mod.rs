@@ -11,6 +11,7 @@ mod gates;
 mod lifecycle;
 mod nodes;
 mod queries;
+mod saga;
 
 use std::collections::HashMap;
 
@@ -19,6 +20,10 @@ use pyo3::prelude::*;
 
 use taskito_core::error::Result as CoreResult;
 use taskito_core::storage::{Storage, StorageBackend};
+#[cfg(feature = "postgres")]
+use taskito_workflows::WorkflowPostgresStorage;
+#[cfg(feature = "redis")]
+use taskito_workflows::WorkflowRedisStorage;
 use taskito_workflows::{
     StepMetadata, WorkflowNode, WorkflowNodeStatus, WorkflowSqliteStorage, WorkflowState,
     WorkflowStorage, WorkflowStorageBackend,
@@ -41,17 +46,13 @@ pub(super) fn workflow_storage(queue: &PyQueue) -> PyResult<WorkflowStorageBacke
             .map(WorkflowStorageBackend::Sqlite)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
         #[cfg(feature = "postgres")]
-        StorageBackend::Postgres(_) => {
-            return Err(PyRuntimeError::new_err(
-                "workflows are currently only supported on the SQLite backend",
-            ))
-        }
+        StorageBackend::Postgres(s) => WorkflowPostgresStorage::new(s.clone())
+            .map(WorkflowStorageBackend::Postgres)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
         #[cfg(feature = "redis")]
-        StorageBackend::Redis(_) => {
-            return Err(PyRuntimeError::new_err(
-                "workflows are currently only supported on the SQLite backend",
-            ))
-        }
+        StorageBackend::Redis(s) => WorkflowRedisStorage::new(s.clone())
+            .map(WorkflowStorageBackend::Redis)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
     };
     // If another thread raced us to initialize, our value is ignored — either
     // handle is equivalent because the underlying pool is shared.
@@ -211,6 +212,10 @@ mod tests {
             started_at: None,
             completed_at: None,
             error: None,
+            compensation_job_id: None,
+            compensation_started_at: None,
+            compensation_completed_at: None,
+            compensation_error: None,
         };
         wf_storage.create_workflow_node(&node).unwrap();
         node

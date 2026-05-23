@@ -64,6 +64,14 @@ impl RedisStorage {
             .get_connection()
             .map_err(|e| QueueError::Other(format!("Redis connection error: {e}")))
     }
+
+    /// The key prefix used for every Redis key this storage writes.
+    ///
+    /// Exposed so adjacent stores (e.g. the workflow store) can namespace
+    /// their own keys under the same prefix without re-parsing the URL.
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
 }
 
 fn map_err(e: redis::RedisError) -> QueueError {

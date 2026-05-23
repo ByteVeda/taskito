@@ -82,6 +82,7 @@ class QueueDecoratorMixin:
     _hooks: dict[str, list[Callable]]
     _task_serializers: dict[str, Serializer]
     _task_idempotent: dict[str, bool]
+    _task_compensates: dict[str, str]
     _task_middleware: dict[str, list[TaskMiddleware]]
     _task_retry_filters: dict[str, dict[str, list[type[Exception]]]]
     _task_inject_map: dict[str, list[str]]
@@ -299,6 +300,7 @@ class QueueDecoratorMixin:
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
         idempotent: bool = False,
+        compensates: TaskWrapper | str | None = None,
         predicate: Predicate | Callable[..., Any] | None = None,
         on_false: str = "defer",
         predicate_extras: dict[str, Any] | None = None,
@@ -331,6 +333,15 @@ class QueueDecoratorMixin:
                 (5 minutes) if not set.
             max_concurrent: Maximum number of concurrent running instances of
                 this task. ``None`` means no limit.
+            compensates: Optional reference to a task that compensates this
+                one. When this task runs as part of a workflow saga and a
+                later step fails, the framework enqueues the compensation
+                task as part of reverse-order rollback. The compensation
+                task is invoked with ``(forward_args, forward_kwargs,
+                forward_result)`` so it can undo the original side effect.
+                Accepts a :class:`TaskWrapper` (a sibling decorated task) or
+                a task-name string. ``None`` (default) means no compensation
+                — saga rollback skips this node if the workflow fails.
             idempotent: When ``True``, ``.delay()``/``.apply_async()`` calls
                 automatically derive a deduplication key from
                 ``sha256(task_name|serialized_payload)``. Two calls with
@@ -414,6 +425,20 @@ class QueueDecoratorMixin:
             # Store per-task idempotency flag (auto-derives unique_key on enqueue)
             if idempotent:
                 self._task_idempotent[task_name] = True
+
+            # Saga compensation: record the compensating task's name so the
+            # workflow tracker can enqueue it during reverse-order rollback.
+            if compensates is not None:
+                if isinstance(compensates, TaskWrapper):
+                    comp_name = compensates.name
+                elif isinstance(compensates, str):
+                    comp_name = compensates
+                else:
+                    raise TypeError(
+                        "compensates= must be a TaskWrapper or a task-name "
+                        f"string, got {type(compensates).__name__}"
+                    )
+                self._task_compensates[task_name] = comp_name
 
             # Store predicate (and its on_false/extras/default_defer).
             # Also serialize a JSON snapshot so the inspection API and
