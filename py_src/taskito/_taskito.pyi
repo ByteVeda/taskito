@@ -258,6 +258,17 @@ class PyQueue:
         cache_hit_nodes: dict[str, str] | None = None,
     ) -> PyWorkflowHandle: ...
     def get_workflow_run_status(self, run_id: str) -> PyWorkflowRunStatus: ...
+    def list_workflow_runs(
+        self,
+        definition_name: str | None = None,
+        state: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[PyWorkflowRun]: ...
+    def get_workflow_run_detail(
+        self, run_id: str
+    ) -> tuple[PyWorkflowRun, list[PyWorkflowRunNode]]: ...
+    def get_child_workflow_runs(self, parent_run_id: str) -> list[PyWorkflowRun]: ...
     def cancel_workflow_run(self, run_id: str) -> None: ...
     def mark_workflow_node_result(
         self,
@@ -383,6 +394,42 @@ class PyWorkflowRunStatus:
     error: str | None
 
     def node_statuses(self) -> dict[str, dict[str, Any]]: ...
+
+class PyWorkflowRun:
+    """One workflow run row, dashboard-shaped.
+
+    Only available when built with the ``workflows`` feature.
+    """
+
+    id: str
+    definition_id: str
+    state: str
+    params: str | None
+    started_at: int | None
+    completed_at: int | None
+    error: str | None
+    parent_run_id: str | None
+    parent_node_name: str | None
+    created_at: int
+
+class PyWorkflowRunNode:
+    """One workflow node row with compensation fields included.
+
+    Only available when built with the ``workflows`` feature.
+    """
+
+    node_name: str
+    status: str
+    job_id: str | None
+    result_hash: str | None
+    fan_out_count: int | None
+    started_at: int | None
+    completed_at: int | None
+    error: str | None
+    compensation_job_id: str | None
+    compensation_started_at: int | None
+    compensation_completed_at: int | None
+    compensation_error: str | None
 
 class PyResultSender:
     """Sends task results from Python async executor back to Rust scheduler.

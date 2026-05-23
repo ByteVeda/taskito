@@ -37,6 +37,8 @@ fn _taskito(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<py_workflow::PyWorkflowBuilder>()?;
         m.add_class::<py_workflow::PyWorkflowHandle>()?;
         m.add_class::<py_workflow::PyWorkflowRunStatus>()?;
+        m.add_class::<py_workflow::PyWorkflowRun>()?;
+        m.add_class::<py_workflow::PyWorkflowRunNode>()?;
     }
     Ok(())
 }

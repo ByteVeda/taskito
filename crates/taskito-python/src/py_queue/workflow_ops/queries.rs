@@ -4,11 +4,11 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use taskito_core::error::Result as CoreResult;
-use taskito_workflows::WorkflowStorage;
+use taskito_workflows::{WorkflowState, WorkflowStorage};
 
 use crate::py_queue::workflow_ops::{status_to_py, workflow_storage};
 use crate::py_queue::PyQueue;
-use crate::py_workflow::PyWorkflowRunStatus;
+use crate::py_workflow::{PyWorkflowRun, PyWorkflowRunNode, PyWorkflowRunStatus};
 
 #[pymethods]
 impl PyQueue {
@@ -70,6 +70,91 @@ impl PyQueue {
                 .into_iter()
                 .map(|n| (n.node_name, n.status.as_str().to_string(), n.result_hash))
                 .collect())
+        });
+
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// List workflow runs, optionally filtered by definition name and / or state.
+    ///
+    /// Used by the dashboard ``/api/workflows/runs`` endpoint. Caller-supplied
+    /// ``limit`` is clamped to ``[1, 500]`` and ``offset`` floored at 0 so the
+    /// endpoint can't be abused for unbounded scans.
+    #[pyo3(signature = (definition_name=None, state=None, limit=50, offset=0))]
+    pub fn list_workflow_runs(
+        &self,
+        py: Python<'_>,
+        definition_name: Option<&str>,
+        state: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> PyResult<Vec<PyWorkflowRun>> {
+        let wf_storage = workflow_storage(self)?;
+        let limit = limit.clamp(1, 500);
+        let offset = offset.max(0);
+        let definition_owned = definition_name.map(|s| s.to_string());
+        let state_parsed = match state {
+            Some(s) => Some(
+                WorkflowState::from_str_val(s)
+                    .ok_or_else(|| PyValueError::new_err(format!("invalid workflow state: {s}")))?,
+            ),
+            None => None,
+        };
+
+        let result: CoreResult<Vec<PyWorkflowRun>> = py.allow_threads(|| {
+            let runs = wf_storage.list_workflow_runs(
+                definition_owned.as_deref(),
+                state_parsed,
+                limit,
+                offset,
+            )?;
+            Ok(runs.into_iter().map(PyWorkflowRun::from).collect())
+        });
+
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Fetch a workflow run with full per-node detail including compensation fields.
+    ///
+    /// Used by the dashboard ``/api/workflows/runs/{run_id}`` endpoint. Unlike
+    /// ``get_workflow_run_status`` (which returns a flat tuple representation),
+    /// this exposes compensation timestamps and error strings for every node.
+    pub fn get_workflow_run_detail(
+        &self,
+        py: Python<'_>,
+        run_id: &str,
+    ) -> PyResult<(PyWorkflowRun, Vec<PyWorkflowRunNode>)> {
+        let wf_storage = workflow_storage(self)?;
+        let run_id_owned = run_id.to_string();
+
+        let result: CoreResult<Option<(PyWorkflowRun, Vec<PyWorkflowRunNode>)>> =
+            py.allow_threads(|| {
+                let run = match wf_storage.get_workflow_run(&run_id_owned)? {
+                    Some(r) => r,
+                    None => return Ok(None),
+                };
+                let nodes = wf_storage.get_workflow_nodes(&run_id_owned)?;
+                let node_rows = nodes.into_iter().map(PyWorkflowRunNode::from).collect();
+                Ok(Some((PyWorkflowRun::from(run), node_rows)))
+            });
+
+        result
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+            .ok_or_else(|| PyValueError::new_err(format!("workflow run '{run_id}' not found")))
+    }
+
+    /// List sub-workflow runs spawned by a parent run.
+    pub fn get_child_workflow_runs(
+        &self,
+        py: Python<'_>,
+        parent_run_id: &str,
+    ) -> PyResult<Vec<PyWorkflowRun>> {
+        let wf_storage = workflow_storage(self)?;
+        let parent_owned = parent_run_id.to_string();
+
+        let result: CoreResult<Vec<PyWorkflowRun>> = py.allow_threads(|| {
+            let runs = wf_storage.get_child_workflow_runs(&parent_owned)?;
+            Ok(runs.into_iter().map(PyWorkflowRun::from).collect())
         });
 
         result.map_err(|e| PyRuntimeError::new_err(e.to_string()))

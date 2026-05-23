@@ -191,3 +191,119 @@ impl PyWorkflowRunStatus {
         )
     }
 }
+
+/// One row of the dashboard ``/api/workflows/runs`` listing.
+///
+/// Mirrors the core ``WorkflowRun`` struct but uses ``String`` for the
+/// state (so the wire shape stays stable when the enum gets new variants)
+/// and exposes only the fields the dashboard actually renders.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyWorkflowRun {
+    #[pyo3(get)]
+    pub id: String,
+    #[pyo3(get)]
+    pub definition_id: String,
+    #[pyo3(get)]
+    pub state: String,
+    #[pyo3(get)]
+    pub params: Option<String>,
+    #[pyo3(get)]
+    pub started_at: Option<i64>,
+    #[pyo3(get)]
+    pub completed_at: Option<i64>,
+    #[pyo3(get)]
+    pub error: Option<String>,
+    #[pyo3(get)]
+    pub parent_run_id: Option<String>,
+    #[pyo3(get)]
+    pub parent_node_name: Option<String>,
+    #[pyo3(get)]
+    pub created_at: i64,
+}
+
+impl From<::taskito_workflows::WorkflowRun> for PyWorkflowRun {
+    fn from(r: ::taskito_workflows::WorkflowRun) -> Self {
+        Self {
+            id: r.id,
+            definition_id: r.definition_id,
+            state: r.state.as_str().to_string(),
+            params: r.params,
+            started_at: r.started_at,
+            completed_at: r.completed_at,
+            error: r.error,
+            parent_run_id: r.parent_run_id,
+            parent_node_name: r.parent_node_name,
+            created_at: r.created_at,
+        }
+    }
+}
+
+#[pymethods]
+impl PyWorkflowRun {
+    fn __repr__(&self) -> String {
+        format!("PyWorkflowRun(id='{}', state='{}')", self.id, self.state)
+    }
+}
+
+/// One node entry for the dashboard ``/api/workflows/runs/{run_id}`` detail view.
+///
+/// Includes compensation columns (added in 0.13.0) so the dashboard can show
+/// "this node was compensated at ts, comp job xxx" without an extra query.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyWorkflowRunNode {
+    #[pyo3(get)]
+    pub node_name: String,
+    #[pyo3(get)]
+    pub status: String,
+    #[pyo3(get)]
+    pub job_id: Option<String>,
+    #[pyo3(get)]
+    pub result_hash: Option<String>,
+    #[pyo3(get)]
+    pub fan_out_count: Option<i32>,
+    #[pyo3(get)]
+    pub started_at: Option<i64>,
+    #[pyo3(get)]
+    pub completed_at: Option<i64>,
+    #[pyo3(get)]
+    pub error: Option<String>,
+    #[pyo3(get)]
+    pub compensation_job_id: Option<String>,
+    #[pyo3(get)]
+    pub compensation_started_at: Option<i64>,
+    #[pyo3(get)]
+    pub compensation_completed_at: Option<i64>,
+    #[pyo3(get)]
+    pub compensation_error: Option<String>,
+}
+
+impl From<::taskito_workflows::WorkflowNode> for PyWorkflowRunNode {
+    fn from(n: ::taskito_workflows::WorkflowNode) -> Self {
+        Self {
+            node_name: n.node_name,
+            status: n.status.as_str().to_string(),
+            job_id: n.job_id,
+            result_hash: n.result_hash,
+            fan_out_count: n.fan_out_count,
+            started_at: n.started_at,
+            completed_at: n.completed_at,
+            error: n.error,
+            compensation_job_id: n.compensation_job_id,
+            compensation_started_at: n.compensation_started_at,
+            compensation_completed_at: n.compensation_completed_at,
+            compensation_error: n.compensation_error,
+        }
+    }
+}
+
+#[pymethods]
+impl PyWorkflowRunNode {
+    fn __repr__(&self) -> String {
+        format!(
+            "PyWorkflowRunNode(node_name='{}', status='{}')",
+            self.node_name, self.status
+        )
+    }
+}
