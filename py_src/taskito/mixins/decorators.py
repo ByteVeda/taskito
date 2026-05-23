@@ -25,6 +25,10 @@ from taskito.interception.reconstruct import reconstruct_args
 from taskito.predicates.core import coerce_predicate
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
 from taskito.task import TaskWrapper
+from taskito.workflows.saga.context import (
+    _reset_compensation_context,
+    _set_compensation_context,
+)
 
 if TYPE_CHECKING:
     from taskito.interception import ArgumentInterceptor
@@ -210,6 +214,19 @@ class QueueDecoratorMixin:
             for hook in hooks["before_task"]:
                 hook(task_name, args, kwargs)
 
+            # Saga compensation context: if this job was dispatched by the
+            # saga orchestrator, look up the in-memory CompensationContext
+            # and push it onto a contextvar so the compensator body can
+            # call ``current_compensation_context()`` to introspect the
+            # forward execution. Pop in the ``finally`` below.
+            comp_ctx_token = None
+            tracker = getattr(queue_ref, "_workflow_tracker", None)
+            saga = getattr(tracker, "_saga", None) if tracker is not None else None
+            if saga is not None and saga.is_compensation_job(job_id):
+                comp_ctx = saga.take_compensation_context(job_id)
+                if comp_ctx is not None:
+                    comp_ctx_token = _set_compensation_context(comp_ctx)
+
             error = None
             result = None
             try:
@@ -251,6 +268,9 @@ class QueueDecoratorMixin:
                     hook(task_name, args, kwargs, result)
                 return result
             finally:
+                # Pop the saga compensation context (no-op outside saga flow).
+                if comp_ctx_token is not None:
+                    _reset_compensation_context(comp_ctx_token)
                 # Release task/request-scoped resources
                 for release_fn in release_callbacks:
                     try:

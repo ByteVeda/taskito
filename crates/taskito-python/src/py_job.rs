@@ -44,6 +44,7 @@ pub struct PyJob {
     pub namespace: Option<String>,
 
     status_val: i32,
+    payload_bytes: Vec<u8>,
     result_bytes: Option<Vec<u8>>,
 }
 
@@ -54,6 +55,13 @@ impl PyJob {
         JobStatus::from_i32(self.status_val)
             .unwrap_or(JobStatus::Pending)
             .as_str()
+    }
+
+    /// The serialized ``(args, kwargs)`` payload that was enqueued for this
+    /// job. Use the queue's per-task serializer to decode.
+    #[getter]
+    pub fn payload_bytes(&self) -> &[u8] {
+        &self.payload_bytes
     }
 
     #[getter]
@@ -93,6 +101,7 @@ impl From<Job> for PyJob {
             notes: job.notes,
             namespace: job.namespace,
             status_val: job.status as i32,
+            payload_bytes: job.payload,
             result_bytes: job.result,
         }
     }
