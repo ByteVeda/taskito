@@ -232,17 +232,50 @@ class WorkflowTracker:
 
         run_id, node_name, terminal_state = result
 
+        # Track partial failure occurrence for continue-mode saga finalization.
+        # This is the only place we observe individual job-failure events in
+        # the tracker — we record it on the in-memory config so that
+        # _try_finalize / the terminal-handler below can decide whether to
+        # transition the run to CompletedWithFailures instead of Failed.
+        if not succeeded and config is not None and config.on_failure == "continue":
+            with self._state_lock:
+                config.partial_failure_occurred = True
+
         if terminal_state is not None:
-            # If the run ended in failure AND the workflow has a saga in any
-            # form — an explicit ``compensation_map`` OR a sub-workflow node
-            # whose child has its own compensators (propagation) — hand off
-            # to the saga orchestrator before emitting the terminal event.
-            # The orchestrator emits its own terminal event when compensation
-            # finishes; ``start_compensation`` decides eligibility internally.
-            if (
+            # Continue-mode partial-failure override: when at least one node
+            # succeeded AND at least one failed AND the user opted into
+            # compensation via compensate_on_continue=True, transition the
+            # run to CompletedWithFailures (instead of the default Failed)
+            # and hand off to the saga orchestrator. The CompletedWithFailures
+            # state is itself a valid pre-compensation state — see
+            # WorkflowState::can_transition_to in Rust.
+            override_to_completed_with_failures = (
                 terminal_state == "failed"
                 and config is not None
-                and config.on_failure == "fail_fast"
+                and config.on_failure == "continue"
+                and config.compensate_on_continue
+                and config.partial_failure_occurred
+            )
+            if override_to_completed_with_failures:
+                try:
+                    self._queue._inner.set_workflow_run_completed_with_failures(run_id)
+                except (RuntimeError, ValueError):
+                    logger.exception(
+                        "set_workflow_run_completed_with_failures failed for %s", run_id
+                    )
+                else:
+                    terminal_state = "completed_with_failures"
+
+            # Hand off to the saga orchestrator when:
+            #   - on_failure="fail_fast" and the run failed, OR
+            #   - on_failure="continue" with compensate_on_continue=True and
+            #     the run finalised with at least one failed node.
+            # The orchestrator decides eligibility internally (checks for
+            # explicit compensation_map or sub-workflow propagation) and
+            # emits its own terminal event when compensation finishes.
+            if config is not None and (
+                (terminal_state == "failed" and config.on_failure == "fail_fast")
+                or (terminal_state == "completed_with_failures" and config.compensate_on_continue)
             ):
                 steps = self._run_steps.get(run_id, {})
                 started = self._saga.start_compensation(run_id, config, steps)
@@ -250,6 +283,7 @@ class WorkflowTracker:
                     # The saga owns the run from here. Don't clean up yet —
                     # the orchestrator will call back when it finishes.
                     return
+
             self._emit_terminal(run_id, terminal_state, error)
             self._cleanup_run(run_id)
             return
@@ -382,9 +416,40 @@ class WorkflowTracker:
         except (RuntimeError, ValueError):
             logger.exception("finalize_run_if_terminal failed for %s", run_id)
             return
-        if terminal_state is not None:
-            self._emit_terminal(run_id, terminal_state, None)
-            self._cleanup_run(run_id)
+        if terminal_state is None:
+            return
+
+        with self._state_lock:
+            config = self._run_configs.get(run_id)
+
+        # Continue-mode partial-failure override + compensation hand-off.
+        # Mirrors the logic in _handle() so fan-out and sub-workflow paths
+        # also surface CompletedWithFailures correctly.
+        if (
+            terminal_state == "failed"
+            and config is not None
+            and config.on_failure == "continue"
+            and config.compensate_on_continue
+            and config.partial_failure_occurred
+        ):
+            try:
+                self._queue._inner.set_workflow_run_completed_with_failures(run_id)
+            except (RuntimeError, ValueError):
+                logger.exception("set_workflow_run_completed_with_failures failed for %s", run_id)
+            else:
+                terminal_state = "completed_with_failures"
+
+        if config is not None and (
+            (terminal_state == "failed" and config.on_failure == "fail_fast")
+            or (terminal_state == "completed_with_failures" and config.compensate_on_continue)
+        ):
+            steps = self._run_steps.get(run_id, {})
+            started = self._saga.start_compensation(run_id, config, steps)
+            if started:
+                return
+
+        self._emit_terminal(run_id, terminal_state, None)
+        self._cleanup_run(run_id)
 
     # ── Gate resolution (public API) ───────────────────────────────
 
