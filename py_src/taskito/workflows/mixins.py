@@ -118,6 +118,7 @@ class QueueWorkflowMixin:
                 sub_workflow_refs=sub_workflow_refs,
                 compensation_map=compensation_map,
                 steps=getattr(workflow, "_steps", None),
+                compensate_on_continue=getattr(workflow, "compensate_on_continue", False),
             )
 
         return WorkflowRun(self, handle.run_id, handle.name)  # type: ignore[arg-type]

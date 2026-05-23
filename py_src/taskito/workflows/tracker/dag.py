@@ -48,6 +48,8 @@ def int_or(value: Any, default: int) -> int:
 def final_state_to_event(state: str) -> EventType | None:
     if state == "completed":
         return EventType.WORKFLOW_COMPLETED
+    if state == "completed_with_failures":
+        return EventType.WORKFLOW_COMPLETED_WITH_FAILURES
     if state == "failed":
         return EventType.WORKFLOW_FAILED
     if state == "cancelled":
