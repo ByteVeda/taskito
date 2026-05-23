@@ -6,6 +6,8 @@
     "web-scraper",
     "data-pipeline",
     "workflows",
+    "saga-checkout",
+    "batch-emails",
     "predicate-gated-jobs",
     "benchmark"
   ]
