@@ -1,6 +1,11 @@
 """taskito — Rust-powered task queue for Python. No broker required."""
 
 from taskito.app import Queue
+from taskito.batching import (
+    BatchItemResult,
+    BatchPartialFailureError,
+    BatchResultTypeError,
+)
 from taskito.canvas import Signature, chain, chord, chunks, group, starmap
 from taskito.context import LogLevel, current_job
 from taskito.events import EventType
@@ -45,6 +50,9 @@ from taskito.testing import MockResource, TestMode, TestResult, TestResults
 
 __all__ = [
     "MAX_NOTE_FIELDS",
+    "BatchItemResult",
+    "BatchPartialFailureError",
+    "BatchResultTypeError",
     "CircuitBreakerOpenError",
     "CircularDependencyError",
     "CloudpickleSerializer",

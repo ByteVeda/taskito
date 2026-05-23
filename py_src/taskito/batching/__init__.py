@@ -27,6 +27,18 @@ from __future__ import annotations
 
 from taskito.batching.accumulator import BatchAccumulator
 from taskito.batching.config import BatchConfig
+from taskito.batching.item_result import (
+    BatchItemResult,
+    BatchPartialFailureError,
+    BatchResultTypeError,
+)
 from taskito.batching.result import BatchedJobResult
 
-__all__ = ["BatchAccumulator", "BatchConfig", "BatchedJobResult"]
+__all__ = [
+    "BatchAccumulator",
+    "BatchConfig",
+    "BatchItemResult",
+    "BatchPartialFailureError",
+    "BatchResultTypeError",
+    "BatchedJobResult",
+]
