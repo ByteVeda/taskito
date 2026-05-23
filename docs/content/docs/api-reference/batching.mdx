@@ -1,0 +1,119 @@
+---
+title: Batching
+description: "@queue.task(batch=…), BatchConfig, BatchedJobResult."
+---
+
+Producer-side task batching primitives. Import paths:
+
+```python
+from taskito.batching import BatchAccumulator, BatchConfig, BatchedJobResult
+```
+
+For the conceptual overview and trade-offs, see [Task batching](/docs/guides/core/batching).
+
+---
+
+## `@queue.task(batch=…)`
+
+Enable producer-side batching for a task. Accepted values:
+
+| Value              | Meaning                                                                |
+|--------------------|------------------------------------------------------------------------|
+| `True`             | Enable with defaults — `max_size=100`, `max_wait_ms=500`               |
+| `dict`             | Override individual knobs, e.g. `{"max_size": 50, "max_wait_ms": 200}` |
+| `BatchConfig`      | Pass a pre-built config object                                         |
+| `False` / `None`   | Disable (default)                                                      |
+
+```python
+@queue.task(batch={"max_size": 50, "max_wait_ms": 200})
+def send_emails(items: list[Email]) -> None:
+    for item in items:
+        smtp.send(item)
+```
+
+The task function **must** accept a `list` as its first positional argument. Each `.delay(item)` call adds one element to the in-memory buffer; when the buffer reaches `max_size` or `max_wait_ms` elapses, taskito enqueues one job whose payload is the full list.
+
+### Restrictions
+
+| Combination                                | Behaviour                                                |
+|--------------------------------------------|----------------------------------------------------------|
+| `@queue.task(batch=…, idempotent=True)`    | **Rejected at decoration** — `ValueError`                |
+| `.delay(item, foo=1)` (kwargs)             | Raises `ValueError` at enqueue time                       |
+| `.delay(item1, item2)` (multiple positional) | Raises `ValueError` at enqueue time                    |
+
+---
+
+## `BatchConfig`
+
+Frozen dataclass:
+
+```python
+@dataclass(frozen=True)
+class BatchConfig:
+    max_size: int = 100
+    max_wait_ms: int = 500
+```
+
+| Field          | Type | Default | Description                                                             |
+|----------------|------|--------:|-------------------------------------------------------------------------|
+| `max_size`     | `int` | 100    | Flush when the buffer reaches this many items. Must be ≥ 1              |
+| `max_wait_ms`  | `int` | 500    | Flush after this many ms since the first item arrived. Must be ≥ 1      |
+
+### `BatchConfig.normalize(value)`
+
+Class method used by the decorator. Accepts `True` / `dict` / `BatchConfig` / `None` / `False` and returns a `BatchConfig` or `None`. Useful in user code that builds dynamic batch configs.
+
+```python
+cfg = BatchConfig.normalize({"max_size": 50})    # → BatchConfig(50, 500)
+cfg = BatchConfig.normalize(True)                # → BatchConfig(100, 500)
+cfg = BatchConfig.normalize(None)                # → None (disabled)
+```
+
+---
+
+## `BatchedJobResult`
+
+Sentinel returned by `Queue.enqueue()` / `task.delay()` for batched tasks — there is no real job id until the batch flushes.
+
+| Attribute / Method | Behaviour                                                                            |
+|--------------------|--------------------------------------------------------------------------------------|
+| `.id`              | Always `None` (no underlying job yet)                                                |
+| `.batched`         | Always `True`                                                                        |
+| `.task_name`       | The batched task's name                                                              |
+| `.status()`        | Returns `"batched"`                                                                  |
+| `.result()`        | Raises `NotImplementedError` — per-item results are not available                    |
+
+```python
+result = send_emails.delay({"to": "a@x.com"})
+assert isinstance(result, BatchedJobResult)
+assert result.id is None
+```
+
+If you need per-item results, batching is the wrong primitive — use [`canvas.chunks()`](/docs/api-reference/canvas) instead, which creates one job per chunk and supports per-chunk retry.
+
+---
+
+## Concurrency, rate limit, and retries
+
+A batched flush is *one job*. That means:
+
+- `max_concurrent=N` on a batched task allows `N` simultaneous batches, not `N` items.
+- A rate limit of `"10/m"` allows ten flushes per minute (potentially thousands of items per minute).
+- If the function raises, the entire batch retries — every item is reprocessed. Wrap items individually if you need per-item resilience.
+
+---
+
+## Queue lifecycle
+
+`Queue.close()` flushes any items still in the accumulator and shuts down the daemon flusher thread. An `atexit` hook does the same on process exit. Items in the buffer at hard crash (no `atexit`) are **lost** — this is the documented trade-off and matches Celery's `Batches` extension.
+
+```python
+queue.close()  # blocks until pending batches flush
+```
+
+For tests that want to observe the loss path deterministically:
+
+```python
+queue._batch_accumulator.shutdown(flush=False)
+queue._batch_accumulator = None
+```

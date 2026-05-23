@@ -1,0 +1,104 @@
+---
+title: Batching — bulk emails
+description: Collect per-recipient calls and dispatch them as a single job
+---
+
+A common shape: your application enqueues one task per recipient, but you'd rather pay the SMTP-handshake cost once for many recipients than once per recipient. `@queue.task(batch=...)` makes that a one-line change.
+
+## Setup
+
+```python
+from taskito import Queue
+
+queue = Queue()
+
+
+@queue.task(batch={"max_size": 200, "max_wait_ms": 1000})
+def send_emails(items: list[dict]) -> None:
+    """Send a batch of email items.
+
+    Called by taskito with up to ``max_size`` accumulated items, or
+    sooner if ``max_wait_ms`` elapses since the first item arrived.
+    """
+    with smtp.connect() as conn:
+        for item in items:
+            conn.send_message(
+                to=item["to"],
+                subject=item["subject"],
+                body=item["body"],
+            )
+```
+
+## Producing items
+
+Application code calls `.delay()` once per item — each call adds exactly one item to the in-memory buffer:
+
+```python
+def signup_completed(user_id: int) -> None:
+    user = users.get(user_id)
+    send_emails.delay({
+        "to": user.email,
+        "subject": "Welcome to taskito",
+        "body": welcome_template(user),
+    })
+
+
+def order_shipped(order_id: int) -> None:
+    order = orders.get(order_id)
+    send_emails.delay({
+        "to": order.customer_email,
+        "subject": f"Order {order.id} shipped",
+        "body": shipping_template(order),
+    })
+```
+
+Two different code paths both `.delay()` into the same batched task. They accumulate in a shared buffer; when 200 items arrive or 1 second elapses, taskito enqueues **one** job whose payload is the full list.
+
+## Trade-off
+
+Items live in memory until the buffer flushes. If the process crashes between `.delay()` and the flush, those items are lost. This matches Celery's `Batches` extension semantics.
+
+<Callout type="warn" title="Do not enable batching for critical writes">
+Anything that must reach the queue with at-least-once semantics — financial transactions, billing events, audit logs — should use a regular task, not a batched one. The throughput win isn't worth the rare-but-real data-loss risk.
+</Callout>
+
+## Tuning
+
+| Knob          | Effect                                                                                       |
+|---------------|----------------------------------------------------------------------------------------------|
+| `max_size=N`  | Higher = more throughput, higher per-batch latency, more memory footprint per buffered batch |
+| `max_wait_ms=M` | Higher = better batching efficiency, worse worst-case latency for any single call          |
+
+Start with the defaults (`max_size=100`, `max_wait_ms=500`). Tune `max_size` up if your downstream is happy with larger payloads and you're CPU-bound on dispatch; tune `max_wait_ms` down if you have a latency SLA you need to meet.
+
+## Retry semantics
+
+A batched task retries as one unit. If the function raises while processing item 73 of 200, the whole batch retries — all 200 items get processed again. For per-item resilience, wrap each item in your own try/except inside the batched function:
+
+```python
+@queue.task(batch=True, max_retries=2)
+def send_emails(items: list[dict]) -> None:
+    failures: list[dict] = []
+    for item in items:
+        try:
+            smtp.send_one(item)
+        except SMTPException:
+            failures.append(item)
+    if failures:
+        # Retry failures later — same task, just the failing subset
+        for item in failures:
+            send_emails.delay(item)
+```
+
+## When to use `chunks()` instead
+
+If you want **N separate jobs** each holding a sub-list (so each chunk retries independently), use `canvas.chunks()`:
+
+```python
+from taskito.canvas import chunks
+
+# Five jobs, each handling 100 emails, each with independent retry.
+chunks(send_emails, all_recipients, chunk_size=100).apply(queue)
+```
+
+`chunks()` is producer-side too, but creates `N` jobs at enqueue time rather than accumulating in a flush window. Use `batch=` when you want the natural call-by-call API; use `chunks()` when you have the full list upfront and want per-chunk retry.

@@ -1,0 +1,159 @@
+---
+title: Saga
+description: "@queue.task(compensates=…), CompensationContext, current_compensation_context()."
+---
+
+Saga compensation primitives. Import paths:
+
+```python
+from taskito.workflows.saga import (
+    CompensationContext,
+    SagaDepthExceededError,
+    SagaOrchestrator,
+    current_compensation_context,
+)
+```
+
+For the conceptual overview, see [Sagas](/docs/guides/workflows/sagas).
+
+---
+
+## `@queue.task(compensates=…)`
+
+Register a compensator for a task. Accepted forms:
+
+| Value type                | Meaning                                                  |
+|---------------------------|----------------------------------------------------------|
+| `TaskWrapper` (a sibling) | The decorated function reference                         |
+| `str`                     | A registered task name (useful when forward-referencing) |
+| `None` (default)          | No compensator — the task is not compensable             |
+
+```python
+@queue.task
+def refund(forward_args, forward_kwargs, forward_result): ...
+
+@queue.task(compensates=refund)
+def charge(amount: int) -> str: ...
+```
+
+The compensator must accept exactly three positional arguments:
+
+| Param            | Type    | What it carries                                              |
+|------------------|---------|--------------------------------------------------------------|
+| `forward_args`   | `tuple` | Positional args the forward task was called with             |
+| `forward_kwargs` | `dict`  | Keyword args the forward task was called with                |
+| `forward_result` | `Any`   | The forward task's return value (`None` if it returned `None`) |
+
+---
+
+## `Workflow.step(…, compensates=…)`
+
+Override or set the compensator for a single workflow step:
+
+```python
+wf.step("charge", charge_payment, compensates=refund_v2)        # Override decorator default
+wf.step("charge", charge_payment)                                # Inherit decorator default
+wf.step("charge", charge_payment, compensates=None)              # Disable compensation
+```
+
+Accepted: `TaskWrapper`, `str`, `None`, or the `INHERIT_COMPENSATOR` sentinel (the default — falls back to whatever `@queue.task(compensates=…)` declared).
+
+---
+
+## `current_compensation_context()`
+
+Returns the `CompensationContext` for the currently-executing compensator, or `None` outside of one. Useful for introspecting the forward execution without unpacking positional args.
+
+```python
+from taskito.workflows.saga import current_compensation_context
+
+@queue.task
+def refund(forward_args, forward_kwargs, forward_result):
+    ctx = current_compensation_context()
+    if ctx is not None:
+        logger.info(
+            "compensating %s/%s (forward job %s)",
+            ctx.workflow_run_id,
+            ctx.workflow_node_name,
+            ctx.forward_job_id,
+        )
+```
+
+---
+
+## `CompensationContext`
+
+Frozen dataclass passed in via the contextvar. Fields:
+
+| Field                   | Type     | Description                                                       |
+|-------------------------|----------|-------------------------------------------------------------------|
+| `workflow_run_id`       | `str`    | The run currently being compensated                               |
+| `workflow_node_name`    | `str`    | The node whose forward execution this compensator is undoing      |
+| `forward_job_id`        | `str \| None` | The job id of the forward execution (may be `None` if missing)    |
+| `forward_args`          | `tuple`  | Same as the compensator's first positional arg                    |
+| `forward_kwargs`        | `dict`   | Same as the compensator's second positional arg                   |
+| `forward_result`        | `Any`    | Same as the compensator's third positional arg                    |
+
+---
+
+## Workflow states added by sagas
+
+| State                 | Terminal | Meaning                                                            |
+|-----------------------|:--------:|--------------------------------------------------------------------|
+| `Compensating`        |     ✗    | Run is rolling back; compensators are in flight                    |
+| `Compensated`         |     ✓    | All compensators succeeded                                         |
+| `CompensationFailed`  |     ✓    | At least one compensator failed; subsequent waves were not dispatched |
+
+`WorkflowState.is_terminal()` returns `True` for `Compensated` and `CompensationFailed`. `WorkflowRun.wait()` unblocks on any of the four terminal states (`Completed`, `Failed`, `Cancelled`, `Compensated`, `CompensationFailed`).
+
+---
+
+## Node statuses added by sagas
+
+| Status                 | Terminal | Meaning                                                  |
+|------------------------|:--------:|----------------------------------------------------------|
+| `Compensating`         |     ✗    | A compensation job has been enqueued for this node       |
+| `Compensated`          |     ✓    | The compensation job succeeded                           |
+| `CompensationFailed`   |     ✓    | The compensation job exhausted retries                    |
+
+Only `Completed` and `CacheHit` nodes are eligible for compensation (`is_compensable()` returns `True` for those two). Failed, skipped, pending, and ready nodes are never compensated — their side effects never happened.
+
+---
+
+## Events
+
+Subscribe to these on the queue's event bus via `queue.on(event_type, callback)`:
+
+| Event                              | Payload                                                                         |
+|------------------------------------|---------------------------------------------------------------------------------|
+| `WORKFLOW_COMPENSATING`            | `{"workflow_run_id": str}`                                                      |
+| `WORKFLOW_COMPENSATED`             | `{"workflow_run_id": str, "any_failed": bool}`                                  |
+| `WORKFLOW_COMPENSATION_FAILED`     | `{"workflow_run_id": str, "any_failed": bool}`                                  |
+| `NODE_COMPENSATING`                | `{"workflow_run_id", "workflow_node_name", "compensation_job_id", "compensation_task"}` |
+| `NODE_COMPENSATED`                 | `{"workflow_run_id", "workflow_node_name", "error": None}`                      |
+| `NODE_COMPENSATION_FAILED`         | `{"workflow_run_id", "workflow_node_name", "error": str}`                       |
+
+---
+
+## `SagaDepthExceededError`
+
+Raised when nested saga propagation (sub-workflow whose child is also a saga whose child is also a saga, …) exceeds the hard cap of **10** levels. Almost always means a workflow graph has accidental sub-workflow recursion.
+
+---
+
+## Idempotency
+
+Every compensation job is enqueued with `idempotency_key=f"compensation:{run_id}:{node_name}"`. The first call creates the job; a duplicate (e.g. after a tracker restart) hits the existing partial-index dedup in all three storage backends and becomes a no-op. Compensator function bodies should also be designed to be safely re-runnable — the at-most-one guarantee is at the *job* level, but the worker can still retry the job's body on transient failures before exhaustion.
+
+---
+
+## Sub-workflow propagation
+
+When a parent workflow's saga reaches a sub-workflow node whose child run carries its own saga, the parent **propagates** compensation into the child:
+
+1. Parent compensation dispatches the sub-workflow node.
+2. Orchestrator detects the node is in `sub_workflow_refs` and the child has compensators.
+3. Child saga starts (depth = parent depth + 1).
+4. When the child saga finalises (`Compensated` or `CompensationFailed`), the parent's node is marked accordingly and the parent's wave advances.
+
+If the parent step has its own explicit `compensates=…`, that wins — no propagation happens. See [Sagas](/docs/guides/workflows/sagas) for a worked example.
