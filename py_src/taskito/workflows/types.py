@@ -12,6 +12,9 @@ class WorkflowState(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    # on_failure="continue" run reached terminal with at least one failed node
+    # and at least one completed node.
+    COMPLETED_WITH_FAILURES = "completed_with_failures"
     FAILED = "failed"
     CANCELLED = "cancelled"
     PAUSED = "paused"
@@ -23,6 +26,7 @@ class WorkflowState(str, enum.Enum):
     def is_terminal(self) -> bool:
         return self in (
             WorkflowState.COMPLETED,
+            WorkflowState.COMPLETED_WITH_FAILURES,
             WorkflowState.FAILED,
             WorkflowState.CANCELLED,
             WorkflowState.COMPENSATED,

@@ -122,6 +122,7 @@ class WorkflowTracker:
         sub_workflow_refs: dict[str, Any] | None = None,
         compensation_map: dict[str, str] | None = None,
         steps: dict[str, Any] | None = None,
+        compensate_on_continue: bool = False,
     ) -> None:
         """Cache configuration for a tracker-managed workflow run."""
         meta: dict[str, dict[str, Any]] = json.loads(step_metadata_json)
@@ -137,6 +138,7 @@ class WorkflowTracker:
             gate_configs=gate_configs or {},
             sub_workflow_refs=sub_workflow_refs or {},
             compensation_map=compensation_map or {},
+            compensate_on_continue=compensate_on_continue,
         )
         with self._state_lock:
             self._run_configs[run_id] = config

@@ -107,6 +107,7 @@ class Workflow:
         version: int = 1,
         on_failure: str = "fail_fast",
         cache_ttl: float | None = None,
+        compensate_on_continue: bool = False,
     ):
         if on_failure not in _VALID_ON_FAILURE:
             raise ValueError(
@@ -116,6 +117,12 @@ class Workflow:
         self.version = version
         self.on_failure = on_failure
         self.cache_ttl = cache_ttl
+        # When True and on_failure="continue", any registered compensators for
+        # completed nodes still run after a partial-failure run terminalizes
+        # (run state becomes CompletedWithFailures, then Compensating). When
+        # False (default), continue-mode runs never trigger compensation —
+        # preserves pre-0.14 behaviour.
+        self.compensate_on_continue = compensate_on_continue
         self._steps: dict[str, _Step] = {}
 
     def step(

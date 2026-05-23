@@ -24,6 +24,16 @@ class _RunConfig:
     # workflow's compiled compensation map at submit time. Empty when the
     # workflow has no saga steps.
     compensation_map: dict[str, str] = None  # type: ignore[assignment]
+    # When True and on_failure="continue", a partial-failure run still
+    # triggers compensation for the completed nodes (after transitioning
+    # through the CompletedWithFailures state). When False (default),
+    # continue-mode partial failures never compensate. Ignored for
+    # on_failure="fail_fast" (which always compensates on terminal failure).
+    compensate_on_continue: bool = False
+    # Set to True by the tracker the first time a node ends in `failed`
+    # state during a continue-mode run. Drives the
+    # Completed -> CompletedWithFailures override at finalization.
+    partial_failure_occurred: bool = False
 
     def __post_init__(self) -> None:
         if self.compensation_map is None:
