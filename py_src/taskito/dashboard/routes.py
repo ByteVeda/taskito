@@ -77,6 +77,12 @@ from taskito.dashboard.handlers.webhooks import (
     handle_test_webhook,
     handle_update_webhook,
 )
+from taskito.dashboard.handlers.workflows import (
+    _handle_get_workflow_children,
+    _handle_get_workflow_dag,
+    _handle_get_workflow_run,
+    _handle_list_workflow_runs,
+)
 
 # ── Auth-exempt paths ──────────────────────────────────────────────────
 #
@@ -138,6 +144,7 @@ GET_ROUTES: dict[str, Any] = {
     "/api/tasks": handle_list_tasks,
     "/api/queues": handle_list_queues,
     "/api/middleware": handle_list_middleware,
+    "/api/workflows/runs": _handle_list_workflow_runs,
 }
 
 # ── Parameterized GET routes: regex → handler(queue, qs, captured_id) ──
@@ -160,6 +167,9 @@ GET_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/tasks/([^/]+)/override$"), handle_get_task_override),
     (re.compile(r"^/api/queues/([^/]+)/override$"), handle_get_queue_override),
     (re.compile(r"^/api/tasks/([^/]+)/middleware$"), handle_get_task_middleware),
+    (re.compile(r"^/api/workflows/runs/([^/]+)/dag$"), _handle_get_workflow_dag),
+    (re.compile(r"^/api/workflows/runs/([^/]+)/children$"), _handle_get_workflow_children),
+    (re.compile(r"^/api/workflows/runs/([^/]+)$"), _handle_get_workflow_run),
 ]
 
 # GET routes with 2 captured groups (handler signature: queue, qs, (g1, g2))
