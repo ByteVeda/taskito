@@ -24,13 +24,14 @@ Idempotency: each compensation job is enqueued with
 creates the job; a duplicate (e.g. after a tracker restart) hits the
 existing partial-index dedup in all 3 storage backends and is a no-op.
 
-v1 contract for the compensator's args: the framework calls
-``compensator(forward_args, forward_kwargs, forward_result)``. In v1
-``forward_args`` and ``forward_kwargs`` come from the deferred-payload
-cache when the forward node was deferred; otherwise they're empty
-tuples/dicts. ``forward_result`` is always ``None`` in v1 — wiring
-through the actual return value requires an extra round-trip to fetch
-the job result and is reserved for a follow-up enhancement.
+Compensator contract: the framework calls
+``compensator(forward_args, forward_kwargs, forward_result)``. The args
+and kwargs come from the deferred-payload cache when the forward node
+was deferred, otherwise from the forward job's stored payload looked up
+through ``PyQueue.get_job``. ``forward_result`` is deserialized from
+the forward job's stored result when present. Compensators that need
+extra metadata (run id, node name, forward job id) can call
+:func:`taskito.workflows.saga.current_compensation_context`.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 from taskito.events import EventType
 from taskito.workflows.analysis import topological_levels
+from taskito.workflows.saga.context import CompensationContext
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -64,6 +66,14 @@ class SagaOrchestrator:
         # Reverse map: compensation job id → (run_id, node_name) so the
         # tracker can route completion events back into the orchestrator.
         self._comp_job_to_node: dict[str, tuple[str, str]] = {}
+        # In-process map: compensation job id → CompensationContext.
+        # Populated when a compensator is enqueued; consumed by the task
+        # wrapper before the compensator function runs so that
+        # ``current_compensation_context()`` returns the forward-execution
+        # metadata. Popped on task completion. This is in-memory only —
+        # a worker restart between enqueue and execute loses the context,
+        # which is consistent with the rest of the saga's in-memory state.
+        self._comp_contexts: dict[str, CompensationContext] = {}
 
     # ── Public API used by tracker ──────────────────────────────────────
 
@@ -71,6 +81,18 @@ class SagaOrchestrator:
         """Whether ``job_id`` is one we dispatched for compensation."""
         with self._lock:
             return job_id in self._comp_job_to_node
+
+    def take_compensation_context(self, job_id: str) -> CompensationContext | None:
+        """Pop and return the :class:`CompensationContext` for ``job_id``.
+
+        Called by the task wrapper before invoking a compensator's body so
+        ``current_compensation_context()`` returns the forward metadata for
+        the duration of the call. Returns ``None`` for non-compensation
+        jobs (or compensation jobs from a different process — the context
+        is in-memory only).
+        """
+        with self._lock:
+            return self._comp_contexts.pop(job_id, None)
 
     def start_compensation(
         self,
@@ -231,13 +253,16 @@ class SagaOrchestrator:
             self._handle_inline_no_op(run_id, node_name, succeeded=True, error=None)
             return
 
-        forward_args, forward_kwargs = self._load_forward_payload(node_name, run_config)
+        forward_args, forward_kwargs, forward_result, forward_job_id = self._load_forward_payload(
+            run_id, node_name, run_config
+        )
 
         idempotency_key = f"compensation:{run_id}:{node_name}"
         metadata_blob = json.dumps(
             {
                 "workflow_run_id": run_id,
                 "workflow_node_name": node_name,
+                "forward_job_id": forward_job_id,
                 "_kind": "compensation",
             }
         )
@@ -252,7 +277,7 @@ class SagaOrchestrator:
             try:
                 job = self._queue.enqueue(
                     comp_task_name,
-                    args=(forward_args, forward_kwargs, None),
+                    args=(forward_args, forward_kwargs, forward_result),
                     kwargs=None,
                     idempotency_key=idempotency_key,
                     metadata=metadata_blob,
@@ -294,8 +319,17 @@ class SagaOrchestrator:
             now_ms,
         )
 
+        comp_ctx = CompensationContext(
+            workflow_run_id=run_id,
+            workflow_node_name=node_name,
+            forward_job_id=forward_job_id,
+            forward_args=forward_args,
+            forward_kwargs=forward_kwargs,
+            forward_result=forward_result,
+        )
         with self._lock:
             self._comp_job_to_node[job_id] = (run_id, node_name)
+            self._comp_contexts[job_id] = comp_ctx
 
         self._queue._emit_event(
             EventType.NODE_COMPENSATING,
@@ -378,9 +412,11 @@ class SagaOrchestrator:
         self._run_waves.pop(run_id, None)
         self._run_inflight.pop(run_id, None)
         any_failed = self._run_any_failed.pop(run_id, False)
-        self._comp_job_to_node = {
-            jid: (rid, nn) for jid, (rid, nn) in self._comp_job_to_node.items() if rid != run_id
-        }
+        # Drop any straggling job→node mappings and their stashed contexts.
+        stale_jids = [jid for jid, (rid, _nn) in self._comp_job_to_node.items() if rid == run_id]
+        for jid in stale_jids:
+            self._comp_job_to_node.pop(jid, None)
+            self._comp_contexts.pop(jid, None)
 
         now_ms = int(time.time() * 1000)
         try:
@@ -419,36 +455,110 @@ class SagaOrchestrator:
 
     def _load_forward_payload(
         self,
+        run_id: str,
         node_name: str,
         run_config: _RunConfig,
-    ) -> tuple[tuple, dict[str, Any]]:
-        """Reconstruct the forward task's args and kwargs (v1 best-effort).
+    ) -> tuple[tuple, dict[str, Any], Any, str | None]:
+        """Reconstruct the forward task's (args, kwargs, result, job_id).
 
-        For deferred nodes the payload lives in
-        ``run_config.deferred_payloads`` (it's what we serialized at
-        submit time). For static nodes there is currently no stored copy
-        of the args at compensation time — they're embedded in the
-        already-completed job's payload and not surfaced through the
-        existing API. v1 returns empty tuples/dicts in that case;
-        compensators that need the original args can either move the
-        forward step into deferred status or look it up themselves.
+        Sources, in priority order:
+
+        - **Deferred-payload cache** (``run_config.deferred_payloads``) — the
+          tracker serialized the forward args/kwargs at submit time. This is
+          the authoritative source for fan-out children whose payloads are
+          constructed at runtime; it covers conditional, fan-out, fan-in,
+          gate, and sub-workflow nodes.
+        - **Storage round-trip** — for static nodes (and as a fall-back for
+          missing/corrupt deferred entries) we look up the forward job via
+          its ID from the workflow-run status, then deserialize the job's
+          stored payload + result.
+
+        Missing or undeserialisable pieces degrade to ``()`` / ``{}`` /
+        ``None`` rather than aborting compensation. The compensator's
+        function still runs; it just won't see the forward state for that
+        node.
         """
-        raw_payload = run_config.deferred_payloads.get(node_name)
-        if raw_payload is None:
-            return (), {}
+        step_meta = run_config.step_metadata.get(node_name, {})
+        task_name = step_meta.get("task_name")
+
+        forward_args: tuple = ()
+        forward_kwargs: dict[str, Any] = {}
+        forward_result: Any = None
+        forward_job_id: str | None = None
+
+        # Deferred-cache path (covers fan-out children, conditional, gate, etc.).
+        raw_deferred = run_config.deferred_payloads.get(node_name)
+        deferred_decoded = False
+        if raw_deferred is not None and task_name is not None:
+            try:
+                d_args, d_kwargs = self._queue._deserialize_payload(task_name, raw_deferred)
+                forward_args = tuple(d_args)
+                forward_kwargs = dict(d_kwargs)
+                deferred_decoded = True
+            except Exception:
+                logger.exception(
+                    "saga: failed to deserialize deferred payload for %s/%s — "
+                    "will fall back to storage lookup",
+                    run_id,
+                    node_name,
+                )
+
+        # Find the forward job id from the run's node statuses. Needed for
+        # static-node payload/result recovery and for CompensationContext.
         try:
-            step_meta = run_config.step_metadata.get(node_name, {})
-            task_name = step_meta.get("task_name")
-            if task_name is None:
-                return (), {}
-            args, kwargs = self._queue._deserialize_payload(task_name, raw_payload)
-            return tuple(args), dict(kwargs)
+            status = self._queue._inner.get_workflow_run_status(run_id)
+            statuses = status.node_statuses()
         except Exception:
-            logger.exception(
-                "saga: deserialize forward payload for %s — compensator will receive empty args",
-                node_name,
-            )
-            return (), {}
+            logger.exception("saga: failed to fetch run status for %s", run_id)
+            statuses = {}
+        info = statuses.get(node_name) or {}
+        forward_job_id = info.get("job_id") if isinstance(info, dict) else None
+
+        if forward_job_id is None or task_name is None:
+            return forward_args, forward_kwargs, forward_result, forward_job_id
+
+        # Fetch the forward job for payload / result recovery.
+        try:
+            forward_job = self._queue._inner.get_job(forward_job_id)
+        except Exception:
+            logger.exception("saga: get_job(%s) failed for compensator setup", forward_job_id)
+            return forward_args, forward_kwargs, forward_result, forward_job_id
+
+        if forward_job is None:
+            return forward_args, forward_kwargs, forward_result, forward_job_id
+
+        # Static-node payload: only deserialize if the deferred cache didn't
+        # already give us the args/kwargs.
+        if not deferred_decoded:
+            try:
+                s_args, s_kwargs = self._queue._deserialize_payload(
+                    task_name, forward_job.payload_bytes
+                )
+                forward_args = tuple(s_args)
+                forward_kwargs = dict(s_kwargs)
+            except Exception:
+                logger.exception(
+                    "saga: failed to deserialize stored payload for %s/%s "
+                    "(job %s) — compensator will receive empty args",
+                    run_id,
+                    node_name,
+                    forward_job_id,
+                )
+
+        # Forward result: always deserialize when present.
+        result_bytes = forward_job.result_bytes
+        if result_bytes:
+            try:
+                forward_result = self._queue._get_serializer(task_name).loads(result_bytes)
+            except Exception:
+                logger.exception(
+                    "saga: failed to deserialize forward result for %s/%s — "
+                    "compensator will see forward_result=None",
+                    run_id,
+                    node_name,
+                )
+
+        return forward_args, forward_kwargs, forward_result, forward_job_id
 
 
 def _reverse_topo_waves(steps: dict[str, _Step], restrict_to: set[str]) -> list[list[str]]:
