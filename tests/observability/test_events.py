@@ -96,6 +96,7 @@ def test_all_event_types_exist() -> None:
         "queue.resumed",
         "workflow.submitted",
         "workflow.completed",
+        "workflow.completed_with_failures",
         "workflow.failed",
         "workflow.cancelled",
         "workflow.gate_reached",
