@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -11,12 +12,22 @@ from taskito import MaxRetriesExceededError, Queue, TaskFailedError, chain, chor
 
 
 @pytest.fixture
-def queue(tmp_path: Path) -> Queue:
+def queue(tmp_path: Path) -> Generator[Queue]:
+    """Queue with a worker thread that's *cleaned up* on teardown.
+
+    Without explicit cleanup the daemon worker thread keeps running for
+    the rest of the pytest session, leaking log records into other
+    tests' ``caplog`` and surfacing as flaky CI failures on Windows.
+    """
     db_path = str(tmp_path / "canvas_sagas.db")
     q = Queue(db_path=db_path, workers=4)
     t = threading.Thread(target=q.run_worker, daemon=True)
     t.start()
-    return q
+    try:
+        yield q
+    finally:
+        q._inner.request_shutdown()
+        t.join(timeout=10)
 
 
 # ── Construction / API validation ─────────────────────────────────────────
