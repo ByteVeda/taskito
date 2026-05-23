@@ -53,6 +53,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("taskito.workflows.saga")
 
+# Cap nested saga propagation. A parent workflow compensating a sub-workflow
+# node that itself triggers nested compensation, and so on, must not recurse
+# indefinitely. Ten levels is far beyond any reasonable real workflow.
+MAX_SAGA_DEPTH = 10
+
+
+class SagaDepthExceededError(RuntimeError):
+    """Raised when nested saga propagation exceeds :data:`MAX_SAGA_DEPTH`.
+
+    Hitting this almost always means a workflow graph has accidental sub-
+    workflow recursion. Surface it loudly rather than silently truncating
+    compensation.
+    """
+
 
 class SagaOrchestrator:
     """Per-Queue saga state machine."""
@@ -74,6 +88,18 @@ class SagaOrchestrator:
         # a worker restart between enqueue and execute loses the context,
         # which is consistent with the rest of the saga's in-memory state.
         self._comp_contexts: dict[str, CompensationContext] = {}
+        # Saga-depth bookkeeping for nested propagation. Keyed by run_id;
+        # populated at ``start_compensation`` time, decremented at finalize.
+        # When a parent run propagates compensation into a child sub-workflow
+        # the child inherits ``parent_depth + 1`` — raising
+        # :class:`SagaDepthExceededError` past :data:`MAX_SAGA_DEPTH`.
+        self._run_depth: dict[str, int] = {}
+        # Mapping: child_run_id → (parent_run_id, parent_node_name) for the
+        # ongoing nested-saga propagations the orchestrator is waiting on.
+        # When the child saga finalises, the parent node is marked
+        # compensated/failed based on the child's outcome and the parent's
+        # wave advances.
+        self._pending_parent_after_child: dict[str, tuple[str, str]] = {}
 
     # ── Public API used by tracker ──────────────────────────────────────
 
@@ -99,20 +125,37 @@ class SagaOrchestrator:
         run_id: str,
         run_config: _RunConfig,
         steps: dict[str, _Step],
+        depth: int = 0,
     ) -> bool:
         """Begin reverse-order compensation for ``run_id``.
 
         Returns ``True`` if compensation was started, ``False`` if the
         run is not eligible (no compensable completed nodes, or already
         compensating).
+
+        ``depth`` is the nested-saga propagation depth. Each parent →
+        child propagation increments it; callers from the tracker pass
+        ``0``. Exceeding :data:`MAX_SAGA_DEPTH` raises
+        :class:`SagaDepthExceededError`.
         """
+        if depth > MAX_SAGA_DEPTH:
+            raise SagaDepthExceededError(
+                f"saga propagation depth exceeded {MAX_SAGA_DEPTH} for run {run_id}"
+            )
+
         with self._lock:
             if run_id in self._run_waves:
                 return False
-            if not run_config.compensation_map:
+
+            # A run is saga-eligible when it has *any* form of compensation:
+            # an explicit ``compensation_map`` entry, or a sub-workflow node
+            # whose child run carries its own saga (propagation).
+            has_explicit = bool(run_config.compensation_map)
+            has_subwf_propagation = self._has_propagatable_subworkflows(run_id, run_config)
+            if not (has_explicit or has_subwf_propagation):
                 return False
 
-            completed = self._fetch_compensable_nodes(run_id, run_config.compensation_map)
+            completed = self._fetch_compensable_nodes(run_id, run_config)
             if not completed:
                 return False
 
@@ -123,6 +166,7 @@ class SagaOrchestrator:
             self._run_waves[run_id] = waves
             self._run_inflight[run_id] = set()
             self._run_any_failed[run_id] = False
+            self._run_depth[run_id] = depth
 
             self._mark_run_compensating(run_id)
 
@@ -180,13 +224,16 @@ class SagaOrchestrator:
     def _fetch_compensable_nodes(
         self,
         run_id: str,
-        compensation_map: dict[str, str],
+        run_config: _RunConfig,
     ) -> set[str]:
-        """Return the subset of ``compensation_map`` that should run.
+        """Return the set of completed nodes that should run during compensation.
 
         A node is compensable when its current storage status is
-        ``"completed"`` or ``"cache_hit"`` AND it has a registered
-        compensator.
+        ``"completed"`` or ``"cache_hit"`` AND either:
+
+        - it has an explicit compensator in ``run_config.compensation_map``, or
+        - it is a sub-workflow node whose child run has its own saga
+          (propagation candidate).
         """
         try:
             node_data = self._queue._inner.get_base_run_node_data(run_id)
@@ -194,20 +241,53 @@ class SagaOrchestrator:
             logger.exception("saga: failed to fetch node data for run %s", run_id)
             return set()
 
+        compensation_map = run_config.compensation_map
+        sub_refs = run_config.sub_workflow_refs
+
         compensable: set[str] = set()
-        # node_data is list[(name, status_str, result_hash)] per the Rust
-        # binding's `get_base_run_node_data` shape.
         for entry in node_data:
             try:
                 name = entry[0]
                 status = entry[1]
             except (IndexError, TypeError):
                 continue
-            if status in ("completed", "cache_hit") and name in compensation_map:
+            if status not in ("completed", "cache_hit"):
+                continue
+            if name in compensation_map:
+                compensable.add(name)
+                continue
+            # Implicit sub-workflow propagation: include only if a child
+            # exists *and* has its own saga.
+            if name in sub_refs and self._child_has_saga(run_id, name):
                 compensable.add(name)
         return compensable
 
+    def _has_propagatable_subworkflows(self, run_id: str, run_config: _RunConfig) -> bool:
+        """Are any of this run's sub-workflow children eligible for saga
+        propagation? Cheap check used to decide whether to start a saga at
+        all when the run has no explicit ``compensation_map`` entries."""
+        for node_name in run_config.sub_workflow_refs:
+            if self._child_has_saga(run_id, node_name):
+                return True
+        return False
+
+    def _child_has_saga(self, parent_run_id: str, parent_node_name: str) -> bool:
+        """Whether any tracked child run of ``(parent_run_id, parent_node_name)``
+        has a non-empty ``compensation_map``."""
+        tracker = getattr(self._queue, "_workflow_tracker", None)
+        if tracker is None:
+            return False
+        with getattr(tracker, "_state_lock", threading.RLock()):
+            for cid, (prid, pnn) in list(getattr(tracker, "_child_to_parent", {}).items()):
+                if prid != parent_run_id or pnn != parent_node_name:
+                    continue
+                cfg = getattr(tracker, "_run_configs", {}).get(cid)
+                if cfg is not None and cfg.compensation_map:
+                    return True
+        return False
+
     def _advance_or_finalize(self, run_id: str, run_config: _RunConfig | None) -> None:
+        finalized: tuple[bool, str | None] | None = None
         with self._lock:
             waves = self._run_waves.get(run_id)
             any_failed = self._run_any_failed.get(run_id, False)
@@ -217,11 +297,22 @@ class SagaOrchestrator:
                 if waves:
                     self._run_waves[run_id] = []
                 self._finalize_locked(run_id, succeeded=False)
-                return
-
-            if not waves:
+                finalized = (False, f"sub-workflow {run_id} compensation failed")
+            elif not waves:
                 self._finalize_locked(run_id, succeeded=True)
-                return
+                finalized = (True, None)
+
+        # If this run was a child saga whose parent is waiting on it, hand
+        # the outcome back to the parent so it can complete its node and
+        # advance. Run outside the lock — the callback re-enters
+        # ``_handle_inline_no_op`` which acquires it.
+        if finalized is not None:
+            with self._lock:
+                pending = run_id in self._pending_parent_after_child
+            if pending:
+                succeeded, err = finalized
+                self._on_child_saga_terminal(run_id, succeeded, err)
+            return
 
         if run_config is not None:
             self._dispatch_next_wave(run_id, run_config)
@@ -244,6 +335,20 @@ class SagaOrchestrator:
         run_config: _RunConfig,
     ) -> None:
         comp_task_name = run_config.compensation_map.get(node_name)
+
+        # Sub-workflow propagation: if the parent has NO explicit compensator
+        # for this node but the node *was* a sub-workflow whose child run has
+        # its own saga, propagate compensation into the child. The parent
+        # node is held in the inflight set until the child finalises; on the
+        # child's terminal event the parent node is marked accordingly and
+        # the parent's wave advances.
+        if (
+            comp_task_name is None
+            and node_name in run_config.sub_workflow_refs
+            and self._propagate_to_child_saga(run_id, node_name)
+        ):
+            return
+
         if comp_task_name is None:
             logger.warning(
                 "saga: no compensator registered for %s/%s — skipping",
@@ -341,6 +446,84 @@ class SagaOrchestrator:
             },
         )
 
+    def _propagate_to_child_saga(self, parent_run_id: str, parent_node_name: str) -> bool:
+        """Trigger compensation on a sub-workflow child run.
+
+        Returns ``True`` if propagation started (parent node now waits on
+        the child's terminal event), ``False`` if there's no eligible child
+        to propagate to (the caller should fall back to the no-op path).
+        """
+        tracker = getattr(self._queue, "_workflow_tracker", None)
+        if tracker is None:
+            return False
+
+        child_runs: list[tuple[str, _RunConfig]] = []
+        # ``_child_to_parent`` maps child_run_id → (parent_run_id, parent_node_name).
+        # Reverse-scan to find children of this specific parent node.
+        with getattr(tracker, "_state_lock", threading.RLock()):
+            for cid, (prid, pnn) in list(getattr(tracker, "_child_to_parent", {}).items()):
+                if prid != parent_run_id or pnn != parent_node_name:
+                    continue
+                cfg = getattr(tracker, "_run_configs", {}).get(cid)
+                if cfg is None or not cfg.compensation_map:
+                    continue
+                child_runs.append((cid, cfg))
+
+        if not child_runs:
+            return False
+
+        # Single child per parent sub-workflow node is the common shape. If
+        # multiple children exist (parallel sub-workflows under the same
+        # node) we propagate to all of them and complete the parent only
+        # after every child terminates.
+        parent_depth = self._run_depth.get(parent_run_id, 0)
+        propagated_any = False
+        for child_run_id, child_cfg in child_runs:
+            child_steps = getattr(tracker, "_run_steps", {}).get(child_run_id, {})
+            try:
+                started = self.start_compensation(
+                    child_run_id,
+                    child_cfg,
+                    child_steps,
+                    depth=parent_depth + 1,
+                )
+            except SagaDepthExceededError:
+                logger.exception(
+                    "saga: depth guard tripped propagating from %s/%s to %s",
+                    parent_run_id,
+                    parent_node_name,
+                    child_run_id,
+                )
+                return False
+
+            if started:
+                with self._lock:
+                    self._pending_parent_after_child[child_run_id] = (
+                        parent_run_id,
+                        parent_node_name,
+                    )
+                propagated_any = True
+
+        return propagated_any
+
+    def _on_child_saga_terminal(
+        self, child_run_id: str, child_succeeded: bool, child_error: str | None
+    ) -> None:
+        """Callback fired by :meth:`_finalize_locked` for a child saga whose
+        parent run is waiting for it. Marks the parent node compensated
+        (success) or failed (failure) and advances the parent's wave."""
+        with self._lock:
+            mapping = self._pending_parent_after_child.pop(child_run_id, None)
+        if mapping is None:
+            return
+        parent_run_id, parent_node_name = mapping
+        self._handle_inline_no_op(
+            parent_run_id,
+            parent_node_name,
+            succeeded=child_succeeded,
+            error=child_error,
+        )
+
     def _handle_inline_no_op(
         self,
         run_id: str,
@@ -411,6 +594,7 @@ class SagaOrchestrator:
         """Cleanly finalize a saga. Must be called with ``self._lock``."""
         self._run_waves.pop(run_id, None)
         self._run_inflight.pop(run_id, None)
+        self._run_depth.pop(run_id, None)
         any_failed = self._run_any_failed.pop(run_id, False)
         # Drop any straggling job→node mappings and their stashed contexts.
         stale_jids = [jid for jid, (rid, _nn) in self._comp_job_to_node.items() if rid == run_id]
@@ -440,6 +624,10 @@ class SagaOrchestrator:
             event_type,
             {"workflow_run_id": run_id, "any_failed": any_failed},
         )
+
+        # ``_advance_or_finalize`` handles sub-workflow saga propagation
+        # (calling ``_on_child_saga_terminal`` *after* this method returns
+        # and the orchestrator lock has been released).
 
     def _safe_call(self, method_name: str, *args: Any) -> None:
         """Invoke a storage method on the Rust binding, logging on failure."""
