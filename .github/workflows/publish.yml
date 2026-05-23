@@ -28,6 +28,7 @@ jobs:
     needs: build-dashboard
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -48,11 +49,12 @@ jobs:
         run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
           manylinux: 2_28
+          maturin-version: v1.13.3
           before-script-linux: |
             dnf install -y openssl-devel perl-core perl-IPC-Cmd
 
@@ -67,6 +69,7 @@ jobs:
     needs: build-dashboard
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -87,11 +90,12 @@ jobs:
         run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
           manylinux: musllinux_1_2
+          maturin-version: v1.13.3
           before-script-linux: |
             apt-get update && apt-get install -y libssl-dev perl pkg-config
 
@@ -106,6 +110,7 @@ jobs:
     needs: build-dashboard
     runs-on: macos-latest
     strategy:
+      fail-fast: false
       matrix:
         target:
           - x86_64-apple-darwin
@@ -144,10 +149,11 @@ jobs:
           python-version: "3.13"
 
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
+          maturin-version: v1.13.3
 
       - name: Upload wheels
         uses: actions/upload-artifact@v7
@@ -160,6 +166,7 @@ jobs:
     needs: build-dashboard
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-pc-windows-msvc
@@ -197,10 +204,11 @@ jobs:
           python-version: "3.13"
 
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
+          maturin-version: v1.13.3
 
       - name: Upload wheels
         uses: actions/upload-artifact@v7
@@ -226,10 +234,11 @@ jobs:
         run: test -f py_src/taskito/static/dashboard/index.html
 
       - name: Build sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.51.0
         with:
           command: sdist
           args: --out dist
+          maturin-version: v1.13.3
 
       - name: Upload sdist
         uses: actions/upload-artifact@v7
