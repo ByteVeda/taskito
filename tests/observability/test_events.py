@@ -99,6 +99,13 @@ def test_all_event_types_exist() -> None:
         "workflow.failed",
         "workflow.cancelled",
         "workflow.gate_reached",
+        # Saga events.
+        "workflow.compensating",
+        "workflow.compensated",
+        "workflow.compensation_failed",
+        "workflow.node_compensating",
+        "workflow.node_compensated",
+        "workflow.node_compensation_failed",
         "predicate.deferred",
         "predicate.cancelled",
         "predicate.rejected",

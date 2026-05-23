@@ -20,3 +20,11 @@ class _RunConfig:
     callable_conditions: dict[str, Callable[..., bool]]
     gate_configs: dict[str, Any]
     sub_workflow_refs: dict[str, Any]
+    # Maps step_name -> compensation_task_name. Populated from the
+    # workflow's compiled compensation map at submit time. Empty when the
+    # workflow has no saga steps.
+    compensation_map: dict[str, str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.compensation_map is None:
+            self.compensation_map = {}
