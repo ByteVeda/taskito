@@ -6,8 +6,8 @@ edition = "2021"
 [features]
 default = []
 extension-module = ["pyo3/extension-module"]
-postgres = ["taskito-core/postgres"]
-redis = ["taskito-core/redis"]
+postgres = ["taskito-core/postgres", "taskito-workflows?/postgres"]
+redis = ["taskito-core/redis", "taskito-workflows?/redis"]
 native-async = ["dep:taskito-async"]
 workflows = ["dep:taskito-workflows"]
 

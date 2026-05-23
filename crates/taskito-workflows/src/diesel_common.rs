@@ -1,17 +1,21 @@
 //! Shared Diesel-based implementation for SQLite + PostgreSQL workflow stores.
 //!
-//! `impl_workflow_diesel_ops!($storage_type, $conn_type)` generates a complete
-//! `impl WorkflowStorage for $storage_type` block. The macro contract: the
-//! storage type must expose an `inner: T` field where `T` has a
+//! `impl_workflow_diesel_ops!($storage_type, $conn_type, $prep_sql)` generates
+//! a complete `impl WorkflowStorage for $storage_type` block. The macro
+//! contract: the storage type must expose an `inner: T` field where `T` has a
 //! `conn() -> Result<PooledConnection<...>>` method that derefs to a mutable
 //! `$conn_type`. SQLite and Postgres both satisfy this via their core storage
 //! handles.
 //!
-//! Diesel's `sql_query` rewrites `?` placeholders per backend automatically, so
-//! the SQL strings here are byte-identical between SQLite and Postgres. The
-//! only schema differences (`BLOB` vs `BYTEA`, `INTEGER` vs `BIGINT` for
-//! timestamps) are handled by the bound `diesel::sql_types::*` types and by
-//! the per-backend migration files — the query bodies stay unified.
+//! Diesel's `sql_query` does **not** rewrite `?` placeholders per backend — it
+//! requires `?` for SQLite and `$N` for Postgres. The `$prep_sql` macro
+//! argument names a function that converts the canonical (`?`-based) SQL into
+//! the dialect the connection expects. `sql_as_is` is a no-op for SQLite;
+//! `pg_rewrite` substitutes `?` → `$1`, `$2`, … for Postgres.
+//!
+//! Schema differences (`BLOB` vs `BYTEA`, `INTEGER` vs `BIGINT` for
+//! timestamps) are handled by the bound `diesel::sql_types::*` types and the
+//! per-backend migration files — the query bodies stay unified.
 
 use diesel::prelude::*;
 use diesel::sql_types::Text;
@@ -21,6 +25,35 @@ use taskito_core::error::{QueueError, Result};
 use crate::{
     StepMetadata, WorkflowDefinition, WorkflowNode, WorkflowNodeStatus, WorkflowRun, WorkflowState,
 };
+
+/// Pass-through SQL prep for SQLite — `?` placeholders are native.
+#[inline]
+pub(crate) fn sql_as_is(sql: &str) -> String {
+    sql.to_string()
+}
+
+/// Rewrite `?` placeholders to `$N` for Postgres in the order they appear.
+///
+/// Diesel's `sql_query` API requires dialect-correct placeholders. Postgres
+/// uses `$1`, `$2`, …; SQLite uses `?`. Doing the rewrite once at query time
+/// (a handful of µs for the short SQL bodies used here) lets the workflow
+/// crate keep a single canonical SQL string per query.
+#[cfg(feature = "postgres")]
+pub(crate) fn pg_rewrite(sql: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(sql.len() + 8);
+    let mut n: usize = 1;
+    for c in sql.chars() {
+        if c == '?' {
+            // `write!` to String is infallible — `.unwrap()` is safe.
+            write!(out, "${n}").unwrap();
+            n += 1;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
 
 #[derive(QueryableByName)]
 pub(crate) struct DefinitionRow {
@@ -86,6 +119,14 @@ pub(crate) struct NodeRow {
     pub completed_at: Option<i64>,
     #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
     pub error: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
+    pub compensation_job_id: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+    pub compensation_started_at: Option<i64>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+    pub compensation_completed_at: Option<i64>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
+    pub compensation_error: Option<String>,
 }
 
 pub(crate) fn definition_from_row(row: DefinitionRow) -> Result<WorkflowDefinition> {
@@ -132,16 +173,21 @@ pub(crate) fn node_from_row(row: NodeRow) -> WorkflowNode {
         started_at: row.started_at,
         completed_at: row.completed_at,
         error: row.error,
+        compensation_job_id: row.compensation_job_id,
+        compensation_started_at: row.compensation_started_at,
+        compensation_completed_at: row.compensation_completed_at,
+        compensation_error: row.compensation_error,
     }
 }
 
 /// Generate the full `impl WorkflowStorage for $storage_type` block.
 ///
-/// Both SQLite and Postgres implementations are byte-identical at the SQL
-/// level (Diesel rewrites `?` per backend). The macro takes the connection
-/// type so each backend's compile-time bind type-checks correctly.
+/// `$prep_sql` names a function that converts canonical (`?`-based) SQL into
+/// the dialect the connection expects. `$crate::diesel_common::sql_as_is`
+/// works for SQLite; `$crate::diesel_common::pg_rewrite` swaps `?` → `$N` for
+/// Postgres.
 macro_rules! impl_workflow_diesel_ops {
-    ($storage_type:ty, $conn_type:ty) => {
+    ($storage_type:ty, $conn_type:ty, $prep_sql:path) => {
         impl $crate::storage::WorkflowStorage for $storage_type {
             fn create_workflow_definition(
                 &self,
@@ -155,8 +201,8 @@ macro_rules! impl_workflow_diesel_ops {
                 })?;
 
                 ::diesel::sql_query(
-                    "INSERT INTO workflow_definitions (id, name, version, dag_data, step_metadata, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                    &$prep_sql("INSERT INTO workflow_definitions (id, name, version, dag_data, step_metadata, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?)"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(&def.id)
                 .bind::<::diesel::sql_types::Text, _>(&def.name)
@@ -178,16 +224,16 @@ macro_rules! impl_workflow_diesel_ops {
 
                 let rows: Vec<$crate::diesel_common::DefinitionRow> = if let Some(v) = version {
                     ::diesel::sql_query(
-                        "SELECT id, name, version, dag_data, step_metadata, created_at
-                         FROM workflow_definitions WHERE name = ? AND version = ?",
+                        &$prep_sql("SELECT id, name, version, dag_data, step_metadata, created_at
+                         FROM workflow_definitions WHERE name = ? AND version = ?"),
                     )
                     .bind::<::diesel::sql_types::Text, _>(name)
                     .bind::<::diesel::sql_types::Integer, _>(v)
                     .load(&mut *conn)?
                 } else {
                     ::diesel::sql_query(
-                        "SELECT id, name, version, dag_data, step_metadata, created_at
-                         FROM workflow_definitions WHERE name = ? ORDER BY version DESC LIMIT 1",
+                        &$prep_sql("SELECT id, name, version, dag_data, step_metadata, created_at
+                         FROM workflow_definitions WHERE name = ? ORDER BY version DESC LIMIT 1"),
                     )
                     .bind::<::diesel::sql_types::Text, _>(name)
                     .load(&mut *conn)?
@@ -205,8 +251,8 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<Option<$crate::WorkflowDefinition>> {
                 let mut conn = self.inner.conn()?;
                 let rows: Vec<$crate::diesel_common::DefinitionRow> = ::diesel::sql_query(
-                    "SELECT id, name, version, dag_data, step_metadata, created_at
-                     FROM workflow_definitions WHERE id = ?",
+                    &$prep_sql("SELECT id, name, version, dag_data, step_metadata, created_at
+                     FROM workflow_definitions WHERE id = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(id)
                 .load(&mut *conn)?;
@@ -223,10 +269,10 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "INSERT INTO workflow_runs
+                    &$prep_sql("INSERT INTO workflow_runs
                         (id, definition_id, params, state, started_at, completed_at, error,
                          parent_run_id, parent_node_name, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(&run.id)
                 .bind::<::diesel::sql_types::Text, _>(&run.definition_id)
@@ -249,9 +295,9 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<Option<$crate::WorkflowRun>> {
                 let mut conn = self.inner.conn()?;
                 let rows: Vec<$crate::diesel_common::RunRow> = ::diesel::sql_query(
-                    "SELECT id, definition_id, params, state, started_at, completed_at, error,
+                    &$prep_sql("SELECT id, definition_id, params, state, started_at, completed_at, error,
                             parent_run_id, parent_node_name, created_at
-                     FROM workflow_runs WHERE id = ?",
+                     FROM workflow_runs WHERE id = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(run_id)
                 .load(&mut *conn)?;
@@ -267,7 +313,7 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_runs SET state = ?, error = ? WHERE id = ?",
+                    &$prep_sql("UPDATE workflow_runs SET state = ?, error = ? WHERE id = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(state.as_str())
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(error)
@@ -283,7 +329,7 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_runs SET state = 'running', started_at = ? WHERE id = ?",
+                    &$prep_sql("UPDATE workflow_runs SET state = 'running', started_at = ? WHERE id = ?"),
                 )
                 .bind::<::diesel::sql_types::BigInt, _>(started_at)
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -298,7 +344,7 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_runs SET completed_at = ? WHERE id = ?",
+                    &$prep_sql("UPDATE workflow_runs SET completed_at = ? WHERE id = ?"),
                 )
                 .bind::<::diesel::sql_types::BigInt, _>(completed_at)
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -317,13 +363,13 @@ macro_rules! impl_workflow_diesel_ops {
 
                 let rows: Vec<$crate::diesel_common::RunRow> = match (definition_name, state) {
                     (Some(name), Some(st)) => ::diesel::sql_query(
-                        "SELECT r.id, r.definition_id, r.params, r.state, r.started_at,
+                        &$prep_sql("SELECT r.id, r.definition_id, r.params, r.state, r.started_at,
                                 r.completed_at, r.error, r.parent_run_id, r.parent_node_name,
                                 r.created_at
                          FROM workflow_runs r
                          JOIN workflow_definitions d ON r.definition_id = d.id
                          WHERE d.name = ? AND r.state = ?
-                         ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
+                         ORDER BY r.created_at DESC LIMIT ? OFFSET ?"),
                     )
                     .bind::<::diesel::sql_types::Text, _>(name)
                     .bind::<::diesel::sql_types::Text, _>(st.as_str())
@@ -331,33 +377,33 @@ macro_rules! impl_workflow_diesel_ops {
                     .bind::<::diesel::sql_types::BigInt, _>(offset)
                     .load(&mut *conn)?,
                     (Some(name), None) => ::diesel::sql_query(
-                        "SELECT r.id, r.definition_id, r.params, r.state, r.started_at,
+                        &$prep_sql("SELECT r.id, r.definition_id, r.params, r.state, r.started_at,
                                 r.completed_at, r.error, r.parent_run_id, r.parent_node_name,
                                 r.created_at
                          FROM workflow_runs r
                          JOIN workflow_definitions d ON r.definition_id = d.id
                          WHERE d.name = ?
-                         ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
+                         ORDER BY r.created_at DESC LIMIT ? OFFSET ?"),
                     )
                     .bind::<::diesel::sql_types::Text, _>(name)
                     .bind::<::diesel::sql_types::BigInt, _>(limit)
                     .bind::<::diesel::sql_types::BigInt, _>(offset)
                     .load(&mut *conn)?,
                     (None, Some(st)) => ::diesel::sql_query(
-                        "SELECT id, definition_id, params, state, started_at, completed_at,
+                        &$prep_sql("SELECT id, definition_id, params, state, started_at, completed_at,
                                 error, parent_run_id, parent_node_name, created_at
                          FROM workflow_runs WHERE state = ?
-                         ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                         ORDER BY created_at DESC LIMIT ? OFFSET ?"),
                     )
                     .bind::<::diesel::sql_types::Text, _>(st.as_str())
                     .bind::<::diesel::sql_types::BigInt, _>(limit)
                     .bind::<::diesel::sql_types::BigInt, _>(offset)
                     .load(&mut *conn)?,
                     (None, None) => ::diesel::sql_query(
-                        "SELECT id, definition_id, params, state, started_at, completed_at,
+                        &$prep_sql("SELECT id, definition_id, params, state, started_at, completed_at,
                                 error, parent_run_id, parent_node_name, created_at
                          FROM workflow_runs
-                         ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                         ORDER BY created_at DESC LIMIT ? OFFSET ?"),
                     )
                     .bind::<::diesel::sql_types::BigInt, _>(limit)
                     .bind::<::diesel::sql_types::BigInt, _>(offset)
@@ -376,10 +422,12 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "INSERT INTO workflow_nodes
+                    &$prep_sql("INSERT INTO workflow_nodes
                         (id, run_id, node_name, job_id, status, result_hash,
-                         fan_out_count, fan_in_data, started_at, completed_at, error)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         fan_out_count, fan_in_data, started_at, completed_at, error,
+                         compensation_job_id, compensation_started_at,
+                         compensation_completed_at, compensation_error)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(&node.id)
                 .bind::<::diesel::sql_types::Text, _>(&node.run_id)
@@ -392,6 +440,10 @@ macro_rules! impl_workflow_diesel_ops {
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.started_at)
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.completed_at)
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.error)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_job_id)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_started_at)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_completed_at)
+                .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_error)
                 .execute(&mut *conn)?;
                 Ok(())
             }
@@ -400,28 +452,37 @@ macro_rules! impl_workflow_diesel_ops {
                 &self,
                 nodes: &[$crate::WorkflowNode],
             ) -> ::taskito_core::error::Result<()> {
+                use ::diesel::connection::Connection;
                 let mut conn = self.inner.conn()?;
-                for node in nodes {
-                    ::diesel::sql_query(
-                        "INSERT INTO workflow_nodes
-                            (id, run_id, node_name, job_id, status, result_hash,
-                             fan_out_count, fan_in_data, started_at, completed_at, error)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    )
-                    .bind::<::diesel::sql_types::Text, _>(&node.id)
-                    .bind::<::diesel::sql_types::Text, _>(&node.run_id)
-                    .bind::<::diesel::sql_types::Text, _>(&node.node_name)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.job_id)
-                    .bind::<::diesel::sql_types::Text, _>(node.status.as_str())
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.result_hash)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Integer>, _>(node.fan_out_count)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.fan_in_data)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.started_at)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.completed_at)
-                    .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.error)
-                    .execute(&mut *conn)?;
-                }
-                Ok(())
+                conn.transaction::<_, ::taskito_core::error::QueueError, _>(|conn| {
+                    for node in nodes {
+                        ::diesel::sql_query(
+                            &$prep_sql("INSERT INTO workflow_nodes
+                                (id, run_id, node_name, job_id, status, result_hash,
+                                 fan_out_count, fan_in_data, started_at, completed_at, error,
+                                 compensation_job_id, compensation_started_at,
+                                 compensation_completed_at, compensation_error)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+                        )
+                        .bind::<::diesel::sql_types::Text, _>(&node.id)
+                        .bind::<::diesel::sql_types::Text, _>(&node.run_id)
+                        .bind::<::diesel::sql_types::Text, _>(&node.node_name)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.job_id)
+                        .bind::<::diesel::sql_types::Text, _>(node.status.as_str())
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.result_hash)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Integer>, _>(node.fan_out_count)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.fan_in_data)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.started_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.completed_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.error)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_job_id)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_started_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::BigInt>, _>(node.compensation_completed_at)
+                        .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(&node.compensation_error)
+                        .execute(conn)?;
+                    }
+                    Ok(())
+                })
             }
 
             fn get_workflow_node(
@@ -431,9 +492,11 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<Option<$crate::WorkflowNode>> {
                 let mut conn = self.inner.conn()?;
                 let rows: Vec<$crate::diesel_common::NodeRow> = ::diesel::sql_query(
-                    "SELECT id, run_id, node_name, job_id, status, result_hash,
-                            fan_out_count, fan_in_data, started_at, completed_at, error
-                     FROM workflow_nodes WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("SELECT id, run_id, node_name, job_id, status, result_hash,
+                            fan_out_count, fan_in_data, started_at, completed_at, error,
+                            compensation_job_id, compensation_started_at,
+                            compensation_completed_at, compensation_error
+                     FROM workflow_nodes WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(run_id)
                 .bind::<::diesel::sql_types::Text, _>(node_name)
@@ -451,9 +514,11 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<Vec<$crate::WorkflowNode>> {
                 let mut conn = self.inner.conn()?;
                 let rows: Vec<$crate::diesel_common::NodeRow> = ::diesel::sql_query(
-                    "SELECT id, run_id, node_name, job_id, status, result_hash,
-                            fan_out_count, fan_in_data, started_at, completed_at, error
-                     FROM workflow_nodes WHERE run_id = ?",
+                    &$prep_sql("SELECT id, run_id, node_name, job_id, status, result_hash,
+                            fan_out_count, fan_in_data, started_at, completed_at, error,
+                            compensation_job_id, compensation_started_at,
+                            compensation_completed_at, compensation_error
+                     FROM workflow_nodes WHERE run_id = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(run_id)
                 .load(&mut *conn)?;
@@ -472,7 +537,7 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_nodes SET status = ? WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("UPDATE workflow_nodes SET status = ? WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(status.as_str())
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -489,7 +554,7 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_nodes SET job_id = ? WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("UPDATE workflow_nodes SET job_id = ? WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(job_id)
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -506,8 +571,8 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_nodes SET status = 'running', started_at = ?
-                     WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("UPDATE workflow_nodes SET status = 'running', started_at = ?
+                     WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::BigInt, _>(started_at)
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -525,8 +590,8 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_nodes SET status = 'completed', completed_at = ?, result_hash = ?
-                     WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("UPDATE workflow_nodes SET status = 'completed', completed_at = ?, result_hash = ?
+                     WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::BigInt, _>(completed_at)
                 .bind::<::diesel::sql_types::Nullable<::diesel::sql_types::Text>, _>(result_hash)
@@ -544,8 +609,8 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_nodes SET status = 'failed', error = ?
-                     WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("UPDATE workflow_nodes SET status = 'failed', error = ?
+                     WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(error)
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -562,8 +627,8 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_nodes SET fan_out_count = ?, status = 'running'
-                     WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("UPDATE workflow_nodes SET fan_out_count = ?, status = 'running'
+                     WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::Integer, _>(count)
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -580,8 +645,8 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<()> {
                 let mut conn = self.inner.conn()?;
                 ::diesel::sql_query(
-                    "UPDATE workflow_nodes SET status = 'running', started_at = ?
-                     WHERE run_id = ? AND node_name = ?",
+                    &$prep_sql("UPDATE workflow_nodes SET status = 'running', started_at = ?
+                     WHERE run_id = ? AND node_name = ?"),
                 )
                 .bind::<::diesel::sql_types::BigInt, _>(started_at)
                 .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -601,10 +666,10 @@ macro_rules! impl_workflow_diesel_ops {
                 let mut conn = self.inner.conn()?;
                 let affected = if succeeded {
                     ::diesel::sql_query(
-                        "UPDATE workflow_nodes
+                        &$prep_sql("UPDATE workflow_nodes
                          SET status = 'completed', completed_at = ?
                          WHERE run_id = ? AND node_name = ?
-                           AND status NOT IN ('completed', 'failed', 'skipped', 'cache_hit')",
+                           AND status NOT IN ('completed', 'failed', 'skipped', 'cache_hit')"),
                     )
                     .bind::<::diesel::sql_types::BigInt, _>(completed_at)
                     .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -612,10 +677,10 @@ macro_rules! impl_workflow_diesel_ops {
                     .execute(&mut *conn)?
                 } else {
                     ::diesel::sql_query(
-                        "UPDATE workflow_nodes
+                        &$prep_sql("UPDATE workflow_nodes
                          SET status = 'failed', error = ?
                          WHERE run_id = ? AND node_name = ?
-                           AND status NOT IN ('completed', 'failed', 'skipped', 'cache_hit')",
+                           AND status NOT IN ('completed', 'failed', 'skipped', 'cache_hit')"),
                     )
                     .bind::<::diesel::sql_types::Text, _>(error.unwrap_or("fan-out child failed"))
                     .bind::<::diesel::sql_types::Text, _>(run_id)
@@ -633,9 +698,11 @@ macro_rules! impl_workflow_diesel_ops {
                 let mut conn = self.inner.conn()?;
                 let pattern = format!("{prefix}%");
                 let rows: Vec<$crate::diesel_common::NodeRow> = ::diesel::sql_query(
-                    "SELECT id, run_id, node_name, job_id, status, result_hash,
-                            fan_out_count, fan_in_data, started_at, completed_at, error
-                     FROM workflow_nodes WHERE run_id = ? AND node_name LIKE ?",
+                    &$prep_sql("SELECT id, run_id, node_name, job_id, status, result_hash,
+                            fan_out_count, fan_in_data, started_at, completed_at, error,
+                            compensation_job_id, compensation_started_at,
+                            compensation_completed_at, compensation_error
+                     FROM workflow_nodes WHERE run_id = ? AND node_name LIKE ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(run_id)
                 .bind::<::diesel::sql_types::Text, _>(&pattern)
@@ -663,9 +730,9 @@ macro_rules! impl_workflow_diesel_ops {
             ) -> ::taskito_core::error::Result<Vec<$crate::WorkflowRun>> {
                 let mut conn = self.inner.conn()?;
                 let rows: Vec<$crate::diesel_common::RunRow> = ::diesel::sql_query(
-                    "SELECT id, definition_id, params, state, started_at, completed_at,
+                    &$prep_sql("SELECT id, definition_id, params, state, started_at, completed_at,
                             error, parent_run_id, parent_node_name, created_at
-                     FROM workflow_runs WHERE parent_run_id = ?",
+                     FROM workflow_runs WHERE parent_run_id = ?"),
                 )
                 .bind::<::diesel::sql_types::Text, _>(parent_run_id)
                 .load(&mut *conn)?;
@@ -674,6 +741,72 @@ macro_rules! impl_workflow_diesel_ops {
                     .into_iter()
                     .map($crate::diesel_common::run_from_row)
                     .collect())
+            }
+
+            fn set_workflow_node_compensation_job(
+                &self,
+                run_id: &str,
+                node_name: &str,
+                compensation_job_id: &str,
+                started_at: i64,
+            ) -> ::taskito_core::error::Result<()> {
+                let mut conn = self.inner.conn()?;
+                ::diesel::sql_query(
+                    &$prep_sql("UPDATE workflow_nodes
+                       SET status = 'compensating',
+                           compensation_job_id = ?,
+                           compensation_started_at = ?
+                     WHERE run_id = ? AND node_name = ?"),
+                )
+                .bind::<::diesel::sql_types::Text, _>(compensation_job_id)
+                .bind::<::diesel::sql_types::BigInt, _>(started_at)
+                .bind::<::diesel::sql_types::Text, _>(run_id)
+                .bind::<::diesel::sql_types::Text, _>(node_name)
+                .execute(&mut *conn)?;
+                Ok(())
+            }
+
+            fn set_workflow_node_compensated(
+                &self,
+                run_id: &str,
+                node_name: &str,
+                completed_at: i64,
+            ) -> ::taskito_core::error::Result<()> {
+                let mut conn = self.inner.conn()?;
+                ::diesel::sql_query(
+                    &$prep_sql("UPDATE workflow_nodes
+                       SET status = 'compensated',
+                           compensation_completed_at = ?
+                     WHERE run_id = ? AND node_name = ?"),
+                )
+                .bind::<::diesel::sql_types::BigInt, _>(completed_at)
+                .bind::<::diesel::sql_types::Text, _>(run_id)
+                .bind::<::diesel::sql_types::Text, _>(node_name)
+                .execute(&mut *conn)?;
+                Ok(())
+            }
+
+            fn set_workflow_node_compensation_failed(
+                &self,
+                run_id: &str,
+                node_name: &str,
+                error: &str,
+                completed_at: i64,
+            ) -> ::taskito_core::error::Result<()> {
+                let mut conn = self.inner.conn()?;
+                ::diesel::sql_query(
+                    &$prep_sql("UPDATE workflow_nodes
+                       SET status = 'compensation_failed',
+                           compensation_completed_at = ?,
+                           compensation_error = ?
+                     WHERE run_id = ? AND node_name = ?"),
+                )
+                .bind::<::diesel::sql_types::BigInt, _>(completed_at)
+                .bind::<::diesel::sql_types::Text, _>(error)
+                .bind::<::diesel::sql_types::Text, _>(run_id)
+                .bind::<::diesel::sql_types::Text, _>(node_name)
+                .execute(&mut *conn)?;
+                Ok(())
             }
         }
     };

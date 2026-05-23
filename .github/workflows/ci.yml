@@ -166,7 +166,7 @@ jobs:
           prefix-key: v1-rust-bin-fix
 
       - name: Run Rust test suite (PostgreSQL backend)
-        run: cargo test --workspace --features postgres
+        run: cargo test --workspace --features postgres,workflows
         env:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
@@ -206,7 +206,7 @@ jobs:
           prefix-key: v1-rust-bin-fix
 
       - name: Run Rust test suite (Redis backend)
-        run: cargo test --workspace --features redis
+        run: cargo test --workspace --features redis,workflows
         env:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_REDIS_TEST_URL: redis://localhost:6379/15

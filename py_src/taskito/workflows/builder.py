@@ -51,6 +51,13 @@ class GateConfig:
     """Human-readable message shown to approvers."""
 
 
+class _InheritCompensator:
+    """Sentinel — use the compensator declared on the task decorator."""
+
+
+INHERIT_COMPENSATOR: _InheritCompensator = _InheritCompensator()
+
+
 @dataclass
 class _Step:
     """Internal representation of a single workflow step."""
@@ -69,6 +76,13 @@ class _Step:
     condition: str | Callable | None = None
     gate_config: GateConfig | None = None
     sub_workflow: SubWorkflowRef | None = None
+    # ``None`` = no compensation for this step; a string = the compensation
+    # task name; the ``INHERIT_COMPENSATOR`` sentinel = look up the
+    # decorator-level ``@queue.task(compensates=...)`` default when the
+    # workflow is compiled.
+    compensates: str | None | _InheritCompensator = field(
+        default_factory=lambda: INHERIT_COMPENSATOR
+    )
 
 
 class Workflow:
@@ -119,6 +133,7 @@ class Workflow:
         fan_out: str | None = None,
         fan_in: str | None = None,
         condition: str | Callable | None = None,
+        compensates: HasTaskName | str | None | _InheritCompensator = INHERIT_COMPENSATOR,
     ) -> Workflow:
         """Add a step to the workflow.
 
@@ -205,6 +220,20 @@ class Workflow:
 
         sub_wf = task if isinstance(task, SubWorkflowRef) else None
 
+        # Resolve the compensates= argument to either a task-name string,
+        # ``None`` (disabled), or the INHERIT sentinel (look up at compile).
+        resolved_compensates: str | None | _InheritCompensator
+        if isinstance(compensates, _InheritCompensator):
+            resolved_compensates = INHERIT_COMPENSATOR
+        elif compensates is None:
+            resolved_compensates = None
+        elif isinstance(compensates, str):
+            resolved_compensates = compensates
+        elif hasattr(compensates, "name"):  # TaskWrapper / HasTaskName
+            resolved_compensates = compensates.name
+        else:
+            raise TypeError("compensates= must be a TaskWrapper, task-name string, or None")
+
         self._steps[name] = _Step(
             name=name,
             task_name=task_name,
@@ -219,6 +248,7 @@ class Workflow:
             fan_in=fan_in,
             condition=condition,
             sub_workflow=sub_wf,
+            compensates=resolved_compensates,
         )
         return self
 
@@ -361,6 +391,24 @@ class Workflow:
         has_gates = any(s.gate_config is not None for s in self._steps.values())
         has_sub_wf = any(s.sub_workflow is not None for s in self._steps.values())
         is_continue = self.on_failure != "fail_fast"
+
+        # Resolve each step's compensator: a per-step override wins, falling
+        # back to the decorator-level default from
+        # ``Queue._task_compensates[task_name]``. Steps with no compensator
+        # (``None`` after resolution) are omitted — the saga orchestrator
+        # treats them as non-compensable.
+        compensation_map: dict[str, str] = {}
+        for step in self._steps.values():
+            comp = step.compensates
+            if isinstance(comp, _InheritCompensator):
+                default_comp = getattr(queue, "_task_compensates", {}).get(step.task_name)
+                if default_comp is not None:
+                    compensation_map[step.name] = default_comp
+            elif comp is not None:
+                compensation_map[step.name] = comp
+        # Stash on the workflow instance for the tracker / saga orchestrator
+        # to read at submit time (PR 6 wires this up).
+        self._compiled_compensation_map: dict[str, str] = compensation_map
 
         # Compute the set of deferred nodes.
         deferred: set[str] = set()

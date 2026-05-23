@@ -65,7 +65,12 @@ impl PyQueue {
                 return Ok(Vec::new());
             }
 
+            // Enqueue all child jobs first, then atomically batch-insert the
+            // matching workflow_nodes. The batch insert wraps every row in one
+            // transaction, so a crash partway through node creation no longer
+            // leaves the run with half-tracked children.
             let mut child_job_ids = Vec::with_capacity(child_names.len());
+            let mut wf_nodes = Vec::with_capacity(child_names.len());
             for (child_name, payload) in child_names.iter().zip(child_payloads.into_iter()) {
                 let new_job = NewJob {
                     queue: queue_owned.clone(),
@@ -86,7 +91,7 @@ impl PyQueue {
                 let job = self.storage.enqueue(new_job)?;
                 child_job_ids.push(job.id.clone());
 
-                let wf_node = WorkflowNode {
+                wf_nodes.push(WorkflowNode {
                     id: uuid::Uuid::now_v7().to_string(),
                     run_id: run_id_owned.clone(),
                     node_name: child_name.clone(),
@@ -98,10 +103,14 @@ impl PyQueue {
                     started_at: None,
                     completed_at: None,
                     error: None,
-                };
-                wf_storage.create_workflow_node(&wf_node)?;
+                    compensation_job_id: None,
+                    compensation_started_at: None,
+                    compensation_completed_at: None,
+                    compensation_error: None,
+                });
             }
 
+            wf_storage.create_workflow_nodes_batch(&wf_nodes)?;
             wf_storage.set_workflow_node_fan_out_count(&run_id_owned, &parent_name_owned, count)?;
             Ok(child_job_ids)
         });

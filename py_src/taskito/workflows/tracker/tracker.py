@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from taskito.events import EventType
+from taskito.workflows.saga import SagaOrchestrator
 from taskito.workflows.tracker import dag, fan_out, gates, sub_workflows
 from taskito.workflows.tracker.types import _RunConfig
 
@@ -50,8 +51,13 @@ class WorkflowTracker:
         self._state_lock = threading.RLock()
         self._run_configs: dict[str, _RunConfig] = {}
         self._job_to_run: dict[str, str] = {}
+        # Steps per run, captured at register-run time. Needed at saga start
+        # to compute reverse topological waves of the compensable nodes.
+        self._run_steps: dict[str, dict[str, Any]] = {}
         self._gate_timers: dict[tuple[str, str], threading.Timer] = {}
         self._child_to_parent: dict[str, tuple[str, str]] = {}
+        # Saga orchestrator — driven by the failure path in `_handle`.
+        self._saga = SagaOrchestrator(queue)
         self._install_listeners()
 
     def _install_listeners(self) -> None:
@@ -63,6 +69,16 @@ class WorkflowTracker:
         self._event_bus.on(EventType.WORKFLOW_COMPLETED, self._on_child_workflow_terminal)
         self._event_bus.on(EventType.WORKFLOW_FAILED, self._on_child_workflow_terminal)
         self._event_bus.on(EventType.WORKFLOW_CANCELLED, self._on_child_workflow_terminal)
+        # Saga terminal events — release waiters when compensation finishes.
+        self._event_bus.on(EventType.WORKFLOW_COMPENSATED, self._on_saga_terminal)
+        self._event_bus.on(EventType.WORKFLOW_COMPENSATION_FAILED, self._on_saga_terminal)
+
+    def _on_saga_terminal(self, _event_type: EventType, payload: dict[str, Any]) -> None:
+        run_id = payload.get("workflow_run_id")
+        if not run_id:
+            return
+        self._release_waiters(run_id)
+        self._cleanup_run(run_id)
 
     # ── Wait management ────────────────────────────────────────────
 
@@ -104,6 +120,8 @@ class WorkflowTracker:
         callable_conditions: dict[str, Callable[..., bool]] | None = None,
         gate_configs: dict[str, Any] | None = None,
         sub_workflow_refs: dict[str, Any] | None = None,
+        compensation_map: dict[str, str] | None = None,
+        steps: dict[str, Any] | None = None,
     ) -> None:
         """Cache configuration for a tracker-managed workflow run."""
         meta: dict[str, dict[str, Any]] = json.loads(step_metadata_json)
@@ -118,9 +136,12 @@ class WorkflowTracker:
             callable_conditions=callable_conditions or {},
             gate_configs=gate_configs or {},
             sub_workflow_refs=sub_workflow_refs or {},
+            compensation_map=compensation_map or {},
         )
         with self._state_lock:
             self._run_configs[run_id] = config
+            if steps is not None:
+                self._run_steps[run_id] = steps
 
         # Populate job→run mapping for initial nodes.
         try:
@@ -175,6 +196,12 @@ class WorkflowTracker:
         if not job_id:
             return
 
+        # Compensation jobs flow through a different code path — the saga
+        # orchestrator owns their lifecycle, not the normal tracker.
+        if self._saga.is_compensation_job(job_id):
+            self._saga.on_compensation_completed(job_id=job_id, succeeded=succeeded, error=error)
+            return
+
         # Determine if this job belongs to a managed run.
         with self._state_lock:
             run_id = self._job_to_run.get(job_id)
@@ -204,6 +231,22 @@ class WorkflowTracker:
         run_id, node_name, terminal_state = result
 
         if terminal_state is not None:
+            # If the run ended in failure AND the workflow has a saga
+            # (non-empty compensation_map), hand off to the orchestrator
+            # before emitting the terminal event — the saga will emit its
+            # own terminal event when compensation finishes.
+            if (
+                terminal_state == "failed"
+                and config is not None
+                and config.compensation_map
+                and config.on_failure == "fail_fast"
+            ):
+                steps = self._run_steps.get(run_id, {})
+                started = self._saga.start_compensation(run_id, config, steps)
+                if started:
+                    # The saga owns the run from here. Don't clean up yet —
+                    # the orchestrator will call back when it finishes.
+                    return
             self._emit_terminal(run_id, terminal_state, error)
             self._cleanup_run(run_id)
             return
@@ -284,6 +327,7 @@ class WorkflowTracker:
         """Drop all tracker state tied to ``run_id`` and cancel any live timers."""
         with self._state_lock:
             self._run_configs.pop(run_id, None)
+            self._run_steps.pop(run_id, None)
             self._job_to_run = {jid: rid for jid, rid in self._job_to_run.items() if rid != run_id}
             stale_timer_keys = [k for k in self._gate_timers if k[0] == run_id]
             for key in stale_timer_keys:

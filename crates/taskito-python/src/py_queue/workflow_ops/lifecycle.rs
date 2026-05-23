@@ -119,6 +119,10 @@ impl PyQueue {
                     started_at: None,
                     completed_at: Some(now),
                     error: None,
+                    compensation_job_id: None,
+                    compensation_started_at: None,
+                    compensation_completed_at: None,
+                    compensation_error: None,
                 };
                 wf_storage
                     .create_workflow_node(&wf_node)
@@ -140,6 +144,10 @@ impl PyQueue {
                     started_at: None,
                     completed_at: None,
                     error: None,
+                    compensation_job_id: None,
+                    compensation_started_at: None,
+                    compensation_completed_at: None,
+                    compensation_error: None,
                 };
                 wf_storage
                     .create_workflow_node(&wf_node)
@@ -208,6 +216,10 @@ impl PyQueue {
                 started_at: None,
                 completed_at: None,
                 error: None,
+                compensation_job_id: None,
+                compensation_started_at: None,
+                compensation_completed_at: None,
+                compensation_error: None,
             };
             wf_storage
                 .create_workflow_node(&wf_node)

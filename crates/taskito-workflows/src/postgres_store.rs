@@ -1,27 +1,29 @@
-//! SQLite implementation of `WorkflowStorage`.
+//! PostgreSQL implementation of `WorkflowStorage`.
 //!
 //! Construction runs the workflow-table migrations once and caches a pool
-//! handle to the underlying `SqliteStorage`. Every trait method is generated
-//! by the `impl_workflow_diesel_ops!` macro in `diesel_common.rs` — both
-//! backends share byte-identical SQL.
+//! handle to the underlying `PostgresStorage`. Every trait method is generated
+//! by the `impl_workflow_diesel_ops!` macro in `diesel_common.rs` — the SQL
+//! bodies are byte-identical to SQLite (Diesel rewrites `?` to `$N` per
+//! backend), only the DDL differs (`BYTEA` for `BLOB`, `BIGINT` for `INTEGER`
+//! timestamps).
 
+use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
 
 use taskito_core::error::Result;
-use taskito_core::storage::sqlite::SqliteStorage;
+use taskito_core::storage::postgres::PostgresStorage;
 
 use crate::diesel_common::impl_workflow_diesel_ops;
 
-fn run_workflow_migrations(conn: &mut SqliteConnection) -> Result<()> {
+fn run_workflow_migrations(conn: &mut PgConnection) -> Result<()> {
     diesel::sql_query(
         "CREATE TABLE IF NOT EXISTS workflow_definitions (
             id             TEXT PRIMARY KEY,
             name           TEXT NOT NULL,
             version        INTEGER NOT NULL DEFAULT 1,
-            dag_data       BLOB NOT NULL,
+            dag_data       BYTEA NOT NULL,
             step_metadata  TEXT NOT NULL,
-            created_at     INTEGER NOT NULL,
+            created_at     BIGINT NOT NULL,
             UNIQUE(name, version)
         )",
     )
@@ -36,12 +38,12 @@ fn run_workflow_migrations(conn: &mut SqliteConnection) -> Result<()> {
             definition_id    TEXT NOT NULL,
             params           TEXT,
             state            TEXT NOT NULL DEFAULT 'pending',
-            started_at       INTEGER,
-            completed_at     INTEGER,
+            started_at       BIGINT,
+            completed_at     BIGINT,
             error            TEXT,
             parent_run_id    TEXT,
             parent_node_name TEXT,
-            created_at       INTEGER NOT NULL
+            created_at       BIGINT NOT NULL
         )",
     )
     .execute(conn)?;
@@ -62,8 +64,8 @@ fn run_workflow_migrations(conn: &mut SqliteConnection) -> Result<()> {
             result_hash    TEXT,
             fan_out_count  INTEGER,
             fan_in_data    TEXT,
-            started_at     INTEGER,
-            completed_at   INTEGER,
+            started_at     BIGINT,
+            completed_at   BIGINT,
             error          TEXT,
             UNIQUE(run_id, node_name)
         )",
@@ -78,51 +80,46 @@ fn run_workflow_migrations(conn: &mut SqliteConnection) -> Result<()> {
     )
     .execute(conn)?;
 
-    // Saga columns — added in 0.13 alongside the saga feature. SQLite has no
-    // `ADD COLUMN IF NOT EXISTS`, so we swallow `duplicate column` errors to
-    // make this idempotent across restarts.
+    // Saga columns — added in 0.13. Postgres supports `ADD COLUMN IF NOT
+    // EXISTS`, so this is naturally idempotent.
     for stmt in [
-        "ALTER TABLE workflow_nodes ADD COLUMN compensation_job_id TEXT",
-        "ALTER TABLE workflow_nodes ADD COLUMN compensation_started_at INTEGER",
-        "ALTER TABLE workflow_nodes ADD COLUMN compensation_completed_at INTEGER",
-        "ALTER TABLE workflow_nodes ADD COLUMN compensation_error TEXT",
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_job_id TEXT",
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_started_at BIGINT",
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_completed_at BIGINT",
+        "ALTER TABLE workflow_nodes ADD COLUMN IF NOT EXISTS compensation_error TEXT",
     ] {
-        if let Err(e) = diesel::sql_query(stmt).execute(conn) {
-            let msg = e.to_string();
-            if !msg.contains("duplicate column") {
-                return Err(e.into());
-            }
-        }
+        diesel::sql_query(stmt).execute(conn)?;
     }
 
     Ok(())
 }
 
-/// Workflow-aware wrapper around `SqliteStorage`.
+/// Workflow-aware wrapper around `PostgresStorage`.
 ///
 /// Runs workflow table migrations on construction, then delegates all
-/// `WorkflowStorage` operations through the shared diesel macro.
+/// `WorkflowStorage` operations through the shared diesel macro. The wrapped
+/// `PostgresStorage` owns the pool; clones share it.
 #[derive(Clone)]
-pub struct WorkflowSqliteStorage {
-    pub(crate) inner: SqliteStorage,
+pub struct WorkflowPostgresStorage {
+    pub(crate) inner: PostgresStorage,
 }
 
-impl WorkflowSqliteStorage {
-    /// Wrap an existing `SqliteStorage` and ensure workflow tables exist.
-    pub fn new(storage: SqliteStorage) -> Result<Self> {
+impl WorkflowPostgresStorage {
+    /// Wrap an existing `PostgresStorage` and ensure workflow tables exist.
+    pub fn new(storage: PostgresStorage) -> Result<Self> {
         let mut conn = storage.conn()?;
         run_workflow_migrations(&mut conn)?;
         Ok(Self { inner: storage })
     }
 
-    /// Access the underlying `SqliteStorage`.
-    pub fn inner(&self) -> &SqliteStorage {
+    /// Access the underlying `PostgresStorage`.
+    pub fn inner(&self) -> &PostgresStorage {
         &self.inner
     }
 }
 
 impl_workflow_diesel_ops!(
-    WorkflowSqliteStorage,
-    SqliteConnection,
-    crate::diesel_common::sql_as_is
+    WorkflowPostgresStorage,
+    PgConnection,
+    crate::diesel_common::pg_rewrite
 );

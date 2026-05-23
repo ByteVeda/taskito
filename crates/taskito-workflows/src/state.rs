@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 /// State machine for a workflow run.
 ///
 /// Transitions:
-///   Pending  → Running
-///   Running  → Completed | Failed | Cancelled | Paused
-///   Paused   → Running | Cancelled
+///   Pending      → Running
+///   Running      → Completed | Failed | Cancelled | Paused | Compensating
+///   Paused       → Running | Cancelled
+///   Compensating → Compensated | CompensationFailed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowState {
@@ -17,6 +18,13 @@ pub enum WorkflowState {
     Completed,
     Failed,
     Cancelled,
+    /// A saga-mode run that has hit a forward failure and is rolling back
+    /// previously-completed nodes via their compensation tasks.
+    Compensating,
+    /// All compensations succeeded — the run is fully rolled back.
+    Compensated,
+    /// At least one compensation failed. Partial rollback may be in effect.
+    CompensationFailed,
 }
 
 impl WorkflowState {
@@ -28,6 +36,9 @@ impl WorkflowState {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
+            Self::Compensating => "compensating",
+            Self::Compensated => "compensated",
+            Self::CompensationFailed => "compensation_failed",
         }
     }
 
@@ -39,12 +50,22 @@ impl WorkflowState {
             "completed" => Some(Self::Completed),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
+            "compensating" => Some(Self::Compensating),
+            "compensated" => Some(Self::Compensated),
+            "compensation_failed" => Some(Self::CompensationFailed),
             _ => None,
         }
     }
 
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Completed
+                | Self::Failed
+                | Self::Cancelled
+                | Self::Compensated
+                | Self::CompensationFailed
+        )
     }
 
     /// Check whether transitioning from `self` to `target` is valid.
@@ -56,8 +77,11 @@ impl WorkflowState {
                 | (Self::Running, Self::Failed)
                 | (Self::Running, Self::Cancelled)
                 | (Self::Running, Self::Paused)
+                | (Self::Running, Self::Compensating)
                 | (Self::Paused, Self::Running)
                 | (Self::Paused, Self::Cancelled)
+                | (Self::Compensating, Self::Compensated)
+                | (Self::Compensating, Self::CompensationFailed)
         )
     }
 }
