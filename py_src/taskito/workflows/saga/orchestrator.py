@@ -155,25 +155,32 @@ class SagaOrchestrator:
             if not (has_explicit or has_subwf_propagation):
                 return False
 
-            completed = self._fetch_compensable_nodes(run_id, run_config)
-            if not completed:
-                return False
-
-            waves = _reverse_topo_waves(steps, restrict_to=completed)
-            if not waves:
-                return False
-
-            self._run_waves[run_id] = waves
-            self._run_inflight[run_id] = set()
-            self._run_any_failed[run_id] = False
-            self._run_depth[run_id] = depth
-
+            # Transition to COMPENSATING immediately after the cheap
+            # eligibility check. The storage call in _fetch_compensable_nodes
+            # can be slow (especially SQLite on Windows under contention), and
+            # wait()'s poll loop would see the transient FAILED state as
+            # terminal if we delay this transition.
             self._mark_run_compensating(run_id)
 
             self._queue._emit_event(
                 EventType.WORKFLOW_COMPENSATING,
                 {"workflow_run_id": run_id},
             )
+
+            completed = self._fetch_compensable_nodes(run_id, run_config)
+            if not completed:
+                self._finalize_locked(run_id, succeeded=True)
+                return True
+
+            waves = _reverse_topo_waves(steps, restrict_to=completed)
+            if not waves:
+                self._finalize_locked(run_id, succeeded=True)
+                return True
+
+            self._run_waves[run_id] = waves
+            self._run_inflight[run_id] = set()
+            self._run_any_failed[run_id] = False
+            self._run_depth[run_id] = depth
 
         self._dispatch_next_wave(run_id, run_config)
         return True
@@ -502,6 +509,16 @@ class SagaOrchestrator:
                         parent_run_id,
                         parent_node_name,
                     )
+                    # If start_compensation finalized immediately (vacuously
+                    # compensated — no nodes to undo), the child saga already
+                    # completed but _pending_parent_after_child was set after
+                    # the fact. Detect and resolve the parent node inline.
+                    already_done = (
+                        child_run_id not in self._run_waves
+                        and child_run_id not in self._run_inflight
+                    )
+                if already_done:
+                    self._on_child_saga_terminal(child_run_id, True, None)
                 propagated_any = True
 
         return propagated_any
