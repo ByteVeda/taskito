@@ -34,6 +34,37 @@ serve_autoscaler(
 `serve_autoscaler` blocks until SIGTERM or SIGINT arrives, at which point it
 drains all worker processes gracefully before returning.
 
+## CLI
+
+The fastest way to run the autoscaler:
+
+```bash
+taskito autoscale --app myapp.tasks:queue
+```
+
+All `AutoscaleConfig` parameters are available as CLI flags:
+
+```bash
+taskito autoscale --app myapp.tasks:queue \
+  --min-workers 2 --max-workers 20 \
+  --target-queue-depth 25 --drain-timeout 60
+```
+
+**systemd unit** (using the CLI instead of a Python entry point):
+
+```ini
+[Unit]
+Description=taskito autoscaler
+After=network.target
+
+[Service]
+ExecStart=taskito autoscale --app myapp.tasks:queue --min-workers 2 --max-workers 20
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ## How it works
 
 Every `poll_interval_sec` seconds (default 5 s) the controller:
