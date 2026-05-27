@@ -68,6 +68,27 @@ class WorkflowRun:
             while True:
                 snapshot = self.status()
                 if snapshot.state.is_terminal():
+                    # FAILED and COMPLETED_WITH_FAILURES can transition to
+                    # COMPENSATING when a saga is about to start.  Between
+                    # mark_workflow_node_result (sets FAILED in Rust) and
+                    # start_compensation (sets COMPENSATING from Python)
+                    # there is a window where the poll sees the transient
+                    # terminal state.  When the tracker owns an event for
+                    # this run, defer to the event — it is set only after
+                    # the saga decision is made — instead of returning the
+                    # possibly-transient state.
+                    if (
+                        snapshot.state
+                        in (WorkflowState.FAILED, WorkflowState.COMPLETED_WITH_FAILURES)
+                        and event is not None
+                        and not event.is_set()
+                    ):
+                        grace = poll_interval
+                        if deadline is not None:
+                            grace = min(grace, max(0.0, deadline - time.monotonic()))
+                        if grace > 0:
+                            event.wait(timeout=grace)
+                            continue
                     return snapshot
 
                 remaining: float
