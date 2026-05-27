@@ -232,6 +232,14 @@ class WorkflowTracker:
 
         run_id, node_name, terminal_state = result
 
+        # The initial lookup used _job_to_run which may not have this
+        # job yet (register_run populates _run_configs before the
+        # slower _job_to_run database read).  Re-fetch now that Rust
+        # gave us the authoritative run_id.
+        if config is None:
+            with self._state_lock:
+                config = self._run_configs.get(run_id)
+
         # Track partial failure occurrence for continue-mode saga finalization.
         # This is the only place we observe individual job-failure events in
         # the tracker — we record it on the in-memory config so that
@@ -288,10 +296,6 @@ class WorkflowTracker:
             self._cleanup_run(run_id)
             return
 
-        # Re-fetch config now that we have the definitive run_id.
-        if config is None:
-            with self._state_lock:
-                config = self._run_configs.get(run_id)
         if config is None:
             return  # Static workflow — Rust cascade handled everything.
 
