@@ -9,8 +9,9 @@ state, emits a workflow-level event and releases any threads blocked on
 For workflows that contain fan-out / fan-in steps, conditions, or
 ``on_failure="continue"``, the tracker orchestrates dynamic job creation,
 condition evaluation, and selective skip propagation. Concern-specific
-helpers live in ``dag``, ``gates``, ``sub_workflows``, and ``fan_out`` and
-are invoked from this orchestrator.
+helpers live in ``dag``, ``gates``, ``sub_workflows``, ``fan_out``,
+``event_routing``, and ``finalization`` and are invoked from this
+orchestrator.
 """
 
 from __future__ import annotations
