@@ -601,11 +601,21 @@ class SagaOrchestrator:
         )
 
     def _mark_run_compensating(self, run_id: str) -> None:
-        """Move the run from ``Running`` to ``Compensating`` in storage."""
-        try:
-            self._queue._inner.set_workflow_run_compensating(run_id)
-        except Exception:
-            logger.exception("saga: failed to mark run %s compensating", run_id)
+        """Move the run to ``Compensating`` in storage.
+
+        Retries briefly on transient SQLite "database is locked" errors
+        so that contention from a concurrent result-handler write does
+        not silently leave the run in ``Failed``.
+        """
+        for attempt in range(5):
+            try:
+                self._queue._inner.set_workflow_run_compensating(run_id)
+                return
+            except Exception as exc:
+                if "database is locked" not in str(exc) or attempt == 4:
+                    logger.exception("saga: failed to mark run %s compensating", run_id)
+                    return
+                time.sleep(0.05 * (attempt + 1))
 
     def _finalize_locked(self, run_id: str, *, succeeded: bool) -> None:
         """Cleanly finalize a saga. Must be called with ``self._lock``."""
