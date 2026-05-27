@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from taskito import MaxRetriesExceededError, Queue, TaskFailedError, chain, chord, group
+
+PollUntil = Any  # the conftest fixture's runtime type
 
 
 @pytest.fixture
@@ -91,7 +95,7 @@ def test_chain_with_compensation_rejects_invalid_compensator(queue: Queue) -> No
 # ── chain compensation ────────────────────────────────────────────────────
 
 
-def test_chain_failure_compensates_in_reverse_order(queue: Queue) -> None:
+def test_chain_failure_compensates_in_reverse_order(queue: Queue, poll_until: PollUntil) -> None:
     """3 steps; step 3 fails → compensators for step 2 and step 1 run in reverse."""
     lock = threading.Lock()
     order: list[str] = []
@@ -129,20 +133,7 @@ def test_chain_failure_compensates_in_reverse_order(queue: Queue) -> None:
         c.apply(queue)
 
     # Wait for compensator jobs to land (they're async dispatches).
-    deadline_lock = threading.Lock()
-
-    def wait_for_comps() -> None:
-        import time
-
-        for _ in range(60):
-            with deadline_lock:
-                pass
-            with lock:
-                if "comp_a" in order and "comp_b" in order:
-                    return
-            time.sleep(0.1)
-
-    wait_for_comps()
+    poll_until(lambda: "comp_a" in order and "comp_b" in order, timeout=6)
 
     with lock:
         assert "a" in order
@@ -185,8 +176,6 @@ def test_chain_success_runs_no_compensators(queue: Queue) -> None:
     assert result_job.result(timeout=30) == 2
 
     # Give the worker a moment to confirm no compensators dispatch.
-    import time
-
     time.sleep(0.5)
     with lock:
         assert comp_calls == [], f"no compensators should run on success: {comp_calls}"
@@ -195,7 +184,9 @@ def test_chain_success_runs_no_compensators(queue: Queue) -> None:
 # ── group compensation ────────────────────────────────────────────────────
 
 
-def test_group_member_failure_compensates_succeeded_members(queue: Queue) -> None:
+def test_group_member_failure_compensates_succeeded_members(
+    queue: Queue, poll_until: PollUntil
+) -> None:
     """3-member group; member 0 fails → comp for members 1 and 2 run."""
     lock = threading.Lock()
     order: list[str] = []
@@ -237,10 +228,8 @@ def test_group_member_failure_compensates_succeeded_members(queue: Queue) -> Non
     with pytest.raises((TaskFailedError, MaxRetriesExceededError)):
         g.apply(queue)
 
-    # Give compensators time to dispatch.
-    import time
-
-    time.sleep(2)
+    # Wait for compensators to dispatch.
+    poll_until(lambda: "comp_b" in order and "comp_c" in order, timeout=5)
     with lock:
         assert "m_fail" in order
         assert "m_ok_1" in order
@@ -253,7 +242,9 @@ def test_group_member_failure_compensates_succeeded_members(queue: Queue) -> Non
 # ── chord compensation ────────────────────────────────────────────────────
 
 
-def test_chord_callback_failure_compensates_group_members(queue: Queue) -> None:
+def test_chord_callback_failure_compensates_group_members(
+    queue: Queue, poll_until: PollUntil
+) -> None:
     """Group succeeds, callback fails → group compensators dispatch."""
     lock = threading.Lock()
     order: list[str] = []
@@ -296,9 +287,7 @@ def test_chord_callback_failure_compensates_group_members(queue: Queue) -> None:
     with pytest.raises((TaskFailedError, MaxRetriesExceededError)):
         ch.apply(queue)
 
-    import time
-
-    time.sleep(2)
+    poll_until(lambda: "comp_a" in order and "comp_b" in order, timeout=5)
     with lock:
         assert "m1" in order and "m2" in order, f"group must run: {order}"
         assert "cb" in order, f"callback must run: {order}"
@@ -339,8 +328,6 @@ def test_chord_group_failure_skips_callback_compensator(queue: Queue) -> None:
     with pytest.raises((TaskFailedError, MaxRetriesExceededError)):
         ch.apply(queue)
 
-    import time
-
     time.sleep(2)
     with lock:
         assert "cb" not in order, f"callback must not run on group failure: {order}"
@@ -352,7 +339,7 @@ def test_chord_group_failure_skips_callback_compensator(queue: Queue) -> None:
 # ── Idempotency (dedup via unique_key) ────────────────────────────────────
 
 
-def test_chain_compensator_idempotency_key_format(queue: Queue) -> None:
+def test_chain_compensator_idempotency_key_format(queue: Queue, poll_until: PollUntil) -> None:
     """Compensator enqueues use canvas_compensation:{run_id}:{slot} as unique_key.
 
     This isn't directly observable on a single apply() call (each apply
@@ -380,8 +367,6 @@ def test_chain_compensator_idempotency_key_format(queue: Queue) -> None:
     with pytest.raises((TaskFailedError, MaxRetriesExceededError)):
         c.apply(queue)
 
-    import time
-
-    time.sleep(2)
+    poll_until(lambda: comp_calls >= 1, timeout=5)
     with lock:
         assert comp_calls == 1, f"compensator must fire exactly once: {comp_calls}"
