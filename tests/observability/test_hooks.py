@@ -7,6 +7,8 @@ from typing import Any
 
 from taskito import Queue
 
+PollUntil = Any  # the conftest fixture's runtime type
+
 
 def test_before_and_after_hooks(queue: Queue) -> None:
     """before_task and after_task hooks fire around task execution."""
@@ -59,7 +61,7 @@ def test_on_success_hook(queue: Queue) -> None:
     assert 12 in success_results
 
 
-def test_on_failure_hook(queue: Queue) -> None:
+def test_on_failure_hook(queue: Queue, poll_until: PollUntil) -> None:
     """on_failure hook fires when task raises."""
     failure_errors: list[str] = []
 
@@ -76,8 +78,5 @@ def test_on_failure_hook(queue: Queue) -> None:
     worker_thread = threading.Thread(target=queue.run_worker, daemon=True)
     worker_thread.start()
 
-    import time
-
-    time.sleep(3)
-
+    poll_until(lambda: len(failure_errors) > 0, timeout=5)
     assert any("boom" in e for e in failure_errors)

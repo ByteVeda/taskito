@@ -16,6 +16,8 @@ from taskito.predicates import (
     PredicateContext,
 )
 
+PollUntil = Any  # the conftest fixture's runtime type
+
 
 @dataclass(frozen=True)
 class _Const(Predicate):
@@ -151,7 +153,7 @@ def test_metrics_record_outcomes(queue: Queue) -> None:
     assert snap["deferred"] == 1
 
 
-def test_defer_emits_predicate_deferred_event(queue: Queue) -> None:
+def test_defer_emits_predicate_deferred_event(queue: Queue, poll_until: PollUntil) -> None:
     from taskito.events import EventType
 
     received: list[dict] = []
@@ -163,17 +165,12 @@ def test_defer_emits_predicate_deferred_event(queue: Queue) -> None:
 
     t.delay()
     # Event bus dispatches in a thread pool — give it a moment.
-    import time
-
-    for _ in range(20):
-        if received:
-            break
-        time.sleep(0.05)
-    assert received and received[0]["defer_seconds"] == 99.0
+    poll_until(lambda: len(received) >= 1, timeout=2)
+    assert received[0]["defer_seconds"] == 99.0
     assert received[0]["phase"] == "enqueue"
 
 
-def test_cancel_emits_predicate_rejected_event(queue: Queue) -> None:
+def test_cancel_emits_predicate_rejected_event(queue: Queue, poll_until: PollUntil) -> None:
     from taskito.events import EventType
 
     received: list[dict] = []
@@ -186,10 +183,5 @@ def test_cancel_emits_predicate_rejected_event(queue: Queue) -> None:
     with pytest.raises(PredicateRejectedError):
         t.delay()
 
-    import time
-
-    for _ in range(20):
-        if received:
-            break
-        time.sleep(0.05)
-    assert received and received[0]["reason"] == "no good"
+    poll_until(lambda: len(received) >= 1, timeout=2)
+    assert received[0]["reason"] == "no good"
