@@ -5,6 +5,14 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.14.1
+
+### Fixed
+
+- **Saga compensation race on Windows SQLite.** `start_compensation` transitioned the workflow run from `Failed` to `Compensating` only after a storage I/O call (`get_base_run_node_data`) that could be slow under SQLite file contention — especially on Windows. During that gap, `WorkflowRun.wait()`'s poll loop could observe the transient `Failed` state (which is terminal) and return early, before the saga had a chance to run. The `Compensating` transition now happens immediately after the cheap in-memory eligibility check, closing the race window. A vacuous-compensation edge case (eligible but no nodes to undo) is handled by finalising as `Compensated` immediately and resolving any pending parent saga node inline.
+
+---
+
 ## 0.14.0
 
 ### Added
