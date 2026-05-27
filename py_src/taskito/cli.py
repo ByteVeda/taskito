@@ -16,12 +16,8 @@ from taskito.log_config import configure as configure_logging
 from taskito.scaler import serve_scaler
 
 
-def main() -> None:
-    """Parse CLI arguments and dispatch to the appropriate subcommand."""
-    # Configure the central taskito logger before any subcommand runs so
-    # ``info``, ``dashboard``, ``scaler``, etc. all share the same sink.
-    configure_logging()
-
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
         prog="taskito",
         description="taskito — Rust-powered task queue for Python",
@@ -193,6 +189,16 @@ def main() -> None:
         help="Reload a specific resource (default: all reloadable)",
     )
 
+    return parser
+
+
+def main() -> None:
+    """Parse CLI arguments and dispatch to the appropriate subcommand."""
+    # Configure the central taskito logger before any subcommand runs so
+    # ``info``, ``dashboard``, ``scaler``, etc. all share the same sink.
+    configure_logging()
+
+    parser = _build_parser()
     args = parser.parse_args()
 
     if args.command == "worker":
