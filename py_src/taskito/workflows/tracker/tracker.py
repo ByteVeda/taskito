@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from taskito.events import EventType
 from taskito.workflows.saga import SagaOrchestrator
-from taskito.workflows.tracker import dag, event_routing, gates, sub_workflows
+from taskito.workflows.tracker import dag, event_routing, finalization, gates, sub_workflows
 from taskito.workflows.tracker.types import _RunConfig
 
 if TYPE_CHECKING:
@@ -222,107 +222,13 @@ class WorkflowTracker:
     # ── Terminal state ─────────────────────────────────────────────
 
     def _emit_terminal(self, run_id: str, terminal_state: str, error: str | None) -> None:
-        workflow_event = dag.final_state_to_event(terminal_state)
-        if workflow_event is not None:
-            try:
-                self._queue._emit_event(
-                    workflow_event,
-                    {"run_id": run_id, "state": terminal_state, "error": error},
-                )
-            except Exception:
-                logger.exception("failed to emit %s", workflow_event)
-        self._release_waiters(run_id)
+        finalization.emit_terminal(self, run_id, terminal_state, error)
 
     def _cleanup_run(self, run_id: str) -> None:
-        """Drop all tracker state tied to ``run_id`` and cancel any live timers.
-
-        When the run is a sub-workflow child whose parent is still being
-        tracked, ``_run_configs`` and ``_run_steps`` are *retained* so the
-        parent's saga orchestrator can propagate compensation into the
-        child later. The parent's own cleanup sweeps these entries when it
-        finalises (see ``stale_child_ids`` below).
-        """
-        with self._state_lock:
-            parent_still_alive = False
-            parent_link = self._child_to_parent.get(run_id)
-            if parent_link is not None:
-                parent_run_id = parent_link[0]
-                parent_still_alive = parent_run_id in self._run_configs
-
-            if parent_still_alive:
-                # Keep config + steps so the parent can propagate compensation.
-                # Drop transient state (job→run map entries, gate timers) so
-                # the worker doesn't keep routing fan-out / gate events to a
-                # finished child.
-                self._job_to_run = {
-                    jid: rid for jid, rid in self._job_to_run.items() if rid != run_id
-                }
-                stale_timer_keys = [k for k in self._gate_timers if k[0] == run_id]
-                for key in stale_timer_keys:
-                    timer = self._gate_timers.pop(key, None)
-                    if timer is not None:
-                        timer.cancel()
-                return
-
-            self._run_configs.pop(run_id, None)
-            self._run_steps.pop(run_id, None)
-            self._job_to_run = {jid: rid for jid, rid in self._job_to_run.items() if rid != run_id}
-            stale_timer_keys = [k for k in self._gate_timers if k[0] == run_id]
-            for key in stale_timer_keys:
-                timer = self._gate_timers.pop(key, None)
-                if timer is not None:
-                    timer.cancel()
-            stale_child_ids = [
-                cid for cid, (prid, _) in self._child_to_parent.items() if prid == run_id
-            ]
-            for cid in stale_child_ids:
-                self._child_to_parent.pop(cid, None)
-                # Children whose cleanup we deferred (because the parent was
-                # still alive) get swept here on parent finalization.
-                self._run_configs.pop(cid, None)
-                self._run_steps.pop(cid, None)
+        finalization.cleanup_run(self, run_id)
 
     def _try_finalize(self, run_id: str) -> None:
-        """If all nodes are terminal, finalize the run and emit the event."""
-        try:
-            terminal_state = self._queue._inner.finalize_run_if_terminal(run_id)
-        except (RuntimeError, ValueError):
-            logger.exception("finalize_run_if_terminal failed for %s", run_id)
-            return
-        if terminal_state is None:
-            return
-
-        with self._state_lock:
-            config = self._run_configs.get(run_id)
-
-        # Continue-mode partial-failure override + compensation hand-off.
-        # Mirrors the logic in _handle() so fan-out and sub-workflow paths
-        # also surface CompletedWithFailures correctly.
-        if (
-            terminal_state == "failed"
-            and config is not None
-            and config.on_failure == "continue"
-            and config.compensate_on_continue
-            and config.partial_failure_occurred
-        ):
-            try:
-                self._queue._inner.set_workflow_run_completed_with_failures(run_id)
-            except (RuntimeError, ValueError):
-                logger.exception("set_workflow_run_completed_with_failures failed for %s", run_id)
-            else:
-                terminal_state = "completed_with_failures"
-
-        if config is not None and (
-            (terminal_state == "failed" and config.on_failure == "fail_fast")
-            or (terminal_state == "completed_with_failures" and config.compensate_on_continue)
-        ):
-            steps = self._run_steps.get(run_id, {})
-            started = self._saga.start_compensation(run_id, config, steps)
-            if started:
-                return
-
-        self._emit_terminal(run_id, terminal_state, None)
-        self._cleanup_run(run_id)
+        finalization.try_finalize(self, run_id)
 
     # ── Gate resolution (public API) ───────────────────────────────
 
