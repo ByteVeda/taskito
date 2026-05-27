@@ -5,6 +5,15 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.14.2
+
+### Fixed
+
+- **`wait()` no longer returns transient `FAILED` during saga startup.** `WorkflowRun.wait()`'s poll safety-net could observe the run in `Failed` state before the saga orchestrator transitioned it to `Compensating`. When a tracker event is registered but has not yet fired, `wait()` now defers to the event instead of returning the possibly-transient terminal state. The event is set only after the saga decision is fully resolved, so `wait()` can never prematurely return `Failed` for a run that is about to compensate.
+- **`_mark_run_compensating` retries on transient SQLite lock.** The `Failed` → `Compensating` storage write could silently fail under SQLite file contention, leaving the run stuck in `Failed`. The method now retries up to 5 times with backoff, matching the existing retry pattern in compensation job dispatch.
+
+---
+
 ## 0.14.1
 
 ### Fixed

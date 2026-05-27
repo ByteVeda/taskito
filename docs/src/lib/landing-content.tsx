@@ -104,7 +104,7 @@ export type LandingCta = {
 };
 
 export const HERO: LandingHero = {
-  badge: "v0.12 — Rust core, native async, DAG workflows",
+  badge: "v0.14 — Rust core, native async, DAG workflows",
   headline: ["Task queue", "without the broker."],
   description:
     "Rust-powered task queue for Python. Replace Celery without Redis or RabbitMQ. Start with SQLite, scale to Postgres.",
