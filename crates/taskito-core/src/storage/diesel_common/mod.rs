@@ -3,6 +3,7 @@
 //! These macros generate the identical method implementations that both
 //! Diesel-backed storage backends share, avoiding code duplication.
 
+mod archival;
 mod dead_letter;
 mod jobs;
 mod locks;
@@ -10,6 +11,7 @@ mod logs;
 mod metrics;
 pub(crate) mod migrations;
 
+pub(crate) use archival::impl_diesel_archival_ops;
 pub(crate) use dead_letter::impl_diesel_dead_letter_ops;
 pub(crate) use jobs::impl_diesel_job_ops;
 pub(crate) use locks::impl_diesel_lock_ops;
