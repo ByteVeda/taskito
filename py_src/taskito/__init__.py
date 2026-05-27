@@ -116,4 +116,4 @@ try:
 
     __version__ = _get_version("taskito")
 except PackageNotFoundError:
-    __version__ = "0.14.0"
+    __version__ = "0.14.1"
