@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Allow manual re-triggers from the GitHub UI or `gh workflow run` —
+  # useful when master squash-merges arrive back-to-back and concurrency
+  # cancellations leave the latest master HEAD without a CI run.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -98,7 +102,7 @@ jobs:
   rust-test:
     name: Rust Tests (SQLite)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -130,7 +134,7 @@ jobs:
   rust-test-postgres:
     name: Rust Tests (PostgreSQL)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -174,7 +178,7 @@ jobs:
   rust-test-redis:
     name: Rust Tests (Redis)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     services:
       redis:
@@ -214,7 +218,7 @@ jobs:
   test:
     name: Python Tests (${{ matrix.os }} / Python ${{ matrix.python-version }})
     needs: [lint, changes]
-    if: needs.changes.outputs.python == 'true' || github.event_name == 'push'
+    if: needs.changes.outputs.python == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     env:
       # setup-python on macOS upgrades certifi via pip; pip's HTTP cache
