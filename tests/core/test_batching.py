@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import threading
-import time
+from typing import Any
 
 import pytest
 
 from taskito import Queue
 from taskito.batching import BatchConfig, BatchedJobResult
+
+PollUntil = Any  # the conftest fixture's runtime type
 
 
 def test_batch_config_normalize_true_uses_defaults() -> None:
@@ -121,7 +123,9 @@ def test_cross_task_isolation(queue: Queue, run_worker: threading.Thread) -> Non
     assert sorted(b_received[0]) == [100, 200]
 
 
-def test_concurrent_adds_no_loss(queue: Queue, run_worker: threading.Thread) -> None:
+def test_concurrent_adds_no_loss(
+    queue: Queue, run_worker: threading.Thread, poll_until: PollUntil
+) -> None:
     """10 threads each enqueue 5 items; all 50 must reach the batch."""
     _ = run_worker
     received: list[int] = []
@@ -142,10 +146,7 @@ def test_concurrent_adds_no_loss(queue: Queue, run_worker: threading.Thread) -> 
     for t in threads:
         t.join()
 
-    deadline = time.time() + 5
-    while time.time() < deadline and len(received) < 50:
-        time.sleep(0.05)
-
+    poll_until(lambda: len(received) >= 50, timeout=5)
     queue.close()
     assert len(received) == 50
 
