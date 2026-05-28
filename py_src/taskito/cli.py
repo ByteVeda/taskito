@@ -339,19 +339,23 @@ def run_scaler(args: argparse.Namespace) -> None:
 def run_autoscale(args: argparse.Namespace) -> None:
     """Start the bare-metal autoscaler."""
     queue = _load_queue(args.app)
-    config = AutoscaleConfig(
-        app_path=args.app,
-        min_workers=args.min_workers,
-        max_workers=args.max_workers,
-        target_queue_depth_per_worker=args.target_queue_depth,
-        target_utilisation=args.target_utilisation,
-        scale_up_window_sec=args.scale_up_window,
-        scale_down_window_sec=args.scale_down_window,
-        tolerance=args.tolerance,
-        poll_interval_sec=args.poll_interval,
-        drain_timeout_sec=args.drain_timeout,
-        threads_per_worker=args.threads_per_worker,
-    )
+    try:
+        config = AutoscaleConfig(
+            app_path=args.app,
+            min_workers=args.min_workers,
+            max_workers=args.max_workers,
+            target_queue_depth_per_worker=args.target_queue_depth,
+            target_utilisation=args.target_utilisation,
+            scale_up_window_sec=args.scale_up_window,
+            scale_down_window_sec=args.scale_down_window,
+            tolerance=args.tolerance,
+            poll_interval_sec=args.poll_interval,
+            drain_timeout_sec=args.drain_timeout,
+            threads_per_worker=args.threads_per_worker,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     serve_autoscaler(queue, config)
 
 
