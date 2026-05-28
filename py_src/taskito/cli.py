@@ -10,17 +10,14 @@ import sys
 import time
 
 from taskito.app import Queue
+from taskito.autoscale import AutoscaleConfig, serve_autoscaler
 from taskito.dashboard import serve_dashboard
 from taskito.log_config import configure as configure_logging
 from taskito.scaler import serve_scaler
 
 
-def main() -> None:
-    """Parse CLI arguments and dispatch to the appropriate subcommand."""
-    # Configure the central taskito logger before any subcommand runs so
-    # ``info``, ``dashboard``, ``scaler``, etc. all share the same sink.
-    configure_logging()
-
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
         prog="taskito",
         description="taskito — Rust-powered task queue for Python",
@@ -112,6 +109,65 @@ def main() -> None:
         help="Scaling target hint for KEDA (default: 10)",
     )
 
+    # autoscale subcommand
+    auto_parser = subparsers.add_parser("autoscale", help="Start the bare-metal autoscaler")
+    auto_parser.add_argument(
+        "--app",
+        required=True,
+        help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
+    )
+    auto_parser.add_argument(
+        "--min-workers", type=int, default=1, help="Minimum worker count (default: 1)"
+    )
+    auto_parser.add_argument(
+        "--max-workers", type=int, default=10, help="Maximum worker count (default: 10)"
+    )
+    auto_parser.add_argument(
+        "--target-queue-depth",
+        type=int,
+        default=15,
+        help="Target queue depth per worker (default: 15)",
+    )
+    auto_parser.add_argument(
+        "--target-utilisation",
+        type=float,
+        default=0.75,
+        help="Target worker utilisation 0.0-1.0 (default: 0.75)",
+    )
+    auto_parser.add_argument(
+        "--scale-up-window",
+        type=int,
+        default=0,
+        help="Seconds of sustained demand before scaling up (default: 0)",
+    )
+    auto_parser.add_argument(
+        "--scale-down-window",
+        type=int,
+        default=300,
+        help="Seconds of low demand before scaling down (default: 300)",
+    )
+    auto_parser.add_argument(
+        "--tolerance", type=float, default=0.1, help="Scaling tolerance band (default: 0.1)"
+    )
+    auto_parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=5,
+        help="Seconds between scaling decisions (default: 5)",
+    )
+    auto_parser.add_argument(
+        "--drain-timeout",
+        type=int,
+        default=30,
+        help="Seconds to wait for in-flight jobs during scale-down (default: 30)",
+    )
+    auto_parser.add_argument(
+        "--threads-per-worker",
+        type=int,
+        default=4,
+        help="Worker threads per process (default: 4)",
+    )
+
     # resources subcommand
     res_parser = subparsers.add_parser("resources", help="Show registered resources")
     res_parser.add_argument(
@@ -133,6 +189,16 @@ def main() -> None:
         help="Reload a specific resource (default: all reloadable)",
     )
 
+    return parser
+
+
+def main() -> None:
+    """Parse CLI arguments and dispatch to the appropriate subcommand."""
+    # Configure the central taskito logger before any subcommand runs so
+    # ``info``, ``dashboard``, ``scaler``, etc. all share the same sink.
+    configure_logging()
+
+    parser = _build_parser()
     args = parser.parse_args()
 
     if args.command == "worker":
@@ -151,6 +217,8 @@ def main() -> None:
         print(f"Queue '{args.queue_name}' resumed")
     elif args.command == "scaler":
         run_scaler(args)
+    elif args.command == "autoscale":
+        run_autoscale(args)
     elif args.command == "resources":
         run_resources(args)
     elif args.command == "reload":
@@ -266,6 +334,29 @@ def run_scaler(args: argparse.Namespace) -> None:
         port=args.port,
         target_queue_depth=args.target_queue_depth,
     )
+
+
+def run_autoscale(args: argparse.Namespace) -> None:
+    """Start the bare-metal autoscaler."""
+    queue = _load_queue(args.app)
+    try:
+        config = AutoscaleConfig(
+            app_path=args.app,
+            min_workers=args.min_workers,
+            max_workers=args.max_workers,
+            target_queue_depth_per_worker=args.target_queue_depth,
+            target_utilisation=args.target_utilisation,
+            scale_up_window_sec=args.scale_up_window,
+            scale_down_window_sec=args.scale_down_window,
+            tolerance=args.tolerance,
+            poll_interval_sec=args.poll_interval,
+            drain_timeout_sec=args.drain_timeout,
+            threads_per_worker=args.threads_per_worker,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    serve_autoscaler(queue, config)
 
 
 def run_resources(args: argparse.Namespace) -> None:
