@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::QueueError;
 use crate::job::{now_millis, JobStatus, NewJob};
 
 fn test_storage() -> SqliteStorage {
@@ -225,6 +226,15 @@ fn test_retry_dead() {
 
     let dead = storage.list_dead(10, 0).unwrap();
     assert!(dead.is_empty());
+}
+
+#[test]
+fn test_retry_dead_missing_id_returns_not_found() {
+    let storage = test_storage();
+    match storage.retry_dead("does-not-exist") {
+        Err(QueueError::JobNotFound(id)) => assert_eq!(id, "does-not-exist"),
+        other => panic!("expected JobNotFound, got {other:?}"),
+    }
 }
 
 #[test]

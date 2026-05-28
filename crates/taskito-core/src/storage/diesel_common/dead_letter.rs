@@ -76,14 +76,27 @@ macro_rules! impl_diesel_dead_letter_ops {
             }
 
             /// Re-enqueue a dead letter job. Returns the new job ID.
+            ///
+            /// Returns `JobNotFound` only when the dead-letter row is absent or
+            /// is removed concurrently by another retry; other Diesel errors
+            /// propagate as `Storage` so real DB failures aren't masked. The
+            /// delete inside the transaction asserts a row was actually removed,
+            /// preventing two concurrent retries from both committing a fresh
+            /// enqueue against the same dead-letter id.
             pub fn retry_dead(&self, dead_id: &str) -> Result<String> {
                 let mut conn = self.conn()?;
 
-                let dead_row: DeadLetterRow = dead_letter::table
+                let dead_row: DeadLetterRow = match dead_letter::table
                     .find(dead_id)
                     .select(DeadLetterRow::as_select())
                     .first(&mut conn)
-                    .map_err(|_| QueueError::JobNotFound(dead_id.to_string()))?;
+                {
+                    Ok(row) => row,
+                    Err(diesel::result::Error::NotFound) => {
+                        return Err(QueueError::JobNotFound(dead_id.to_string()));
+                    }
+                    Err(err) => return Err(err.into()),
+                };
 
                 let new_job = NewJob {
                     queue: dead_row.queue,
@@ -104,7 +117,7 @@ macro_rules! impl_diesel_dead_letter_ops {
 
                 let job = new_job.into_job();
 
-                conn.transaction(|conn| {
+                let result = conn.transaction(|conn| {
                     let row = super::super::models::NewJobRow {
                         id: &job.id,
                         queue: &job.queue,
@@ -130,12 +143,24 @@ macro_rules! impl_diesel_dead_letter_ops {
                         .values(&row)
                         .execute(conn)?;
 
-                    diesel::delete(dead_letter::table.find(dead_id)).execute(conn)?;
+                    let deleted = diesel::delete(dead_letter::table.find(dead_id)).execute(conn)?;
+                    if deleted == 0 {
+                        // A concurrent retry won the race. Roll back the
+                        // freshly-inserted job by returning an error from the
+                        // transaction closure — Diesel aborts the txn.
+                        return Err(diesel::result::Error::NotFound);
+                    }
 
                     Ok::<(), diesel::result::Error>(())
-                })?;
+                });
 
-                Ok(job.id)
+                match result {
+                    Ok(()) => Ok(job.id),
+                    Err(diesel::result::Error::NotFound) => {
+                        Err(QueueError::JobNotFound(dead_id.to_string()))
+                    }
+                    Err(err) => Err(err.into()),
+                }
             }
 
             /// Purge dead letter entries older than the given timestamp.
