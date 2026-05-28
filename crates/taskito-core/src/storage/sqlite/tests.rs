@@ -238,6 +238,45 @@ fn test_retry_dead_missing_id_returns_not_found() {
 }
 
 #[test]
+fn test_reap_dead_workers_removes_stale_keeps_fresh() {
+    use diesel::prelude::*;
+
+    use crate::storage::schema::workers;
+
+    let storage = test_storage();
+    storage
+        .register_worker("stale", "default", None, None, None, 1, None, None, None)
+        .unwrap();
+    storage
+        .register_worker("fresh", "default", None, None, None, 1, None, None, None)
+        .unwrap();
+
+    // Backdate `stale` past the dead-worker threshold (30s) so it is reaped;
+    // `fresh` keeps its current heartbeat. This also exercises the new
+    // double-predicate in the DELETE — even if a worker_id ends up in the
+    // scan list, the DELETE only removes rows whose heartbeat is still stale.
+    let cutoff = now_millis() - crate::storage::DEAD_WORKER_THRESHOLD_MS - 1_000;
+    let mut conn = storage.conn().unwrap();
+    diesel::update(workers::table.filter(workers::worker_id.eq("stale")))
+        .set(workers::last_heartbeat.eq(cutoff))
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let reaped = storage.reap_dead_workers().unwrap();
+    assert_eq!(reaped, vec!["stale".to_string()]);
+
+    let surviving: Vec<String> = storage
+        .list_workers()
+        .unwrap()
+        .into_iter()
+        .map(|w| w.worker_id)
+        .collect();
+    assert!(surviving.contains(&"fresh".to_string()));
+    assert!(!surviving.contains(&"stale".to_string()));
+}
+
+#[test]
 fn test_stats() {
     let storage = test_storage();
     storage.enqueue(make_job("t1")).unwrap();

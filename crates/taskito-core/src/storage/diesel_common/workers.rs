@@ -46,6 +46,13 @@ macro_rules! impl_diesel_worker_ops {
 
             /// Remove workers that haven't sent a heartbeat within the threshold.
             /// Returns the IDs of the reaped workers.
+            ///
+            /// The delete re-applies the `last_heartbeat < cutoff` predicate so
+            /// a worker that heartbeats between the scan and the delete is not
+            /// reaped erroneously. The returned id list reflects the scan
+            /// snapshot and may slightly over-report the actual reaped set when
+            /// such a race occurs — callers use the list for event emission and
+            /// orphan rescue, both of which tolerate the false positive.
             pub fn reap_dead_workers(&self) -> Result<Vec<String>> {
                 let mut conn = self.conn()?;
                 let cutoff = now_millis().saturating_sub(DEAD_WORKER_THRESHOLD_MS);
@@ -56,8 +63,12 @@ macro_rules! impl_diesel_worker_ops {
                     .load(&mut conn)?;
 
                 if !dead_ids.is_empty() {
-                    diesel::delete(workers::table.filter(workers::worker_id.eq_any(&dead_ids)))
-                        .execute(&mut conn)?;
+                    diesel::delete(
+                        workers::table
+                            .filter(workers::worker_id.eq_any(&dead_ids))
+                            .filter(workers::last_heartbeat.lt(cutoff)),
+                    )
+                    .execute(&mut conn)?;
                 }
 
                 Ok(dead_ids)
