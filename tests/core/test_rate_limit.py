@@ -2,11 +2,14 @@
 
 import threading
 import time
+from typing import Any
 
 from taskito import Queue
 
+PollUntil = Any  # the conftest fixture's runtime type
 
-def test_rate_limit_throttles(queue: Queue) -> None:
+
+def test_rate_limit_throttles(queue: Queue, poll_until: PollUntil) -> None:
     """Rate-limited tasks should be throttled."""
     timestamps: list[float] = []
 
@@ -26,7 +29,7 @@ def test_rate_limit_throttles(queue: Queue) -> None:
     worker_thread.start()
 
     # Wait for all tasks
-    time.sleep(5)
+    poll_until(lambda: len(timestamps) == 4, timeout=10)
 
     # Should have all 4 results
     assert len(timestamps) == 4
