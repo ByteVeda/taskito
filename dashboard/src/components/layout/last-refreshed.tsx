@@ -25,7 +25,14 @@ export function LastRefreshed({ className }: { className?: string }) {
     let id: ReturnType<typeof setTimeout>;
     const schedule = () => {
       const age = Date.now() - lastRefreshedAt;
-      const delay = age < 60_000 ? 1_000 : age < 3_600_000 ? 60_000 : 3_600_000;
+      // Fire at the next boundary the label actually changes on, so it never
+      // lags by almost a full bucket.
+      const delay =
+        age < 60_000
+          ? 1_000 - (age % 1_000)
+          : age < 3_600_000
+            ? 60_000 - (age % 60_000)
+            : 3_600_000 - (age % 3_600_000);
       id = setTimeout(() => {
         setTick((n) => n + 1);
         schedule();
