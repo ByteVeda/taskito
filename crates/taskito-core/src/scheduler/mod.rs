@@ -120,34 +120,6 @@ pub struct QueueConfig {
     pub max_concurrent: Option<i32>,
 }
 
-/// In-memory cache of average task execution duration.
-/// Updated on every `handle_result()` — no DB queries needed.
-struct TaskDurationCache {
-    durations: HashMap<String, (u64, i64)>, // (count, sum_ns)
-}
-
-impl TaskDurationCache {
-    fn new() -> Self {
-        Self {
-            durations: HashMap::new(),
-        }
-    }
-
-    fn record(&mut self, task_name: &str, wall_time_ns: i64) {
-        let entry = self.durations.entry(task_name.to_string()).or_default();
-        entry.0 += 1;
-        entry.1 = entry.1.saturating_add(wall_time_ns);
-    }
-
-    #[allow(dead_code)]
-    fn avg_ns(&self, task_name: &str) -> Option<i64> {
-        self.durations
-            .get(task_name)
-            .filter(|(count, _)| *count > 0)
-            .map(|(count, sum)| sum / *count as i64)
-    }
-}
-
 /// The central scheduler that coordinates job dispatch, retries, rate limiting, and circuit breakers.
 pub struct Scheduler {
     storage: StorageBackend,
@@ -161,7 +133,6 @@ pub struct Scheduler {
     shutdown: Arc<Notify>,
     paused_cache: Mutex<(HashSet<String>, Instant)>,
     namespace: Option<String>,
-    duration_cache: Mutex<TaskDurationCache>,
 }
 
 /// Counters for tick-based scheduling of periodic maintenance tasks.
@@ -195,7 +166,6 @@ impl Scheduler {
             shutdown: Arc::new(Notify::new()),
             paused_cache: Mutex::new((HashSet::new(), Instant::now())),
             namespace,
-            duration_cache: Mutex::new(TaskDurationCache::new()),
         }
     }
 
