@@ -104,6 +104,43 @@ fn test_stats(s: &impl Storage) {
     assert!(stats.pending >= 2);
 }
 
+fn test_stats_by_queue_and_task(s: &impl Storage) {
+    let q = "q-stats-breakdown";
+    let task = "stats_breakdown_task";
+    s.enqueue(make_job(q, task)).unwrap();
+    s.enqueue(make_job(q, task)).unwrap();
+    s.enqueue(make_job(q, task)).unwrap();
+
+    // 3 pending, none running yet.
+    let st = s.stats_by_queue(q).unwrap();
+    assert_eq!(st.pending, 3);
+    assert_eq!(st.running, 0);
+    assert_eq!(s.count_running_by_task(task).unwrap(), 0);
+
+    // Run two of them.
+    let d1 = s.dequeue(q, now_millis() + 1000, None).unwrap().unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap().unwrap();
+    assert_eq!(s.count_running_by_task(task).unwrap(), 2);
+    let st = s.stats_by_queue(q).unwrap();
+    assert_eq!(st.running, 2);
+    assert_eq!(st.pending, 1);
+
+    // Complete one — running drops, completed rises.
+    s.complete(&d1.id, None).unwrap();
+    assert_eq!(s.count_running_by_task(task).unwrap(), 1);
+    let st = s.stats_by_queue(q).unwrap();
+    assert_eq!(st.pending, 1);
+    assert_eq!(st.running, 1);
+    assert_eq!(st.completed, 1);
+
+    // stats_all_queues reports the same breakdown for this queue.
+    let all = s.stats_all_queues().unwrap();
+    let qs = all.get(q).expect("queue should appear in stats_all_queues");
+    assert_eq!(qs.pending, 1);
+    assert_eq!(qs.running, 1);
+    assert_eq!(qs.completed, 1);
+}
+
 fn test_unique_key_dedup(s: &impl Storage) {
     let mut job1 = make_job("q-unique", "unique_task");
     job1.unique_key = Some("dedup-key".to_string());
@@ -308,6 +345,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_retry(s);
     test_cancel_job(s);
     test_stats(s);
+    test_stats_by_queue_and_task(s);
     test_unique_key_dedup(s);
     test_enqueue_batch(s);
     test_dead_letter_queue(s);
