@@ -94,8 +94,10 @@ impl Scheduler {
     }
 
     /// Snapshot the queue list with paused queues filtered out. The paused
-    /// list is cached for 1s to avoid hammering storage on every tick.
-    fn active_queues(&self) -> Vec<String> {
+    /// list is cached for 1s to avoid hammering storage on every tick. Borrows
+    /// the queue list directly in the common case (nothing paused), allocating
+    /// only when a filtered copy is actually needed.
+    fn active_queues(&self) -> std::borrow::Cow<'_, [String]> {
         let mut cache = self.paused_cache.lock().unwrap_or_else(|poisoned| {
             warn!("paused_cache mutex was poisoned, recovering");
             poisoned.into_inner()
@@ -110,13 +112,15 @@ impl Scheduler {
             cache.1 = std::time::Instant::now();
         }
         if cache.0.is_empty() {
-            self.queues.clone()
+            std::borrow::Cow::Borrowed(&self.queues)
         } else {
-            self.queues
-                .iter()
-                .filter(|q| !cache.0.contains(*q))
-                .cloned()
-                .collect()
+            std::borrow::Cow::Owned(
+                self.queues
+                    .iter()
+                    .filter(|q| !cache.0.contains(*q))
+                    .cloned()
+                    .collect(),
+            )
         }
     }
 
