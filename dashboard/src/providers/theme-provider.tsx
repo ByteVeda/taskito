@@ -31,7 +31,7 @@ function applyTheme(resolved: ResolvedTheme) {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => readStored());
   const [resolved, setResolved] = useState<ResolvedTheme>(() =>
-    readStored() === "system" ? readSystem() : (readStored() as ResolvedTheme),
+    theme === "system" ? readSystem() : theme,
   );
 
   useEffect(() => {
