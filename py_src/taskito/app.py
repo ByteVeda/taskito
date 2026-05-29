@@ -631,6 +631,21 @@ class Queue(
                 f"kwargs_list length ({len(kwargs_list)}) must match "
                 f"args_list length ({len(args_list)})"
             )
+        # Validate every per-job list up front so a length mismatch fails here
+        # with a clear message rather than misaligning the batch arrays later.
+        for field_name, values in (
+            ("delay_list", delay_list),
+            ("unique_keys", unique_keys),
+            ("metadata_list", metadata_list),
+            ("notes_list", notes_list),
+            ("expires_list", expires_list),
+            ("result_ttl_list", result_ttl_list),
+            ("idempotency_keys", idempotency_keys),
+        ):
+            if values is not None and len(values) != count:
+                raise ValueError(
+                    f"{field_name} length ({len(values)}) must match args_list length ({count})"
+                )
         kw_list = kwargs_list or [{}] * count
 
         chain = self._get_middleware_chain(task_name)
