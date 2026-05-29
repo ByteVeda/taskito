@@ -25,6 +25,8 @@ export function tasksQuery() {
   return queryOptions({
     queryKey: TASKS_KEY,
     queryFn: ({ signal }) => listTasks(signal),
+    // Task registry rarely changes between deploys.
+    staleTime: 60_000,
   });
 }
 
@@ -32,6 +34,7 @@ export function queuesQuery() {
   return queryOptions({
     queryKey: QUEUES_KEY,
     queryFn: ({ signal }) => listQueues(signal),
+    staleTime: 60_000,
   });
 }
 

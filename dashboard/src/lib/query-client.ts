@@ -13,7 +13,9 @@ export function createQueryClient(): QueryClient {
       queries: {
         staleTime: 5_000,
         gcTime: 5 * 60_000,
-        refetchOnWindowFocus: true,
+        // Interval polling already keeps data fresh; focus-refetch would fire
+        // every active query at once on tab refocus (a thundering-herd burst).
+        refetchOnWindowFocus: false,
         retry: (failureCount, error) => {
           const status = (error as { status?: number }).status;
           if (status && status >= 400 && status < 500) return false;

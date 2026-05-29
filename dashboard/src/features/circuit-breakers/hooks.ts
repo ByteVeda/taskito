@@ -6,6 +6,7 @@ export function circuitBreakersQuery() {
   return queryOptions({
     queryKey: ["circuit-breakers"],
     queryFn: ({ signal }) => fetchCircuitBreakers(signal),
+    staleTime: 60_000,
   });
 }
 
