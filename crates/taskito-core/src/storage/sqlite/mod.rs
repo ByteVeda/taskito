@@ -63,6 +63,11 @@ impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqlitePragma
 #[derive(Clone)]
 pub struct SqliteStorage {
     pool: DbPool,
+    /// In-process wake handle, set by the scheduler when push-dispatch is
+    /// enabled. Enqueue of a ready job calls `notify_one()` so the scheduler
+    /// dispatches immediately instead of waiting for the next poll.
+    #[cfg(feature = "push-dispatch")]
+    notify: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl SqliteStorage {
@@ -79,7 +84,11 @@ impl SqliteStorage {
             .connection_customizer(Box::new(SqlitePragmaCustomizer))
             .build(manager)?;
 
-        let storage = Self { pool };
+        let storage = Self {
+            pool,
+            #[cfg(feature = "push-dispatch")]
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        };
         storage.run_migrations()?;
         Ok(storage)
     }
@@ -92,9 +101,27 @@ impl SqliteStorage {
             .connection_customizer(Box::new(SqlitePragmaCustomizer))
             .build(manager)?;
 
-        let storage = Self { pool };
+        let storage = Self {
+            pool,
+            #[cfg(feature = "push-dispatch")]
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        };
         storage.run_migrations()?;
         Ok(storage)
+    }
+
+    /// Replace the in-process wake handle so it is shared with the scheduler's
+    /// [`WakeSource`]. Only meaningful under `push-dispatch`.
+    #[cfg(feature = "push-dispatch")]
+    pub fn set_notify_handle(&mut self, notify: std::sync::Arc<tokio::sync::Notify>) {
+        self.notify = notify;
+    }
+
+    /// The in-process wake handle. Enqueue paths call `notify_one()` on this
+    /// when a ready job is inserted.
+    #[cfg(feature = "push-dispatch")]
+    pub fn notify_handle(&self) -> &std::sync::Arc<tokio::sync::Notify> {
+        &self.notify
     }
 
     pub fn conn(
@@ -122,6 +149,14 @@ impl SqliteStorage {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "push-dispatch")]
+impl crate::storage::notify::StorageNotifier for SqliteStorage {
+    fn notify_job_ready(&self, _queue: &str, _scheduled_at: i64) {
+        // Single-process: wake the in-memory scheduler loop directly.
+        self.notify.notify_one();
     }
 }
 

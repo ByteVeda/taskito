@@ -93,6 +93,7 @@ class PyQueue:
         scheduler_cleanup_interval: int = 1200,
         scheduler_batch_size: int = 1,
         namespace: str | None = None,
+        push_dispatch: bool = False,
     ) -> None: ...
     def request_shutdown(self) -> None: ...
     def enqueue(

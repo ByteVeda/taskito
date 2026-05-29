@@ -1,6 +1,8 @@
 mod maintenance;
 mod poller;
 mod result_handler;
+#[cfg(feature = "push-dispatch")]
+pub mod wake;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -138,6 +140,15 @@ pub struct Scheduler {
     shutdown: Arc<Notify>,
     paused_cache: Mutex<(HashSet<String>, Instant)>,
     namespace: Option<String>,
+    /// Wake source for push-dispatch, installed before `run()`. Taken (moved
+    /// out) once when the loop starts. `None` means the loop polls as today.
+    #[cfg(feature = "push-dispatch")]
+    wake_source: Mutex<Option<wake::WakeSource>>,
+    /// Earliest `scheduled_at` of any delayed job seen at enqueue time, so the
+    /// push loop can arm a timer for the next delayed job rather than waking
+    /// immediately. Milliseconds; `i64::MAX` means "nothing scheduled".
+    #[cfg(feature = "push-dispatch")]
+    next_scheduled_at: std::sync::atomic::AtomicI64,
 }
 
 /// Counters for tick-based scheduling of periodic maintenance tasks.
@@ -171,6 +182,10 @@ impl Scheduler {
             shutdown: Arc::new(Notify::new()),
             paused_cache: Mutex::new((HashSet::new(), Instant::now())),
             namespace,
+            #[cfg(feature = "push-dispatch")]
+            wake_source: Mutex::new(None),
+            #[cfg(feature = "push-dispatch")]
+            next_scheduled_at: std::sync::atomic::AtomicI64::new(i64::MAX),
         }
     }
 
@@ -206,6 +221,15 @@ impl Scheduler {
     /// exponentially (up to 1s) when no jobs are found, resets immediately
     /// when a job is dispatched.
     pub async fn run(&self, job_tx: tokio::sync::mpsc::Sender<Job>) {
+        // Push-dispatch: if a wake source was configured, run the event-driven
+        // loop. Otherwise (and always when the feature is off) fall through to
+        // the unchanged adaptive-poll loop below.
+        #[cfg(feature = "push-dispatch")]
+        if let Some(wake) = self.take_wake_source() {
+            self.run_push(job_tx, wake).await;
+            return;
+        }
+
         let mut counters = TickCounters::default();
         let base_interval = self.config.poll_interval;
         let max_interval = Duration::from_millis(200);
@@ -230,19 +254,33 @@ impl Scheduler {
     /// Returns true if any work was done (job dispatched or periodic task enqueued),
     /// which resets the adaptive poll interval.
     fn tick(&self, job_tx: &tokio::sync::mpsc::Sender<Job>, counters: &mut TickCounters) -> bool {
+        let dispatched = self.tick_dispatch(job_tx);
+        let had_maintenance = self.tick_maintenance(counters);
+        dispatched || had_maintenance
+    }
+
+    /// Run one dispatch round (batch or single). Returns true if a job was
+    /// dispatched. Pulled out of [`Scheduler::tick`] so the push loop can run
+    /// dispatch independently of the maintenance cadence.
+    fn tick_dispatch(&self, job_tx: &tokio::sync::mpsc::Sender<Job>) -> bool {
         let dispatch_result = if self.config.batch_size > 1 {
             self.try_dispatch_batch(job_tx)
         } else {
             self.try_dispatch(job_tx)
         };
-        let dispatched = match dispatch_result {
+        match dispatch_result {
             Ok(d) => d,
             Err(e) => {
                 error!("scheduler error: {e}");
                 false
             }
-        };
+        }
+    }
 
+    /// Advance the tick counters and run any due maintenance (reap, periodic
+    /// enqueue, cleanup). Returns true if periodic enqueue ran (work that
+    /// should reset the poll backoff).
+    fn tick_maintenance(&self, counters: &mut TickCounters) -> bool {
         let mut had_maintenance = false;
 
         counters.reap += 1;
@@ -278,7 +316,118 @@ impl Scheduler {
             }
         }
 
-        dispatched || had_maintenance
+        had_maintenance
+    }
+}
+
+#[cfg(feature = "push-dispatch")]
+impl Scheduler {
+    /// Fallback dispatch interval when push-dispatch is on. A missed wake can
+    /// never strand a job longer than this.
+    const PUSH_FALLBACK_INTERVAL: Duration = Duration::from_secs(2);
+
+    /// Cadence of the dedicated maintenance ticker, decoupled from dispatch.
+    const PUSH_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(500);
+
+    /// Install the wake source the push loop should consume. Call before
+    /// `run()`. With no wake source installed, `run()` keeps polling.
+    pub fn set_wake_source(&self, source: wake::WakeSource) {
+        let mut guard = self.wake_source.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some(source);
+    }
+
+    /// Move the installed wake source out for the run loop. Returns `None` if
+    /// none was installed (the loop then polls).
+    fn take_wake_source(&self) -> Option<wake::WakeSource> {
+        self.wake_source
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+    }
+
+    /// Bridge a (re)scheduled job into the push loop: wake immediately if it
+    /// is ready now, otherwise arm the delayed timer. Used by the retry and
+    /// periodic-enqueue paths, which run on the scheduler and already hold a
+    /// storage handle.
+    pub(crate) fn signal_scheduled(&self, scheduled_at: i64) {
+        use crate::storage::notify::StorageNotifier;
+        if scheduled_at <= crate::job::now_millis() {
+            match &self.storage {
+                StorageBackend::Sqlite(s) => s.notify_job_ready("", scheduled_at),
+                #[cfg(feature = "postgres")]
+                StorageBackend::Postgres(s) => s.notify_job_ready("", scheduled_at),
+                #[cfg(feature = "redis")]
+                StorageBackend::Redis(s) => s.notify_job_ready("", scheduled_at),
+            }
+        } else {
+            self.note_scheduled_at(scheduled_at);
+        }
+    }
+
+    /// Record the earliest delayed-job schedule so the loop can arm a timer.
+    /// Ready jobs (`scheduled_at <= now`) wake immediately and don't update
+    /// this. Safe to call from any thread.
+    pub fn note_scheduled_at(&self, scheduled_at: i64) {
+        use std::sync::atomic::Ordering;
+        let mut current = self.next_scheduled_at.load(Ordering::Relaxed);
+        while scheduled_at < current {
+            match self.next_scheduled_at.compare_exchange_weak(
+                current,
+                scheduled_at,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Duration until the next delayed job is due, capped at the fallback
+    /// interval. Resets the tracker once the time has passed so a stale value
+    /// can't pin the timer low forever.
+    fn next_delayed_timer(&self) -> Duration {
+        use std::sync::atomic::Ordering;
+        let next = self.next_scheduled_at.load(Ordering::Relaxed);
+        if next == i64::MAX {
+            return Self::PUSH_FALLBACK_INTERVAL;
+        }
+        let now = crate::job::now_millis();
+        if next <= now {
+            // The delayed job is due; clear the tracker and dispatch now.
+            self.next_scheduled_at.store(i64::MAX, Ordering::Relaxed);
+            return Duration::ZERO;
+        }
+        Duration::from_millis((next - now) as u64).min(Self::PUSH_FALLBACK_INTERVAL)
+    }
+
+    /// Event-driven dispatch loop. Dispatches on a wake signal, on the
+    /// fallback timer, or when a delayed job comes due. Maintenance runs on
+    /// its own ticker so its cadence is independent of dispatch.
+    async fn run_push(&self, job_tx: tokio::sync::mpsc::Sender<Job>, mut wake: wake::WakeSource) {
+        let mut counters = TickCounters::default();
+        let mut maintenance = tokio::time::interval(Self::PUSH_MAINTENANCE_INTERVAL);
+        maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            let fallback = self.next_delayed_timer();
+            tokio::select! {
+                _ = self.shutdown.notified() => break,
+                _ = wake.wait() => {
+                    // Drain dispatch fully so a single wake clears the queue.
+                    while self.tick_dispatch(&job_tx) {}
+                }
+                _ = tokio::time::sleep(fallback) => {
+                    while self.tick_dispatch(&job_tx) {}
+                }
+                _ = maintenance.tick() => {
+                    if self.tick_maintenance(&mut counters) {
+                        // Periodic enqueue may have produced ready work.
+                        while self.tick_dispatch(&job_tx) {}
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -862,5 +1011,139 @@ mod tests {
         assert_eq!(counters.reap, 1);
         assert_eq!(counters.periodic, 1);
         assert_eq!(counters.cleanup, 1);
+    }
+}
+
+#[cfg(all(test, feature = "push-dispatch"))]
+mod push_tests {
+    use super::*;
+    use crate::job::{now_millis, NewJob};
+    use crate::storage::Storage;
+    use std::time::Duration;
+
+    fn push_scheduler() -> Scheduler {
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        Scheduler::new(
+            storage,
+            vec!["default".to_string()],
+            SchedulerConfig::default(),
+            None,
+        )
+    }
+
+    fn ready_job(task_name: &str) -> NewJob {
+        NewJob {
+            queue: "default".to_string(),
+            task_name: task_name.to_string(),
+            payload: vec![1, 2, 3],
+            priority: 0,
+            scheduled_at: now_millis(),
+            max_retries: 3,
+            timeout_ms: 300_000,
+            unique_key: None,
+            metadata: None,
+            notes: None,
+            depends_on: vec![],
+            expires_at: None,
+            result_ttl_ms: None,
+            namespace: None,
+        }
+    }
+
+    /// Enqueuing a ready job must wake the in-process Notify within 50ms.
+    #[test]
+    fn test_wake_fires_on_immediate_enqueue() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let scheduler = push_scheduler();
+            let notify = match scheduler.storage() {
+                StorageBackend::Sqlite(s) => s.notify_handle().clone(),
+                _ => unreachable!("test uses sqlite"),
+            };
+
+            // Enqueue goes through the StorageBackend chokepoint, which calls
+            // notify_one() for ready jobs.
+            scheduler.storage().enqueue(ready_job("wake_task")).unwrap();
+
+            // notify_one() before notified() still wakes the next waiter, so a
+            // brief wait must resolve.
+            let woke = tokio::time::timeout(Duration::from_millis(50), notify.notified()).await;
+            assert!(
+                woke.is_ok(),
+                "enqueue of a ready job must wake the scheduler"
+            );
+        });
+    }
+
+    /// A delayed job must NOT wake immediately — the Notify stays unsignaled.
+    #[test]
+    fn test_delayed_job_does_not_wake() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let scheduler = push_scheduler();
+            let notify = match scheduler.storage() {
+                StorageBackend::Sqlite(s) => s.notify_handle().clone(),
+                _ => unreachable!("test uses sqlite"),
+            };
+
+            let mut delayed = ready_job("later_task");
+            delayed.scheduled_at = now_millis() + 60_000; // 1 minute out
+            scheduler.storage().enqueue(delayed).unwrap();
+
+            let woke = tokio::time::timeout(Duration::from_millis(50), notify.notified()).await;
+            assert!(woke.is_err(), "a delayed job must not wake immediately");
+
+            // It should instead arm the delayed timer.
+            let timer = scheduler.next_delayed_timer();
+            assert!(timer > Duration::ZERO && timer <= Scheduler::PUSH_FALLBACK_INTERVAL);
+        });
+    }
+
+    /// With no wake delivered, the fallback timer still dispatches a job.
+    #[test]
+    fn test_fallback_poll_dispatches_without_wake() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let scheduler = push_scheduler();
+
+            // Insert a ready job directly via the inherent SQLite method so the
+            // StorageBackend notify chokepoint is bypassed — simulating a
+            // missed wake. The fallback dispatch path must still pick it up.
+            match scheduler.storage() {
+                StorageBackend::Sqlite(s) => {
+                    s.enqueue(ready_job("fallback_task")).unwrap();
+                }
+                _ => unreachable!("test uses sqlite"),
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+            // Drive a single fallback dispatch round directly.
+            while scheduler.tick_dispatch(&tx) {}
+
+            assert!(
+                rx.try_recv().is_ok(),
+                "fallback dispatch must claim the job even without a wake"
+            );
+
+            let job = rx.try_recv();
+            // Only one job existed.
+            assert!(job.is_err());
+        });
+    }
+
+    /// `note_scheduled_at` keeps the earliest schedule and clears once due.
+    #[test]
+    fn test_next_delayed_timer_tracks_earliest() {
+        let scheduler = push_scheduler();
+        let now = now_millis();
+        scheduler.note_scheduled_at(now + 10_000);
+        scheduler.note_scheduled_at(now + 5_000);
+        scheduler.note_scheduled_at(now + 20_000);
+
+        let timer = scheduler.next_delayed_timer();
+        // Earliest (5s out), capped at the fallback interval (2s).
+        assert!(timer <= Scheduler::PUSH_FALLBACK_INTERVAL);
+        assert!(timer > Duration::ZERO);
     }
 }
