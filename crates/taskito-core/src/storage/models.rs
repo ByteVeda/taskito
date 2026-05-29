@@ -34,6 +34,7 @@ pub struct JobRow {
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<String>,
+    pub has_deps: bool,
 }
 
 /// Insertable struct for creating new jobs.
@@ -58,6 +59,7 @@ pub struct NewJobRow<'a> {
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<&'a str>,
+    pub has_deps: bool,
 }
 
 /// A row in the `dead_letter` table.

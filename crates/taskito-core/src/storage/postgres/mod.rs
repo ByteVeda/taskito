@@ -124,6 +124,9 @@ impl PostgresStorage {
         for sql in common_migrations::alter_statements(&common_migrations::POSTGRES) {
             migration_alter(&mut conn, &sql);
         }
+        for sql in common_migrations::backfill_statements() {
+            migration_alter(&mut conn, sql);
+        }
 
         Ok(())
     }

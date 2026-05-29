@@ -89,6 +89,10 @@ pub struct Job {
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<String>,
+    /// True when the job was enqueued with at least one dependency. Lets the
+    /// scheduler skip the dependency lookup entirely for the common case.
+    #[serde(default)]
+    pub has_deps: bool,
 }
 
 impl From<JobRow> for Job {
@@ -117,6 +121,7 @@ impl From<JobRow> for Job {
             expires_at: row.expires_at,
             result_ttl_ms: row.result_ttl_ms,
             namespace: row.namespace,
+            has_deps: row.has_deps,
         }
     }
 }
@@ -143,6 +148,7 @@ pub struct NewJob {
 impl NewJob {
     pub fn into_job(self) -> Job {
         let now = now_millis();
+        let has_deps = !self.depends_on.is_empty();
         Job {
             id: Uuid::now_v7().to_string(),
             queue: self.queue,
@@ -167,6 +173,7 @@ impl NewJob {
             expires_at: self.expires_at,
             result_ttl_ms: self.result_ttl_ms,
             namespace: self.namespace,
+            has_deps,
         }
     }
 }

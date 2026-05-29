@@ -137,6 +137,7 @@ macro_rules! impl_diesel_dead_letter_ops {
                         expires_at: job.expires_at,
                         result_ttl_ms: job.result_ttl_ms,
                         namespace: job.namespace.as_deref(),
+                        has_deps: job.has_deps,
                     };
 
                     diesel::insert_into(jobs::table)

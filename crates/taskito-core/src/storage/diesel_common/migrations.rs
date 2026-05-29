@@ -91,7 +91,8 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
                 notes        TEXT,
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
                 expires_at   {bi},
-                result_ttl_ms {bi}
+                result_ttl_ms {bi},
+                has_deps     {bool_false}
             )"
         ),
         format!(
@@ -296,6 +297,7 @@ pub fn alter_statements(d: &Dialect) -> Vec<String> {
     let bi = d.big_int;
     let real = d.real;
     let ife = d.alter_if_not_exists;
+    let bool_false = d.boolean_default_false;
 
     vec![
         // jobs ── cancel_requested / expires_at / result_ttl_ms
@@ -345,5 +347,24 @@ pub fn alter_statements(d: &Dialect) -> Vec<String> {
         format!("ALTER TABLE jobs ADD COLUMN {ife}notes TEXT"),
         format!("ALTER TABLE dead_letter ADD COLUMN {ife}notes TEXT"),
         format!("ALTER TABLE archived_jobs ADD COLUMN {ife}notes TEXT"),
+        // has_deps fast-path flag: lets dequeue skip the dependency lookup for
+        // the common no-dependency job. Defaults false; backfilled below.
+        format!("ALTER TABLE jobs ADD COLUMN {ife}has_deps {bool_false}"),
+    ]
+}
+
+/// One-time data backfills run after [`alter_statements`]. Unlike the schema
+/// alters these are idempotent UPDATEs guarded so they only write rows whose
+/// value actually differs — after the first run they match nothing.
+///
+/// Backfills `has_deps` for pre-existing pending jobs: a database upgraded
+/// while pending jobs already had dependencies would otherwise default them to
+/// `has_deps = false` and let dequeue skip the dependency check. The
+/// `id IN (subquery)` expression yields a boolean in Postgres and 0/1 in
+/// SQLite, so the same statement works on both backends.
+pub fn backfill_statements() -> &'static [&'static str] {
+    &[
+        "UPDATE jobs SET has_deps = (id IN (SELECT job_id FROM job_dependencies)) \
+         WHERE status = 0 AND has_deps <> (id IN (SELECT job_id FROM job_dependencies))",
     ]
 }

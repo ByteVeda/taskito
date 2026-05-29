@@ -42,6 +42,8 @@ macro_rules! impl_diesel_archival_ops {
                         expires_at: row.expires_at,
                         result_ttl_ms: row.result_ttl_ms,
                         namespace: row.namespace,
+                        // Archived jobs are terminal and never re-dequeued.
+                        has_deps: false,
                     })
                     .collect())
             }

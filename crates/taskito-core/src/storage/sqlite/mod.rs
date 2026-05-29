@@ -115,6 +115,9 @@ impl SqliteStorage {
         for sql in common_migrations::alter_statements(&common_migrations::SQLITE) {
             migration_alter(&mut conn, &sql);
         }
+        for sql in common_migrations::backfill_statements() {
+            migration_alter(&mut conn, sql);
+        }
 
         Ok(())
     }

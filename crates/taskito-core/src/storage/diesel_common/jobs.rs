@@ -13,27 +13,22 @@ macro_rules! impl_diesel_job_ops {
                     return Ok(());
                 }
 
+                diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(job_ids)))
+                    .execute(conn)?;
+                diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(job_ids)))
+                    .execute(conn)?;
+                diesel::delete(task_metrics::table.filter(task_metrics::job_id.eq_any(job_ids)))
+                    .execute(conn)?;
                 diesel::delete(
-                    job_errors::table.filter(job_errors::job_id.eq_any(job_ids)),
+                    job_dependencies::table.filter(
+                        job_dependencies::job_id
+                            .eq_any(job_ids)
+                            .or(job_dependencies::depends_on_job_id.eq_any(job_ids)),
+                    ),
                 )
                 .execute(conn)?;
                 diesel::delete(
-                    task_logs::table.filter(task_logs::job_id.eq_any(job_ids)),
-                )
-                .execute(conn)?;
-                diesel::delete(
-                    task_metrics::table.filter(task_metrics::job_id.eq_any(job_ids)),
-                )
-                .execute(conn)?;
-                diesel::delete(job_dependencies::table.filter(
-                    job_dependencies::job_id
-                        .eq_any(job_ids)
-                        .or(job_dependencies::depends_on_job_id.eq_any(job_ids)),
-                ))
-                .execute(conn)?;
-                diesel::delete(
-                    replay_history::table
-                        .filter(replay_history::original_job_id.eq_any(job_ids)),
+                    replay_history::table.filter(replay_history::original_job_id.eq_any(job_ids)),
                 )
                 .execute(conn)?;
 
@@ -108,6 +103,7 @@ macro_rules! impl_diesel_job_ops {
                         expires_at: job.expires_at,
                         result_ttl_ms: job.result_ttl_ms,
                         namespace: job.namespace.as_deref(),
+                        has_deps: job.has_deps,
                     };
 
                     diesel::insert_into(jobs::table)
@@ -129,11 +125,9 @@ macro_rules! impl_diesel_job_ops {
                     Ok(())
                 })
                 .map_err(|e| match e {
-                    diesel::result::Error::RollbackTransaction => {
-                        QueueError::DependencyNotFound(
-                            "dependency not found or already dead/cancelled".to_string(),
-                        )
-                    }
+                    diesel::result::Error::RollbackTransaction => QueueError::DependencyNotFound(
+                        "dependency not found or already dead/cancelled".to_string(),
+                    ),
                     other => QueueError::Storage(other),
                 })?;
 
@@ -142,12 +136,19 @@ macro_rules! impl_diesel_job_ops {
 
             /// Enqueue multiple jobs in a single transaction.
             pub fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
+                // Bound rows-per-INSERT so the bound-parameter count stays
+                // under SQLite's 999 limit (NewJobRow has ~19 columns;
+                // 50 * 19 < 999). Postgres tolerates far more, but one shared
+                // chunk size keeps the macro-generated code identical.
+                const BATCH_INSERT_CHUNK: usize = 50;
+
                 let mut conn = self.conn()?;
                 let jobs: Vec<Job> = new_jobs.into_iter().map(|nj| nj.into_job()).collect();
 
                 conn.transaction(|conn| {
-                    for job in &jobs {
-                        let row = NewJobRow {
+                    let rows: Vec<NewJobRow> = jobs
+                        .iter()
+                        .map(|job| NewJobRow {
                             id: &job.id,
                             queue: &job.queue,
                             task_name: &job.task_name,
@@ -166,10 +167,15 @@ macro_rules! impl_diesel_job_ops {
                             expires_at: job.expires_at,
                             result_ttl_ms: job.result_ttl_ms,
                             namespace: job.namespace.as_deref(),
-                        };
+                            has_deps: job.has_deps,
+                        })
+                        .collect();
 
+                    // One multi-row INSERT per chunk instead of N single-row
+                    // INSERTs — far fewer round trips / statement executions.
+                    for chunk in rows.chunks(BATCH_INSERT_CHUNK) {
                         diesel::insert_into(jobs::table)
-                            .values(&row)
+                            .values(chunk)
                             .execute(conn)?;
                     }
                     Ok(jobs)
@@ -188,10 +194,8 @@ macro_rules! impl_diesel_job_ops {
                         let existing: Option<JobRow> = jobs::table
                             .filter(jobs::unique_key.eq(uk))
                             .filter(
-                                jobs::status.eq_any([
-                                    JobStatus::Pending as i32,
-                                    JobStatus::Running as i32,
-                                ]),
+                                jobs::status
+                                    .eq_any([JobStatus::Pending as i32, JobStatus::Running as i32]),
                             )
                             .select(JobRow::as_select())
                             .first(conn)
@@ -221,6 +225,7 @@ macro_rules! impl_diesel_job_ops {
                         expires_at: job.expires_at,
                         result_ttl_ms: job.result_ttl_ms,
                         namespace: job.namespace.as_deref(),
+                        has_deps: job.has_deps,
                     };
 
                     diesel::insert_into(jobs::table)
@@ -251,17 +256,16 @@ macro_rules! impl_diesel_job_ops {
                     )) => {
                         if let Some(ref uk) = job.unique_key {
                             let mut conn = self.conn()?;
-                            let existing: Option<JobRow> = jobs::table
-                                .filter(jobs::unique_key.eq(uk))
-                                .filter(
-                                    jobs::status.eq_any([
+                            let existing: Option<JobRow> =
+                                jobs::table
+                                    .filter(jobs::unique_key.eq(uk))
+                                    .filter(jobs::status.eq_any([
                                         JobStatus::Pending as i32,
                                         JobStatus::Running as i32,
-                                    ]),
-                                )
-                                .select(JobRow::as_select())
-                                .first(&mut conn)
-                                .optional()?;
+                                    ]))
+                                    .select(JobRow::as_select())
+                                    .first(&mut conn)
+                                    .optional()?;
                             if let Some(row) = existing {
                                 return Ok(Job::from(row));
                             }
@@ -275,7 +279,12 @@ macro_rules! impl_diesel_job_ops {
             /// Atomically dequeue the highest-priority ready job from the given queue.
             /// Skips expired jobs. When `namespace` is `Some`, only jobs in that
             /// namespace are considered; when `None`, only jobs with no namespace.
-            pub fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
+            pub fn dequeue(
+                &self,
+                queue_name: &str,
+                now: i64,
+                namespace: Option<&str>,
+            ) -> Result<Option<Job>> {
                 let mut conn = self.conn()?;
 
                 conn.transaction(|conn| {
@@ -293,9 +302,7 @@ macro_rules! impl_diesel_job_ops {
                         query = query.filter(jobs::namespace.is_null());
                     }
 
-                    let candidates: Vec<JobRow> = query
-                        .select(JobRow::as_select())
-                        .load(conn)?;
+                    let candidates: Vec<JobRow> = query.select(JobRow::as_select()).load(conn)?;
 
                     for row in candidates {
                         // Skip expired jobs
@@ -314,7 +321,9 @@ macro_rules! impl_diesel_job_ops {
                             }
                         }
 
-                        if !Self::deps_satisfied(conn, &row.id)? {
+                        // Common case: jobs with no dependencies skip the
+                        // job_dependencies lookup entirely.
+                        if row.has_deps && !Self::deps_satisfied(conn, &row.id)? {
                             continue;
                         }
 
@@ -340,7 +349,12 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// Dequeue from multiple queues, checking each in order.
-            pub fn dequeue_from(&self, queues: &[String], now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
+            pub fn dequeue_from(
+                &self,
+                queues: &[String],
+                now: i64,
+                namespace: Option<&str>,
+            ) -> Result<Option<Job>> {
                 for queue_name in queues {
                     if let Some(job) = self.dequeue(queue_name, now, namespace)? {
                         return Ok(Some(job));
@@ -764,10 +778,8 @@ macro_rules! impl_diesel_job_ops {
 
                     Self::delete_job_children(conn, &job_ids)?;
 
-                    let affected = diesel::delete(
-                        jobs::table.filter(jobs::id.eq_any(&job_ids)),
-                    )
-                    .execute(conn)?;
+                    let affected = diesel::delete(jobs::table.filter(jobs::id.eq_any(&job_ids)))
+                        .execute(conn)?;
 
                     Ok(affected as u64)
                 })
@@ -786,35 +798,27 @@ macro_rules! impl_diesel_job_ops {
                         .select(jobs::id)
                         .load(conn)?;
 
-                    let rows_with_ttl: Vec<JobRow> = jobs::table
+                    // Push the per-job `completed_at + result_ttl_ms < now`
+                    // check into SQL and select only the id — avoids loading
+                    // full rows (payload + result blobs) just to filter them.
+                    let per_job_ids: Vec<String> = jobs::table
                         .filter(jobs::status.eq(JobStatus::Complete as i32))
                         .filter(jobs::result_ttl_ms.is_not_null())
-                        .select(JobRow::as_select())
+                        .filter(jobs::completed_at.is_not_null())
+                        .filter(
+                            (jobs::completed_at.assume_not_null()
+                                + jobs::result_ttl_ms.assume_not_null())
+                            .lt(now),
+                        )
+                        .select(jobs::id)
                         .load(conn)?;
 
-                    let per_job_ids: Vec<String> = rows_with_ttl
-                        .into_iter()
-                        .filter(|row| {
-                            matches!(
-                                (row.completed_at, row.result_ttl_ms),
-                                (Some(completed), Some(ttl))
-                                    if completed
-                                        .checked_add(ttl)
-                                        .is_some_and(|expiry| expiry < now)
-                            )
-                        })
-                        .map(|row| row.id)
-                        .collect();
-
-                    let all_ids: Vec<String> =
-                        global_ids.into_iter().chain(per_job_ids).collect();
+                    let all_ids: Vec<String> = global_ids.into_iter().chain(per_job_ids).collect();
 
                     Self::delete_job_children(conn, &all_ids)?;
 
-                    let affected = diesel::delete(
-                        jobs::table.filter(jobs::id.eq_any(&all_ids)),
-                    )
-                    .execute(conn)?;
+                    let affected = diesel::delete(jobs::table.filter(jobs::id.eq_any(&all_ids)))
+                        .execute(conn)?;
 
                     Ok(affected as u64)
                 })
@@ -824,37 +828,21 @@ macro_rules! impl_diesel_job_ops {
             pub fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>> {
                 let mut conn = self.conn()?;
 
+                // Push the `started_at + timeout_ms < now` deadline into SQL so
+                // only genuinely-stale rows (and their payload blobs) are read,
+                // instead of every running job.
                 let rows: Vec<JobRow> = jobs::table
                     .filter(jobs::status.eq(JobStatus::Running as i32))
                     .filter(jobs::started_at.is_not_null())
+                    .filter((jobs::started_at.assume_not_null() + jobs::timeout_ms).lt(now))
                     .select(JobRow::as_select())
                     .load(&mut conn)?;
 
-                let stale: Vec<Job> = rows
-                    .into_iter()
-                    .filter(|r| {
-                        if let Some(started) = r.started_at {
-                            match started.checked_add(r.timeout_ms) {
-                                Some(deadline) => deadline < now,
-                                None => true,
-                            }
-                        } else {
-                            false
-                        }
-                    })
-                    .map(Job::from)
-                    .collect();
-
-                Ok(stale)
+                Ok(rows.into_iter().map(Job::from).collect())
             }
 
             /// Record an error for a job attempt.
-            pub fn record_error(
-                &self,
-                job_id: &str,
-                attempt: i32,
-                error: &str,
-            ) -> Result<()> {
+            pub fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()> {
                 let mut conn = self.conn()?;
                 let id = uuid::Uuid::now_v7().to_string();
                 let now = now_millis();
