@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import time
 from concurrent.futures import (
@@ -25,6 +26,12 @@ logger = logging.getLogger("taskito.proxies")
 
 _PROXY_KEY = "__taskito_proxy__"
 _REF_KEY = "__taskito_ref__"
+
+# Shared, process-wide pool for timeout-bounded proxy reconstruction. A fresh
+# ThreadPoolExecutor per reconstructed argument would spawn and tear down an OS
+# thread on the worker hot path; one small pool serves all reconstructions.
+_RECONSTRUCT_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="taskito-proxy")
+atexit.register(_RECONSTRUCT_POOL.shutdown, wait=False)
 
 
 def reconstruct_proxies(
@@ -170,14 +177,13 @@ def _reconstruct_one(
     start = time.monotonic()
     try:
         if max_timeout > 0:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(handler.reconstruct, recipe, version)
-                try:
-                    obj = future.result(timeout=max_timeout)
-                except FuturesTimeout:
-                    raise ProxyReconstructionError(
-                        f"Reconstruction of '{handler_name}' timed out after {max_timeout}s"
-                    ) from None
+            future = _RECONSTRUCT_POOL.submit(handler.reconstruct, recipe, version)
+            try:
+                obj = future.result(timeout=max_timeout)
+            except FuturesTimeout:
+                raise ProxyReconstructionError(
+                    f"Reconstruction of '{handler_name}' timed out after {max_timeout}s"
+                ) from None
         else:
             obj = handler.reconstruct(recipe, version)
     except ProxyReconstructionError:
