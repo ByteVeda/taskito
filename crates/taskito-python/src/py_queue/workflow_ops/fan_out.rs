@@ -220,3 +220,290 @@ impl PyQueue {
         result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::py_queue::workflow_ops::test_helpers::*;
+
+    /// Mismatched lengths surface as a `PyValueError`. Caller-side bug, not a
+    /// silent partial expansion.
+    #[test]
+    fn expand_fan_out_rejects_mismatched_lengths() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Pending, None);
+
+            let result = queue.expand_fan_out(
+                py,
+                &run_id,
+                "parent",
+                vec!["child[0]".to_string()],
+                vec![vec![1u8, 2, 3], vec![4u8, 5, 6]],
+                "task_child",
+                "default",
+                3,
+                300_000,
+                0,
+            );
+            let err = match result {
+                Err(e) => e,
+                Ok(_) => panic!("expected PyValueError for length mismatch"),
+            };
+            assert!(err.to_string().contains("same length"));
+        });
+    }
+
+    /// Empty child list short-circuits to a `Completed` parent — there is
+    /// nothing to wait on. No child jobs are enqueued.
+    #[test]
+    fn expand_fan_out_completes_parent_immediately_on_empty_children() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Pending, None);
+
+            let ids = queue
+                .expand_fan_out(
+                    py,
+                    &run_id,
+                    "parent",
+                    Vec::new(),
+                    Vec::new(),
+                    "task_child",
+                    "default",
+                    3,
+                    300_000,
+                    0,
+                )
+                .unwrap();
+            assert!(ids.is_empty());
+
+            let parent = fetch_node(wf, &run_id, "parent");
+            assert_eq!(parent.status, WorkflowNodeStatus::Completed);
+            assert_eq!(parent.fan_out_count, Some(0));
+            assert!(parent.completed_at.is_some());
+        });
+    }
+
+    /// Non-empty fan-out creates a child node and job per entry, sets the
+    /// parent's `fan_out_count`, and returns the child job ids in order.
+    #[test]
+    fn expand_fan_out_creates_children_and_records_count() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Pending, None);
+
+            let child_names = vec!["parent[0]".to_string(), "parent[1]".to_string()];
+            let child_payloads = vec![vec![1u8], vec![2u8]];
+
+            let ids = queue
+                .expand_fan_out(
+                    py,
+                    &run_id,
+                    "parent",
+                    child_names.clone(),
+                    child_payloads,
+                    "task_child",
+                    "default",
+                    3,
+                    300_000,
+                    0,
+                )
+                .unwrap();
+            assert_eq!(ids.len(), 2);
+
+            let nodes = wf.get_workflow_nodes(&run_id).unwrap();
+            for name in &child_names {
+                let node = nodes
+                    .iter()
+                    .find(|n| &n.node_name == name)
+                    .unwrap_or_else(|| panic!("child node {name} missing"));
+                assert_eq!(node.status, WorkflowNodeStatus::Pending);
+                assert!(node.job_id.is_some());
+            }
+
+            // The parent's fan_out_count is updated; the parent stays in its
+            // prior status because the tracker is responsible for promoting it
+            // separately (mirrors the production path).
+            let parent = fetch_node(wf, &run_id, "parent");
+            assert_eq!(parent.fan_out_count, Some(2));
+        });
+    }
+
+    /// `create_deferred_job` enqueues a job and binds it to the named node.
+    #[test]
+    fn create_deferred_job_enqueues_and_attaches_to_node() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "deferred", WorkflowNodeStatus::Pending, None);
+
+            let job_id = queue
+                .create_deferred_job(
+                    py,
+                    &run_id,
+                    "deferred",
+                    vec![9u8, 9, 9],
+                    "task_deferred",
+                    "default",
+                    3,
+                    300_000,
+                    0,
+                )
+                .unwrap();
+
+            let job = queue.storage.get_job(&job_id).unwrap().unwrap();
+            assert_eq!(job.task_name, "task_deferred");
+            assert!(job
+                .metadata
+                .as_deref()
+                .unwrap_or("")
+                .contains("workflow_run_id"));
+
+            let node = fetch_node(wf, &run_id, "deferred");
+            assert_eq!(node.job_id.as_deref(), Some(job_id.as_str()));
+        });
+    }
+
+    /// `check_fan_out_completion` returns `None` while any child is still
+    /// non-terminal.
+    #[test]
+    fn check_fan_out_completion_returns_none_while_children_running() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Running, None);
+            seed_node(
+                wf,
+                &run_id,
+                "parent[0]",
+                WorkflowNodeStatus::Completed,
+                None,
+            );
+            seed_node(wf, &run_id, "parent[1]", WorkflowNodeStatus::Running, None);
+
+            let outcome = queue
+                .check_fan_out_completion(py, &run_id, "parent")
+                .unwrap();
+            assert!(outcome.is_none());
+        });
+    }
+
+    /// All-success children finalize the parent as `Completed` exactly once
+    /// and return `(true, child_job_ids)`.
+    #[test]
+    fn check_fan_out_completion_finalizes_parent_on_all_success() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Running, None);
+            let j0 = enqueue_test_job(&queue.storage, "task_child_0");
+            let j1 = enqueue_test_job(&queue.storage, "task_child_1");
+            seed_node(
+                wf,
+                &run_id,
+                "parent[0]",
+                WorkflowNodeStatus::Completed,
+                Some(j0.clone()),
+            );
+            seed_node(
+                wf,
+                &run_id,
+                "parent[1]",
+                WorkflowNodeStatus::Completed,
+                Some(j1.clone()),
+            );
+
+            let outcome = queue
+                .check_fan_out_completion(py, &run_id, "parent")
+                .unwrap()
+                .expect("first caller transitions the parent");
+            assert!(outcome.0, "all-success path returns true");
+            let mut ids = outcome.1;
+            ids.sort();
+            let mut expected = vec![j0, j1];
+            expected.sort();
+            assert_eq!(ids, expected);
+
+            // The second caller observes the parent already finalized and
+            // returns `None` rather than double-firing the success path.
+            let again = queue
+                .check_fan_out_completion(py, &run_id, "parent")
+                .unwrap();
+            assert!(again.is_none());
+        });
+    }
+
+    /// Any failed child finalizes the parent as `Failed` and reports
+    /// `(false, child_job_ids)`.
+    #[test]
+    fn check_fan_out_completion_finalizes_parent_as_failed_on_any_failure() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Running, None);
+            seed_node(
+                wf,
+                &run_id,
+                "parent[0]",
+                WorkflowNodeStatus::Completed,
+                Some(enqueue_test_job(&queue.storage, "task_child_0")),
+            );
+            seed_node(
+                wf,
+                &run_id,
+                "parent[1]",
+                WorkflowNodeStatus::Failed,
+                Some(enqueue_test_job(&queue.storage, "task_child_1")),
+            );
+
+            let outcome = queue
+                .check_fan_out_completion(py, &run_id, "parent")
+                .unwrap()
+                .expect("first caller transitions the parent");
+            assert!(!outcome.0, "failure path returns false");
+
+            let parent = fetch_node(wf, &run_id, "parent");
+            assert_eq!(parent.status, WorkflowNodeStatus::Failed);
+        });
+    }
+
+    /// A fan-out parent with no children yet (e.g. expansion not run) leaves
+    /// `check_fan_out_completion` returning `None` rather than promoting the
+    /// parent on a zero-child set.
+    #[test]
+    fn check_fan_out_completion_is_noop_when_no_children_exist() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Running, None);
+
+            let outcome = queue
+                .check_fan_out_completion(py, &run_id, "parent")
+                .unwrap();
+            assert!(outcome.is_none());
+
+            let parent = fetch_node(wf, &run_id, "parent");
+            assert_eq!(parent.status, WorkflowNodeStatus::Running);
+        });
+    }
+}

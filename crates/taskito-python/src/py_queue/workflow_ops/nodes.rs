@@ -269,3 +269,332 @@ impl PyQueue {
         result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::py_queue::workflow_ops::test_helpers::*;
+
+    /// Mark a node successful when there is no matching workflow metadata on
+    /// the job. The method returns `None` (signalling a non-workflow job) and
+    /// leaves the run unchanged.
+    #[test]
+    fn mark_workflow_node_result_returns_none_for_non_workflow_job() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let job_id = enqueue_test_job(&queue.storage, "standalone_task");
+
+            let outcome = queue
+                .mark_workflow_node_result(py, &job_id, true, None, false, None)
+                .unwrap();
+            assert!(outcome.is_none());
+        });
+    }
+
+    /// Missing job id surfaces as a `PyValueError` rather than a silent no-op.
+    #[test]
+    fn mark_workflow_node_result_errors_on_unknown_job_id() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let result =
+                queue.mark_workflow_node_result(py, "no-such-job", true, None, false, None);
+            let err = match result {
+                Err(e) => e,
+                Ok(_) => panic!("expected PyValueError for missing job"),
+            };
+            assert!(err.to_string().contains("not found"));
+        });
+    }
+
+    /// Marking the last terminal node successful transitions the run to
+    /// `Completed` and reports the final state back to the caller.
+    #[test]
+    fn mark_workflow_node_result_finalizes_run_on_last_success() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            let job_id = enqueue_workflow_job(&queue.storage, &run_id, "leaf");
+            seed_node(
+                wf,
+                &run_id,
+                "leaf",
+                WorkflowNodeStatus::Running,
+                Some(job_id.clone()),
+            );
+
+            let outcome = queue
+                .mark_workflow_node_result(py, &job_id, true, None, false, None)
+                .unwrap()
+                .unwrap();
+            assert_eq!(outcome.0, run_id);
+            assert_eq!(outcome.1, "leaf");
+            assert_eq!(outcome.2.as_deref(), Some("completed"));
+
+            let run = wf.get_workflow_run(&run_id).unwrap().unwrap();
+            assert_eq!(run.state, WorkflowState::Completed);
+        });
+    }
+
+    /// On failure (without `skip_cascade`), siblings in `Pending`/`Ready`
+    /// status are skipped and the run finalizes as `Failed`.
+    #[test]
+    fn mark_workflow_node_result_cascades_failure_to_pending_siblings() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            let failing_job = enqueue_workflow_job(&queue.storage, &run_id, "fail");
+            let pending_job = enqueue_test_job(&queue.storage, "task_pending");
+            seed_node(
+                wf,
+                &run_id,
+                "fail",
+                WorkflowNodeStatus::Running,
+                Some(failing_job.clone()),
+            );
+            seed_node(
+                wf,
+                &run_id,
+                "pending",
+                WorkflowNodeStatus::Pending,
+                Some(pending_job.clone()),
+            );
+
+            let outcome = queue
+                .mark_workflow_node_result(
+                    py,
+                    &failing_job,
+                    false,
+                    Some("boom".to_string()),
+                    false,
+                    None,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(outcome.2.as_deref(), Some("failed"));
+
+            assert_eq!(
+                fetch_node(wf, &run_id, "pending").status,
+                WorkflowNodeStatus::Skipped,
+            );
+            let pending = queue.storage.get_job(&pending_job).unwrap().unwrap();
+            assert_eq!(pending.status.wire_name(), "Cancelled");
+        });
+    }
+
+    /// `skip_cascade=true` records the failure but leaves pending siblings
+    /// alone — the tracker handles the cascade for conditional/continue runs.
+    #[test]
+    fn mark_workflow_node_result_skips_cascade_when_requested() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            let failing_job = enqueue_workflow_job(&queue.storage, &run_id, "fail");
+            let pending_job = enqueue_test_job(&queue.storage, "task_pending");
+            seed_node(
+                wf,
+                &run_id,
+                "fail",
+                WorkflowNodeStatus::Running,
+                Some(failing_job.clone()),
+            );
+            seed_node(
+                wf,
+                &run_id,
+                "pending",
+                WorkflowNodeStatus::Pending,
+                Some(pending_job.clone()),
+            );
+
+            queue
+                .mark_workflow_node_result(py, &failing_job, false, None, true, None)
+                .unwrap();
+
+            assert_eq!(
+                fetch_node(wf, &run_id, "pending").status,
+                WorkflowNodeStatus::Pending,
+                "skip_cascade must leave pending siblings untouched",
+            );
+            let pending = queue.storage.get_job(&pending_job).unwrap().unwrap();
+            assert_ne!(pending.status.wire_name(), "Cancelled");
+        });
+    }
+
+    /// Success carries the `result_hash` through to the persisted node so the
+    /// incremental layer can resolve future cache hits.
+    #[test]
+    fn mark_workflow_node_result_persists_result_hash_on_success() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            let job_id = enqueue_workflow_job(&queue.storage, &run_id, "hashed");
+            seed_node(
+                wf,
+                &run_id,
+                "hashed",
+                WorkflowNodeStatus::Running,
+                Some(job_id.clone()),
+            );
+
+            queue
+                .mark_workflow_node_result(
+                    py,
+                    &job_id,
+                    true,
+                    None,
+                    false,
+                    Some("sha-of-result".to_string()),
+                )
+                .unwrap();
+
+            let node = fetch_node(wf, &run_id, "hashed");
+            assert_eq!(node.status, WorkflowNodeStatus::Completed);
+            assert_eq!(node.result_hash.as_deref(), Some("sha-of-result"));
+        });
+    }
+
+    /// Gate hand-off: the node flips to `WaitingApproval` and stays there
+    /// until externally resolved.
+    #[test]
+    fn set_workflow_node_waiting_approval_transitions_node() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "gate", WorkflowNodeStatus::Pending, None);
+
+            queue
+                .set_workflow_node_waiting_approval(py, &run_id, "gate")
+                .unwrap();
+
+            assert_eq!(
+                fetch_node(wf, &run_id, "gate").status,
+                WorkflowNodeStatus::WaitingApproval,
+            );
+        });
+    }
+
+    /// Sub-workflow parent promotion: the node flips to `Running` and gets a
+    /// non-null `started_at`.
+    #[test]
+    fn set_workflow_node_running_stamps_started_at() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "child", WorkflowNodeStatus::Pending, None);
+
+            queue
+                .set_workflow_node_running(py, &run_id, "child")
+                .unwrap();
+
+            let node = fetch_node(wf, &run_id, "child");
+            assert_eq!(node.status, WorkflowNodeStatus::Running);
+            assert!(node.started_at.is_some());
+        });
+    }
+
+    /// `set_workflow_node_fan_out_count` records the count and transitions
+    /// the parent to `Running`, gating downstream finalization on the count.
+    #[test]
+    fn set_workflow_node_fan_out_count_records_count_and_promotes() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "parent", WorkflowNodeStatus::Pending, None);
+
+            queue
+                .set_workflow_node_fan_out_count(py, &run_id, "parent", 5)
+                .unwrap();
+
+            let node = fetch_node(wf, &run_id, "parent");
+            assert_eq!(node.fan_out_count, Some(5));
+            assert_eq!(node.status, WorkflowNodeStatus::Running);
+        });
+    }
+
+    /// `fail_workflow_node` records the error message on the node and flips
+    /// the status to `Failed` without touching siblings.
+    #[test]
+    fn fail_workflow_node_marks_failed_with_error() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "broken", WorkflowNodeStatus::Pending, None);
+            seed_node(wf, &run_id, "sibling", WorkflowNodeStatus::Pending, None);
+
+            queue
+                .fail_workflow_node(py, &run_id, "broken", "compile error")
+                .unwrap();
+
+            let broken = fetch_node(wf, &run_id, "broken");
+            assert_eq!(broken.status, WorkflowNodeStatus::Failed);
+            assert_eq!(broken.error.as_deref(), Some("compile error"));
+            assert_eq!(
+                fetch_node(wf, &run_id, "sibling").status,
+                WorkflowNodeStatus::Pending,
+            );
+        });
+    }
+
+    /// `skip_workflow_node` cancels the backing job (if any) and marks the
+    /// node `Skipped`.
+    #[test]
+    fn skip_workflow_node_cancels_job_and_marks_skipped() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            let job_id = enqueue_test_job(&queue.storage, "task_to_skip");
+            seed_node(
+                wf,
+                &run_id,
+                "skipped",
+                WorkflowNodeStatus::Pending,
+                Some(job_id.clone()),
+            );
+
+            queue.skip_workflow_node(py, &run_id, "skipped").unwrap();
+
+            assert_eq!(
+                fetch_node(wf, &run_id, "skipped").status,
+                WorkflowNodeStatus::Skipped,
+            );
+            let job = queue.storage.get_job(&job_id).unwrap().unwrap();
+            assert_eq!(job.status.wire_name(), "Cancelled");
+        });
+    }
+
+    /// Skipping an unknown node name is a no-op rather than an error — the
+    /// tracker may race the storage and we accept that.
+    #[test]
+    fn skip_workflow_node_is_noop_for_unknown_node() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+
+            queue
+                .skip_workflow_node(py, &run_id, "ghost")
+                .expect("missing node is a no-op, not an error");
+            assert!(wf.get_workflow_nodes(&run_id).unwrap().is_empty());
+        });
+    }
+}
