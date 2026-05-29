@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol, runtime_checkable
 
+import cloudpickle
+
 
 @runtime_checkable
 class Serializer(Protocol):
@@ -23,13 +25,9 @@ class CloudpickleSerializer:
     """Default serializer using cloudpickle (handles lambdas, closures, etc.)."""
 
     def dumps(self, obj: Any) -> bytes:
-        import cloudpickle
-
         return cloudpickle.dumps(obj)  # type: ignore[no-any-return]
 
     def loads(self, data: bytes) -> Any:
-        import cloudpickle
-
         return cloudpickle.loads(data)
 
 

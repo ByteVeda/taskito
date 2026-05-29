@@ -226,6 +226,12 @@ class Queue(
         self._batch_accumulator: BatchAccumulator | None = None
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}
+        # Per-task middleware-chain cache (chain, disable_version, computed_at).
+        # Bumping ``_mw_disable_version`` invalidates same-process readers
+        # instantly; the TTL bounds cross-process staleness. See
+        # ``_get_middleware_chain``.
+        self._mw_chain_cache: dict[str, tuple[list[TaskMiddleware], int, float]] = {}
+        self._mw_disable_version: int = 0
         self._task_retry_filters: dict[str, dict[str, list[type[Exception]]]] = {}
         self._init_predicate_state()
         self._drain_timeout = drain_timeout
@@ -434,44 +440,47 @@ class Queue(
         final_args = args
         final_kwargs = kwargs or {}
 
-        # Run on_enqueue middleware hook (options dict is mutable)
-        enqueue_options: dict[str, Any] = {
-            "priority": priority,
-            "delay": delay,
-            "queue": queue,
-            "max_retries": max_retries,
-            "timeout": timeout,
-            "unique_key": unique_key,
-            "metadata": metadata,
-            "notes": notes,
-            "depends_on": depends_on,
-            "expires": expires,
-            "result_ttl": result_ttl,
-            "idempotency_key": idempotency_key,
-            "idempotent": idempotent,
-        }
-        for mw in self._global_middleware:
-            if not mw._should_apply(None, task_name=task_name):
-                continue
-            try:
-                mw.on_enqueue(task_name, final_args, final_kwargs, enqueue_options)
-            except Exception:
-                logger.exception("middleware on_enqueue() error")
+        # Run on_enqueue middleware hook (options dict is mutable). Skip the
+        # whole build/read-back when no middleware is registered — the common
+        # hot path — to avoid a needless dict allocation and 13 reads per call.
+        if self._global_middleware:
+            enqueue_options: dict[str, Any] = {
+                "priority": priority,
+                "delay": delay,
+                "queue": queue,
+                "max_retries": max_retries,
+                "timeout": timeout,
+                "unique_key": unique_key,
+                "metadata": metadata,
+                "notes": notes,
+                "depends_on": depends_on,
+                "expires": expires,
+                "result_ttl": result_ttl,
+                "idempotency_key": idempotency_key,
+                "idempotent": idempotent,
+            }
+            for mw in self._global_middleware:
+                if not mw._should_apply(None, task_name=task_name):
+                    continue
+                try:
+                    mw.on_enqueue(task_name, final_args, final_kwargs, enqueue_options)
+                except Exception:
+                    logger.exception("middleware on_enqueue() error")
 
-        # Apply any middleware mutations back
-        priority = enqueue_options.get("priority")
-        delay = enqueue_options.get("delay")
-        queue = enqueue_options.get("queue")
-        max_retries = enqueue_options.get("max_retries")
-        timeout = enqueue_options.get("timeout")
-        unique_key = enqueue_options.get("unique_key")
-        metadata = enqueue_options.get("metadata")
-        notes = enqueue_options.get("notes")
-        depends_on = enqueue_options.get("depends_on")
-        expires = enqueue_options.get("expires")
-        result_ttl = enqueue_options.get("result_ttl")
-        idempotency_key = enqueue_options.get("idempotency_key")
-        idempotent = enqueue_options.get("idempotent")
+            # Apply any middleware mutations back
+            priority = enqueue_options.get("priority")
+            delay = enqueue_options.get("delay")
+            queue = enqueue_options.get("queue")
+            max_retries = enqueue_options.get("max_retries")
+            timeout = enqueue_options.get("timeout")
+            unique_key = enqueue_options.get("unique_key")
+            metadata = enqueue_options.get("metadata")
+            notes = enqueue_options.get("notes")
+            depends_on = enqueue_options.get("depends_on")
+            expires = enqueue_options.get("expires")
+            result_ttl = enqueue_options.get("result_ttl")
+            idempotency_key = enqueue_options.get("idempotency_key")
+            idempotent = enqueue_options.get("idempotent")
 
         # Validation runs *after* middleware so a mutating hook still gets
         # the chance to reshape notes before we reject them.
@@ -622,53 +631,96 @@ class Queue(
                 f"kwargs_list length ({len(kwargs_list)}) must match "
                 f"args_list length ({len(args_list)})"
             )
+        # Validate every per-job list up front so a length mismatch fails here
+        # with a clear message rather than misaligning the batch arrays later.
+        for field_name, values in (
+            ("delay_list", delay_list),
+            ("unique_keys", unique_keys),
+            ("metadata_list", metadata_list),
+            ("notes_list", notes_list),
+            ("expires_list", expires_list),
+            ("result_ttl_list", result_ttl_list),
+            ("idempotency_keys", idempotency_keys),
+        ):
+            if values is not None and len(values) != count:
+                raise ValueError(
+                    f"{field_name} length ({len(values)}) must match args_list length ({count})"
+                )
         kw_list = kwargs_list or [{}] * count
 
-        # Build a per-job options dict so on_enqueue middleware can mutate
-        # priority/queue/delay/etc. on a per-job basis before the batch is
-        # committed. The dispatch must happen BEFORE enqueue_batch — running
-        # it after (as the previous implementation did) made mutations
-        # impossible to apply.
-        per_job_options: list[dict[str, Any]] = [
-            {
-                "priority": priority,
-                "queue": queue,
-                "max_retries": max_retries,
-                "timeout": timeout,
-                "delay": (delay_list[i] if delay_list is not None else delay),
-                "unique_key": (unique_keys[i] if unique_keys is not None else None),
-                "metadata": (metadata_list[i] if metadata_list is not None else metadata),
-                "notes": (notes_list[i] if notes_list is not None else notes),
-                "expires": (expires_list[i] if expires_list is not None else expires),
-                "result_ttl": (result_ttl_list[i] if result_ttl_list is not None else result_ttl),
-                "idempotency_key": (idempotency_keys[i] if idempotency_keys is not None else None),
-                "idempotent": idempotent,
-            }
-            for i in range(count)
-        ]
-
         chain = self._get_middleware_chain(task_name)
-        for i in range(count):
-            for mw in chain:
-                if not mw._should_apply(None, task_name=task_name):
-                    continue
-                try:
-                    mw.on_enqueue(task_name, args_list[i], kw_list[i], per_job_options[i])
-                except Exception:
-                    logger.exception("middleware on_enqueue() error")
+        # ``_should_apply`` depends only on (task_name, middleware), which is
+        # constant across the batch — evaluate it once, not per job.  [B4]
+        applicable = [mw for mw in chain if mw._should_apply(None, task_name=task_name)]
 
-        # Read mutated per-job options back into the per-job lists passed to
-        # the Rust batch enqueue. `None` entries are forwarded so the Rust
-        # side falls back to its defaults.
-        queues_list = [opt["queue"] or "default" for opt in per_job_options]
-        priorities_list = [opt["priority"] for opt in per_job_options]
-        retries_list = [opt["max_retries"] for opt in per_job_options]
-        timeouts_list = [opt["timeout"] for opt in per_job_options]
-        delays = [opt["delay"] for opt in per_job_options]
-        metas = [opt["metadata"] for opt in per_job_options]
-        notes_encoded = [validate_and_encode_notes(opt["notes"]) for opt in per_job_options]
-        exp_list = [opt["expires"] for opt in per_job_options]
-        ttl_list = [opt["result_ttl"] for opt in per_job_options]
+        if applicable:
+            # Middleware may mutate priority/queue/delay/etc. per job, so build
+            # the mutable per-job options dicts and dispatch ``on_enqueue``
+            # BEFORE enqueue_batch so mutations are applied.
+            per_job_options: list[dict[str, Any]] = [
+                {
+                    "priority": priority,
+                    "queue": queue,
+                    "max_retries": max_retries,
+                    "timeout": timeout,
+                    "delay": (delay_list[i] if delay_list is not None else delay),
+                    "unique_key": (unique_keys[i] if unique_keys is not None else None),
+                    "metadata": (metadata_list[i] if metadata_list is not None else metadata),
+                    "notes": (notes_list[i] if notes_list is not None else notes),
+                    "expires": (expires_list[i] if expires_list is not None else expires),
+                    "result_ttl": (
+                        result_ttl_list[i] if result_ttl_list is not None else result_ttl
+                    ),
+                    "idempotency_key": (
+                        idempotency_keys[i] if idempotency_keys is not None else None
+                    ),
+                    "idempotent": idempotent,
+                }
+                for i in range(count)
+            ]
+            for i in range(count):
+                for mw in applicable:
+                    try:
+                        mw.on_enqueue(task_name, args_list[i], kw_list[i], per_job_options[i])
+                    except Exception:
+                        logger.exception("middleware on_enqueue() error")
+
+            queues_list = [opt["queue"] or "default" for opt in per_job_options]
+            priorities_list = [opt["priority"] for opt in per_job_options]
+            retries_list = [opt["max_retries"] for opt in per_job_options]
+            timeouts_list = [opt["timeout"] for opt in per_job_options]
+            delays = [opt["delay"] for opt in per_job_options]
+            metas = [opt["metadata"] for opt in per_job_options]
+            notes_encoded = [validate_and_encode_notes(opt["notes"]) for opt in per_job_options]
+            exp_list = [opt["expires"] for opt in per_job_options]
+            ttl_list = [opt["result_ttl"] for opt in per_job_options]
+            uk_src = [opt["unique_key"] for opt in per_job_options]
+            ik_src = [opt["idempotency_key"] for opt in per_job_options]
+            idem_src = [opt["idempotent"] for opt in per_job_options]
+        else:
+            # No applicable middleware — build the parallel lists the Rust batch
+            # enqueue wants directly, skipping the per-job dict layer.  [B3]
+            # Copy any per-job input lists so a later predicate mutation can't
+            # corrupt the caller's arguments.
+            default_queue = queue or "default"
+            queues_list = [default_queue] * count
+            priorities_list = [priority] * count
+            retries_list = [max_retries] * count
+            timeouts_list = [timeout] * count
+            delays = list(delay_list) if delay_list is not None else [delay] * count
+            metas = list(metadata_list) if metadata_list is not None else [metadata] * count
+            if notes_list is None and notes is None:
+                notes_encoded = [None] * count  # no per-job validate call needed
+            else:
+                notes_source = notes_list if notes_list is not None else [notes] * count
+                notes_encoded = [validate_and_encode_notes(n) for n in notes_source]
+            exp_list = list(expires_list) if expires_list is not None else [expires] * count
+            ttl_list = (
+                list(result_ttl_list) if result_ttl_list is not None else [result_ttl] * count
+            )
+            uk_src = list(unique_keys) if unique_keys is not None else [None] * count
+            ik_src = list(idempotency_keys) if idempotency_keys is not None else [None] * count
+            idem_src = [idempotent] * count
 
         task_serializer = self._get_serializer(task_name)
         if self._interceptor is not None:
@@ -687,9 +739,9 @@ class Queue(
             self._resolve_unique_key(
                 task_name=task_name,
                 payload=payloads[i],
-                unique_key=per_job_options[i]["unique_key"],
-                idempotency_key=per_job_options[i]["idempotency_key"],
-                idempotent=per_job_options[i]["idempotent"],
+                unique_key=uk_src[i],
+                idempotency_key=ik_src[i],
+                idempotent=idem_src[i],
             )
             for i in range(count)
         ]

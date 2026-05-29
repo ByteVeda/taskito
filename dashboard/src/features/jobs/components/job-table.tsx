@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   Badge,
   DataTable,
@@ -24,7 +24,11 @@ interface JobTableProps {
 
 export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
   const navigate = useNavigate();
-  const showErrorColumn = !!jobs?.some((j) => j.error);
+  const showErrorColumn = useMemo(() => !!jobs?.some((j) => j.error), [jobs]);
+  const handleRowClick = useCallback(
+    (job: Job) => navigate({ to: "/jobs/$id", params: { id: job.id } }),
+    [navigate],
+  );
 
   const columns = useMemo<ColumnDef<Job>[]>(() => {
     const base: ColumnDef<Job>[] = [
@@ -128,11 +132,6 @@ export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
   }
 
   return (
-    <DataTable
-      columns={columns}
-      data={jobs}
-      rowKey={(j) => j.id}
-      onRowClick={(job) => navigate({ to: "/jobs/$id", params: { id: job.id } })}
-    />
+    <DataTable columns={columns} data={jobs} rowKey={(j) => j.id} onRowClick={handleRowClick} />
   );
 }

@@ -91,11 +91,18 @@ impl WorkerDispatcher for AsyncWorkerPool {
                         }
                     }
                     Err(e) => {
-                        let (error_msg, is_cancelled, exc_class_name) = Python::with_gil(|py| {
+                        // Single GIL acquisition: extract the error info and the
+                        // retry decision together instead of taking the GIL twice.
+                        let (error_msg, is_cancelled, should_retry) = Python::with_gil(|py| {
                             let msg = format_python_error(py, &e);
                             let cancelled = is_cancelled_error(py, &e);
-                            let class_name = get_exception_class_name(py, &e);
-                            (msg, cancelled, class_name)
+                            let retry = if cancelled {
+                                false
+                            } else {
+                                let class_name = get_exception_class_name(py, &e);
+                                check_should_retry(py, &filters, &task_name, &class_name, &e)
+                            };
+                            (msg, cancelled, retry)
                         });
 
                         if is_cancelled {
@@ -105,10 +112,6 @@ impl WorkerDispatcher for AsyncWorkerPool {
                                 wall_time_ns,
                             }
                         } else {
-                            let should_retry = Python::with_gil(|py| {
-                                check_should_retry(py, &filters, &task_name, &exc_class_name, &e)
-                            });
-
                             log::error!("[taskito] Task {task_name}[{job_id}] failed: {error_msg}");
                             JobResult::Failure {
                                 job_id,

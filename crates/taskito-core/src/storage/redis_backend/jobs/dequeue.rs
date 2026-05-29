@@ -21,9 +21,16 @@ impl RedisStorage {
             .zrangebyscore_limit(&queue_key, "-inf", "+inf", 0, 100)
             .map_err(map_err)?;
 
-        for job_id in candidates {
-            let job_key = self.key(&["job", &job_id]);
-            let data: Option<String> = conn.get(&job_key).map_err(map_err)?;
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        // Batch-load every candidate's JSON in one MGET instead of one GET per
+        // candidate.
+        let job_keys: Vec<String> = candidates.iter().map(|id| self.key(&["job", id])).collect();
+        let blobs: Vec<Option<String>> = conn.mget(&job_keys).map_err(map_err)?;
+
+        for (job_id, data) in candidates.into_iter().zip(blobs) {
             let data = match data {
                 Some(d) => d,
                 None => {
@@ -64,24 +71,28 @@ impl RedisStorage {
                 }
             }
 
-            // Check dependencies
-            let deps_key = self.key(&["job", &job_id, "depends_on"]);
-            let dep_ids: Vec<String> = conn.smembers(&deps_key).map_err(map_err)?;
-            if !dep_ids.is_empty() {
-                let mut all_complete = true;
-                for dep_id in &dep_ids {
-                    if let Some(dep_job) = self.get_job(dep_id)? {
-                        if dep_job.status != JobStatus::Complete {
+            // Check dependencies — only for jobs that actually have them, and
+            // resolve them on the existing connection rather than opening a new
+            // one per dependency.
+            if job.has_deps {
+                let deps_key = self.key(&["job", &job_id, "depends_on"]);
+                let dep_ids: Vec<String> = conn.smembers(&deps_key).map_err(map_err)?;
+                if !dep_ids.is_empty() {
+                    let mut all_complete = true;
+                    for dep_id in &dep_ids {
+                        if let Some(dep_job) = self.load_job(&mut conn, dep_id)? {
+                            if dep_job.status != JobStatus::Complete {
+                                all_complete = false;
+                                break;
+                            }
+                        } else {
                             all_complete = false;
                             break;
                         }
-                    } else {
-                        all_complete = false;
-                        break;
                     }
-                }
-                if !all_complete {
-                    continue;
+                    if !all_complete {
+                        continue;
+                    }
                 }
             }
 

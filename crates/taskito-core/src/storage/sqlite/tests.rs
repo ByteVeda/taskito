@@ -559,3 +559,102 @@ fn test_setting_preserves_unicode_and_json() {
         Some(payload.to_string())
     );
 }
+
+#[test]
+fn test_reap_stale_jobs_only_returns_expired() {
+    let storage = test_storage();
+    let t0 = now_millis();
+
+    let mut short = make_job("short_timeout");
+    short.timeout_ms = 1;
+    storage.enqueue(short).unwrap();
+    let mut long = make_job("long_timeout");
+    long.timeout_ms = 300_000;
+    storage.enqueue(long).unwrap();
+
+    // Run both: started_at = t0 for each.
+    storage.dequeue("default", t0, None).unwrap();
+    storage.dequeue("default", t0, None).unwrap();
+
+    // Well past the short job's deadline (t0 + 1) but before the long one's.
+    let stale = storage.reap_stale_jobs(t0 + 1_000).unwrap();
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0].task_name, "short_timeout");
+}
+
+#[test]
+fn test_has_deps_flag_gates_dequeue() {
+    let storage = test_storage();
+
+    // No-dependency job: has_deps is false.
+    let plain = storage.enqueue(make_job("plain")).unwrap();
+    assert!(!plain.has_deps);
+
+    // Dependency target and dependent child, each on its own queue so the
+    // dequeue calls are unambiguous.
+    let mut target = make_job("target");
+    target.queue = "qt".to_string();
+    let target = storage.enqueue(target).unwrap();
+    let mut child = make_job("child");
+    child.queue = "q2".to_string();
+    child.depends_on = vec![target.id.clone()];
+    let child = storage.enqueue(child).unwrap();
+    assert!(child.has_deps);
+
+    let t0 = now_millis();
+    // Blocked while the dependency is incomplete.
+    assert!(storage.dequeue("q2", t0, None).unwrap().is_none());
+
+    // Complete the dependency, then the child becomes dequeueable.
+    storage.dequeue("qt", t0, None).unwrap();
+    storage.complete(&target.id, None).unwrap();
+    let got = storage.dequeue("q2", t0, None).unwrap();
+    assert_eq!(got.map(|j| j.id), Some(child.id));
+}
+
+#[test]
+fn test_enqueue_batch_crosses_chunk_boundary() {
+    let storage = test_storage();
+    // More than the 50-row insert chunk so multiple multi-row INSERTs run.
+    let count = 120;
+    let jobs: Vec<NewJob> = (0..count)
+        .map(|i| make_job(&format!("batch_{i}")))
+        .collect();
+
+    let result = storage.enqueue_batch(jobs).unwrap();
+    assert_eq!(result.len(), count);
+    assert_eq!(storage.stats().unwrap().pending, count as i64);
+}
+
+#[test]
+fn test_purge_completed_respects_per_job_ttl() {
+    let storage = test_storage();
+
+    // Completed with a 1ms TTL — should be purged once that elapses. Each on
+    // its own queue so the dequeue/complete pair is unambiguous.
+    let mut expired = make_job("ttl_expired");
+    expired.queue = "qa".to_string();
+    expired.result_ttl_ms = Some(1);
+    let expired = storage.enqueue(expired).unwrap();
+    // Completed with a far-future TTL — should survive.
+    let mut kept = make_job("ttl_kept");
+    kept.queue = "qb".to_string();
+    kept.result_ttl_ms = Some(3_600_000);
+    let kept = storage.enqueue(kept).unwrap();
+
+    // Capture `now` after enqueue so both jobs' scheduled_at are eligible.
+    let now = now_millis();
+    storage.dequeue("qa", now, None).unwrap();
+    storage.dequeue("qb", now, None).unwrap();
+    storage.complete(&expired.id, None).unwrap();
+    storage.complete(&kept.id, None).unwrap();
+
+    // Ensure the 1ms TTL has elapsed relative to purge's `now`.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // global_cutoff = 0 so only the per-job TTL path can match.
+    storage.purge_completed_with_ttl(0).unwrap();
+
+    assert!(storage.get_job(&expired.id).unwrap().is_none());
+    assert!(storage.get_job(&kept.id).unwrap().is_some());
+}

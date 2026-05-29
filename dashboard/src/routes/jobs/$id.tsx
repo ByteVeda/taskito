@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { PageHeader } from "@/components/layout";
 import {
   Badge,
@@ -33,11 +34,13 @@ export const Route = createFileRoute("/jobs/$id")({
 
 function JobDetailPage() {
   const { id } = Route.useParams();
+  const [tab, setTab] = useState("overview");
   const job = useJob(id);
-  const logs = useJobLogs(id);
-  const errors = useJobErrors(id);
-  const replays = useReplayHistory(id);
-  const dag = useJobDag(id);
+  // Each tab's data (and its polling) only fetches while that tab is open.
+  const logs = useJobLogs(id, tab === "logs");
+  const errors = useJobErrors(id, tab === "errors");
+  const replays = useReplayHistory(id, tab === "replays");
+  const dag = useJobDag(id, tab === "dag");
 
   if (job.isLoading && !job.data) {
     return (
@@ -85,7 +88,7 @@ function JobDetailPage() {
         }
       />
 
-      <Tabs defaultValue="overview">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>

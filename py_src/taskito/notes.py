@@ -74,7 +74,9 @@ def validate_and_encode_notes(notes: dict[str, Any] | None) -> str | None:
         _validate_value(key, value, depth=1)
 
     encoded = json.dumps(notes, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    encoded_bytes = len(encoded.encode("utf-8"))
+    # For the common all-ASCII payload, byte length == char length, so skip the
+    # throwaway UTF-8 encode just to measure size.
+    encoded_bytes = len(encoded) if encoded.isascii() else len(encoded.encode("utf-8"))
     if encoded_bytes > MAX_NOTE_BYTES:
         raise NotesValidationError(
             f"encoded notes are {encoded_bytes} bytes, exceeds limit of {MAX_NOTE_BYTES} bytes"

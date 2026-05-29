@@ -23,6 +23,7 @@ diesel::table! {
         expires_at -> Nullable<BigInt>,
         result_ttl_ms -> Nullable<BigInt>,
         namespace -> Nullable<Text>,
+        has_deps -> Bool,
     }
 }
 

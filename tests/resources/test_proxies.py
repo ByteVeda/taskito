@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import pytest
@@ -12,6 +13,7 @@ from taskito.proxies import ProxyRegistry, cleanup_proxies, reconstruct_proxies
 from taskito.proxies.built_in import register_builtin_handlers
 from taskito.proxies.handlers.file import FileHandler
 from taskito.proxies.handlers.logger import LoggerHandler
+from taskito.proxies.reconstruct import _ReconstructionTimeout, _run_with_timeout
 
 # ---------------------------------------------------------------------------
 # FileHandler
@@ -427,3 +429,58 @@ def test_logger_proxy_marker_production(tmp_path: Any) -> None:
     assert args[0].get("__taskito_proxy__") is True
     assert args[0]["handler"] == "logger"
     assert args[0]["recipe"]["name"] == "test.proxy.marker"
+
+
+class TestReconstructionTimeout:
+    """The reconstruction watchdog bounds caller wait time without blocking."""
+
+    def test_run_with_timeout_returns_and_propagates(self) -> None:
+        assert _run_with_timeout(lambda: 42, 1.0) == 42
+
+        def boom() -> None:
+            raise ValueError("handler failed")
+
+        with pytest.raises(ValueError, match="handler failed"):
+            _run_with_timeout(boom, 1.0)
+
+    def test_run_with_timeout_unblocks_caller_on_hang(self) -> None:
+        """A hung callable raises promptly — the caller never waits it out."""
+        started = time.monotonic()
+        with pytest.raises(_ReconstructionTimeout):
+            _run_with_timeout(lambda: time.sleep(5), 0.05)
+        # Returned on the ~0.05s budget, not after the 5s sleep.
+        assert time.monotonic() - started < 1.0
+
+    def test_slow_reconstruct_times_out_as_proxy_error(self) -> None:
+        class SlowHandler:
+            name = "slow"
+            version = 1
+            handled_types: tuple[type, ...] = ()
+
+            def detect(self, obj: Any) -> bool:
+                return False
+
+            def deconstruct(self, obj: Any) -> dict[str, Any]:
+                return {}
+
+            def reconstruct(self, recipe: dict[str, Any], version: int) -> Any:
+                time.sleep(5)
+                return "never"
+
+            def cleanup(self, obj: Any) -> None:
+                pass
+
+        reg = ProxyRegistry()
+        reg.register(SlowHandler())
+        marker = {
+            "__taskito_proxy__": True,
+            "handler": "slow",
+            "version": 1,
+            "recipe": {},
+        }
+
+        started = time.monotonic()
+        with pytest.raises(ProxyReconstructionError, match="timed out"):
+            reconstruct_proxies((marker,), {}, reg, max_timeout=1)
+        # Surfaced on the 1s budget rather than blocking for the 5s sleep.
+        assert time.monotonic() - started < 3.0

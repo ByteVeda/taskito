@@ -151,6 +151,7 @@ def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
     registry: dict[str, Any] = {"test_mod.my_task": FakeWrapper()}
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -193,6 +194,7 @@ def test_async_exception_reported(poll_until: PollUntil) -> None:
     registry: dict[str, Any] = {"mod.failing_task": FakeWrapper()}
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -234,6 +236,7 @@ def test_async_cancellation(poll_until: PollUntil) -> None:
     registry: dict[str, Any] = {"mod.cancelling_task": FakeWrapper()}
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -272,6 +275,7 @@ def test_async_retry_filter(poll_until: PollUntil) -> None:
     registry: dict[str, Any] = {"mod.flaky_task": FakeWrapper()}
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -322,6 +326,7 @@ def test_async_concurrency_limit(poll_until: PollUntil) -> None:
     registry: dict[str, Any] = {"mod.slow_task": FakeWrapper()}
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -377,6 +382,7 @@ def test_async_middleware_hooks(poll_until: PollUntil) -> None:
     registry: dict[str, Any] = {"mod.simple_task": FakeWrapper()}
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -417,6 +423,7 @@ def test_async_task_with_injection(poll_until: PollUntil) -> None:
     fake_db = "fake-conn"
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -462,6 +469,7 @@ def test_async_context_available_inside_task(poll_until: PollUntil) -> None:
     registry: dict[str, Any] = {"mod.ctx_task": FakeWrapper()}
 
     queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -492,3 +500,49 @@ def test_async_concurrency_default(tmp_path: Path) -> None:
     """Default async_concurrency is 100."""
     queue = Queue(db_path=str(tmp_path / "test.db"))
     assert queue._async_concurrency == 100
+
+
+def test_async_executor_honors_per_task_serializer(poll_until: PollUntil) -> None:
+    """Regression: the async executor deserializes via
+    ``queue._deserialize_payload`` (honoring ``@task(serializer=...)``) rather
+    than a hardcoded ``cloudpickle.loads``."""
+    import cloudpickle
+
+    from taskito.async_support.executor import AsyncTaskExecutor
+    from taskito.serializers import JsonSerializer
+
+    sender = MagicMock()
+    serializer = JsonSerializer()
+
+    async def add(x: int, y: int) -> int:
+        return x + y
+
+    class FakeWrapper:
+        _taskito_async_fn = staticmethod(add)
+
+    registry: dict[str, Any] = {"mod.add": FakeWrapper()}
+
+    queue_ref = MagicMock()
+    # Route deserialization through a NON-cloudpickle serializer; a hardcoded
+    # cloudpickle.loads would raise on this JSON payload.
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: serializer.loads(data)
+    queue_ref._interceptor = None
+    queue_ref._proxy_registry = None
+    queue_ref._test_mode_active = False
+    queue_ref._resource_runtime = None
+    queue_ref._task_inject_map = {}
+    queue_ref._task_retry_filters = {}
+    queue_ref._get_middleware_chain.return_value = []
+    queue_ref._proxy_metrics = None
+
+    executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
+    executor.start()
+
+    payload = serializer.dumps(([2, 3], {}))
+    executor.submit_job("ser-job", "mod.add", payload, 0, 3, "default")
+    poll_until(lambda: sender.report_success.called, message="ser-job result not reported")
+    executor.stop()
+
+    queue_ref._deserialize_payload.assert_called_once_with("mod.add", payload)
+    result = cloudpickle.loads(sender.report_success.call_args[0][2])
+    assert result == 5

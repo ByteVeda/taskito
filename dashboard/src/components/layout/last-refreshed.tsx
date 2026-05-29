@@ -17,10 +17,30 @@ export function LastRefreshed({ className }: { className?: string }) {
   const { lastRefreshedAt, isFetching } = useLastRefreshed();
   const [, setTick] = useState(0);
 
+  // Re-render only as often as the label can actually change: every second
+  // while the "Ns ago" portion ticks, then minute- and hour-granularity once
+  // the timestamp ages. Avoids a fixed 1s re-render forever.
   useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
+    if (isFetching) return;
+    let id: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      const age = Date.now() - lastRefreshedAt;
+      // Fire at the next boundary the label actually changes on, so it never
+      // lags by almost a full bucket.
+      const delay =
+        age < 60_000
+          ? 1_000 - (age % 1_000)
+          : age < 3_600_000
+            ? 60_000 - (age % 60_000)
+            : 3_600_000 - (age % 3_600_000);
+      id = setTimeout(() => {
+        setTick((n) => n + 1);
+        schedule();
+      }, delay);
+    };
+    schedule();
+    return () => clearTimeout(id);
+  }, [isFetching, lastRefreshedAt]);
 
   const label = isFetching ? "Refreshing…" : `Updated ${formatAgo(Date.now() - lastRefreshedAt)}`;
 

@@ -8,6 +8,9 @@ from typing import Any
 
 from taskito.interception.strategy import Strategy
 
+# Sentinel distinguishing "not cached" from "cached as no-match (None)".
+_UNCACHED = object()
+
 
 @dataclass
 class RegistryEntry:
@@ -36,6 +39,9 @@ class TypeRegistry:
     def __init__(self) -> None:
         self._entries: list[RegistryEntry] = []
         self._sorted = False
+        # Memoize resolution per concrete object type — the result for a given
+        # type is stable until the registry changes. Cleared on register().
+        self._cache: dict[type, RegistryEntry | None] = {}
 
     def register(
         self,
@@ -68,20 +74,30 @@ class TypeRegistry:
         )
         self._entries.append(entry)
         self._sorted = False
+        self._cache.clear()
 
     def resolve(self, obj: Any) -> RegistryEntry | None:
         """Find the highest-priority entry matching ``obj``."""
         if not self._sorted:
             self._entries.sort(key=lambda e: e.priority, reverse=True)
             self._sorted = True
+
+        obj_type = type(obj)
+        cached = self._cache.get(obj_type, _UNCACHED)
+        if cached is not _UNCACHED:
+            return cached  # type: ignore[return-value]
+
+        result: RegistryEntry | None = None
         for entry in self._entries:
             try:
                 if isinstance(obj, entry.types):
-                    return entry
+                    result = entry
+                    break
             except TypeError:
                 # Entry contains a non-type — skip it
                 continue
-        return None
+        self._cache[obj_type] = result
+        return result
 
     def __len__(self) -> int:
         return len(self._entries)

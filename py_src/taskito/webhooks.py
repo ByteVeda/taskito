@@ -128,6 +128,11 @@ class WebhookManager:
 
     def notify(self, event_type: EventType, payload: dict[str, Any]) -> None:
         """Queue an event for delivery to matching webhooks."""
+        # Fast path: no subscriptions → skip the lock and list copy entirely.
+        # The unlocked read is a benign race; a webhook added concurrently is
+        # picked up by the next event.
+        if not self._webhooks:
+            return
         with self._lock:
             webhooks = list(self._webhooks)
         task_name = payload.get("task_name")

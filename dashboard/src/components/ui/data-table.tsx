@@ -8,7 +8,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { cn } from "@/lib/cn";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
 
@@ -22,7 +22,7 @@ interface DataTableProps<TData> {
   initialSorting?: SortingState;
 }
 
-export function DataTable<TData>({
+function DataTableImpl<TData>({
   columns,
   data,
   empty,
@@ -126,3 +126,9 @@ export function DataTable<TData>({
     </div>
   );
 }
+
+// Memoized so unrelated parent re-renders (e.g. the polling clock) don't
+// re-render the whole table. The cast preserves the generic call signature
+// that React.memo otherwise erases. Relies on callers passing stable
+// `columns`/`onRowClick` (via useMemo/useCallback) to actually skip renders.
+export const DataTable = memo(DataTableImpl) as typeof DataTableImpl;
