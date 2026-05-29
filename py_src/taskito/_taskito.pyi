@@ -91,6 +91,7 @@ class PyQueue:
         scheduler_poll_interval_ms: int = 50,
         scheduler_reap_interval: int = 100,
         scheduler_cleanup_interval: int = 1200,
+        scheduler_batch_size: int = 1,
         namespace: str | None = None,
     ) -> None: ...
     def request_shutdown(self) -> None: ...

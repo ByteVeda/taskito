@@ -363,6 +363,128 @@ macro_rules! impl_diesel_job_ops {
                 Ok(None)
             }
 
+            /// Atomically claim up to `max` ready jobs from a single queue in
+            /// one transaction. Generalizes `dequeue` to the batch case: scans
+            /// a bounded candidate set and claims eligible rows until the
+            /// budget is met or candidates are exhausted.
+            ///
+            /// Each claim uses an `UPDATE ... WHERE status = Pending` guarded
+            /// by the affected-row count: if another worker already moved the
+            /// row out of `Pending`, the update affects zero rows and the
+            /// candidate is skipped — avoiding a double-claim race.
+            pub fn dequeue_batch(
+                &self,
+                queue_name: &str,
+                now: i64,
+                namespace: Option<&str>,
+                max: usize,
+            ) -> Result<Vec<Job>> {
+                if max == 0 {
+                    return Ok(Vec::new());
+                }
+
+                // Scan more candidates than `max` so dependency/expiry skips
+                // still leave enough eligible rows to fill the batch, bounded
+                // to keep the loaded set small.
+                let scan_limit = (max.saturating_mul(4)).min(400) as i64;
+
+                let mut conn = self.conn()?;
+
+                conn.transaction(|conn| {
+                    let mut query = jobs::table
+                        .filter(jobs::queue.eq(queue_name))
+                        .filter(jobs::status.eq(JobStatus::Pending as i32))
+                        .filter(jobs::scheduled_at.le(now))
+                        .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+                        .limit(scan_limit)
+                        .into_boxed();
+
+                    if let Some(ns) = namespace {
+                        query = query.filter(jobs::namespace.eq(ns));
+                    } else {
+                        query = query.filter(jobs::namespace.is_null());
+                    }
+
+                    let candidates: Vec<JobRow> = query.select(JobRow::as_select()).load(conn)?;
+
+                    let mut claimed: Vec<Job> = Vec::with_capacity(max.min(candidates.len()));
+
+                    for row in candidates {
+                        if claimed.len() == max {
+                            break;
+                        }
+
+                        // Skip expired jobs (and mark them cancelled).
+                        if let Some(expires_at) = row.expires_at {
+                            if now > expires_at {
+                                diesel::update(jobs::table)
+                                    .filter(jobs::id.eq(&row.id))
+                                    .set((
+                                        jobs::status.eq(JobStatus::Cancelled as i32),
+                                        jobs::completed_at.eq(now),
+                                        jobs::error.eq("expired before execution"),
+                                    ))
+                                    .execute(conn)?;
+                                continue;
+                            }
+                        }
+
+                        // Common case: jobs with no dependencies skip the
+                        // job_dependencies lookup entirely.
+                        if row.has_deps && !Self::deps_satisfied(conn, &row.id)? {
+                            continue;
+                        }
+
+                        // Claim guarded by the affected-row count: if another
+                        // worker already moved this row out of `Pending`, the
+                        // update touches zero rows — skip it rather than
+                        // claiming a job we don't own.
+                        let affected = diesel::update(jobs::table)
+                            .filter(jobs::id.eq(&row.id))
+                            .filter(jobs::status.eq(JobStatus::Pending as i32))
+                            .set((
+                                jobs::status.eq(JobStatus::Running as i32),
+                                jobs::started_at.eq(now),
+                            ))
+                            .execute(conn)?;
+
+                        if affected == 0 {
+                            continue;
+                        }
+
+                        let updated: JobRow = jobs::table
+                            .find(&row.id)
+                            .select(JobRow::as_select())
+                            .first(conn)?;
+
+                        claimed.push(Job::from(updated));
+                    }
+
+                    Ok(claimed)
+                })
+            }
+
+            /// Claim up to `max` ready jobs across the given queues, checking
+            /// each in order until the budget is exhausted.
+            pub fn dequeue_batch_from(
+                &self,
+                queues: &[String],
+                now: i64,
+                namespace: Option<&str>,
+                max: usize,
+            ) -> Result<Vec<Job>> {
+                let mut claimed: Vec<Job> = Vec::new();
+                for queue_name in queues {
+                    if claimed.len() >= max {
+                        break;
+                    }
+                    let remaining = max - claimed.len();
+                    let mut batch = self.dequeue_batch(queue_name, now, namespace, remaining)?;
+                    claimed.append(&mut batch);
+                }
+                Ok(claimed)
+            }
+
             /// Mark a job as complete with the given result.
             pub fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
                 let now = now_millis();

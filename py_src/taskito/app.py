@@ -133,6 +133,7 @@ class Queue(
         scheduler_poll_interval_ms: int = 50,
         scheduler_reap_interval: int = 100,
         scheduler_cleanup_interval: int = 1200,
+        scheduler_batch_size: int = 1,
         namespace: str | None = None,
     ):
         """Initialize a new task queue.
@@ -180,6 +181,9 @@ class Queue(
                 (default 100).
             scheduler_cleanup_interval: Cleanup old jobs every N poll iterations
                 (default 1200).
+            scheduler_batch_size: Maximum number of jobs the scheduler claims
+                per dispatch round. ``1`` (default) preserves one-job-per-round
+                behavior; higher values batch-claim for greater throughput.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -201,6 +205,7 @@ class Queue(
             scheduler_poll_interval_ms=scheduler_poll_interval_ms,
             scheduler_reap_interval=scheduler_reap_interval,
             scheduler_cleanup_interval=scheduler_cleanup_interval,
+            scheduler_batch_size=scheduler_batch_size,
             namespace=namespace,
         )
         self._backend = backend

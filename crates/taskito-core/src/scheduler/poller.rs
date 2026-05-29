@@ -43,6 +43,61 @@ impl Scheduler {
             None => return Ok(false),
         };
 
+        self.gate_and_dispatch(job, now, job_tx)
+    }
+
+    /// Batch variant of [`try_dispatch`]. Claims up to `batch_size` jobs in a
+    /// single round-trip, then runs the exact same per-job gate/claim/
+    /// concurrency/dispatch logic the single path uses. The pre-sized batch is
+    /// advisory only — the hard per-task and per-queue caps are still enforced
+    /// per job after the claim, rolling back any job that exceeds a limit.
+    pub(super) fn try_dispatch_batch(
+        &self,
+        job_tx: &tokio::sync::mpsc::Sender<Job>,
+    ) -> Result<bool> {
+        let now = now_millis();
+
+        let active_queues = self.active_queues();
+        if active_queues.is_empty() {
+            return Ok(false);
+        }
+
+        // Size the batch to the worker pool's free capacity so we never claim
+        // more jobs than the channel can immediately accept. `try_send` still
+        // guards each hand-off, but pre-sizing avoids needless claim/rollback
+        // churn. Always claim at least one.
+        let budget = self.config.batch_size.min(job_tx.capacity().max(1));
+
+        let jobs = self.storage.dequeue_batch_from(
+            &active_queues,
+            now,
+            self.namespace.as_deref(),
+            budget,
+        )?;
+        if jobs.is_empty() {
+            return Ok(false);
+        }
+
+        let mut dispatched_any = false;
+        for job in jobs {
+            if self.gate_and_dispatch(job, now, job_tx)? {
+                dispatched_any = true;
+            }
+        }
+        Ok(dispatched_any)
+    }
+
+    /// Run the post-dequeue pipeline for a single already-claimed (Running)
+    /// job: soft pre-claim gates, exactly-once claim, hard concurrency caps,
+    /// and hand-off to the worker pool. Returns `Ok(true)` if the job was
+    /// dispatched, `Ok(false)` if it was gated/rolled back. Shared by both the
+    /// single and batch dispatch paths so limit enforcement never drifts.
+    fn gate_and_dispatch(
+        &self,
+        job: Job,
+        now: i64,
+        job_tx: &tokio::sync::mpsc::Sender<Job>,
+    ) -> Result<bool> {
         // Pre-claim soft gates: rate limits and circuit breaker.
         //
         // These don't need to be atomic with the claim — if two schedulers
@@ -60,7 +115,7 @@ impl Scheduler {
 
         // Post-claim hard gate: concurrency caps must be checked AFTER the
         // claim so two schedulers cannot both pass the cap. Status was
-        // already transitioned to `Running` by `dequeue_from`, so the
+        // already transitioned to `Running` by the dequeue, so the
         // running-count includes this job — use strict `>` to allow exactly
         // `max_concurrent` jobs.
         //

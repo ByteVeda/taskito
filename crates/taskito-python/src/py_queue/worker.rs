@@ -214,6 +214,7 @@ impl PyQueue {
             reap_interval: self.scheduler_reap_interval,
             cleanup_interval: self.scheduler_cleanup_interval,
             result_ttl_ms: self.result_ttl_ms,
+            batch_size: self.scheduler_batch_size,
             ..SchedulerConfig::default()
         };
         let mut scheduler = Scheduler::new(
