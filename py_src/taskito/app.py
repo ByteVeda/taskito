@@ -52,7 +52,7 @@ from taskito.proxies import ProxyRegistry
 from taskito.proxies.built_in import register_builtin_handlers
 from taskito.proxies.metrics import ProxyMetrics
 from taskito.result import JobResult
-from taskito.serializers import CloudpickleSerializer, Serializer
+from taskito.serializers import Serializer, SmartSerializer
 from taskito.webhooks import WebhookManager
 
 if TYPE_CHECKING:
@@ -147,7 +147,8 @@ class Queue(
             default_priority: Default task priority (higher = more urgent).
             result_ttl: Auto-cleanup completed/dead jobs older than this many
                 seconds. None disables auto-cleanup.
-            serializer: Serializer for task payloads. Defaults to CloudpickleSerializer.
+            serializer: Serializer for task payloads. Defaults to SmartSerializer
+                (msgpack with cloudpickle fallback).
             middleware: List of global middleware instances applied to all tasks.
             backend: Storage backend — ``"sqlite"`` (default) or ``"postgres"``.
             db_url: PostgreSQL connection URL (required when backend is ``"postgres"``).
@@ -218,7 +219,7 @@ class Queue(
             "on_success": [],
             "on_failure": [],
         }
-        self._serializer: Serializer = serializer or CloudpickleSerializer()
+        self._serializer: Serializer = serializer or SmartSerializer()
         self._task_serializers: dict[str, Serializer] = {}
         self._task_idempotent: dict[str, bool] = {}
         self._task_compensates: dict[str, str] = {}
@@ -386,8 +387,15 @@ class Queue(
             self._batch_accumulator = None
 
     def _deserialize_payload(self, task_name: str, payload: bytes) -> tuple:
-        """Deserialize a job payload using the per-task or queue-level serializer."""
-        return self._get_serializer(task_name).loads(payload)  # type: ignore[no-any-return]
+        """Deserialize a job payload into an ``(args, kwargs)`` pair.
+
+        Serializers without a native tuple type (msgpack, JSON) flatten the
+        payload to ``[args, kwargs]`` with ``args`` as a list. The worker hands
+        ``args`` straight to PyO3, which requires a real tuple, so the shape is
+        normalized back to ``(tuple, dict)`` here regardless of serializer.
+        """
+        args, kwargs = self._get_serializer(task_name).loads(payload)
+        return tuple(args), kwargs
 
     def enqueue(
         self,
