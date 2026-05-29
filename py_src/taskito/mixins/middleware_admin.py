@@ -15,6 +15,12 @@ class QueueMiddlewareAdminMixin:
 
     _global_middleware: list[TaskMiddleware]
     _task_middleware: dict[str, list[TaskMiddleware]]
+    _mw_disable_version: int
+
+    def _bump_mw_disable_version(self) -> None:
+        """Invalidate the per-task middleware-chain cache for same-process
+        readers after a disable-list change."""
+        self._mw_disable_version += 1
 
     # ── Discovery ──────────────────────────────────────────────────
 
@@ -57,14 +63,20 @@ class QueueMiddlewareAdminMixin:
         return MiddlewareDisableStore(self).get_for(task_name)  # type: ignore[arg-type]
 
     def disable_middleware_for_task(self, task_name: str, mw_name: str) -> list[str]:
-        return MiddlewareDisableStore(self).set_disabled(  # type: ignore[arg-type]
+        result = MiddlewareDisableStore(self).set_disabled(  # type: ignore[arg-type]
             task_name, mw_name, disabled=True
         )
+        self._bump_mw_disable_version()
+        return result
 
     def enable_middleware_for_task(self, task_name: str, mw_name: str) -> list[str]:
-        return MiddlewareDisableStore(self).set_disabled(  # type: ignore[arg-type]
+        result = MiddlewareDisableStore(self).set_disabled(  # type: ignore[arg-type]
             task_name, mw_name, disabled=False
         )
+        self._bump_mw_disable_version()
+        return result
 
     def clear_middleware_disables(self, task_name: str) -> bool:
-        return MiddlewareDisableStore(self).clear_for(task_name)  # type: ignore[arg-type]
+        result = MiddlewareDisableStore(self).clear_for(task_name)  # type: ignore[arg-type]
+        self._bump_mw_disable_version()
+        return result

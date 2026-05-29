@@ -53,6 +53,10 @@ logger = logging.getLogger("taskito")
 # `CELERYD_TASK_LOG_FORMAT` truncation in spirit.
 _MAX_RESULT_REPR = 80
 
+# How long a cached middleware chain stays valid without a version bump. Bounds
+# the worst-case lag for an out-of-process dashboard disable change.
+_MW_CHAIN_TTL = 1.0
+
 
 def _safe_result_repr(value: Any) -> str:
     """Render a task return value for the success log, bounded and crash-proof."""
@@ -123,19 +127,38 @@ class QueueDecoratorMixin:
     # serializer. Declared here so mypy sees it through the mixin.
     _apply_dispatch_predicate: Callable[..., None]
 
+    # Middleware-chain cache state (initialized in ``Queue.__init__``).
+    _mw_chain_cache: dict[str, tuple[list[TaskMiddleware], int, float]]
+    _mw_disable_version: int
+
     def _get_middleware_chain(self, task_name: str) -> list[TaskMiddleware]:
         """Get the combined global + per-task middleware list, minus any
-        middleware the operator has disabled for this task from the dashboard."""
+        middleware the operator has disabled for this task from the dashboard.
+
+        Cached per task to avoid a synchronous storage read on every job
+        dispatch. The cache is invalidated immediately on same-process disable
+        changes (via ``_mw_disable_version``) and expires after
+        ``_MW_CHAIN_TTL`` so out-of-process changes still take effect promptly.
+        """
+        version = self._mw_disable_version
+        cached = self._mw_chain_cache.get(task_name)
+        if cached is not None:
+            chain, cached_version, computed_at = cached
+            if cached_version == version and time.monotonic() - computed_at < _MW_CHAIN_TTL:
+                return chain
+
         per_task = self._task_middleware.get(task_name, [])
         chain = self._global_middleware + per_task
         try:
             disabled = MiddlewareDisableStore(self).get_for(task_name)  # type: ignore[arg-type]
         except Exception:  # pragma: no cover - storage read failure is non-fatal
             disabled = []
-        if not disabled:
-            return chain
-        disabled_set = set(disabled)
-        return [mw for mw in chain if getattr(mw, "name", "") not in disabled_set]
+        if disabled:
+            disabled_set = set(disabled)
+            chain = [mw for mw in chain if getattr(mw, "name", "") not in disabled_set]
+
+        self._mw_chain_cache[task_name] = (chain, version, time.monotonic())
+        return chain
 
     def _wrap_task(
         self, fn: Callable, task_name: str, soft_timeout: float | None = None
