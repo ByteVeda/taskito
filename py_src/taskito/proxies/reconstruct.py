@@ -181,6 +181,10 @@ def _reconstruct_one(
             try:
                 obj = future.result(timeout=max_timeout)
             except FuturesTimeout:
+                # Frees the slot if the task hasn't started; a started
+                # reconstruction can't be interrupted (thread pools don't
+                # support termination), so handlers should bound their own I/O.
+                future.cancel()
                 raise ProxyReconstructionError(
                     f"Reconstruction of '{handler_name}' timed out after {max_timeout}s"
                 ) from None
