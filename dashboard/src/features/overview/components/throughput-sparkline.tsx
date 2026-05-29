@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, ErrorState, Skeleton } from "@/components/ui";
 import type { TimeseriesBucket } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
@@ -17,9 +17,9 @@ export function ThroughputSparkline({
   error,
   onRetry,
 }: ThroughputSparklineProps) {
-  const points = buckets ?? [];
-  const total = points.reduce((sum, b) => sum + b.count, 0);
-  const peak = points.reduce((max, b) => Math.max(max, b.count), 0);
+  const points = useMemo(() => buckets ?? [], [buckets]);
+  const total = useMemo(() => points.reduce((sum, b) => sum + b.count, 0), [points]);
+  const peak = useMemo(() => points.reduce((max, b) => Math.max(max, b.count), 0), [points]);
 
   if (error) {
     return (
@@ -54,29 +54,30 @@ export function ThroughputSparkline({
   );
 }
 
+const SPARK_WIDTH = 800;
+const SPARK_HEIGHT = 80;
+
 function Sparkline({ buckets }: { buckets: TimeseriesBucket[] }) {
-  const width = 800;
-  const height = 80;
-  const maxCount = Math.max(1, ...buckets.map((b) => b.count));
-  const step = buckets.length > 1 ? width / (buckets.length - 1) : 0;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // Unique per instance so multiple sparklines don't share one gradient <defs>.
+  const gradientId = `sparkline-fill-${useId().replace(/:/g, "")}`;
 
-  const areaPath = buckets
-    .map((b, i) => {
+  // Geometry depends only on the data — recompute on new buckets, not on hover.
+  const { areaPath, linePath } = useMemo(() => {
+    const maxCount = Math.max(1, ...buckets.map((b) => b.count));
+    const step = buckets.length > 1 ? SPARK_WIDTH / (buckets.length - 1) : 0;
+    const points = buckets.map((b, i) => {
       const x = i * step;
-      const y = height - (b.count / maxCount) * height;
+      const y = SPARK_HEIGHT - (b.count / maxCount) * SPARK_HEIGHT;
       return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .concat([`L ${width} ${height}`, `L 0 ${height}`, "Z"])
-    .join(" ");
-
-  const linePath = buckets
-    .map((b, i) => {
-      const x = i * step;
-      const y = height - (b.count / maxCount) * height;
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
+    });
+    return {
+      areaPath: points
+        .concat([`L ${SPARK_WIDTH} ${SPARK_HEIGHT}`, `L 0 ${SPARK_HEIGHT}`, "Z"])
+        .join(" "),
+      linePath: points.join(" "),
+    };
+  }, [buckets]);
 
   const startLabel = buckets[0] ? formatRelative(buckets[0].timestamp) : "";
   const endLabel = "now";
@@ -103,19 +104,19 @@ function Sparkline({ buckets }: { buckets: TimeseriesBucket[] }) {
       onMouseLeave={() => setHoverIdx(null)}
     >
       <svg
-        viewBox={`0 0 ${width} ${height}`}
+        viewBox={`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`}
         role="img"
         aria-label="Throughput over the last hour"
         className="h-20 w-full"
         preserveAspectRatio="none"
       >
         <defs>
-          <linearGradient id="sparkline-fill" x1="0" x2="0" y1="0" y2="1">
+          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.3" />
             <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0" />
           </linearGradient>
         </defs>
-        <path d={areaPath} fill="url(#sparkline-fill)" />
+        <path d={areaPath} fill={`url(#${gradientId})`} />
         <path
           d={linePath}
           fill="none"
