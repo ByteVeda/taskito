@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-use crate::storage::models::JobRow;
+use crate::storage::models::{ArchivedJobRow, JobRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(i32)]
@@ -122,6 +122,38 @@ impl From<JobRow> for Job {
             result_ttl_ms: row.result_ttl_ms,
             namespace: row.namespace,
             has_deps: row.has_deps,
+        }
+    }
+}
+
+impl From<ArchivedJobRow> for Job {
+    fn from(row: ArchivedJobRow) -> Self {
+        Self {
+            id: row.id,
+            queue: row.queue,
+            task_name: row.task_name,
+            payload: row.payload,
+            status: JobStatus::from_i32(row.status).unwrap_or(JobStatus::Pending),
+            priority: row.priority,
+            created_at: row.created_at,
+            scheduled_at: row.scheduled_at,
+            started_at: row.started_at,
+            completed_at: row.completed_at,
+            retry_count: row.retry_count,
+            max_retries: row.max_retries,
+            result: row.result,
+            error: row.error,
+            timeout_ms: row.timeout_ms,
+            unique_key: row.unique_key,
+            progress: row.progress,
+            metadata: row.metadata,
+            notes: row.notes,
+            cancel_requested: row.cancel_requested != 0,
+            expires_at: row.expires_at,
+            result_ttl_ms: row.result_ttl_ms,
+            namespace: row.namespace,
+            // Archived jobs are terminal and never re-dequeued.
+            has_deps: false,
         }
     }
 }

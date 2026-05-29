@@ -144,6 +144,12 @@ impl PostgresStorage {
         for sql in common_migrations::backfill_statements() {
             diesel::sql_query(*sql).execute(&mut conn)?;
         }
+        drop(conn);
+
+        // Drain any pre-existing terminal jobs left in `jobs` by older
+        // versions into `archived_jobs`. Terminal jobs now live there from the
+        // moment they transition; this one-time sweep migrates the backlog.
+        self.archive_old_jobs(i64::MAX)?;
 
         Ok(())
     }

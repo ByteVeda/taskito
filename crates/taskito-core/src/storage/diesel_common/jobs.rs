@@ -35,6 +35,47 @@ macro_rules! impl_diesel_job_ops {
                 Ok(())
             }
 
+            /// Move an already-loaded job row into `archived_jobs` and delete it
+            /// from `jobs`, inside the caller's transaction. Terminal jobs live
+            /// in `archived_jobs` so the live `jobs` table only ever holds
+            /// pending/running rows that the dequeue index must scan.
+            pub(crate) fn archive_job_row(
+                conn: &mut $conn_type,
+                row: &JobRow,
+            ) -> diesel::result::QueryResult<()> {
+                let archived = NewArchivedJobRow {
+                    id: &row.id,
+                    queue: &row.queue,
+                    task_name: &row.task_name,
+                    payload: &row.payload,
+                    status: row.status,
+                    priority: row.priority,
+                    created_at: row.created_at,
+                    scheduled_at: row.scheduled_at,
+                    started_at: row.started_at,
+                    completed_at: row.completed_at,
+                    retry_count: row.retry_count,
+                    max_retries: row.max_retries,
+                    result: row.result.as_deref(),
+                    error: row.error.as_deref(),
+                    timeout_ms: row.timeout_ms,
+                    unique_key: row.unique_key.as_deref(),
+                    progress: row.progress,
+                    metadata: row.metadata.as_deref(),
+                    notes: row.notes.as_deref(),
+                    cancel_requested: row.cancel_requested,
+                    expires_at: row.expires_at,
+                    result_ttl_ms: row.result_ttl_ms,
+                    namespace: row.namespace.as_deref(),
+                };
+
+                diesel::insert_into(archived_jobs::table)
+                    .values(&archived)
+                    .execute(conn)?;
+                diesel::delete(jobs::table.filter(jobs::id.eq(&row.id))).execute(conn)?;
+                Ok(())
+            }
+
             fn deps_satisfied(
                 conn: &mut $conn_type,
                 job_id: &str,
@@ -304,19 +345,14 @@ macro_rules! impl_diesel_job_ops {
 
                     let candidates: Vec<JobRow> = query.select(JobRow::as_select()).load(conn)?;
 
-                    for row in candidates {
-                        // Skip expired jobs
+                    for mut row in candidates {
+                        // Skip expired jobs — archive them as cancelled.
                         if let Some(expires_at) = row.expires_at {
                             if now > expires_at {
-                                // Mark as cancelled (expired)
-                                diesel::update(jobs::table)
-                                    .filter(jobs::id.eq(&row.id))
-                                    .set((
-                                        jobs::status.eq(JobStatus::Cancelled as i32),
-                                        jobs::completed_at.eq(now),
-                                        jobs::error.eq("expired before execution"),
-                                    ))
-                                    .execute(conn)?;
+                                row.status = JobStatus::Cancelled as i32;
+                                row.completed_at = Some(now);
+                                row.error = Some("expired before execution".to_string());
+                                Self::archive_job_row(conn, &row)?;
                                 continue;
                             }
                         }
@@ -485,46 +521,54 @@ macro_rules! impl_diesel_job_ops {
                 Ok(claimed)
             }
 
-            /// Mark a job as complete with the given result.
+            /// Mark a job as complete with the given result. The job moves from
+            /// `jobs` into `archived_jobs` in a single transaction.
             pub fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
                 let now = now_millis();
-                let mut conn = self.conn()?;
 
-                let affected = diesel::update(jobs::table)
-                    .filter(jobs::id.eq(id))
-                    .filter(jobs::status.eq(JobStatus::Running as i32))
-                    .set((
-                        jobs::status.eq(JobStatus::Complete as i32),
-                        jobs::completed_at.eq(now),
-                        jobs::result.eq(result_bytes),
-                    ))
-                    .execute(&mut conn)?;
+                self.archive_transaction(|conn| {
+                    let mut row: JobRow = match jobs::table
+                        .find(id)
+                        .filter(jobs::status.eq(JobStatus::Running as i32))
+                        .select(JobRow::as_select())
+                        .first(conn)
+                        .optional()?
+                    {
+                        Some(row) => row,
+                        None => return Err(QueueError::JobNotFound(id.to_string())),
+                    };
 
-                if affected == 0 {
-                    return Err(QueueError::JobNotFound(id.to_string()));
-                }
-                Ok(())
+                    row.status = JobStatus::Complete as i32;
+                    row.completed_at = Some(now);
+                    row.result = result_bytes;
+                    Self::archive_job_row(conn, &row)?;
+                    Ok(())
+                })
             }
 
-            /// Mark a job as failed with the given error message.
+            /// Mark a job as failed with the given error message. The job moves
+            /// from `jobs` into `archived_jobs` in a single transaction.
             pub fn fail(&self, id: &str, error: &str) -> Result<()> {
                 let now = now_millis();
-                let mut conn = self.conn()?;
 
-                let affected = diesel::update(jobs::table)
-                    .filter(jobs::id.eq(id))
-                    .filter(jobs::status.eq(JobStatus::Running as i32))
-                    .set((
-                        jobs::status.eq(JobStatus::Failed as i32),
-                        jobs::completed_at.eq(now),
-                        jobs::error.eq(error),
-                    ))
-                    .execute(&mut conn)?;
+                self.archive_transaction(|conn| {
+                    let mut row: JobRow = match jobs::table
+                        .find(id)
+                        .filter(jobs::status.eq(JobStatus::Running as i32))
+                        .select(JobRow::as_select())
+                        .first(conn)
+                        .optional()?
+                    {
+                        Some(row) => row,
+                        None => return Err(QueueError::JobNotFound(id.to_string())),
+                    };
 
-                if affected == 0 {
-                    return Err(QueueError::JobNotFound(id.to_string()));
-                }
-                Ok(())
+                    row.status = JobStatus::Failed as i32;
+                    row.completed_at = Some(now);
+                    row.error = Some(error.to_string());
+                    Self::archive_job_row(conn, &row)?;
+                    Ok(())
+                })
             }
 
             /// Re-schedule a job for retry.
@@ -549,26 +593,34 @@ macro_rules! impl_diesel_job_ops {
                 Ok(())
             }
 
-            /// Cancel a pending job and cascade-cancel its dependents.
+            /// Cancel a pending job and cascade-cancel its dependents. The
+            /// cancelled job moves from `jobs` into `archived_jobs`.
             pub fn cancel_job(&self, id: &str) -> Result<bool> {
                 let now = now_millis();
-                let mut conn = self.conn()?;
 
-                let affected = diesel::update(jobs::table)
-                    .filter(jobs::id.eq(id))
-                    .filter(jobs::status.eq(JobStatus::Pending as i32))
-                    .set((
-                        jobs::status.eq(JobStatus::Cancelled as i32),
-                        jobs::completed_at.eq(now),
-                    ))
-                    .execute(&mut conn)?;
+                let archived = self.archive_transaction(|conn| {
+                    let mut row: JobRow = match jobs::table
+                        .find(id)
+                        .filter(jobs::status.eq(JobStatus::Pending as i32))
+                        .select(JobRow::as_select())
+                        .first(conn)
+                        .optional()?
+                    {
+                        Some(row) => row,
+                        None => return Ok(false),
+                    };
 
-                drop(conn);
-                if affected > 0 {
+                    row.status = JobStatus::Cancelled as i32;
+                    row.completed_at = Some(now);
+                    Self::archive_job_row(conn, &row)?;
+                    Ok(true)
+                })?;
+
+                if archived {
                     self.cascade_cancel(id, "dependency cancelled")?;
                 }
 
-                Ok(affected > 0)
+                Ok(archived)
             }
 
             /// Request cancellation of a running job. The task must check for this.
@@ -597,21 +649,28 @@ macro_rules! impl_diesel_job_ops {
                 Ok(val.unwrap_or(0) != 0)
             }
 
-            /// Mark a job as cancelled (used when a running job detects cancellation).
+            /// Mark a job as cancelled (used when a running job detects
+            /// cancellation). The job moves from `jobs` into `archived_jobs`.
             pub fn mark_cancelled(&self, id: &str) -> Result<()> {
                 let now = now_millis();
-                let mut conn = self.conn()?;
 
-                diesel::update(jobs::table)
-                    .filter(jobs::id.eq(id))
-                    .set((
-                        jobs::status.eq(JobStatus::Cancelled as i32),
-                        jobs::completed_at.eq(now),
-                        jobs::error.eq("cancelled by request"),
-                    ))
-                    .execute(&mut conn)?;
+                self.archive_transaction(|conn| {
+                    let mut row: JobRow = match jobs::table
+                        .find(id)
+                        .select(JobRow::as_select())
+                        .first(conn)
+                        .optional()?
+                    {
+                        Some(row) => row,
+                        None => return Ok(()),
+                    };
 
-                Ok(())
+                    row.status = JobStatus::Cancelled as i32;
+                    row.completed_at = Some(now);
+                    row.error = Some("cancelled by request".to_string());
+                    Self::archive_job_row(conn, &row)?;
+                    Ok(())
+                })
             }
 
             /// Cascade-cancel all pending jobs that depend (directly or transitively)
@@ -645,18 +704,27 @@ macro_rules! impl_diesel_job_ops {
                 if !queue.is_empty() {
                     queue.remove(0);
                 }
+                // Release the BFS connection before the write transaction grabs
+                // its own (single-connection pools would otherwise deadlock).
+                drop(conn);
 
                 if !queue.is_empty() {
                     let error_msg = format!("{reason}: {failed_job_id}");
-                    diesel::update(jobs::table)
-                        .filter(jobs::id.eq_any(&queue))
-                        .filter(jobs::status.eq(JobStatus::Pending as i32))
-                        .set((
-                            jobs::status.eq(JobStatus::Cancelled as i32),
-                            jobs::completed_at.eq(now),
-                            jobs::error.eq(&error_msg),
-                        ))
-                        .execute(&mut conn)?;
+                    self.archive_transaction(|conn| {
+                        let rows: Vec<JobRow> = jobs::table
+                            .filter(jobs::id.eq_any(&queue))
+                            .filter(jobs::status.eq(JobStatus::Pending as i32))
+                            .select(JobRow::as_select())
+                            .load(conn)?;
+
+                        for mut row in rows {
+                            row.status = JobStatus::Cancelled as i32;
+                            row.completed_at = Some(now);
+                            row.error = Some(error_msg.clone());
+                            Self::archive_job_row(conn, &row)?;
+                        }
+                        Ok(())
+                    })?;
                 }
 
                 Ok(())
@@ -714,33 +782,25 @@ macro_rules! impl_diesel_job_ops {
                 offset: i64,
                 namespace: Option<&str>,
             ) -> Result<Vec<Job>> {
-                let mut conn = self.conn()?;
-
-                let mut query = jobs::table.into_boxed().order(jobs::created_at.desc());
-
-                if let Some(s) = status {
-                    query = query.filter(jobs::status.eq(s));
-                }
-                if let Some(q) = queue_name {
-                    query = query.filter(jobs::queue.eq(q));
-                }
-                if let Some(t) = task_name {
-                    query = query.filter(jobs::task_name.eq(t));
-                }
-                if let Some(ns) = namespace {
-                    query = query.filter(jobs::namespace.eq(ns));
-                }
-
-                let rows: Vec<JobRow> = query
-                    .limit(limit)
-                    .offset(offset)
-                    .select(JobRow::as_select())
-                    .load(&mut conn)?;
-
-                Ok(rows.into_iter().map(Job::from).collect())
+                self.list_jobs_filtered(
+                    status, queue_name, task_name, None, None, None, None, limit, offset, namespace,
+                )
             }
 
-            /// Get a job by ID.
+            /// True when `status` is a terminal status whose rows now live in
+            /// `archived_jobs` rather than the live `jobs` table.
+            fn is_terminal_status(status: i32) -> bool {
+                matches!(
+                    JobStatus::from_i32(status),
+                    Some(JobStatus::Complete)
+                        | Some(JobStatus::Failed)
+                        | Some(JobStatus::Dead)
+                        | Some(JobStatus::Cancelled)
+                )
+            }
+
+            /// Get a job by ID. Checks the live `jobs` table first, then falls
+            /// back to `archived_jobs` for terminal jobs.
             pub fn get_job(&self, id: &str) -> Result<Option<Job>> {
                 let mut conn = self.conn()?;
 
@@ -750,86 +810,111 @@ macro_rules! impl_diesel_job_ops {
                     .first(&mut conn)
                     .optional()?;
 
-                Ok(row.map(Job::from))
+                if let Some(row) = row {
+                    return Ok(Some(Job::from(row)));
+                }
+
+                let archived: Option<ArchivedJobRow> = archived_jobs::table
+                    .find(id)
+                    .select(ArchivedJobRow::as_select())
+                    .first(&mut conn)
+                    .optional()?;
+
+                Ok(archived.map(Job::from))
             }
 
-            /// Get queue statistics.
+            /// Get queue statistics. Pending/Running counts come from the live
+            /// `jobs` table; terminal counts come from `archived_jobs`.
             pub fn stats(&self) -> Result<QueueStats> {
                 let mut conn = self.conn()?;
 
-                let rows: Vec<(i32, i64)> = jobs::table
+                let live_rows: Vec<(i32, i64)> = jobs::table
                     .group_by(jobs::status)
                     .select((jobs::status, diesel::dsl::count(jobs::id)))
                     .load(&mut conn)?;
 
-                let mut stats = QueueStats::default();
-                for (status, count) in rows {
-                    match JobStatus::from_i32(status) {
-                        Some(JobStatus::Pending) => stats.pending = count,
-                        Some(JobStatus::Running) => stats.running = count,
-                        Some(JobStatus::Complete) => stats.completed = count,
-                        Some(JobStatus::Failed) => stats.failed = count,
-                        Some(JobStatus::Dead) => stats.dead = count,
-                        Some(JobStatus::Cancelled) => stats.cancelled = count,
-                        None => {}
-                    }
-                }
+                let archived_rows: Vec<(i32, i64)> = archived_jobs::table
+                    .group_by(archived_jobs::status)
+                    .select((archived_jobs::status, diesel::dsl::count(archived_jobs::id)))
+                    .load(&mut conn)?;
 
+                let mut stats = QueueStats::default();
+                Self::apply_status_count(&mut stats, live_rows);
+                Self::apply_status_count(&mut stats, archived_rows);
                 Ok(stats)
             }
 
-            /// Get queue statistics for a specific queue.
+            /// Get queue statistics for a specific queue. Pending/Running counts
+            /// come from `jobs`; terminal counts come from `archived_jobs`.
             pub fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
                 let mut conn = self.conn()?;
 
-                let rows: Vec<(i32, i64)> = jobs::table
+                let live_rows: Vec<(i32, i64)> = jobs::table
                     .filter(jobs::queue.eq(queue_name))
                     .group_by(jobs::status)
                     .select((jobs::status, diesel::dsl::count(jobs::id)))
                     .load(&mut conn)?;
 
-                let mut stats = QueueStats::default();
-                for (status, count) in rows {
-                    match JobStatus::from_i32(status) {
-                        Some(JobStatus::Pending) => stats.pending = count,
-                        Some(JobStatus::Running) => stats.running = count,
-                        Some(JobStatus::Complete) => stats.completed = count,
-                        Some(JobStatus::Failed) => stats.failed = count,
-                        Some(JobStatus::Dead) => stats.dead = count,
-                        Some(JobStatus::Cancelled) => stats.cancelled = count,
-                        None => {}
-                    }
-                }
+                let archived_rows: Vec<(i32, i64)> = archived_jobs::table
+                    .filter(archived_jobs::queue.eq(queue_name))
+                    .group_by(archived_jobs::status)
+                    .select((archived_jobs::status, diesel::dsl::count(archived_jobs::id)))
+                    .load(&mut conn)?;
 
+                let mut stats = QueueStats::default();
+                Self::apply_status_count(&mut stats, live_rows);
+                Self::apply_status_count(&mut stats, archived_rows);
                 Ok(stats)
             }
 
-            /// Get queue statistics broken down by queue name.
+            /// Get queue statistics broken down by queue name. Pending/Running
+            /// counts come from `jobs`; terminal counts from `archived_jobs`.
             pub fn stats_all_queues(
                 &self,
             ) -> Result<std::collections::HashMap<String, QueueStats>> {
                 let mut conn = self.conn()?;
 
-                let rows: Vec<(String, i32, i64)> = jobs::table
+                let live_rows: Vec<(String, i32, i64)> = jobs::table
                     .group_by((jobs::queue, jobs::status))
                     .select((jobs::queue, jobs::status, diesel::dsl::count(jobs::id)))
                     .load(&mut conn)?;
 
+                let archived_rows: Vec<(String, i32, i64)> = archived_jobs::table
+                    .group_by((archived_jobs::queue, archived_jobs::status))
+                    .select((
+                        archived_jobs::queue,
+                        archived_jobs::status,
+                        diesel::dsl::count(archived_jobs::id),
+                    ))
+                    .load(&mut conn)?;
+
                 let mut map = std::collections::HashMap::<String, QueueStats>::new();
-                for (queue, status, count) in rows {
+                for (queue, status, count) in live_rows.into_iter().chain(archived_rows) {
                     let stats = map.entry(queue).or_default();
-                    match JobStatus::from_i32(status) {
-                        Some(JobStatus::Pending) => stats.pending = count,
-                        Some(JobStatus::Running) => stats.running = count,
-                        Some(JobStatus::Complete) => stats.completed = count,
-                        Some(JobStatus::Failed) => stats.failed = count,
-                        Some(JobStatus::Dead) => stats.dead = count,
-                        Some(JobStatus::Cancelled) => stats.cancelled = count,
-                        None => {}
-                    }
+                    Self::set_status_count(stats, status, count);
                 }
 
                 Ok(map)
+            }
+
+            /// Merge a `(status, count)` GROUP BY result into a `QueueStats`.
+            fn apply_status_count(stats: &mut QueueStats, rows: Vec<(i32, i64)>) {
+                for (status, count) in rows {
+                    Self::set_status_count(stats, status, count);
+                }
+            }
+
+            /// Assign a per-status count into the matching `QueueStats` field.
+            fn set_status_count(stats: &mut QueueStats, status: i32, count: i64) {
+                match JobStatus::from_i32(status) {
+                    Some(JobStatus::Pending) => stats.pending = count,
+                    Some(JobStatus::Running) => stats.running = count,
+                    Some(JobStatus::Complete) => stats.completed = count,
+                    Some(JobStatus::Failed) => stats.failed = count,
+                    Some(JobStatus::Dead) => stats.dead = count,
+                    Some(JobStatus::Cancelled) => stats.cancelled = count,
+                    None => {}
+                }
             }
 
             /// List jobs with extended filters.
@@ -837,6 +922,86 @@ macro_rules! impl_diesel_job_ops {
             /// When `None`, all jobs are returned regardless of namespace.
             #[allow(clippy::too_many_arguments)]
             pub fn list_jobs_filtered(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                offset: i64,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                // Terminal statuses now live in `archived_jobs`; live statuses in
+                // `jobs`. With no status filter, both tables are merged.
+                match status {
+                    Some(s) if Self::is_terminal_status(s) => self.list_archived_filtered(
+                        Some(s),
+                        queue_name,
+                        task_name,
+                        metadata_like,
+                        error_like,
+                        created_after,
+                        created_before,
+                        limit,
+                        offset,
+                        namespace,
+                    ),
+                    Some(_) => self.list_live_filtered(
+                        status,
+                        queue_name,
+                        task_name,
+                        metadata_like,
+                        error_like,
+                        created_after,
+                        created_before,
+                        limit,
+                        offset,
+                        namespace,
+                    ),
+                    None => {
+                        // Fetch enough from each table to satisfy limit+offset,
+                        // then merge by created_at desc and paginate in memory.
+                        let take = limit.saturating_add(offset).max(0);
+                        let mut live = self.list_live_filtered(
+                            None,
+                            queue_name,
+                            task_name,
+                            metadata_like,
+                            error_like,
+                            created_after,
+                            created_before,
+                            take,
+                            0,
+                            namespace,
+                        )?;
+                        let archived = self.list_archived_filtered(
+                            None,
+                            queue_name,
+                            task_name,
+                            metadata_like,
+                            error_like,
+                            created_after,
+                            created_before,
+                            take,
+                            0,
+                            namespace,
+                        )?;
+                        live.extend(archived);
+                        live.sort_by_key(|j| std::cmp::Reverse(j.created_at));
+
+                        let start = (offset.max(0) as usize).min(live.len());
+                        let end = start.saturating_add(limit.max(0) as usize).min(live.len());
+                        Ok(live[start..end].to_vec())
+                    }
+                }
+            }
+
+            /// Query the live `jobs` table with the shared filter set.
+            #[allow(clippy::too_many_arguments)]
+            fn list_live_filtered(
                 &self,
                 status: Option<i32>,
                 queue_name: Option<&str>,
@@ -887,60 +1052,118 @@ macro_rules! impl_diesel_job_ops {
                 Ok(rows.into_iter().map(Job::from).collect())
             }
 
-            /// Purge completed jobs older than the given timestamp.
-            pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
+            /// Query the `archived_jobs` table with the shared filter set.
+            #[allow(clippy::too_many_arguments)]
+            fn list_archived_filtered(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                offset: i64,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
                 let mut conn = self.conn()?;
 
-                conn.transaction(|conn| {
-                    let job_ids: Vec<String> = jobs::table
-                        .filter(jobs::status.eq(JobStatus::Complete as i32))
-                        .filter(jobs::completed_at.lt(older_than_ms))
-                        .select(jobs::id)
+                let mut query = archived_jobs::table
+                    .into_boxed()
+                    .order(archived_jobs::created_at.desc());
+
+                if let Some(s) = status {
+                    query = query.filter(archived_jobs::status.eq(s));
+                }
+                if let Some(q) = queue_name {
+                    query = query.filter(archived_jobs::queue.eq(q));
+                }
+                if let Some(t) = task_name {
+                    query = query.filter(archived_jobs::task_name.eq(t));
+                }
+                if let Some(m) = metadata_like {
+                    query = query.filter(archived_jobs::metadata.like(format!("%{m}%")));
+                }
+                if let Some(e) = error_like {
+                    query = query.filter(archived_jobs::error.like(format!("%{e}%")));
+                }
+                if let Some(after) = created_after {
+                    query = query.filter(archived_jobs::created_at.ge(after));
+                }
+                if let Some(before) = created_before {
+                    query = query.filter(archived_jobs::created_at.le(before));
+                }
+                if let Some(ns) = namespace {
+                    query = query.filter(archived_jobs::namespace.eq(ns));
+                }
+
+                let rows: Vec<ArchivedJobRow> = query
+                    .limit(limit)
+                    .offset(offset)
+                    .select(ArchivedJobRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows.into_iter().map(Job::from).collect())
+            }
+
+            /// Purge completed jobs older than the given timestamp. Terminal
+            /// jobs live in `archived_jobs`, so the purge targets that table.
+            pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
+                self.archive_transaction(|conn| {
+                    let job_ids: Vec<String> = archived_jobs::table
+                        .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
+                        .filter(archived_jobs::completed_at.lt(older_than_ms))
+                        .select(archived_jobs::id)
                         .load(conn)?;
 
                     Self::delete_job_children(conn, &job_ids)?;
 
-                    let affected = diesel::delete(jobs::table.filter(jobs::id.eq_any(&job_ids)))
-                        .execute(conn)?;
+                    let affected = diesel::delete(
+                        archived_jobs::table.filter(archived_jobs::id.eq_any(&job_ids)),
+                    )
+                    .execute(conn)?;
 
                     Ok(affected as u64)
                 })
             }
 
-            /// Purge completed jobs respecting per-job result_ttl_ms.
+            /// Purge completed jobs respecting per-job result_ttl_ms. Terminal
+            /// jobs live in `archived_jobs`, so the purge targets that table.
             pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
                 let now = now_millis();
-                let mut conn = self.conn()?;
 
-                conn.transaction(|conn| {
-                    let global_ids: Vec<String> = jobs::table
-                        .filter(jobs::status.eq(JobStatus::Complete as i32))
-                        .filter(jobs::result_ttl_ms.is_null())
-                        .filter(jobs::completed_at.lt(global_cutoff_ms))
-                        .select(jobs::id)
+                self.archive_transaction(|conn| {
+                    let global_ids: Vec<String> = archived_jobs::table
+                        .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
+                        .filter(archived_jobs::result_ttl_ms.is_null())
+                        .filter(archived_jobs::completed_at.lt(global_cutoff_ms))
+                        .select(archived_jobs::id)
                         .load(conn)?;
 
                     // Push the per-job `completed_at + result_ttl_ms < now`
                     // check into SQL and select only the id — avoids loading
                     // full rows (payload + result blobs) just to filter them.
-                    let per_job_ids: Vec<String> = jobs::table
-                        .filter(jobs::status.eq(JobStatus::Complete as i32))
-                        .filter(jobs::result_ttl_ms.is_not_null())
-                        .filter(jobs::completed_at.is_not_null())
+                    let per_job_ids: Vec<String> = archived_jobs::table
+                        .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
+                        .filter(archived_jobs::result_ttl_ms.is_not_null())
+                        .filter(archived_jobs::completed_at.is_not_null())
                         .filter(
-                            (jobs::completed_at.assume_not_null()
-                                + jobs::result_ttl_ms.assume_not_null())
+                            (archived_jobs::completed_at.assume_not_null()
+                                + archived_jobs::result_ttl_ms.assume_not_null())
                             .lt(now),
                         )
-                        .select(jobs::id)
+                        .select(archived_jobs::id)
                         .load(conn)?;
 
                     let all_ids: Vec<String> = global_ids.into_iter().chain(per_job_ids).collect();
 
                     Self::delete_job_children(conn, &all_ids)?;
 
-                    let affected = diesel::delete(jobs::table.filter(jobs::id.eq_any(&all_ids)))
-                        .execute(conn)?;
+                    let affected = diesel::delete(
+                        archived_jobs::table.filter(archived_jobs::id.eq_any(&all_ids)),
+                    )
+                    .execute(conn)?;
 
                     Ok(affected as u64)
                 })
@@ -997,58 +1220,66 @@ macro_rules! impl_diesel_job_ops {
                 Ok(rows)
             }
 
+            /// Archive a set of pending job rows as cancelled with the given
+            /// error, moving each from `jobs` to `archived_jobs`.
+            fn archive_pending_rows(
+                conn: &mut $conn_type,
+                rows: Vec<JobRow>,
+                now: i64,
+                error: &str,
+            ) -> diesel::result::QueryResult<u64> {
+                let count = rows.len() as u64;
+                for mut row in rows {
+                    row.status = JobStatus::Cancelled as i32;
+                    row.completed_at = Some(now);
+                    row.error = Some(error.to_string());
+                    Self::archive_job_row(conn, &row)?;
+                }
+                Ok(count)
+            }
+
             /// Expire pending jobs that have passed their expires_at.
             pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
-                let mut conn = self.conn()?;
+                self.archive_transaction(|conn| {
+                    let rows: Vec<JobRow> = jobs::table
+                        .filter(jobs::status.eq(JobStatus::Pending as i32))
+                        .filter(jobs::expires_at.is_not_null())
+                        .filter(jobs::expires_at.lt(now))
+                        .select(JobRow::as_select())
+                        .load(conn)?;
 
-                let affected = diesel::update(jobs::table)
-                    .filter(jobs::status.eq(JobStatus::Pending as i32))
-                    .filter(jobs::expires_at.is_not_null())
-                    .filter(jobs::expires_at.lt(now))
-                    .set((
-                        jobs::status.eq(JobStatus::Cancelled as i32),
-                        jobs::completed_at.eq(now),
-                        jobs::error.eq("expired"),
-                    ))
-                    .execute(&mut conn)?;
-
-                Ok(affected as u64)
+                    Ok(Self::archive_pending_rows(conn, rows, now, "expired")?)
+                })
             }
 
             /// Cancel all pending jobs in a specific queue.
             pub fn cancel_pending_by_queue(&self, queue: &str) -> Result<u64> {
-                let mut conn = self.conn()?;
                 let now = now_millis();
 
-                let affected = diesel::update(jobs::table)
-                    .filter(jobs::status.eq(JobStatus::Pending as i32))
-                    .filter(jobs::queue.eq(queue))
-                    .set((
-                        jobs::status.eq(JobStatus::Cancelled as i32),
-                        jobs::completed_at.eq(now),
-                        jobs::error.eq("purged"),
-                    ))
-                    .execute(&mut conn)?;
+                self.archive_transaction(|conn| {
+                    let rows: Vec<JobRow> = jobs::table
+                        .filter(jobs::status.eq(JobStatus::Pending as i32))
+                        .filter(jobs::queue.eq(queue))
+                        .select(JobRow::as_select())
+                        .load(conn)?;
 
-                Ok(affected as u64)
+                    Ok(Self::archive_pending_rows(conn, rows, now, "purged")?)
+                })
             }
 
             /// Cancel all pending jobs for a specific task name.
             pub fn cancel_pending_by_task(&self, task_name: &str) -> Result<u64> {
-                let mut conn = self.conn()?;
                 let now = now_millis();
 
-                let affected = diesel::update(jobs::table)
-                    .filter(jobs::status.eq(JobStatus::Pending as i32))
-                    .filter(jobs::task_name.eq(task_name))
-                    .set((
-                        jobs::status.eq(JobStatus::Cancelled as i32),
-                        jobs::completed_at.eq(now),
-                        jobs::error.eq("revoked"),
-                    ))
-                    .execute(&mut conn)?;
+                self.archive_transaction(|conn| {
+                    let rows: Vec<JobRow> = jobs::table
+                        .filter(jobs::status.eq(JobStatus::Pending as i32))
+                        .filter(jobs::task_name.eq(task_name))
+                        .select(JobRow::as_select())
+                        .load(conn)?;
 
-                Ok(affected as u64)
+                    Ok(Self::archive_pending_rows(conn, rows, now, "revoked")?)
+                })
             }
 
             /// Count running jobs for a specific task name (for per-task concurrency limiting).

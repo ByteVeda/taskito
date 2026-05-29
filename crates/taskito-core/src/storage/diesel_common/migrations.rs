@@ -285,6 +285,9 @@ pub fn create_indexes() -> &'static [&'static str] {
         "CREATE INDEX IF NOT EXISTS idx_task_logs_job_id ON task_logs(job_id)",
         "CREATE INDEX IF NOT EXISTS idx_task_logs_recorded ON task_logs(logged_at)",
         "CREATE INDEX IF NOT EXISTS idx_archived_jobs_completed ON archived_jobs(completed_at)",
+        "CREATE INDEX IF NOT EXISTS idx_archived_jobs_status ON archived_jobs(status)",
+        "CREATE INDEX IF NOT EXISTS idx_archived_jobs_queue_status
+                ON archived_jobs(queue, status)",
         "CREATE INDEX IF NOT EXISTS idx_distributed_locks_expires ON distributed_locks(expires_at)",
         "CREATE INDEX IF NOT EXISTS idx_execution_claims_claimed ON execution_claims(claimed_at)",
     ]

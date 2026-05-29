@@ -64,9 +64,9 @@ impl RedisStorage {
                     job.status = JobStatus::Cancelled;
                     job.completed_at = Some(now);
                     job.error = Some("expired before execution".to_string());
-                    self.save_job_and_move_status(&mut conn, &job, JobStatus::Pending)?;
                     conn.zrem::<_, _, ()>(&queue_key, &job_id)
                         .map_err(map_err)?;
+                    self.archive_job_immediately(&mut conn, &job, JobStatus::Pending)?;
                     continue;
                 }
             }

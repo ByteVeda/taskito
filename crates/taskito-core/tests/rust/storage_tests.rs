@@ -375,6 +375,64 @@ fn test_circuit_breakers(s: &impl Storage) {
 
 // ── Run all generic tests against a storage impl ─────────────────────
 
+fn test_immediate_archival(s: &impl Storage) {
+    let q = "q-archival";
+
+    // Complete, fail, and cancel are all terminal: they archive immediately but
+    // remain readable via get_job and surface in the per-queue terminal stats.
+    let done = s.enqueue(make_job(q, "arch_done")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&done.id, Some(vec![9])).unwrap();
+
+    let failed = s.enqueue(make_job(q, "arch_fail")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.fail(&failed.id, "boom").unwrap();
+
+    let cancelled = s.enqueue(make_job(q, "arch_cancel")).unwrap();
+    assert!(s.cancel_job(&cancelled.id).unwrap());
+
+    // One running and one pending left live. Enqueue the to-be-running job
+    // first so the FIFO dequeue claims it, leaving the later one pending.
+    s.enqueue(make_job(q, "arch_running")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let pending_job = s.enqueue(make_job(q, "arch_pending")).unwrap();
+
+    // get_job resolves archived terminals.
+    assert_eq!(
+        s.get_job(&done.id).unwrap().unwrap().status,
+        JobStatus::Complete
+    );
+    assert_eq!(
+        s.get_job(&failed.id).unwrap().unwrap().status,
+        JobStatus::Failed
+    );
+    assert_eq!(
+        s.get_job(&cancelled.id).unwrap().unwrap().status,
+        JobStatus::Cancelled
+    );
+
+    // Per-queue stats: terminals from the archive, pending/running live.
+    let stats = s.stats_by_queue(q).unwrap();
+    assert_eq!(stats.completed, 1, "completed");
+    assert_eq!(stats.failed, 1, "failed");
+    assert_eq!(stats.cancelled, 1, "cancelled");
+    assert_eq!(stats.pending, 1, "pending");
+    assert_eq!(stats.running, 1, "running");
+
+    // Listing by a terminal status reads the archive; pending must not surface
+    // the archived row.
+    let complete = s
+        .list_jobs(Some(JobStatus::Complete as i32), Some(q), None, 50, 0, None)
+        .unwrap();
+    assert!(complete.iter().any(|j| j.id == done.id));
+
+    let pending = s
+        .list_jobs(Some(JobStatus::Pending as i32), Some(q), None, 50, 0, None)
+        .unwrap();
+    assert!(!pending.iter().any(|j| j.id == done.id));
+    assert!(pending.iter().any(|j| j.id == pending_job.id));
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -395,6 +453,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_dashboard_settings(s);
+    test_immediate_archival(s);
 }
 
 // ── Backend-specific wiring ──────────────────────────────────────────

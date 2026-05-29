@@ -10,15 +10,20 @@ use crate::storage::redis_backend::{map_err, RedisStorage};
 impl RedisStorage {
     pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
-        let status_key = self.key(&["jobs", "status", &(JobStatus::Complete as i32).to_string()]);
+        // Completed jobs are terminal and live in the archive.
+        let status_key = self.key(&[
+            "archived",
+            "status",
+            &(JobStatus::Complete as i32).to_string(),
+        ]);
         let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
 
         let mut count = 0u64;
         for id in &job_ids {
-            if let Some(job) = self.load_job(&mut conn, id)? {
+            if let Some(job) = self.load_archived_job(&mut conn, id)? {
                 if let Some(completed_at) = job.completed_at {
                     if completed_at < older_than_ms {
-                        self.delete_job_fully(&mut conn, &job)?;
+                        self.delete_archived_job(&mut conn, &job)?;
                         count += 1;
                     }
                 }
@@ -31,12 +36,17 @@ impl RedisStorage {
     pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
         let now = now_millis();
         let mut conn = self.conn()?;
-        let status_key = self.key(&["jobs", "status", &(JobStatus::Complete as i32).to_string()]);
+        // Completed jobs are terminal and live in the archive.
+        let status_key = self.key(&[
+            "archived",
+            "status",
+            &(JobStatus::Complete as i32).to_string(),
+        ]);
         let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
 
         let mut count = 0u64;
         for id in &job_ids {
-            if let Some(job) = self.load_job(&mut conn, id)? {
+            if let Some(job) = self.load_archived_job(&mut conn, id)? {
                 let should_purge = match (job.completed_at, job.result_ttl_ms) {
                     (Some(completed), Some(ttl)) => completed
                         .checked_add(ttl)
@@ -45,7 +55,7 @@ impl RedisStorage {
                     _ => false,
                 };
                 if should_purge {
-                    self.delete_job_fully(&mut conn, &job)?;
+                    self.delete_archived_job(&mut conn, &job)?;
                     count += 1;
                 }
             }
@@ -91,11 +101,11 @@ impl RedisStorage {
                         job.status = JobStatus::Cancelled;
                         job.completed_at = Some(now);
                         job.error = Some("expired".to_string());
-                        self.save_job_and_move_status(&mut conn, &job, old_status)?;
 
                         let queue_key = self.key(&["queue", &job.queue, "pending"]);
                         conn.zrem::<_, _, ()>(&queue_key, &job.id)
                             .map_err(map_err)?;
+                        self.archive_job_immediately(&mut conn, &job, old_status)?;
                         count += 1;
                     }
                 }
@@ -119,11 +129,11 @@ impl RedisStorage {
                     job.status = JobStatus::Cancelled;
                     job.completed_at = Some(now);
                     job.error = Some("purged".to_string());
-                    self.save_job_and_move_status(&mut conn, &job, old_status)?;
 
                     let queue_key = self.key(&["queue", &job.queue, "pending"]);
                     conn.zrem::<_, _, ()>(&queue_key, &job.id)
                         .map_err(map_err)?;
+                    self.archive_job_immediately(&mut conn, &job, old_status)?;
                     count += 1;
                 }
             }
@@ -146,11 +156,11 @@ impl RedisStorage {
                     job.status = JobStatus::Cancelled;
                     job.completed_at = Some(now);
                     job.error = Some("revoked".to_string());
-                    self.save_job_and_move_status(&mut conn, &job, old_status)?;
 
                     let queue_key = self.key(&["queue", &job.queue, "pending"]);
                     conn.zrem::<_, _, ()>(&queue_key, &job.id)
                         .map_err(map_err)?;
+                    self.archive_job_immediately(&mut conn, &job, old_status)?;
                     count += 1;
                 }
             }

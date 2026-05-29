@@ -423,3 +423,36 @@ pub struct ArchivedJobRow {
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<String>,
 }
+
+/// Insertable struct for archived job entries.
+///
+/// Mirrors [`ArchivedJobRow`] with borrowed fields. The `archived_jobs` table
+/// has no `has_deps` column (terminal jobs are never re-dequeued), so it is
+/// absent here.
+#[derive(Insertable, Debug)]
+#[diesel(table_name = archived_jobs)]
+pub struct NewArchivedJobRow<'a> {
+    pub id: &'a str,
+    pub queue: &'a str,
+    pub task_name: &'a str,
+    pub payload: &'a [u8],
+    pub status: i32,
+    pub priority: i32,
+    pub created_at: i64,
+    pub scheduled_at: i64,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub retry_count: i32,
+    pub max_retries: i32,
+    pub result: Option<&'a [u8]>,
+    pub error: Option<&'a str>,
+    pub timeout_ms: i64,
+    pub unique_key: Option<&'a str>,
+    pub progress: Option<i32>,
+    pub metadata: Option<&'a str>,
+    pub notes: Option<&'a str>,
+    pub cancel_requested: i32,
+    pub expires_at: Option<i64>,
+    pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<&'a str>,
+}

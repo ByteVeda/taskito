@@ -83,13 +83,13 @@ impl RedisStorage {
         pipe.zadd(&dlq_all, &dlq_id, now as f64);
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
-        // Update job status to Dead
+        // Archive the now-Dead job out of the live indices.
         let mut dead_job = job.clone();
         let old_status = dead_job.status;
         dead_job.status = JobStatus::Dead;
         dead_job.error = Some(error.to_string());
         dead_job.completed_at = Some(now);
-        self.save_job_and_move_status(&mut conn, &dead_job, old_status)?;
+        self.archive_job_immediately(&mut conn, &dead_job, old_status)?;
 
         // Cascade cancel dependents
         drop(conn);
