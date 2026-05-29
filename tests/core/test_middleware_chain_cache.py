@@ -10,12 +10,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from taskito import Queue
 
 
-def test_middleware_chain_caches_disable_reads(tmp_path: Path) -> None:
+def test_middleware_chain_caches_disable_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Repeated dispatches read the disable list from storage at most once
     within the TTL window."""
+    # Pin the TTL large so the assertion can't flake if the loop happens to
+    # straddle the real 1s window under load.
+    monkeypatch.setattr("taskito.mixins.decorators._MW_CHAIN_TTL", 1_000_000.0)
     queue = Queue(db_path=str(tmp_path / "cache.db"))
 
     reads = {"count": 0}
@@ -32,8 +39,12 @@ def test_middleware_chain_caches_disable_reads(tmp_path: Path) -> None:
     assert reads["count"] == 1, "disable list should be read once, then cached"
 
 
-def test_disable_version_bump_invalidates_cache(tmp_path: Path) -> None:
+def test_disable_version_bump_invalidates_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A same-process disable change re-reads the disable list on the next call."""
+    # Pin the TTL so only the version bump (not expiry) can trigger a re-read.
+    monkeypatch.setattr("taskito.mixins.decorators._MW_CHAIN_TTL", 1_000_000.0)
     queue = Queue(db_path=str(tmp_path / "cache.db"))
 
     reads = {"count": 0}
