@@ -5,7 +5,12 @@ import pickle
 
 import pytest
 
-from taskito.serializers import CloudpickleSerializer, JsonSerializer, Serializer
+from taskito.serializers import (
+    CloudpickleSerializer,
+    JsonSerializer,
+    Serializer,
+    SmartSerializer,
+)
 
 
 class TestJsonSerializer:
@@ -148,3 +153,53 @@ class TestEncryptedSerializer:
         s = EncryptedSerializer(JsonSerializer(), os.urandom(32))
         with pytest.raises(ValueError, match="too short"):
             s.loads(b"only-twelve-")
+
+
+class TestSmartSerializer:
+    def test_plain_data_uses_msgpack_tag(self) -> None:
+        s = SmartSerializer()
+        encoded = s.dumps({"x": 1, "y": ["a", "b"]})
+        assert encoded[:1] == b"\x01"
+        assert s.loads(encoded) == {"x": 1, "y": ["a", "b"]}
+
+    def test_falls_back_to_cloudpickle_for_lambda(self) -> None:
+        s = SmartSerializer()
+        encoded = s.dumps(lambda x: x + 1)
+        assert encoded[:1] == b"\x00"
+        assert s.loads(encoded)(41) == 42
+
+    def test_falls_back_to_cloudpickle_for_custom_class(self) -> None:
+        s = SmartSerializer()
+
+        class Point:
+            def __init__(self, x: int) -> None:
+                self.x = x
+
+        encoded = s.dumps(Point(7))
+        assert encoded[:1] == b"\x00"
+        assert s.loads(encoded).x == 7
+
+    def test_loads_legacy_untagged_cloudpickle(self) -> None:
+        """Payloads written before the envelope existed are raw cloudpickle
+        and must still deserialize."""
+        legacy = CloudpickleSerializer().dumps({"legacy": True})
+        # A protocol-2+ pickle starts with 0x80, never a codec tag.
+        assert legacy[:1] not in (b"\x00", b"\x01")
+        assert SmartSerializer().loads(legacy) == {"legacy": True}
+
+    def test_preserves_tuples(self) -> None:
+        """Tuples round-trip as tuples (not lists) via the msgpack ExtType,
+        including nested ones — so task args/results keep exact semantics."""
+        s = SmartSerializer()
+        payload = ((1, "two", 3.0), {"k": ("nested", "tuple")})
+        restored = s.loads(s.dumps(payload))
+        assert restored == payload
+        assert isinstance(restored[0], tuple)
+        assert isinstance(restored[1]["k"], tuple)
+
+    def test_empty_payload_rejected(self) -> None:
+        with pytest.raises(ValueError, match="empty payload"):
+            SmartSerializer().loads(b"")
+
+    def test_satisfies_protocol(self) -> None:
+        assert isinstance(SmartSerializer(), Serializer)

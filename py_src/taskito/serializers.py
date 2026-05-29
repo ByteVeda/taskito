@@ -6,6 +6,47 @@ import json
 from typing import Any, Protocol, runtime_checkable
 
 import cloudpickle
+import msgpack
+
+# Format tags for the envelope written by ``SmartSerializer``. A legacy
+# cloudpickle payload starts with the pickle protocol-2+ opcode ``\x80``, which
+# never collides with these tags — so untagged bytes are unambiguously legacy.
+_CODEC_CLOUDPICKLE = b"\x00"
+_CODEC_MSGPACK = b"\x01"
+
+# msgpack has no native tuple type and would silently flatten tuples to lists.
+# A custom ExtType preserves them so payloads round-trip with exact Python
+# semantics (a task returning ``(1, 2)`` gets back ``(1, 2)``, not ``[1, 2]``).
+_EXT_TUPLE = 0
+
+
+def _msgpack_default(obj: Any) -> Any:
+    """Encode types msgpack can't represent natively.
+
+    Tuples become a tagged ExtType (recursively packed). Anything else raises,
+    which ``SmartSerializer`` catches to fall back to cloudpickle.
+    """
+    if isinstance(obj, tuple):
+        return msgpack.ExtType(_EXT_TUPLE, _msgpack_packb(list(obj)))
+    raise TypeError(f"Cannot msgpack-encode {type(obj).__name__}")
+
+
+def _msgpack_ext_hook(code: int, data: bytes) -> Any:
+    if code == _EXT_TUPLE:
+        return tuple(_msgpack_unpackb(data))
+    return msgpack.ExtType(code, data)
+
+
+def _msgpack_packb(obj: Any) -> bytes:
+    # ``strict_types`` ensures tuples reach ``default`` instead of being
+    # auto-coerced to arrays; subclasses also route to the cloudpickle fallback.
+    return bytes(
+        msgpack.packb(obj, use_bin_type=True, strict_types=True, default=_msgpack_default)
+    )
+
+
+def _msgpack_unpackb(data: bytes) -> Any:
+    return msgpack.unpackb(data, raw=False, ext_hook=_msgpack_ext_hook)
 
 
 @runtime_checkable
@@ -47,20 +88,50 @@ class JsonSerializer:
 class MsgPackSerializer:
     """MsgPack-based serializer for compact, cross-language payloads.
 
-    Requires the ``msgpack`` extra::
-
-        pip install taskito[msgpack]
+    Only handles msgpack-native types. For arbitrary Python objects use
+    :class:`SmartSerializer`, which falls back to cloudpickle.
     """
 
     def dumps(self, obj: Any) -> bytes:
-        import msgpack
-
         return bytes(msgpack.packb(obj, use_bin_type=True))
 
     def loads(self, data: bytes) -> Any:
-        import msgpack
-
         return msgpack.unpackb(data, raw=False)
+
+
+class SmartSerializer:
+    """Default serializer: msgpack for plain payloads, cloudpickle fallback.
+
+    Plain data (the common case) serializes via msgpack — faster and more
+    compact than cloudpickle. Anything msgpack can't encode (lambdas, closures,
+    arbitrary class instances) transparently falls back to cloudpickle. A
+    one-byte tag records which codec produced each payload.
+
+    Tuples are preserved (via a msgpack ExtType), so payloads round-trip with
+    exact Python semantics.
+
+    Backward compatible: untagged payloads (written by older versions, raw
+    cloudpickle) are detected and loaded as cloudpickle.
+    """
+
+    def dumps(self, obj: Any) -> bytes:
+        try:
+            return _CODEC_MSGPACK + _msgpack_packb(obj)
+        except Exception:
+            # msgpack rejects non-native types (lambdas, custom classes, …);
+            # cloudpickle handles them.
+            return _CODEC_CLOUDPICKLE + bytes(cloudpickle.dumps(obj))
+
+    def loads(self, data: bytes) -> Any:
+        if not data:
+            raise ValueError("Cannot deserialize empty payload")
+        tag, body = data[:1], data[1:]
+        if tag == _CODEC_MSGPACK:
+            return _msgpack_unpackb(body)
+        if tag == _CODEC_CLOUDPICKLE:
+            return cloudpickle.loads(body)
+        # Untagged: a legacy cloudpickle payload from before the envelope existed.
+        return cloudpickle.loads(data)
 
 
 class EncryptedSerializer:
