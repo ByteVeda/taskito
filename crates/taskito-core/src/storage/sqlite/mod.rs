@@ -115,8 +115,10 @@ impl SqliteStorage {
         for sql in common_migrations::alter_statements(&common_migrations::SQLITE) {
             migration_alter(&mut conn, &sql);
         }
+        // Data backfills must fail loudly — a swallowed failure would leave
+        // has_deps wrong and let dequeue bypass dependency enforcement.
         for sql in common_migrations::backfill_statements() {
-            migration_alter(&mut conn, sql);
+            diesel::sql_query(*sql).execute(&mut conn)?;
         }
 
         Ok(())
