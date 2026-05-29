@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import atexit
 import logging
+import threading
 import time
-from concurrent.futures import (
-    ThreadPoolExecutor,
-)
-from concurrent.futures import (
-    TimeoutError as FuturesTimeout,
-)
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from taskito.exceptions import ProxyReconstructionError
@@ -27,11 +22,49 @@ logger = logging.getLogger("taskito.proxies")
 _PROXY_KEY = "__taskito_proxy__"
 _REF_KEY = "__taskito_ref__"
 
-# Shared, process-wide pool for timeout-bounded proxy reconstruction. A fresh
-# ThreadPoolExecutor per reconstructed argument would spawn and tear down an OS
-# thread on the worker hot path; one small pool serves all reconstructions.
-_RECONSTRUCT_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="taskito-proxy")
-atexit.register(_RECONSTRUCT_POOL.shutdown, wait=False)
+
+class _ReconstructionTimeout(Exception):
+    """Internal signal that a reconstruction exceeded its wall-clock budget."""
+
+
+def _run_with_timeout(fn: Callable[[], Any], timeout: float) -> Any:
+    """Run ``fn`` with a wall-clock ``timeout`` and return its result.
+
+    ``fn`` runs on a dedicated **daemon** thread so an overrunning reconstruction
+    is abandoned without blocking either the worker or interpreter shutdown.
+    This is the only safe in-process option:
+
+    * A process pool could be terminated, but reconstructed resources (sessions,
+      clients, file handles) are not picklable and so can't be returned across a
+      process boundary.
+    * A shared ``ThreadPoolExecutor`` force-joins its workers at interpreter exit
+      (CPython issue 36780), so a hung task would hang shutdown.
+    * Python cannot safely kill a running thread.
+
+    The watchdog only bounds how long the *caller* waits; a hung reconstruction
+    keeps running in the background until it returns. Hard runaway protection
+    must come from the handler bounding its own I/O (connect/read timeouts).
+
+    Raises :class:`_ReconstructionTimeout` if the budget is exceeded, and
+    re-raises any exception ``fn`` itself raised.
+    """
+    result: list[Any] = []
+    error: list[Exception] = []
+
+    def runner() -> None:
+        try:
+            result.append(fn())
+        except Exception as exc:  # surfaced to the caller below
+            error.append(exc)
+
+    worker = threading.Thread(target=runner, name="taskito-proxy-reconstruct", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise _ReconstructionTimeout
+    if error:
+        raise error[0]
+    return result[0]
 
 
 def reconstruct_proxies(
@@ -177,19 +210,15 @@ def _reconstruct_one(
     start = time.monotonic()
     try:
         if max_timeout > 0:
-            future = _RECONSTRUCT_POOL.submit(handler.reconstruct, recipe, version)
-            try:
-                obj = future.result(timeout=max_timeout)
-            except FuturesTimeout:
-                # Frees the slot if the task hasn't started; a started
-                # reconstruction can't be interrupted (thread pools don't
-                # support termination), so handlers should bound their own I/O.
-                future.cancel()
-                raise ProxyReconstructionError(
-                    f"Reconstruction of '{handler_name}' timed out after {max_timeout}s"
-                ) from None
+            obj = _run_with_timeout(lambda: handler.reconstruct(recipe, version), max_timeout)
         else:
             obj = handler.reconstruct(recipe, version)
+    except _ReconstructionTimeout:
+        if metrics is not None:
+            metrics.record_error(handler_name)
+        raise ProxyReconstructionError(
+            f"Reconstruction of '{handler_name}' timed out after {max_timeout}s"
+        ) from None
     except ProxyReconstructionError:
         if metrics is not None:
             metrics.record_error(handler_name)
