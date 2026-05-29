@@ -1,5 +1,5 @@
 import { ExternalLink as ExternalLinkIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { buttonVariants, Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
 import { applyJobContext, useIntegrations } from "@/features/settings";
 import type { Job } from "@/lib/api-types";
@@ -208,13 +208,17 @@ function NotesCard({ raw }: { raw: string | null }) {
  */
 function JobIntegrations({ job }: { job: Job }) {
   const integrations = useIntegrations();
-  const links = (
-    [
-      { label: "Open in Grafana", href: integrations.grafana },
-      { label: "Open in Sentry", href: integrations.sentry },
-      { label: "Open in OTel", href: integrations.otel },
-    ] as const
-  ).filter((entry) => entry.href);
+  const links = useMemo(
+    () =>
+      (
+        [
+          { label: "Open in Grafana", href: integrations.grafana },
+          { label: "Open in Sentry", href: integrations.sentry },
+          { label: "Open in OTel", href: integrations.otel },
+        ] as const
+      ).filter((entry) => entry.href),
+    [integrations.grafana, integrations.sentry, integrations.otel],
+  );
 
   if (links.length === 0) return null;
 
