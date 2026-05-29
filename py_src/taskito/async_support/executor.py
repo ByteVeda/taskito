@@ -95,8 +95,10 @@ class AsyncTaskExecutor:
             completed_mw: list[Any] = []
 
             try:
-                args, kwargs = cloudpickle.loads(payload_bytes)
                 queue = self._queue_ref
+                # Honor the per-task serializer (matches the sync worker path);
+                # a hardcoded cloudpickle.loads would ignore @task(serializer=...).
+                args, kwargs = queue._deserialize_payload(task_name, payload_bytes)
 
                 # Worker-dispatch predicate gate (raw args, pre-reconstruction).
                 if task_name in queue._task_predicates:
