@@ -125,114 +125,12 @@ pub(super) fn cascade_skip_pending_nodes(
 }
 
 #[cfg(test)]
+pub(super) mod test_helpers;
+
+#[cfg(test)]
 mod tests {
+    use super::test_helpers::*;
     use super::*;
-
-    use taskito_core::job::{now_millis, NewJob};
-    use taskito_core::storage::sqlite::SqliteStorage;
-    use taskito_workflows::{
-        WorkflowDefinition, WorkflowRun, WorkflowSqliteStorage, WorkflowStorageBackend,
-    };
-
-    fn make_storages() -> (StorageBackend, WorkflowStorageBackend) {
-        let sql = SqliteStorage::in_memory().unwrap();
-        let backend = StorageBackend::Sqlite(sql.clone());
-        let wf = WorkflowSqliteStorage::new(sql).unwrap();
-        let wf_backend = WorkflowStorageBackend::Sqlite(wf);
-        (backend, wf_backend)
-    }
-
-    fn enqueue_test_job(storage: &StorageBackend, task_name: &str) -> String {
-        let job = storage
-            .enqueue(NewJob {
-                queue: "default".to_string(),
-                task_name: task_name.to_string(),
-                payload: vec![1, 2, 3],
-                priority: 0,
-                scheduled_at: now_millis(),
-                max_retries: 3,
-                timeout_ms: 300_000,
-                unique_key: None,
-                metadata: None,
-                notes: None,
-                depends_on: vec![],
-                expires_at: None,
-                result_ttl_ms: None,
-                namespace: None,
-            })
-            .unwrap();
-        job.id
-    }
-
-    fn seed_run(wf_storage: &WorkflowStorageBackend) -> String {
-        let now = now_millis();
-        let definition = WorkflowDefinition {
-            id: uuid::Uuid::now_v7().to_string(),
-            name: "audit_pipeline".to_string(),
-            version: 1,
-            dag_data: vec![],
-            step_metadata: HashMap::new(),
-            created_at: now,
-        };
-        wf_storage.create_workflow_definition(&definition).unwrap();
-
-        let run = WorkflowRun {
-            id: uuid::Uuid::now_v7().to_string(),
-            definition_id: definition.id,
-            params: None,
-            state: WorkflowState::Running,
-            started_at: Some(now),
-            completed_at: None,
-            error: None,
-            parent_run_id: None,
-            parent_node_name: None,
-            created_at: now,
-        };
-        let run_id = run.id.clone();
-        wf_storage.create_workflow_run(&run).unwrap();
-        run_id
-    }
-
-    fn seed_node(
-        wf_storage: &WorkflowStorageBackend,
-        run_id: &str,
-        node_name: &str,
-        status: WorkflowNodeStatus,
-        job_id: Option<String>,
-    ) -> WorkflowNode {
-        let node = WorkflowNode {
-            id: uuid::Uuid::now_v7().to_string(),
-            run_id: run_id.to_string(),
-            node_name: node_name.to_string(),
-            job_id,
-            status,
-            result_hash: None,
-            fan_out_count: None,
-            fan_in_data: None,
-            started_at: None,
-            completed_at: None,
-            error: None,
-            compensation_job_id: None,
-            compensation_started_at: None,
-            compensation_completed_at: None,
-            compensation_error: None,
-        };
-        wf_storage.create_workflow_node(&node).unwrap();
-        node
-    }
-
-    fn fetch_node(
-        wf_storage: &WorkflowStorageBackend,
-        run_id: &str,
-        node_name: &str,
-    ) -> WorkflowNode {
-        wf_storage
-            .get_workflow_nodes(run_id)
-            .unwrap()
-            .into_iter()
-            .find(|n| n.node_name == node_name)
-            .unwrap()
-    }
 
     #[test]
     fn build_metadata_json_round_trips_special_characters() {

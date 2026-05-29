@@ -352,3 +352,312 @@ impl PyQueue {
         result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::py_queue::workflow_ops::test_helpers::*;
+
+    /// Submitting a 2-node linear DAG inserts a node per step, enqueues a job
+    /// per step, and threads the predecessor's job id through the successor's
+    /// `depends_on` chain.
+    #[test]
+    fn submit_workflow_links_linear_dag_via_depends_on() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|_py| {
+            let queue = make_test_pyqueue();
+            let dag = make_dag_bytes(&["a", "b"], &[("a", "b")]);
+            let metadata = make_step_metadata_json(&[("a", "task_a"), ("b", "task_b")]);
+            let payloads = make_node_payloads(&["a", "b"]);
+
+            let handle = queue
+                .submit_workflow(
+                    "linear", 1, dag, &metadata, payloads, "default", None, None, None, None, None,
+                )
+                .unwrap();
+
+            let wf = wf_storage(&queue);
+            let mut nodes = wf.get_workflow_nodes(&handle.run_id).unwrap();
+            nodes.sort_by(|x, y| x.node_name.cmp(&y.node_name));
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(nodes[0].node_name, "a");
+            assert_eq!(nodes[1].node_name, "b");
+
+            let a_job_id = nodes[0].job_id.clone().expect("node a has a job");
+            let b_job_id = nodes[1].job_id.clone().expect("node b has a job");
+
+            let b_deps = queue.storage.get_dependencies(&b_job_id).unwrap();
+            assert_eq!(b_deps, vec![a_job_id]);
+
+            let run = wf.get_workflow_run(&handle.run_id).unwrap().unwrap();
+            assert_eq!(run.state, WorkflowState::Running);
+        });
+    }
+
+    /// Nodes listed in `deferred_node_names` get a `WorkflowNode` but no job;
+    /// downstream successors omit the deferred predecessor from `depends_on`.
+    #[test]
+    fn submit_workflow_skips_job_creation_for_deferred_nodes() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|_py| {
+            let queue = make_test_pyqueue();
+            let dag = make_dag_bytes(&["a", "b"], &[("a", "b")]);
+            let metadata = make_step_metadata_json(&[("a", "task_a"), ("b", "task_b")]);
+            let payloads = make_node_payloads(&["a", "b"]);
+
+            let handle = queue
+                .submit_workflow(
+                    "deferred",
+                    1,
+                    dag,
+                    &metadata,
+                    payloads,
+                    "default",
+                    None,
+                    Some(vec!["a".to_string()]),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+
+            let wf = wf_storage(&queue);
+            let nodes = wf.get_workflow_nodes(&handle.run_id).unwrap();
+            let a = nodes.iter().find(|n| n.node_name == "a").unwrap();
+            let b = nodes.iter().find(|n| n.node_name == "b").unwrap();
+
+            assert!(a.job_id.is_none(), "deferred node must not enqueue a job");
+            assert_eq!(a.status, WorkflowNodeStatus::Pending);
+
+            let b_job_id = b.job_id.clone().expect("non-deferred node enqueues a job");
+            let b_deps = queue.storage.get_dependencies(&b_job_id).unwrap();
+            assert!(
+                b_deps.is_empty(),
+                "successor must drop the deferred predecessor from depends_on"
+            );
+        });
+    }
+
+    /// Cache-hit nodes copy a `result_hash` from a previous run, skip job
+    /// creation, and land in `CacheHit` state with a `completed_at` timestamp.
+    /// The incremental layer only marks leaf-style nodes (no successors that
+    /// need a real job id) as cache hits, so the test mirrors that invariant.
+    #[test]
+    fn submit_workflow_marks_cache_hit_nodes_terminal_without_job() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|_py| {
+            let queue = make_test_pyqueue();
+            let dag = make_dag_bytes(&["a"], &[]);
+            let metadata = make_step_metadata_json(&[("a", "task_a")]);
+            let payloads = make_node_payloads(&["a"]);
+            let mut cache = HashMap::new();
+            cache.insert("a".to_string(), "hash-of-a".to_string());
+
+            let handle = queue
+                .submit_workflow(
+                    "cached",
+                    1,
+                    dag,
+                    &metadata,
+                    payloads,
+                    "default",
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(cache),
+                )
+                .unwrap();
+
+            let wf = wf_storage(&queue);
+            let nodes = wf.get_workflow_nodes(&handle.run_id).unwrap();
+            let a = nodes.iter().find(|n| n.node_name == "a").unwrap();
+
+            assert!(a.job_id.is_none());
+            assert_eq!(a.status, WorkflowNodeStatus::CacheHit);
+            assert_eq!(a.result_hash.as_deref(), Some("hash-of-a"));
+            assert!(a.completed_at.is_some());
+        });
+    }
+
+    /// A reused `(name, version)` returns the same definition id rather than
+    /// inserting a duplicate row.
+    #[test]
+    fn submit_workflow_reuses_existing_definition_by_name_and_version() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|_py| {
+            let queue = make_test_pyqueue();
+            let dag = make_dag_bytes(&["a"], &[]);
+            let metadata = make_step_metadata_json(&[("a", "task_a")]);
+
+            let first = queue
+                .submit_workflow(
+                    "reused",
+                    1,
+                    dag.clone(),
+                    &metadata,
+                    make_node_payloads(&["a"]),
+                    "default",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            let second = queue
+                .submit_workflow(
+                    "reused",
+                    1,
+                    dag,
+                    &metadata,
+                    make_node_payloads(&["a"]),
+                    "default",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+
+            assert_eq!(first.definition_id, second.definition_id);
+            assert_ne!(first.run_id, second.run_id);
+        });
+    }
+
+    /// Missing `step_metadata` for a non-deferred, non-cached node is a
+    /// `PyValueError` — callers must supply per-step task config.
+    #[test]
+    fn submit_workflow_rejects_missing_step_metadata() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|_py| {
+            let queue = make_test_pyqueue();
+            let dag = make_dag_bytes(&["a", "b"], &[("a", "b")]);
+            // step_metadata only describes 'a' — 'b' is intentionally missing.
+            let metadata = make_step_metadata_json(&[("a", "task_a")]);
+            let payloads = make_node_payloads(&["a", "b"]);
+
+            let result = queue.submit_workflow(
+                "broken", 1, dag, &metadata, payloads, "default", None, None, None, None, None,
+            );
+            let err = match result {
+                Err(e) => e,
+                Ok(_) => panic!("expected PyValueError for missing step_metadata"),
+            };
+            assert!(err.to_string().contains("missing from step_metadata"));
+        });
+    }
+
+    /// Cancelling a run marks the run `Cancelled`, skips pending/ready nodes,
+    /// and cancels their underlying jobs.
+    #[test]
+    fn cancel_workflow_run_cancels_pending_jobs_and_marks_terminal() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            let job_id = enqueue_test_job(&queue.storage, "task_pending");
+            seed_node(
+                wf,
+                &run_id,
+                "p",
+                WorkflowNodeStatus::Pending,
+                Some(job_id.clone()),
+            );
+
+            queue.cancel_workflow_run(py, &run_id).unwrap();
+
+            let run = wf.get_workflow_run(&run_id).unwrap().unwrap();
+            assert_eq!(run.state, WorkflowState::Cancelled);
+            assert!(run.completed_at.is_some());
+            assert_eq!(
+                fetch_node(wf, &run_id, "p").status,
+                WorkflowNodeStatus::Skipped,
+            );
+            let job = queue.storage.get_job(&job_id).unwrap().unwrap();
+            assert_eq!(job.status.wire_name(), "Cancelled");
+        });
+    }
+
+    /// `finalize_run_if_terminal` returns `None` while any node is still
+    /// non-terminal and does not transition the run.
+    #[test]
+    fn finalize_run_if_terminal_is_noop_when_nodes_pending() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "p", WorkflowNodeStatus::Pending, None);
+            seed_node(wf, &run_id, "done", WorkflowNodeStatus::Completed, None);
+
+            let outcome = queue.finalize_run_if_terminal(py, &run_id).unwrap();
+            assert!(outcome.is_none());
+
+            let run = wf.get_workflow_run(&run_id).unwrap().unwrap();
+            assert_eq!(run.state, WorkflowState::Running);
+        });
+    }
+
+    /// All-success terminal nodes promote the run to `Completed`.
+    #[test]
+    fn finalize_run_if_terminal_promotes_run_to_completed_on_all_success() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "a", WorkflowNodeStatus::Completed, None);
+            seed_node(wf, &run_id, "b", WorkflowNodeStatus::Completed, None);
+
+            let outcome = queue.finalize_run_if_terminal(py, &run_id).unwrap();
+            assert_eq!(outcome.as_deref(), Some("completed"));
+
+            let run = wf.get_workflow_run(&run_id).unwrap().unwrap();
+            assert_eq!(run.state, WorkflowState::Completed);
+            assert!(run.completed_at.is_some());
+        });
+    }
+
+    /// Any failed terminal node demotes the run to `Failed`.
+    #[test]
+    fn finalize_run_if_terminal_promotes_run_to_failed_on_any_failure() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            seed_node(wf, &run_id, "a", WorkflowNodeStatus::Completed, None);
+            seed_node(wf, &run_id, "b", WorkflowNodeStatus::Failed, None);
+
+            let outcome = queue.finalize_run_if_terminal(py, &run_id).unwrap();
+            assert_eq!(outcome.as_deref(), Some("failed"));
+
+            let run = wf.get_workflow_run(&run_id).unwrap().unwrap();
+            assert_eq!(run.state, WorkflowState::Failed);
+        });
+    }
+
+    /// `set_workflow_run_completed_with_failures` flips an already-failed run
+    /// to `CompletedWithFailures` for `on_failure="continue"` semantics.
+    #[test]
+    fn set_workflow_run_completed_with_failures_overrides_failed_state() {
+        pyo3::prepare_freethreaded_python();
+        pyo3::Python::with_gil(|py| {
+            let queue = make_test_pyqueue();
+            let wf = wf_storage(&queue);
+            let run_id = seed_run(wf);
+            wf.update_workflow_run_state(&run_id, WorkflowState::Failed, Some("partial"))
+                .unwrap();
+
+            queue
+                .set_workflow_run_completed_with_failures(py, &run_id)
+                .unwrap();
+
+            let run = wf.get_workflow_run(&run_id).unwrap().unwrap();
+            assert_eq!(run.state, WorkflowState::CompletedWithFailures);
+        });
+    }
+}
