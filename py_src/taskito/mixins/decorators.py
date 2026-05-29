@@ -27,6 +27,7 @@ from taskito.events import EventType
 from taskito.exceptions import TaskCancelledError
 from taskito.inject import Inject, _InjectAlias
 from taskito.interception.reconstruct import reconstruct_args
+from taskito.middleware import middleware_key
 from taskito.predicates.core import coerce_predicate
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
 from taskito.task import TaskWrapper
@@ -155,7 +156,9 @@ class QueueDecoratorMixin:
             disabled = []
         if disabled:
             disabled_set = set(disabled)
-            chain = [mw for mw in chain if getattr(mw, "name", "") not in disabled_set]
+            # ``middleware_key`` matches admin discovery's keying (name, else
+            # class path) so a dashboard disable on an unnamed middleware works.
+            chain = [mw for mw in chain if middleware_key(mw) not in disabled_set]
 
         self._mw_chain_cache[task_name] = (chain, version, time.monotonic())
         return chain

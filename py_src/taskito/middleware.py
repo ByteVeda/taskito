@@ -121,3 +121,15 @@ class TaskMiddleware:
 
     def on_cancel(self, ctx: JobContext) -> None:
         """Called when a job is cancelled during execution."""
+
+
+def middleware_class_path(mw: TaskMiddleware) -> str:
+    """Fully-qualified class path of a middleware instance."""
+    return f"{type(mw).__module__}.{type(mw).__qualname__}"
+
+
+def middleware_key(mw: TaskMiddleware) -> str:
+    """Stable identifier a middleware is keyed by in the dashboard disable
+    list: its ``name`` if set, otherwise its class path. This is the single
+    source of truth shared by chain filtering and admin discovery."""
+    return getattr(mw, "name", "") or middleware_class_path(mw)

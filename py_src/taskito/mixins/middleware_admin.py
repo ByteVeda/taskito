@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from taskito.dashboard.middleware_store import MiddlewareDisableStore
+from taskito.middleware import middleware_class_path, middleware_key
 
 if TYPE_CHECKING:
     from taskito.middleware import TaskMiddleware
@@ -30,23 +31,23 @@ class QueueMiddlewareAdminMixin:
         ``name`` is the value the disable list keys on."""
         seen: dict[str, dict[str, Any]] = {}
         for mw in self._global_middleware:
-            name = getattr(mw, "name", "") or f"{type(mw).__module__}.{type(mw).__qualname__}"
+            name = middleware_key(mw)
             seen.setdefault(
                 name,
                 {
                     "name": name,
-                    "class_path": f"{type(mw).__module__}.{type(mw).__qualname__}",
+                    "class_path": middleware_class_path(mw),
                     "scopes": [],
                 },
             )["scopes"].append({"kind": "global"})
         for task_name, mws in self._task_middleware.items():
             for mw in mws:
-                name = getattr(mw, "name", "") or f"{type(mw).__module__}.{type(mw).__qualname__}"
+                name = middleware_key(mw)
                 entry = seen.setdefault(
                     name,
                     {
                         "name": name,
-                        "class_path": f"{type(mw).__module__}.{type(mw).__qualname__}",
+                        "class_path": middleware_class_path(mw),
                         "scopes": [],
                     },
                 )

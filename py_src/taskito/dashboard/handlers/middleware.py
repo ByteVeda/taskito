@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from taskito.dashboard.errors import _BadRequest, _NotFound
+from taskito.middleware import middleware_class_path, middleware_key
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -24,13 +25,13 @@ def handle_get_task_middleware(queue: Queue, _qs: dict, task_name: str) -> dict[
     # can render every toggle.
     base_chain = queue._global_middleware + queue._task_middleware.get(task_name, [])
     entries: list[dict[str, Any]] = []
-    chain_names = {getattr(mw, "name", "") for mw in chain}
+    chain_names = {middleware_key(mw) for mw in chain}
     for mw in base_chain:
-        name = getattr(mw, "name", "") or f"{type(mw).__module__}.{type(mw).__qualname__}"
+        name = middleware_key(mw)
         entries.append(
             {
                 "name": name,
-                "class_path": f"{type(mw).__module__}.{type(mw).__qualname__}",
+                "class_path": middleware_class_path(mw),
                 "disabled": name in disabled,
                 "effective": name in chain_names,
             }
