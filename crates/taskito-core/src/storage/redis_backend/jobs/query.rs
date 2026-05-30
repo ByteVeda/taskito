@@ -119,68 +119,99 @@ impl RedisStorage {
         Ok(stats)
     }
 
+    /// `SINTERCARD` of a membership set with a per-status set — the count of
+    /// jobs that are both in `membership_key` and in the given status, computed
+    /// server-side without transferring or deserializing any job. Redis starts
+    /// from the smaller set, so e.g. intersecting against the (small) running
+    /// set stays cheap regardless of how large the membership set has grown.
+    fn count_in_status(
+        &self,
+        conn: &mut redis::Connection,
+        membership_key: &str,
+        status: JobStatus,
+    ) -> Result<i64> {
+        let status_key = self.key(&["jobs", "status", &(status as i32).to_string()]);
+        redis::cmd("SINTERCARD")
+            .arg(2)
+            .arg(membership_key)
+            .arg(&status_key)
+            .query::<i64>(conn)
+            .map_err(map_err)
+    }
+
+    /// Per-status breakdown for the jobs in `membership_key` (a per-queue or
+    /// per-task set), one `SINTERCARD` per status.
+    fn status_breakdown(
+        &self,
+        conn: &mut redis::Connection,
+        membership_key: &str,
+    ) -> Result<QueueStats> {
+        let mut stats = QueueStats::default();
+        for (status, field) in [
+            (JobStatus::Pending, &mut stats.pending),
+            (JobStatus::Running, &mut stats.running),
+            (JobStatus::Complete, &mut stats.completed),
+            (JobStatus::Failed, &mut stats.failed),
+            (JobStatus::Dead, &mut stats.dead),
+            (JobStatus::Cancelled, &mut stats.cancelled),
+        ] {
+            *field = self.count_in_status(conn, membership_key, status)?;
+        }
+        Ok(stats)
+    }
+
     /// Count running jobs for a specific task name (for per-task concurrency limiting).
     pub fn count_running_by_task(&self, task_name: &str) -> Result<i64> {
         let mut conn = self.conn()?;
         let by_task_key = self.key(&["jobs", "by_task", task_name]);
-        let job_ids: Vec<String> = conn.smembers(&by_task_key).map_err(map_err)?;
-
-        let mut count: i64 = 0;
-        for id in &job_ids {
-            if let Some(job) = self.load_job(&mut conn, id)? {
-                if job.status == JobStatus::Running {
-                    count += 1;
-                }
-            }
-        }
-
-        Ok(count)
+        self.count_in_status(&mut conn, &by_task_key, JobStatus::Running)
     }
 
     pub fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
         let mut conn = self.conn()?;
         let by_queue_key = self.key(&["jobs", "by_queue", queue_name]);
-        let job_ids: Vec<String> = conn.smembers(&by_queue_key).map_err(map_err)?;
-
-        let mut stats = QueueStats::default();
-        for id in &job_ids {
-            if let Some(job) = self.load_job(&mut conn, id)? {
-                match job.status as i32 {
-                    0 => stats.pending += 1,
-                    1 => stats.running += 1,
-                    2 => stats.completed += 1,
-                    3 => stats.failed += 1,
-                    4 => stats.dead += 1,
-                    5 => stats.cancelled += 1,
-                    _ => {}
-                }
-            }
-        }
-
-        Ok(stats)
+        self.status_breakdown(&mut conn, &by_queue_key)
     }
 
     pub fn stats_all_queues(&self) -> Result<std::collections::HashMap<String, QueueStats>> {
         let mut conn = self.conn()?;
-        let all_key = self.key(&["jobs", "all"]);
-        let job_ids: Vec<String> = conn.zrange(&all_key, 0, -1).map_err(map_err)?;
 
-        let mut map = std::collections::HashMap::<String, QueueStats>::new();
-        for id in &job_ids {
-            if let Some(job) = self.load_job(&mut conn, id)? {
-                let stats = map.entry(job.queue.clone()).or_default();
-                match job.status as i32 {
-                    0 => stats.pending += 1,
-                    1 => stats.running += 1,
-                    2 => stats.completed += 1,
-                    3 => stats.failed += 1,
-                    4 => stats.dead += 1,
-                    5 => stats.cancelled += 1,
-                    _ => {}
+        // Enumerate queues by scanning the per-queue membership keys (one per
+        // queue with at least one job — empty sets are auto-removed by Redis).
+        // This is bounded by the number of queues, not the job population.
+        let pattern = self.key(&["jobs", "by_queue", "*"]);
+        let strip = self.key(&["jobs", "by_queue", ""]);
+        let mut queues: Vec<String> = Vec::new();
+        let mut cursor = 0u64;
+        loop {
+            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            for key in batch {
+                if let Some(name) = key.strip_prefix(&strip) {
+                    queues.push(name.to_string());
                 }
             }
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
         }
+        // SCAN may return duplicates across iterations.
+        queues.sort_unstable();
+        queues.dedup();
 
+        let mut map = std::collections::HashMap::<String, QueueStats>::new();
+        for queue in queues {
+            let by_queue_key = self.key(&["jobs", "by_queue", &queue]);
+            let stats = self.status_breakdown(&mut conn, &by_queue_key)?;
+            map.insert(queue, stats);
+        }
         Ok(map)
     }
 
