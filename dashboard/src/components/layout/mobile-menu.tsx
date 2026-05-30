@@ -15,7 +15,7 @@ import {
   Settings2,
   Skull,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Button,
   Sheet,
@@ -71,10 +71,7 @@ export function MobileMenu() {
   const externalLinks = useExternalLinks();
   const [open, setOpen] = useState(false);
 
-  // Close on navigation
-  useEffect(() => {
-    setOpen(false);
-  }, []);
+  const close = () => setOpen(false);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -100,6 +97,7 @@ export function MobileMenu() {
                     <li key={to}>
                       <Link
                         to={to}
+                        onClick={close}
                         className={cn(
                           "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
                           active
@@ -128,6 +126,7 @@ export function MobileMenu() {
                       href={link.url}
                       target="_blank"
                       rel="noreferrer noopener"
+                      onClick={close}
                       className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
                     >
                       <ExternalLinkIcon className="size-4" aria-hidden />
