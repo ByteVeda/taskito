@@ -78,10 +78,15 @@ impl Scheduler {
             return Ok(false);
         }
 
+        // Every job in `jobs` is already claimed (Running). Isolate per-job
+        // failures so one error doesn't strand the rest of the batch in
+        // Running until the reaper times them out.
         let mut dispatched_any = false;
         for job in jobs {
-            if self.gate_and_dispatch(job, now, job_tx)? {
-                dispatched_any = true;
+            match self.gate_and_dispatch(job, now, job_tx) {
+                Ok(true) => dispatched_any = true,
+                Ok(false) => {}
+                Err(e) => log::warn!("batch dispatch failed for a claimed job: {e}"),
             }
         }
         Ok(dispatched_any)
