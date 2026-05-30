@@ -165,8 +165,11 @@ your business logic.
 
 ### SSRF guard
 
-Outbound webhook URLs are validated before the manager queues any
-delivery. The guard rejects:
+Outbound webhook URLs are validated both when a webhook is registered and
+again **at delivery time**, so a hostname that is rebound to an internal
+address after registration (DNS rebinding) is still refused on the actual
+request. Redirects are not followed, so a `30x` response can't bounce
+delivery to an internal host either. The guard rejects:
 
 - Non-`http` / `https` schemes
 - `localhost`, `*.local`, `*.internal`, `*.intranet`, `*.lan`,
