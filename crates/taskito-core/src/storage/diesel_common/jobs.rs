@@ -456,7 +456,11 @@ macro_rules! impl_diesel_job_ops {
                             continue;
                         }
 
-                        diesel::update(jobs::table)
+                        // Claim guarded by the affected-row count: if another
+                        // worker already moved this row out of `Pending`, the
+                        // update touches zero rows — skip it rather than
+                        // handing out a job we don't own.
+                        let claimed = diesel::update(jobs::table)
                             .filter(jobs::id.eq(&row.id))
                             .filter(jobs::status.eq(JobStatus::Pending as i32))
                             .set((
@@ -464,6 +468,10 @@ macro_rules! impl_diesel_job_ops {
                                 jobs::started_at.eq(now),
                             ))
                             .execute(conn)?;
+
+                        if claimed == 0 {
+                            continue;
+                        }
 
                         let updated: NarrowJobRow = jobs::table
                             .find(&row.id)
