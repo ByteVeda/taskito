@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-use crate::storage::models::{ArchivedJobRow, JobRow};
+use crate::storage::models::{ArchivedJobRow, JobRow, NarrowJobRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(i32)]
@@ -154,6 +154,41 @@ impl From<ArchivedJobRow> for Job {
             namespace: row.namespace,
             // Archived jobs are terminal and never re-dequeued.
             has_deps: false,
+        }
+    }
+}
+
+impl Job {
+    /// Assemble a [`Job`] from a blob-free [`NarrowJobRow`] plus the
+    /// `payload`/`result` fetched separately from the `job_payloads` side
+    /// table. The narrow row carries every non-blob column; the caller
+    /// supplies the blobs after claiming the single job it wants.
+    pub fn from_narrow(narrow: NarrowJobRow, payload: Vec<u8>, result: Option<Vec<u8>>) -> Self {
+        Self {
+            id: narrow.id,
+            queue: narrow.queue,
+            task_name: narrow.task_name,
+            payload,
+            status: JobStatus::from_i32(narrow.status).unwrap_or(JobStatus::Pending),
+            priority: narrow.priority,
+            created_at: narrow.created_at,
+            scheduled_at: narrow.scheduled_at,
+            started_at: narrow.started_at,
+            completed_at: narrow.completed_at,
+            retry_count: narrow.retry_count,
+            max_retries: narrow.max_retries,
+            result,
+            error: narrow.error,
+            timeout_ms: narrow.timeout_ms,
+            unique_key: narrow.unique_key,
+            progress: narrow.progress,
+            metadata: narrow.metadata,
+            notes: narrow.notes,
+            cancel_requested: narrow.cancel_requested != 0,
+            expires_at: narrow.expires_at,
+            result_ttl_ms: narrow.result_ttl_ms,
+            namespace: narrow.namespace,
+            has_deps: narrow.has_deps,
         }
     }
 }

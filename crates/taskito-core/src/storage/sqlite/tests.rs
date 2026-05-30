@@ -907,3 +907,98 @@ fn test_fail_and_cancel_archive_immediately() {
         JobStatus::Cancelled
     );
 }
+
+// ── Payload side-table (job_payloads) ────────────────────────────────
+
+/// Count rows in `job_payloads` for a given job id.
+fn payload_row_count(storage: &SqliteStorage, job_id: &str) -> i64 {
+    use crate::storage::schema::job_payloads;
+    use diesel::prelude::*;
+    let mut conn = storage.conn().unwrap();
+    job_payloads::table
+        .filter(job_payloads::job_id.eq(job_id))
+        .count()
+        .get_result(&mut conn)
+        .unwrap()
+}
+
+#[test]
+fn test_enqueue_populates_payload_side_table() {
+    use crate::storage::schema::job_payloads;
+    use diesel::prelude::*;
+    let storage = test_storage();
+    let mut nj = make_job("side_table");
+    nj.payload = vec![9, 8, 7, 6];
+    let job = storage.enqueue(nj).unwrap();
+
+    let mut conn = storage.conn().unwrap();
+    let (payload, result): (Vec<u8>, Option<Vec<u8>>) = job_payloads::table
+        .filter(job_payloads::job_id.eq(&job.id))
+        .select((job_payloads::payload, job_payloads::result))
+        .first(&mut conn)
+        .unwrap();
+    assert_eq!(payload, vec![9, 8, 7, 6]);
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_dequeue_returns_full_payload() {
+    let storage = test_storage();
+    let mut nj = make_job("dq_payload");
+    nj.payload = vec![42, 43, 44];
+    storage.enqueue(nj).unwrap();
+
+    let dequeued = storage
+        .dequeue("default", now_millis(), None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(dequeued.payload, vec![42, 43, 44]);
+    assert_eq!(dequeued.status, JobStatus::Running);
+}
+
+#[test]
+fn test_complete_archives_and_removes_side_table_row() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("complete_side")).unwrap();
+    storage.dequeue("default", now_millis(), None).unwrap();
+    // The side-table row exists while the job is live.
+    assert_eq!(payload_row_count(&storage, &job.id), 1);
+
+    storage.complete(&job.id, Some(vec![5, 5, 5])).unwrap();
+
+    // Completing archives the job: the live row and its side-table row are
+    // both gone; the result is preserved in `archived_jobs`.
+    assert_eq!(jobs_row_count(&storage, &job.id), 0);
+    assert_eq!(payload_row_count(&storage, &job.id), 0);
+    let fetched = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.result, Some(vec![5, 5, 5]));
+}
+
+#[test]
+fn test_get_job_returns_payload_and_result() {
+    let storage = test_storage();
+    let mut nj = make_job("get_side");
+    nj.payload = vec![1, 1, 2, 3, 5];
+    let job = storage.enqueue(nj).unwrap();
+    storage.dequeue("default", now_millis(), None).unwrap();
+    storage.complete(&job.id, Some(vec![8, 13])).unwrap();
+
+    // After archival, get_job assembles payload + result from `archived_jobs`.
+    let fetched = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.payload, vec![1, 1, 2, 3, 5]);
+    assert_eq!(fetched.result, Some(vec![8, 13]));
+}
+
+#[test]
+fn test_side_table_stays_one_to_one_with_live_jobs() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("cascade_side")).unwrap();
+    // A live (pending) job has exactly one side-table row.
+    assert_eq!(payload_row_count(&storage, &job.id), 1);
+
+    // Cancelling the pending job archives it and drops the side-table row,
+    // keeping `job_payloads` 1:1 with the live `jobs` table (no leak).
+    assert!(storage.cancel_job(&job.id).unwrap());
+    assert_eq!(jobs_row_count(&storage, &job.id), 0);
+    assert_eq!(payload_row_count(&storage, &job.id), 0);
+}

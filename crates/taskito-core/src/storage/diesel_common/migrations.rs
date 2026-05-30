@@ -96,6 +96,13 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
             )"
         ),
         format!(
+            "CREATE TABLE IF NOT EXISTS job_payloads (
+                job_id  TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                payload {bin} NOT NULL,
+                result  {bin}
+            )"
+        ),
+        format!(
             "CREATE TABLE IF NOT EXISTS dead_letter (
                 id              TEXT PRIMARY KEY,
                 original_job_id TEXT NOT NULL,
@@ -370,4 +377,21 @@ pub fn backfill_statements() -> &'static [&'static str] {
         "UPDATE jobs SET has_deps = (id IN (SELECT job_id FROM job_dependencies)) \
          WHERE status = 0 AND has_deps <> (id IN (SELECT job_id FROM job_dependencies))",
     ]
+}
+
+/// Backfill the `job_payloads` side table from the kept `jobs.payload` /
+/// `jobs.result` columns. Idempotent: SQLite uses `INSERT OR IGNORE`, Postgres
+/// `ON CONFLICT (job_id) DO NOTHING`, so it only copies rows that aren't there
+/// yet. After a database that pre-dates the side table is migrated, every live
+/// job gets a matching payload row; subsequent runs match nothing.
+pub fn backfill_payload_side_table(d: &Dialect) -> Vec<String> {
+    let stmt = if d.alter_if_not_exists.is_empty() {
+        // SQLite: empty `alter_if_not_exists` marks this dialect.
+        "INSERT OR IGNORE INTO job_payloads (job_id, payload, result) \
+         SELECT id, payload, result FROM jobs"
+    } else {
+        "INSERT INTO job_payloads (job_id, payload, result) \
+         SELECT id, payload, result FROM jobs ON CONFLICT (job_id) DO NOTHING"
+    };
+    vec![stmt.to_string()]
 }
