@@ -294,13 +294,16 @@ class QueueDecoratorMixin:
                         exc,
                     )
                 else:
+                    # Log the exception type only; ``exc_info`` carries the full
+                    # detail. ``%r`` of the exception is avoided because its
+                    # message can echo task argument data into log sinks.
                     logger.error(
-                        "Task %s[%s] raised %s in %.3fs: %r",
+                        "Task %s[%s] raised %s in %.3fs",
                         task_name,
                         job_id,
                         type(exc).__name__,
                         elapsed,
-                        exc,
+                        exc_info=True,
                     )
                 for hook in hooks["on_failure"]:
                     hook(task_name, args, kwargs, exc)
