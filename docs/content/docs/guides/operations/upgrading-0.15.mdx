@@ -1,0 +1,182 @@
+---
+title: Upgrading to 0.15
+description: "Breaking changes, migration steps, and operator notes for the 0.15 release."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="warn" title="Breaking wire and schema changes">
+  0.15 introduces breaking changes to the serialization wire format, the job
+  storage schema, and internal table layout. **Database migrations run
+  automatically on first startup** — the storage layer's `run_migrations`
+  adds new tables, columns, and indexes and backfills existing rows. Operators
+  do not need to run manual SQL, but should read the rolling-upgrade notes for
+  each change before deploying.
+</Callout>
+
+## 1. Serializer default is now `SmartSerializer`
+
+**What changed.** The default serializer is now `SmartSerializer`, which uses
+msgpack for plain-data payloads (dicts, lists, strings, ints, floats, bools,
+`None`, and tuples) and falls back to cloudpickle for anything else (lambdas,
+closures, custom classes, generators, namedtuples). Payloads that do not
+require cloudpickle are smaller and faster to serialize and deserialize.
+`msgpack` is now a base dependency — no extra install required.
+
+**Breaking — rolling upgrade required.** 0.15 workers prefix every payload with
+a 1-byte codec tag. Workers running pre-0.15 do not know about this tag and
+**will fail to deserialize payloads written by a 0.15 worker**. During a
+mixed-version deploy window you must take one of the following approaches:
+
+- **Recommended:** stop all workers, upgrade everything at once, restart.
+- **If rolling deployment is required:** pin the old serializer explicitly on
+  all queues until every worker has been upgraded to 0.15, then remove the
+  override.
+
+```python
+from taskito import Queue
+from taskito.serializers import CloudpickleSerializer
+
+# Pin during the rolling-upgrade window.
+# Remove this line once every worker is on 0.15.
+queue = Queue(
+    db_path="myapp.db",
+    serializer=CloudpickleSerializer(),
+)
+```
+
+Pre-0.15 payloads (untagged cloudpickle) are read transparently by 0.15 workers
+— backward compatibility for **reading** old data is fully maintained.
+
+<Callout type="info" title="Idempotency key shift">
+  Auto-derived idempotency keys (`@queue.task(idempotent=True)`) are computed
+  from a SHA-256 hash of the serialized payload. Because the serialized bytes
+  change with the new codec tag, the same logical enqueue can produce a
+  different key before and after the upgrade. Idempotent tasks may not deduplicate
+  correctly across the upgrade window. Either drain idempotent work before
+  upgrading or accept at-least-once delivery for that period.
+</Callout>
+
+## 2. Per-task / per-queue stats are computed server-side
+
+**What changed.** Per-task and per-queue statistics are now computed on the
+server side using `SINTERCARD`, replacing the previous O(N) full-scan approach.
+This is a pure performance improvement.
+
+**Action required:** none. No data migration, no API change, no configuration
+change.
+
+## 3. Batch dequeue — `scheduler_batch_size`
+
+**What changed.** A new optional `scheduler_batch_size` kwarg on `Queue()`
+controls how many jobs the scheduler claims per round-trip. The **default is 1**,
+which preserves existing behaviour exactly.
+
+```python
+# Higher throughput under sustained load:
+queue = Queue(
+    db_path="myapp.db",
+    scheduler_batch_size=20,
+)
+```
+
+Set `scheduler_batch_size` above 1 when your queue regularly accumulates a
+backlog and per-job overhead is low. Under light load there is no meaningful
+difference.
+
+**Breaking:** no.
+
+## 4. Opt-in push-based dispatch — `push_dispatch`
+
+**What changed.** Setting `push_dispatch=True` on `Queue()` switches from
+polling to event-driven wakeups. This eliminates the dispatch latency floor
+and idle database load under quiet periods.
+
+```python
+queue = Queue(
+    db_path="myapp.db",
+    push_dispatch=True,
+)
+```
+
+**Off by default.** Push dispatch is gated behind a `push-dispatch` cargo
+feature and is **not included in the default wheel**. To use it you must build
+the extension with that feature enabled:
+
+```bash
+maturin develop --features push-dispatch
+# or, for a release wheel:
+maturin build --release --features push-dispatch
+```
+
+Backend support:
+
+| Backend | Dispatch mode |
+|---------|--------------|
+| SQLite (in-process) | Fully event-driven |
+| Redis | Fully event-driven via `BLPOP` |
+| Postgres | Falls back to a faster poll — native `LISTEN` listener pending |
+
+Polling remains the default and the safety-net fallback. There is no
+correctness difference between the two modes.
+
+**Breaking:** no.
+
+## 5. Terminal jobs are archived immediately
+
+**What changed.** Completed, failed, dead-lettered, and cancelled jobs are
+now moved to the `archived_jobs` table the moment they reach a terminal state,
+rather than being cleaned up by the periodic maintenance pass. This keeps the
+hot `jobs` table bounded regardless of job throughput.
+
+`queue.stats()`, `queue.get_job()`, and `queue.list_jobs()` transparently
+include archived jobs — there is no API change.
+
+**On first startup**, existing terminal rows in `jobs` are drained into
+`archived_jobs` automatically. This migration runs as part of `run_migrations`
+and may take a few seconds on large databases.
+
+<Callout type="warn" title="Downgrade floor">
+  A pre-0.15 binary only queries the `jobs` table, so it will not see any jobs
+  that 0.15 has archived. Once you upgrade a database to 0.15, **treat 0.15 as
+  the minimum version floor for that database** — do not roll a single database
+  back to a pre-0.15 binary after deploying.
+</Callout>
+
+## 6. Job payloads moved to a side table (`job_payloads`)
+
+**What changed.** Payload BLOBs are now stored in a separate `job_payloads`
+table rather than inline on the `jobs` row. The dequeue path no longer loads
+payload bytes for candidate jobs it does not ultimately claim, reducing I/O
+under contention.
+
+This is transparent — no API change, no change to enqueue or result behaviour.
+
+**Rollback safety:** the `jobs.payload` and `jobs.result` columns are **kept
+and dual-written in 0.15**. If you need to roll back to a pre-0.15 binary, the
+data is still there.
+
+**0.16 column drop:** `jobs.payload` and `jobs.result` will be **dropped in the
+0.16 migration**. Plan your 0.16 upgrade window accordingly — once 0.16 is
+deployed you cannot roll that database back to 0.15.
+
+<Callout type="info">
+  Redis is unaffected by this change. The Redis backend stores job payloads
+  inline in the job JSON object and does not use the `job_payloads` table.
+</Callout>
+
+## Upgrade checklist
+
+- [ ] **Serializer:** upgrade all workers together before relying on the new
+  format. If rolling deployment is required, pin `CloudpickleSerializer()`
+  until all workers are on 0.15, then remove the override.
+- [ ] **Idempotent tasks:** drain idempotent work before upgrading, or accept
+  at-least-once delivery during the upgrade window.
+- [ ] **Batch dequeue:** decide on a `scheduler_batch_size` for your workload.
+  Default of 1 is safe; raise it if you regularly see a backlog.
+- [ ] **Push dispatch:** optionally enable `push_dispatch=True` if you build
+  the extension with `--features push-dispatch`. Not required for correctness.
+- [ ] **Downgrade floor:** after upgrading any database to 0.15, do not run
+  pre-0.15 binaries against it.
+- [ ] **0.16 column drop:** the `jobs.payload` and `jobs.result` columns will
+  be removed in 0.16. Ensure all workers are on 0.15 before upgrading to 0.16.

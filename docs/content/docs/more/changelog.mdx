@@ -5,6 +5,49 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.15.0
+
+See the [Upgrading to 0.15](/guides/operations/upgrading-0.15) guide for
+migration steps, rolling-upgrade notes, and the downgrade floor.
+
+### Breaking
+
+- **Serializer default changed to `SmartSerializer`.** Payloads written by
+  0.15 carry a 1-byte codec tag and cannot be read by pre-0.15 workers. Upgrade
+  all workers together; if rolling deployment is required, pin
+  `Queue(serializer=CloudpickleSerializer())` until every worker is on 0.15.
+  Reading old (untagged cloudpickle) payloads is fully backward compatible.
+- **Terminal jobs archived immediately.** Completed, failed, dead-lettered,
+  and cancelled jobs move to `archived_jobs` on completion. Pre-0.15 binaries
+  only look in `jobs` and will not see archived rows — treat 0.15 as a
+  minimum-version floor for any upgraded database.
+
+### Added
+
+- **`SmartSerializer` (new default).** msgpack for plain-data payloads
+  (faster, smaller); cloudpickle fallback for lambdas, closures, and custom
+  classes. `msgpack` is now a base dependency. Tuples are preserved; namedtuples
+  fall back to cloudpickle.
+- **`Queue(scheduler_batch_size=N)`.** New optional kwarg; defaults to 1
+  (unchanged behaviour). Raise it to claim up to N jobs per scheduler
+  round-trip for higher throughput under sustained load.
+- **Opt-in push-based dispatch (`push_dispatch=True`).** Event-driven wakeups
+  instead of polling — removes the dispatch latency floor and idle DB load.
+  Off by default; requires building the extension with `--features push-dispatch`
+  (not included in the default wheel). SQLite and Redis are fully event-driven;
+  Postgres falls back to a faster poll pending a native LISTEN listener.
+
+### Changed
+
+- **Per-task / per-queue stats computed server-side.** Replaces O(N) full
+  scans with `SINTERCARD`. No API change, no data migration.
+- **Job payloads moved to `job_payloads` side table.** The dequeue path no
+  longer loads payload BLOBs for candidates it does not claim. Transparent —
+  no API change. `jobs.payload` / `jobs.result` are dual-written in 0.15 for
+  rollback safety and **will be dropped in 0.16**. Redis is unaffected.
+
+---
+
 ## 0.14.2
 
 ### Fixed
