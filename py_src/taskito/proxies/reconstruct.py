@@ -19,6 +19,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("taskito.proxies")
 
+# Set once we've warned about reconstructing proxy recipes without a signing
+# key, so the warning fires at most once per process instead of per recipe.
+_UNSIGNED_WARNED = False
+
+
+def _warn_unsigned_once() -> None:
+    """Warn (once) that a proxy recipe was reconstructed without verification.
+
+    A proxy recipe travels inside the untrusted payload. With no signing key
+    its integrity is unchecked, so anyone able to write to the queue can forge
+    one. Surfacing this at the moment it actually happens avoids spamming every
+    Queue that merely has the built-in handlers registered.
+    """
+    global _UNSIGNED_WARNED
+    if _UNSIGNED_WARNED:
+        return
+    _UNSIGNED_WARNED = True
+    logger.warning(
+        "Reconstructing proxy recipes without integrity verification; set "
+        "recipe_signing_key= or TASKITO_RECIPE_SECRET to enable HMAC signing."
+    )
+
+
 _PROXY_KEY = "__taskito_proxy__"
 _REF_KEY = "__taskito_ref__"
 
