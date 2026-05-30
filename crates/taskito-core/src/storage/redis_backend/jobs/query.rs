@@ -171,7 +171,11 @@ impl RedisStorage {
         Ok(QueueStats {
             pending: self.count_in_status(conn, &by_queue, JobStatus::Pending)?,
             running: self.count_in_status(conn, &by_queue, JobStatus::Running)?,
-            completed: self.count_in_archived_status(conn, &archived_by_queue, JobStatus::Complete)?,
+            completed: self.count_in_archived_status(
+                conn,
+                &archived_by_queue,
+                JobStatus::Complete,
+            )?,
             failed: self.count_in_archived_status(conn, &archived_by_queue, JobStatus::Failed)?,
             dead: self.count_in_archived_status(conn, &archived_by_queue, JobStatus::Dead)?,
             cancelled: self.count_in_archived_status(

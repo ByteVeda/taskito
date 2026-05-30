@@ -41,8 +41,13 @@ impl RedisStorage {
         }
     }
 
+    /// Live-only required lookup for write/mutator paths. Resolves `job:<id>`
+    /// directly without the archived fallback, so a mutator never operates on a
+    /// terminal job that has already left the live indices (which would leave
+    /// the reindex partial). Read paths must use `get_job` instead.
     pub(super) fn get_job_required(&self, id: &str) -> Result<Job> {
-        self.get_job(id)?
+        let mut conn = self.conn()?;
+        self.load_job(&mut conn, id)?
             .ok_or_else(|| QueueError::JobNotFound(id.to_string()))
     }
 
@@ -92,18 +97,27 @@ impl RedisStorage {
         let by_queue_key = self.key(&["jobs", "by_queue", &job.queue]);
         let by_task_key = self.key(&["jobs", "by_task", &job.task_name]);
         let all_key = self.key(&["jobs", "all"]);
+        let pending_key = self.key(&["queue", &job.queue, "pending"]);
         let archived_key = self.key(&["archived", &job.id]);
         let archived_status_key =
             self.key(&["archived", "status", &(job.status as i32).to_string()]);
         let archived_by_queue = self.key(&["archived", "by_queue", &job.queue]);
         let archived_all = self.key(&["archived", "all"]);
 
+        // `.atomic()` wraps the live→archive move in MULTI/EXEC so the job is
+        // never observable in both the live and archived indices at once.
         let pipe = &mut redis::pipe();
+        pipe.atomic();
         pipe.del(&job_key);
         pipe.srem(&status_key, &job.id);
         pipe.srem(&by_queue_key, &job.id);
         pipe.srem(&by_task_key, &job.id);
         pipe.zrem(&all_key, &job.id);
+        // Pending jobs still sit in the per-queue pending zset; running jobs
+        // were removed at dequeue, so only remove on a Pending→terminal move.
+        if old_status == JobStatus::Pending {
+            pipe.zrem(&pending_key, &job.id);
+        }
         pipe.set(&archived_key, &job_json);
         pipe.sadd(&archived_status_key, &job.id);
         pipe.sadd(&archived_by_queue, &job.id);
@@ -140,9 +154,16 @@ impl RedisStorage {
         pipe.del(&deps_key);
         pipe.del(&dependents_key);
 
+        // Only release the unique-key pointer if it still points at THIS job.
+        // `enqueue_unique` stores the job id at `jobs:unique:<uk>`; a newer live
+        // job may have reused the same `unique_key` after this row was archived,
+        // and deleting the pointer would clobber the new job's lock.
         if let Some(ref uk) = job.unique_key {
             let unique_key = self.key(&["jobs", "unique", uk]);
-            pipe.del(&unique_key);
+            let owner: Option<String> = conn.get(&unique_key).map_err(map_err)?;
+            if owner.as_deref() == Some(job.id.as_str()) {
+                pipe.del(&unique_key);
+            }
         }
 
         pipe.query::<()>(conn).map_err(map_err)?;

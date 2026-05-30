@@ -89,13 +89,62 @@ macro_rules! impl_diesel_job_ops {
                     return Ok(true);
                 }
 
-                let incomplete: i64 = jobs::table
+                // A dependency is incomplete if it is non-Complete in the live
+                // `jobs` table OR non-Complete in `archived_jobs` (a terminal
+                // parent that was cancelled/failed/dead has been archived and
+                // must still block its dependents; an archived-Complete parent
+                // is counted as satisfied).
+                let live_incomplete: i64 = jobs::table
                     .filter(jobs::id.eq_any(&dep_job_ids))
                     .filter(jobs::status.ne(JobStatus::Complete as i32))
                     .count()
                     .get_result(conn)?;
 
-                Ok(incomplete == 0)
+                let archived_incomplete: i64 = archived_jobs::table
+                    .filter(archived_jobs::id.eq_any(&dep_job_ids))
+                    .filter(archived_jobs::status.ne(JobStatus::Complete as i32))
+                    .count()
+                    .get_result(conn)?;
+
+                Ok(live_incomplete + archived_incomplete == 0)
+            }
+
+            /// Validate that a dependency exists and is in an acceptable state.
+            /// A live (pending/running) or archived-complete dependency is
+            /// accepted; a dead/cancelled/failed dependency or a missing one is
+            /// rejected via `RollbackTransaction`. Terminal deps live in
+            /// `archived_jobs`, so a missing live row falls back to the archive.
+            fn validate_dependency(
+                conn: &mut $conn_type,
+                dep_id: &str,
+            ) -> diesel::result::QueryResult<()> {
+                let dep: Option<JobRow> = jobs::table
+                    .find(dep_id)
+                    .select(JobRow::as_select())
+                    .first(conn)
+                    .optional()?;
+
+                match dep {
+                    Some(d)
+                        if d.status == JobStatus::Dead as i32
+                            || d.status == JobStatus::Cancelled as i32 =>
+                    {
+                        Err(diesel::result::Error::RollbackTransaction)
+                    }
+                    Some(_) => Ok(()),
+                    None => {
+                        let archived: Option<ArchivedJobRow> = archived_jobs::table
+                            .find(dep_id)
+                            .select(ArchivedJobRow::as_select())
+                            .first(conn)
+                            .optional()?;
+
+                        match archived {
+                            Some(a) if a.status == JobStatus::Complete as i32 => Ok(()),
+                            _ => Err(diesel::result::Error::RollbackTransaction),
+                        }
+                    }
+                }
             }
 
             /// Insert a new job into the queue. Returns the job.
@@ -105,24 +154,11 @@ macro_rules! impl_diesel_job_ops {
                 let mut conn = self.conn()?;
 
                 conn.transaction(|conn| {
-                    // Validate dependencies exist and aren't dead/cancelled
+                    // Validate dependencies exist and aren't dead/cancelled.
+                    // Terminal deps live in `archived_jobs`, so a missing live
+                    // row falls back to the archive.
                     for dep_id in &depends_on {
-                        let dep: Option<JobRow> = jobs::table
-                            .find(dep_id)
-                            .select(JobRow::as_select())
-                            .first(conn)
-                            .optional()?;
-
-                        match dep {
-                            None => return Err(diesel::result::Error::RollbackTransaction),
-                            Some(d)
-                                if d.status == JobStatus::Dead as i32
-                                    || d.status == JobStatus::Cancelled as i32 =>
-                            {
-                                return Err(diesel::result::Error::RollbackTransaction);
-                            }
-                            _ => {}
-                        }
+                        Self::validate_dependency(conn, dep_id)?;
                     }
 
                     let row = NewJobRow {

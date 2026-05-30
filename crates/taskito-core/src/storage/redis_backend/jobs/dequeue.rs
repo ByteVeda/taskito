@@ -80,14 +80,19 @@ impl RedisStorage {
                 if !dep_ids.is_empty() {
                     let mut all_complete = true;
                     for dep_id in &dep_ids {
-                        if let Some(dep_job) = self.load_job(&mut conn, dep_id)? {
-                            if dep_job.status != JobStatus::Complete {
+                        // A completed dep has been archived out of the live
+                        // indices, so fall back to the archive before deciding
+                        // the dep is unsatisfied.
+                        let dep_job = match self.load_job(&mut conn, dep_id)? {
+                            Some(j) => Some(j),
+                            None => self.load_archived_job(&mut conn, dep_id)?,
+                        };
+                        match dep_job {
+                            Some(dep_job) if dep_job.status == JobStatus::Complete => {}
+                            _ => {
                                 all_complete = false;
                                 break;
                             }
-                        } else {
-                            all_complete = false;
-                            break;
                         }
                     }
                     if !all_complete {
@@ -214,14 +219,19 @@ impl RedisStorage {
                 if !dep_ids.is_empty() {
                     let mut all_complete = true;
                     for dep_id in &dep_ids {
-                        if let Some(dep_job) = self.load_job(&mut conn, dep_id)? {
-                            if dep_job.status != JobStatus::Complete {
+                        // A completed dep has been archived out of the live
+                        // indices, so fall back to the archive before deciding
+                        // the dep is unsatisfied.
+                        let dep_job = match self.load_job(&mut conn, dep_id)? {
+                            Some(j) => Some(j),
+                            None => self.load_archived_job(&mut conn, dep_id)?,
+                        };
+                        match dep_job {
+                            Some(dep_job) if dep_job.status == JobStatus::Complete => {}
+                            _ => {
                                 all_complete = false;
                                 break;
                             }
-                        } else {
-                            all_complete = false;
-                            break;
                         }
                     }
                     if !all_complete {

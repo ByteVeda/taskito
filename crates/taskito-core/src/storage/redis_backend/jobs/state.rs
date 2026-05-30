@@ -88,12 +88,8 @@ impl RedisStorage {
         job.status = JobStatus::Cancelled;
         job.completed_at = Some(now_millis());
 
-        // Remove from pending queue before archiving moves the job out of the
-        // live indices.
-        let queue_key = self.key(&["queue", &job.queue, "pending"]);
-        conn.zrem::<_, _, ()>(&queue_key, &job.id)
-            .map_err(map_err)?;
-
+        // `archive_job_immediately` removes the job from the per-queue pending
+        // zset as part of its atomic live→archive move (old_status == Pending).
         self.archive_job_immediately(&mut conn, &job, old_status)?;
 
         // Cascade cancel dependents
@@ -184,10 +180,8 @@ impl RedisStorage {
                     job.completed_at = Some(now);
                     job.error = Some(error_msg.clone());
 
-                    let queue_key = self.key(&["queue", &job.queue, "pending"]);
-                    conn.zrem::<_, _, ()>(&queue_key, &job.id)
-                        .map_err(map_err)?;
-
+                    // `archive_job_immediately` removes the job from the
+                    // per-queue pending zset as part of its atomic move.
                     self.archive_job_immediately(&mut conn, &job, old_status)?;
                 }
             }

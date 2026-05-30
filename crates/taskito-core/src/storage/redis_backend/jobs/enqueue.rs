@@ -24,13 +24,19 @@ impl RedisStorage {
             if skip.is_some_and(|s| s.contains(dep_id.as_str())) {
                 continue;
             }
+            // A live dep is read from `job:<id>`; a terminal dep has been
+            // archived, so a missing live row falls back to `archived:<id>`.
+            // A completed archived dep is valid; any other state is rejected.
             let dep_key = self.key(&["job", dep_id]);
             let data: Option<String> = conn.get(&dep_key).map_err(map_err)?;
             let dep_job: Job = match data {
-                None => return Err(QueueError::DependencyNotFound(DEP_MISSING.to_string())),
                 Some(d) => {
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?
                 }
+                None => match self.load_archived_job(conn, dep_id)? {
+                    Some(archived) if archived.status == JobStatus::Complete => continue,
+                    _ => return Err(QueueError::DependencyNotFound(DEP_MISSING.to_string())),
+                },
             };
             if dep_job.status == JobStatus::Dead || dep_job.status == JobStatus::Cancelled {
                 return Err(QueueError::DependencyNotFound(DEP_MISSING.to_string()));
