@@ -218,6 +218,10 @@ def _reconstruct_one(
             if metrics is not None:
                 metrics.record_checksum_failure(handler_name)
             raise
+    else:
+        # No signing key: the recipe's integrity is unverified. Warn once so an
+        # unsigned-reconstruction deployment is a deliberate choice, not silent.
+        _warn_unsigned_once()
 
     # Schema validation
     handler_schema = getattr(handler, "schema", None)
