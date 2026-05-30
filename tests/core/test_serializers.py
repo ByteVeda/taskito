@@ -162,6 +162,20 @@ class TestSmartSerializer:
         assert encoded[:1] == b"\x01"
         assert s.loads(encoded) == {"x": 1, "y": ["a", "b"]}
 
+    def test_namedtuple_preserved_via_cloudpickle(self) -> None:
+        """Tuple subclasses (namedtuples) must keep their type, not be
+        demoted to a plain tuple by the ExtType path."""
+        from collections import namedtuple
+
+        Point = namedtuple("Point", ["x", "y"])
+        s = SmartSerializer()
+        encoded = s.dumps(Point(1, 2))
+        assert encoded[:1] == b"\x00"  # cloudpickle fallback, not msgpack
+        restored = s.loads(encoded)
+        assert restored == Point(1, 2)
+        assert type(restored) is Point
+        assert restored.x == 1
+
     def test_falls_back_to_cloudpickle_for_lambda(self) -> None:
         s = SmartSerializer()
         encoded = s.dumps(lambda x: x + 1)

@@ -23,10 +23,12 @@ _EXT_TUPLE = 0
 def _msgpack_default(obj: Any) -> Any:
     """Encode types msgpack can't represent natively.
 
-    Tuples become a tagged ExtType (recursively packed). Anything else raises,
-    which ``SmartSerializer`` catches to fall back to cloudpickle.
+    Exact tuples become a tagged ExtType (recursively packed). Tuple
+    *subclasses* (e.g. namedtuples) are not exact tuples — ``list(obj)`` would
+    drop their type — so they raise here and fall back to cloudpickle, which
+    preserves them. Anything else also raises and falls back.
     """
-    if isinstance(obj, tuple):
+    if type(obj) is tuple:
         return msgpack.ExtType(_EXT_TUPLE, _msgpack_packb(list(obj)))
     raise TypeError(f"Cannot msgpack-encode {type(obj).__name__}")
 
