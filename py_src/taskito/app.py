@@ -302,7 +302,12 @@ class Queue(
     @staticmethod
     def _auto_idempotency_key(task_name: str, payload: bytes) -> str:
         """Derive a deterministic dedup key from task name + serialized payload."""
-        digest = hashlib.sha256(task_name.encode("utf-8") + b"|" + payload).hexdigest()
+        # NUL separates the task name from the payload so the boundary is
+        # unambiguous. A printable separator like "|" can occur in both fields,
+        # letting one job's (name, payload) hash-collide with another's — a
+        # job-suppression vector when task names are caller-influenced. NUL
+        # cannot appear in a Python task name.
+        digest = hashlib.sha256(task_name.encode("utf-8") + b"\x00" + payload).hexdigest()
         return f"auto:{digest[:32]}"
 
     def _resolve_unique_key(
