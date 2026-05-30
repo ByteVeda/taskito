@@ -87,6 +87,40 @@ from taskito.serializers import EncryptedSerializer, MsgPackSerializer
 queue = Queue(serializer=EncryptedSerializer(key=key, inner=MsgPackSerializer()))
 ```
 
+### SignedSerializer
+
+HMAC-SHA256 integrity tag for task arguments and results. Unlike
+`EncryptedSerializer`, it does **not** hide the payload — it authenticates it.
+A worker refuses to deserialize any bytes that were not produced with the
+shared key, so an attacker who can write to the queue's storage (the SQLite
+file, a Postgres table, or Redis) cannot smuggle in a forged payload.
+
+```python
+import os
+from taskito.serializers import SignedSerializer, SmartSerializer
+
+key = os.urandom(32)  # share this across producers and workers
+queue = Queue(serializer=SignedSerializer(SmartSerializer(), key))
+```
+
+<Callout type="warn" title="Why this matters">
+  The default serializer can execute code on load (cloudpickle handles
+  lambdas and arbitrary objects). Without signing, anyone able to write to
+  the backing store can achieve remote code execution on every worker that
+  dequeues a crafted job. `SignedSerializer` closes that path. The key must
+  be at least 32 bytes of CSPRNG output and identical on producers and
+  workers.
+</Callout>
+
+For both confidentiality **and** integrity, wrap one in the other:
+
+```python
+from taskito.serializers import EncryptedSerializer, SignedSerializer, SmartSerializer
+
+inner = EncryptedSerializer(SmartSerializer(), key=enc_key)
+queue = Queue(serializer=SignedSerializer(inner, sign_key))
+```
+
 ## When to use each
 
 |   | CloudpickleSerializer | JsonSerializer | MsgPackSerializer | EncryptedSerializer |

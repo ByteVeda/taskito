@@ -10,8 +10,10 @@ idempotently on server start.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -57,6 +59,7 @@ from taskito.dashboard.routes import (
     is_csrf_exempt,
     is_public_path,
     is_state_changing_method,
+    requires_admin,
 )
 from taskito.dashboard.static import (
     IMMUTABLE_PREFIX,
@@ -91,16 +94,18 @@ def _safe_path(path: str) -> str:
     return path.translate(_LOG_UNSAFE_CHARS)[:_LOG_PATH_MAX]
 
 
-def _session_cookies(session: Any) -> tuple[str, ...]:
+def _session_cookies(session: Any, *, secure: bool = True) -> tuple[str, ...]:
     """Build the standard ``Set-Cookie`` headers for a freshly-created session.
 
     Used by both password login and OAuth callback so the cookie shape
-    stays in lockstep across login methods.
+    stays in lockstep across login methods. ``secure`` adds the ``Secure``
+    attribute so the cookies are never sent over plain HTTP.
     """
+    secure_attr = "; Secure" if secure else ""
     return (
-        f"{SESSION_COOKIE}={session.token}; HttpOnly; SameSite=Strict; Path=/; "
+        f"{SESSION_COOKIE}={session.token}; HttpOnly; SameSite=Strict; Path=/{secure_attr}; "
         f"Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
-        f"{CSRF_COOKIE}={session.csrf_token}; SameSite=Strict; Path=/; "
+        f"{CSRF_COOKIE}={session.csrf_token}; SameSite=Strict; Path=/{secure_attr}; "
         f"Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
     )
 
@@ -112,6 +117,7 @@ def serve_dashboard(
     *,
     static_assets: StaticAssets | None = None,
     oauth_flow: OAuthFlow | None = None,
+    secure_cookies: bool = True,
 ) -> None:
     """Start the dashboard HTTP server (blocking).
 
@@ -129,7 +135,12 @@ def serve_dashboard(
     bootstrap_admin_from_env(queue)
     if oauth_flow is None:
         oauth_flow = _build_oauth_flow_from_env(queue)
-    handler = _make_handler(queue, static_assets=static_assets, oauth_flow=oauth_flow)
+    handler = _make_handler(
+        queue,
+        static_assets=static_assets,
+        oauth_flow=oauth_flow,
+        secure_cookies=secure_cookies,
+    )
     server = ThreadingHTTPServer((host, port), handler)
     print(f"taskito dashboard → http://{host}:{port}")
     print("Press Ctrl+C to stop")
@@ -166,9 +177,11 @@ def _make_handler(
     *,
     static_assets: StaticAssets | None = None,
     oauth_flow: OAuthFlow | None = None,
+    secure_cookies: bool = True,
 ) -> type:
     """Create a request handler class bound to the given queue."""
     assets = static_assets if static_assets is not None else _get_default_assets()
+    cookie_secure_attr = "; Secure" if secure_cookies else ""
 
     class DashboardHandler(BaseHTTPRequestHandler):
         # ── Entry points ────────────────────────────────────────────
@@ -266,9 +279,11 @@ def _make_handler(
             if path == "/health":
                 self._json_response(check_health())
             elif path == "/readiness":
-                self._json_response(check_readiness(queue))
+                if self._metrics_token_ok():
+                    self._json_response(check_readiness(queue))
             elif path == "/metrics":
-                self._serve_prometheus_metrics()
+                if self._metrics_token_ok():
+                    self._serve_prometheus_metrics()
             else:
                 self._json_response({"error": "Not found"}, status=404)
 
@@ -428,6 +443,12 @@ def _make_handler(
                 self._json_response({"error": "csrf_failed"}, status=403)
                 return ctx, True
 
+            # Authorization: mutating routes require the admin role. Viewers
+            # retain read access and their own auth self-service endpoints.
+            if requires_admin(path, method) and ctx.role != "admin":
+                self._json_response({"error": "forbidden"}, status=403)
+                return ctx, True
+
             return ctx, False
 
         def _build_context(self) -> RequestContext:
@@ -453,18 +474,19 @@ def _make_handler(
                 return
             # 24-hour Max-Age matches the session TTL.
             self._extra_set_cookies = [
-                f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; "
-                f"Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
-                f"{CSRF_COOKIE}={csrf}; SameSite=Strict; Path=/; "
-                f"Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
+                f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; "
+                f"Path=/{cookie_secure_attr}; Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
+                f"{CSRF_COOKIE}={csrf}; SameSite=Strict; "
+                f"Path=/{cookie_secure_attr}; Max-Age={DEFAULT_SESSION_TTL_SECONDS}",
             ]
             # Don't leak the raw token in the JSON body — the cookie holds it.
             response["session"] = {k: v for k, v in session.items() if k != "token"}
 
         def _clear_login_cookies(self) -> None:
             self._extra_set_cookies = [
-                f"{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
-                f"{CSRF_COOKIE}=; SameSite=Strict; Path=/; Max-Age=0",
+                f"{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; "
+                f"Path=/{cookie_secure_attr}; Max-Age=0",
+                f"{CSRF_COOKIE}=; SameSite=Strict; Path=/{cookie_secure_attr}; Max-Age=0",
             ]
 
         # ── Dispatch helper ─────────────────────────────────────────
@@ -509,7 +531,7 @@ def _make_handler(
                 return
             cookies: list[str] = []
             if redirect.session is not None:
-                cookies = list(_session_cookies(redirect.session))
+                cookies = list(_session_cookies(redirect.session, secure=secure_cookies))
             self.send_response(redirect.status)
             self.send_header("Location", redirect.url)
             self.send_header("Content-Length", "0")
@@ -555,6 +577,23 @@ def _make_handler(
                 self.send_header("Set-Cookie", cookie)
             self.end_headers()
             self.wfile.write(body)
+
+        def _metrics_token_ok(self) -> bool:
+            """Gate ``/metrics`` and ``/readiness`` behind an optional bearer token.
+
+            When ``TASKITO_DASHBOARD_METRICS_TOKEN`` is unset the endpoints stay
+            public (probe-friendly default). When set, a matching
+            ``Authorization: Bearer <token>`` header is required. Writes a 401
+            and returns ``False`` when the check fails.
+            """
+            token = os.environ.get("TASKITO_DASHBOARD_METRICS_TOKEN")
+            if not token:
+                return True
+            header = self.headers.get("Authorization", "")
+            if hmac.compare_digest(header, f"Bearer {token}"):
+                return True
+            self._json_response({"error": "not_authenticated"}, status=401)
+            return False
 
         def _serve_prometheus_metrics(self) -> None:
             try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import pathlib
 import sys
 from typing import Any, ClassVar
@@ -57,21 +58,42 @@ class FileHandler:
     def reconstruct(self, recipe: dict[str, Any], version: int) -> Any:
         path = recipe["path"]
 
-        # Path allowlist enforcement
+        # Path allowlist enforcement. Resolve once, check containment by path
+        # component (not string prefix — ``/var/data`` must not allow
+        # ``/var/data_exfil``), then open the *resolved* path so a symlink
+        # swapped in after the check can't redirect us outside the allowlist.
+        open_path = path
         if self._path_allowlist:
             resolved = str(pathlib.Path(path).resolve())
-            allowed = any(resolved.startswith(prefix) for prefix in self._path_allowlist)
-            if not allowed:
+            if not self._is_allowed(resolved):
                 raise ProxyReconstructionError(f"File path '{path}' is not in the allowed paths")
+            open_path = resolved
 
         kwargs: dict[str, Any] = {}
         if recipe.get("encoding") is not None:
             kwargs["encoding"] = recipe["encoding"]
-        f = open(path, recipe["mode"], **kwargs)  # noqa: SIM115
+        f = open(open_path, recipe["mode"], **kwargs)  # noqa: SIM115
         position = recipe.get("position", 0)
         if position and position > 0:
             f.seek(position)
         return f
+
+    def _is_allowed(self, resolved: str) -> bool:
+        """Whether a resolved path lies within an allowlisted directory.
+
+        Containment is by path component via ``os.path.commonpath`` so
+        ``/var/data`` does not admit ``/var/data_exfil``. Incomparable paths
+        (e.g. different drives) fail closed.
+        """
+        for prefix in self._path_allowlist:
+            if resolved == prefix:
+                return True
+            try:
+                if os.path.commonpath([resolved, prefix]) == prefix:
+                    return True
+            except ValueError:
+                continue
+        return False
 
     def cleanup(self, obj: Any) -> None:
         if not obj.closed:

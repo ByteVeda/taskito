@@ -484,3 +484,19 @@ class TestReconstructionTimeout:
             reconstruct_proxies((marker,), {}, reg, max_timeout=1)
         # Surfaced on the 1s budget rather than blocking for the 5s sleep.
         assert time.monotonic() - started < 3.0
+
+
+def test_file_handler_rejects_sibling_prefix_bypass(tmp_path: Any) -> None:
+    """A string-prefix check would let '<allow>_exfil' through; component
+    containment must not (H4)."""
+    allowed = tmp_path / "data"
+    allowed.mkdir()
+    sibling = tmp_path / "data_exfil"
+    sibling.mkdir()
+    secret = sibling / "secret.txt"
+    secret.write_text("top-secret")
+
+    handler = FileHandler(path_allowlist=[str(allowed)])
+    recipe = {"path": str(secret), "mode": "r"}
+    with pytest.raises(ProxyReconstructionError, match="not in the allowed"):
+        handler.reconstruct(recipe, 1)

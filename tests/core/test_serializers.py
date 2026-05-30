@@ -9,6 +9,7 @@ from taskito.serializers import (
     CloudpickleSerializer,
     JsonSerializer,
     Serializer,
+    SignedSerializer,
     SmartSerializer,
 )
 
@@ -217,3 +218,44 @@ class TestSmartSerializer:
 
     def test_satisfies_protocol(self) -> None:
         assert isinstance(SmartSerializer(), Serializer)
+
+
+class TestSignedSerializer:
+    def test_roundtrip(self) -> None:
+        s = SignedSerializer(SmartSerializer(), b"k" * 32)
+        assert s.loads(s.dumps({"hello": "world"})) == {"hello": "world"}
+
+    def test_requires_bytes_key(self) -> None:
+        with pytest.raises(TypeError, match="key must be bytes"):
+            SignedSerializer(CloudpickleSerializer(), "string-key")  # type: ignore[arg-type]
+
+    def test_rejects_short_key(self) -> None:
+        with pytest.raises(ValueError, match="at least 32 bytes"):
+            SignedSerializer(CloudpickleSerializer(), b"tooshort")
+
+    def test_wrong_key_rejected(self) -> None:
+        producer = SignedSerializer(CloudpickleSerializer(), b"a" * 32)
+        attacker = SignedSerializer(CloudpickleSerializer(), b"b" * 32)
+        data = producer.dumps({"x": 1})
+        with pytest.raises(ValueError, match="integrity check failed"):
+            attacker.loads(data)
+
+    def test_tamper_detected(self) -> None:
+        s = SignedSerializer(CloudpickleSerializer(), b"k" * 32)
+        data = s.dumps({"x": 1})
+        tampered = data[:-1] + bytes([data[-1] ^ 0xFF])
+        with pytest.raises(ValueError, match="integrity check failed"):
+            s.loads(tampered)
+
+    def test_truncated_payload_rejected(self) -> None:
+        s = SignedSerializer(CloudpickleSerializer(), b"k" * 32)
+        with pytest.raises(ValueError, match="too short"):
+            s.loads(b"short")
+
+    def test_blocks_forged_unsigned_body(self) -> None:
+        # An attacker who can write to storage but lacks the key cannot get a
+        # forged cloudpickle body past verification (the RCE vector).
+        s = SignedSerializer(CloudpickleSerializer(), b"k" * 32)
+        forged = CloudpickleSerializer().dumps({"evil": True})
+        with pytest.raises(ValueError, match="integrity check failed"):
+            s.loads(b"\x00" * 32 + forged)

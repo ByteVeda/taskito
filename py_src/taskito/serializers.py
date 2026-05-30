@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from typing import Any, Protocol, runtime_checkable
 
@@ -134,6 +136,56 @@ class SmartSerializer:
             return cloudpickle.loads(body)
         # Untagged: a legacy cloudpickle payload from before the envelope existed.
         return cloudpickle.loads(data)
+
+
+class SignedSerializer:
+    """Wraps another serializer with an HMAC-SHA256 integrity tag.
+
+    Task payloads and results are read back from the queue's storage and
+    deserialized on every worker. When the inner serializer can execute code
+    on load (``cloudpickle`` / the default ``SmartSerializer`` fallback),
+    anyone able to write to the storage backend can achieve remote code
+    execution. ``SignedSerializer`` prepends a keyed HMAC so the worker
+    refuses to deserialize bytes that were not produced with the shared key.
+
+    This authenticates but does **not** encrypt — pair it with
+    :class:`EncryptedSerializer` if confidentiality is also required.
+
+    Usage::
+
+        import os
+        from taskito import SignedSerializer, SmartSerializer
+
+        key = os.urandom(32)  # share across producers and workers
+        serializer = SignedSerializer(SmartSerializer(), key)
+        queue = Queue(serializer=serializer)
+    """
+
+    _DIGEST_SIZE = 32  # SHA-256 output length in bytes
+
+    def __init__(self, inner: Serializer, key: bytes):
+        if not isinstance(key, bytes):
+            raise TypeError(f"key must be bytes, got {type(key).__name__}")
+        if len(key) < 32:
+            raise ValueError(
+                f"key must be at least 32 bytes of CSPRNG output, got {len(key)} bytes"
+            )
+        self._inner = inner
+        self._key = key
+
+    def dumps(self, obj: Any) -> bytes:
+        body = self._inner.dumps(obj)
+        tag = hmac.new(self._key, body, hashlib.sha256).digest()
+        return tag + body
+
+    def loads(self, data: bytes) -> Any:
+        if len(data) < self._DIGEST_SIZE:
+            raise ValueError("Signed payload too short")
+        tag, body = data[: self._DIGEST_SIZE], data[self._DIGEST_SIZE :]
+        expected = hmac.new(self._key, body, hashlib.sha256).digest()
+        if not hmac.compare_digest(tag, expected):
+            raise ValueError("Signature verification failed: payload integrity check failed")
+        return self._inner.loads(body)
 
 
 class EncryptedSerializer:

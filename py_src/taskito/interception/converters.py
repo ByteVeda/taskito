@@ -6,6 +6,7 @@ import collections
 import dataclasses
 import datetime
 import decimal
+import enum
 import importlib
 import pathlib
 import re
@@ -14,12 +15,21 @@ from typing import Any
 
 
 def _import_type(type_path: str) -> type:
-    """Import a type from its fully-qualified dotted path."""
+    """Import a type from its fully-qualified dotted path.
+
+    The path comes from the (untrusted) payload, so the resolved object must
+    be a class — never an arbitrary callable like ``os.system``. Per-kind
+    checks in the reconstructors below further constrain *which* classes are
+    acceptable.
+    """
     module_path, _, class_name = type_path.rpartition(".")
     if not module_path:
         raise ValueError(f"Invalid type path: {type_path!r}")
     module = importlib.import_module(module_path)
-    return getattr(module, class_name)  # type: ignore[no-any-return]
+    obj = getattr(module, class_name)
+    if not isinstance(obj, type):
+        raise ValueError(f"Type path {type_path!r} did not resolve to a class")
+    return obj
 
 
 def _type_path(cls: type) -> str:
@@ -125,6 +135,8 @@ def convert_enum(obj: Any) -> dict[str, Any]:
 
 def reconstruct_enum(data: dict[str, Any]) -> Any:
     cls = _import_type(data["type_path"])
+    if not issubclass(cls, enum.Enum):
+        raise ValueError(f"{data['type_path']!r} is not an Enum")
     return cls(data["value"])
 
 
@@ -142,7 +154,11 @@ def convert_pydantic(obj: Any) -> dict[str, Any]:
 
 def reconstruct_pydantic(data: dict[str, Any]) -> Any:
     cls = _import_type(data["type_path"])
-    return cls.model_validate(data["value"])  # type: ignore[attr-defined]
+    # Duck-typed so pydantic stays an optional dependency: a genuine model
+    # class exposes ``model_validate`` / ``model_dump``.
+    if not (hasattr(cls, "model_validate") and hasattr(cls, "model_fields")):
+        raise ValueError(f"{data['type_path']!r} is not a pydantic model")
+    return cls.model_validate(data["value"])
 
 
 # -- dataclass --
@@ -159,6 +175,8 @@ def convert_dataclass(obj: Any) -> dict[str, Any]:
 
 def reconstruct_dataclass(data: dict[str, Any]) -> Any:
     cls = _import_type(data["type_path"])
+    if not dataclasses.is_dataclass(cls):
+        raise ValueError(f"{data['type_path']!r} is not a dataclass")
     return cls(**data["value"])
 
 
@@ -193,6 +211,8 @@ def convert_named_tuple(obj: Any) -> dict[str, Any]:
 
 def reconstruct_named_tuple(data: dict[str, Any]) -> Any:
     cls = _import_type(data["type_path"])
+    if not (issubclass(cls, tuple) and hasattr(cls, "_fields")):
+        raise ValueError(f"{data['type_path']!r} is not a NamedTuple")
     return cls(*data["fields"])
 
 

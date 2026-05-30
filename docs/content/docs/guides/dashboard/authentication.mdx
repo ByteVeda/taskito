@@ -22,7 +22,10 @@ token on every state-changing request.
   baseline). No third-party crypto dependency.
 - **Sessions** are stored server-side under
   `auth:session:<random_token>` with a 24-hour TTL. The token rides in
-  an `HttpOnly` + `SameSite=Strict` cookie named `taskito_session`.
+  an `HttpOnly` + `SameSite=Strict` + `Secure` cookie named
+  `taskito_session` (the `Secure` flag means HTTPS-only; for local HTTP
+  dev use `serve_dashboard(secure_cookies=False)` or
+  `taskito dashboard --insecure-cookies`).
 - **CSRF** uses the double-submit pattern: a non-HttpOnly cookie named
   `taskito_csrf` carries a per-session token that the SPA reads and
   echoes back via the `X-CSRF-Token` header on POST/PUT/DELETE. The
@@ -100,7 +103,9 @@ All routes live under `/api/auth/`:
 
 Every other route under `/api/` is auth-gated. Public exceptions:
 `/health`, `/readiness`, `/metrics` (Prometheus), and the static SPA
-assets.
+assets. Set `TASKITO_DASHBOARD_METRICS_TOKEN` to additionally require an
+`Authorization: Bearer <token>` header on `/metrics` and `/readiness`
+(`/health` stays open for liveness probes).
 
 ## Headless requests
 
@@ -154,10 +159,20 @@ password auth — see [SSO (OAuth & OIDC)](/guides/dashboard/sso).
 Operators can mix-and-match providers or run an OAuth-only deployment
 by setting `TASKITO_DASHBOARD_PASSWORD_AUTH_ENABLED=false`.
 
+## Roles
+
+Two roles exist, and the role is **enforced server-side**:
+
+- **admin** — full access. Every state-changing API route (cancel/replay
+  jobs, purge dead-letters, pause/resume queues, manage webhooks, edit
+  settings, manage users, edit task/queue overrides) requires this role.
+- **viewer** — read-only access to dashboards and job data, plus their own
+  logout and change-password. Any mutating route returns `403 forbidden`.
+
+The first user is always an admin; additional users can be created with
+either role.
+
 ## Limitations
 
-- **One role** today (`admin`). Read-only viewers and per-route
-  permissions are planned; the column already exists on the user
-  record.
 - **Password rotation** has an endpoint but no UI yet — invoke
   `POST /api/auth/change-password` directly.

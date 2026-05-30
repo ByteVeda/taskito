@@ -60,6 +60,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)"
     )
     dash_parser.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+    dash_parser.add_argument(
+        "--insecure-cookies",
+        action="store_true",
+        default=False,
+        help="Drop the Secure flag on session cookies (local HTTP dev only)",
+    )
 
     # info subcommand
     info_parser = subparsers.add_parser("info", help="Show queue statistics")
@@ -100,7 +106,11 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
     )
-    scaler_parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    scaler_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1; use 0.0.0.0 only behind a network boundary)",
+    )
     scaler_parser.add_argument("--port", type=int, default=9091, help="Bind port (default: 9091)")
     scaler_parser.add_argument(
         "--target-queue-depth",
@@ -280,7 +290,12 @@ def run_worker(args: argparse.Namespace) -> None:
 def run_dashboard(args: argparse.Namespace) -> None:
     """Start the web dashboard."""
     queue = _load_queue(args.app)
-    serve_dashboard(queue, host=args.host, port=args.port)
+    serve_dashboard(
+        queue,
+        host=args.host,
+        port=args.port,
+        secure_cookies=not args.insecure_cookies,
+    )
 
 
 def run_info(args: argparse.Namespace) -> None:

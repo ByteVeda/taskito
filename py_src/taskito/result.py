@@ -22,6 +22,27 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("taskito.result")
 
+# Cap on the error summary surfaced in the job list/detail API. The full
+# traceback (which can echo argument values and local context) stays available
+# only via the per-job ``/api/jobs/{id}/errors`` endpoint.
+_ERROR_SUMMARY_MAX = 500
+
+
+def _summarize_error(error: str | None) -> str | None:
+    """Reduce a stored traceback to its final line (exception type + message).
+
+    A Python traceback ends with the ``ExceptionType: message`` line; the
+    intervening frames carry file paths and source snippets we don't want in
+    the broadly-readable job list. Return that last non-empty line, capped.
+    """
+    if not error:
+        return error
+    last_line = next((ln for ln in reversed(error.splitlines()) if ln.strip()), error)
+    last_line = last_line.strip()
+    if len(last_line) > _ERROR_SUMMARY_MAX:
+        last_line = last_line[:_ERROR_SUMMARY_MAX] + "…"
+    return last_line
+
 
 class JobResult(AsyncJobResultMixin):
     """
@@ -260,7 +281,7 @@ class JobResult(AsyncJobResultMixin):
             "scheduled_at": self._py_job.scheduled_at,
             "started_at": self._py_job.started_at,
             "completed_at": self._py_job.completed_at,
-            "error": self._py_job.error,
+            "error": _summarize_error(self._py_job.error),
             "timeout_ms": self._py_job.timeout_ms,
             "unique_key": self._py_job.unique_key,
             "metadata": self._py_job.metadata,

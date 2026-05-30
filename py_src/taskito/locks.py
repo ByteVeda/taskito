@@ -81,8 +81,21 @@ class DistributedLock:
         return self._inner.extend_lock(self._name, self._owner_id, ttl_ms)
 
     def info(self) -> dict[str, Any] | None:
-        """Get lock info."""
-        return self._inner.get_lock_info(self._name)
+        """Get lock info.
+
+        ``owner_id`` is a bearer token: any caller that learns it can release
+        or extend another holder's lock. The real holder already knows its own
+        token, so it's only revealed when it matches this handle's owner; every
+        other caller (e.g. a peer polling lock status) sees it masked.
+        ``acquired_at`` / ``expires_at`` are left intact for monitoring.
+        """
+        info = self._inner.get_lock_info(self._name)
+        if not info:
+            return info
+        owner = info.get("owner_id")
+        if owner is not None and owner != self._owner_id:
+            info = {**info, "owner_id": "***"}
+        return info
 
     def _start_extend(self) -> None:
         """Start auto-extend background thread."""

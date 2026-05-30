@@ -50,6 +50,14 @@ fn validate_schema_name(schema: &str) -> Result<()> {
     Ok(())
 }
 
+/// Quote a SQL identifier for safe interpolation. Postgres can't bind
+/// identifiers as parameters, and while `validate_schema_name` already
+/// restricts the schema to `[A-Za-z0-9_]`, quoting here makes the structural
+/// safety explicit rather than relying solely on the validator.
+fn pg_quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 /// PostgreSQL-backed storage for the task queue, using Diesel ORM.
 #[derive(Clone)]
 pub struct PostgresStorage {
@@ -117,9 +125,12 @@ impl PostgresStorage {
 
     pub fn conn(&self) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
         let mut conn = self.pool.get()?;
-        diesel::sql_query(format!("SET search_path TO {}", self.schema))
-            .execute(&mut conn)
-            .map_err(crate::error::QueueError::Storage)?;
+        diesel::sql_query(format!(
+            "SET search_path TO {}",
+            pg_quote_ident(&self.schema)
+        ))
+        .execute(&mut conn)
+        .map_err(crate::error::QueueError::Storage)?;
         Ok(conn)
     }
 
@@ -127,8 +138,11 @@ impl PostgresStorage {
         let mut conn = self.conn()?;
 
         // Postgres-only: ensure the target schema exists before any DDL runs.
-        diesel::sql_query(format!("CREATE SCHEMA IF NOT EXISTS {}", self.schema))
-            .execute(&mut conn)?;
+        diesel::sql_query(format!(
+            "CREATE SCHEMA IF NOT EXISTS {}",
+            pg_quote_ident(&self.schema)
+        ))
+        .execute(&mut conn)?;
 
         for sql in common_migrations::create_tables(&common_migrations::POSTGRES) {
             diesel::sql_query(&sql).execute(&mut conn)?;

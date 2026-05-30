@@ -218,19 +218,21 @@ impl Scheduler {
         Ok(true)
     }
 
-    /// Try to claim exactly-once execution. Returns `Ok(true)` if the claim
-    /// was taken (or recoverably failed and the caller should still attempt
-    /// dispatch), `Ok(false)` if the job was already claimed by another
-    /// scheduler.
+    /// Try to claim exactly-once execution. Returns `Ok(true)` only if the
+    /// claim was actually taken; `Ok(false)` if it was already claimed by
+    /// another scheduler **or** the claim attempt errored.
     fn claim_for_dispatch(&self, job: &Job) -> Result<bool> {
         match self.storage.claim_execution(&job.id, SCHEDULER_CLAIM_OWNER) {
             Ok(true) => Ok(true),
             Ok(false) => Ok(false),
             Err(e) => {
-                // Don't drop the job on a transient claim error — proceed and
-                // let the worker handle the duplicate execution defensively.
-                warn!("claim_execution error for job {}: {e}", job.id);
-                Ok(true)
+                // Treat a claim error as "not claimed" and skip this tick. The
+                // job stays Running and the stale-reaper will requeue it. The
+                // previous behaviour (dispatch anyway) caused duplicate
+                // execution when several schedulers hit a transient storage
+                // error at once, since no claim row actually guarded the job.
+                warn!("claim_execution error for job {}; skipping: {e}", job.id);
+                Ok(false)
             }
         }
     }

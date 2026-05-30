@@ -21,15 +21,27 @@ if TYPE_CHECKING:
 _MAX_KEY_LENGTH = 256
 _MAX_VALUE_LENGTH = 64 * 1024  # 64 KiB — enough for any realistic dashboard config blob
 
+# Internal namespaces that must never be exposed or mutated through the public
+# settings API. ``auth:`` holds password hashes, live session records (with
+# their CSRF tokens), and the CSRF secret — reading or overwriting any of these
+# is a full auth bypass, so the settings endpoints treat them as if absent.
+_PROTECTED_PREFIXES = ("auth:",)
+
+
+def _is_protected(key: str) -> bool:
+    return any(key.startswith(p) for p in _PROTECTED_PREFIXES)
+
 
 def _validate_key(key: str) -> None:
-    """Reject empty / oversized / control-character keys."""
+    """Reject empty / oversized / control-character / protected keys."""
     if not key:
         raise _BadRequest("setting key must not be empty")
     if len(key) > _MAX_KEY_LENGTH:
         raise _BadRequest(f"setting key exceeds {_MAX_KEY_LENGTH} characters")
     if any(ord(c) < 32 or ord(c) == 127 for c in key):
         raise _BadRequest("setting key must not contain control characters")
+    if _is_protected(key):
+        raise _BadRequest("setting key is reserved")
 
 
 def _validate_value(value: str) -> None:
@@ -38,12 +50,16 @@ def _validate_value(value: str) -> None:
 
 
 def _handle_list_settings(queue: Queue, _qs: dict) -> dict[str, str]:
-    """Return all settings as a ``{key: value}`` dict."""
-    return queue.list_settings()
+    """Return all settings as a ``{key: value}`` dict, minus protected keys."""
+    return {k: v for k, v in queue.list_settings().items() if not _is_protected(k)}
 
 
 def _handle_get_setting(queue: Queue, _qs: dict, key: str) -> dict[str, Any]:
     """Return a single setting, or 404 if it does not exist."""
+    # Protected keys are reported as absent so the API never confirms their
+    # existence or leaks their contents.
+    if _is_protected(key):
+        raise _NotFound(f"setting '{key}' not found")
     value = queue.get_setting(key)
     if value is None:
         raise _NotFound(f"setting '{key}' not found")
@@ -66,4 +82,6 @@ def _handle_set_setting(queue: Queue, body: dict, key: str) -> dict[str, Any]:
 
 def _handle_delete_setting(queue: Queue, key: str) -> dict[str, bool]:
     """Delete a setting. Returns ``{deleted: bool}``."""
+    if _is_protected(key):
+        raise _NotFound(f"setting '{key}' not found")
     return {"deleted": queue.delete_setting(key)}

@@ -94,12 +94,14 @@ def dashboard_server(queue: Queue) -> Generator[tuple[AuthedClient, Queue]]:
         server.shutdown()
 
 
-def test_get_settings_returns_empty_dict(dashboard_server: tuple[AuthedClient, Queue]) -> None:
+def test_get_settings_hides_auth_keys(dashboard_server: tuple[AuthedClient, Queue]) -> None:
     client, _ = dashboard_server
-    # The admin user setting is the only one populated by the seed helper.
     snapshot = client.get("/api/settings")
-    assert "auth:users" in snapshot
-    # No dashboard.* keys yet.
+    # The settings API must never expose the internal ``auth:`` namespace
+    # (password hashes, sessions, CSRF secret), even though the seed helper
+    # populated ``auth:users``.
+    assert not any(k.startswith("auth:") for k in snapshot)
+    # No dashboard.* keys yet either.
     assert not any(k.startswith("dashboard.") for k in snapshot)
 
 

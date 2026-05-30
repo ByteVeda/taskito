@@ -444,3 +444,30 @@ class TestCustomRegistration:
         args, _ = strict.intercept((Money(100, "USD"),), {})
         assert args[0]["__taskito_convert__"] is True
         assert args[0]["value"]["amount"] == 100
+
+
+class TestMaliciousTypePathRejected:
+    """type_path comes from the untrusted payload; reconstruction must refuse
+    to import-and-call arbitrary objects like os.system / eval (H6)."""
+
+    def test_enum_rejects_non_enum(self) -> None:
+        data = {"type_key": "enum", "type_path": "os.system", "value": "id"}
+        with pytest.raises(ValueError):
+            reconstruct_converted(data)
+
+    def test_dataclass_rejects_non_dataclass(self) -> None:
+        # Target a function (not a class): _import_type must reject it before
+        # any call, proving an attacker can't invoke arbitrary callables.
+        data = {"type_key": "dataclass", "type_path": "subprocess.run", "value": {"args": "id"}}
+        with pytest.raises(ValueError):
+            reconstruct_converted(data)
+
+    def test_named_tuple_rejects_plain_class(self) -> None:
+        data = {"type_key": "named_tuple", "type_path": "subprocess.Popen", "fields": ["id"]}
+        with pytest.raises(ValueError):
+            reconstruct_converted(data)
+
+    def test_callable_path_rejected_as_non_class(self) -> None:
+        data = {"type_key": "enum", "type_path": "builtins.eval", "value": "1+1"}
+        with pytest.raises(ValueError):
+            reconstruct_converted(data)

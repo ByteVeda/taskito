@@ -11,6 +11,11 @@ use taskito_workflows::{WorkflowNode, WorkflowNodeStatus, WorkflowStorage};
 use crate::py_queue::workflow_ops::{build_metadata_json, workflow_storage};
 use crate::py_queue::PyQueue;
 
+/// Maximum number of children a single fan-out may expand into. Guards against
+/// a task returning an enormous list and flooding storage + memory in one
+/// transaction.
+const MAX_FAN_OUT: usize = 10_000;
+
 #[pymethods]
 impl PyQueue {
     /// Expand a fan-out node into N child nodes + jobs.
@@ -41,6 +46,12 @@ impl PyQueue {
             return Err(PyValueError::new_err(
                 "child_names and child_payloads must have the same length",
             ));
+        }
+        if child_names.len() > MAX_FAN_OUT {
+            return Err(PyValueError::new_err(format!(
+                "fan-out of {} children exceeds the limit of {MAX_FAN_OUT}",
+                child_names.len()
+            )));
         }
 
         let wf_storage = workflow_storage(self)?;

@@ -10,12 +10,24 @@ from typing import Any
 from taskito.exceptions import ProxyReconstructionError
 
 
-def sign_recipe(handler_name: str, version: int, recipe: dict[str, Any], secret: str) -> str:
-    """Compute HMAC-SHA256 over handler_name + version + canonical JSON."""
+def _key_bytes(secret: str | bytes) -> bytes:
+    """Normalise the signing secret to bytes (UTF-8 for ``str``)."""
+    return secret if isinstance(secret, bytes) else secret.encode("utf-8")
+
+
+def sign_recipe(
+    handler_name: str, version: int, recipe: dict[str, Any], secret: str | bytes
+) -> str:
+    """Compute HMAC-SHA256 over handler_name + version + canonical JSON.
+
+    The signature covers the handler name, version, and recipe — but not the
+    owning job, so a valid signed recipe can be replayed into another job.
+    Treat the signing key as a shared secret and rotate it if leaked.
+    """
     canonical = f"{handler_name}:{version}:" + json.dumps(
         recipe, sort_keys=True, separators=(",", ":")
     )
-    return hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(_key_bytes(secret), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def verify_recipe(
@@ -23,7 +35,7 @@ def verify_recipe(
     version: int,
     recipe: dict[str, Any],
     checksum: str,
-    secret: str,
+    secret: str | bytes,
 ) -> bool:
     """Return True if checksum matches; raise ProxyReconstructionError if not."""
     expected = sign_recipe(handler_name, version, recipe, secret)

@@ -25,6 +25,7 @@ const EXTEND_LOCK_SCRIPT: &str = r#"
     local current = redis.call('HGET', key, 'owner_id')
     if current == owner then
         redis.call('HSET', key, 'expires_at', new_expires)
+        redis.call('PEXPIREAT', key, tonumber(new_expires))
         return 1
     end
     return 0
@@ -43,7 +44,21 @@ const ACQUIRE_LOCK_SCRIPT: &str = r#"
     end
     redis.call('HSET', key, 'lock_name', KEYS[2], 'owner_id', owner,
                'acquired_at', acquired_at, 'expires_at', expires_at)
+    redis.call('PEXPIREAT', key, tonumber(expires_at))
     return 1
+"#;
+
+/// Lua script: delete a lock only if it is still expired at delete time.
+/// Re-checking inside the script closes the TOCTOU window where the SCAN-driven
+/// reaper would HGET an expired lock, another client re-acquires it, and the
+/// reaper then DELs the now-valid lock.
+const REAP_LOCK_SCRIPT: &str = r#"
+    local exp = redis.call('HGET', KEYS[1], 'expires_at')
+    if exp and tonumber(exp) <= tonumber(ARGV[1]) then
+        redis.call('DEL', KEYS[1])
+        return 1
+    end
+    return 0
 "#;
 
 impl RedisStorage {
@@ -139,14 +154,10 @@ impl RedisStorage {
                 .query(&mut conn)
                 .map_err(map_err)?;
 
+            let reap = redis::Script::new(REAP_LOCK_SCRIPT);
             for key in keys {
-                let expires_at: Option<i64> = conn.hget(&key, "expires_at").map_err(map_err)?;
-                if let Some(exp) = expires_at {
-                    if exp <= now {
-                        conn.del::<_, ()>(&key).map_err(map_err)?;
-                        count += 1;
-                    }
-                }
+                let deleted: i64 = reap.key(&key).arg(now).invoke(&mut conn).map_err(map_err)?;
+                count += deleted as u64;
             }
 
             cursor = next_cursor;

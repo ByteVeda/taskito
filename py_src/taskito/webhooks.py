@@ -28,6 +28,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any
 
 from taskito.dashboard.delivery_store import DeliveryStore
+from taskito.dashboard.url_safety import UnsafeWebhookUrl, validate_webhook_url
 from taskito.events import EventType
 
 if TYPE_CHECKING:
@@ -35,6 +36,21 @@ if TYPE_CHECKING:
     from taskito.dashboard.webhook_store import WebhookSubscription
 
 logger = logging.getLogger("taskito.webhooks")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that refuses to follow 3xx responses.
+
+    Without this, a destination that passed the SSRF check could 30x-bounce
+    delivery to a private/metadata address that the validator never saw.
+    """
+
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+# Module-level opener reused across deliveries — it follows no redirects.
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 class WebhookManager:
@@ -212,8 +228,15 @@ class WebhookManager:
         for attempt in range(max_retries):
             attempt_count = attempt + 1
             try:
+                # Re-validate at delivery time: the URL passed the check when
+                # the webhook was registered, but DNS may have been rebound
+                # since (or between retries) to a private/loopback/metadata
+                # address. A residual micro-race remains between this resolve
+                # and the socket connect below, but this closes the wide
+                # registration-to-delivery rebinding window.
+                validate_webhook_url(wh["url"])
                 req = urllib.request.Request(wh["url"], data=body, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                with _NO_REDIRECT_OPENER.open(req, timeout=timeout) as resp:
                     last_status = int(resp.status)
                     last_response_body = self._read_response_body(resp)
                     if last_status < 400:
@@ -255,6 +278,24 @@ class WebhookManager:
                     return e.code
                 if write_to_log:
                     logger.warning("Webhook %s returned server error %d", wh["url"], e.code)
+            except UnsafeWebhookUrl as e:
+                # The target now resolves somewhere we won't deliver to.
+                # Don't retry — record once and stop.
+                last_error = f"blocked unsafe webhook URL: {e}"
+                if write_to_log:
+                    logger.warning("Webhook %s blocked: %s", wh["url"], e)
+                self._record(
+                    wh,
+                    payload,
+                    status="failed",
+                    attempts=attempt_count,
+                    response_code=None,
+                    response_body=None,
+                    latency_ms=int((time.monotonic() - started_at) * 1000),
+                    error=last_error,
+                    write_to_log=write_to_log,
+                )
+                return None
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
                 if write_to_log:

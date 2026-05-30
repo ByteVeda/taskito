@@ -17,8 +17,15 @@ PollUntil = Any  # the conftest fixture's runtime type
 
 
 @pytest.fixture
-def webhook_server() -> Generator[tuple[str, list[dict[str, Any]]]]:
-    """Start a local HTTP server that records webhook deliveries."""
+def webhook_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[tuple[str, list[dict[str, Any]]]]:
+    """Start a local HTTP server that records webhook deliveries.
+
+    Delivery now validates the target URL and refuses private/loopback hosts,
+    so the 127.0.0.1 test server needs the documented dev escape hatch.
+    """
+    monkeypatch.setenv("TASKITO_WEBHOOKS_ALLOW_PRIVATE", "1")
     received: list[dict[str, Any]] = []
 
     class Handler(BaseHTTPRequestHandler):

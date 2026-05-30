@@ -44,6 +44,7 @@ from taskito.serializers import (
     JsonSerializer,
     MsgPackSerializer,
     Serializer,
+    SignedSerializer,
     SmartSerializer,
 )
 from taskito.task import TaskWrapper
@@ -84,6 +85,7 @@ __all__ = [
     "SerializationError",
     "Serializer",
     "Signature",
+    "SignedSerializer",
     "SmartSerializer",
     "SoftTimeoutError",
     "TaskCancelledError",
