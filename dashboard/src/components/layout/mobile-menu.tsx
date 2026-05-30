@@ -1,20 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import {
-  Activity,
-  BarChart3,
-  Box,
-  CircuitBoard,
-  Cog,
-  ExternalLink as ExternalLinkIcon,
-  LayoutDashboard,
-  ListTree,
-  type LucideIcon,
-  Menu,
-  ScrollText,
-  Server,
-  Settings2,
-  Skull,
-} from "lucide-react";
+import { ExternalLink as ExternalLinkIcon, Menu } from "lucide-react";
 import { useState } from "react";
 import {
   Button,
@@ -26,44 +11,7 @@ import {
 } from "@/components/ui";
 import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-}
-
-const NAV: Array<{ title: string; items: NavItem[] }> = [
-  {
-    title: "Monitoring",
-    items: [
-      { to: "/", label: "Overview", icon: LayoutDashboard },
-      { to: "/jobs", label: "Jobs", icon: ListTree },
-      { to: "/metrics", label: "Metrics", icon: BarChart3 },
-      { to: "/logs", label: "Logs", icon: ScrollText },
-    ],
-  },
-  {
-    title: "Infrastructure",
-    items: [
-      { to: "/queues", label: "Queues", icon: Box },
-      { to: "/workers", label: "Workers", icon: Server },
-      { to: "/resources", label: "Resources", icon: Activity },
-    ],
-  },
-  {
-    title: "Reliability",
-    items: [
-      { to: "/dead-letters", label: "Dead letters", icon: Skull },
-      { to: "/circuit-breakers", label: "Circuit breakers", icon: CircuitBoard },
-      { to: "/system", label: "System", icon: Settings2 },
-    ],
-  },
-  {
-    title: "Configuration",
-    items: [{ to: "/settings", label: "Settings", icon: Cog }],
-  },
-];
+import { NAV } from "./nav-config";
 
 export function MobileMenu() {
   const { pathname } = useLocation();
