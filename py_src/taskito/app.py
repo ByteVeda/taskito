@@ -75,6 +75,12 @@ except ImportError:  # pragma: no cover - workflows feature not compiled in
 
 logger = logging.getLogger("taskito")
 
+# Hard cap on a single serialized task payload. Unbounded payloads let any
+# producer exhaust DB/Redis storage and spike per-job worker memory, so reject
+# oversized ones at enqueue time. Override per-Queue via ``max_payload_bytes``
+# (set to 0 to disable).
+DEFAULT_MAX_PAYLOAD_BYTES = 1 * 1024 * 1024  # 1 MiB
+
 
 class Queue(
     QueueDecoratorMixin,
@@ -262,6 +268,8 @@ class Queue(
         self._proxy_metrics = ProxyMetrics()
         self._recipe_signing_key = recipe_signing_key or os.environ.get("TASKITO_RECIPE_SECRET")
         self._max_reconstruction_timeout = max_reconstruction_timeout
+        # Reject oversized serialized payloads at enqueue time (0 disables).
+        self.max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES
 
         # Argument interception
         self._interception_metrics: InterceptionMetrics | None = None
@@ -298,6 +306,15 @@ class Queue(
     def _get_serializer(self, task_name: str) -> Serializer:
         """Get the serializer for a task (per-task or queue-level fallback)."""
         return self._task_serializers.get(task_name, self._serializer)
+
+    def _check_payload_size(self, task_name: str, size: int) -> None:
+        """Reject a serialized payload that exceeds ``max_payload_bytes``."""
+        limit = self.max_payload_bytes
+        if limit and size > limit:
+            raise ValueError(
+                f"Serialized payload for task '{task_name}' is {size} bytes, exceeding the "
+                f"{limit}-byte limit (adjust queue.max_payload_bytes)"
+            )
 
     @staticmethod
     def _auto_idempotency_key(task_name: str, payload: bytes) -> str:
@@ -366,6 +383,7 @@ class Queue(
         del config  # currently unused at dispatch time; reserved for telemetry
         task_serializer = self._get_serializer(task_name)
         payload = task_serializer.dumps(((items,), {}))
+        self._check_payload_size(task_name, len(payload))
         py_job = self._inner.enqueue(
             task_name=task_name,
             payload=payload,
@@ -535,6 +553,7 @@ class Queue(
 
         task_serializer = self._get_serializer(task_name)
         payload = task_serializer.dumps((final_args, final_kwargs))
+        self._check_payload_size(task_name, len(payload))
 
         # Evaluate enqueue-time predicate (if registered). Outcome may
         # adjust the delay (Defer / False+defer), raise (Cancel /
@@ -758,6 +777,8 @@ class Queue(
             payloads = [
                 task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list, strict=True)
             ]
+        for payload in payloads:
+            self._check_payload_size(task_name, len(payload))
         task_names = [task_name] * count
 
         per_job_unique_keys = [
