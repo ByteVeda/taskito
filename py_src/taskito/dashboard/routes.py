@@ -267,6 +267,25 @@ def is_state_changing_method(method: str) -> bool:
     return method in {"POST", "PUT", "DELETE", "PATCH"}
 
 
+# Mutating routes that any authenticated user may call against their own
+# session — these are intentionally NOT admin-gated.
+SELF_SERVICE_PATHS: frozenset[str] = frozenset({"/api/auth/logout", "/api/auth/change-password"})
+
+
+def requires_admin(path: str, method: str) -> bool:
+    """Whether a request needs the ``admin`` role.
+
+    Every state-changing API route (cancel/replay jobs, purge DLQ, pause
+    queues, manage webhooks/settings/overrides) is admin-only. ``viewer``
+    sessions keep read (GET) access and their own auth self-service routes.
+    """
+    if not is_state_changing_method(method):
+        return False
+    if not path.startswith("/api/"):
+        return False
+    return not (is_public_path(path) or path in SELF_SERVICE_PATHS)
+
+
 def is_csrf_exempt(path: str) -> bool:
     """Login and setup happen before a session exists, so they're CSRF-exempt.
 

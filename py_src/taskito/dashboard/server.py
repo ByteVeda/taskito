@@ -57,6 +57,7 @@ from taskito.dashboard.routes import (
     is_csrf_exempt,
     is_public_path,
     is_state_changing_method,
+    requires_admin,
 )
 from taskito.dashboard.static import (
     IMMUTABLE_PREFIX,
@@ -426,6 +427,12 @@ def _make_handler(
                 and not ctx.csrf_valid()
             ):
                 self._json_response({"error": "csrf_failed"}, status=403)
+                return ctx, True
+
+            # Authorization: mutating routes require the admin role. Viewers
+            # retain read access and their own auth self-service endpoints.
+            if requires_admin(path, method) and ctx.role != "admin":
+                self._json_response({"error": "forbidden"}, status=403)
                 return ctx, True
 
             return ctx, False
