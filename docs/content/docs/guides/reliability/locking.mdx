@@ -146,3 +146,11 @@ queue._inner.release_lock("my-lock", lock_id)
   The low-level API skips auto-extension and does not release on exception.
   Prefer the context manager (`lock()` / `alock()`) for production code.
 </Callout>
+
+<Callout type="info" title="Owner token is sensitive">
+  `owner_id` is a bearer token — whoever knows it can release or extend the
+  lock. The low-level `get_lock_info` returns it raw; the high-level
+  `queue.lock(name).info()` masks it to `"***"` for any caller that isn't the
+  current holder, so prefer `info()` when surfacing lock status to other
+  parties (e.g. a dashboard or another tenant).
+</Callout>
