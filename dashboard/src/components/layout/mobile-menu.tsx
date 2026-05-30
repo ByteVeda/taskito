@@ -1,21 +1,6 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import {
-  Activity,
-  BarChart3,
-  Box,
-  CircuitBoard,
-  Cog,
-  ExternalLink as ExternalLinkIcon,
-  LayoutDashboard,
-  ListTree,
-  type LucideIcon,
-  Menu,
-  ScrollText,
-  Server,
-  Settings2,
-  Skull,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { ExternalLink as ExternalLinkIcon, Menu } from "lucide-react";
+import { useState } from "react";
 import {
   Button,
   Sheet,
@@ -26,44 +11,7 @@ import {
 } from "@/components/ui";
 import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-}
-
-const NAV: Array<{ title: string; items: NavItem[] }> = [
-  {
-    title: "Monitoring",
-    items: [
-      { to: "/", label: "Overview", icon: LayoutDashboard },
-      { to: "/jobs", label: "Jobs", icon: ListTree },
-      { to: "/metrics", label: "Metrics", icon: BarChart3 },
-      { to: "/logs", label: "Logs", icon: ScrollText },
-    ],
-  },
-  {
-    title: "Infrastructure",
-    items: [
-      { to: "/queues", label: "Queues", icon: Box },
-      { to: "/workers", label: "Workers", icon: Server },
-      { to: "/resources", label: "Resources", icon: Activity },
-    ],
-  },
-  {
-    title: "Reliability",
-    items: [
-      { to: "/dead-letters", label: "Dead letters", icon: Skull },
-      { to: "/circuit-breakers", label: "Circuit breakers", icon: CircuitBoard },
-      { to: "/system", label: "System", icon: Settings2 },
-    ],
-  },
-  {
-    title: "Configuration",
-    items: [{ to: "/settings", label: "Settings", icon: Cog }],
-  },
-];
+import { NAV } from "./nav-config";
 
 export function MobileMenu() {
   const { pathname } = useLocation();
@@ -71,10 +19,7 @@ export function MobileMenu() {
   const externalLinks = useExternalLinks();
   const [open, setOpen] = useState(false);
 
-  // Close on navigation
-  useEffect(() => {
-    setOpen(false);
-  }, []);
+  const close = () => setOpen(false);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -100,6 +45,7 @@ export function MobileMenu() {
                     <li key={to}>
                       <Link
                         to={to}
+                        onClick={close}
                         className={cn(
                           "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
                           active
@@ -128,6 +74,7 @@ export function MobileMenu() {
                       href={link.url}
                       target="_blank"
                       rel="noreferrer noopener"
+                      onClick={close}
                       className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
                     >
                       <ExternalLinkIcon className="size-4" aria-hidden />

@@ -1,7 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Activity } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { Badge, DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { ResourceStatus } from "@/lib/api-types";
 import { resourceTone } from "@/lib/status";
 import { formatDuration } from "@/lib/time";
@@ -107,7 +107,9 @@ export function ResourcesTable({ resources, loading, error, onRetry }: Resources
   }
 
   if (loading && !resources) {
-    return <Skeleton className="h-48 w-full" />;
+    return (
+      <TableSkeleton rows={4} columns={["w-32", "w-16", "w-16", "w-16", "w-16", "w-40", "w-24"]} />
+    );
   }
 
   if (!resources || resources.length === 0) {
