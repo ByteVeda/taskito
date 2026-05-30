@@ -21,6 +21,25 @@ pub trait Storage: Send + Sync + Clone {
         now: i64,
         namespace: Option<&str>,
     ) -> Result<Option<Job>>;
+    /// Atomically claim up to `max` ready jobs from a single queue in one
+    /// transaction. Returns the claimed jobs (now in `Running` state). May
+    /// return fewer than `max` if the queue lacks enough eligible jobs.
+    fn dequeue_batch(
+        &self,
+        queue_name: &str,
+        now: i64,
+        namespace: Option<&str>,
+        max: usize,
+    ) -> Result<Vec<Job>>;
+    /// Claim up to `max` ready jobs across the given queues, checking each in
+    /// order until the budget is exhausted.
+    fn dequeue_batch_from(
+        &self,
+        queues: &[String],
+        now: i64,
+        namespace: Option<&str>,
+        max: usize,
+    ) -> Result<Vec<Job>>;
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()>;
     fn fail(&self, id: &str, error: &str) -> Result<()>;
     fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()>;

@@ -33,6 +33,10 @@ pub struct SchedulerConfig {
     pub cleanup_interval: u32,
     /// TTL for job results in milliseconds. None means no auto-cleanup.
     pub result_ttl_ms: Option<i64>,
+    /// Maximum number of jobs claimed per dispatch round. `1` (the default)
+    /// preserves the original one-job-per-round-trip behavior; values above
+    /// `1` enable batch claiming for higher throughput.
+    pub batch_size: usize,
 }
 
 impl Default for SchedulerConfig {
@@ -44,6 +48,7 @@ impl Default for SchedulerConfig {
             periodic_check_interval: 60,
             cleanup_interval: 1200,
             result_ttl_ms: None,
+            batch_size: 1,
         }
     }
 }
@@ -225,7 +230,12 @@ impl Scheduler {
     /// Returns true if any work was done (job dispatched or periodic task enqueued),
     /// which resets the adaptive poll interval.
     fn tick(&self, job_tx: &tokio::sync::mpsc::Sender<Job>, counters: &mut TickCounters) -> bool {
-        let dispatched = match self.try_dispatch(job_tx) {
+        let dispatch_result = if self.config.batch_size > 1 {
+            self.try_dispatch_batch(job_tx)
+        } else {
+            self.try_dispatch(job_tx)
+        };
+        let dispatched = match dispatch_result {
             Ok(d) => d,
             Err(e) => {
                 error!("scheduler error: {e}");

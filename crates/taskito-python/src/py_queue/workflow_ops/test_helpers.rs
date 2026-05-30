@@ -54,6 +54,7 @@ pub(crate) fn make_test_pyqueue() -> PyQueue {
         scheduler_poll_interval_ms: 50,
         scheduler_reap_interval: 100,
         scheduler_cleanup_interval: 1200,
+        scheduler_batch_size: 1,
         namespace: None,
         dispatcher: Arc::new(Mutex::new(None)),
         workflow_storage,

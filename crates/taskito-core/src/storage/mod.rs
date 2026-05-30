@@ -117,6 +117,24 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Option<$crate::job::Job>> {
                 self.dequeue_from(queues, now, namespace)
             }
+            fn dequeue_batch(
+                &self,
+                queue_name: &str,
+                now: i64,
+                namespace: Option<&str>,
+                max: usize,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.dequeue_batch(queue_name, now, namespace, max)
+            }
+            fn dequeue_batch_from(
+                &self,
+                queues: &[String],
+                now: i64,
+                namespace: Option<&str>,
+                max: usize,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.dequeue_batch_from(queues, now, namespace, max)
+            }
             fn complete(
                 &self,
                 id: &str,
@@ -580,6 +598,24 @@ impl Storage for StorageBackend {
         namespace: Option<&str>,
     ) -> Result<Option<Job>> {
         delegate!(self, dequeue_from, queues, now, namespace)
+    }
+    fn dequeue_batch(
+        &self,
+        queue_name: &str,
+        now: i64,
+        namespace: Option<&str>,
+        max: usize,
+    ) -> Result<Vec<Job>> {
+        delegate!(self, dequeue_batch, queue_name, now, namespace, max)
+    }
+    fn dequeue_batch_from(
+        &self,
+        queues: &[String],
+        now: i64,
+        namespace: Option<&str>,
+        max: usize,
+    ) -> Result<Vec<Job>> {
+        delegate!(self, dequeue_batch_from, queues, now, namespace, max)
     }
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
         delegate!(self, complete, id, result_bytes)

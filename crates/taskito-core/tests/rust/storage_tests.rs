@@ -50,6 +50,44 @@ fn test_dequeue(s: &impl Storage) {
     assert!(none.is_none());
 }
 
+fn test_dequeue_batch(s: &impl Storage) {
+    let q = "q-dequeue-batch";
+    let mut ids = Vec::new();
+    for _ in 0..5 {
+        ids.push(s.enqueue(make_job(q, "batch_task")).unwrap().id);
+    }
+
+    // Claim 3 of the 5 in one round-trip.
+    let now = now_millis() + 1000;
+    let first = s.dequeue_batch(q, now, None, 3).unwrap();
+    assert_eq!(first.len(), 3);
+    for job in &first {
+        assert_eq!(job.status, JobStatus::Running);
+    }
+
+    // A second batch of 10 returns only the 2 remaining — and no id overlaps.
+    let second = s.dequeue_batch(q, now, None, 10).unwrap();
+    assert_eq!(second.len(), 2);
+
+    let mut all: Vec<String> = first
+        .iter()
+        .chain(second.iter())
+        .map(|j| j.id.clone())
+        .collect();
+    all.sort();
+    all.dedup();
+    assert_eq!(all.len(), 5, "batches must claim disjoint jobs");
+
+    // Queue is now empty.
+    let empty = s.dequeue_batch(q, now, None, 4).unwrap();
+    assert!(empty.is_empty());
+
+    // max == 0 claims nothing even when jobs exist.
+    s.enqueue(make_job(q, "batch_task")).unwrap();
+    let zero = s.dequeue_batch(q, now, None, 0).unwrap();
+    assert!(zero.is_empty());
+}
+
 fn test_complete(s: &impl Storage) {
     let q = "q-complete";
     let job = s.enqueue(make_job(q, "complete_task")).unwrap();
@@ -340,6 +378,7 @@ fn test_circuit_breakers(s: &impl Storage) {
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
+    test_dequeue_batch(s);
     test_complete(s);
     test_fail(s);
     test_retry(s);

@@ -122,4 +122,145 @@ impl RedisStorage {
         }
         Ok(None)
     }
+
+    /// Claim up to `max` ready jobs from a single queue. Mirrors `dequeue`
+    /// (ZRANGEBYSCORE candidates + MGET + claim loop) but accumulates up to
+    /// `max` jobs. Shares `dequeue`'s TOCTOU window — `claim_execution` is the
+    /// external exactly-once guard.
+    pub fn dequeue_batch(
+        &self,
+        queue_name: &str,
+        now: i64,
+        namespace: Option<&str>,
+        max: usize,
+    ) -> Result<Vec<Job>> {
+        if max == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = self.conn()?;
+        let queue_key = self.key(&["queue", queue_name, "pending"]);
+
+        // Scan more candidates than `max` so dependency/expiry skips still
+        // leave enough eligible rows to fill the batch, bounded to keep the
+        // loaded set small.
+        let scan_limit = (max.saturating_mul(4)).min(400) as isize;
+
+        // Get candidates ordered by score (lowest first = highest priority)
+        let candidates: Vec<String> = conn
+            .zrangebyscore_limit(&queue_key, "-inf", "+inf", 0, scan_limit)
+            .map_err(map_err)?;
+
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Batch-load every candidate's JSON in one MGET instead of one GET per
+        // candidate.
+        let job_keys: Vec<String> = candidates.iter().map(|id| self.key(&["job", id])).collect();
+        let blobs: Vec<Option<String>> = conn.mget(&job_keys).map_err(map_err)?;
+
+        let mut claimed: Vec<Job> = Vec::with_capacity(max.min(candidates.len()));
+
+        for (job_id, data) in candidates.into_iter().zip(blobs) {
+            if claimed.len() == max {
+                break;
+            }
+
+            let data = match data {
+                Some(d) => d,
+                None => {
+                    // Stale entry — remove from queue
+                    conn.zrem::<_, _, ()>(&queue_key, &job_id)
+                        .map_err(map_err)?;
+                    continue;
+                }
+            };
+
+            let mut job: Job =
+                serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+
+            // Must be pending and scheduled_at <= now
+            if job.status != JobStatus::Pending || job.scheduled_at > now {
+                continue;
+            }
+
+            // Filter by namespace: Some(ns) matches that namespace, None matches only jobs without a namespace
+            if let Some(ns) = namespace {
+                if job.namespace.as_deref() != Some(ns) {
+                    continue;
+                }
+            } else if job.namespace.is_some() {
+                continue;
+            }
+
+            // Skip expired jobs
+            if let Some(expires_at) = job.expires_at {
+                if now > expires_at {
+                    job.status = JobStatus::Cancelled;
+                    job.completed_at = Some(now);
+                    job.error = Some("expired before execution".to_string());
+                    self.save_job_and_move_status(&mut conn, &job, JobStatus::Pending)?;
+                    conn.zrem::<_, _, ()>(&queue_key, &job_id)
+                        .map_err(map_err)?;
+                    continue;
+                }
+            }
+
+            // Check dependencies — only for jobs that actually have them.
+            if job.has_deps {
+                let deps_key = self.key(&["job", &job_id, "depends_on"]);
+                let dep_ids: Vec<String> = conn.smembers(&deps_key).map_err(map_err)?;
+                if !dep_ids.is_empty() {
+                    let mut all_complete = true;
+                    for dep_id in &dep_ids {
+                        if let Some(dep_job) = self.load_job(&mut conn, dep_id)? {
+                            if dep_job.status != JobStatus::Complete {
+                                all_complete = false;
+                                break;
+                            }
+                        } else {
+                            all_complete = false;
+                            break;
+                        }
+                    }
+                    if !all_complete {
+                        continue;
+                    }
+                }
+            }
+
+            // Claim the job
+            job.status = JobStatus::Running;
+            job.started_at = Some(now);
+            self.save_job_and_move_status(&mut conn, &job, JobStatus::Pending)?;
+            conn.zrem::<_, _, ()>(&queue_key, &job_id)
+                .map_err(map_err)?;
+
+            claimed.push(job);
+        }
+
+        Ok(claimed)
+    }
+
+    /// Claim up to `max` ready jobs across the given queues, checking each in
+    /// order until the budget is exhausted.
+    pub fn dequeue_batch_from(
+        &self,
+        queues: &[String],
+        now: i64,
+        namespace: Option<&str>,
+        max: usize,
+    ) -> Result<Vec<Job>> {
+        let mut claimed: Vec<Job> = Vec::new();
+        for queue_name in queues {
+            if claimed.len() >= max {
+                break;
+            }
+            let remaining = max - claimed.len();
+            let mut batch = self.dequeue_batch(queue_name, now, namespace, remaining)?;
+            claimed.append(&mut batch);
+        }
+        Ok(claimed)
+    }
 }

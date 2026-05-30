@@ -100,6 +100,120 @@ fn test_dequeue() {
 }
 
 #[test]
+fn test_dequeue_batch_claims_n() {
+    let storage = test_storage();
+    for _ in 0..5 {
+        storage.enqueue(make_job("batch_task")).unwrap();
+    }
+
+    let claimed = storage
+        .dequeue_batch("default", now_millis() + 1000, None, 3)
+        .unwrap();
+    assert_eq!(claimed.len(), 3);
+    for job in &claimed {
+        assert_eq!(job.status, JobStatus::Running);
+    }
+
+    let running = storage
+        .list_jobs(Some(JobStatus::Running as i32), None, None, 100, 0, None)
+        .unwrap();
+    assert_eq!(running.len(), 3);
+}
+
+#[test]
+fn test_dequeue_batch_respects_available() {
+    let storage = test_storage();
+    storage.enqueue(make_job("batch_task")).unwrap();
+    storage.enqueue(make_job("batch_task")).unwrap();
+
+    let claimed = storage
+        .dequeue_batch("default", now_millis() + 1000, None, 10)
+        .unwrap();
+    assert_eq!(claimed.len(), 2, "only claims what's available");
+}
+
+#[test]
+fn test_dequeue_batch_empty_and_zero_max() {
+    let storage = test_storage();
+
+    // Empty queue → empty batch.
+    let empty = storage
+        .dequeue_batch("default", now_millis() + 1000, None, 5)
+        .unwrap();
+    assert!(empty.is_empty());
+
+    // max == 0 claims nothing even when jobs exist.
+    storage.enqueue(make_job("batch_task")).unwrap();
+    let zero = storage
+        .dequeue_batch("default", now_millis() + 1000, None, 0)
+        .unwrap();
+    assert!(zero.is_empty());
+
+    // The job must still be pending after a zero-max batch.
+    let pending = storage
+        .list_jobs(Some(JobStatus::Pending as i32), None, None, 100, 0, None)
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+}
+
+#[test]
+fn test_dequeue_batch_no_double_claim() {
+    let storage = test_storage();
+    for _ in 0..4 {
+        storage.enqueue(make_job("batch_task")).unwrap();
+    }
+
+    let now = now_millis() + 1000;
+    let first = storage.dequeue_batch("default", now, None, 2).unwrap();
+    let second = storage.dequeue_batch("default", now, None, 2).unwrap();
+    assert_eq!(first.len(), 2);
+    assert_eq!(second.len(), 2);
+
+    let mut ids: Vec<String> = first
+        .iter()
+        .chain(second.iter())
+        .map(|j| j.id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 4, "two batches must claim disjoint jobs");
+}
+
+#[test]
+fn test_dequeue_batch_from_across_queues() {
+    let storage = test_storage();
+
+    let mut a = make_job("batch_task");
+    a.queue = "qa".to_string();
+    storage.enqueue(a).unwrap();
+    storage
+        .enqueue({
+            let mut j = make_job("batch_task");
+            j.queue = "qa".to_string();
+            j
+        })
+        .unwrap();
+    storage
+        .enqueue({
+            let mut j = make_job("batch_task");
+            j.queue = "qb".to_string();
+            j
+        })
+        .unwrap();
+
+    let queues = vec!["qa".to_string(), "qb".to_string()];
+    let claimed = storage
+        .dequeue_batch_from(&queues, now_millis() + 1000, None, 10)
+        .unwrap();
+    assert_eq!(claimed.len(), 3, "claims across both queues");
+
+    let queue_names: std::collections::HashSet<&str> =
+        claimed.iter().map(|j| j.queue.as_str()).collect();
+    assert!(queue_names.contains("qa"));
+    assert!(queue_names.contains("qb"));
+}
+
+#[test]
 fn test_dequeue_respects_schedule() {
     let storage = test_storage();
     let future = now_millis() + 60_000;
