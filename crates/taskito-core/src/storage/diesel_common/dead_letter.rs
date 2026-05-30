@@ -14,10 +14,12 @@ macro_rules! impl_diesel_dead_letter_ops {
             ) -> Result<()> {
                 let now = now_millis();
                 let dlq_id = uuid::Uuid::now_v7().to_string();
-                let mut conn = self.conn()?;
                 let job_id = job.id.clone();
 
-                conn.transaction(|conn| {
+                // Write-priority transaction: this reads the job row then writes
+                // it to `archived_jobs`, which would deadlock under SQLite's
+                // deferred lock-upgrade. See `archive_transaction`.
+                self.archive_transaction(|conn| {
                     let dlq_row = NewDeadLetterRow {
                         id: &dlq_id,
                         original_job_id: &job.id,
@@ -40,22 +42,28 @@ macro_rules! impl_diesel_dead_letter_ops {
                         .values(&dlq_row)
                         .execute(conn)?;
 
-                    diesel::update(jobs::table)
-                        .filter(jobs::id.eq(&job.id))
-                        .set((
-                            jobs::status.eq(JobStatus::Dead as i32),
-                            jobs::error.eq(error),
-                            jobs::completed_at.eq(now),
-                        ))
-                        .execute(conn)?;
+                    // Archive the now-Dead job: move it out of the live `jobs`
+                    // table into `archived_jobs` so the dequeue index and stats
+                    // scans no longer see it. The row may already be absent if a
+                    // prior terminal transition archived it; only archive when
+                    // it is still live.
+                    if let Some(mut row) = jobs::table
+                        .find(&job.id)
+                        .select(JobRow::as_select())
+                        .first(conn)
+                        .optional()?
+                    {
+                        row.status = JobStatus::Dead as i32;
+                        row.error = Some(error.to_string());
+                        row.completed_at = Some(now);
+                        <$storage_type>::archive_job_row(conn, &row)?;
+                    }
 
-                    Ok::<(), diesel::result::Error>(())
+                    Ok::<(), QueueError>(())
                 })?;
 
-                // Drop connection before cascade (needed for single-connection pools).
-                drop(conn);
-
-                // Cascade cancel dependents.
+                // Cascade cancel dependents (opens its own connection, so the
+                // archive transaction above must already be committed).
                 self.cascade_cancel(&job_id, "dependency failed")?;
 
                 Ok(())

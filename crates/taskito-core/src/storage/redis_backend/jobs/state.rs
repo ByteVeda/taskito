@@ -21,7 +21,7 @@ impl RedisStorage {
         job.status = JobStatus::Complete;
         job.completed_at = Some(now_millis());
         job.result = result_bytes;
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
+        self.archive_job_immediately(&mut conn, &job, old_status)?;
 
         // Clean up unique key if present
         if let Some(ref uk) = job.unique_key {
@@ -44,7 +44,7 @@ impl RedisStorage {
         job.status = JobStatus::Failed;
         job.completed_at = Some(now_millis());
         job.error = Some(error.to_string());
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
+        self.archive_job_immediately(&mut conn, &job, old_status)?;
 
         Ok(())
     }
@@ -87,12 +87,10 @@ impl RedisStorage {
         let old_status = job.status;
         job.status = JobStatus::Cancelled;
         job.completed_at = Some(now_millis());
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
 
-        // Remove from pending queue
-        let queue_key = self.key(&["queue", &job.queue, "pending"]);
-        conn.zrem::<_, _, ()>(&queue_key, &job.id)
-            .map_err(map_err)?;
+        // `archive_job_immediately` removes the job from the per-queue pending
+        // zset as part of its atomic live→archive move (old_status == Pending).
+        self.archive_job_immediately(&mut conn, &job, old_status)?;
 
         // Cascade cancel dependents
         drop(conn);
@@ -138,7 +136,7 @@ impl RedisStorage {
         job.status = JobStatus::Cancelled;
         job.completed_at = Some(now_millis());
         job.error = Some("cancelled by request".to_string());
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
+        self.archive_job_immediately(&mut conn, &job, old_status)?;
 
         // Clean up cancel request
         let cancel_set = self.key(&["jobs", "cancel_requested"]);
@@ -181,11 +179,10 @@ impl RedisStorage {
                     job.status = JobStatus::Cancelled;
                     job.completed_at = Some(now);
                     job.error = Some(error_msg.clone());
-                    self.save_job_and_move_status(&mut conn, &job, old_status)?;
 
-                    let queue_key = self.key(&["queue", &job.queue, "pending"]);
-                    conn.zrem::<_, _, ()>(&queue_key, &job.id)
-                        .map_err(map_err)?;
+                    // `archive_job_immediately` removes the job from the
+                    // per-queue pending zset as part of its atomic move.
+                    self.archive_job_immediately(&mut conn, &job, old_status)?;
                 }
             }
         }

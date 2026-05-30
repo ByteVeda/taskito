@@ -772,3 +772,138 @@ fn test_purge_completed_respects_per_job_ttl() {
     assert!(storage.get_job(&expired.id).unwrap().is_none());
     assert!(storage.get_job(&kept.id).unwrap().is_some());
 }
+
+// ── Immediate terminal-job archival ──────────────────────────────────
+
+/// Count rows in the live `jobs` table for a given id.
+fn jobs_row_count(storage: &SqliteStorage, id: &str) -> i64 {
+    use crate::storage::schema::jobs;
+    use diesel::prelude::*;
+    let mut conn = storage.conn().unwrap();
+    jobs::table
+        .filter(jobs::id.eq(id))
+        .count()
+        .get_result(&mut conn)
+        .unwrap()
+}
+
+/// Count rows in the `archived_jobs` table for a given id.
+fn archived_row_count(storage: &SqliteStorage, id: &str) -> i64 {
+    use crate::storage::schema::archived_jobs;
+    use diesel::prelude::*;
+    let mut conn = storage.conn().unwrap();
+    archived_jobs::table
+        .filter(archived_jobs::id.eq(id))
+        .count()
+        .get_result(&mut conn)
+        .unwrap()
+}
+
+#[test]
+fn test_complete_moves_to_archived_immediately() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("archive_complete")).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+
+    storage.complete(&job.id, Some(vec![7])).unwrap();
+
+    // Gone from the live table, present in the archive.
+    assert_eq!(jobs_row_count(&storage, &job.id), 0);
+    assert_eq!(archived_row_count(&storage, &job.id), 1);
+}
+
+#[test]
+fn test_get_job_finds_archived() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("archive_get")).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+    storage.complete(&job.id, Some(vec![1])).unwrap();
+
+    let fetched = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.id, job.id);
+    assert_eq!(fetched.status, JobStatus::Complete);
+    assert_eq!(fetched.result, Some(vec![1]));
+}
+
+#[test]
+fn test_stats_counts_archived_terminals() {
+    let storage = test_storage();
+
+    // Three jobs completed (archived), one left pending, one running.
+    for i in 0..3 {
+        let job = storage.enqueue(make_job(&format!("done_{i}"))).unwrap();
+        storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap();
+        storage.complete(&job.id, None).unwrap();
+    }
+    storage.enqueue(make_job("still_pending")).unwrap();
+    let running = storage.enqueue(make_job("running")).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+
+    let stats = storage.stats().unwrap();
+    assert_eq!(stats.completed, 3);
+    assert_eq!(stats.pending, 1);
+    assert_eq!(stats.running, 1);
+    let _ = running;
+}
+
+#[test]
+fn test_list_jobs_terminal_status_reads_archive() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("listed")).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+    storage.complete(&job.id, None).unwrap();
+
+    // Filtering by a terminal status returns the archived row.
+    let complete = storage
+        .list_jobs(Some(JobStatus::Complete as i32), None, None, 50, 0, None)
+        .unwrap();
+    assert!(complete.iter().any(|j| j.id == job.id));
+
+    // No status filter merges live + archived.
+    let all = storage.list_jobs(None, None, None, 50, 0, None).unwrap();
+    assert!(all.iter().any(|j| j.id == job.id));
+
+    // Pending filter must not surface the archived job.
+    let pending = storage
+        .list_jobs(Some(JobStatus::Pending as i32), None, None, 50, 0, None)
+        .unwrap();
+    assert!(!pending.iter().any(|j| j.id == job.id));
+}
+
+#[test]
+fn test_fail_and_cancel_archive_immediately() {
+    let storage = test_storage();
+
+    // Failed running job is archived.
+    let failed = storage.enqueue(make_job("to_fail")).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+    storage.fail(&failed.id, "boom").unwrap();
+    assert_eq!(jobs_row_count(&storage, &failed.id), 0);
+    assert_eq!(archived_row_count(&storage, &failed.id), 1);
+    assert_eq!(
+        storage.get_job(&failed.id).unwrap().unwrap().status,
+        JobStatus::Failed
+    );
+
+    // Cancelled pending job is archived.
+    let cancelled = storage.enqueue(make_job("to_cancel")).unwrap();
+    assert!(storage.cancel_job(&cancelled.id).unwrap());
+    assert_eq!(jobs_row_count(&storage, &cancelled.id), 0);
+    assert_eq!(archived_row_count(&storage, &cancelled.id), 1);
+    assert_eq!(
+        storage.get_job(&cancelled.id).unwrap().unwrap().status,
+        JobStatus::Cancelled
+    );
+}

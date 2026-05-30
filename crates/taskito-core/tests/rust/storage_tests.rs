@@ -375,6 +375,107 @@ fn test_circuit_breakers(s: &impl Storage) {
 
 // ── Run all generic tests against a storage impl ─────────────────────
 
+fn test_immediate_archival(s: &impl Storage) {
+    let q = "q-archival";
+
+    // Complete, fail, and cancel are all terminal: they archive immediately but
+    // remain readable via get_job and surface in the per-queue terminal stats.
+    let done = s.enqueue(make_job(q, "arch_done")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&done.id, Some(vec![9])).unwrap();
+
+    let failed = s.enqueue(make_job(q, "arch_fail")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.fail(&failed.id, "boom").unwrap();
+
+    let cancelled = s.enqueue(make_job(q, "arch_cancel")).unwrap();
+    assert!(s.cancel_job(&cancelled.id).unwrap());
+
+    // One running and one pending left live. Enqueue the to-be-running job
+    // first so the FIFO dequeue claims it, leaving the later one pending.
+    s.enqueue(make_job(q, "arch_running")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let pending_job = s.enqueue(make_job(q, "arch_pending")).unwrap();
+
+    // get_job resolves archived terminals.
+    assert_eq!(
+        s.get_job(&done.id).unwrap().unwrap().status,
+        JobStatus::Complete
+    );
+    assert_eq!(
+        s.get_job(&failed.id).unwrap().unwrap().status,
+        JobStatus::Failed
+    );
+    assert_eq!(
+        s.get_job(&cancelled.id).unwrap().unwrap().status,
+        JobStatus::Cancelled
+    );
+
+    // Per-queue stats: terminals from the archive, pending/running live.
+    let stats = s.stats_by_queue(q).unwrap();
+    assert_eq!(stats.completed, 1, "completed");
+    assert_eq!(stats.failed, 1, "failed");
+    assert_eq!(stats.cancelled, 1, "cancelled");
+    assert_eq!(stats.pending, 1, "pending");
+    assert_eq!(stats.running, 1, "running");
+
+    // Listing by a terminal status reads the archive; pending must not surface
+    // the archived row.
+    let complete = s
+        .list_jobs(Some(JobStatus::Complete as i32), Some(q), None, 50, 0, None)
+        .unwrap();
+    assert!(complete.iter().any(|j| j.id == done.id));
+
+    let pending = s
+        .list_jobs(Some(JobStatus::Pending as i32), Some(q), None, 50, 0, None)
+        .unwrap();
+    assert!(!pending.iter().any(|j| j.id == done.id));
+    assert!(pending.iter().any(|j| j.id == pending_job.id));
+}
+
+fn test_enqueue_dep_on_completed_archived_job(s: &impl Storage) {
+    let q = "q-dep-archived-complete";
+
+    // Run A to completion — it now lives in `archived_jobs`, not `jobs`.
+    let a = s.enqueue(make_job(q, "dep_parent_done")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&a.id, None).unwrap();
+
+    // Enqueuing B with a completed (archived) dependency must succeed: the
+    // existence check has to fall back to the archive.
+    let mut b_job = make_job(q, "dep_child");
+    b_job.depends_on = vec![a.id.clone()];
+    let b = s.enqueue(b_job).unwrap();
+
+    // And B must be dequeuable: a completed archived parent counts as satisfied.
+    let dequeued = s.dequeue(q, now_millis() + 1000, None).unwrap();
+    assert_eq!(
+        dequeued.map(|j| j.id),
+        Some(b.id),
+        "B should dequeue once its archived-complete dependency is satisfied"
+    );
+}
+
+fn test_dependent_blocked_by_cancelled_parent(s: &impl Storage) {
+    let q = "q-dep-cancelled-parent";
+
+    let a = s.enqueue(make_job(q, "dep_parent_cancel")).unwrap();
+    let mut b_job = make_job(q, "dep_child_blocked");
+    b_job.depends_on = vec![a.id.clone()];
+    let b = s.enqueue(b_job).unwrap();
+
+    // Cancelling A archives it as Cancelled. B's dependency is now unsatisfiable.
+    assert!(s.cancel_job(&a.id).unwrap());
+
+    // A dequeue attempt must not return B (its archived parent is non-Complete).
+    // Cascade-cancel may also have archived B; either way it must not dequeue.
+    let dequeued = s.dequeue(q, now_millis() + 1000, None).unwrap();
+    assert!(
+        dequeued.as_ref().map(|j| &j.id) != Some(&b.id),
+        "B must not dequeue while its parent is archived-cancelled"
+    );
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -395,6 +496,9 @@ fn run_storage_tests(s: &impl Storage) {
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_dashboard_settings(s);
+    test_immediate_archival(s);
+    test_enqueue_dep_on_completed_archived_job(s);
+    test_dependent_blocked_by_cancelled_parent(s);
 }
 
 // ── Backend-specific wiring ──────────────────────────────────────────
@@ -423,6 +527,74 @@ fn redis_storage_tests() {
     };
 
     run_storage_tests(&storage);
+    redis_mutators_reject_archived_jobs(&storage);
+    redis_purge_preserves_reused_unique_key(&storage);
+}
+
+/// A terminal job has left the live indices, so a mutator that resolves the
+/// live row (`get_job_required`) must return `JobNotFound` rather than partially
+/// reindexing an archived row.
+#[cfg(feature = "redis")]
+fn redis_mutators_reject_archived_jobs(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-mutate-archived";
+
+    // Cancel a pending job → archived as Cancelled.
+    let cancelled = s.enqueue(make_job(q, "redis_archived_cancel")).unwrap();
+    assert!(s.cancel_job(&cancelled.id).unwrap());
+    assert!(matches!(
+        s.retry(&cancelled.id, now_millis()),
+        Err(taskito_core::error::QueueError::JobNotFound(_))
+    ));
+    assert!(matches!(
+        s.mark_cancelled(&cancelled.id),
+        Err(taskito_core::error::QueueError::JobNotFound(_))
+    ));
+
+    // Complete a job → archived as Complete; the same guard applies.
+    let done = s.enqueue(make_job(q, "redis_archived_done")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&done.id, None).unwrap();
+    assert!(matches!(
+        s.retry(&done.id, now_millis()),
+        Err(taskito_core::error::QueueError::JobNotFound(_))
+    ));
+}
+
+/// Purging an archived job must not delete a `jobs:unique` pointer now owned by
+/// a different live job that reused the same `unique_key`.
+#[cfg(feature = "redis")]
+fn redis_purge_preserves_reused_unique_key(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-unique-reuse";
+    let shared_key = "redis-reused-unique";
+
+    // Run A to completion under the shared unique key.
+    let mut a_job = make_job(q, "unique_reuse_a");
+    a_job.unique_key = Some(shared_key.to_string());
+    let a = s.enqueue_unique(a_job).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&a.id, None).unwrap();
+
+    // A new live job B reuses the freed unique key and owns the lock.
+    let mut b_job = make_job(q, "unique_reuse_b");
+    b_job.unique_key = Some(shared_key.to_string());
+    let b = s.enqueue_unique(b_job).unwrap();
+    assert_ne!(
+        a.id, b.id,
+        "B should be a distinct live job, not deduped to A"
+    );
+
+    // Purge A's archived row — must leave B's unique lock intact.
+    s.purge_completed(now_millis() + 1000).unwrap();
+
+    // Re-enqueuing under the same key must still dedup to B, proving the lock
+    // survived the purge.
+    let mut c_job = make_job(q, "unique_reuse_c");
+    c_job.unique_key = Some(shared_key.to_string());
+    let c = s.enqueue_unique(c_job).unwrap();
+    assert_eq!(
+        c.id, b.id,
+        "unique lock for B must survive purging archived A"
+    );
 }
 
 #[cfg(feature = "postgres")]

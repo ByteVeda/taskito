@@ -20,19 +20,11 @@ impl RedisStorage {
                 if let Some(job) = self.load_job(&mut conn, id)? {
                     if let Some(completed_at) = job.completed_at {
                         if completed_at < cutoff_ms {
-                            // Store in archive
-                            let archived_key = self.key(&["archived", id]);
-                            let archived_all = self.key(&["archived", "all"]);
-                            let job_json = serde_json::to_string(&job)
-                                .map_err(|e| QueueError::Other(e.to_string()))?;
-
-                            let pipe = &mut redis::pipe();
-                            pipe.set(&archived_key, &job_json);
-                            pipe.zadd(&archived_all, id, completed_at as f64);
-                            pipe.query::<()>(&mut conn).map_err(map_err)?;
-
-                            // Delete original job
-                            self.delete_job_fully(&mut conn, &job)?;
+                            // Move the job out of every live index and into the
+                            // archive (including the per-status archive set used
+                            // by stats and list_jobs).
+                            let old_status = job.status;
+                            self.archive_job_immediately(&mut conn, &job, old_status)?;
                             count += 1;
                         }
                     }
