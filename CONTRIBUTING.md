@@ -84,6 +84,10 @@ cargo clippy --manifest-path crates/taskito-core/Cargo.toml
 
 ## Making Changes
 
+New to the code? Read [`ARCHITECTURE.md`](ARCHITECTURE.md) first — it maps the
+layers, boundary rules, and the ordered touch-points for common changes (adding a
+storage method, a Queue method, a contrib integration).
+
 1. Fork the repo and create a branch from `master`
 2. Make your changes
 3. Add or update tests as needed
