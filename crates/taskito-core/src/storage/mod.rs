@@ -1,5 +1,7 @@
 mod diesel_common;
 pub mod models;
+#[cfg(feature = "push-dispatch")]
+pub mod notify;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 #[cfg(feature = "redis")]
@@ -578,15 +580,50 @@ macro_rules! delegate {
     };
 }
 
+impl StorageBackend {
+    /// Signal the scheduler that a ready job was enqueued, so it can dispatch
+    /// immediately instead of waiting for the next poll. No-op for delayed
+    /// jobs (`scheduled_at > now`) — those rely on the fallback timer — and a
+    /// no-op entirely when `push-dispatch` is off.
+    #[cfg(feature = "push-dispatch")]
+    fn notify_if_ready(&self, scheduled_at: i64) {
+        use crate::storage::notify::StorageNotifier;
+        if scheduled_at > crate::job::now_millis() {
+            return;
+        }
+        match self {
+            StorageBackend::Sqlite(s) => s.notify_job_ready("", scheduled_at),
+            #[cfg(feature = "postgres")]
+            StorageBackend::Postgres(s) => s.notify_job_ready("", scheduled_at),
+            #[cfg(feature = "redis")]
+            StorageBackend::Redis(s) => s.notify_job_ready("", scheduled_at),
+        }
+    }
+}
+
 impl Storage for StorageBackend {
     fn enqueue(&self, new_job: NewJob) -> Result<Job> {
-        delegate!(self, enqueue, new_job)
+        let job = delegate!(self, enqueue, new_job)?;
+        #[cfg(feature = "push-dispatch")]
+        self.notify_if_ready(job.scheduled_at);
+        Ok(job)
     }
     fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
-        delegate!(self, enqueue_batch, new_jobs)
+        let jobs = delegate!(self, enqueue_batch, new_jobs)?;
+        #[cfg(feature = "push-dispatch")]
+        if jobs
+            .iter()
+            .any(|j| j.scheduled_at <= crate::job::now_millis())
+        {
+            self.notify_if_ready(0);
+        }
+        Ok(jobs)
     }
     fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
-        delegate!(self, enqueue_unique, new_job)
+        let job = delegate!(self, enqueue_unique, new_job)?;
+        #[cfg(feature = "push-dispatch")]
+        self.notify_if_ready(job.scheduled_at);
+        Ok(job)
     }
     fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
         delegate!(self, dequeue, queue_name, now, namespace)

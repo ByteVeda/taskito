@@ -135,6 +135,7 @@ class Queue(
         scheduler_cleanup_interval: int = 1200,
         scheduler_batch_size: int = 1,
         namespace: str | None = None,
+        push_dispatch: bool = False,
     ):
         """Initialize a new task queue.
 
@@ -184,6 +185,11 @@ class Queue(
             scheduler_batch_size: Maximum number of jobs the scheduler claims
                 per dispatch round. ``1`` (default) preserves one-job-per-round
                 behavior; higher values batch-claim for greater throughput.
+            push_dispatch: Opt into event-driven dispatch, where an enqueue
+                wakes the scheduler immediately instead of waiting for the next
+                poll. Honored only when the native module was built with the
+                ``push-dispatch`` cargo feature; otherwise accepted and ignored
+                (polling is kept). Defaults to ``False``.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -207,6 +213,7 @@ class Queue(
             scheduler_cleanup_interval=scheduler_cleanup_interval,
             scheduler_batch_size=scheduler_batch_size,
             namespace=namespace,
+            push_dispatch=push_dispatch,
         )
         self._backend = backend
         self._namespace = namespace

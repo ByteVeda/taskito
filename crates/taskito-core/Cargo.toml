@@ -7,6 +7,9 @@ edition = "2021"
 default = []
 postgres = ["diesel/postgres", "pq-sys", "openssl-sys"]
 redis = ["dep:redis"]
+# Event-driven scheduler wakeups. OFF by default — the shipped wheel keeps
+# polling. Opt-in for source builds that want lower dispatch latency.
+push-dispatch = []
 
 [dependencies]
 diesel = { workspace = true }

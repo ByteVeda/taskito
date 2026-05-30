@@ -12,6 +12,9 @@ mod rate_limits;
 mod trait_impl;
 mod workers;
 
+#[cfg(feature = "push-dispatch")]
+pub mod listener;
+
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -52,6 +55,10 @@ fn validate_schema_name(schema: &str) -> Result<()> {
 pub struct PostgresStorage {
     pool: PgPool,
     schema: String,
+    /// Original connection URL, retained only to open the dedicated
+    /// (non-pooled) `LISTEN` connection used by push-dispatch.
+    #[cfg(feature = "push-dispatch")]
+    database_url: String,
 }
 
 impl PostgresStorage {
@@ -95,9 +102,17 @@ impl PostgresStorage {
         let storage = Self {
             pool,
             schema: schema.to_string(),
+            #[cfg(feature = "push-dispatch")]
+            database_url: database_url.to_string(),
         };
         storage.run_migrations()?;
         Ok(storage)
+    }
+
+    /// The connection URL, for opening the dedicated `LISTEN` connection.
+    #[cfg(feature = "push-dispatch")]
+    pub fn database_url(&self) -> &str {
+        &self.database_url
     }
 
     pub fn conn(&self) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
@@ -131,5 +146,31 @@ impl PostgresStorage {
         }
 
         Ok(())
+    }
+}
+
+/// Postgres `NOTIFY` channel that carries "a ready job was enqueued" signals.
+#[cfg(feature = "push-dispatch")]
+pub const JOB_READY_CHANNEL: &str = "taskito_job_ready";
+
+#[cfg(feature = "push-dispatch")]
+impl crate::storage::notify::StorageNotifier for PostgresStorage {
+    fn notify_job_ready(&self, queue: &str, _scheduled_at: i64) {
+        // Best-effort: a failed NOTIFY only costs the latency improvement —
+        // the scheduler's fallback poll still picks the job up.
+        let mut conn = match self.conn() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("push-dispatch: NOTIFY conn failed: {e}");
+                return;
+            }
+        };
+        // Bind the queue as a parameter so the payload can't break out of the
+        // NOTIFY statement.
+        let stmt = diesel::sql_query(format!("SELECT pg_notify('{JOB_READY_CHANNEL}', $1)"))
+            .bind::<diesel::sql_types::Text, _>(queue);
+        if let Err(e) = stmt.execute(&mut conn) {
+            log::warn!("push-dispatch: pg_notify failed: {e}");
+        }
     }
 }

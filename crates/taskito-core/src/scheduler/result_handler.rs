@@ -113,6 +113,8 @@ impl Scheduler {
                 if retry_count < effective_max {
                     let next_at = policy.next_retry_at(retry_count);
                     self.storage.retry(&job_id, next_at)?;
+                    #[cfg(feature = "push-dispatch")]
+                    self.signal_scheduled(next_at);
                     Ok(ResultOutcome::Retry {
                         job_id,
                         task_name,

@@ -12,6 +12,9 @@ mod rate_limits;
 mod trait_impl;
 mod workers;
 
+#[cfg(feature = "push-dispatch")]
+pub mod listener;
+
 use crate::error::{QueueError, Result};
 
 /// Redis-backed storage for the task queue.
@@ -71,6 +74,44 @@ impl RedisStorage {
     /// their own keys under the same prefix without re-parsing the URL.
     pub fn prefix(&self) -> &str {
         &self.prefix
+    }
+
+    /// The single list key push-dispatch uses to signal ready jobs. The
+    /// enqueue side `LPUSH`es a sentinel here; the listener `BLPOP`s it.
+    #[cfg(feature = "push-dispatch")]
+    pub(crate) fn notify_key(&self) -> String {
+        self.key(&["notify", "_ready"])
+    }
+
+    /// A raw client clone, for the listener's dedicated blocking connection.
+    #[cfg(feature = "push-dispatch")]
+    pub fn client(&self) -> &redis::Client {
+        &self.client
+    }
+}
+
+#[cfg(feature = "push-dispatch")]
+impl crate::storage::notify::StorageNotifier for RedisStorage {
+    fn notify_job_ready(&self, _queue: &str, _scheduled_at: i64) {
+        // Best-effort LPUSH of a sentinel onto the notify list. A failure only
+        // costs the latency improvement — the fallback poll still dispatches.
+        let mut conn = match self.conn() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("push-dispatch: redis notify conn failed: {e}");
+                return;
+            }
+        };
+        let key = self.notify_key();
+        // Keep the list short — a single pending sentinel is enough to wake the
+        // listener; trim so it can't grow unbounded under bursty enqueues.
+        let res: redis::RedisResult<()> = redis::pipe()
+            .lpush(&key, 1)
+            .ltrim(&key, 0, 15)
+            .query(&mut conn);
+        if let Err(e) = res {
+            log::warn!("push-dispatch: redis LPUSH notify failed: {e}");
+        }
     }
 }
 
