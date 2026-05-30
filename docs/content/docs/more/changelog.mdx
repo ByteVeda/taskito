@@ -5,6 +5,47 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.15.2
+
+Security-hardening release. No breaking changes.
+
+### Added
+
+- **`SignedSerializer`.** Opt-in HMAC-SHA256 integrity wrapper for task payloads
+  and results — a worker refuses to deserialize bytes not produced with the
+  shared key, closing the untrusted-storage code-execution path. Compose with
+  `EncryptedSerializer` for confidentiality + integrity.
+- **`Queue.max_payload_bytes`.** Per-queue cap (default 1 MiB) that rejects
+  oversized serialized payloads at enqueue time.
+- **Security guide.** New *Operations → Security* page documenting the trust
+  model and a production hardening checklist.
+
+### Changed
+
+- **Dashboard authorization is enforced server-side.** Mutating API routes now
+  require the `admin` role; `viewer` sessions are read-only. Session and CSRF
+  cookies carry `Secure`, and `/metrics` / `/readiness` can be gated behind
+  `TASKITO_DASHBOARD_METRICS_TOKEN`.
+- **Scaler binds to `127.0.0.1` by default.** Use `--host 0.0.0.0` only behind a
+  trusted network boundary.
+
+### Fixed
+
+- **Settings API no longer leaks auth data.** `/api/settings` hides and rejects
+  internal `auth:` keys (password hashes, sessions, CSRF secret).
+- **Webhook SSRF closed.** Target URLs are re-validated against
+  private/loopback/metadata addresses at delivery time (defeating DNS
+  rebinding) and redirects are no longer followed.
+- **Proxy hardening.** File-proxy allowlist prefix/symlink bypass closed;
+  argument reconstruction restricted to safe type kinds; a warning is emitted
+  when proxy recipes are reconstructed without a signing key.
+- **Lock owner token no longer disclosed.** `DistributedLock.info()` masks
+  another holder's `owner_id`; Redis locks set a native TTL with an atomic reap.
+- **No duplicate execution on claim errors.** The scheduler skips dispatch when
+  a claim attempt errors instead of running the job unguarded.
+- **Job-list API summarizes tracebacks.** Only the final exception line is shown
+  in the jobs list; the full traceback stays on the per-job errors endpoint.
+
 ## 0.15.1
 
 ### Fixed
