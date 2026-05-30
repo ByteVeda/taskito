@@ -106,7 +106,11 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Python path to the Queue instance (e.g., 'myapp.tasks:queue')",
     )
-    scaler_parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    scaler_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1; use 0.0.0.0 only behind a network boundary)",
+    )
     scaler_parser.add_argument("--port", type=int, default=9091, help="Bind port (default: 9091)")
     scaler_parser.add_argument(
         "--target-queue-depth",

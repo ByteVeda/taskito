@@ -10,7 +10,7 @@ Usage::
 Or programmatically::
 
     from taskito.scaler import serve_scaler
-    serve_scaler(queue, host="0.0.0.0", port=9091)
+    serve_scaler(queue, host="127.0.0.1", port=9091)
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = logging.getLogger("taskito.scaler")
 
 def serve_scaler(
     queue: Queue,
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 9091,
     target_queue_depth: int = 10,
 ) -> None:
@@ -39,7 +39,8 @@ def serve_scaler(
 
     Args:
         queue: The Queue instance to monitor.
-        host: Bind address.
+        host: Bind address. Defaults to loopback; only bind to ``0.0.0.0``
+            behind a trusted network boundary — the endpoints are unauthenticated.
         port: Bind port.
         target_queue_depth: Default scaling target hint for KEDA.
     """
