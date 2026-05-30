@@ -5,6 +5,23 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.15.1
+
+### Fixed
+
+- **Mobile navigation drawer closes on navigation.** The drawer previously
+  stayed open after tapping a link; it now closes on every navigation,
+  including re-selecting the current route.
+- **Mobile menu shows the full navigation.** The Tasks and Webhooks links were
+  missing from the mobile menu. The sidebar and mobile menu now share a single
+  navigation definition so the two can no longer drift.
+- **Job logs tab virtualized.** The job detail logs view renders only the
+  visible rows, keeping jobs with hundreds of log lines smooth to scroll.
+- **Resources table loading state matches its layout.** The placeholder now
+  uses the table-shaped skeleton instead of a single opaque block.
+
+---
+
 ## 0.15.0
 
 See the [Upgrading to 0.15](/guides/operations/upgrading-0.15) guide for
