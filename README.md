@@ -1,10 +1,14 @@
+<div align="center">
+
 # taskito
+
+A Rust-powered task queue for Python. No broker required — just SQLite or Postgres.
 
 [![PyPI version](https://img.shields.io/pypi/v/taskito.svg)](https://pypi.org/project/taskito/)
 [![Python versions](https://img.shields.io/pypi/pyversions/taskito.svg)](https://pypi.org/project/taskito/)
 [![License](https://img.shields.io/pypi/l/taskito.svg)](https://github.com/ByteVeda/taskito/blob/master/LICENSE)
 
-A Rust-powered task queue for Python. No broker required — just SQLite or Postgres.
+</div>
 
 ```
 pip install taskito                # SQLite (default)
