@@ -31,6 +31,12 @@ macro_rules! impl_diesel_job_ops {
                     replay_history::table.filter(replay_history::original_job_id.eq_any(job_ids)),
                 )
                 .execute(conn)?;
+                // Explicit delete of the side-table rows. The FK declares
+                // ON DELETE CASCADE, but SQLite only enforces foreign keys when
+                // `PRAGMA foreign_keys = ON` is set, so we delete here to be
+                // correct regardless of the connection's FK-enforcement state.
+                diesel::delete(job_payloads::table.filter(job_payloads::job_id.eq_any(job_ids)))
+                    .execute(conn)?;
 
                 Ok(())
             }
@@ -71,6 +77,13 @@ macro_rules! impl_diesel_job_ops {
 
                 diesel::insert_into(archived_jobs::table)
                     .values(&archived)
+                    .execute(conn)?;
+                // Archived jobs keep their blobs in `archived_jobs`'s own
+                // payload/result columns and have no `job_payloads` row. Drop
+                // the side-table row explicitly: SQLite doesn't enforce the
+                // ON DELETE CASCADE FK unless `PRAGMA foreign_keys = ON`, so
+                // relying on the cascade would leak `job_payloads` rows.
+                diesel::delete(job_payloads::table.filter(job_payloads::job_id.eq(&row.id)))
                     .execute(conn)?;
                 diesel::delete(jobs::table.filter(jobs::id.eq(&row.id))).execute(conn)?;
                 Ok(())
@@ -187,6 +200,17 @@ macro_rules! impl_diesel_job_ops {
                         .values(&row)
                         .execute(conn)?;
 
+                    // Dual-write the payload to the 1:1 side table. The kept
+                    // `jobs.payload` column above stays populated for one-release
+                    // rollback safety; reads come from `job_payloads`.
+                    diesel::insert_into(job_payloads::table)
+                        .values(&NewJobPayloadRow {
+                            job_id: &job.id,
+                            payload: &job.payload,
+                            result: None,
+                        })
+                        .execute(conn)?;
+
                     // Insert dependency rows
                     for dep_id in &depends_on {
                         let dep_row = NewJobDependencyRow {
@@ -255,6 +279,21 @@ macro_rules! impl_diesel_job_ops {
                             .values(chunk)
                             .execute(conn)?;
                     }
+
+                    // Dual-write payload side-table rows in matching chunks.
+                    let payload_rows: Vec<NewJobPayloadRow> = jobs
+                        .iter()
+                        .map(|job| NewJobPayloadRow {
+                            job_id: &job.id,
+                            payload: &job.payload,
+                            result: None,
+                        })
+                        .collect();
+                    for chunk in payload_rows.chunks(BATCH_INSERT_CHUNK) {
+                        diesel::insert_into(job_payloads::table)
+                            .values(chunk)
+                            .execute(conn)?;
+                    }
                     Ok(jobs)
                 })
             }
@@ -307,6 +346,14 @@ macro_rules! impl_diesel_job_ops {
 
                     diesel::insert_into(jobs::table)
                         .values(&row)
+                        .execute(conn)?;
+
+                    diesel::insert_into(job_payloads::table)
+                        .values(&NewJobPayloadRow {
+                            job_id: &job.id,
+                            payload: &job.payload,
+                            result: None,
+                        })
                         .execute(conn)?;
 
                     // Insert dependency rows
@@ -379,16 +426,26 @@ macro_rules! impl_diesel_job_ops {
                         query = query.filter(jobs::namespace.is_null());
                     }
 
-                    let candidates: Vec<JobRow> = query.select(JobRow::as_select()).load(conn)?;
+                    // Narrow scan: select every column EXCEPT the payload/result
+                    // blobs. Claiming one job out of up to 100 candidates no
+                    // longer reads 99 discarded blobs into heap.
+                    let candidates: Vec<NarrowJobRow> =
+                        query.select(NarrowJobRow::as_select()).load(conn)?;
 
-                    for mut row in candidates {
-                        // Skip expired jobs — archive them as cancelled.
+                    for row in candidates {
+                        // Skip expired jobs — archive them as cancelled. The
+                        // archived row keeps the payload, so load the full row
+                        // (only for this one expired candidate) before archiving.
                         if let Some(expires_at) = row.expires_at {
                             if now > expires_at {
-                                row.status = JobStatus::Cancelled as i32;
-                                row.completed_at = Some(now);
-                                row.error = Some("expired before execution".to_string());
-                                Self::archive_job_row(conn, &row)?;
+                                let mut full: JobRow = jobs::table
+                                    .find(&row.id)
+                                    .select(JobRow::as_select())
+                                    .first(conn)?;
+                                full.status = JobStatus::Cancelled as i32;
+                                full.completed_at = Some(now);
+                                full.error = Some("expired before execution".to_string());
+                                Self::archive_job_row(conn, &full)?;
                                 continue;
                             }
                         }
@@ -408,12 +465,23 @@ macro_rules! impl_diesel_job_ops {
                             ))
                             .execute(conn)?;
 
-                        let updated: JobRow = jobs::table
+                        let updated: NarrowJobRow = jobs::table
                             .find(&row.id)
-                            .select(JobRow::as_select())
+                            .select(NarrowJobRow::as_select())
                             .first(conn)?;
 
-                        return Ok(Some(Job::from(updated)));
+                        // Now fetch only the winning job's blobs from the side
+                        // table and assemble the full Job.
+                        let payload_row: JobPayloadRow = job_payloads::table
+                            .find(&updated.id)
+                            .select(JobPayloadRow::as_select())
+                            .first(conn)?;
+
+                        return Ok(Some(Job::from_narrow(
+                            updated,
+                            payload_row.payload,
+                            payload_row.result,
+                        )));
                     }
 
                     Ok(None)
@@ -840,14 +908,19 @@ macro_rules! impl_diesel_job_ops {
             pub fn get_job(&self, id: &str) -> Result<Option<Job>> {
                 let mut conn = self.conn()?;
 
-                let row: Option<JobRow> = jobs::table
-                    .find(id)
-                    .select(JobRow::as_select())
+                let row: Option<(NarrowJobRow, JobPayloadRow)> = jobs::table
+                    .inner_join(job_payloads::table.on(job_payloads::job_id.eq(jobs::id)))
+                    .filter(jobs::id.eq(id))
+                    .select((NarrowJobRow::as_select(), JobPayloadRow::as_select()))
                     .first(&mut conn)
                     .optional()?;
 
-                if let Some(row) = row {
-                    return Ok(Some(Job::from(row)));
+                if let Some((narrow, payload)) = row {
+                    return Ok(Some(Job::from_narrow(
+                        narrow,
+                        payload.payload,
+                        payload.result,
+                    )));
                 }
 
                 let archived: Option<ArchivedJobRow> = archived_jobs::table
@@ -1052,7 +1125,10 @@ macro_rules! impl_diesel_job_ops {
             ) -> Result<Vec<Job>> {
                 let mut conn = self.conn()?;
 
-                let mut query = jobs::table.into_boxed().order(jobs::created_at.desc());
+                let mut query = jobs::table
+                    .inner_join(job_payloads::table.on(job_payloads::job_id.eq(jobs::id)))
+                    .into_boxed()
+                    .order(jobs::created_at.desc());
 
                 if let Some(s) = status {
                     query = query.filter(jobs::status.eq(s));
@@ -1079,13 +1155,18 @@ macro_rules! impl_diesel_job_ops {
                     query = query.filter(jobs::namespace.eq(ns));
                 }
 
-                let rows: Vec<JobRow> = query
+                let rows: Vec<(NarrowJobRow, JobPayloadRow)> = query
                     .limit(limit)
                     .offset(offset)
-                    .select(JobRow::as_select())
+                    .select((NarrowJobRow::as_select(), JobPayloadRow::as_select()))
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(Job::from).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|(narrow, payload)| {
+                        Job::from_narrow(narrow, payload.payload, payload.result)
+                    })
+                    .collect())
             }
 
             /// Query the `archived_jobs` table with the shared filter set.
@@ -1210,16 +1291,21 @@ macro_rules! impl_diesel_job_ops {
                 let mut conn = self.conn()?;
 
                 // Push the `started_at + timeout_ms < now` deadline into SQL so
-                // only genuinely-stale rows (and their payload blobs) are read,
-                // instead of every running job.
-                let rows: Vec<JobRow> = jobs::table
+                // only genuinely-stale rows are read, instead of every running
+                // job. The narrow row skips the payload/result blobs entirely —
+                // reaping only needs the timeout arithmetic plus id/task/queue,
+                // so the assembled Job carries an empty payload.
+                let rows: Vec<NarrowJobRow> = jobs::table
                     .filter(jobs::status.eq(JobStatus::Running as i32))
                     .filter(jobs::started_at.is_not_null())
                     .filter((jobs::started_at.assume_not_null() + jobs::timeout_ms).lt(now))
-                    .select(JobRow::as_select())
+                    .select(NarrowJobRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(Job::from).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|narrow| Job::from_narrow(narrow, Vec::new(), None))
+                    .collect())
             }
 
             /// Record an error for a job attempt.

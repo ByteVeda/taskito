@@ -3,7 +3,8 @@ use diesel::sqlite::SqliteConnection;
 
 use super::super::models::*;
 use super::super::schema::{
-    archived_jobs, job_dependencies, job_errors, jobs, replay_history, task_logs, task_metrics,
+    archived_jobs, job_dependencies, job_errors, job_payloads, jobs, replay_history, task_logs,
+    task_metrics,
 };
 use super::SqliteStorage;
 use crate::error::{QueueError, Result};

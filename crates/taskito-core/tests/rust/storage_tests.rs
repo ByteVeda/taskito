@@ -476,6 +476,61 @@ fn test_dependent_blocked_by_cancelled_parent(s: &impl Storage) {
     );
 }
 
+/// Exercise the payload/result round-trip through the full job lifecycle.
+/// On the Diesel backends this verifies the `job_payloads` side table is
+/// populated on enqueue, returned by dequeue, and read back by get_job after
+/// the job is archived. Redis passes trivially: its Job JSON already carries
+/// the blobs.
+fn test_payload_side_table(s: &impl Storage) {
+    let q = "q-payload-side-table";
+    let mut nj = make_job(q, "payload_side_task");
+    nj.payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
+    let job = s.enqueue(nj).unwrap();
+
+    let dequeued = s.dequeue(q, now_millis() + 1000, None).unwrap().unwrap();
+    assert_eq!(dequeued.id, job.id);
+    assert_eq!(dequeued.payload, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+
+    s.complete(&job.id, Some(vec![0x01, 0x02, 0x03])).unwrap();
+
+    let fetched = s.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.status, JobStatus::Complete);
+    assert_eq!(fetched.payload, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!(fetched.result, Some(vec![0x01, 0x02, 0x03]));
+}
+
+/// A job run to completion is archived: its blobs move into `archived_jobs`
+/// and its `job_payloads` side-table row is dropped (no leak). `get_job` must
+/// still resolve the full payload + result from the archive. On the Diesel
+/// backends the archived job has no side-table row, so a stray join would lose
+/// it — this guards that the archived fallback reads `archived_jobs` directly.
+/// Redis passes trivially. The SQLite-only test
+/// `test_side_table_stays_one_to_one_with_live_jobs` asserts the row removal
+/// directly against `job_payloads`.
+fn test_archived_job_payload_resolves(s: &impl Storage) {
+    let q = "q-archived-payload-resolves";
+    let mut nj = make_job(q, "archived_payload_task");
+    nj.payload = vec![0xCA, 0xFE, 0xBA, 0xBE];
+    let job = s.enqueue(nj).unwrap();
+
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&job.id, Some(vec![0x11, 0x22])).unwrap();
+
+    // The job now lives only in `archived_jobs`; the side-table row is gone.
+    let fetched = s.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.status, JobStatus::Complete);
+    assert_eq!(fetched.payload, vec![0xCA, 0xFE, 0xBA, 0xBE]);
+    assert_eq!(fetched.result, Some(vec![0x11, 0x22]));
+
+    // Listing by the terminal status reads the archive and still carries blobs.
+    let listed = s
+        .list_jobs(Some(JobStatus::Complete as i32), Some(q), None, 50, 0, None)
+        .unwrap();
+    let row = listed.iter().find(|j| j.id == job.id).unwrap();
+    assert_eq!(row.payload, vec![0xCA, 0xFE, 0xBA, 0xBE]);
+    assert_eq!(row.result, Some(vec![0x11, 0x22]));
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -499,6 +554,8 @@ fn run_storage_tests(s: &impl Storage) {
     test_immediate_archival(s);
     test_enqueue_dep_on_completed_archived_job(s);
     test_dependent_blocked_by_cancelled_parent(s);
+    test_payload_side_table(s);
+    test_archived_job_payload_resolves(s);
 }
 
 // ── Backend-specific wiring ──────────────────────────────────────────

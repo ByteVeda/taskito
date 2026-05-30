@@ -147,6 +147,9 @@ impl SqliteStorage {
         for sql in common_migrations::backfill_statements() {
             diesel::sql_query(*sql).execute(&mut conn)?;
         }
+        for sql in common_migrations::backfill_payload_side_table(&common_migrations::SQLITE) {
+            diesel::sql_query(&sql).execute(&mut conn)?;
+        }
         drop(conn);
 
         // Drain any pre-existing terminal jobs left in `jobs` by older
