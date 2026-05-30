@@ -5,6 +5,7 @@
     "testing",
     "job-management",
     "troubleshooting",
+    "security",
     "deployment",
     "autoscaler",
     "keda",
