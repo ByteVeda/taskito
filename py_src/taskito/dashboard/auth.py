@@ -22,6 +22,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
 import time
 from dataclasses import asdict, dataclass
@@ -434,11 +435,13 @@ def bootstrap_admin_from_env(queue: Queue) -> User | None:
     If ``TASKITO_DASHBOARD_ADMIN_USER`` and ``TASKITO_DASHBOARD_ADMIN_PASSWORD``
     are set AND the user does not exist yet, create it. Safe to call on every
     startup — does nothing if the user already exists.
-    """
-    import os
 
+    The password is removed from ``os.environ`` immediately after it is read so
+    it cannot later be harvested via ``/proc/<pid>/environ``, ``ps``, or a
+    crash reporter.
+    """
     username = os.environ.get("TASKITO_DASHBOARD_ADMIN_USER")
-    password = os.environ.get("TASKITO_DASHBOARD_ADMIN_PASSWORD")
+    password = os.environ.pop("TASKITO_DASHBOARD_ADMIN_PASSWORD", None)
     if not username or not password:
         return None
     store = AuthStore(queue)
