@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ListTree, Pause, ShieldCheck } from "lucide-react";
+import { Clock, ListTree, Pause } from "lucide-react";
 import { PageHeader } from "@/components/layout";
 import { StatCard } from "@/components/ui";
 import {
@@ -32,29 +32,31 @@ function QueuesPage() {
     : 0;
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
+        eyebrow="Infrastructure"
         title="Queues"
         description="Inspect throughput and pause or resume traffic per queue."
       />
-      <div className="mb-4 grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+      <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
         <StatCard
           label="Queues"
           tone="neutral"
-          icon={<ListTree className="size-4" />}
+          icon={<ListTree />}
           value={formatCount(totalQueues)}
         />
         <StatCard
-          label="Pending"
+          label="Total pending"
           tone="info"
-          icon={<ShieldCheck className="size-4" />}
+          icon={<Clock />}
           value={formatCount(totalPending)}
         />
         <StatCard
           label="Paused"
           tone="warning"
-          icon={<Pause className="size-4" />}
+          icon={<Pause />}
           value={formatCount(pausedCount)}
+          hint="not pulling work"
         />
       </div>
       <QueuesTable
@@ -67,6 +69,6 @@ function QueuesPage() {
           paused.refetch();
         }}
       />
-    </>
+    </div>
   );
 }

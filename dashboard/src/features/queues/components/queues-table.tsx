@@ -1,7 +1,15 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Box, Pause, Play } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, Button, DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  QueueBar,
+  TableSkeleton,
+} from "@/components/ui";
 import type { QueueStatsMap } from "@/lib/api-types";
 import { formatCount } from "@/lib/number";
 import { usePauseQueue, useResumeQueue } from "../hooks";
@@ -24,6 +32,8 @@ interface QueuesTableProps {
   error: Error | null;
   onRetry: () => void;
 }
+
+const NUM_CELL = "block w-full text-right font-mono text-[0.82rem] tabular-nums";
 
 export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTableProps) {
   const rows = useMemo<QueueRow[]>(() => {
@@ -55,29 +65,43 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
             <span className="font-medium text-[var(--fg)]">{row.original.name}</span>
-            {row.original.paused ? <Badge tone="warning">Paused</Badge> : null}
+            {row.original.paused ? (
+              <Badge tone="warning" dot>
+                Paused
+              </Badge>
+            ) : null}
           </div>
+        ),
+      },
+      {
+        id: "mix",
+        header: "Mix",
+        cell: ({ row }) => (
+          <QueueBar
+            pending={row.original.pending}
+            running={row.original.running}
+            failedTotal={row.original.failedTotal}
+            className="min-w-[120px]"
+          />
         ),
       },
       {
         accessorKey: "pending",
         header: "Pending",
-        cell: ({ getValue }) => (
-          <span className="tabular-nums">{formatCount(getValue<number>())}</span>
-        ),
+        cell: ({ getValue }) => <span className={NUM_CELL}>{formatCount(getValue<number>())}</span>,
       },
       {
         accessorKey: "running",
         header: "Running",
         cell: ({ getValue }) => (
-          <span className="tabular-nums text-info">{formatCount(getValue<number>())}</span>
+          <span className={`${NUM_CELL} text-info`}>{formatCount(getValue<number>())}</span>
         ),
       },
       {
         accessorKey: "completed",
         header: "Completed",
         cell: ({ getValue }) => (
-          <span className="tabular-nums text-[var(--fg-muted)]">
+          <span className={`${NUM_CELL} text-[var(--fg-muted)]`}>
             {formatCount(getValue<number>())}
           </span>
         ),
@@ -88,9 +112,7 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
         cell: ({ getValue }) => {
           const total = getValue<number>();
           return (
-            <span
-              className={`tabular-nums ${total > 0 ? "text-danger" : "text-[var(--fg-muted)]"}`}
-            >
+            <span className={`${NUM_CELL} ${total > 0 ? "text-danger" : "text-[var(--fg-muted)]"}`}>
               {formatCount(total)}
             </span>
           );
@@ -100,7 +122,9 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
         id: "actions",
         header: "",
         cell: ({ row }) => (
-          <PauseResumeCell name={row.original.name} paused={row.original.paused} />
+          <div className="flex justify-end">
+            <PauseResumeCell name={row.original.name} paused={row.original.paused} />
+          </div>
         ),
       },
     ],
@@ -114,7 +138,9 @@ export function QueuesTable({ stats, paused, loading, error, onRetry }: QueuesTa
   }
 
   if (loading && rows.length === 0) {
-    return <TableSkeleton rows={6} columns={["w-32", "w-16", "w-16", "w-20", "w-20", "w-20"]} />;
+    return (
+      <TableSkeleton rows={6} columns={["w-32", "w-28", "w-16", "w-16", "w-20", "w-20", "w-20"]} />
+    );
   }
 
   if (rows.length === 0) {
@@ -141,7 +167,7 @@ function PauseResumeCell({ name, paused }: { name: string; paused: boolean }) {
   if (paused) {
     return (
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         onClick={(e) => {
           e.stopPropagation();
@@ -155,7 +181,7 @@ function PauseResumeCell({ name, paused }: { name: string; paused: boolean }) {
   }
   return (
     <Button
-      variant="secondary"
+      variant="ghost"
       size="sm"
       onClick={(e) => {
         e.stopPropagation();

@@ -3,10 +3,8 @@ import { Server } from "lucide-react";
 import { useMemo } from "react";
 import { Badge, DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
 import type { Worker } from "@/lib/api-types";
-import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/time";
-
-const STALE_AFTER_MS = 30_000;
+import { isWorkerStale } from "../utils";
 
 interface WorkersTableProps {
   workers: Worker[] | undefined;
@@ -14,6 +12,9 @@ interface WorkersTableProps {
   error: Error | null;
   onRetry: () => void;
 }
+
+const TIME_CELL =
+  "block w-full text-right font-mono text-[0.82rem] tabular-nums text-[var(--fg-muted)]";
 
 export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableProps) {
   const columns = useMemo<ColumnDef<Worker>[]>(
@@ -29,8 +30,7 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
         accessorKey: "queues",
         header: "Queues",
         cell: ({ getValue }) => {
-          const raw = getValue<string>();
-          const parts = raw
+          const parts = getValue<string>()
             .split(",")
             .map((s) => s.trim())
             .filter(Boolean);
@@ -46,35 +46,6 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
         },
       },
       {
-        accessorKey: "last_heartbeat",
-        header: "Heartbeat",
-        cell: ({ getValue }) => {
-          const ts = getValue<number>();
-          const stale = Date.now() - ts > STALE_AFTER_MS;
-          return (
-            <div className="flex items-center gap-2">
-              <span
-                className={cn(
-                  "size-2 rounded-full",
-                  stale ? "bg-warning" : "bg-success animate-pulse",
-                )}
-                aria-hidden
-              />
-              <span className="text-xs text-[var(--fg-muted)]">{formatRelative(ts)}</span>
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "registered_at",
-        header: "Registered",
-        cell: ({ getValue }) => (
-          <span className="text-xs text-[var(--fg-muted)]">
-            {formatRelative(getValue<number>())}
-          </span>
-        ),
-      },
-      {
         accessorKey: "tags",
         header: "Tags",
         cell: ({ getValue }) => {
@@ -82,6 +53,40 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
           if (!tags) return <span className="text-[var(--fg-subtle)]">—</span>;
           return <span className="text-xs text-[var(--fg-muted)]">{tags}</span>;
         },
+      },
+      {
+        accessorKey: "registered_at",
+        header: "Registered",
+        cell: ({ getValue }) => (
+          <span className={TIME_CELL}>{formatRelative(getValue<number>())}</span>
+        ),
+      },
+      {
+        accessorKey: "last_heartbeat",
+        header: "Last heartbeat",
+        cell: ({ getValue }) => (
+          <span className={TIME_CELL}>{formatRelative(getValue<number>())}</span>
+        ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        // Recompute staleness against the wall clock on every render so a
+        // worker ages from Online to Stale as its heartbeat goes cold (the
+        // query refetches on the user interval, re-rendering this table).
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            {isWorkerStale(row.original) ? (
+              <Badge tone="danger" dot>
+                Stale
+              </Badge>
+            ) : (
+              <Badge tone="success" dot>
+                Online
+              </Badge>
+            )}
+          </div>
+        ),
       },
     ],
     [],
@@ -94,7 +99,7 @@ export function WorkersTable({ workers, loading, error, onRetry }: WorkersTableP
   }
 
   if (loading && !workers) {
-    return <TableSkeleton rows={4} columns={["w-32", "w-40", "w-24", "w-24", "w-20"]} />;
+    return <TableSkeleton rows={4} columns={["w-32", "w-40", "w-24", "w-24", "w-24", "w-20"]} />;
   }
 
   if (!workers || workers.length === 0) {

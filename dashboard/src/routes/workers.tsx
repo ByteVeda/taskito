@@ -1,11 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Activity, AlertCircle, Server } from "lucide-react";
+import { CheckCircle2, Server, Skull } from "lucide-react";
 import { PageHeader } from "@/components/layout";
 import { StatCard } from "@/components/ui";
-import { useWorkers, WorkersTable, workersQuery } from "@/features/workers";
+import { isWorkerStale, useWorkers, WorkersTable, workersQuery } from "@/features/workers";
 import { formatCount } from "@/lib/number";
-
-const STALE_AFTER_MS = 30_000;
 
 export const Route = createFileRoute("/workers")({
   loader: ({ context: { queryClient } }) => queryClient.ensureQueryData(workersQuery()),
@@ -15,39 +13,38 @@ export const Route = createFileRoute("/workers")({
 function WorkersPage() {
   const workers = useWorkers();
   const all = workers.data ?? [];
-  const count = workers.data?.length;
+  // Compute against the wall clock at render so workers "age out" between
+  // refetches: the query re-renders on the user interval, refreshing these.
   const now = Date.now();
-  const stale = all.filter((w) => now - w.last_heartbeat > STALE_AFTER_MS).length;
-  const healthy = all.length - stale;
+  const stale = all.filter((w) => isWorkerStale(w, now)).length;
+  const online = all.length - stale;
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
+        eyebrow="Infrastructure"
         title="Workers"
-        description={
-          count != null
-            ? `${formatCount(count)} registered worker${count === 1 ? "" : "s"}`
-            : "Active workers, heartbeats, and assignments."
-        }
+        description="Every worker process, what it's pulling, and when it last checked in."
       />
-      <div className="mb-4 grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+      <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
         <StatCard
-          label="Registered"
+          label="Workers"
           tone="neutral"
-          icon={<Server className="size-4" />}
+          icon={<Server />}
           value={formatCount(all.length)}
         />
         <StatCard
-          label="Healthy"
+          label="Online"
           tone="success"
-          icon={<Activity className="size-4" />}
-          value={formatCount(healthy)}
+          icon={<CheckCircle2 />}
+          value={formatCount(online)}
         />
         <StatCard
           label="Stale"
-          tone="warning"
-          icon={<AlertCircle className="size-4" />}
+          tone="danger"
+          icon={<Skull />}
           value={formatCount(stale)}
+          hint="no recent heartbeat"
         />
       </div>
       <WorkersTable
@@ -56,6 +53,6 @@ function WorkersPage() {
         error={workers.error}
         onRetry={() => workers.refetch()}
       />
-    </>
+    </div>
   );
 }
