@@ -50,8 +50,8 @@ export function BrandingSection({ settings }: { settings: SettingsSnapshot }) {
       </CardHeader>
       <CardContent className="divide-y divide-[var(--border)]">
         <SettingRow
-          label="Dashboard title"
-          description="Shown in the sidebar header. Leave blank for the default."
+          label="Instance name"
+          description="Shown in the sidebar header and browser tab. Leave blank for the default."
           htmlFor="brand-title"
         >
           <Input
@@ -67,13 +67,23 @@ export function BrandingSection({ settings }: { settings: SettingsSnapshot }) {
           description="Hex color for buttons, active links, and highlights (e.g. #6366f1)."
           htmlFor="brand-accent"
         >
-          <Input
-            id="brand-accent"
-            placeholder="#6366f1"
-            value={accent}
-            onChange={(e) => setAccent(e.target.value)}
-            maxLength={9}
-          />
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              aria-label="Accent color swatch"
+              value={/^#[0-9a-fA-F]{6}$/.test(accent) ? accent : "#6366f1"}
+              onChange={(e) => setAccent(e.target.value)}
+              className="size-9 shrink-0 cursor-pointer rounded-[var(--btn-radius)] border border-[var(--border-strong)] bg-transparent p-0.5"
+            />
+            <Input
+              id="brand-accent"
+              placeholder="#6366f1"
+              value={accent}
+              onChange={(e) => setAccent(e.target.value)}
+              maxLength={9}
+              className="font-mono"
+            />
+          </div>
         </SettingRow>
         <div className="flex justify-end pt-4">
           <Button onClick={onSave} disabled={!dirty || update.isPending}>

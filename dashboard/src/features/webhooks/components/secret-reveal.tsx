@@ -1,6 +1,6 @@
-import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, KeyRound, Shield } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui";
+import { Button, Callout } from "@/components/ui";
 
 interface Props {
   secret: string;
@@ -28,37 +28,43 @@ export function SecretReveal({ secret, hint }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3">
-      <div className="flex items-center gap-2 text-xs font-medium text-[var(--fg)]">
-        <KeyRound className="size-3.5" aria-hidden />
-        {hint ?? "Signing secret"}
+    <div className="flex flex-col gap-3">
+      <Callout tone="warning" icon={<Shield aria-hidden />}>
+        For security, taskito stores only a hash of this secret. If you lose it you'll need to
+        rotate to a new one.
+      </Callout>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-xs font-medium text-[var(--fg)]">
+          <KeyRound className="size-3.5" aria-hidden />
+          {hint ?? "Signing secret"}
+        </div>
+        <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-subtle)] p-1.5">
+          <code className="grow break-all px-1.5 font-mono text-xs">
+            {shown ? secret : "•".repeat(Math.min(secret.length, 48))}
+          </code>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={shown ? "Hide secret" : "Show secret"}
+            onClick={() => setShown((v) => !v)}
+          >
+            {shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Copy secret"
+            onClick={copyToClipboard}
+          >
+            {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
+          </Button>
+        </div>
+        <p className="text-[11px] text-[var(--fg-subtle)]">
+          Store this securely — it will not be shown again.
+        </p>
       </div>
-      <div className="flex items-center gap-2">
-        <code className="grow rounded bg-[var(--bg)] px-2 py-1.5 text-xs font-mono break-all">
-          {shown ? secret : "•".repeat(Math.min(secret.length, 48))}
-        </code>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={shown ? "Hide secret" : "Show secret"}
-          onClick={() => setShown((v) => !v)}
-        >
-          {shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label="Copy secret"
-          onClick={copyToClipboard}
-        >
-          {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
-        </Button>
-      </div>
-      <p className="text-[11px] text-[var(--fg-subtle)]">
-        Store this securely — it will not be shown again.
-      </p>
     </div>
   );
 }

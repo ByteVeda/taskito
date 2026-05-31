@@ -1,14 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import {
-  Eye,
-  History,
-  MoreHorizontal,
-  Power,
-  PowerOff,
-  RotateCcw,
-  Send,
-  Trash2,
-} from "lucide-react";
+import { Eye, History, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
   Button,
@@ -25,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui";
 import { DestructiveConfirmDialog } from "@/components/ui/destructive-confirm-dialog";
-import { useDeleteWebhook, useRotateSecret, useTestWebhook, useUpdateWebhook } from "../hooks";
+import { useDeleteWebhook, useRotateSecret } from "../hooks";
 import type { Webhook } from "../types";
 import { SecretReveal } from "./secret-reveal";
 
@@ -34,21 +25,12 @@ interface Props {
 }
 
 export function WebhookRowActions({ webhook }: Props) {
-  const update = useUpdateWebhook();
   const remove = useDeleteWebhook();
   const rotate = useRotateSecret();
-  const test = useTestWebhook();
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
-
-  function onToggleEnabled() {
-    update.mutate({
-      id: webhook.id,
-      input: { enabled: !webhook.enabled },
-    });
-  }
 
   function onRotate() {
     rotate.mutate(webhook.id, {
@@ -75,23 +57,6 @@ export function WebhookRowActions({ webhook }: Props) {
             >
               <History aria-hidden /> View deliveries
             </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => test.mutate(webhook.id)}
-            disabled={test.isPending || !webhook.enabled}
-          >
-            <Send aria-hidden /> Send test
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onToggleEnabled} disabled={update.isPending}>
-            {webhook.enabled ? (
-              <>
-                <PowerOff aria-hidden /> Disable
-              </>
-            ) : (
-              <>
-                <Power aria-hidden /> Enable
-              </>
-            )}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setConfirmRotate(true)}>
             <RotateCcw aria-hidden /> Rotate secret

@@ -10,6 +10,8 @@ import {
   DialogTitle,
   DialogTrigger,
   Input,
+  Stepper,
+  Switch,
 } from "@/components/ui";
 import { ApiError } from "@/lib/api-client";
 import { useCreateWebhook } from "../hooks";
@@ -18,6 +20,10 @@ import { EventTypeMultiSelect } from "./event-type-multi-select";
 import { SecretReveal } from "./secret-reveal";
 import { TaskFilterInput } from "./task-filter-input";
 
+const DEFAULT_RETRIES = 3;
+const DEFAULT_TIMEOUT = 10;
+const DEFAULT_BACKOFF = 2;
+
 export function CreateWebhookDialog() {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
@@ -25,6 +31,9 @@ export function CreateWebhookDialog() {
   const [events, setEvents] = useState<string[]>([]);
   const [taskFilter, setTaskFilter] = useState<string[] | null>(null);
   const [generateSecret, setGenerateSecret] = useState(true);
+  const [maxRetries, setMaxRetries] = useState(DEFAULT_RETRIES);
+  const [timeoutSeconds, setTimeoutSeconds] = useState(DEFAULT_TIMEOUT);
+  const [retryBackoff, setRetryBackoff] = useState(DEFAULT_BACKOFF);
   const [createdWebhook, setCreatedWebhook] = useState<Webhook | null>(null);
   const create = useCreateWebhook();
 
@@ -34,6 +43,9 @@ export function CreateWebhookDialog() {
     setEvents([]);
     setTaskFilter(null);
     setGenerateSecret(true);
+    setMaxRetries(DEFAULT_RETRIES);
+    setTimeoutSeconds(DEFAULT_TIMEOUT);
+    setRetryBackoff(DEFAULT_BACKOFF);
     setCreatedWebhook(null);
     create.reset();
   }
@@ -52,6 +64,9 @@ export function CreateWebhookDialog() {
         events,
         task_filter: taskFilter,
         generate_secret: generateSecret,
+        max_retries: maxRetries,
+        timeout_seconds: timeoutSeconds,
+        retry_backoff: retryBackoff,
       },
       { onSuccess: (webhook) => setCreatedWebhook(webhook) },
     );
@@ -78,12 +93,19 @@ export function CreateWebhookDialog() {
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <DialogHeader>
               <DialogTitle>New webhook</DialogTitle>
-              <DialogDescription>
-                Subscribe an HTTP endpoint to job lifecycle events.
-              </DialogDescription>
+              <DialogDescription>Push events to an endpoint you control.</DialogDescription>
             </DialogHeader>
+            <label htmlFor="webhook-desc" className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium">Description</span>
+              <Input
+                id="webhook-desc"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What is this for?"
+              />
+            </label>
             <label htmlFor="webhook-url" className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium">URL</span>
+              <span className="font-medium">Endpoint URL</span>
               <Input
                 id="webhook-url"
                 type="url"
@@ -91,15 +113,6 @@ export function CreateWebhookDialog() {
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://your-service.example.com/hooks"
                 required
-              />
-            </label>
-            <label htmlFor="webhook-desc" className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium">Description</span>
-              <Input
-                id="webhook-desc"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional — e.g. ops failures"
               />
             </label>
             <div className="flex flex-col gap-1.5 text-sm">
@@ -110,14 +123,50 @@ export function CreateWebhookDialog() {
               </span>
             </div>
             <TaskFilterInput value={taskFilter} onChange={setTaskFilter} />
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+            <div className="grid grid-cols-3 gap-3">
+              <div className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Max retries</span>
+                <Stepper
+                  value={maxRetries}
+                  onChange={setMaxRetries}
+                  min={0}
+                  aria-label="max retries"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Timeout</span>
+                <Stepper
+                  value={timeoutSeconds}
+                  onChange={setTimeoutSeconds}
+                  min={1}
+                  format={(v) => `${v}s`}
+                  aria-label="timeout seconds"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Backoff ×</span>
+                <Stepper
+                  value={retryBackoff}
+                  onChange={setRetryBackoff}
+                  min={1}
+                  step={0.5}
+                  aria-label="retry backoff"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-4 border-t border-[var(--border)] pt-4">
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium">Generate signing secret</span>
+                <span className="text-xs text-[var(--fg-subtle)]">
+                  HMAC-sign every payload so receivers can verify it. Shown once on create.
+                </span>
+              </div>
+              <Switch
                 checked={generateSecret}
-                onChange={(e) => setGenerateSecret(e.target.checked)}
+                onCheckedChange={setGenerateSecret}
+                aria-label="Generate signing secret"
               />
-              Auto-generate a signing secret (HMAC-SHA256)
-            </label>
+            </div>
             {errorMessage ? (
               <div
                 role="alert"

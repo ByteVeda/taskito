@@ -19,17 +19,18 @@ function SettingsPage() {
   const { data, isLoading, error, refetch } = useSettings();
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
+        eyebrow="Configuration"
         title="Settings"
-        description="Customize the dashboard's appearance and configure external integrations."
+        description="Branding, dashboard behaviour, integrations, and quick links — shared across every worker."
       />
 
       {isLoading || !data ? (
-        <div className="flex flex-col gap-4">
-          <Skeleton className="h-48 rounded-lg" />
-          <Skeleton className="h-48 rounded-lg" />
-          <Skeleton className="h-64 rounded-lg" />
+        <div className="flex flex-col gap-[var(--gap)]">
+          <Skeleton className="h-48 rounded-[var(--card-radius)]" />
+          <Skeleton className="h-48 rounded-[var(--card-radius)]" />
+          <Skeleton className="h-64 rounded-[var(--card-radius)]" />
         </div>
       ) : error ? (
         <ErrorState
@@ -38,13 +39,13 @@ function SettingsPage() {
           onRetry={() => refetch()}
         />
       ) : (
-        <div className="flex flex-col gap-6">
-          <RefreshIntervalSection />
+        <div className="flex flex-col gap-[var(--gap)]">
           <BrandingSection settings={data} />
-          <ExternalLinksSection settings={data} />
+          <RefreshIntervalSection />
           <IntegrationsSection settings={data} />
+          <ExternalLinksSection settings={data} />
         </div>
       )}
-    </>
+    </div>
   );
 }
