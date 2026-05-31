@@ -1,17 +1,21 @@
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import {
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui";
+import { Input, Segmented, type SegmentedOption } from "@/components/ui";
 import { useDebouncedValue } from "@/hooks";
 import { cn } from "@/lib/cn";
 import { LOG_LEVELS, type LogLevel } from "../api";
 
 const ALL_LEVELS = "__all__";
+
+type LevelValue = LogLevel | typeof ALL_LEVELS;
+
+const LEVEL_OPTIONS: SegmentedOption<LevelValue>[] = [
+  { value: ALL_LEVELS, label: "All" },
+  ...LOG_LEVELS.map((lvl) => ({
+    value: lvl,
+    label: lvl.charAt(0).toUpperCase() + lvl.slice(1),
+  })),
+];
 
 interface LogFiltersProps {
   task: string | undefined;
@@ -37,30 +41,25 @@ export function LogFilters({ task, level, onChange, className }: LogFiltersProps
   }, [debounced, task, onChange, level]);
 
   return (
-    <div className={cn("grid gap-2 md:grid-cols-[1fr_200px]", className)}>
-      <Input
-        value={localTask}
-        onChange={(e) => setLocalTask(e.target.value)}
-        placeholder="Filter by task name…"
-      />
-      <Select
+    <div className={cn("flex flex-wrap items-center gap-2.5", className)}>
+      <Segmented
+        aria-label="Log level"
+        options={LEVEL_OPTIONS}
         value={level ?? ALL_LEVELS}
-        onValueChange={(v) =>
-          onChange({ task, level: v === ALL_LEVELS ? undefined : (v as LogLevel) })
-        }
-      >
-        <SelectTrigger aria-label="Log level">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL_LEVELS}>All levels</SelectItem>
-          {LOG_LEVELS.map((lvl) => (
-            <SelectItem key={lvl} value={lvl}>
-              {lvl}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        onChange={(v) => onChange({ task, level: v === ALL_LEVELS ? undefined : v })}
+      />
+      <div className="relative max-w-80 flex-1">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 size-[15px] -translate-y-1/2 text-[var(--fg-subtle)]"
+          aria-hidden
+        />
+        <Input
+          value={localTask}
+          onChange={(e) => setLocalTask(e.target.value)}
+          placeholder="Filter by message or task…"
+          className="pl-8"
+        />
+      </div>
     </div>
   );
 }

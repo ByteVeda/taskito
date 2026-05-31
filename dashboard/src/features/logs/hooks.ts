@@ -12,7 +12,7 @@ export function logsListQuery(query: LogsQuery) {
   });
 }
 
-export function useLogs(query: LogsQuery) {
+export function useLogs(query: LogsQuery, live = true) {
   const { intervalMs } = useRefreshInterval();
-  return useQuery({ ...logsListQuery(query), refetchInterval: intervalMs });
+  return useQuery({ ...logsListQuery(query), refetchInterval: live ? intervalMs : false });
 }

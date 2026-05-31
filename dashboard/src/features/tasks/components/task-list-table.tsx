@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   Badge,
   Button,
+  Card,
   EmptyState,
   Sheet,
   SheetContent,
@@ -13,12 +14,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui";
+import { formatDuration } from "@/lib/time";
 import type { TaskEntry } from "../types";
 import { TaskOverrideForm } from "./task-override-form";
 
 interface Props {
   tasks: TaskEntry[];
 }
+
+const numCell = "text-right font-mono text-[0.82rem] tabular-nums";
 
 export function TaskListTable({ tasks }: Props) {
   const [editing, setEditing] = useState<TaskEntry | null>(null);
@@ -35,74 +39,67 @@ export function TaskListTable({ tasks }: Props) {
 
   return (
     <>
-      <div className="overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)]">
+      <Card className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Task</TableHead>
               <TableHead>Queue</TableHead>
+              <TableHead className="text-right">Priority</TableHead>
+              <TableHead className="text-right">Max retries</TableHead>
+              <TableHead className="text-right">Timeout</TableHead>
               <TableHead>Rate limit</TableHead>
-              <TableHead>Concurrency</TableHead>
-              <TableHead>Retries</TableHead>
-              <TableHead>Timeout</TableHead>
-              <TableHead>Override</TableHead>
-              <TableHead className="w-24" />
+              <TableHead className="text-right">Config</TableHead>
+              <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {tasks.map((task) => (
-              <TableRow key={task.name}>
-                <TableCell className="font-mono text-xs">{task.name}</TableCell>
-                <TableCell>
-                  <Badge tone="neutral">{task.queue}</Badge>
-                </TableCell>
-                <TableCell>
-                  <EffectiveCell
-                    effective={task.effective.rate_limit}
-                    decoratorDefault={task.defaults.rate_limit}
-                    formatter={(v) => (v == null ? "—" : String(v))}
-                  />
-                </TableCell>
-                <TableCell>
-                  <EffectiveCell
-                    effective={task.effective.max_concurrent}
-                    decoratorDefault={task.defaults.max_concurrent}
-                    formatter={(v) => (v == null ? "—" : String(v))}
-                  />
-                </TableCell>
-                <TableCell>
-                  <EffectiveCell
-                    effective={task.effective.max_retries}
-                    decoratorDefault={task.defaults.max_retries}
-                    formatter={(v) => String(v)}
-                  />
-                </TableCell>
-                <TableCell>
-                  <EffectiveCell
-                    effective={task.effective.timeout}
-                    decoratorDefault={task.defaults.timeout}
-                    formatter={(v) => `${v}s`}
-                  />
-                </TableCell>
-                <TableCell>
-                  {task.paused ? (
-                    <Badge tone="warning">Paused</Badge>
-                  ) : task.override ? (
-                    <Badge tone="info">Override</Badge>
-                  ) : (
-                    <span className="text-[11px] text-[var(--fg-subtle)]">Default</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(task)}>
-                    Edit
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {tasks.map((task) => {
+              const rateLimit = task.effective.rate_limit;
+              return (
+                <TableRow key={task.name}>
+                  <TableCell className="font-mono text-[0.82rem] font-medium text-[var(--fg)]">
+                    {task.name}
+                  </TableCell>
+                  <TableCell className="text-[var(--fg-muted)]">{task.queue}</TableCell>
+                  <TableCell className={numCell}>{task.effective.priority}</TableCell>
+                  <TableCell className={`${numCell} text-[var(--fg-muted)]`}>
+                    {task.effective.max_retries}
+                  </TableCell>
+                  <TableCell className={`${numCell} text-[var(--fg-muted)]`}>
+                    {formatDuration(task.effective.timeout * 1000)}
+                  </TableCell>
+                  <TableCell>
+                    {rateLimit ? (
+                      <Badge tone="warning">{rateLimit}</Badge>
+                    ) : (
+                      <span className="text-[var(--fg-subtle)]">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {task.paused ? (
+                      <Badge tone="warning" dot>
+                        Paused
+                      </Badge>
+                    ) : task.override ? (
+                      <Badge tone="info" dot>
+                        Override
+                      </Badge>
+                    ) : (
+                      <span className="text-[0.78rem] text-[var(--fg-subtle)]">default</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(task)}>
+                      Edit
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
-      </div>
+      </Card>
 
       <Sheet open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
         <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
@@ -110,23 +107,5 @@ export function TaskListTable({ tasks }: Props) {
         </SheetContent>
       </Sheet>
     </>
-  );
-}
-
-interface CellProps<T> {
-  effective: T;
-  decoratorDefault: T;
-  formatter: (v: T) => string;
-}
-
-function EffectiveCell<T>({ effective, decoratorDefault, formatter }: CellProps<T>) {
-  const overridden = effective !== decoratorDefault;
-  return (
-    <span
-      className={`font-mono text-xs ${overridden ? "text-accent" : "text-[var(--fg-muted)]"}`}
-      title={overridden ? `default: ${formatter(decoratorDefault)}` : undefined}
-    >
-      {formatter(effective)}
-    </span>
   );
 }
