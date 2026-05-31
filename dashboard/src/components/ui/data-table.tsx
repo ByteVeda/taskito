@@ -45,7 +45,7 @@ function DataTableImpl<TData>({
   return (
     <div
       className={cn(
-        "rounded-lg bg-[var(--surface)] ring-1 ring-inset ring-[var(--border)] shadow-xs",
+        "overflow-hidden rounded-[var(--card-radius)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--card-shadow)]",
         className,
       )}
     >
@@ -62,7 +62,7 @@ function DataTableImpl<TData>({
                       <button
                         type="button"
                         onClick={header.column.getToggleSortingHandler()}
-                        className="inline-flex items-center gap-1 uppercase tracking-wider transition-colors hover:text-[var(--fg)]"
+                        className="inline-flex items-center gap-1 transition-colors hover:text-[var(--fg)]"
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {sorted === "asc" ? (
