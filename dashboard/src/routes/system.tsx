@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PageHeader } from "@/components/layout";
+import { PageHeader, SectionHeading } from "@/components/layout";
 import {
   InterceptionTable,
   interceptionStatsQuery,
@@ -25,12 +25,20 @@ function SystemPage() {
   return (
     <>
       <PageHeader
+        eyebrow="Reliability"
         title="System"
-        description="Proxy reconstruction and argument interception metrics."
+        description="Core internals — resource-proxy reconstruction and call interception."
       />
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold tracking-tight text-[var(--fg)]">Proxy handlers</h2>
+      <div className="flex flex-col gap-[var(--page-gap)]">
+        <section>
+          <SectionHeading
+            title="Resource proxies"
+            action={
+              <span className="text-xs text-[var(--fg-subtle)]">
+                reconstructed across worker boundaries
+              </span>
+            }
+          />
           <ProxyTable
             stats={proxy.data}
             loading={proxy.isLoading}
@@ -38,10 +46,9 @@ function SystemPage() {
             onRetry={() => proxy.refetch()}
           />
         </section>
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold tracking-tight text-[var(--fg)]">
-            Interception strategies
-          </h2>
+
+        <section>
+          <SectionHeading title="Call interception" />
           <InterceptionTable
             stats={interception.data}
             loading={interception.isLoading}
