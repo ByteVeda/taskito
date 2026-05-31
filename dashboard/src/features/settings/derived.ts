@@ -65,28 +65,34 @@ export function useBranding(): { title: string } {
 }
 
 /**
- * Apply the configured accent color as a CSS variable on the root
- * element. Invalid colors are silently ignored — the dashboard keeps
- * the bundled default rather than producing broken styling.
+ * Apply the configured accent color by overriding the accent token set on
+ * the root element. Invalid colors are silently ignored — the dashboard
+ * keeps the bundled emerald rather than producing broken styling.
  *
- * The dim variant (used for muted badges and hover states) is derived
- * via ``color-mix`` so the override stays coherent with the base color.
+ * We drive the base `--accent` (which `--color-accent` and every Tailwind
+ * `*-accent` utility resolve through) plus the derived `-dim`/`-ink`/
+ * `-strong`/ring variants via ``color-mix`` so the override stays coherent
+ * across badges, buttons, links, and charts.
  */
+const ACCENT_TOKENS = ["--accent", "--accent-dim", "--accent-ink", "--accent-strong", "--ring"];
+
 export function useApplyAccent(): void {
   const { data } = useSettings();
   const value = data?.[SETTING_KEYS.brandAccent]?.trim();
   useEffect(() => {
     const root = document.documentElement;
+    const clear = () => {
+      for (const token of ACCENT_TOKENS) root.style.removeProperty(token);
+    };
     if (!value || !CSS.supports("color", value)) {
-      root.style.removeProperty("--color-accent");
-      root.style.removeProperty("--color-accent-dim");
+      clear();
       return;
     }
-    root.style.setProperty("--color-accent", value);
-    root.style.setProperty("--color-accent-dim", `color-mix(in srgb, ${value} 18%, transparent)`);
-    return () => {
-      root.style.removeProperty("--color-accent");
-      root.style.removeProperty("--color-accent-dim");
-    };
+    root.style.setProperty("--accent", value);
+    root.style.setProperty("--accent-dim", `color-mix(in oklch, ${value} 16%, transparent)`);
+    root.style.setProperty("--accent-ink", value);
+    root.style.setProperty("--accent-strong", value);
+    root.style.setProperty("--ring", `color-mix(in oklch, ${value} 45%, transparent)`);
+    return clear;
   }, [value]);
 }

@@ -1,69 +1,122 @@
 @import "tailwindcss";
 
 /*
-  Design tokens — Supabase/Planetscale-ish.
+  taskito — "Friendly ops" design tokens.
 
-  - Airy, data-forward, soft dividers over hard borders
-  - Single emerald accent (soft enough for extended screen time)
-  - Inter for UI, JetBrains Mono for code/IDs
-  - Light + dark paired; dark is the daily driver
+  Warm paper neutrals (not cold blue-gray), emerald as the healthy-queue
+  signal, IBM Plex (sans for UI, mono for numbers/IDs, serif for titles),
+  structured-but-soft surfaces. Light + dark paired; theme flips `html.dark`.
+
+  The "warm" vibe and "regular" density are baked in directly — every value
+  the prototype exposed behind a switcher is hard-coded here as its default.
 */
 
 @theme {
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", Menlo, monospace;
+  --font-serif: "IBM Plex Serif", Georgia, serif;
 
-  --radius-sm: 0.375rem;
+  --radius-sm: 0.3rem;
   --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-
-  /* accent (emerald) */
-  --color-accent: oklch(0.72 0.17 162);
-  --color-accent-fg: oklch(0.22 0.04 160);
-  --color-accent-dim: oklch(0.72 0.17 162 / 0.18);
-
-  /* status semantics */
-  --color-success: oklch(0.72 0.17 162);
-  --color-success-dim: oklch(0.72 0.17 162 / 0.18);
-  --color-warning: oklch(0.8 0.14 75);
-  --color-warning-dim: oklch(0.8 0.14 75 / 0.18);
-  --color-danger: oklch(0.68 0.22 22);
-  --color-danger-dim: oklch(0.68 0.22 22 / 0.18);
-  --color-info: oklch(0.72 0.13 232);
-  --color-info-dim: oklch(0.72 0.13 232 / 0.18);
+  --radius-lg: 0.875rem;
 }
 
-/* Light theme (default) */
+/* ---- Light (default) : warm paper -------------------------------------- */
 :root {
-  --bg: oklch(0.985 0.003 240);
-  --bg-subtle: oklch(0.97 0.004 240);
-  --surface: oklch(1 0 0);
-  --surface-2: oklch(0.98 0.003 240);
-  --surface-3: oklch(0.955 0.004 240);
-  --fg: oklch(0.22 0.015 240);
-  --fg-muted: oklch(0.48 0.015 240);
-  --fg-subtle: oklch(0.62 0.012 240);
-  --border: oklch(0.92 0.005 240);
-  --border-strong: oklch(0.86 0.007 240);
-  --ring: oklch(0.72 0.17 162 / 0.4);
+  --bg: oklch(0.984 0.007 84);
+  --bg-subtle: oklch(0.965 0.009 84);
+  --surface: oklch(0.998 0.003 84);
+  --surface-2: oklch(0.96 0.009 84);
+  --surface-3: oklch(0.935 0.011 82);
+  --fg: oklch(0.275 0.016 62);
+  --fg-muted: oklch(0.475 0.015 62);
+  --fg-subtle: oklch(0.6 0.013 64);
+  --border: oklch(0.9 0.011 80);
+  --border-strong: oklch(0.83 0.015 76);
+  --shadow-warm: 28 25% 12%;
+
+  /* accent — emerald, the brand / healthy signal */
+  --accent: oklch(0.6 0.13 158);
+  --accent-strong: oklch(0.53 0.15 158);
+  --accent-ink: oklch(0.46 0.13 158);
+  --accent-dim: oklch(0.6 0.13 158 / 0.12);
+  --accent-fg: oklch(0.99 0.01 158);
+  --ring: oklch(0.6 0.13 158 / 0.45);
+
+  /* status — warmed; -dim is the same color at the light tint alpha (0.12) */
+  --success: oklch(0.55 0.13 158);
+  --success-dim: oklch(0.55 0.13 158 / 0.12);
+  --warning: oklch(0.62 0.14 72);
+  --warning-dim: oklch(0.62 0.14 72 / 0.12);
+  --danger: oklch(0.56 0.18 28);
+  --danger-dim: oklch(0.56 0.18 28 / 0.12);
+  --info: oklch(0.56 0.12 236);
+  --info-dim: oklch(0.56 0.12 236 / 0.12);
 }
 
-/* Dark theme */
+/* ---- Dark : warm espresso ---------------------------------------------- */
 html.dark {
-  --bg: oklch(0.17 0.012 240);
-  --bg-subtle: oklch(0.195 0.013 240);
-  --surface: oklch(0.205 0.014 240);
-  --surface-2: oklch(0.23 0.014 240);
-  --surface-3: oklch(0.26 0.015 240);
-  --fg: oklch(0.96 0.005 240);
-  --fg-muted: oklch(0.72 0.012 240);
-  --fg-subtle: oklch(0.58 0.012 240);
-  --border: oklch(0.3 0.01 240 / 0.5);
-  --border-strong: oklch(0.35 0.01 240 / 0.7);
-  --ring: oklch(0.72 0.17 162 / 0.45);
+  --bg: oklch(0.185 0.009 58);
+  --bg-subtle: oklch(0.21 0.01 58);
+  --surface: oklch(0.227 0.012 58);
+  --surface-2: oklch(0.262 0.013 58);
+  --surface-3: oklch(0.3 0.014 58);
+  --fg: oklch(0.955 0.007 82);
+  --fg-muted: oklch(0.74 0.012 76);
+  --fg-subtle: oklch(0.6 0.012 70);
+  --border: oklch(0.36 0.01 60 / 0.6);
+  --border-strong: oklch(0.45 0.012 60 / 0.85);
+  --shadow-warm: 30 30% 2%;
+
+  /* accent lightness rises in dark for legibility */
+  --accent: oklch(0.76 0.13 158);
+  --accent-strong: oklch(0.66 0.15 158);
+  --accent-ink: oklch(0.8 0.13 158);
+  --accent-dim: oklch(0.76 0.13 158 / 0.2);
+  --accent-fg: oklch(0.17 0.03 158);
+  --ring: oklch(0.76 0.13 158 / 0.45);
+
+  /* status — dark lightness, tint alpha 0.2 */
+  --success: oklch(0.76 0.13 158);
+  --success-dim: oklch(0.76 0.13 158 / 0.2);
+  --warning: oklch(0.78 0.14 72);
+  --warning-dim: oklch(0.78 0.14 72 / 0.2);
+  --danger: oklch(0.7 0.18 28);
+  --danger-dim: oklch(0.7 0.18 28 / 0.2);
+  --info: oklch(0.72 0.12 236);
+  --info-dim: oklch(0.72 0.12 236 / 0.2);
 }
 
-/* Map semantic vars onto @theme's color system so Tailwind utilities work. */
+/* ---- Surfaces / shape / density (baked: warm vibe, regular density) ---- */
+:root {
+  --card-radius: var(--radius-lg);
+  --card-shadow: 0 1px 1px hsl(var(--shadow-warm) / 0.05),
+    0 10px 26px -18px hsl(var(--shadow-warm) / 0.5);
+  --card-hover-shadow: 0 1px 1px hsl(var(--shadow-warm) / 0.06),
+    0 16px 34px -18px hsl(var(--shadow-warm) / 0.6);
+  --chip-radius: 999px;
+  --btn-radius: 0.625rem;
+
+  /* editorial labels / titles */
+  --label-font: var(--font-sans);
+  --label-transform: none;
+  --label-tracking: 0.005em;
+  --label-weight: 500;
+  --label-size: 0.78rem;
+  --title-font: var(--font-serif);
+
+  /* density (regular) */
+  --pad: 18px;
+  --pad-lg: 22px;
+  --gap: 16px;
+  --row-h: 46px;
+  --stat-size: 2.3rem;
+  --page-gap: 26px;
+}
+
+/* Map semantic vars onto @theme's color system so Tailwind utilities work
+   (bg-accent, text-success, bg-accent-dim, …). Inline so they track the
+   live theme/accent vars instead of baking a single value at build time. */
 @theme inline {
   --color-bg: var(--bg);
   --color-bg-subtle: var(--bg-subtle);
@@ -76,6 +129,21 @@ html.dark {
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-ring: var(--ring);
+
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-dim: var(--accent-dim);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-ink: var(--accent-ink);
+
+  --color-success: var(--success);
+  --color-success-dim: var(--success-dim);
+  --color-warning: var(--warning);
+  --color-warning-dim: var(--warning-dim);
+  --color-danger: var(--danger);
+  --color-danger-dim: var(--danger-dim);
+  --color-info: var(--info);
+  --color-info-dim: var(--info-dim);
 }
 
 * {
@@ -93,23 +161,23 @@ body {
   font-family: var(--font-sans);
   background: var(--bg);
   color: var(--fg);
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-feature-settings: "ss03";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* Subtle scrollbars */
+/* Warm scrollbars */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border: 2px solid var(--bg);
-  border-radius: 8px;
+  border: 3px solid var(--bg);
+  border-radius: 9px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--fg-subtle);
@@ -117,15 +185,15 @@ body {
 
 /* Focus rings */
 *:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
 
-/* Monospace helper */
+/* Mono helper — slashed zero, structural numbers/IDs */
 .font-mono {
   font-family: var(--font-mono);
-  font-feature-settings: "zero", "ss02";
+  font-feature-settings: "zero";
 }
 
 /* Animations */
@@ -147,6 +215,17 @@ body {
     transform: translateY(0);
   }
 }
+/* Transform-only page entrance. Never animate opacity from 0 here: a
+   background tab freezes the animation at frame 0 and the page would stay
+   invisible. Resting opacity is always 1. */
+@keyframes page-rise {
+  from {
+    transform: translateY(6px);
+  }
+  to {
+    transform: none;
+  }
+}
 @keyframes shimmer {
   from {
     background-position: -200% 0;
@@ -155,12 +234,31 @@ body {
     background-position: 200% 0;
   }
 }
+/* Live "pulse" ring for status dots. Drives box-shadow off currentColor so
+   the same keyframe works for success / info / accent dots. */
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, currentColor 70%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
 
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
 .animate-slide-up {
   animation: slide-up 0.24s ease-out;
+}
+.animate-page-rise {
+  animation: page-rise 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.pulse-ring {
+  animation: pulse-dot 2.4s infinite;
 }
 .animate-shimmer {
   background: linear-gradient(

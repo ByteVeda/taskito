@@ -8,6 +8,16 @@ export type ResourceHealth = "healthy" | "degraded" | "unhealthy" | "unknown";
 
 export type Tone = "neutral" | "accent" | "info" | "success" | "warning" | "danger";
 
+/** The CSS variable for a tone — for inline `style` use (bars, charts, dots). */
+export const TONE_VAR: Record<Tone, string> = {
+  neutral: "var(--fg-subtle)",
+  accent: "var(--accent)",
+  info: "var(--info)",
+  success: "var(--success)",
+  warning: "var(--warning)",
+  danger: "var(--danger)",
+};
+
 export const JOB_STATUS_TONE: Record<JobStatus, Tone> = {
   pending: "neutral",
   running: "info",

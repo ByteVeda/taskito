@@ -8,6 +8,7 @@ export { LastRefreshed } from "./last-refreshed";
 export { MobileMenu } from "./mobile-menu";
 export { PageHeader } from "./page-header";
 export { RouteErrorBoundary } from "./route-error-boundary";
+export { SectionHeading } from "./section-heading";
 export { Sidebar } from "./sidebar";
 export { ThemeToggle } from "./theme-toggle";
 export { TopProgressBar } from "./top-progress-bar";

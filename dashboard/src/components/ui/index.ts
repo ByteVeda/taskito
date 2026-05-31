@@ -1,5 +1,6 @@
 export { Badge, badgeVariants } from "./badge";
 export { Button, buttonVariants } from "./button";
+export { Callout } from "./callout";
 export {
   Card,
   CardContent,
@@ -55,8 +56,13 @@ export { EmptyState } from "./empty-state";
 export { ErrorState } from "./error-state";
 export { Input } from "./input";
 export { Kbd } from "./kbd";
+export { type KvItem, KvList } from "./kv-list";
+export { LiveDot } from "./live-dot";
+export { MeterBar } from "./meter-bar";
 export { Pagination } from "./pagination";
+export { QueueBar } from "./queue-bar";
 export { ScrollArea, ScrollBar } from "./scroll-area";
+export { Segmented, type SegmentedOption } from "./segmented";
 export {
   Select,
   SelectContent,
@@ -83,6 +89,9 @@ export {
 } from "./sheet";
 export { Skeleton, TableSkeleton } from "./skeleton";
 export { StatCard } from "./stat-card";
+export { StatusBadge } from "./status-badge";
+export { Stepper } from "./stepper";
+export { Switch } from "./switch";
 export {
   Table,
   TableBody,
