@@ -19,8 +19,10 @@ export function KvList({ items, columns = 2, className }: KvListProps) {
   return (
     <dl
       className={cn(
-        "grid gap-x-[22px] [&>div:nth-last-of-type(-n+2)]:border-b-0",
-        columns === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1",
+        "grid gap-x-[22px]",
+        columns === 2
+          ? "grid-cols-1 sm:grid-cols-2 [&>div:nth-last-of-type(-n+2)]:border-b-0"
+          : "grid-cols-1 [&>div:last-of-type]:border-b-0",
         className,
       )}
     >
