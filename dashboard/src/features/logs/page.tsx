@@ -48,7 +48,11 @@ export default function LogsPage() {
         title="Logs"
         description="A live tail of structured task logs across every worker."
         actions={
-          <Button variant={live ? "default" : "outline"} onClick={() => setLive((v) => !v)}>
+          <Button
+            variant={live ? "default" : "outline"}
+            aria-pressed={live}
+            onClick={() => setLive((v) => !v)}
+          >
             {live ? <LiveDot tone="accent" /> : null}
             {live ? "Live tail on" : "Paused"}
           </Button>
