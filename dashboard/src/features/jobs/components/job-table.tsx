@@ -2,17 +2,16 @@ import { useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useCallback, useMemo } from "react";
 import {
-  Badge,
   DataTable,
   EmptyState,
   ErrorState,
+  StatusBadge,
   TableSkeleton,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui";
 import type { Job } from "@/lib/api-types";
-import { JOB_STATUS_LABEL, JOB_STATUS_TONE } from "@/lib/status";
 import { formatAbsolute, formatRelative } from "@/lib/time";
 
 interface JobTableProps {
@@ -56,11 +55,7 @@ export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
       {
         accessorKey: "status",
         header: "Status",
-        cell: ({ row }) => (
-          <Badge tone={JOB_STATUS_TONE[row.original.status]}>
-            {JOB_STATUS_LABEL[row.original.status]}
-          </Badge>
-        ),
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
       {
         accessorKey: "retry_count",

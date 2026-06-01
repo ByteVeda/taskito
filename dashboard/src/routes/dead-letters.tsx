@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { List, Rows3, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Clock, List, ListTree, Rows3, Skull, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout";
-import { Button, DestructiveConfirmDialog, Pagination } from "@/components/ui";
+import { Button, DestructiveConfirmDialog, Pagination, StatCard } from "@/components/ui";
 import {
   DeadLetterList,
   type DeadLetterView,
@@ -11,6 +11,8 @@ import {
   usePurgeDeadLetters,
 } from "@/features/dead-letters";
 import { cn } from "@/lib/cn";
+import { formatCount } from "@/lib/number";
+import { formatRelative } from "@/lib/time";
 
 const PAGE_SIZE = 25;
 const DEAD_LETTER_VIEWS: readonly DeadLetterView[] = ["grouped", "flat"];
@@ -53,11 +55,22 @@ function DeadLettersPage() {
   const items = query.data;
   const hasMore = items ? items.length >= PAGE_SIZE : false;
 
+  const { taskCount, oldestFailedAt } = useMemo(() => {
+    const tasks = new Set<string>();
+    let oldest: number | null = null;
+    for (const item of items ?? []) {
+      tasks.add(item.task_name);
+      if (oldest == null || item.failed_at < oldest) oldest = item.failed_at;
+    }
+    return { taskCount: tasks.size, oldestFailedAt: oldest };
+  }, [items]);
+
   return (
     <>
       <PageHeader
+        eyebrow="Reliability"
         title="Dead letters"
-        description="Failures that exhausted their retries. Retry individually or purge all."
+        description="Jobs that exhausted every retry. Inspect the failure, replay them, or let them go."
         actions={
           <>
             <ViewToggle value={view} onChange={setView} />
@@ -73,15 +86,40 @@ function DeadLettersPage() {
         }
       />
 
-      <div className="flex flex-col gap-4">
-        <DeadLetterList
-          items={items}
-          view={view}
-          loading={query.isLoading || (query.isFetching && !items)}
-          error={query.error}
-          onRetry={() => query.refetch()}
-        />
-        <Pagination page={page} hasMore={hasMore} onChange={setPage} />
+      <div className="flex flex-col gap-[var(--page-gap)]">
+        <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
+          <StatCard
+            label="On this page"
+            tone="danger"
+            icon={<Skull />}
+            value={formatCount(items?.length ?? 0)}
+            hint="awaiting a decision"
+          />
+          <StatCard
+            label="Affected tasks"
+            tone="warning"
+            icon={<ListTree />}
+            value={formatCount(taskCount)}
+            hint="on this page"
+          />
+          <StatCard
+            label="Oldest on this page"
+            tone="neutral"
+            icon={<Clock />}
+            value={oldestFailedAt != null ? formatRelative(oldestFailedAt) : "—"}
+          />
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <DeadLetterList
+            items={items}
+            view={view}
+            loading={query.isLoading || (query.isFetching && !items)}
+            error={query.error}
+            onRetry={() => query.refetch()}
+          />
+          <Pagination page={page} hasMore={hasMore} onChange={setPage} />
+        </div>
       </div>
 
       <DestructiveConfirmDialog

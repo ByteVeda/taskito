@@ -19,7 +19,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Header />
           <TopProgressBar />
           <main className="flex-1 px-4 py-5 md:px-6 md:py-6">
-            <div key={pathname} className="mx-auto max-w-[1400px] animate-fade-in">
+            <div key={pathname} className="mx-auto max-w-[1240px] animate-page-rise">
               <RouteErrorBoundary>{children}</RouteErrorBoundary>
             </div>
           </main>

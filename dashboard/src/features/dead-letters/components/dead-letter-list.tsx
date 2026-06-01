@@ -1,10 +1,10 @@
-import { Skull } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { useMemo } from "react";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { DeadLetter } from "@/lib/api-types";
 import { groupByError } from "../utils";
 import { DeadLetterGroupRow } from "./dead-letter-group-row";
-import { DeadLetterRow } from "./dead-letter-row";
+import { DeadLetterTable } from "./dead-letter-table";
 
 export type DeadLetterView = "flat" | "grouped";
 
@@ -39,9 +39,9 @@ export function DeadLetterList({ items, view, loading, error, onRetry }: DeadLet
   if (!items || items.length === 0) {
     return (
       <EmptyState
-        icon={Skull}
-        title="No dead letters"
-        description="Jobs that exhaust their retries land here."
+        icon={CheckCircle2}
+        title="Nothing dead here"
+        description="Every job has been replayed or discarded. Nice and tidy."
       />
     );
   }
@@ -56,11 +56,5 @@ export function DeadLetterList({ items, view, loading, error, onRetry }: DeadLet
     );
   }
 
-  return (
-    <div className="flex flex-col gap-2">
-      {items.map((item) => (
-        <DeadLetterRow key={item.id} item={item} />
-      ))}
-    </div>
-  );
+  return <DeadLetterTable items={items} />;
 }

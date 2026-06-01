@@ -96,7 +96,7 @@ export function JobFiltersBar({ filters, onChange, className }: JobFiltersBarPro
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 rounded-lg bg-[var(--surface)] p-3 ring-1 ring-inset ring-[var(--border)]",
+        "flex flex-col gap-3 rounded-[var(--card-radius)] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--card-shadow)]",
         className,
       )}
     >

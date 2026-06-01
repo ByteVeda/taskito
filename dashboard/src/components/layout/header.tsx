@@ -13,9 +13,8 @@ export function Header() {
       <MobileMenu />
       <Button
         variant="outline"
-        size="sm"
         onClick={() => setOpen(true)}
-        className="hidden md:inline-flex w-[260px] justify-between text-[var(--fg-subtle)] font-normal"
+        className="hidden w-[300px] max-w-[38vw] justify-between font-normal text-[var(--fg-subtle)] md:inline-flex"
       >
         <span className="inline-flex items-center gap-2">
           <Search className="size-3.5" aria-hidden />

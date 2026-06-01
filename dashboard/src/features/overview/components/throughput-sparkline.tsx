@@ -11,6 +11,21 @@ interface ThroughputSparklineProps {
   onRetry?: () => void;
 }
 
+function Legend() {
+  return (
+    <div className="flex items-center gap-4">
+      <span className="inline-flex items-center gap-1.5 text-[0.76rem] text-[var(--fg-muted)]">
+        <i className="size-2.5 rounded-[3px] bg-accent" />
+        runs
+      </span>
+      <span className="inline-flex items-center gap-1.5 text-[0.76rem] text-[var(--fg-muted)]">
+        <i className="size-2.5 rounded-[3px] bg-danger" />
+        failures
+      </span>
+    </div>
+  );
+}
+
 export function ThroughputSparkline({
   buckets,
   loading,
@@ -29,60 +44,64 @@ export function ThroughputSparkline({
 
   return (
     <Card>
-      <CardHeader className="flex-row items-baseline justify-between gap-4 pb-2">
+      <CardHeader className="flex-row items-center justify-between gap-4">
         <CardTitle>Throughput — last hour</CardTitle>
-        {loading ? (
-          <Skeleton className="h-4 w-24" />
-        ) : (
-          <span className="text-xs text-[var(--fg-subtle)]">
-            {formatCount(total)} runs · peak {formatCount(peak)}/min
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-4">
+          <Legend />
+          {loading ? (
+            <Skeleton className="h-4 w-24" />
+          ) : (
+            <span className="text-[0.76rem] tabular-nums text-[var(--fg-subtle)]">
+              {formatCount(total)} runs · peak {formatCount(peak)}/min
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {loading ? (
-          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-[150px] w-full" />
         ) : points.length === 0 ? (
-          <div className="grid h-20 place-items-center text-xs text-[var(--fg-subtle)]">
+          <div className="grid h-[150px] place-items-center text-xs text-[var(--fg-subtle)]">
             No activity in this window
           </div>
         ) : (
-          <Sparkline buckets={points} />
+          <AreaChart buckets={points} />
         )}
       </CardContent>
     </Card>
   );
 }
 
-const SPARK_WIDTH = 800;
-const SPARK_HEIGHT = 80;
+const CHART_WIDTH = 1000;
+const CHART_HEIGHT = 150;
 
-function Sparkline({ buckets }: { buckets: TimeseriesBucket[] }) {
+function AreaChart({ buckets }: { buckets: TimeseriesBucket[] }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  // Unique per instance so multiple sparklines don't share one gradient <defs>.
-  const gradientId = `sparkline-fill-${useId().replace(/:/g, "")}`;
+  // Unique per instance so multiple charts don't share one gradient <defs>.
+  const gradientId = `throughput-fill-${useId().replace(/:/g, "")}`;
 
   // Geometry depends only on the data — recompute on new buckets, not on hover.
-  const { areaPath, linePath } = useMemo(() => {
+  const { areaPath, runsPath, failPath } = useMemo(() => {
     const maxCount = Math.max(1, ...buckets.map((b) => b.count));
-    const step = buckets.length > 1 ? SPARK_WIDTH / (buckets.length - 1) : 0;
-    const points = buckets.map((b, i) => {
-      const x = i * step;
-      const y = SPARK_HEIGHT - (b.count / maxCount) * SPARK_HEIGHT;
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    });
+    const step = buckets.length > 1 ? CHART_WIDTH / (buckets.length - 1) : 0;
+    const toY = (v: number) => CHART_HEIGHT - (v / maxCount) * (CHART_HEIGHT - 8) - 4;
+    const toPath = (field: "count" | "failure") =>
+      buckets
+        .map(
+          (b, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(1)} ${toY(b[field]).toFixed(1)}`,
+        )
+        .join(" ");
+    const runsPath = toPath("count");
     return {
-      areaPath: points
-        .concat([`L ${SPARK_WIDTH} ${SPARK_HEIGHT}`, `L 0 ${SPARK_HEIGHT}`, "Z"])
-        .join(" "),
-      linePath: points.join(" "),
+      runsPath,
+      failPath: toPath("failure"),
+      areaPath: `${runsPath} L ${CHART_WIDTH} ${CHART_HEIGHT} L 0 ${CHART_HEIGHT} Z`,
     };
   }, [buckets]);
 
-  const startLabel = buckets[0] ? formatRelative(buckets[0].timestamp) : "";
-  const endLabel = "now";
+  const startLabel = buckets[0] ? formatRelative(buckets[0].timestamp) : "60 min ago";
   const midBucket = buckets[Math.floor(buckets.length / 2)];
-  const midLabel = midBucket ? formatRelative(midBucket.timestamp) : "";
+  const midLabel = midBucket ? formatRelative(midBucket.timestamp) : "30 min ago";
 
   function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     if (buckets.length === 0) return;
@@ -98,30 +117,50 @@ function Sparkline({ buckets }: { buckets: TimeseriesBucket[] }) {
   return (
     <div
       role="img"
-      aria-label="Throughput chart with hover details"
+      aria-label="Throughput over the last hour with hover details"
       className="relative"
       onMouseMove={handleMouseMove}
       onMouseLeave={() => setHoverIdx(null)}
     >
       <svg
-        viewBox={`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`}
-        role="img"
-        aria-label="Throughput over the last hour"
-        className="h-20 w-full"
+        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+        className="block h-[150px] w-full"
         preserveAspectRatio="none"
       >
+        <title>Throughput over the last hour</title>
         <defs>
           <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.3" />
-            <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.32" />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
           </linearGradient>
         </defs>
+        {[0.25, 0.5, 0.75].map((g) => (
+          <line
+            key={g}
+            x1="0"
+            x2={CHART_WIDTH}
+            y1={CHART_HEIGHT * g}
+            y2={CHART_HEIGHT * g}
+            stroke="var(--border)"
+            strokeWidth="1"
+            strokeDasharray="2 5"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
         <path d={areaPath} fill={`url(#${gradientId})`} />
         <path
-          d={linePath}
+          d={runsPath}
           fill="none"
-          stroke="var(--color-accent)"
-          strokeWidth="1.5"
+          stroke="var(--accent)"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
+        <path
+          d={failPath}
+          fill="none"
+          stroke="var(--danger)"
+          strokeWidth="1.6"
+          strokeOpacity="0.85"
           vectorEffect="non-scaling-stroke"
         />
       </svg>
@@ -133,20 +172,21 @@ function Sparkline({ buckets }: { buckets: TimeseriesBucket[] }) {
             aria-hidden
           />
           <div
-            className="pointer-events-none absolute -top-1 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-[var(--surface-3)] px-2 py-1 text-[11px] text-[var(--fg)] shadow-sm ring-1 ring-inset ring-[var(--border)]"
+            className="pointer-events-none absolute -top-1.5 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-2.5 py-1.5 text-[11px] text-[var(--fg)] shadow-md"
             style={{ left: `${hoverX}%` }}
           >
             <div className="text-[var(--fg-subtle)]">{formatRelative(hovered.timestamp)}</div>
             <div className="font-mono tabular-nums">
-              {formatCount(hovered.count)} runs · {formatCount(hovered.failure)} failed
+              {formatCount(hovered.count)} runs ·{" "}
+              <span className="text-danger">{formatCount(hovered.failure)} failed</span>
             </div>
           </div>
         </>
       ) : null}
-      <div className="mt-1 flex justify-between text-[10px] uppercase tracking-wider text-[var(--fg-subtle)]">
+      <div className="mt-1.5 flex justify-between font-mono text-[0.66rem] uppercase tracking-[0.06em] text-[var(--fg-subtle)]">
         <span>{startLabel}</span>
         <span>{midLabel}</span>
-        <span>{endLabel}</span>
+        <span>now</span>
       </div>
     </div>
   );

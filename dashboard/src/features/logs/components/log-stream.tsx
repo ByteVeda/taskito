@@ -5,7 +5,11 @@ import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
 import type { TaskLog } from "@/lib/api-types";
 import { cn } from "@/lib/cn";
 import { logLevelClass } from "@/lib/status";
-import { formatAbsolute } from "@/lib/time";
+
+/** Wall-clock time only (24h), to match the live-tail row density. */
+function formatLogTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString("en-US", { hour12: false });
+}
 
 interface LogStreamProps {
   logs: TaskLog[] | undefined;
@@ -53,20 +57,26 @@ export function LogStream({ logs, loading, error, onRetry, className }: LogStrea
   };
 
   if (error) {
-    return <ErrorState title="Couldn't load logs" description={error.message} onRetry={onRetry} />;
+    return (
+      <div className="p-[var(--pad)]">
+        <ErrorState title="Couldn't load logs" description={error.message} onRetry={onRetry} />
+      </div>
+    );
   }
 
   if (loading && !logs) {
-    return <Skeleton className="h-96 w-full" />;
+    return <Skeleton className="m-[var(--pad)] h-96" />;
   }
 
   if (!logs || logs.length === 0) {
     return (
-      <EmptyState
-        icon={ScrollText}
-        title="No logs match this filter"
-        description="Try widening the time range or clearing the task filter."
-      />
+      <div className="p-[var(--pad)]">
+        <EmptyState
+          icon={ScrollText}
+          title="No logs match this filter"
+          description="Try widening the time range or clearing the task filter."
+        />
+      </div>
     );
   }
 
@@ -75,13 +85,12 @@ export function LogStream({ logs, loading, error, onRetry, className }: LogStrea
       <div
         ref={parentRef}
         onScroll={handleScroll}
-        className="h-[560px] overflow-auto rounded-lg bg-[var(--surface)] ring-1 ring-inset ring-[var(--border)]"
+        className="h-[560px] overflow-auto rounded-[var(--card-radius)]"
       >
         <div style={{ height: virtualizer.getTotalSize(), width: "100%", position: "relative" }}>
           {virtualizer.getVirtualItems().map((item) => {
             const log = logs[item.index];
             if (!log) return null;
-            const levelClass = logLevelClass(log.level);
             return (
               <div
                 key={`${log.logged_at}-${log.job_id}-${item.index}`}
@@ -92,16 +101,31 @@ export function LogStream({ logs, loading, error, onRetry, className }: LogStrea
                   right: 0,
                   transform: `translateY(${item.start}px)`,
                 }}
-                className="flex gap-3 px-4 py-1 font-mono text-[11px] hover:bg-[var(--surface-2)]/40"
+                className="flex items-center gap-3 px-4 py-1 text-[0.78rem] hover:bg-[var(--surface-2)]/50"
               >
-                <span className="shrink-0 text-[var(--fg-subtle)]">
-                  {formatAbsolute(log.logged_at)}
+                <span className="shrink-0 font-mono tabular-nums text-[var(--fg-subtle)]">
+                  {formatLogTime(log.logged_at)}
                 </span>
-                <span className={cn("w-14 shrink-0 uppercase", levelClass)}>{log.level}</span>
-                <span className="w-40 shrink-0 truncate text-[var(--fg-muted)]">
+                <span
+                  className={cn(
+                    "inline-flex w-[58px] shrink-0 justify-center rounded-[var(--chip-radius)] bg-current/10 px-1.5 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.08em]",
+                    logLevelClass(log.level),
+                  )}
+                >
+                  {log.level}
+                </span>
+                <span className="w-[168px] shrink-0 truncate font-mono text-[var(--accent-ink)]">
                   {log.task_name}
                 </span>
-                <span className="flex-1 truncate text-[var(--fg)]">{log.message}</span>
+                <span className="flex-1 truncate text-[var(--fg)]">
+                  {log.message}
+                  {log.extra ? (
+                    <span className="ml-1.5 font-mono text-[var(--fg-subtle)]">{log.extra}</span>
+                  ) : null}
+                </span>
+                <span className="ml-auto shrink-0 font-mono text-[var(--fg-subtle)]">
+                  {log.job_id.slice(0, 6)}
+                </span>
               </div>
             );
           })}

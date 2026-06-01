@@ -1,8 +1,10 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import { DataTable, EmptyState, ErrorState, TableSkeleton } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, MeterBar, TableSkeleton } from "@/components/ui";
 import type { MetricsResponse, TaskMetrics } from "@/lib/api-types";
 import { formatCount, formatPercent } from "@/lib/number";
+import type { Tone } from "@/lib/status";
+import { formatDuration } from "@/lib/time";
 
 interface Row extends TaskMetrics {
   task: string;
@@ -46,17 +48,23 @@ export function MetricsTable({ metrics, loading, error, onRetry }: MetricsTableP
             accessorKey: "count",
             header: "Runs",
             cell: ({ getValue }) => (
-              <span className="tabular-nums">{formatCount(getValue<number>())}</span>
+              <span className="font-mono tabular-nums">{formatCount(getValue<number>())}</span>
             ),
           },
           {
             accessorKey: "successRate",
-            header: "Success",
+            header: "Success rate",
             cell: ({ row }) => {
-              const rate = row.original.successRate;
-              const tone =
-                rate >= 0.99 ? "text-success" : rate >= 0.9 ? "text-warning" : "text-danger";
-              return <span className={`tabular-nums ${tone}`}>{formatPercent(rate, 1)}</span>;
+              const pct = row.original.successRate * 100;
+              const tone: Tone = pct >= 99 ? "success" : pct >= 96 ? "warning" : "danger";
+              return (
+                <div className="flex items-center gap-2.5">
+                  <MeterBar value={pct} tone={tone} className="min-w-[60px] flex-1" />
+                  <span className="w-11 text-right font-mono text-[0.74rem] tabular-nums text-[var(--fg-muted)]">
+                    {formatPercent(row.original.successRate, 1)}
+                  </span>
+                </div>
+              );
             },
           },
           {
@@ -66,7 +74,9 @@ export function MetricsTable({ metrics, loading, error, onRetry }: MetricsTableP
               const n = getValue<number>();
               return (
                 <span
-                  className={`tabular-nums ${n > 0 ? "text-danger" : "text-[var(--fg-muted)]"}`}
+                  className={`font-mono tabular-nums ${
+                    n > 0 ? "text-danger" : "text-[var(--fg-muted)]"
+                  }`}
                 >
                   {formatCount(n)}
                 </span>
@@ -147,7 +157,9 @@ function GroupHeader({ children }: { children: React.ReactNode }) {
 
 function Ms({ value }: { value: number | null | undefined }) {
   if (value == null || !Number.isFinite(value)) {
-    return <span className="tabular-nums text-[var(--fg-subtle)]">—</span>;
+    return <span className="font-mono tabular-nums text-[var(--fg-subtle)]">—</span>;
   }
-  return <span className="tabular-nums text-[var(--fg-muted)]">{`${value.toFixed(1)}ms`}</span>;
+  return (
+    <span className="font-mono tabular-nums text-[var(--fg-muted)]">{formatDuration(value)}</span>
+  );
 }

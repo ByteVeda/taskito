@@ -2,9 +2,8 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ListTree } from "lucide-react";
 import { useMemo } from "react";
-import { Badge, DataTable, EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, Skeleton, StatusBadge } from "@/components/ui";
 import type { Job } from "@/lib/api-types";
-import { JOB_STATUS_LABEL, JOB_STATUS_TONE } from "@/lib/status";
 import { formatRelative } from "@/lib/time";
 
 interface RecentJobsProps {
@@ -50,11 +49,7 @@ export function RecentJobs({ jobs, loading, error, onRetry }: RecentJobsProps) {
       {
         accessorKey: "status",
         header: "Status",
-        cell: ({ row }) => (
-          <Badge tone={JOB_STATUS_TONE[row.original.status]}>
-            {JOB_STATUS_LABEL[row.original.status]}
-          </Badge>
-        ),
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
       {
         accessorKey: "created_at",

@@ -1,55 +1,82 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
-import { AlertOctagon, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { LiveDot } from "@/components/ui";
+import { statsQuery } from "@/features/overview/hooks";
 import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
+import { formatCount } from "@/lib/number";
+import { site } from "@/lib/site";
+import { BrandMark } from "./brand-mark";
 import { NAV } from "./nav-config";
 
 export function Sidebar() {
   const { pathname } = useLocation();
   const { title } = useBranding();
   const externalLinks = useExternalLinks();
+  // Shares the ["stats"] cache with the Overview — no extra polling here, just
+  // a one-time fetch that stays in sync as other views refetch.
+  const { data: stats } = useQuery(statsQuery());
+  const deadCount = stats?.dead ?? 0;
+  const isDefaultBrand = title === site.name;
+
   return (
-    <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)]">
-      <div className="flex items-center gap-2 px-5 py-4">
-        <div className="grid place-items-center size-7 rounded-md bg-accent text-accent-fg">
-          <AlertOctagon className="size-4" aria-hidden />
-        </div>
-        <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold tracking-tight">{title}</span>
-          <span className="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)]">
-            Dashboard
-          </span>
+    <aside className="hidden w-[248px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)] lg:flex">
+      <div className="flex items-center gap-2.5 px-[18px] pt-[18px] pb-4">
+        <BrandMark size={38} />
+        <div className="leading-none">
+          <div className="text-[1.18rem] font-semibold tracking-[-0.02em]">
+            {isDefaultBrand ? (
+              <>
+                task<span className="text-[var(--accent-ink)]">ito</span>
+              </>
+            ) : (
+              title
+            )}
+          </div>
+          <div className="mt-[3px] font-mono text-[0.66rem] uppercase tracking-[0.16em] text-[var(--fg-subtle)]">
+            Queue console
+          </div>
         </div>
       </div>
       <nav className="flex-1 overflow-y-auto px-3 pb-4">
         {NAV.map((group) => (
-          <div key={group.title} className="mt-5 first:mt-2">
-            <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
+          <div key={group.title} className="mt-[18px] first:mt-1.5">
+            <div className="px-2.5 pb-[7px] font-mono text-[0.62rem] font-semibold uppercase tracking-[0.13em] text-[var(--fg-subtle)]">
               {group.title}
             </div>
             <ul className="flex flex-col gap-0.5">
               {group.items.map(({ to, label, icon: Icon }) => {
                 const active = pathname === to || (to !== "/" && pathname.startsWith(`${to}/`));
+                const count = to === "/dead-letters" && deadCount > 0 ? deadCount : null;
                 return (
                   <li key={to}>
                     <Link
                       to={to}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "relative flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
+                        "relative flex items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-sm transition-colors",
                         active
-                          ? "bg-[var(--surface-2)] text-[var(--fg)] shadow-xs"
-                          : "text-[var(--fg-muted)] hover:bg-[var(--surface-2)]/60 hover:text-[var(--fg)]",
+                          ? "bg-[var(--surface)] font-semibold text-[var(--fg)] shadow-[var(--card-shadow)]"
+                          : "font-normal text-[var(--fg-muted)] hover:bg-[var(--surface-2)]/70 hover:text-[var(--fg)]",
                       )}
                     >
                       {active ? (
                         <span
                           aria-hidden
-                          className="absolute -left-3 inset-y-1.5 w-0.5 rounded-r-full bg-accent"
+                          className="absolute -left-3 inset-y-2 w-[3px] rounded-r-full bg-accent"
                         />
                       ) : null}
-                      <Icon className={cn("size-4", active && "text-accent")} aria-hidden />
-                      <span>{label}</span>
+                      <Icon
+                        className={cn("size-[17px] shrink-0", active && "text-accent")}
+                        aria-hidden
+                      />
+                      <span className="truncate">{label}</span>
+                      {count != null ? (
+                        <span className="ml-auto font-mono text-[0.7rem] font-semibold tabular-nums text-danger">
+                          {formatCount(count)}
+                        </span>
+                      ) : null}
                     </Link>
                   </li>
                 );
@@ -58,8 +85,8 @@ export function Sidebar() {
           </div>
         ))}
         {externalLinks.length > 0 ? (
-          <div className="mt-5">
-            <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-subtle)]">
+          <div className="mt-[18px]">
+            <div className="px-2.5 pb-[7px] font-mono text-[0.62rem] font-semibold uppercase tracking-[0.13em] text-[var(--fg-subtle)]">
               Links
             </div>
             <ul className="flex flex-col gap-0.5">
@@ -69,9 +96,9 @@ export function Sidebar() {
                     href={link.url}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
+                    className="flex items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-sm text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
                   >
-                    <ExternalLinkIcon className="size-4" aria-hidden />
+                    <ExternalLinkIcon className="size-[17px] shrink-0" aria-hidden />
                     <span className="truncate">{link.label}</span>
                   </a>
                 </li>
@@ -80,8 +107,9 @@ export function Sidebar() {
           </div>
         ) : null}
       </nav>
-      <div className="border-t border-[var(--border)] px-5 py-3 text-[11px] text-[var(--fg-subtle)]">
-        {import.meta.env.DEV ? "dev build" : "production"}
+      <div className="flex items-center gap-2 border-t border-[var(--border)] px-[18px] py-3 text-[0.72rem] text-[var(--fg-subtle)]">
+        <LiveDot tone="success" />
+        Core healthy · {import.meta.env.DEV ? "dev build" : "production"}
       </div>
     </aside>
   );

@@ -18,13 +18,14 @@ interface StatCardProps extends HTMLAttributes<HTMLDivElement> {
   tone?: StatTone;
 }
 
-const TONE_RING: Record<StatTone, string> = {
-  neutral: "text-[var(--fg-muted)]",
-  accent: "text-accent",
-  info: "text-info",
-  success: "text-success",
-  warning: "text-warning",
-  danger: "text-danger",
+/** Tinted icon chip — the icon's color plus its faint background tint. */
+const TONE_CHIP: Record<StatTone, string> = {
+  neutral: "bg-[var(--surface-2)] text-[var(--fg-muted)]",
+  accent: "bg-accent-dim text-accent",
+  info: "bg-info-dim text-info",
+  success: "bg-success-dim text-success",
+  warning: "bg-warning-dim text-warning",
+  danger: "bg-danger-dim text-danger",
 };
 
 const TREND_ICON: Record<StatTrend["direction"], typeof ArrowUp> = {
@@ -38,18 +39,36 @@ export const StatCard = forwardRef<HTMLDivElement, StatCardProps>(
     const TrendIcon = trend ? TREND_ICON[trend.direction] : null;
     const trendClass = trend ? trendToneClass(trend.direction, trend.upIsGood ?? true) : "";
     return (
-      <Card ref={ref} className={cn("flex flex-col px-5 py-4", className)} {...props}>
-        <div className="flex items-start justify-between">
-          <div className="text-xs font-medium uppercase tracking-wide text-[var(--fg-subtle)]">
+      <Card
+        ref={ref}
+        className={cn(
+          "flex flex-col overflow-hidden p-[var(--pad)] transition-shadow hover:shadow-[var(--card-hover-shadow)]",
+          className,
+        )}
+        {...props}
+      >
+        <div className="flex items-center justify-between">
+          <div className="text-[length:var(--label-size)] font-medium tracking-[0.005em] text-[var(--fg-muted)]">
             {label}
           </div>
-          {icon ? <div className={cn("shrink-0", TONE_RING[tone])}>{icon}</div> : null}
+          {icon ? (
+            <span
+              className={cn(
+                "grid size-[30px] shrink-0 place-items-center rounded-[9px] [&_svg]:size-4",
+                TONE_CHIP[tone],
+              )}
+            >
+              {icon}
+            </span>
+          ) : null}
         </div>
-        <div className="mt-2 flex items-baseline gap-2">
-          <div className="text-2xl font-semibold tracking-tight tabular-nums">{value}</div>
+        <div className="mt-3.5 flex items-baseline gap-2">
+          <div className="font-mono text-[length:var(--stat-size)] font-semibold leading-[1.05] tracking-[-0.03em] tabular-nums whitespace-nowrap">
+            {value}
+          </div>
           {trend && TrendIcon ? (
             <span
-              className={cn("inline-flex items-center gap-0.5 text-xs font-medium", trendClass)}
+              className={cn("inline-flex items-center gap-0.5 text-xs font-semibold", trendClass)}
             >
               <TrendIcon className="size-3" aria-hidden />
               <span className="sr-only">Trend {trend.direction}:</span>

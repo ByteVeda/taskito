@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { LiveDot } from "@/components/ui";
 import { useLastRefreshed } from "@/hooks";
 import { cn } from "@/lib/cn";
 
@@ -55,7 +56,7 @@ export function LastRefreshed({ className }: { className?: string }) {
       {isFetching ? (
         <Loader2 className="size-3 animate-spin text-accent" aria-hidden />
       ) : (
-        <span aria-hidden className="size-1.5 rounded-full bg-success" />
+        <LiveDot tone="success" size={6} />
       )}
       {label}
     </span>

@@ -6,7 +6,7 @@ export const Card = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
     <div
       ref={ref}
       className={cn(
-        "rounded-lg bg-[var(--surface)] ring-1 ring-inset ring-[var(--border)] shadow-xs",
+        "rounded-[var(--card-radius)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--card-shadow)]",
         className,
       )}
       {...props}
@@ -17,7 +17,11 @@ Card.displayName = "Card";
 
 export const CardHeader = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("flex flex-col gap-1 px-5 pt-5 pb-2", className)} {...props} />
+    <div
+      ref={ref}
+      className={cn("flex flex-col gap-1 px-[var(--pad)] pt-[var(--pad)]", className)}
+      {...props}
+    />
   ),
 );
 CardHeader.displayName = "CardHeader";
@@ -26,7 +30,10 @@ export const CardTitle = forwardRef<HTMLHeadingElement, HTMLAttributes<HTMLHeadi
   ({ className, ...props }, ref) => (
     <h3
       ref={ref}
-      className={cn("text-sm font-medium text-[var(--fg-muted)] tracking-tight", className)}
+      className={cn(
+        "text-[0.95rem] font-semibold tracking-tight text-[var(--fg)] whitespace-nowrap",
+        className,
+      )}
       {...props}
     />
   ),
@@ -43,7 +50,7 @@ CardDescription.displayName = "CardDescription";
 
 export const CardContent = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("px-5 pb-5", className)} {...props} />
+    <div ref={ref} className={cn("p-[var(--pad)]", className)} {...props} />
   ),
 );
 CardContent.displayName = "CardContent";
@@ -52,7 +59,10 @@ export const CardFooter = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEleme
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn("flex items-center px-5 py-3 border-t border-[var(--border)]", className)}
+      className={cn(
+        "flex items-center px-[var(--pad)] py-3 border-t border-[var(--border)]",
+        className,
+      )}
       {...props}
     />
   ),
