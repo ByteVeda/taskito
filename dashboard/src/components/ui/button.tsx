@@ -40,17 +40,29 @@ export interface ButtonProps
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild, type, ...props }, ref) => {
+  ({ className, variant, size, asChild, type, disabled, ...props }, ref) => {
+    const classes = cn(buttonVariants({ variant, size, className }));
     if (asChild) {
+      // A Slot may wrap a non-button (e.g. a router Link) that ignores the
+      // native `disabled` attribute and its `:disabled` styles, so emulate the
+      // disabled state: dim it, block pointer events, drop it from the tab
+      // order, and expose `aria-disabled` to assistive tech.
       return (
-        <Slot ref={ref} className={cn(buttonVariants({ variant, size, className }))} {...props} />
+        <Slot
+          ref={ref}
+          className={cn(classes, disabled && "pointer-events-none opacity-50")}
+          aria-disabled={disabled || undefined}
+          tabIndex={disabled ? -1 : undefined}
+          {...props}
+        />
       );
     }
     return (
       <button
         ref={ref}
         type={type ?? "button"}
-        className={cn(buttonVariants({ variant, size, className }))}
+        disabled={disabled}
+        className={classes}
         {...props}
       />
     );
