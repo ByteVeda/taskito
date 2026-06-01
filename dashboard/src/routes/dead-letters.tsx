@@ -89,7 +89,7 @@ function DeadLettersPage() {
       <div className="flex flex-col gap-[var(--page-gap)]">
         <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
           <StatCard
-            label="In the queue"
+            label="On this page"
             tone="danger"
             icon={<Skull />}
             value={formatCount(items?.length ?? 0)}
@@ -100,9 +100,10 @@ function DeadLettersPage() {
             tone="warning"
             icon={<ListTree />}
             value={formatCount(taskCount)}
+            hint="on this page"
           />
           <StatCard
-            label="Oldest"
+            label="Oldest on this page"
             tone="neutral"
             icon={<Clock />}
             value={oldestFailedAt != null ? formatRelative(oldestFailedAt) : "—"}
