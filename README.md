@@ -59,7 +59,7 @@ parallelism on CPU-bound work.
 
 Grouped by what you're trying to do — each section has a one-line sample and a
 link to its deep-dive guide. New here? Start with
-**[Capabilities at a glance](https://docs.byteveda.org/taskito/docs/capabilities)**.
+**[Capabilities at a glance](https://docs.byteveda.org/taskito/capabilities)**.
 
 ### Reliability
 
@@ -71,7 +71,7 @@ dead-letter queue with replay, circuit breakers, and idempotent enqueue.
 def fetch_url(url: str) -> str: ...
 ```
 
-[→ Reliability guide](https://docs.byteveda.org/taskito/docs/guides/reliability)
+[→ Reliability guide](https://docs.byteveda.org/taskito/guides/reliability)
 
 ### Workflows
 
@@ -82,7 +82,7 @@ task dependency graphs with cascade cancel.
 chain(fetch.s(url), parse.s(), store.s()).apply()
 ```
 
-[→ Workflows guide](https://docs.byteveda.org/taskito/docs/guides/workflows/canvas)
+[→ Workflows guide](https://docs.byteveda.org/taskito/guides/workflows/canvas)
 
 ### Concurrency
 
@@ -93,7 +93,7 @@ pool of child processes for true CPU parallelism with no GIL contention.
 taskito worker --pool prefork --app tasks:queue   # CPU-bound: real parallelism
 ```
 
-[→ Execution & prefork guide](https://docs.byteveda.org/taskito/docs/guides/advanced-execution/prefork)
+[→ Execution & prefork guide](https://docs.byteveda.org/taskito/guides/advanced-execution/prefork)
 
 ### Scheduling
 
@@ -105,7 +105,7 @@ expiration.
 def notify(user_id: int) -> None: ...
 ```
 
-[→ Scheduling guide](https://docs.byteveda.org/taskito/docs/guides/core/scheduling)
+[→ Scheduling guide](https://docs.byteveda.org/taskito/guides/core/scheduling)
 
 ### Observability
 
@@ -116,7 +116,7 @@ OpenTelemetry exporters, structured logging, and worker heartbeats.
 taskito dashboard --app tasks:queue   # Flower-style monitoring UI
 ```
 
-[→ Dashboard & monitoring guide](https://docs.byteveda.org/taskito/docs/guides/dashboard)
+[→ Dashboard & monitoring guide](https://docs.byteveda.org/taskito/guides/dashboard)
 
 ### Extensibility
 
@@ -128,7 +128,7 @@ Redis backends for multi-machine workers.
 def handle(payload: dict) -> None: ...
 ```
 
-[→ Extensibility guide](https://docs.byteveda.org/taskito/docs/guides/extensibility)
+[→ Extensibility guide](https://docs.byteveda.org/taskito/guides/extensibility)
 
 ## Examples
 
@@ -178,7 +178,7 @@ def test_add():
 ## Documentation
 
 **[Read the docs →](https://docs.byteveda.org/taskito)** — guides, API reference, and architecture.
-Coming from Celery? See the **[Migration Guide](https://docs.byteveda.org/taskito/docs/guides/operations/migration)**.
+Coming from Celery? See the **[Migration Guide](https://docs.byteveda.org/taskito/guides/operations/migration)**.
 
 ## Comparison
 
