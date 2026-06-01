@@ -39,6 +39,8 @@ function TasksPage() {
               aria-hidden
             />
             <Input
+              type="search"
+              aria-label="Search tasks"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search tasks…"
