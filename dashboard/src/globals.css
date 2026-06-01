@@ -270,3 +270,16 @@ body {
   background-size: 200% 100%;
   animation: shimmer 1.4s infinite;
 }
+
+/* Respect users who prefer reduced motion — drop the looping/entrance
+   animations (resting states already have opacity 1, so content stays
+   visible). */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-slide-up,
+  .animate-page-rise,
+  .pulse-ring,
+  .animate-shimmer {
+    animation: none !important;
+  }
+}
