@@ -90,7 +90,11 @@ export function useApplyAccent(): void {
     }
     root.style.setProperty("--accent", value);
     root.style.setProperty("--accent-dim", `color-mix(in oklch, ${value} 16%, transparent)`);
-    root.style.setProperty("--accent-ink", value);
+    // Ink is the accent used as small text on the dim tint (badges, segmented).
+    // It needs more contrast than the raw accent, so blend toward the theme's
+    // foreground — which darkens it in light mode and lightens it in dark mode,
+    // preserving the default --accent vs --accent-ink lightness shift.
+    root.style.setProperty("--accent-ink", `color-mix(in oklch, ${value} 72%, var(--fg))`);
     root.style.setProperty("--accent-strong", value);
     root.style.setProperty("--ring", `color-mix(in oklch, ${value} 45%, transparent)`);
     return clear;
