@@ -43,7 +43,10 @@ export function Stepper({
       >
         <Minus className="size-3.5" aria-hidden />
       </button>
-      <span className="min-w-[48px] px-1 text-center font-mono text-[0.85rem] tabular-nums">
+      <span
+        aria-live="polite"
+        className="min-w-[48px] px-1 text-center font-mono text-[0.85rem] tabular-nums"
+      >
         {format ? format(value) : value}
       </span>
       <button
