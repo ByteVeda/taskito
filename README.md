@@ -57,12 +57,78 @@ parallelism on CPU-bound work.
 
 ## Features
 
-- **Reliability** — retries with exponential backoff, dead letter queue with replay, circuit breakers, exception filtering
-- **Scheduling** — priorities, rate limiting, periodic (cron) tasks, delayed execution, job expiration
-- **Workflows** — `chain` / `group` / `chord`, task dependencies with cascade cancel
-- **Control** — cooperative cancellation, soft timeouts, unique/idempotent tasks, queue pause/resume
-- **Observability** — web dashboard, events, HMAC-signed webhooks, structured logging, worker heartbeats
-- **Extensibility** — pluggable serializers, per-task middleware, async API, Postgres/Redis backends
+Grouped by what you're trying to do — each section has a one-line sample and a
+link to its deep-dive guide. New here? Start with
+**[Capabilities at a glance](https://docs.byteveda.org/taskito/docs/capabilities)**.
+
+### Reliability
+
+Retries with exponential backoff, per-exception retry rules, soft timeouts, a
+dead-letter queue with replay, circuit breakers, and idempotent enqueue.
+
+```python
+@queue.task(max_retries=5, retry_backoff=2.0, retry_on=[TimeoutError])
+def fetch_url(url: str) -> str: ...
+```
+
+[→ Reliability guide](https://docs.byteveda.org/taskito/docs/guides/reliability)
+
+### Workflows
+
+Compose tasks with `chain`, fan out with `group`, fan in with `chord` — plus
+task dependency graphs with cascade cancel.
+
+```python
+chain(fetch.s(url), parse.s(), store.s()).apply()
+```
+
+[→ Workflows guide](https://docs.byteveda.org/taskito/docs/guides/workflows/canvas)
+
+### Concurrency
+
+A thread pool by default (ideal for I/O-bound tasks); switch to a **prefork**
+pool of child processes for true CPU parallelism with no GIL contention.
+
+```bash
+taskito worker --pool prefork --app tasks:queue   # CPU-bound: real parallelism
+```
+
+[→ Execution & prefork guide](https://docs.byteveda.org/taskito/docs/guides/advanced-execution/prefork)
+
+### Scheduling
+
+Priorities, rate limiting, periodic (cron) tasks, delayed execution, and job
+expiration.
+
+```python
+@queue.task(priority=9, rate_limit="100/m")
+def notify(user_id: int) -> None: ...
+```
+
+[→ Scheduling guide](https://docs.byteveda.org/taskito/docs/guides/core/scheduling)
+
+### Observability
+
+A built-in web dashboard, an events system, HMAC-signed webhooks, Prometheus and
+OpenTelemetry exporters, structured logging, and worker heartbeats.
+
+```bash
+taskito dashboard --app tasks:queue   # Flower-style monitoring UI
+```
+
+[→ Dashboard & monitoring guide](https://docs.byteveda.org/taskito/docs/guides/dashboard)
+
+### Extensibility
+
+Pluggable serializers, per-task middleware, a fully async API, and Postgres or
+Redis backends for multi-machine workers.
+
+```python
+@queue.task(middleware=[MyMiddleware()])   # per-task hooks
+def handle(payload: dict) -> None: ...
+```
+
+[→ Extensibility guide](https://docs.byteveda.org/taskito/docs/guides/extensibility)
 
 ## Examples
 
@@ -124,9 +190,11 @@ Coming from Celery? See the **[Migration Guide](https://docs.byteveda.org/taskit
 | Rate limiting | **Yes** | Yes | No | Yes | No |
 | Dead letter queue | **Yes** | No | Yes | No | No |
 | Task dependencies | **Yes** | No | No | No | No |
+| Workflows (chain/group/chord) | **Yes** | Yes | No | Yes | No |
 | Built-in dashboard | **Yes** | No | No | No | No |
 | FastAPI integration | **Yes** | No | No | No | No |
 | Cancel running tasks | **Yes** | Yes | No | No | No |
+| CPU parallelism (prefork pool) | **Yes** | Yes | Yes | Yes | Yes |
 | Postgres backend | **Yes** | Yes | No | No | No |
 | Setup | **`pip install`** | Broker + backend | Redis | Broker | Redis |
 
