@@ -21,6 +21,8 @@ fn make_config(gossip_port: u16, steal_port: u16) -> MeshConfig {
         steal_threshold: 2,
         affinity_weight: 0.7,
         enable_stealing: true,
+        encryption_key: None,
+        steal_rate_limit: 0,
     }
 }
 

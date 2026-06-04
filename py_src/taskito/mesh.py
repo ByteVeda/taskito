@@ -19,11 +19,13 @@ class MeshWorker:
     __slots__ = (
         "affinity_weight",
         "bind_addr",
+        "encryption_key",
         "local_buffer",
         "port",
         "seeds",
         "steal",
         "steal_batch",
+        "steal_rate_limit",
         "steal_threshold",
         "virtual_nodes",
     )
@@ -40,6 +42,8 @@ class MeshWorker:
         steal_threshold: int = 2,
         virtual_nodes: int = 150,
         bind_addr: str = "0.0.0.0",
+        encryption_key: str | None = None,
+        steal_rate_limit: int = 10,
     ) -> None:
         if not 1024 <= port <= 65535:
             raise ValueError(f"port must be 1024-65535, got {port}")
@@ -61,6 +65,8 @@ class MeshWorker:
         self.steal_threshold = steal_threshold
         self.virtual_nodes = virtual_nodes
         self.bind_addr = bind_addr
+        self.encryption_key = encryption_key
+        self.steal_rate_limit = steal_rate_limit
 
     def to_json(self) -> str:
         """Serialize to JSON for passing through the PyO3 boundary."""
@@ -81,6 +87,8 @@ class MeshWorker:
             "steal_threshold": self.steal_threshold,
             "affinity_weight": self.affinity_weight,
             "enable_stealing": self.steal,
+            "encryption_key": self.encryption_key,
+            "steal_rate_limit": self.steal_rate_limit,
         }
 
     def __repr__(self) -> str:

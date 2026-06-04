@@ -22,6 +22,8 @@ fn make_config(port: u16, seeds: Vec<String>) -> MeshConfig {
         steal_threshold: 2,
         affinity_weight: 0.7,
         enable_stealing: false,
+        encryption_key: None,
+        steal_rate_limit: 10,
     }
 }
 

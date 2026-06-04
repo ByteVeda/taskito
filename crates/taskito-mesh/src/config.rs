@@ -28,6 +28,12 @@ pub struct MeshConfig {
     pub affinity_weight: f64,
     /// Whether work-stealing is enabled.
     pub enable_stealing: bool,
+    /// Shared encryption key for gossip messages (base64-encoded, 32 bytes).
+    /// When set, gossip datagrams are XOR-encrypted with this key.
+    /// Not cryptographically strong — prevents casual sniffing only.
+    pub encryption_key: Option<String>,
+    /// Max steal requests per peer per second. 0 = unlimited.
+    pub steal_rate_limit: u32,
 }
 
 impl Default for MeshConfig {
@@ -46,6 +52,18 @@ impl Default for MeshConfig {
             steal_threshold: 2,
             affinity_weight: 0.7,
             enable_stealing: true,
+            encryption_key: None,
+            steal_rate_limit: 10,
         }
+    }
+}
+
+impl MeshConfig {
+    /// Decode the encryption key from base64. Returns None if unset or invalid.
+    pub fn decoded_encryption_key(&self) -> Option<Vec<u8>> {
+        self.encryption_key.as_ref().and_then(|k| {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.decode(k).ok()
+        })
     }
 }

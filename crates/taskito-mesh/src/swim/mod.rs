@@ -17,6 +17,13 @@ use self::failure::FailureDetector;
 use self::membership::Membership;
 use self::message::{GossipMessage, MemberUpdate};
 
+fn xor_cipher(data: &[u8], key: &[u8]) -> Vec<u8> {
+    data.iter()
+        .enumerate()
+        .map(|(i, b)| b ^ key[i % key.len()])
+        .collect()
+}
+
 /// SWIM protocol node. Runs a gossip loop on a tokio UDP socket.
 pub struct SwimNode {
     config: MeshConfig,
@@ -26,6 +33,7 @@ pub struct SwimNode {
     local_info: WorkerInfo,
     seq: u64,
     shutdown: Arc<Notify>,
+    encryption_key: Option<Vec<u8>>,
 }
 
 impl SwimNode {
@@ -42,6 +50,7 @@ impl SwimNode {
             config.suspicion_multiplier,
             config.protocol_period_ms,
         );
+        let encryption_key = config.decoded_encryption_key();
         Self {
             config,
             state,
@@ -50,12 +59,31 @@ impl SwimNode {
             local_info,
             seq: 0,
             shutdown,
+            encryption_key,
         }
+    }
+
+    fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+        match &self.encryption_key {
+            Some(key) => xor_cipher(data, key),
+            None => data.to_vec(),
+        }
+    }
+
+    fn decrypt(&self, data: &[u8]) -> Vec<u8> {
+        self.encrypt(data) // XOR is symmetric
     }
 
     fn next_seq(&mut self) -> u64 {
         self.seq += 1;
         self.seq
+    }
+
+    async fn send_msg(&self, socket: &UdpSocket, msg: &GossipMessage, addr: SocketAddr) {
+        if let Ok(bytes) = msg.encode() {
+            let encrypted = self.encrypt(&bytes);
+            let _ = socket.send_to(&encrypted, addr).await;
+        }
     }
 
     /// Run the SWIM gossip loop. Blocks until shutdown.
@@ -114,11 +142,9 @@ impl SwimNode {
             };
             let local_update = self.make_local_update();
             let msg = ping.with_updates(vec![local_update]);
-            if let Ok(bytes) = msg.encode() {
-                if let Ok(addr) = seed.parse::<SocketAddr>() {
-                    let _ = socket.send_to(&bytes, addr).await;
-                    debug!("[mesh] join ping sent to {seed}");
-                }
+            if let Ok(addr) = seed.parse::<SocketAddr>() {
+                self.send_msg(socket, &msg, addr).await;
+                debug!("[mesh] join ping sent to {seed}");
             }
         }
     }
@@ -154,11 +180,9 @@ impl SwimNode {
             };
             let updates = self.membership.take_updates();
             let msg = ping.with_updates(updates);
-            if let Ok(bytes) = msg.encode() {
-                let _ = socket.send_to(&bytes, target.info.gossip_addr).await;
-                self.failure_detector
-                    .ping_sent(seq, target.info.worker_id.clone());
-            }
+            self.send_msg(socket, &msg, target.info.gossip_addr).await;
+            self.failure_detector
+                .ping_sent(seq, target.info.worker_id.clone());
         }
     }
 
@@ -199,9 +223,8 @@ impl SwimNode {
                     target: target_id.to_string(),
                     target_addr: addr,
                 };
-                if let Ok(bytes) = ping_req.encode() {
-                    let _ = socket.send_to(&bytes, intermediary.info.gossip_addr).await;
-                }
+                self.send_msg(socket, &ping_req, intermediary.info.gossip_addr)
+                    .await;
             }
             self.failure_detector
                 .ping_req_sent(seq, target_id.to_string());
@@ -210,9 +233,10 @@ impl SwimNode {
         }
     }
 
-    /// Handle an incoming UDP datagram.
+    /// Handle an incoming UDP datagram (decrypt if key set).
     async fn handle_datagram(&mut self, data: &[u8], from: SocketAddr, socket: &UdpSocket) {
-        let msg = match GossipMessage::decode(data) {
+        let decrypted = self.decrypt(data);
+        let msg = match GossipMessage::decode(&decrypted) {
             Ok(m) => m,
             Err(e) => {
                 debug!("[mesh] decode error from {from}: {e}");
@@ -256,9 +280,7 @@ impl SwimNode {
                 }
                 all_updates.extend(self.membership.take_updates());
                 let msg = ack.with_updates(all_updates);
-                if let Ok(bytes) = msg.encode() {
-                    let _ = socket.send_to(&bytes, from).await;
-                }
+                self.send_msg(socket, &msg, from).await;
                 debug!("[mesh] ack sent to {sender} at {from}");
             }
             GossipMessage::Ack { seq, from: sender } => {
@@ -277,9 +299,7 @@ impl SwimNode {
                     from: self.local_info.worker_id.clone(),
                     from_addr: self.local_info.gossip_addr,
                 };
-                if let Ok(bytes) = ping.encode() {
-                    let _ = socket.send_to(&bytes, target_addr).await;
-                }
+                self.send_msg(socket, &ping, target_addr).await;
                 debug!("[mesh] relayed ping-req from {requester} to {target}");
             }
             GossipMessage::AckRelay {
@@ -345,10 +365,8 @@ impl SwimNode {
         let msg = GossipMessage::Sync {
             updates: vec![leave],
         };
-        if let Ok(bytes) = msg.encode() {
-            for peer in self.state.alive_peers() {
-                let _ = socket.send_to(&bytes, peer.info.gossip_addr).await;
-            }
+        for peer in self.state.alive_peers() {
+            self.send_msg(socket, &msg, peer.info.gossip_addr).await;
         }
         info!("[mesh] leave broadcast sent");
     }
