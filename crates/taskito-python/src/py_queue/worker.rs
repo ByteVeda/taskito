@@ -15,6 +15,54 @@ use super::PyQueue;
 use crate::async_worker::AsyncWorkerPool;
 use crate::py_config::PyTaskConfig;
 
+/// Mesh-aware scheduler bridge: receives jobs from the scheduler's
+/// intermediate channel, pushes them into the local deque with affinity
+/// sorting, then drains the deque to the real dispatcher channel.
+#[cfg(feature = "mesh")]
+async fn run_mesh_bridge(
+    scheduler: Arc<taskito_core::scheduler::Scheduler>,
+    mesh_node: Arc<taskito_mesh::MeshNode>,
+    job_tx: tokio::sync::mpsc::Sender<taskito_core::job::Job>,
+) {
+    let (mesh_tx, mut mesh_rx) = tokio::sync::mpsc::channel::<taskito_core::job::Job>(64);
+
+    let sched = scheduler.clone();
+    let sched_task = tokio::spawn(async move {
+        sched.run(mesh_tx).await;
+    });
+
+    loop {
+        // Drain local deque to dispatcher first
+        while let Some(job) = mesh_node.pop_local() {
+            if job_tx.send(job).await.is_err() {
+                let _ = sched_task.await;
+                return;
+            }
+        }
+
+        // Wait for scheduler to produce jobs
+        match mesh_rx.recv().await {
+            Some(job) => {
+                let mut batch = vec![job];
+                while let Ok(j) = mesh_rx.try_recv() {
+                    batch.push(j);
+                }
+                mesh_node.prefetch(batch);
+            }
+            None => break,
+        }
+    }
+
+    // Drain remaining deque
+    while let Some(job) = mesh_node.pop_local() {
+        if job_tx.send(job).await.is_err() {
+            break;
+        }
+    }
+
+    let _ = sched_task.await;
+}
+
 /// Dispatch a ResultOutcome to Python middleware hooks and events.
 ///
 /// Called with the GIL held after `handle_result()` returns.
@@ -185,6 +233,7 @@ impl PyQueue {
         queue_configs=None,
         pool=None,
         app_path=None,
+        mesh_config=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn run_worker(
@@ -202,6 +251,7 @@ impl PyQueue {
         queue_configs: Option<String>,
         pool: Option<String>,
         app_path: Option<String>,
+        #[allow(unused_variables)] mesh_config: Option<String>,
     ) -> PyResult<()> {
         // Reset shutdown flag for this run
         self.shutdown_flag.store(false, Ordering::SeqCst);
@@ -435,6 +485,9 @@ impl PyQueue {
             }
         };
 
+        #[cfg(feature = "mesh")]
+        let mesh_worker_id = worker_id.clone();
+
         // Captured for the channel-based (Postgres/Redis) wake-source setup
         // inside the runtime. Gated to the listener-bearing backends so the
         // default and SQLite-only builds have no unused binding.
@@ -489,6 +542,29 @@ impl PyQueue {
                     }
                 }
 
+                // When mesh is enabled, interpose a local deque between
+                // scheduler and dispatcher for affinity-sorted prefetch.
+                #[cfg(feature = "mesh")]
+                let scheduler_task = {
+                    if let Some(ref cfg_json) = mesh_config {
+                        let mesh_cfg: taskito_mesh::MeshConfig =
+                            serde_json::from_str(cfg_json).unwrap_or_default();
+                        let mesh_node =
+                            Arc::new(taskito_mesh::MeshNode::new(mesh_worker_id, mesh_cfg));
+                        log::info!(
+                            "[taskito] mesh scheduling enabled (local_buffer={})",
+                            mesh_node.config().local_buffer_capacity,
+                        );
+                        tokio::spawn(async move {
+                            run_mesh_bridge(scheduler_for_dispatch, mesh_node, job_tx).await;
+                        })
+                    } else {
+                        tokio::spawn(async move {
+                            scheduler_for_dispatch.run(job_tx).await;
+                        })
+                    }
+                };
+                #[cfg(not(feature = "mesh"))]
                 let scheduler_task = tokio::spawn(async move {
                     scheduler_for_dispatch.run(job_tx).await;
                 });
