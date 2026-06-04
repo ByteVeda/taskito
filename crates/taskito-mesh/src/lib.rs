@@ -3,6 +3,7 @@ pub mod local_deque;
 pub mod metrics;
 pub mod ring;
 pub mod state;
+pub mod steal;
 pub mod swim;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -73,7 +74,45 @@ impl MeshNode {
         })
     }
 
-    /// Signal the gossip loop to stop (broadcasts Leave first).
+    /// Spawn the TCP steal server as a tokio task.
+    pub fn spawn_steal_server(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let node = self.clone();
+        let shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            steal::server::run_steal_server(node, shutdown).await;
+        })
+    }
+
+    /// Attempt to steal work from the busiest peer.
+    /// Returns stolen jobs pushed into local deque.
+    pub async fn try_steal(self: &Arc<Self>) -> usize {
+        if !self.should_steal() {
+            return 0;
+        }
+        let min_surplus = self.config.steal_threshold + self.config.max_steal_batch;
+        let target = match self.state.best_steal_target(min_surplus) {
+            Some(t) => t,
+            None => return 0,
+        };
+
+        self.metrics
+            .steals_initiated
+            .fetch_add(1, Ordering::Relaxed);
+        let stolen = steal::steal_from_peer(self, &target).await;
+        let count = stolen.len();
+        if count > 0 {
+            self.metrics
+                .steals_succeeded
+                .fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .jobs_stolen_in
+                .fetch_add(count as u64, Ordering::Relaxed);
+            self.prefetch(stolen);
+        }
+        count
+    }
+
+    /// Signal the gossip loop and steal server to stop.
     pub fn request_shutdown(&self) {
         self.shutdown.notify_one();
     }

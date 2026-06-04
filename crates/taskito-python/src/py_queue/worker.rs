@@ -40,6 +40,18 @@ async fn run_mesh_bridge(
             }
         }
 
+        // Try stealing when deque is low and stealing is enabled
+        if mesh_node.should_steal() {
+            mesh_node.try_steal().await;
+            // Drain any stolen jobs
+            while let Some(job) = mesh_node.pop_local() {
+                if job_tx.send(job).await.is_err() {
+                    let _ = sched_task.await;
+                    return;
+                }
+            }
+        }
+
         // Wait for scheduler to produce jobs
         match mesh_rx.recv().await {
             Some(job) => {
@@ -561,6 +573,7 @@ impl PyQueue {
                             queues_str.split(',').map(|s| s.to_string()).collect();
                         let gossip_handle =
                             mesh_node.spawn_gossip(gossip_queues, num_workers as u16);
+                        let steal_handle = mesh_node.spawn_steal_server();
 
                         let mesh_for_bridge = mesh_node.clone();
                         let bridge_handle = tokio::spawn(async move {
@@ -568,7 +581,7 @@ impl PyQueue {
                         });
 
                         tokio::spawn(async move {
-                            let _ = tokio::join!(bridge_handle, gossip_handle);
+                            let _ = tokio::join!(bridge_handle, gossip_handle, steal_handle);
                         })
                     } else {
                         tokio::spawn(async move {
