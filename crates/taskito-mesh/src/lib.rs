@@ -18,11 +18,18 @@ pub use local_deque::LocalDeque;
 pub use metrics::{MeshMetrics, MetricsSnapshot};
 pub use state::{MemberState, MeshState, WorkerInfo};
 
-/// A mesh node manages the local deque, consistent-hash ring, and (in later
-/// phases) the SWIM gossip protocol and work-stealing connections.
-///
-/// Phase 1 provides local-deque prefetch with affinity sorting.
-/// Gossip and stealing are added in subsequent phases.
+/// Snapshot of mesh cluster state for observability.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ClusterInfo {
+    pub peer_count: usize,
+    pub total_capacity: u16,
+    pub total_load: u16,
+    pub total_buffered: u16,
+    pub local_buffer_len: u16,
+    pub adaptive_prefetch: u16,
+}
+
+/// Manages local deque, consistent-hash ring, SWIM gossip, and work-stealing.
 pub struct MeshNode {
     config: MeshConfig,
     state: Arc<MeshState>,
@@ -164,6 +171,45 @@ impl MeshNode {
         self.deque.len() < self.config.local_buffer_capacity / 2
     }
 
+    /// Adaptive prefetch budget based on this worker's share of total
+    /// mesh capacity. With no peers, returns the full local_buffer_capacity.
+    /// With peers, scales proportionally: capacity / total_capacity.
+    pub fn adaptive_prefetch_size(&self) -> usize {
+        let peers = self.state.alive_peers();
+        if peers.is_empty() {
+            return self.config.local_buffer_capacity;
+        }
+        let my_capacity = self.config.local_buffer_capacity as f64;
+        let total: f64 = peers.iter().map(|p| p.info.capacity as f64).sum::<f64>() + my_capacity;
+        let share = my_capacity / total;
+        let budget = (my_capacity * share * 2.0).ceil() as usize;
+        budget.max(1).min(self.config.local_buffer_capacity)
+    }
+
+    /// Jitter delay to stagger DB polls across mesh peers.
+    /// Returns 0..protocol_period_ms based on position in the hash ring.
+    pub fn poll_jitter_ms(&self) -> u64 {
+        let worker_id = self.state.local_worker_id();
+        let hash = xxhash_rust::xxh3::xxh3_64(worker_id.as_bytes());
+        hash % self.config.protocol_period_ms.max(1)
+    }
+
+    /// Summary of mesh cluster state for observability.
+    pub fn cluster_info(&self) -> ClusterInfo {
+        let peers = self.state.alive_peers();
+        let total_capacity: u16 = peers.iter().map(|p| p.info.capacity).sum();
+        let total_load: u16 = peers.iter().map(|p| p.info.current_load).sum();
+        let total_buffered: u16 = peers.iter().map(|p| p.info.local_buffer_len).sum();
+        ClusterInfo {
+            peer_count: peers.len(),
+            total_capacity,
+            total_load,
+            total_buffered,
+            local_buffer_len: self.deque.len() as u16,
+            adaptive_prefetch: self.adaptive_prefetch_size() as u16,
+        }
+    }
+
     /// Whether the local deque has jobs ready to dispatch.
     pub fn has_local_work(&self) -> bool {
         !self.deque.is_empty()
@@ -273,5 +319,86 @@ mod tests {
         };
         let node2 = MeshNode::new("worker-2".to_string(), config2);
         assert!(node2.should_steal()); // empty deque ≤ threshold
+    }
+
+    #[test]
+    fn adaptive_prefetch_no_peers() {
+        let config = MeshConfig {
+            local_buffer_capacity: 64,
+            ..MeshConfig::default()
+        };
+        let node = MeshNode::new("solo".to_string(), config);
+        assert_eq!(node.adaptive_prefetch_size(), 64);
+    }
+
+    #[test]
+    fn adaptive_prefetch_scales_with_peers() {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        let config = MeshConfig {
+            local_buffer_capacity: 64,
+            ..MeshConfig::default()
+        };
+        let node = MeshNode::new("w1".to_string(), config);
+
+        // Add 3 peers with capacity 64 each — total 256, share = 1/4
+        for i in 0..3 {
+            node.state().upsert_member(state::Member {
+                info: WorkerInfo {
+                    worker_id: format!("peer-{i}"),
+                    gossip_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7946 + i),
+                    steal_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8946 + i),
+                    queues: vec!["default".to_string()],
+                    threads: 4,
+                    current_load: 0,
+                    local_buffer_len: 0,
+                    capacity: 64,
+                    updated_at: 0,
+                },
+                state: MemberState::Alive,
+                incarnation: 1,
+            });
+        }
+
+        let size = node.adaptive_prefetch_size();
+        assert!(size < 64, "with 4 workers, prefetch should be < solo");
+        assert!(size >= 1, "prefetch must be at least 1");
+    }
+
+    #[test]
+    fn poll_jitter_within_bounds() {
+        let config = MeshConfig {
+            protocol_period_ms: 500,
+            ..MeshConfig::default()
+        };
+        let node = MeshNode::new("w1".to_string(), config);
+        let jitter = node.poll_jitter_ms();
+        assert!(jitter < 500);
+    }
+
+    #[test]
+    fn cluster_info_reflects_state() {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        let node = MeshNode::new("w1".to_string(), MeshConfig::default());
+        node.state().upsert_member(state::Member {
+            info: WorkerInfo {
+                worker_id: "peer-a".to_string(),
+                gossip_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7946),
+                steal_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7947),
+                queues: vec!["default".to_string()],
+                threads: 4,
+                current_load: 2,
+                local_buffer_len: 5,
+                capacity: 4,
+                updated_at: 0,
+            },
+            state: MemberState::Alive,
+            incarnation: 1,
+        });
+
+        let info = node.cluster_info();
+        assert_eq!(info.peer_count, 1);
+        assert_eq!(info.total_capacity, 4);
+        assert_eq!(info.total_load, 2);
+        assert_eq!(info.total_buffered, 5);
     }
 }
