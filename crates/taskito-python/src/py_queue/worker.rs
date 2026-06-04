@@ -543,7 +543,8 @@ impl PyQueue {
                 }
 
                 // When mesh is enabled, interpose a local deque between
-                // scheduler and dispatcher for affinity-sorted prefetch.
+                // scheduler and dispatcher for affinity-sorted prefetch,
+                // and spawn the SWIM gossip loop for peer discovery.
                 #[cfg(feature = "mesh")]
                 let scheduler_task = {
                     if let Some(ref cfg_json) = mesh_config {
@@ -555,8 +556,19 @@ impl PyQueue {
                             "[taskito] mesh scheduling enabled (local_buffer={})",
                             mesh_node.config().local_buffer_capacity,
                         );
+
+                        let gossip_queues: Vec<String> =
+                            queues_str.split(',').map(|s| s.to_string()).collect();
+                        let gossip_handle =
+                            mesh_node.spawn_gossip(gossip_queues, num_workers as u16);
+
+                        let mesh_for_bridge = mesh_node.clone();
+                        let bridge_handle = tokio::spawn(async move {
+                            run_mesh_bridge(scheduler_for_dispatch, mesh_for_bridge, job_tx).await;
+                        });
+
                         tokio::spawn(async move {
-                            run_mesh_bridge(scheduler_for_dispatch, mesh_node, job_tx).await;
+                            let _ = tokio::join!(bridge_handle, gossip_handle);
                         })
                     } else {
                         tokio::spawn(async move {

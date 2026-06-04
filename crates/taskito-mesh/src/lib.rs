@@ -3,11 +3,14 @@ pub mod local_deque;
 pub mod metrics;
 pub mod ring;
 pub mod state;
+pub mod swim;
 
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use taskito_core::job::Job;
+use tokio::sync::Notify;
 
 pub use config::MeshConfig;
 pub use local_deque::LocalDeque;
@@ -24,6 +27,7 @@ pub struct MeshNode {
     state: Arc<MeshState>,
     deque: LocalDeque,
     metrics: Arc<MeshMetrics>,
+    shutdown: Arc<Notify>,
 }
 
 impl MeshNode {
@@ -35,7 +39,43 @@ impl MeshNode {
             state,
             deque,
             metrics: Arc::new(MeshMetrics::default()),
+            shutdown: Arc::new(Notify::new()),
         }
+    }
+
+    /// Spawn the SWIM gossip loop as a tokio task.
+    /// Call this inside the tokio runtime before the scheduler loop.
+    pub fn spawn_gossip(&self, queues: Vec<String>, threads: u16) -> tokio::task::JoinHandle<()> {
+        let gossip_addr =
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), self.config.gossip_port);
+        let steal_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), self.config.steal_port);
+        let local_info = WorkerInfo {
+            worker_id: self.state.local_worker_id().to_string(),
+            gossip_addr,
+            steal_addr,
+            queues,
+            threads,
+            current_load: 0,
+            local_buffer_len: 0,
+            capacity: threads,
+            updated_at: taskito_core::job::now_millis(),
+        };
+
+        let swim = swim::SwimNode::new(
+            self.config.clone(),
+            self.state.clone(),
+            local_info,
+            self.shutdown.clone(),
+        );
+
+        tokio::spawn(async move {
+            swim.run().await;
+        })
+    }
+
+    /// Signal the gossip loop to stop (broadcasts Leave first).
+    pub fn request_shutdown(&self) {
+        self.shutdown.notify_one();
     }
 
     pub fn config(&self) -> &MeshConfig {
