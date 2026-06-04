@@ -1,0 +1,14 @@
+[package]
+name = "taskito-mesh"
+version = "0.15.2"
+edition = "2021"
+
+[dependencies]
+taskito-core = { path = "../taskito-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = "1"
+log = { workspace = true }
+rand = { workspace = true }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
