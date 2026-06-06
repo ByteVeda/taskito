@@ -16,8 +16,15 @@ export function Sidebar() {
   const externalLinks = useExternalLinks();
   // Shares the ["stats"] cache with the Overview — no extra polling here, just
   // a one-time fetch that stays in sync as other views refetch.
-  const { data: stats } = useQuery(statsQuery());
+  const { data: stats, isError, isPending } = useQuery(statsQuery());
   const deadCount = stats?.dead ?? 0;
+
+  const coreTone = isError ? "danger" : isPending && !stats ? "warning" : "success";
+  const coreLabel = isError
+    ? "Core unreachable"
+    : isPending && !stats
+      ? "Connecting…"
+      : "Core healthy";
   const isDefaultBrand = title === site.name;
 
   return (
@@ -108,8 +115,8 @@ export function Sidebar() {
         ) : null}
       </nav>
       <div className="flex items-center gap-2 border-t border-[var(--border)] px-[18px] py-3 text-[0.72rem] text-[var(--fg-subtle)]">
-        <LiveDot tone="success" />
-        Core healthy · {import.meta.env.DEV ? "dev build" : "production"}
+        <LiveDot tone={coreTone} />
+        {coreLabel} · {import.meta.env.DEV ? "dev build" : "production"}
       </div>
     </aside>
   );
