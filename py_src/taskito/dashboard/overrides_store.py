@@ -179,7 +179,7 @@ def _validate_bool_field(fields: dict[str, Any], name: str) -> None:
 
 
 def _now() -> int:
-    return int(time.time())
+    return int(time.time() * 1000)
 
 
 def _parse_json(raw: str | None) -> dict[str, Any]:
