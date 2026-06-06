@@ -3,6 +3,8 @@ title: Scheduler
 description: "The Tokio-based poll loop that dequeues, dispatches, retries, and reaps."
 ---
 
+import { Callout } from "fumadocs-ui/components/callout";
+
 The scheduler runs in a dedicated Tokio single-threaded async runtime:
 
 ```text
@@ -41,3 +43,10 @@ loop {
 5. `handle_result()` — mark complete, schedule retry, or move to DLQ.
 
 <DispatchSequence />
+
+<Callout type="info">
+  With [mesh scheduling](/architecture/mesh) enabled, a mesh bridge sits
+  between the scheduler and the worker pool — buffering jobs in a local deque,
+  applying task affinity, and stealing from peers on idle ticks. The scheduler
+  itself is unchanged.
+</Callout>

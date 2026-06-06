@@ -30,29 +30,9 @@ For usage and configuration, see the
 ## Crate structure
 
 The mesh is implemented as a standalone Rust crate (`crates/taskito-mesh/`)
-with no PyO3 dependency:
-
-```text
-taskito-mesh/src/
-├── lib.rs           MeshNode — top-level API
-├── config.rs        MeshConfig (16 tunables)
-├── state.rs         MeshState, WorkerInfo, Member, MemberState
-├── ring.rs          Consistent-hashing ring (xxhash + BTreeMap)
-├── local_deque.rs   Mutex<VecDeque<Job>> with affinity sorting
-├── metrics.rs       AtomicU64 counters for observability
-├── swim/
-│   ├── mod.rs       SwimNode — protocol orchestrator
-│   ├── message.rs   GossipMessage wire format (bincode)
-│   ├── membership.rs  Incarnation tracking, piggybacked updates
-│   └── failure.rs   Failure detector (ping → suspect → dead)
-└── steal/
-    ├── mod.rs       steal_from_peer() TCP client
-    ├── protocol.rs  StealRequest/Response framing
-    └── server.rs    TCP listener + per-peer rate limiter
-```
-
-Feature-gated via `mesh` cargo feature on `taskito-python`. Depends on
-`taskito-core` for the [`Job`](/architecture/job-lifecycle) type only.
+with no PyO3 dependency. Feature-gated via `mesh` cargo feature on
+`taskito-python`. Depends on `taskito-core` for the
+[`Job`](/architecture/job-lifecycle) type only.
 
 ## SWIM gossip protocol
 
@@ -123,7 +103,8 @@ failure detection from cascading across the cluster.
 
 Optional XOR symmetric encryption with a shared key (base64-encoded).
 Applied to every UDP datagram before send, reversed on receive. All
-cluster nodes must share the same key.
+cluster nodes must share the same key. See
+[Gossip encryption](/guides/operations/mesh#gossip-encryption) for setup.
 
 <Callout type="info">
   XOR encryption provides obfuscation, not cryptographic security. It
@@ -329,3 +310,11 @@ In every failure case, the database remains the source of truth. The worst
 outcome is reduced performance (more DB polls), never data loss or
 double-execution — those guarantees come from the
 [storage layer's](/architecture/storage) atomic claim mechanism.
+
+## See also
+
+- [Mesh Scheduling guide](/guides/operations/mesh) — configuration, cluster topology, Docker Compose example
+- [Scheduler](/architecture/scheduler) — the poll loop that feeds jobs into the mesh bridge
+- [Worker Pool](/architecture/worker-pool) — the dispatcher that receives jobs from the mesh bridge
+- [Storage](/architecture/storage) — atomic claim mechanism that guarantees exactly-once dispatch
+- [Failure Model](/architecture/failure-model) — how taskito handles crashes and timeouts
