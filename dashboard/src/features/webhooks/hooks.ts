@@ -4,7 +4,6 @@ import { ApiError } from "@/lib/api-client";
 import {
   createWebhook,
   deleteWebhook,
-  getWebhook,
   listDeliveries,
   listEventTypes,
   listWebhooks,
@@ -29,13 +28,6 @@ export function webhooksQuery() {
   return queryOptions({
     queryKey: KEY,
     queryFn: ({ signal }) => listWebhooks(signal),
-  });
-}
-
-export function webhookQuery(id: string) {
-  return queryOptions({
-    queryKey: [...KEY, id],
-    queryFn: ({ signal }) => getWebhook(id, signal),
   });
 }
 
