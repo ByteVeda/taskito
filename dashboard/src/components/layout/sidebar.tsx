@@ -28,7 +28,7 @@ export function Sidebar() {
   const isDefaultBrand = title === site.name;
 
   return (
-    <aside className="hidden w-[248px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)] lg:flex">
+    <aside className="hidden h-screen w-[248px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)] lg:flex">
       <div className="flex items-center gap-2.5 px-[18px] pt-[18px] pb-4">
         <BrandMark size={38} />
         <div className="leading-none">

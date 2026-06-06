@@ -13,9 +13,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex min-h-screen bg-[var(--bg)] text-[var(--fg)]">
+      <div className="flex h-screen overflow-hidden bg-[var(--bg)] text-[var(--fg)]">
         <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
           <Header />
           <TopProgressBar />
           <main className="flex-1 px-4 py-5 md:px-6 md:py-6">
