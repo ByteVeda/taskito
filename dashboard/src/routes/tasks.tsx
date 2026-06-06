@@ -27,7 +27,7 @@ function TasksPage() {
   }, [tasks, query]);
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
         eyebrow="Configuration"
         title="Tasks"
@@ -49,36 +49,29 @@ function TasksPage() {
           </div>
         }
       />
-      <div className="flex flex-col gap-[var(--page-gap)]">
-        {error ? (
-          <ErrorState
-            title="Failed to load tasks"
-            description={error instanceof Error ? error.message : String(error)}
-          />
-        ) : isLoading ? (
-          <Skeleton className="h-48" />
-        ) : (
-          <>
-            <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
-              <StatCard
-                label="Registered"
-                tone="neutral"
-                icon={<ListTree />}
-                value={tasks.length}
-              />
-              <StatCard
-                label="With overrides"
-                tone="info"
-                icon={<Settings2 />}
-                value={overrides}
-                hint="operator-tuned"
-              />
-              <StatCard label="Rate limited" tone="warning" icon={<Zap />} value={rateLimited} />
-            </div>
-            <TaskListTable tasks={filtered} />
-          </>
-        )}
-      </div>
-    </>
+      {error ? (
+        <ErrorState
+          title="Failed to load tasks"
+          description={error instanceof Error ? error.message : String(error)}
+        />
+      ) : isLoading ? (
+        <Skeleton className="h-48" />
+      ) : (
+        <>
+          <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
+            <StatCard label="Registered" tone="neutral" icon={<ListTree />} value={tasks.length} />
+            <StatCard
+              label="With overrides"
+              tone="info"
+              icon={<Settings2 />}
+              value={overrides}
+              hint="operator-tuned"
+            />
+            <StatCard label="Rate limited" tone="warning" icon={<Zap />} value={rateLimited} />
+          </div>
+          <TaskListTable tasks={filtered} />
+        </>
+      )}
+    </div>
   );
 }

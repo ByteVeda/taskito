@@ -56,7 +56,7 @@ function OverviewPage() {
   const onlineWorkers = (workers.data ?? []).filter((w) => !isWorkerStale(w)).length;
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
         eyebrow="Dashboard"
         title="Overview"
@@ -68,78 +68,75 @@ function OverviewPage() {
           </Button>
         }
       />
+      <Pulse stats={stats.data} throughput={throughput.data} />
 
-      <div className="flex flex-col gap-[var(--page-gap)]">
-        <Pulse stats={stats.data} throughput={throughput.data} />
+      <StatsGrid
+        stats={stats.data}
+        pausedCount={paused.data?.length}
+        throughput={throughput.data}
+        loading={stats.isLoading}
+        error={stats.error}
+        onRetry={() => stats.refetch()}
+      />
 
-        <StatsGrid
-          stats={stats.data}
-          pausedCount={paused.data?.length}
-          throughput={throughput.data}
-          loading={stats.isLoading}
-          error={stats.error}
-          onRetry={() => stats.refetch()}
-        />
+      <ThroughputSparkline
+        buckets={throughput.data}
+        loading={throughput.isLoading}
+        error={throughput.error}
+        onRetry={() => throughput.refetch()}
+      />
 
-        <ThroughputSparkline
-          buckets={throughput.data}
-          loading={throughput.isLoading}
-          error={throughput.error}
-          onRetry={() => throughput.refetch()}
-        />
-
-        <div className="grid gap-[var(--gap)] lg:grid-cols-[1.5fr_1fr]">
-          <section>
-            <SectionHeading
-              title="Busiest queues"
-              action={
-                <Button variant="ghost" size="sm" asChild>
-                  <Link to="/queues">
-                    View all
-                    <ChevronRight aria-hidden />
-                  </Link>
-                </Button>
-              }
-            />
-            <BusiestQueues
-              queueStats={queueStats.data}
-              paused={paused.data}
-              loading={queueStats.isLoading}
-            />
-          </section>
-          <section>
-            <SectionHeading
-              title="Workers"
-              action={
-                <Badge tone="success" dot>
-                  {onlineWorkers} online
-                </Badge>
-              }
-            />
-            <WorkersCard workers={workers.data} loading={workers.isLoading} />
-          </section>
-        </div>
-
+      <div className="grid gap-[var(--gap)] lg:grid-cols-[1.5fr_1fr]">
         <section>
           <SectionHeading
-            title="Recent jobs"
+            title="Busiest queues"
             action={
               <Button variant="ghost" size="sm" asChild>
-                <Link to="/jobs" search={{ page: 0, pageSize: 25 }}>
-                  Open Jobs
+                <Link to="/queues">
+                  View all
                   <ChevronRight aria-hidden />
                 </Link>
               </Button>
             }
           />
-          <RecentJobs
-            jobs={jobs.data}
-            loading={jobs.isLoading}
-            error={jobs.error}
-            onRetry={() => jobs.refetch()}
+          <BusiestQueues
+            queueStats={queueStats.data}
+            paused={paused.data}
+            loading={queueStats.isLoading}
           />
         </section>
+        <section>
+          <SectionHeading
+            title="Workers"
+            action={
+              <Badge tone="success" dot>
+                {onlineWorkers} online
+              </Badge>
+            }
+          />
+          <WorkersCard workers={workers.data} loading={workers.isLoading} />
+        </section>
       </div>
-    </>
+
+      <section>
+        <SectionHeading
+          title="Recent jobs"
+          action={
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/jobs" search={{ page: 0, pageSize: 25 }}>
+                Open Jobs
+                <ChevronRight aria-hidden />
+              </Link>
+            </Button>
+          }
+        />
+        <RecentJobs
+          jobs={jobs.data}
+          loading={jobs.isLoading}
+          error={jobs.error}
+          onRetry={() => jobs.refetch()}
+        />
+      </section>
+    </div>
   );
 }

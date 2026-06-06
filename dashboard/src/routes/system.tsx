@@ -23,40 +23,38 @@ function SystemPage() {
   const interception = useInterceptionStats();
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
         eyebrow="Reliability"
         title="System"
         description="Core internals — resource-proxy reconstruction and call interception."
       />
-      <div className="flex flex-col gap-[var(--page-gap)]">
-        <section>
-          <SectionHeading
-            title="Resource proxies"
-            action={
-              <span className="text-xs text-[var(--fg-subtle)]">
-                reconstructed across worker boundaries
-              </span>
-            }
-          />
-          <ProxyTable
-            stats={proxy.data}
-            loading={proxy.isLoading}
-            error={proxy.error}
-            onRetry={() => proxy.refetch()}
-          />
-        </section>
+      <section>
+        <SectionHeading
+          title="Resource proxies"
+          action={
+            <span className="text-xs text-[var(--fg-subtle)]">
+              reconstructed across worker boundaries
+            </span>
+          }
+        />
+        <ProxyTable
+          stats={proxy.data}
+          loading={proxy.isLoading}
+          error={proxy.error}
+          onRetry={() => proxy.refetch()}
+        />
+      </section>
 
-        <section>
-          <SectionHeading title="Call interception" />
-          <InterceptionTable
-            stats={interception.data}
-            loading={interception.isLoading}
-            error={interception.error}
-            onRetry={() => interception.refetch()}
-          />
-        </section>
-      </div>
-    </>
+      <section>
+        <SectionHeading title="Call interception" />
+        <InterceptionTable
+          stats={interception.data}
+          loading={interception.isLoading}
+          error={interception.error}
+          onRetry={() => interception.refetch()}
+        />
+      </section>
+    </div>
   );
 }
