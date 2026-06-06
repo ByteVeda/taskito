@@ -4,6 +4,7 @@ import {
   BarChart3,
   Box,
   CircuitBoard,
+  Cog,
   LayoutDashboard,
   ListTree,
   type LucideIcon,
@@ -13,6 +14,7 @@ import {
   Settings2,
   Skull,
   Sun,
+  Webhook as WebhookIcon,
 } from "lucide-react";
 import { useCallback } from "react";
 import {
@@ -45,6 +47,9 @@ const NAV_COMMANDS: NavCmd[] = [
   { label: "Dead letters", to: "/dead-letters", icon: Skull },
   { label: "Circuit breakers", to: "/circuit-breakers", icon: CircuitBoard },
   { label: "System", to: "/system", icon: Settings2 },
+  { label: "Tasks", to: "/tasks", icon: ListTree },
+  { label: "Webhooks", to: "/webhooks", icon: WebhookIcon },
+  { label: "Settings", to: "/settings", icon: Cog },
 ];
 
 const REFRESH_COMMANDS: RefreshOption[] = ["2s", "5s", "10s", "off"];
