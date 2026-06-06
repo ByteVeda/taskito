@@ -1,8 +1,11 @@
-import { Server, Skull } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ChevronRight, Server, Skull } from "lucide-react";
 import { Badge, Card, EmptyState, Skeleton } from "@/components/ui";
 import { isWorkerStale } from "@/features/workers/utils";
 import type { Worker } from "@/lib/api-types";
 import { formatRelative } from "@/lib/time";
+
+const VISIBLE_LIMIT = 6;
 
 interface WorkersCardProps {
   workers: Worker[] | undefined;
@@ -29,7 +32,7 @@ export function WorkersCard({ workers, loading }: WorkersCardProps) {
   return (
     <Card>
       <div className="flex flex-col gap-2.5 p-[var(--pad)]">
-        {list.slice(0, 6).map((w) => {
+        {list.slice(0, VISIBLE_LIMIT).map((w) => {
           const stale = isWorkerStale(w);
           const queues = w.queues
             .split(",")
@@ -65,6 +68,15 @@ export function WorkersCard({ workers, loading }: WorkersCardProps) {
             </div>
           );
         })}
+        {list.length > VISIBLE_LIMIT ? (
+          <Link
+            to="/workers"
+            className="flex items-center justify-center gap-1 rounded-md py-1.5 text-xs font-medium text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]"
+          >
+            +{list.length - VISIBLE_LIMIT} more
+            <ChevronRight className="size-3.5" aria-hidden />
+          </Link>
+        ) : null}
       </div>
     </Card>
   );
