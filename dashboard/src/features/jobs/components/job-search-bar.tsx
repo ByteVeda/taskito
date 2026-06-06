@@ -28,7 +28,7 @@ export function JobSearchBar({ className }: JobSearchBarProps) {
   return (
     <form onSubmit={handleSubmit} className={cn("relative flex items-center", className)}>
       <Search
-        className="pointer-events-none absolute left-3 size-3.5 text-[var(--fg-subtle)]"
+        className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--fg-subtle)]"
         aria-hidden
       />
       <Input
@@ -36,7 +36,7 @@ export function JobSearchBar({ className }: JobSearchBarProps) {
         onChange={(e) => setId(e.target.value)}
         placeholder="Jump to job ID…"
         aria-label="Jump to job by ID"
-        className="pl-9 pr-9 font-mono text-xs"
+        className="pl-8 pr-9 font-mono text-xs"
       />
       {id ? (
         <button

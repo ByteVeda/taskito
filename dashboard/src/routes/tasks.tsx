@@ -35,7 +35,7 @@ function TasksPage() {
         actions={
           <div className="relative w-60">
             <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 size-[15px] -translate-y-1/2 text-[var(--fg-subtle)]"
+              className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--fg-subtle)]"
               aria-hidden
             />
             <Input
