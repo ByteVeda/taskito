@@ -1,8 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ExternalLink as ExternalLinkIcon } from "lucide-react";
 import { LiveDot } from "@/components/ui";
-import { statsQuery } from "@/features/overview/hooks";
+import { useStats } from "@/features/overview/hooks";
 import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
 import { formatCount } from "@/lib/number";
@@ -14,9 +13,7 @@ export function Sidebar() {
   const { pathname } = useLocation();
   const { title } = useBranding();
   const externalLinks = useExternalLinks();
-  // Shares the ["stats"] cache with the Overview — no extra polling here, just
-  // a one-time fetch that stays in sync as other views refetch.
-  const { data: stats, isError, isPending } = useQuery(statsQuery());
+  const { data: stats, isError, isPending } = useStats();
   const deadCount = stats?.dead ?? 0;
 
   const coreTone = isError ? "danger" : isPending && !stats ? "warning" : "success";
