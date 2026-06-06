@@ -13,19 +13,15 @@ For usage and configuration, see the
 [Mesh Scheduling guide](/guides/operations/mesh).
 
 <Mermaid
-  chart={`block-beta
-    columns 1
-    block:dispatch["DISPATCH LAYER — enhanced poller"]
-      columns 3
-      d1["Local deque"] d2["Affinity routing"] d3["Work-stealing"]
+  chart={`flowchart TB
+    subgraph dispatch["DISPATCH LAYER — enhanced poller"]
+      d1["Local deque"] ~~~ d2["Affinity routing"] ~~~ d3["Work-stealing"]
     end
-    block:mesh["MESH LAYER — taskito-mesh crate"]
-      columns 3
-      m1["SWIM gossip"] m2["Membership"] m3["Failure detection"]
+    subgraph mesh["MESH LAYER — taskito-mesh crate"]
+      m1["SWIM gossip"] ~~~ m2["Membership"] ~~~ m3["Failure detection"]
     end
-    block:durability["DURABILITY LAYER — unchanged"]
-      columns 3
-      s1["SQLite"] s2["Postgres"] s3["Redis"]
+    subgraph durability["DURABILITY LAYER — unchanged"]
+      s1["SQLite"] ~~~ s2["Postgres"] ~~~ s3["Redis"]
     end
     dispatch --> mesh --> durability
   `}
@@ -167,17 +163,13 @@ Each worker maintains a `Mutex<VecDeque<Job>>` as a local job buffer with
 a configurable capacity (`local_buffer_capacity`, default 64):
 
 <Mermaid
-  chart={`block-beta
-    columns 1
-    block:deque["VecDeque — front (cold/stealable) → back (hot/owned)"]
-      columns 5
-      j1["Non-owned"] j2["Non-owned"] j3["Mixed"] j4["Owned"] j5["Owned"]
+  chart={`flowchart LR
+    subgraph deque["VecDeque — front ← steal · pop → back"]
+      direction LR
+      j1["Non-owned"] --- j2["Non-owned"] --- j3["Mixed"] --- j4["Owned"] --- j5["Owned"]
     end
-    block:ops[" "]
-      columns 2
-      steal["← steal(n) from front"]
-      pop["pop() from back →"]
-    end
+    steal["steal(n) FIFO"] -.-> j1
+    j5 -.-> pop["pop() LIFO"]
   `}
 />
 
