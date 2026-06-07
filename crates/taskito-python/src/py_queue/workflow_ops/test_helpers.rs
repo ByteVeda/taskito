@@ -55,6 +55,8 @@ pub(crate) fn make_test_pyqueue() -> PyQueue {
         scheduler_reap_interval: 100,
         scheduler_cleanup_interval: 1200,
         scheduler_batch_size: 1,
+        dlq_auto_retry_delay_ms: None,
+        dlq_auto_retry_max: 1,
         namespace: None,
         push_dispatch: false,
         dispatcher: Arc::new(Mutex::new(None)),
