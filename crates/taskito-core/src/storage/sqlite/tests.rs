@@ -1002,3 +1002,111 @@ fn test_side_table_stays_one_to_one_with_live_jobs() {
     assert_eq!(jobs_row_count(&storage, &job.id), 0);
     assert_eq!(payload_row_count(&storage, &job.id), 0);
 }
+
+// -- DLQ policies --
+
+#[test]
+fn test_delete_dead_existing() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("del_dead")).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+    let running = storage.get_job(&job.id).unwrap().unwrap();
+    storage.move_to_dlq(&running, "err", None).unwrap();
+
+    let dead = storage.list_dead(10, 0).unwrap();
+    assert_eq!(dead.len(), 1);
+
+    assert!(storage.delete_dead(&dead[0].id).unwrap());
+    assert!(storage.list_dead(10, 0).unwrap().is_empty());
+}
+
+#[test]
+fn test_delete_dead_nonexistent() {
+    let storage = test_storage();
+    assert!(!storage.delete_dead("nope").unwrap());
+}
+
+#[test]
+fn test_purge_dead_with_ttl_global() {
+    let storage = test_storage();
+    let now = now_millis();
+
+    // Create a DLQ entry with no per-entry TTL
+    let job = storage.enqueue(make_job("ttl_global")).unwrap();
+    storage.dequeue("default", now + 1000, None).unwrap();
+    let running = storage.get_job(&job.id).unwrap().unwrap();
+    storage.move_to_dlq(&running, "err", None).unwrap();
+
+    // Cutoff in the future purges it
+    let purged = storage.purge_dead_with_ttl(now + 5000).unwrap();
+    assert_eq!(purged, 1);
+}
+
+#[test]
+fn test_purge_dead_with_ttl_per_entry() {
+    let storage = test_storage();
+    let now = now_millis();
+
+    // Create a job with per-entry TTL
+    let mut new_job = make_job("ttl_entry");
+    new_job.result_ttl_ms = Some(1); // 1ms TTL
+    let job = storage.enqueue(new_job).unwrap();
+    storage.dequeue("default", now + 1000, None).unwrap();
+    let running = storage.get_job(&job.id).unwrap().unwrap();
+    storage.move_to_dlq(&running, "err", None).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // Global cutoff in the past — only per-entry TTL should purge
+    let purged = storage.purge_dead_with_ttl(0).unwrap();
+    assert_eq!(purged, 1);
+}
+
+#[test]
+fn test_list_dead_for_retry() {
+    let storage = test_storage();
+    let now = now_millis();
+
+    let job = storage.enqueue(make_job("retry_cand")).unwrap();
+    storage.dequeue("default", now + 1000, None).unwrap();
+    let running = storage.get_job(&job.id).unwrap().unwrap();
+    storage.move_to_dlq(&running, "err", None).unwrap();
+
+    // Cutoff in the future, max_retries=3 — should find it
+    let cands = storage.list_dead_for_retry(now + 5000, 3, 10).unwrap();
+    assert_eq!(cands.len(), 1);
+    assert_eq!(cands[0].dlq_retry_count, 0);
+
+    // max_retries=0 — should find nothing
+    let cands = storage.list_dead_for_retry(now + 5000, 0, 10).unwrap();
+    assert!(cands.is_empty());
+
+    // Cutoff in the past — should find nothing
+    let cands = storage.list_dead_for_retry(0, 3, 10).unwrap();
+    assert!(cands.is_empty());
+}
+
+#[test]
+fn test_dlq_retry_count_round_trip() {
+    let storage = test_storage();
+    let now = now_millis();
+
+    // Enqueue → dequeue → DLQ (count=0) → retry → dequeue → DLQ (count=1)
+    let job = storage.enqueue(make_job("count_rt")).unwrap();
+    storage.dequeue("default", now + 1000, None).unwrap();
+    let running = storage.get_job(&job.id).unwrap().unwrap();
+    storage.move_to_dlq(&running, "err1", None).unwrap();
+
+    let dead = storage.list_dead(10, 0).unwrap();
+    assert_eq!(dead[0].dlq_retry_count, 0);
+
+    let new_id = storage.retry_dead(&dead[0].id).unwrap();
+    storage.dequeue("default", now + 2000, None).unwrap();
+    let running2 = storage.get_job(&new_id).unwrap().unwrap();
+    storage.move_to_dlq(&running2, "err2", None).unwrap();
+
+    let dead2 = storage.list_dead(10, 0).unwrap();
+    assert_eq!(dead2[0].dlq_retry_count, 1);
+}

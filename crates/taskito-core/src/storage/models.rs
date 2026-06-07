@@ -130,6 +130,7 @@ pub struct DeadLetterRow {
     pub timeout_ms: i64,
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<String>,
+    pub dlq_retry_count: i32,
 }
 
 /// Insertable struct for dead letter entries.
@@ -151,6 +152,7 @@ pub struct NewDeadLetterRow<'a> {
     pub timeout_ms: i64,
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<&'a str>,
+    pub dlq_retry_count: i32,
 }
 
 /// A row in the `rate_limits` table.
