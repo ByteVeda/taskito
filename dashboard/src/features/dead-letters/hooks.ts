@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRefreshInterval } from "@/providers";
-import { fetchDeadLetters, purgeDeadLetters, retryDeadLetter } from "./api";
+import { deleteDeadLetter, fetchDeadLetters, purgeDeadLetters, retryDeadLetter } from "./api";
 
 const KEY = {
   all: ["dead-letters"] as const,
@@ -40,6 +40,25 @@ export function useRetryDeadLetter() {
       toast.success("Re-enqueued", {
         description: `New job: ${result.new_job_id.slice(0, 8)}…`,
       });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: KEY.all });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
+export function useDeleteDeadLetter() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteDeadLetter(id),
+    onError: (error) => {
+      toast.error("Couldn't discard dead letter", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    },
+    onSuccess: () => {
+      toast.success("Dead letter discarded");
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: KEY.all });

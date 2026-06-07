@@ -11,6 +11,7 @@ function dl(overrides: Partial<DeadLetter>): DeadLetter {
     error: overrides.error ?? null,
     retry_count: overrides.retry_count ?? 3,
     failed_at: overrides.failed_at ?? 1_700_000_000_000,
+    dlq_retry_count: overrides.dlq_retry_count ?? 0,
   };
 }
 

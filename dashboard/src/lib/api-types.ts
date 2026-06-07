@@ -114,6 +114,7 @@ export interface DeadLetter {
   retry_count: number;
   /** Unix milliseconds. */
   failed_at: number;
+  dlq_retry_count: number;
 }
 
 export interface TaskMetrics {
