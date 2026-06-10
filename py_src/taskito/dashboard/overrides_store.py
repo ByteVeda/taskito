@@ -182,6 +182,15 @@ def _now() -> int:
     return int(time.time() * 1000)
 
 
+_SECONDS_ERA_THRESHOLD = 10**12
+
+
+def _ensure_millis(ts: int) -> int:
+    if 0 < ts < _SECONDS_ERA_THRESHOLD:
+        return ts * 1000
+    return ts
+
+
 def _parse_json(raw: str | None) -> dict[str, Any]:
     if not raw:
         return {}
@@ -250,7 +259,7 @@ class OverridesStore:
             timeout=row.get("timeout"),
             priority=row.get("priority"),
             paused=bool(row.get("paused", False)),
-            updated_at=int(row.get("updated_at", 0)),
+            updated_at=_ensure_millis(int(row.get("updated_at", 0))),
         )
 
     # ── Queues ─────────────────────────────────────────────────
@@ -301,7 +310,7 @@ class OverridesStore:
             rate_limit=row.get("rate_limit"),
             max_concurrent=row.get("max_concurrent"),
             paused=bool(row.get("paused", False)),
-            updated_at=int(row.get("updated_at", 0)),
+            updated_at=_ensure_millis(int(row.get("updated_at", 0))),
         )
 
     # ── Apply (used at worker startup) ─────────────────────────
