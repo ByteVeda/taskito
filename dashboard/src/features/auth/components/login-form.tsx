@@ -10,12 +10,17 @@ import { OAuthButton } from "./oauth-button";
 const ERROR_MESSAGES: Record<string, string> = {
   invalid_credentials: "Invalid username or password.",
   setup_required: "Dashboard setup is required before login.",
+  oauth_state_invalid: "OAuth session expired or was already used. Try again.",
+  oauth_failed: "OAuth sign-in failed. The provider returned an error.",
+  oauth_denied: "Access denied. Your account is not in the allowed list.",
 };
 
 export function LoginForm() {
   const navigate = useNavigate();
-  const search = useSearch({ strict: false }) as { next?: string } | undefined;
+  const search = useSearch({ strict: false }) as { next?: string; error?: string } | undefined;
   const nextPath = typeof search?.next === "string" ? search.next : undefined;
+  const oauthError =
+    typeof search?.error === "string" ? (ERROR_MESSAGES[search.error] ?? search.error) : null;
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -53,6 +58,16 @@ export function LoginForm() {
             : "Choose a provider to continue."}
         </p>
       </div>
+
+      {oauthError ? (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-md bg-danger-dim px-3 py-2 text-sm text-danger"
+        >
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>{oauthError}</span>
+        </div>
+      ) : null}
 
       {hasOAuth ? (
         <div className="flex flex-col gap-2">
