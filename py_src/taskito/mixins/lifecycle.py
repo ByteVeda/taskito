@@ -27,6 +27,7 @@ from taskito.testing import TestMode
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from taskito.mesh import MeshWorker
     from taskito.resources.definition import ResourceDefinition
 
 
@@ -108,6 +109,7 @@ class QueueLifecycleMixin:
         tags: list[str] | None = None,
         pool: str = "thread",
         app: str | None = None,
+        mesh: MeshWorker | None = None,
     ) -> None:
         """Start the worker loop. Blocks until interrupted.
 
@@ -120,6 +122,9 @@ class QueueLifecycleMixin:
                 true parallelism on CPU-bound tasks.
             app: Import path to the Queue instance (e.g. ``"myapp:queue"``).
                 Required when ``pool="prefork"``.
+            mesh: Mesh scheduling config. Pass a ``MeshWorker`` instance to
+                enable gossip-based worker discovery, task affinity, and
+                work-stealing. Requires the ``mesh`` cargo feature.
         """
         if pool == "prefork":
             if sys.platform == "win32":
@@ -250,6 +255,7 @@ class QueueLifecycleMixin:
                     except Exception:
                         logger.exception("Failed to apply paused state for queue %s", queue_name)
             queue_configs_json = json.dumps(merged_queue_configs) if merged_queue_configs else None
+            mesh_config_json = mesh.to_json() if mesh is not None else None
             self._inner.run_worker(
                 task_registry=self._task_registry,
                 task_configs=self._task_configs,
@@ -263,6 +269,7 @@ class QueueLifecycleMixin:
                 queue_configs=queue_configs_json,
                 pool=pool if pool != "thread" else None,
                 app_path=app,
+                mesh_config=mesh_config_json,
             )
         except KeyboardInterrupt:
             logger.info("Cold shutdown (terminating immediately)")

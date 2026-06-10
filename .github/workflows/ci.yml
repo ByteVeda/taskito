@@ -131,6 +131,9 @@ jobs:
       - name: Check build with native-async features
         run: cargo check --workspace --features native-async
 
+      - name: Check build with mesh feature
+        run: cargo check --workspace --features mesh
+
   rust-test-postgres:
     name: Rust Tests (PostgreSQL)
     needs: changes
@@ -215,6 +218,35 @@ jobs:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_REDIS_TEST_URL: redis://localhost:6379/15
 
+  rust-test-mesh:
+    name: Rust Tests (Mesh)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+          cache-bin: false
+          prefix-key: v1-rust-bin-fix
+
+      - name: Run mesh crate tests
+        run: cargo test -p taskito-mesh
+        env:
+          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+
   test:
     name: Python Tests (${{ matrix.os }} / Python ${{ matrix.python-version }})
     needs: [lint, changes]
@@ -272,7 +304,7 @@ jobs:
         uses: PyO3/maturin-action@v1.51.0
         with:
           command: develop
-          args: --release --features extension-module,postgres,redis,native-async,workflows
+          args: --release --features extension-module,postgres,redis,native-async,workflows,mesh
           maturin-version: v1.13.3
 
       - name: Run Python test suite
@@ -284,7 +316,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, rust-test, rust-test-postgres, rust-test-redis, test]
+    needs: [lint, rust-test, rust-test-postgres, rust-test-redis, rust-test-mesh, test]
     runs-on: ubuntu-latest
     steps:
       - name: Check that no required job failed

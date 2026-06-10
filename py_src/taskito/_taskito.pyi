@@ -188,6 +188,7 @@ class PyQueue:
         queue_configs: str | None = None,
         pool: str | None = None,
         app_path: str | None = None,
+        mesh_config: str | None = None,
     ) -> None: ...
     def worker_heartbeat(
         self,

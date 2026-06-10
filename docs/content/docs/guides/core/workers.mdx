@@ -303,3 +303,7 @@ See [Native Async Tasks](/guides/advanced-execution) for the full guide.
 3. Async jobs are dispatched to the **native async pool** and scheduled on a dedicated Python event loop
 4. Results from both pools flow back through a **result channel** to the main loop
 5. The main loop updates job status in SQLite (complete, retry, or DLQ)
+
+For multi-worker deployments, [mesh scheduling](/guides/operations/mesh)
+adds gossip-based discovery, task affinity, and work-stealing between
+workers.
