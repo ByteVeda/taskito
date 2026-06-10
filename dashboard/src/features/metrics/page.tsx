@@ -81,7 +81,7 @@ export default function MetricsPage() {
   const totals = useMemo(() => summarize(summary.data), [summary.data]);
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
         title="Metrics"
         description="Throughput, latency, and success rate across your tasks."
@@ -97,40 +97,38 @@ export default function MetricsPage() {
           </>
         }
       />
-      <div className="flex flex-col gap-[var(--page-gap)]">
-        <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
-          <StatCard
-            label="Total runs"
-            tone="neutral"
-            icon={<Zap />}
-            value={formatCount(totals.totalRuns)}
-            hint={`across ${formatCount(totals.taskCount)} tasks`}
-          />
-          <StatCard
-            label="Success rate"
-            tone="success"
-            icon={<CheckCircle2 />}
-            value={totals.successRate == null ? "—" : formatPercent(totals.successRate, 2)}
-          />
-          <StatCard
-            label="Slowest p95"
-            tone="warning"
-            icon={<Clock />}
-            value={totals.slowestTask ? formatDuration(totals.slowestP95) : "—"}
-            hint={totals.slowestTask ?? undefined}
-          />
-        </div>
-        <div className="grid gap-[var(--gap)] lg:grid-cols-2">
-          <ThroughputChart buckets={series.data} loading={series.isLoading} />
-          <LatencyChart buckets={series.data} loading={series.isLoading} />
-        </div>
-        <MetricsTable
-          metrics={summary.data}
-          loading={summary.isLoading}
-          error={summary.error}
-          onRetry={() => summary.refetch()}
+      <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
+        <StatCard
+          label="Total runs"
+          tone="neutral"
+          icon={<Zap />}
+          value={formatCount(totals.totalRuns)}
+          hint={`across ${formatCount(totals.taskCount)} tasks`}
+        />
+        <StatCard
+          label="Success rate"
+          tone="success"
+          icon={<CheckCircle2 />}
+          value={totals.successRate == null ? "—" : formatPercent(totals.successRate, 2)}
+        />
+        <StatCard
+          label="Slowest p95"
+          tone="warning"
+          icon={<Clock />}
+          value={totals.slowestTask ? formatDuration(totals.slowestP95) : "—"}
+          hint={totals.slowestTask ?? undefined}
         />
       </div>
-    </>
+      <div className="grid gap-[var(--gap)] lg:grid-cols-2">
+        <ThroughputChart buckets={series.data} loading={series.isLoading} />
+        <LatencyChart buckets={series.data} loading={series.isLoading} />
+      </div>
+      <MetricsTable
+        metrics={summary.data}
+        loading={summary.isLoading}
+        error={summary.error}
+        onRetry={() => summary.refetch()}
+      />
+    </div>
   );
 }

@@ -42,7 +42,7 @@ export default function LogsPage() {
   const lineCount = logs.data?.length ?? 0;
 
   return (
-    <>
+    <div className="flex flex-col gap-[var(--page-gap)]">
       <PageHeader
         eyebrow="Monitoring"
         title="Logs"
@@ -58,24 +58,22 @@ export default function LogsPage() {
           </Button>
         }
       />
-      <div className="flex flex-col gap-[var(--page-gap)]">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <LogFilters task={search.task} level={search.level} onChange={setFilter} />
-          <span className="ml-auto font-mono text-xs tabular-nums text-[var(--fg-subtle)]">
-            {formatCount(lineCount)} lines
-          </span>
-        </div>
-        <Card>
-          <CardContent className="p-0">
-            <LogStream
-              logs={logs.data}
-              loading={logs.isLoading || (logs.isFetching && !logs.data)}
-              error={logs.error}
-              onRetry={() => logs.refetch()}
-            />
-          </CardContent>
-        </Card>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <LogFilters task={search.task} level={search.level} onChange={setFilter} />
+        <span className="ml-auto font-mono text-xs tabular-nums text-[var(--fg-subtle)]">
+          {formatCount(lineCount)} lines
+        </span>
       </div>
-    </>
+      <Card>
+        <CardContent className="p-0">
+          <LogStream
+            logs={logs.data}
+            loading={logs.isLoading || (logs.isFetching && !logs.data)}
+            error={logs.error}
+            onRetry={() => logs.refetch()}
+          />
+        </CardContent>
+      </Card>
+    </div>
   );
 }

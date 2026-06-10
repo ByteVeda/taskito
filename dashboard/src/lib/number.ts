@@ -11,11 +11,3 @@ export function formatPercent(value: number, digits = 1): string {
   if (!Number.isFinite(value)) return "—";
   return `${(value * 100).toFixed(digits)}%`;
 }
-
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes)) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const exp = Math.min(units.length - 1, Math.floor(Math.log(Math.max(bytes, 1)) / Math.log(1024)));
-  const value = bytes / 1024 ** exp;
-  return `${value.toFixed(value < 10 ? 2 : 1)} ${units[exp]}`;
-}

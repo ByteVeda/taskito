@@ -67,26 +67,25 @@ function DeadLettersPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Reliability"
-        title="Dead letters"
-        description="Jobs that exhausted every retry. Inspect the failure, replay them, or let them go."
-        actions={
-          <>
-            <ViewToggle value={view} onChange={setView} />
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => setConfirmPurge(true)}
-              disabled={purge.isPending || !items || items.length === 0}
-            >
-              <Trash2 aria-hidden /> Purge all
-            </Button>
-          </>
-        }
-      />
-
       <div className="flex flex-col gap-[var(--page-gap)]">
+        <PageHeader
+          eyebrow="Reliability"
+          title="Dead letters"
+          description="Jobs that exhausted every retry. Inspect the failure, replay them, or let them go."
+          actions={
+            <>
+              <ViewToggle value={view} onChange={setView} />
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => setConfirmPurge(true)}
+                disabled={purge.isPending || !items || items.length === 0}
+              >
+                <Trash2 aria-hidden /> Purge all
+              </Button>
+            </>
+          }
+        />
         <div className="grid gap-[var(--gap)] grid-cols-[repeat(auto-fit,minmax(186px,1fr))]">
           <StatCard
             label="On this page"
@@ -109,7 +108,6 @@ function DeadLettersPage() {
             value={oldestFailedAt != null ? formatRelative(oldestFailedAt) : "—"}
           />
         </div>
-
         <div className="flex flex-col gap-4">
           <DeadLetterList
             items={items}

@@ -202,3 +202,63 @@ export interface InterceptionStats {
   strategy_counts: Record<string, number>;
   max_depth_reached: number;
 }
+
+export type WorkflowState =
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "completed_with_failures"
+  | "failed"
+  | "cancelled"
+  | "compensating"
+  | "compensated"
+  | "compensation_failed";
+
+export type WorkflowNodeStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped"
+  | "waiting_approval"
+  | "cache_hit"
+  | "compensating"
+  | "compensated"
+  | "compensation_failed";
+
+export interface WorkflowRun {
+  id: string;
+  definition_id: string;
+  state: WorkflowState;
+  params: string | null;
+  /** Unix milliseconds; null if not started. */
+  started_at: number | null;
+  /** Unix milliseconds; null if not completed. */
+  completed_at: number | null;
+  error: string | null;
+  parent_run_id: string | null;
+  parent_node_name: string | null;
+  /** Unix milliseconds. */
+  created_at: number;
+}
+
+export interface WorkflowNode {
+  node_name: string;
+  status: WorkflowNodeStatus;
+  job_id: string | null;
+  result_hash: string | null;
+  fan_out_count: number | null;
+  /** Unix milliseconds; null if not started. */
+  started_at: number | null;
+  /** Unix milliseconds; null if not completed. */
+  completed_at: number | null;
+  error: string | null;
+  compensation_job_id: string | null;
+  /** Unix milliseconds. */
+  compensation_started_at: number | null;
+  /** Unix milliseconds. */
+  compensation_completed_at: number | null;
+  compensation_error: string | null;
+}
