@@ -73,12 +73,20 @@ impl MeshState {
         let worker_id = member.info.worker_id.clone();
         let is_alive = member.state == MemberState::Alive;
         let mut members = self.members.write().unwrap_or_else(|p| p.into_inner());
-        let is_new = !members.contains_key(&worker_id);
-        members.insert(worker_id.clone(), member);
+        let previous = members.insert(worker_id.clone(), member);
+        let is_new = previous.is_none();
+        let was_alive = previous
+            .map(|m| m.state == MemberState::Alive)
+            .unwrap_or(false);
+        drop(members);
 
-        if is_new && is_alive {
+        if was_alive != is_alive {
             let mut ring = self.ring.write().unwrap_or_else(|p| p.into_inner());
-            ring.add_worker(&worker_id);
+            if is_alive {
+                ring.add_worker(&worker_id);
+            } else {
+                ring.remove_worker(&worker_id);
+            }
         }
         is_new
     }
