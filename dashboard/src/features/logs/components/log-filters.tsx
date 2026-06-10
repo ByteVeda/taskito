@@ -50,7 +50,7 @@ export function LogFilters({ task, level, onChange, className }: LogFiltersProps
       />
       <div className="relative max-w-80 flex-1">
         <Search
-          className="pointer-events-none absolute left-2.5 top-1/2 size-[15px] -translate-y-1/2 text-[var(--fg-subtle)]"
+          className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--fg-subtle)]"
           aria-hidden
         />
         <Input

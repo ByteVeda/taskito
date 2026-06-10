@@ -8,15 +8,10 @@ import type {
   TestWebhookResult,
   UpdateWebhookInput,
   Webhook,
-  WebhookDelivery,
 } from "./types";
 
 export function listWebhooks(signal?: AbortSignal): Promise<Webhook[]> {
   return api.get<Webhook[]>("/api/webhooks", { signal });
-}
-
-export function getWebhook(id: string, signal?: AbortSignal): Promise<Webhook> {
-  return api.get<Webhook>(`/api/webhooks/${id}`, { signal });
 }
 
 export function createWebhook(input: CreateWebhookInput): Promise<Webhook> {
@@ -54,16 +49,6 @@ export function listDeliveries(
       limit: options.limit,
       offset: options.offset,
     },
-  });
-}
-
-export function getDelivery(
-  subscriptionId: string,
-  deliveryId: string,
-  signal?: AbortSignal,
-): Promise<WebhookDelivery> {
-  return api.get<WebhookDelivery>(`/api/webhooks/${subscriptionId}/deliveries/${deliveryId}`, {
-    signal,
   });
 }
 

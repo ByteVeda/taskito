@@ -1,4 +1,4 @@
-import type { JobStatus } from "@/lib/api-types";
+import type { JobStatus, WorkflowNodeStatus, WorkflowState } from "@/lib/api-types";
 
 export type { JobStatus };
 
@@ -46,6 +46,60 @@ export const CIRCUIT_LABEL: Record<CircuitState, string> = {
   closed: "Closed",
   half_open: "Half open",
   open: "Open",
+};
+
+export const WORKFLOW_STATE_TONE: Record<WorkflowState, Tone> = {
+  pending: "neutral",
+  running: "info",
+  paused: "warning",
+  completed: "success",
+  completed_with_failures: "danger",
+  failed: "danger",
+  cancelled: "neutral",
+  compensating: "info",
+  compensated: "success",
+  compensation_failed: "danger",
+};
+
+export const WORKFLOW_STATE_LABEL: Record<WorkflowState, string> = {
+  pending: "Pending",
+  running: "Running",
+  paused: "Paused",
+  completed: "Completed",
+  completed_with_failures: "Partial failure",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  compensating: "Compensating",
+  compensated: "Compensated",
+  compensation_failed: "Compensation failed",
+};
+
+export const WORKFLOW_NODE_TONE: Record<WorkflowNodeStatus, Tone> = {
+  pending: "neutral",
+  ready: "neutral",
+  running: "info",
+  completed: "success",
+  failed: "danger",
+  skipped: "warning",
+  waiting_approval: "warning",
+  cache_hit: "success",
+  compensating: "info",
+  compensated: "success",
+  compensation_failed: "danger",
+};
+
+export const WORKFLOW_NODE_LABEL: Record<WorkflowNodeStatus, string> = {
+  pending: "Pending",
+  ready: "Ready",
+  running: "Running",
+  completed: "Completed",
+  failed: "Failed",
+  skipped: "Skipped",
+  waiting_approval: "Awaiting approval",
+  cache_hit: "Cache hit",
+  compensating: "Compensating",
+  compensated: "Compensated",
+  compensation_failed: "Compensation failed",
 };
 
 export function resourceTone(health: string): Tone {

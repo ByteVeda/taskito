@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
-import { LogOut, User as UserIcon } from "lucide-react";
+import { KeyRound, LogOut, User as UserIcon } from "lucide-react";
+import { useState } from "react";
 import {
   Button,
   DropdownMenu,
@@ -10,11 +11,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui";
 import { useLogout, useWhoami } from "../hooks";
+import { ChangePasswordDialog } from "./change-password-dialog";
 
 export function UserMenu() {
   const { data } = useWhoami();
   const navigate = useNavigate();
   const logout = useLogout();
+  const [pwOpen, setPwOpen] = useState(false);
 
   if (!data?.user) return null;
 
@@ -46,6 +49,9 @@ export function UserMenu() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => setPwOpen(true)}>
+          <KeyRound aria-hidden /> Change password
+        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={onLogout}
           disabled={logout.isPending}
@@ -54,6 +60,7 @@ export function UserMenu() {
           <LogOut aria-hidden /> Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>
+      <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
     </DropdownMenu>
   );
 }

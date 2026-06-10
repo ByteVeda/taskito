@@ -4,6 +4,7 @@ import {
   Box,
   CircuitBoard,
   Cog,
+  GitBranch,
   LayoutDashboard,
   ListTree,
   type LucideIcon,
@@ -37,6 +38,7 @@ export const NAV: NavGroup[] = [
       { to: "/jobs", label: "Jobs", icon: ListTree },
       { to: "/metrics", label: "Metrics", icon: BarChart3 },
       { to: "/logs", label: "Logs", icon: ScrollText },
+      { to: "/workflows", label: "Workflows", icon: GitBranch },
     ],
   },
   {

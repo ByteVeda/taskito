@@ -243,11 +243,11 @@ class AuthStore:
         users = self._load_users()
         if username in users:
             raise ValueError(f"user '{username}' already exists")
-        now = int(time.time())
+        now_ms = int(time.time() * 1000)
         users[username] = {
             "password_hash": hash_password(password),
             "role": role,
-            "created_at": now,
+            "created_at": now_ms,
             "last_login_at": None,
         }
         self._save_users(users)
@@ -280,7 +280,7 @@ class AuthStore:
             return None
         if not verify_password(password, str(row["password_hash"])):
             return None
-        row["last_login_at"] = int(time.time())
+        row["last_login_at"] = int(time.time() * 1000)
         users[username] = row
         self._save_users(users)
         return self._row_to_user(username, row)
@@ -328,7 +328,7 @@ class AuthStore:
                 existing["email"] = email
             if name and existing.get("display_name") != name:
                 existing["display_name"] = name
-            existing["last_login_at"] = int(time.time())
+            existing["last_login_at"] = int(time.time() * 1000)
             users[username] = existing
             self._save_users(users)
             return self._row_to_user(username, existing)
@@ -339,12 +339,12 @@ class AuthStore:
             admin_emails=admin_emails,
             user_table_empty=not users,
         )
-        now = int(time.time())
+        now_ms = int(time.time() * 1000)
         users[username] = {
             "password_hash": f"{OAUTH_PASSWORD_HASH_PREFIX}{slot}",
             "role": role,
-            "created_at": now,
-            "last_login_at": now,
+            "created_at": now_ms,
+            "last_login_at": now_ms,
             "email": email,
             "display_name": name,
         }
