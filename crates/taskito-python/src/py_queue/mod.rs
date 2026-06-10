@@ -89,6 +89,29 @@ impl PyQueue {
         dlq_auto_retry_delay: Option<i64>,
         dlq_auto_retry_max: i32,
     ) -> PyResult<Self> {
+        if let Some(delay) = dlq_auto_retry_delay {
+            if delay < 0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "dlq_auto_retry_delay must be non-negative",
+                ));
+            }
+        }
+        if dlq_auto_retry_max < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "dlq_auto_retry_max must be non-negative",
+            ));
+        }
+
+        let dlq_auto_retry_delay_ms = dlq_auto_retry_delay
+            .map(|s| {
+                s.checked_mul(1000).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "dlq_auto_retry_delay too large, would overflow",
+                    )
+                })
+            })
+            .transpose()?;
+
         // Storage init blocks on connection-pool builders that may emit
         // `log::*` records from worker threads. With the pyo3-log bridge
         // active, those records need the GIL to deliver to Python — so we
@@ -162,7 +185,7 @@ impl PyQueue {
             scheduler_reap_interval,
             scheduler_cleanup_interval,
             scheduler_batch_size: scheduler_batch_size.max(1),
-            dlq_auto_retry_delay_ms: dlq_auto_retry_delay.map(|s| s * 1000),
+            dlq_auto_retry_delay_ms,
             dlq_auto_retry_max,
             namespace,
             push_dispatch,
