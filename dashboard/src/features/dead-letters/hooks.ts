@@ -57,8 +57,12 @@ export function useDeleteDeadLetter() {
         description: error instanceof Error ? error.message : String(error),
       });
     },
-    onSuccess: () => {
-      toast.success("Dead letter discarded");
+    onSuccess: (result) => {
+      if (result.deleted) {
+        toast.success("Dead letter discarded");
+      } else {
+        toast.message("Dead letter already removed");
+      }
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: KEY.all });
