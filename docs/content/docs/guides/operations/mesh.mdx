@@ -1,0 +1,407 @@
+---
+title: Mesh Scheduling
+description: "Gossip-based worker discovery, consistent-hashing affinity, and work-stealing for distributed task dispatch."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+
+Mesh scheduling adds a decentralized overlay network on top of the
+[standard scheduler](/architecture/scheduler). Workers discover each other via
+gossip, route tasks through a consistent-hashing ring, and steal work from
+busy peers — all without a central coordinator.
+
+<Callout type="info">
+  Mesh is **opt-in** and requires the `mesh` cargo feature at build time.
+  Without it, `MeshWorker` is still importable but passing it to `run_worker`
+  has no effect. Build with: `uv run maturin develop --features mesh,workflows`
+</Callout>
+
+## Quick start
+
+```python
+from taskito import Queue, MeshWorker
+
+queue = Queue(db_path="tasks.db")
+
+@queue.task()
+def process(item_id: int):
+    ...
+
+# First worker — no seeds needed, becomes the initial cluster node
+mesh = MeshWorker(port=7946)
+queue.run_worker(queues=["default"], mesh=mesh)
+```
+
+In a second process (or on another machine):
+
+```python
+# Joins the cluster by seeding from the first worker
+mesh = MeshWorker(
+    port=7946,
+    seeds=["first-worker-host:7946"],
+)
+queue.run_worker(queues=["default"], mesh=mesh)
+```
+
+The second worker discovers the first via gossip. If you add a third, it only
+needs to seed from *any* existing member — gossip propagates the full
+membership list automatically.
+
+## How it works
+
+Mesh scheduling composes five primitives that work together:
+
+| Primitive | What it does |
+|---|---|
+| **SWIM gossip** | UDP protocol for worker discovery and failure detection (~1.5s vs 30s DB heartbeat) |
+| **Consistent hashing** | xxhash ring with virtual nodes maps tasks to preferred workers (soft affinity) |
+| **Local deque** | In-memory buffer between DB polls — workers drain the deque before hitting the [storage backend](/architecture/storage) |
+| **Work-stealing** | TCP protocol lets idle workers steal jobs from busy peers |
+| **Adaptive load balancing** | Prefetch size and poll timing auto-tune based on cluster state |
+
+The database remains the source of truth. Gossip is an optimization layer —
+if it fails, workers fall back to standard DB polling. See
+[Architecture: Mesh Scheduling](/architecture/mesh) for protocol-level details.
+
+## Configuration
+
+All mesh settings live in `MeshWorker`, keeping the
+[`Queue`](/api-reference/queue) class clean:
+
+```python
+mesh = MeshWorker(
+    port=7946,              # gossip UDP port (steal port = port + 1)
+    seeds=["host:7946"],    # seed nodes for cluster join
+    steal=True,             # enable work-stealing
+    affinity_weight=0.7,    # 0.0–1.0, how strongly tasks prefer their hashed worker
+    local_buffer=64,        # local deque capacity
+    steal_batch=4,          # max jobs stolen per request
+    steal_threshold=2,      # steal when own deque ≤ this
+    virtual_nodes=150,      # consistent-hash ring virtual nodes per worker
+    bind_addr="0.0.0.0",   # network interface to bind
+    encryption_key=None,    # base64-encoded key for gossip encryption
+    steal_rate_limit=10,    # max steal requests per peer per second
+)
+```
+
+### Parameter reference
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `port` | `int` | `7946` | Gossip UDP port. Steal TCP port is `port + 1`. Must be 1024–65535. |
+| `seeds` | `list[str]` | `[]` | Addresses of existing cluster members (`host:port`). |
+| `steal` | `bool` | `True` | Whether this worker can steal from and be stolen from. |
+| `affinity_weight` | `float` | `0.7` | Task-to-worker affinity strength. `0.0` = no affinity, `1.0` = strong preference. |
+| `local_buffer` | `int` | `64` | Max jobs buffered locally before back-pressuring prefetch. |
+| `steal_batch` | `int` | `4` | Max jobs transferred per steal request. |
+| `steal_threshold` | `int` | `2` | Trigger stealing when own buffer drops to this level. |
+| `virtual_nodes` | `int` | `150` | Hash ring virtual nodes per worker. More = more even distribution. |
+| `bind_addr` | `str` | `"0.0.0.0"` | Network interface for gossip and steal servers. |
+| `encryption_key` | `str \| None` | `None` | Base64 key for XOR gossip encryption. All nodes must share the same key. |
+| `steal_rate_limit` | `int` | `10` | Max steal requests accepted per peer per second. `0` = unlimited. |
+
+## Cluster topology
+
+### Single-machine (development)
+
+Run multiple workers on one host with different ports. Each worker process
+needs a unique gossip port (steal port is automatically `port + 1`):
+
+```python
+# worker_a.py
+from taskito import Queue, MeshWorker
+
+queue = Queue(db_path="tasks.db")
+
+@queue.task()
+def send_email(to: str, subject: str):
+    ...
+
+mesh = MeshWorker(port=7946)
+queue.run_worker(mesh=mesh)
+```
+
+```python
+# worker_b.py — seeds from worker A
+from myapp import queue  # same queue, different process
+
+mesh = MeshWorker(port=7948, seeds=["127.0.0.1:7946"])
+queue.run_worker(mesh=mesh)
+```
+
+### Multi-machine (production)
+
+Point seeds at known stable nodes. You don't need to list every node —
+gossip propagates membership automatically:
+
+```python
+import os
+
+SEEDS = ["scheduler-1.internal:7946", "scheduler-2.internal:7946"]
+
+mesh = MeshWorker(
+    port=7946,
+    seeds=SEEDS,
+    encryption_key=os.environ["MESH_ENCRYPTION_KEY"],
+    steal_rate_limit=20,
+)
+queue.run_worker(
+    queues=["default", "emails"],
+    mesh=mesh,
+)
+```
+
+<Callout type="warn" title="Firewall rules">
+  Workers need UDP (gossip) and TCP (steal) access to each other. Open both
+  the gossip port and steal port (gossip + 1) between all mesh workers.
+</Callout>
+
+### Docker Compose example
+
+```yaml
+services:
+  worker-1:
+    build: .
+    command: taskito worker --app myapp:queue
+    environment:
+      MESH_PORT: "7946"
+      MESH_SEEDS: ""  # first node, no seeds
+      MESH_KEY: ${MESH_ENCRYPTION_KEY}
+    ports:
+      - "7946:7946/udp"  # gossip
+      - "7947:7947/tcp"  # steal
+
+  worker-2:
+    build: .
+    command: taskito worker --app myapp:queue
+    environment:
+      MESH_PORT: "7946"
+      MESH_SEEDS: "worker-1:7946"
+      MESH_KEY: ${MESH_ENCRYPTION_KEY}
+    ports:
+      - "7948:7946/udp"
+      - "7949:7947/tcp"
+    depends_on:
+      - worker-1
+```
+
+```python
+# myapp.py — reads mesh config from environment
+import os
+from taskito import Queue, MeshWorker
+
+queue = Queue(db_path="tasks.db")
+
+def get_mesh() -> MeshWorker | None:
+    port = os.environ.get("MESH_PORT")
+    if not port:
+        return None
+    seeds_raw = os.environ.get("MESH_SEEDS", "")
+    seeds = [s.strip() for s in seeds_raw.split(",") if s.strip()]
+    return MeshWorker(
+        port=int(port),
+        seeds=seeds,
+        encryption_key=os.environ.get("MESH_KEY"),
+    )
+```
+
+## Task affinity
+
+The consistent-hashing ring maps each task name to a preferred worker. When
+a worker prefetches jobs from the DB, it sorts them:
+
+- **Owned tasks** (hashed to this worker) go to the back of the deque —
+  executed first (LIFO)
+- **Non-owned tasks** go to the front — available for stealing (FIFO)
+
+Affinity is soft: any worker can run any task. The `affinity_weight`
+parameter controls how aggressively the ring biases dispatch. Set it to
+`0.0` to disable affinity entirely.
+
+This improves cache locality — if a task always runs on the same worker,
+its imports, connections, and warm caches stay hot. Particularly useful with
+[worker resources](/guides/resources/overview) that have expensive
+initialization.
+
+```python
+# High affinity — tasks strongly prefer their hashed worker
+mesh = MeshWorker(affinity_weight=1.0)
+
+# No affinity — pure load-balancing, no task-to-worker preference
+mesh = MeshWorker(affinity_weight=0.0)
+```
+
+## Work-stealing
+
+When a worker's local buffer drops to `steal_threshold`, it looks for the
+busiest peer (via gossip-reported buffer lengths) and sends a TCP steal
+request.
+
+The victim pops jobs from the cold end of its deque (non-owned tasks first)
+and sends them back. The thief executes them locally — no DB round-trip
+needed since the jobs are already claimed as `Running` in the database.
+
+Stealing is rate-limited per peer (`steal_rate_limit`) to prevent
+thundering herd effects.
+
+<Tabs items={["Stealing enabled", "Stealing disabled"]}>
+  <Tab value="Stealing enabled">
+    ```python
+    mesh = MeshWorker(steal=True, steal_batch=4, steal_threshold=2)
+    ```
+    Workers automatically balance load across the cluster. When one worker
+    gets a burst of jobs, idle peers steal the overflow within milliseconds.
+  </Tab>
+  <Tab value="Stealing disabled">
+    ```python
+    mesh = MeshWorker(steal=False)
+    ```
+    Workers still benefit from gossip discovery, consistent hashing, and local
+    deque prefetch — but won't steal from or donate jobs to peers. Useful when
+    tasks have strong per-worker state dependencies.
+  </Tab>
+</Tabs>
+
+### Tuning work-stealing
+
+| Scenario | Recommended settings |
+|---|---|
+| Bursty, short tasks | `steal_batch=8, steal_threshold=4` — steal more, earlier |
+| Long-running tasks | `steal_batch=1, steal_threshold=1` — steal conservatively |
+| Many workers (10+) | `steal_rate_limit=5` — prevent steal storms |
+| Few workers (2–3) | `steal_rate_limit=0` — unlimited, low contention |
+
+## Gossip encryption
+
+Enable symmetric XOR encryption for gossip messages with a shared
+base64-encoded key:
+
+```python
+import base64
+import os
+
+# Generate a key (share this across all workers)
+key = base64.b64encode(os.urandom(32)).decode()
+print(key)  # store in environment variable or secret manager
+
+mesh = MeshWorker(encryption_key=key)
+```
+
+All nodes in the cluster must use the same key. Nodes with mismatched keys
+will fail to decode gossip messages and won't join the cluster.
+
+<Callout type="warn" title="Encryption scope">
+  Gossip encryption covers the UDP membership protocol only. Work-stealing
+  uses unencrypted TCP. For full transport security, use network-level
+  encryption (WireGuard, VPN, or a service mesh).
+</Callout>
+
+## Combining with other features
+
+Mesh scheduling works alongside all existing taskito features:
+
+```python
+from taskito import Queue, MeshWorker
+from taskito.resources import ResourceDefinition, Scope
+
+queue = Queue(db_path="tasks.db")
+
+# Worker resources work normally — each mesh worker manages its own pool
+@queue.worker_resource(scope=Scope.WORKER)
+def db_pool():
+    return create_connection_pool()
+
+# Rate limits and concurrency are per-task, enforced in the DB layer
+@queue.task(max_concurrent=5, rate_limit="100/m")
+def process_order(order_id: int, db_pool=None):
+    ...
+
+# Batch dequeue works with mesh — prefetch fills the local deque
+queue_config = Queue(db_path="tasks.db", scheduler_batch_size=10)
+
+mesh = MeshWorker(seeds=["peer:7946"])
+queue.run_worker(mesh=mesh)
+```
+
+See also:
+- [Per-task concurrency](/guides/core/tasks#concurrency) for `max_concurrent`
+- [Rate limiting](/guides/core/tasks#rate-limiting) for `rate_limit`
+- [Worker resources](/guides/resources/overview) for DI into tasks
+- [Batch dequeue](/guides/core/scheduling#batch-dequeue) for `scheduler_batch_size`
+
+## Mixing mesh and non-mesh workers
+
+Mesh workers coexist safely with [standard workers](/guides/core/workers).
+Both use the same [storage backend](/architecture/storage) for atomic job
+claims — mesh just reduces how often workers hit the DB.
+
+```python
+# Standard worker — no mesh, polls DB directly
+queue.run_worker(queues=["default"])
+
+# Mesh worker — same DB, but prefetches + steals
+mesh = MeshWorker(seeds=["other-mesh-node:7946"])
+queue.run_worker(queues=["default"], mesh=mesh)
+```
+
+Non-mesh workers are invisible to the mesh (no gossip, no stealing) but
+still process jobs normally. You can gradually roll out mesh to your fleet
+without downtime.
+
+## Monitoring
+
+Mesh activity appears in Rust log output at `debug` and `info` levels:
+
+```bash
+# See all mesh activity
+RUST_LOG=taskito_mesh=debug taskito worker --app myapp:queue
+
+# See only gossip membership changes
+RUST_LOG=taskito_mesh::swim=info taskito worker --app myapp:queue
+```
+
+Key log messages:
+
+| Level | Message | Meaning |
+|---|---|---|
+| `info` | `gossip listening on ...` | Gossip server started |
+| `info` | `discovered peer X at Y` | New cluster member joined |
+| `info` | `member X declared dead` | Failure detector confirmed crash |
+| `info` | `leave broadcast sent` | Graceful shutdown leave |
+| `debug` | `giving N jobs to thief X` | Responded to steal request |
+| `debug` | `ack from X resolved probe` | Healthy ping-ack cycle |
+
+If you use [Prometheus](/guides/integrations/prometheus), mesh metrics flow
+through the same worker observability pipeline.
+
+## Graceful shutdown
+
+When a mesh worker shuts down (via `SIGINT`, `SIGTERM`, or
+[`request_shutdown()`](/api-reference/queue#request_shutdown)), it broadcasts
+a `Leave` message to all known peers. They remove it from the ring
+immediately — no suspicion timeout needed.
+
+If a worker crashes without leaving, the SWIM failure detector kicks in:
+direct ping fails → indirect ping via intermediaries → suspicion → declared
+dead after `suspicion_multiplier × ln(N+1) × protocol_period`.
+
+With default settings (multiplier=4, period=500ms), a crashed worker in a
+3-node cluster is detected in roughly `4 × ln(4) × 500ms ≈ 2.8s`.
+
+## When to use mesh
+
+**Good fit:**
+- Multiple workers processing the same queues (2+ workers)
+- High job throughput where DB polling is a bottleneck
+- Tasks that benefit from cache locality (imports, connections, warm state)
+- Environments where sub-second failure detection matters
+- Horizontal scaling where workers come and go frequently
+
+**Not needed:**
+- Single worker setups
+- Low throughput (&lt; 100 jobs/second)
+- Workers processing completely different queues (no overlap = no stealing)
+- Already using [bare-metal autoscaler](/guides/operations/autoscaler) or
+  [KEDA](/guides/operations/keda) for process-level scaling (mesh is
+  *within-process* optimization, not a replacement for autoscaling)

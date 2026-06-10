@@ -1,5 +1,14 @@
 import { Send, Shield, Webhook as WebhookIcon } from "lucide-react";
-import { Badge, Button, EmptyState, LiveDot, Switch } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  LiveDot,
+  Switch,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui";
 import { formatRelative } from "@/lib/time";
 import { useTestWebhook, useUpdateWebhook } from "../hooks";
 import type { Webhook } from "../types";
@@ -96,15 +105,22 @@ function WebhookCard({ webhook }: { webhook: Webhook }) {
               signed
             </span>
           ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => test.mutate(webhook.id)}
-            disabled={test.isPending || !webhook.enabled}
-          >
-            <Send className="size-3.5" aria-hidden />
-            Test
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={webhook.enabled ? undefined : 0}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => test.mutate(webhook.id)}
+                  disabled={test.isPending || !webhook.enabled}
+                >
+                  <Send className="size-3.5" aria-hidden />
+                  Test
+                </Button>
+              </span>
+            </TooltipTrigger>
+            {!webhook.enabled ? <TooltipContent>Enable the webhook first</TooltipContent> : null}
+          </Tooltip>
         </div>
       </div>
     </div>

@@ -66,7 +66,7 @@ def _new_id() -> str:
 
 
 def _now() -> int:
-    return int(time.time())
+    return int(time.time() * 1000)
 
 
 def generate_secret() -> str:

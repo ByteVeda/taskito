@@ -17,7 +17,6 @@ export {
   useTestWebhook,
   useUpdateWebhook,
   useWebhooks,
-  webhookQuery,
   webhooksQuery,
 } from "./hooks";
 export type {

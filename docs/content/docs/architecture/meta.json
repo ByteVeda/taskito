@@ -7,6 +7,7 @@
     "job-lifecycle",
     "worker-pool",
     "scheduler",
+    "mesh",
     "storage",
     "resources",
     "failure-model",
