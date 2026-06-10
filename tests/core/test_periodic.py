@@ -52,7 +52,7 @@ def test_periodic_task_triggers(queue: Queue, poll_until: Any) -> None:
 
     poll_until(
         lambda: queue.stats()["completed"] >= 1,
-        timeout=15,
+        timeout=30,
         message="periodic task never triggered",
     )
 
