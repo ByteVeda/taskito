@@ -57,9 +57,8 @@ impl Scheduler {
 
         let cutoff = now_millis().saturating_sub(ttl);
 
-        // Use per-job TTL aware cleanup
         let completed = self.storage.purge_completed_with_ttl(cutoff)?;
-        let dead = self.storage.purge_dead(cutoff)?;
+        let dead = self.storage.purge_dead_with_ttl(cutoff)?;
         let errors = self.storage.purge_job_errors(cutoff)?;
         let metrics = self.storage.purge_metrics(cutoff).unwrap_or_else(|e| {
             warn!("purge_metrics failed: {e}");
@@ -126,6 +125,49 @@ impl Scheduler {
             {
                 error!("failed to update schedule for '{}': {e}", task.name);
             }
+        }
+
+        Ok(())
+    }
+
+    /// Auto-retry eligible DLQ entries that have aged past the configured delay.
+    pub(super) fn auto_retry_dlq(&self) -> Result<()> {
+        let delay = match self.config.dlq_auto_retry_delay_ms {
+            Some(d) => d,
+            None => return Ok(()),
+        };
+
+        let now = now_millis();
+        let cutoff = now.saturating_sub(delay);
+        let max_retries = self.config.dlq_auto_retry_max;
+
+        let candidates = self.storage.list_dead_for_retry(cutoff, max_retries, 50)?;
+
+        if candidates.is_empty() {
+            return Ok(());
+        }
+
+        let mut retried = 0u64;
+        for entry in &candidates {
+            match self.storage.retry_dead(&entry.id) {
+                Ok(new_id) => {
+                    info!(
+                        "dlq auto-retry: {} -> {} (attempt {}/{})",
+                        entry.id,
+                        new_id,
+                        entry.dlq_retry_count + 1,
+                        max_retries
+                    );
+                    retried += 1;
+                }
+                Err(e) => {
+                    warn!("dlq auto-retry failed for {}: {e}", entry.id);
+                }
+            }
+        }
+
+        if retried > 0 {
+            info!("dlq auto-retry: retried {retried} entries");
         }
 
         Ok(())

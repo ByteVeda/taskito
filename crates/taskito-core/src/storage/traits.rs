@@ -75,6 +75,14 @@ pub trait Storage: Send + Sync + Clone {
     fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
     fn retry_dead(&self, dead_id: &str) -> Result<String>;
     fn purge_dead(&self, older_than_ms: i64) -> Result<u64>;
+    fn delete_dead(&self, dead_id: &str) -> Result<bool>;
+    fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64>;
+    fn list_dead_for_retry(
+        &self,
+        cutoff_ms: i64,
+        max_retries: i32,
+        limit: i64,
+    ) -> Result<Vec<DeadJob>>;
 
     // ── Rate limit operations ───────────────────────────────────────
 

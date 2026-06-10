@@ -19,6 +19,13 @@ macro_rules! impl_diesel_dead_letter_ops {
                 // Write-priority transaction: this reads the job row then writes
                 // it to `archived_jobs`, which would deadlock under SQLite's
                 // deferred lock-upgrade. See `archive_transaction`.
+                let dlq_retry_count = job
+                    .metadata
+                    .as_deref()
+                    .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+                    .and_then(|v| v.get("__dlq_retry_count")?.as_i64())
+                    .unwrap_or(0) as i32;
+
                 self.archive_transaction(|conn| {
                     let dlq_row = NewDeadLetterRow {
                         id: &dlq_id,
@@ -36,6 +43,7 @@ macro_rules! impl_diesel_dead_letter_ops {
                         timeout_ms: job.timeout_ms,
                         result_ttl_ms: job.result_ttl_ms,
                         namespace: job.namespace.as_deref(),
+                        dlq_retry_count,
                     };
 
                     diesel::insert_into(dead_letter::table)
@@ -106,6 +114,23 @@ macro_rules! impl_diesel_dead_letter_ops {
                     Err(err) => return Err(err.into()),
                 };
 
+                let retry_metadata = {
+                    let next_count = dead_row.dlq_retry_count + 1;
+                    let mut obj = dead_row
+                        .metadata
+                        .as_deref()
+                        .and_then(|m| {
+                            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(m)
+                                .ok()
+                        })
+                        .unwrap_or_default();
+                    obj.insert(
+                        "__dlq_retry_count".to_string(),
+                        serde_json::Value::from(next_count),
+                    );
+                    Some(serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_default())
+                };
+
                 let new_job = NewJob {
                     queue: dead_row.queue,
                     task_name: dead_row.task_name,
@@ -115,7 +140,7 @@ macro_rules! impl_diesel_dead_letter_ops {
                     max_retries: dead_row.max_retries,
                     timeout_ms: dead_row.timeout_ms,
                     unique_key: None,
-                    metadata: dead_row.metadata,
+                    metadata: retry_metadata,
                     notes: dead_row.notes,
                     depends_on: vec![],
                     expires_at: None,
@@ -193,6 +218,59 @@ macro_rules! impl_diesel_dead_letter_ops {
                 .execute(&mut conn)?;
 
                 Ok(affected as u64)
+            }
+
+            /// Delete a single dead letter entry. Returns true if it existed.
+            pub fn delete_dead(&self, dead_id: &str) -> Result<bool> {
+                let mut conn = self.conn()?;
+                let affected =
+                    diesel::delete(dead_letter::table.find(dead_id)).execute(&mut conn)?;
+                Ok(affected > 0)
+            }
+
+            /// Purge dead letter entries respecting per-entry TTL overrides.
+            pub fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+                let now = now_millis();
+                let mut conn = self.conn()?;
+
+                let global_count = diesel::delete(
+                    dead_letter::table
+                        .filter(dead_letter::result_ttl_ms.is_null())
+                        .filter(dead_letter::failed_at.lt(global_cutoff_ms)),
+                )
+                .execute(&mut conn)?;
+
+                let per_entry_count = diesel::delete(
+                    dead_letter::table
+                        .filter(dead_letter::result_ttl_ms.is_not_null())
+                        .filter(
+                            (dead_letter::failed_at + dead_letter::result_ttl_ms.assume_not_null())
+                                .lt(now),
+                        ),
+                )
+                .execute(&mut conn)?;
+
+                Ok((global_count + per_entry_count) as u64)
+            }
+
+            /// List DLQ entries eligible for auto-retry.
+            pub fn list_dead_for_retry(
+                &self,
+                cutoff_ms: i64,
+                max_retries: i32,
+                limit: i64,
+            ) -> Result<Vec<DeadJob>> {
+                let mut conn = self.conn()?;
+
+                let rows: Vec<DeadLetterRow> = dead_letter::table
+                    .filter(dead_letter::failed_at.le(cutoff_ms))
+                    .filter(dead_letter::dlq_retry_count.lt(max_retries))
+                    .order(dead_letter::failed_at.asc())
+                    .limit(limit)
+                    .select(DeadLetterRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows.into_iter().map(DeadJob::from).collect())
             }
         }
     };

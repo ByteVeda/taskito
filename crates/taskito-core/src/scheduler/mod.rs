@@ -39,6 +39,12 @@ pub struct SchedulerConfig {
     /// preserves the original one-job-per-round-trip behavior; values above
     /// `1` enable batch claiming for higher throughput.
     pub batch_size: usize,
+    /// Minimum age (ms) before a DLQ entry is auto-retried. `None` disables.
+    pub dlq_auto_retry_delay_ms: Option<i64>,
+    /// Max DLQ auto-retries per entry before giving up.
+    pub dlq_auto_retry_max: i32,
+    /// Check DLQ auto-retry every N ticks.
+    pub dlq_auto_retry_interval: u32,
 }
 
 impl Default for SchedulerConfig {
@@ -51,6 +57,9 @@ impl Default for SchedulerConfig {
             cleanup_interval: 1200,
             result_ttl_ms: None,
             batch_size: 1,
+            dlq_auto_retry_delay_ms: None,
+            dlq_auto_retry_max: 1,
+            dlq_auto_retry_interval: 60,
         }
     }
 }
@@ -157,6 +166,7 @@ struct TickCounters {
     reap: u32,
     periodic: u32,
     cleanup: u32,
+    dlq_auto_retry: u32,
 }
 
 impl Scheduler {
@@ -313,6 +323,16 @@ impl Scheduler {
         {
             if let Err(e) = self.auto_cleanup() {
                 error!("auto-cleanup error: {e}");
+            }
+        }
+
+        counters.dlq_auto_retry += 1;
+        if counters
+            .dlq_auto_retry
+            .is_multiple_of(self.config.dlq_auto_retry_interval)
+        {
+            if let Err(e) = self.auto_retry_dlq() {
+                error!("dlq auto-retry error: {e}");
             }
         }
 

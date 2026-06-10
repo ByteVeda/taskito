@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Trash2 } from "lucide-react";
 import { Badge, Button } from "@/components/ui";
 import type { DeadLetter } from "@/lib/api-types";
 import { formatRelative } from "@/lib/time";
-import { useRetryDeadLetter } from "../hooks";
+import { useDeleteDeadLetter, useRetryDeadLetter } from "../hooks";
 
 interface DeadLetterRowProps {
   item: DeadLetter;
@@ -11,6 +11,7 @@ interface DeadLetterRowProps {
 
 export function DeadLetterRow({ item }: DeadLetterRowProps) {
   const retry = useRetryDeadLetter();
+  const discard = useDeleteDeadLetter();
   return (
     <div className="flex items-start gap-4 rounded-lg bg-[var(--surface)] p-4 ring-1 ring-inset ring-[var(--border)] transition-colors hover:bg-[var(--surface-2)]/40">
       <div className="min-w-0 flex-1">
@@ -30,6 +31,9 @@ export function DeadLetterRow({ item }: DeadLetterRowProps) {
               {item.retry_count} {item.retry_count === 1 ? "retry" : "retries"}
             </Badge>
           ) : null}
+          {item.dlq_retry_count > 0 ? (
+            <Badge tone="info">DLQ retry #{item.dlq_retry_count}</Badge>
+          ) : null}
           <span className="ml-auto tabular-nums text-[var(--fg-subtle)]">
             {formatRelative(item.failed_at)}
           </span>
@@ -40,14 +44,24 @@ export function DeadLetterRow({ item }: DeadLetterRowProps) {
           </pre>
         ) : null}
       </div>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => retry.mutate(item.id)}
-        disabled={retry.isPending}
-      >
-        <RotateCcw aria-hidden /> Retry
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => retry.mutate(item.id)}
+          disabled={retry.isPending}
+        >
+          <RotateCcw aria-hidden /> Retry
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => discard.mutate(item.id)}
+          disabled={discard.isPending}
+        >
+          <Trash2 aria-hidden /> Discard
+        </Button>
+      </div>
     </div>
   );
 }

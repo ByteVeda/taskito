@@ -23,3 +23,7 @@ export function retryDeadLetter(id: string): Promise<{ new_job_id: string }> {
 export function purgeDeadLetters(): Promise<{ purged: number }> {
   return api.post<{ purged: number }>("/api/dead-letters/purge");
 }
+
+export function deleteDeadLetter(id: string): Promise<{ deleted: boolean }> {
+  return api.delete<{ deleted: boolean }>(`/api/dead-letters/${encodeURIComponent(id)}`);
+}

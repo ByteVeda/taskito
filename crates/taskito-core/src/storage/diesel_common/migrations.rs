@@ -360,6 +360,8 @@ pub fn alter_statements(d: &Dialect) -> Vec<String> {
         // has_deps fast-path flag: lets dequeue skip the dependency lookup for
         // the common no-dependency job. Defaults false; backfilled below.
         format!("ALTER TABLE jobs ADD COLUMN {ife}has_deps {bool_false}"),
+        // DLQ auto-retry counter: tracks how many times an entry was auto-retried
+        format!("ALTER TABLE dead_letter ADD COLUMN {ife}dlq_retry_count INTEGER NOT NULL DEFAULT 0"),
     ]
 }
 

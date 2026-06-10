@@ -40,6 +40,8 @@ pub struct PyQueue {
     pub(crate) scheduler_reap_interval: u32,
     pub(crate) scheduler_cleanup_interval: u32,
     pub(crate) scheduler_batch_size: usize,
+    pub(crate) dlq_auto_retry_delay_ms: Option<i64>,
+    pub(crate) dlq_auto_retry_max: i32,
     pub(crate) namespace: Option<String>,
     /// Opt-in event-driven dispatch. Honored only when the crate is built with
     /// the `push-dispatch` cargo feature; otherwise accepted and ignored.
@@ -64,7 +66,7 @@ pub struct PyQueue {
 )]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200, scheduler_batch_size=1, namespace=None, push_dispatch=false))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200, scheduler_batch_size=1, namespace=None, push_dispatch=false, dlq_auto_retry_delay=None, dlq_auto_retry_max=1))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         py: Python<'_>,
@@ -84,7 +86,32 @@ impl PyQueue {
         scheduler_batch_size: usize,
         namespace: Option<String>,
         push_dispatch: bool,
+        dlq_auto_retry_delay: Option<i64>,
+        dlq_auto_retry_max: i32,
     ) -> PyResult<Self> {
+        if let Some(delay) = dlq_auto_retry_delay {
+            if delay < 0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "dlq_auto_retry_delay must be non-negative",
+                ));
+            }
+        }
+        if dlq_auto_retry_max < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "dlq_auto_retry_max must be non-negative",
+            ));
+        }
+
+        let dlq_auto_retry_delay_ms = dlq_auto_retry_delay
+            .map(|s| {
+                s.checked_mul(1000).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "dlq_auto_retry_delay too large, would overflow",
+                    )
+                })
+            })
+            .transpose()?;
+
         // Storage init blocks on connection-pool builders that may emit
         // `log::*` records from worker threads. With the pyo3-log bridge
         // active, those records need the GIL to deliver to Python — so we
@@ -158,6 +185,8 @@ impl PyQueue {
             scheduler_reap_interval,
             scheduler_cleanup_interval,
             scheduler_batch_size: scheduler_batch_size.max(1),
+            dlq_auto_retry_delay_ms,
+            dlq_auto_retry_max,
             namespace,
             push_dispatch,
             dispatcher: Arc::new(Mutex::new(None)),
