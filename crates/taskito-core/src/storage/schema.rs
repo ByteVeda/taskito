@@ -44,6 +44,7 @@ diesel::table! {
         timeout_ms -> BigInt,
         result_ttl_ms -> Nullable<BigInt>,
         namespace -> Nullable<Text>,
+        dlq_retry_count -> Integer,
     }
 }
 

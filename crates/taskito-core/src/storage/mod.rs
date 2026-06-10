@@ -52,6 +52,7 @@ pub struct DeadJob {
     pub timeout_ms: i64,
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<String>,
+    pub dlq_retry_count: i32,
 }
 
 impl From<models::DeadLetterRow> for DeadJob {
@@ -72,6 +73,7 @@ impl From<models::DeadLetterRow> for DeadJob {
             timeout_ms: row.timeout_ms,
             result_ttl_ms: row.result_ttl_ms,
             namespace: row.namespace,
+            dlq_retry_count: row.dlq_retry_count,
         }
     }
 }
@@ -244,6 +246,20 @@ macro_rules! impl_storage {
             }
             fn purge_dead(&self, older_than_ms: i64) -> $crate::error::Result<u64> {
                 self.purge_dead(older_than_ms)
+            }
+            fn delete_dead(&self, dead_id: &str) -> $crate::error::Result<bool> {
+                self.delete_dead(dead_id)
+            }
+            fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> $crate::error::Result<u64> {
+                self.purge_dead_with_ttl(global_cutoff_ms)
+            }
+            fn list_dead_for_retry(
+                &self,
+                cutoff_ms: i64,
+                max_retries: i32,
+                limit: i64,
+            ) -> $crate::error::Result<Vec<$crate::storage::DeadJob>> {
+                self.list_dead_for_retry(cutoff_ms, max_retries, limit)
             }
             fn get_rate_limit(
                 &self,
@@ -733,6 +749,20 @@ impl Storage for StorageBackend {
     }
     fn purge_dead(&self, older_than_ms: i64) -> Result<u64> {
         delegate!(self, purge_dead, older_than_ms)
+    }
+    fn delete_dead(&self, dead_id: &str) -> Result<bool> {
+        delegate!(self, delete_dead, dead_id)
+    }
+    fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+        delegate!(self, purge_dead_with_ttl, global_cutoff_ms)
+    }
+    fn list_dead_for_retry(
+        &self,
+        cutoff_ms: i64,
+        max_retries: i32,
+        limit: i64,
+    ) -> Result<Vec<DeadJob>> {
+        delegate!(self, list_dead_for_retry, cutoff_ms, max_retries, limit)
     }
     fn get_rate_limit(&self, key: &str) -> Result<Option<models::RateLimitRow>> {
         delegate!(self, get_rate_limit, key)

@@ -1,8 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ExternalLink as ExternalLinkIcon } from "lucide-react";
 import { LiveDot } from "@/components/ui";
-import { statsQuery } from "@/features/overview/hooks";
+import { useStats } from "@/features/overview/hooks";
 import { useBranding, useExternalLinks } from "@/features/settings";
 import { cn } from "@/lib/cn";
 import { formatCount } from "@/lib/number";
@@ -14,14 +13,19 @@ export function Sidebar() {
   const { pathname } = useLocation();
   const { title } = useBranding();
   const externalLinks = useExternalLinks();
-  // Shares the ["stats"] cache with the Overview — no extra polling here, just
-  // a one-time fetch that stays in sync as other views refetch.
-  const { data: stats } = useQuery(statsQuery());
+  const { data: stats, isError, isPending } = useStats();
   const deadCount = stats?.dead ?? 0;
+
+  const coreTone = isError ? "danger" : isPending && !stats ? "warning" : "success";
+  const coreLabel = isError
+    ? "Core unreachable"
+    : isPending && !stats
+      ? "Connecting…"
+      : "Core healthy";
   const isDefaultBrand = title === site.name;
 
   return (
-    <aside className="hidden w-[248px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)] lg:flex">
+    <aside className="hidden h-screen w-[248px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-subtle)] lg:flex">
       <div className="flex items-center gap-2.5 px-[18px] pt-[18px] pb-4">
         <BrandMark size={38} />
         <div className="leading-none">
@@ -108,8 +112,8 @@ export function Sidebar() {
         ) : null}
       </nav>
       <div className="flex items-center gap-2 border-t border-[var(--border)] px-[18px] py-3 text-[0.72rem] text-[var(--fg-subtle)]">
-        <LiveDot tone="success" />
-        Core healthy · {import.meta.env.DEV ? "dev build" : "production"}
+        <LiveDot tone={coreTone} />
+        {coreLabel} · {import.meta.env.DEV ? "dev build" : "production"}
       </div>
     </aside>
   );

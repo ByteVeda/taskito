@@ -28,6 +28,10 @@ class QueueOperationsMixin:
         """Delete dead letter entries older than a given age."""
         return self._inner.purge_dead(older_than)  # type: ignore[no-any-return]
 
+    def delete_dead(self, dead_id: str) -> bool:
+        """Discard a single dead letter entry without re-enqueueing."""
+        return self._inner.delete_dead(dead_id)  # type: ignore[no-any-return]
+
     # -- Replay --
 
     def replay(self, job_id: str) -> JobResult:

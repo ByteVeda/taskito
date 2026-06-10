@@ -343,26 +343,24 @@ def test_callback_replayed_state_is_rejected(
         f"{base}/api/auth/oauth/callback/google?code=abc&state={state}"
     )
     assert first_status == 302
-    # Replay is a 400.
-    replay_status, body, _ = _get_no_redirect(
+    # Replay redirects to login with error.
+    replay_status, _, replay_headers = _get_no_redirect(
         f"{base}/api/auth/oauth/callback/google?code=abc&state={state}"
     )
-    assert replay_status == 400
-    assert body is not None
-    assert "oauth_state_invalid" in body.get("error", "")
+    assert replay_status == 302
+    assert "oauth_state_invalid" in replay_headers["Location"][0]
 
 
-def test_callback_with_provider_error_returns_400(
+def test_callback_with_provider_error_redirects_to_login(
     server_factory: Any, queue: Queue, google_provider: _FakeProvider
 ) -> None:
     flow = _make_flow(queue, {"google": google_provider})
     base = server_factory(flow)
-    status, body, _ = _get_no_redirect(
+    status, _, headers = _get_no_redirect(
         f"{base}/api/auth/oauth/callback/google?error=access_denied"
     )
-    assert status == 400
-    assert body is not None
-    assert "oauth_state_invalid" in body.get("error", "") or "identity" in body.get("error", "")
+    assert status == 302
+    assert "oauth_failed" in headers["Location"][0]
 
 
 def test_callback_blocked_by_allowlist(
@@ -374,14 +372,13 @@ def test_callback_blocked_by_allowlist(
     google_provider.allow = False
     flow = _make_flow(queue, {"google": google_provider})
     base = server_factory(flow)
-    _, _, headers = _get_no_redirect(f"{base}/api/auth/oauth/start/google")
-    state = headers["Location"][0].split("state=")[-1]
-    status, body, _ = _get_no_redirect(
+    _, _, start_headers = _get_no_redirect(f"{base}/api/auth/oauth/start/google")
+    state = start_headers["Location"][0].split("state=")[-1]
+    status, _, headers = _get_no_redirect(
         f"{base}/api/auth/oauth/callback/google?code=abc&state={state}"
     )
-    assert status == 400
-    assert body is not None
-    assert "allowlist_denied" in body.get("error", "")
+    assert status == 302
+    assert "oauth_denied" in headers["Location"][0]
 
 
 def test_oauth_paths_bypass_setup_required_gate(

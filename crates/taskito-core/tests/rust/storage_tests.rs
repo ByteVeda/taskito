@@ -220,6 +220,47 @@ fn test_dead_letter_queue(s: &impl Storage) {
     assert!(!dead.is_empty());
 }
 
+fn test_delete_dead(s: &impl Storage) {
+    let q = "q-del-dead";
+    let job = s.enqueue(make_job(q, "del_dead_task")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+    s.move_to_dlq(&running, "err", None).unwrap();
+
+    let dead = s.list_dead(100, 0).unwrap();
+    let entry = dead
+        .iter()
+        .find(|d| d.original_job_id == job.id)
+        .expect("our DLQ entry should exist");
+    let dead_id = entry.id.clone();
+
+    assert!(s.delete_dead(&dead_id).unwrap());
+    assert!(!s.delete_dead(&dead_id).unwrap());
+}
+
+fn test_list_dead_for_retry(s: &impl Storage) {
+    let q = "q-dlq-retry";
+    let job = s.enqueue(make_job(q, "dlq_retry_task")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+    s.move_to_dlq(&running, "err", None).unwrap();
+
+    let now = now_millis();
+    let cands = s.list_dead_for_retry(now + 5000, 3, 100).unwrap();
+    let ours = cands
+        .iter()
+        .find(|d| d.original_job_id == job.id)
+        .expect("our entry should be eligible");
+    assert_eq!(ours.dlq_retry_count, 0);
+
+    // max_retries=0 should exclude everything
+    let empty = s.list_dead_for_retry(now + 5000, 0, 100).unwrap();
+    assert!(
+        empty.iter().all(|d| d.original_job_id != job.id),
+        "max_retries=0 should exclude our entry"
+    );
+}
+
 fn test_progress_tracking(s: &impl Storage) {
     let job = s.enqueue(make_job("q-progress", "progress_task")).unwrap();
     s.update_progress(&job.id, 50).unwrap();
@@ -544,6 +585,8 @@ fn run_storage_tests(s: &impl Storage) {
     test_unique_key_dedup(s);
     test_enqueue_batch(s);
     test_dead_letter_queue(s);
+    test_delete_dead(s);
+    test_list_dead_for_retry(s);
     test_progress_tracking(s);
     test_record_and_get_errors(s);
     test_workers(s);

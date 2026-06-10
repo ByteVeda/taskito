@@ -103,6 +103,7 @@ impl PyQueue {
                 dict.set_item("retry_count", d.retry_count)?;
                 dict.set_item("failed_at", d.failed_at)?;
                 dict.set_item("metadata", d.metadata)?;
+                dict.set_item("dlq_retry_count", d.dlq_retry_count)?;
                 result.push(dict.into());
             }
             Ok(result)
@@ -121,6 +122,13 @@ impl PyQueue {
         let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));
         self.storage
             .purge_dead(cutoff)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Delete a single dead letter entry without re-enqueueing.
+    pub fn delete_dead(&self, dead_id: &str) -> PyResult<bool> {
+        self.storage
+            .delete_dead(dead_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 

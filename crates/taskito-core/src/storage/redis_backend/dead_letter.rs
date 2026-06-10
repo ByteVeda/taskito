@@ -25,6 +25,8 @@ struct DeadJobEntry {
     pub result_ttl_ms: Option<i64>,
     #[serde(default)]
     pub namespace: Option<String>,
+    #[serde(default)]
+    pub dlq_retry_count: i32,
 }
 
 impl From<DeadJobEntry> for DeadJob {
@@ -45,6 +47,7 @@ impl From<DeadJobEntry> for DeadJob {
             timeout_ms: e.timeout_ms,
             result_ttl_ms: e.result_ttl_ms,
             namespace: e.namespace,
+            dlq_retry_count: e.dlq_retry_count,
         }
     }
 }
@@ -54,6 +57,13 @@ impl RedisStorage {
         let now = now_millis();
         let dlq_id = uuid::Uuid::now_v7().to_string();
         let mut conn = self.conn()?;
+
+        let dlq_retry_count = job
+            .metadata
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("__dlq_retry_count")?.as_i64())
+            .unwrap_or(0) as i32;
 
         let entry = DeadJobEntry {
             id: dlq_id.clone(),
@@ -71,6 +81,7 @@ impl RedisStorage {
             timeout_ms: job.timeout_ms,
             result_ttl_ms: job.result_ttl_ms,
             namespace: job.namespace.clone(),
+            dlq_retry_count,
         };
 
         let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
@@ -140,6 +151,22 @@ impl RedisStorage {
         let entry: DeadJobEntry =
             serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
 
+        let retry_metadata = {
+            let next_count = entry.dlq_retry_count + 1;
+            let mut obj = entry
+                .metadata
+                .as_deref()
+                .and_then(|m| {
+                    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(m).ok()
+                })
+                .unwrap_or_default();
+            obj.insert(
+                "__dlq_retry_count".to_string(),
+                serde_json::Value::from(next_count),
+            );
+            Some(serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_default())
+        };
+
         let new_job = NewJob {
             queue: entry.queue,
             task_name: entry.task_name,
@@ -149,7 +176,7 @@ impl RedisStorage {
             max_retries: entry.max_retries,
             timeout_ms: entry.timeout_ms,
             unique_key: None,
-            metadata: entry.metadata,
+            metadata: retry_metadata,
             notes: entry.notes,
             depends_on: vec![],
             expires_at: None,
@@ -191,5 +218,93 @@ impl RedisStorage {
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(ids.len() as u64)
+    }
+
+    pub fn delete_dead(&self, dead_id: &str) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let dlq_key = self.key(&["dlq", dead_id]);
+        let dlq_all = self.key(&["dlq", "all"]);
+
+        let existed: bool = conn.exists(&dlq_key).map_err(map_err)?;
+        if !existed {
+            return Ok(false);
+        }
+
+        let pipe = &mut redis::pipe();
+        pipe.del(&dlq_key);
+        pipe.zrem(&dlq_all, dead_id);
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
+        Ok(true)
+    }
+
+    pub fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let dlq_all = self.key(&["dlq", "all"]);
+        let now = now_millis();
+
+        let ids: Vec<String> = conn
+            .zrangebyscore(&dlq_all, "-inf", "+inf")
+            .map_err(map_err)?;
+
+        let mut to_delete = Vec::new();
+        for id in &ids {
+            let dlq_key = self.key(&["dlq", id]);
+            let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+            if let Some(d) = data {
+                if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
+                    let expired = match entry.result_ttl_ms {
+                        Some(ttl) => entry.failed_at + ttl <= now,
+                        None => entry.failed_at < global_cutoff_ms,
+                    };
+                    if expired {
+                        to_delete.push(id.clone());
+                    }
+                }
+            }
+        }
+
+        if to_delete.is_empty() {
+            return Ok(0);
+        }
+
+        let pipe = &mut redis::pipe();
+        for id in &to_delete {
+            pipe.del(self.key(&["dlq", id]));
+            pipe.zrem(&dlq_all, id.as_str());
+        }
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
+        Ok(to_delete.len() as u64)
+    }
+
+    pub fn list_dead_for_retry(
+        &self,
+        cutoff_ms: i64,
+        max_retries: i32,
+        limit: i64,
+    ) -> Result<Vec<DeadJob>> {
+        let mut conn = self.conn()?;
+        let dlq_all = self.key(&["dlq", "all"]);
+
+        let ids: Vec<String> = conn
+            .zrangebyscore(&dlq_all, "-inf", cutoff_ms as f64)
+            .map_err(map_err)?;
+
+        let mut results = Vec::new();
+        for id in ids {
+            if results.len() >= limit as usize {
+                break;
+            }
+            let dlq_key = self.key(&["dlq", &id]);
+            let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+            if let Some(d) = data {
+                if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
+                    if entry.dlq_retry_count < max_retries {
+                        results.push(DeadJob::from(entry));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 }

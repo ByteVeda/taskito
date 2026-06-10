@@ -142,6 +142,8 @@ class Queue(
         scheduler_batch_size: int = 1,
         namespace: str | None = None,
         push_dispatch: bool = False,
+        dlq_auto_retry_delay: int | None = None,
+        dlq_auto_retry_max: int = 1,
     ):
         """Initialize a new task queue.
 
@@ -196,6 +198,10 @@ class Queue(
                 poll. Honored only when the native module was built with the
                 ``push-dispatch`` cargo feature; otherwise accepted and ignored
                 (polling is kept). Defaults to ``False``.
+            dlq_auto_retry_delay: Minimum age in seconds before a DLQ entry
+                is automatically retried. ``None`` disables auto-retry.
+            dlq_auto_retry_max: Maximum number of DLQ auto-retries per entry
+                before giving up. Defaults to 1.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -220,6 +226,8 @@ class Queue(
             scheduler_batch_size=scheduler_batch_size,
             namespace=namespace,
             push_dispatch=push_dispatch,
+            dlq_auto_retry_delay=dlq_auto_retry_delay,
+            dlq_auto_retry_max=dlq_auto_retry_max,
         )
         self._backend = backend
         self._namespace = namespace

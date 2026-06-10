@@ -259,6 +259,10 @@ DELETE_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/tasks/([^/]+)/override$"), handle_delete_task_override),
     (re.compile(r"^/api/queues/([^/]+)/override$"), handle_delete_queue_override),
     (re.compile(r"^/api/tasks/([^/]+)/middleware$"), handle_delete_task_middleware),
+    (
+        re.compile(r"^/api/dead-letters/([^/]+)$"),
+        lambda q, did: {"deleted": q.delete_dead(did)},
+    ),
 ]
 
 

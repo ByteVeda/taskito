@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from taskito.dashboard.errors import _BadRequest, _NotFound
+from taskito.dashboard.errors import _NotFound
 from taskito.dashboard.oauth.identity import (
     AllowlistDenied,
     IdentityFetchError,
@@ -106,10 +106,11 @@ def handle_callback(
         )
     except ProviderNotConfigured as e:
         raise _NotFound(str(e)) from None
-    except StateValidationError as e:
-        raise _BadRequest(f"oauth_state_invalid: {e}") from None
-    except IdentityFetchError as e:
-        raise _BadRequest(f"oauth_identity_failed: {e}") from None
-    except AllowlistDenied as e:
-        raise _BadRequest(f"oauth_allowlist_denied: {e}") from None
+    except StateValidationError:
+        return OAuthRedirect(url="/login?error=oauth_state_invalid")
+    except IdentityFetchError:
+        return OAuthRedirect(url="/login?error=oauth_failed")
+    except AllowlistDenied:
+        return OAuthRedirect(url="/login?error=oauth_denied")
+    flow.prune_state()
     return OAuthRedirect(url=next_url, session=session)
