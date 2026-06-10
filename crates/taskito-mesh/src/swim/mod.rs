@@ -2,6 +2,7 @@ pub mod failure;
 pub mod membership;
 pub mod message;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -34,6 +35,10 @@ pub struct SwimNode {
     seq: u64,
     shutdown: Arc<Notify>,
     encryption_key: Option<Vec<u8>>,
+    /// Tracks PingReq relays: seq → (requester_id, requester_addr).
+    /// When an ACK arrives for a relayed seq, we forward AckRelay
+    /// back to the original requester.
+    pending_relays: HashMap<u64, (String, SocketAddr)>,
 }
 
 impl SwimNode {
@@ -60,6 +65,7 @@ impl SwimNode {
             seq: 0,
             shutdown,
             encryption_key,
+            pending_relays: HashMap::new(),
         }
     }
 
@@ -104,6 +110,8 @@ impl SwimNode {
         self.join_seeds(&socket).await;
 
         let period = std::time::Duration::from_millis(self.config.protocol_period_ms);
+        let mut ticker = tokio::time::interval(period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut recv_buf = vec![0u8; 2048];
 
         loop {
@@ -112,7 +120,7 @@ impl SwimNode {
                     self.broadcast_leave(&socket).await;
                     break;
                 }
-                _ = tokio::time::sleep(period) => {
+                _ = ticker.tick() => {
                     self.protocol_tick(&socket).await;
                 }
                 result = socket.recv_from(&mut recv_buf) => {
@@ -152,6 +160,9 @@ impl SwimNode {
     /// One SWIM protocol period: ping a random peer, check timeouts.
     async fn protocol_tick(&mut self, socket: &UdpSocket) {
         self.failure_detector.gc_stale_probes();
+        // Stale relays: any seq older than current - 100 is expired
+        let cutoff = self.seq.saturating_sub(100);
+        self.pending_relays.retain(|&seq, _| seq > cutoff);
 
         let timed_out = self.failure_detector.check_ping_timeouts();
         for target_id in timed_out {
@@ -162,12 +173,17 @@ impl SwimNode {
         let newly_dead = self.failure_detector.check_suspicion_timeouts(member_count);
         for dead_id in newly_dead {
             info!("[mesh] member {dead_id} declared dead (suspicion expired)");
+            let (incarnation, info) = self
+                .state
+                .get_member(&dead_id)
+                .map(|m| (m.incarnation, m.info))
+                .unwrap_or((0, self.local_info.clone()));
             self.state.mark_dead(&dead_id);
             self.membership.queue_update(MemberUpdate {
                 member_id: dead_id,
                 state: MemberState::Dead,
-                incarnation: 0,
-                info: self.local_info.clone(),
+                incarnation,
+                info,
             });
         }
 
@@ -198,11 +214,16 @@ impl SwimNode {
         if intermediaries.is_empty() {
             if self.failure_detector.suspect(target_id) {
                 info!("[mesh] member {target_id} suspected (no intermediaries)");
+                let (incarnation, info) = self
+                    .state
+                    .get_member(target_id)
+                    .map(|m| (m.incarnation, m.info))
+                    .unwrap_or((0, self.local_info.clone()));
                 self.membership.queue_update(MemberUpdate {
                     member_id: target_id.to_string(),
                     state: MemberState::Suspect,
-                    incarnation: 0,
-                    info: self.local_info.clone(),
+                    incarnation,
+                    info,
                 });
             }
             return;
@@ -284,6 +305,15 @@ impl SwimNode {
                 debug!("[mesh] ack sent to {sender} at {from}");
             }
             GossipMessage::Ack { seq, from: sender } => {
+                if let Some((requester_id, requester_addr)) = self.pending_relays.remove(&seq) {
+                    let relay = GossipMessage::AckRelay {
+                        seq,
+                        original_from: sender.clone(),
+                        via: self.local_info.worker_id.clone(),
+                    };
+                    self.send_msg(socket, &relay, requester_addr).await;
+                    debug!("[mesh] relayed ack from {sender} back to {requester_id}");
+                }
                 if let Some(resolved) = self.failure_detector.ack_received(seq) {
                     debug!("[mesh] ack from {sender} resolved probe for {resolved}");
                 }
@@ -294,13 +324,16 @@ impl SwimNode {
                 target,
                 target_addr,
             } => {
+                let relay_seq = self.next_seq();
                 let ping = GossipMessage::Ping {
-                    seq,
+                    seq: relay_seq,
                     from: self.local_info.worker_id.clone(),
                     from_addr: self.local_info.gossip_addr,
                 };
+                self.pending_relays
+                    .insert(relay_seq, (requester.clone(), from));
                 self.send_msg(socket, &ping, target_addr).await;
-                debug!("[mesh] relayed ping-req from {requester} to {target}");
+                debug!("[mesh] relayed ping-req from {requester} to {target} (relay_seq={relay_seq}, orig_seq={seq})");
             }
             GossipMessage::AckRelay {
                 seq, original_from, ..
@@ -316,20 +349,33 @@ impl SwimNode {
     fn apply_updates(&mut self, updates: &[MemberUpdate]) {
         for update in updates {
             if update.member_id == self.local_info.worker_id {
+                if self.membership.handle_self_update(update) {
+                    let refute = self.make_local_update();
+                    self.membership.queue_update(refute);
+                }
                 continue;
             }
-            let is_new = self.state.upsert_member(Member {
-                info: update.info.clone(),
-                state: update.state,
-                incarnation: update.incarnation,
-            });
-            if is_new {
-                info!(
-                    "[mesh] discovered peer {} at {}",
-                    update.member_id, update.info.gossip_addr
-                );
+
+            let should_apply = match self.state.get_member(&update.member_id) {
+                Some(existing) => self.membership.should_apply(update, &existing),
+                None => true,
+            };
+
+            if should_apply {
+                let is_new = self.state.upsert_member(Member {
+                    info: update.info.clone(),
+                    state: update.state,
+                    incarnation: update.incarnation,
+                });
+                if is_new {
+                    info!(
+                        "[mesh] discovered peer {} at {}",
+                        update.member_id, update.info.gossip_addr
+                    );
+                }
                 self.membership.queue_update(update.clone());
             }
+
             if update.state == MemberState::Alive {
                 self.failure_detector.clear_suspect(&update.member_id);
             }

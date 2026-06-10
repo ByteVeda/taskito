@@ -74,7 +74,7 @@ impl Membership {
     }
 
     /// Handle updates about ourselves — refute if suspected.
-    fn handle_self_update(&mut self, update: &MemberUpdate) -> bool {
+    pub fn handle_self_update(&mut self, update: &MemberUpdate) -> bool {
         if matches!(update.state, MemberState::Suspect | MemberState::Dead)
             && update.incarnation >= self.local_incarnation
         {
@@ -83,6 +83,14 @@ impl Membership {
         } else {
             false
         }
+    }
+
+    /// Check if an update should override existing member state
+    /// based on incarnation number and state priority.
+    pub fn should_apply(&self, update: &MemberUpdate, existing: &Member) -> bool {
+        update.incarnation > existing.incarnation
+            || (update.incarnation == existing.incarnation
+                && state_priority(update.state) > state_priority(existing.state))
     }
 
     /// Queue an update for piggybacking on outgoing messages.

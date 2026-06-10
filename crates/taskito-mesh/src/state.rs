@@ -122,6 +122,12 @@ impl MeshState {
             .find(|m| m.info.local_buffer_len as usize > min_surplus)
     }
 
+    /// Get a clone of a member by worker ID.
+    pub fn get_member(&self, worker_id: &str) -> Option<Member> {
+        let members = self.members.read().unwrap_or_else(|p| p.into_inner());
+        members.get(worker_id).cloned()
+    }
+
     /// Number of alive members (excluding self).
     pub fn alive_count(&self) -> usize {
         let members = self.members.read().unwrap_or_else(|p| p.into_inner());
