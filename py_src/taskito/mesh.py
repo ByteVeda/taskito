@@ -17,6 +17,7 @@ class MeshWorker:
     """
 
     __slots__ = (
+        "advertise_addr",
         "affinity_weight",
         "bind_addr",
         "encryption_key",
@@ -42,6 +43,7 @@ class MeshWorker:
         steal_threshold: int = 2,
         virtual_nodes: int = 150,
         bind_addr: str = "0.0.0.0",
+        advertise_addr: str | None = None,
         encryption_key: str | None = None,
         steal_rate_limit: int = 10,
     ) -> None:
@@ -65,6 +67,7 @@ class MeshWorker:
         self.steal_threshold = steal_threshold
         self.virtual_nodes = virtual_nodes
         self.bind_addr = bind_addr
+        self.advertise_addr = advertise_addr
         self.encryption_key = encryption_key
         self.steal_rate_limit = steal_rate_limit
 
@@ -87,6 +90,7 @@ class MeshWorker:
             "steal_threshold": self.steal_threshold,
             "affinity_weight": self.affinity_weight,
             "enable_stealing": self.steal,
+            "advertise_addr": self.advertise_addr,
             "encryption_key": self.encryption_key,
             "steal_rate_limit": self.steal_rate_limit,
         }

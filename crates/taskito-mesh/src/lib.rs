@@ -6,7 +6,7 @@ pub mod state;
 pub mod steal;
 pub mod swim;
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -54,9 +54,9 @@ impl MeshNode {
     /// Spawn the SWIM gossip loop as a tokio task.
     /// Call this inside the tokio runtime before the scheduler loop.
     pub fn spawn_gossip(&self, queues: Vec<String>, threads: u16) -> tokio::task::JoinHandle<()> {
-        let gossip_addr =
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), self.config.gossip_port);
-        let steal_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), self.config.steal_port);
+        let advertise_ip = self.config.advertise_ip();
+        let gossip_addr = SocketAddr::new(advertise_ip, self.config.gossip_port);
+        let steal_addr = SocketAddr::new(advertise_ip, self.config.steal_port);
         let local_info = WorkerInfo {
             worker_id: self.state.local_worker_id().to_string(),
             gossip_addr,

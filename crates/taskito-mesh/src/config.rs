@@ -1,3 +1,5 @@
+use std::net::{IpAddr, Ipv4Addr};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +30,10 @@ pub struct MeshConfig {
     pub affinity_weight: f64,
     /// Whether work-stealing is enabled.
     pub enable_stealing: bool,
+    /// IP address to advertise to peers for gossip and steal connections.
+    /// Required when `bind_addr` is `0.0.0.0` and peers run on other hosts.
+    /// Falls back to `bind_addr` when unset.
+    pub advertise_addr: Option<String>,
     /// Shared encryption key for gossip messages (base64-encoded, 32 bytes).
     /// When set, gossip datagrams are XOR-encrypted with this key.
     /// Not cryptographically strong — prevents casual sniffing only.
@@ -52,6 +58,7 @@ impl Default for MeshConfig {
             steal_threshold: 2,
             affinity_weight: 0.7,
             enable_stealing: true,
+            advertise_addr: None,
             encryption_key: None,
             steal_rate_limit: 10,
         }
@@ -59,6 +66,16 @@ impl Default for MeshConfig {
 }
 
 impl MeshConfig {
+    /// Resolve the IP to advertise to peers.
+    /// Prefers `advertise_addr`, falls back to `bind_addr`.
+    pub fn advertise_ip(&self) -> IpAddr {
+        self.advertise_addr
+            .as_deref()
+            .or(Some(self.bind_addr.as_str()))
+            .and_then(|s| s.parse::<IpAddr>().ok())
+            .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+    }
+
     /// Decode the encryption key from base64. Returns None if unset or invalid.
     pub fn decoded_encryption_key(&self) -> Option<Vec<u8>> {
         self.encryption_key.as_ref().and_then(|k| {
