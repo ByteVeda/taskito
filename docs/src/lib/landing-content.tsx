@@ -13,6 +13,7 @@ import {
   Workflow,
   Zap,
 } from "lucide-react";
+import { RELEASE_BADGE } from "./release";
 
 export type CtaTarget = {
   href: string;
@@ -104,7 +105,7 @@ export type LandingCta = {
 };
 
 export const HERO: LandingHero = {
-  badge: "v0.16 — mesh scheduling, DLQ policies, dashboard redesign",
+  badge: RELEASE_BADGE,
   headline: ["Task queue", "without the broker."],
   description:
     "Rust-powered task queue for Python. Replace Celery without Redis or RabbitMQ. Start with SQLite, scale to Postgres.",
