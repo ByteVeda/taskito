@@ -18,6 +18,9 @@ Patch release: publish workflow hardening.
   `License-File` metadata emitted by maturin 1.13.3. Pinned `twine>=6.1`.
 - **Timeout guards.** Added `timeout=30` on PyPI API calls and
   `--connect-timeout 10 --max-time 30` on verification curl.
+- **Dashboard artifact download retry.** Extracted dashboard download into a
+  reusable composite action with `gh` CLI fallback on transient
+  `download-artifact` failures (hit on Windows in 0.16.0 publish).
 
 ## 0.16.0
 
