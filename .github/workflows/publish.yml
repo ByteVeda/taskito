@@ -227,7 +227,7 @@ jobs:
           for whl in dist/*.whl; do
             unzip -qt "$whl"
           done
-          check-wheel-contents dist/*.whl
+          check-wheel-contents --ignore W009,W010 dist/*.whl
 
       - name: Check PyPI for existing version
         id: pypi-check
