@@ -5,6 +5,67 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.16.0
+
+Feature release: mesh scheduling, DLQ policies, and a full dashboard redesign.
+
+### Added
+
+- **Mesh scheduling.** Decentralized worker overlay network for task affinity
+  and work-stealing. SWIM gossip protocol for peer discovery, consistent-hash
+  ring for affinity routing, TCP work-stealing for load balancing. New
+  `taskito-mesh` crate (feature-gated via `mesh`). Python API:
+  `MeshWorker` class passed to `queue.run_worker(mesh=...)`. The database
+  remains source of truth — mesh is a dispatch optimization only.
+- **DLQ policies.** Dead-letter queue entries now support auto-retry, per-entry
+  TTL, and explicit delete. New `Queue` params: `dlq_auto_retry_delay` and
+  `dlq_auto_retry_max`. New methods: `delete_dead()` / `adelete_dead()`.
+  Storage trait gains `delete_dead`, `purge_dead_with_ttl`, and
+  `list_dead_for_retry` across all three backends. Dashboard adds a Discard
+  button and retry-count badge on the Dead Letters page.
+- **Dashboard "Friendly ops" redesign.** Full re-skin with warm-paper neutrals,
+  emerald accent, and IBM Plex typography. New shared primitives: `Switch`,
+  `QueueBar`, `MeterBar`, `Segmented`, `Stepper`, `KvList`, `Callout`,
+  `LiveDot`, `StatusBadge`. Overview page gains a health pulse banner, workers
+  card, and busiest-queues table. All pages restyled. Light/dark toggle
+  preserved; custom accent override via `useApplyAccent`.
+- **Dashboard workflows module.** Workflows page with routes and nav entry;
+  command palette entries for Tasks, Webhooks, and Settings.
+- **Dashboard change-password dialog** in the user menu.
+
+### Fixed
+
+- **OAuth callback errors redirect to login** instead of showing a raw error
+  page. Missing `joserfc` dependency added to the `oauth` extras group.
+- **Dashboard timestamp contract enforced.** Webhook store, overrides store,
+  and auth endpoints now emit Unix milliseconds (matching the documented API
+  contract) instead of seconds — fixes "56 years ago" display bugs.
+- **Dashboard sidebar health derived from stats query**, no longer hardcoded
+  green.
+- **Dashboard sidebar polls at configured interval** on all pages, preventing
+  stale "Updated Xs ago" timers.
+- **Fixed sidebar scrolls independently** of page content.
+- **Dead code removed from dashboard** (`QueueBreakdown`, `formatBytes`, unused
+  webhook queries).
+- **Consistent vertical spacing** across all dashboard pages.
+- **Workers card shows overflow count** ("+N more" link when >6 workers).
+- **Accessibility improvements.** `prefers-reduced-motion` honored for
+  animations; `aria-live` on Stepper value changes; `aria-pressed` on
+  live-tail toggle; accessible name on tasks search input.
+
+### Changed
+
+- **Dashboard dependencies updated** (22 packages in the dashboard-deps group).
+
+### Notes
+
+- `jobs.payload` and `jobs.result` columns (dual-written since 0.15.0 for
+  rollback safety) are **not** dropped in this release. They remain for one
+  more cycle to give any lagging workers time to upgrade. Expect removal in
+  0.17.
+
+---
+
 ## 0.15.2
 
 Security-hardening release. No breaking changes.
