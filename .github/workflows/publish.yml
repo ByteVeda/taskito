@@ -223,11 +223,11 @@ jobs:
 
       - name: Validate wheels
         run: |
-          pip install "twine>=6.1,<6.2"
+          pip install check-wheel-contents
           for whl in dist/*.whl; do
             unzip -qt "$whl"
           done
-          twine check dist/*
+          check-wheel-contents dist/*.whl
 
       - name: Check PyPI for existing version
         id: pypi-check
