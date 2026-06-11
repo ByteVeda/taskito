@@ -38,15 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download dashboard assets
-        uses: actions/download-artifact@v8
-        with:
-          name: dashboard-dist
-          path: py_src/taskito/static/dashboard
-
-      - name: Verify dashboard assets present
-        shell: bash
-        run: test -f py_src/taskito/static/dashboard/index.html
+      - uses: ./.github/actions/download-dashboard
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1.51.0
@@ -79,15 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download dashboard assets
-        uses: actions/download-artifact@v8
-        with:
-          name: dashboard-dist
-          path: py_src/taskito/static/dashboard
-
-      - name: Verify dashboard assets present
-        shell: bash
-        run: test -f py_src/taskito/static/dashboard/index.html
+      - uses: ./.github/actions/download-dashboard
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1.51.0
@@ -118,15 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download dashboard assets
-        uses: actions/download-artifact@v8
-        with:
-          name: dashboard-dist
-          path: py_src/taskito/static/dashboard
-
-      - name: Verify dashboard assets present
-        shell: bash
-        run: test -f py_src/taskito/static/dashboard/index.html
+      - uses: ./.github/actions/download-dashboard
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v6
@@ -173,15 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download dashboard assets
-        uses: actions/download-artifact@v8
-        with:
-          name: dashboard-dist
-          path: py_src/taskito/static/dashboard
-
-      - name: Verify dashboard assets present
-        shell: bash
-        run: test -f py_src/taskito/static/dashboard/index.html
+      - uses: ./.github/actions/download-dashboard
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v6
@@ -223,15 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download dashboard assets
-        uses: actions/download-artifact@v8
-        with:
-          name: dashboard-dist
-          path: py_src/taskito/static/dashboard
-
-      - name: Verify dashboard assets present
-        shell: bash
-        run: test -f py_src/taskito/static/dashboard/index.html
+      - uses: ./.github/actions/download-dashboard
 
       - name: Build sdist
         uses: PyO3/maturin-action@v1.51.0

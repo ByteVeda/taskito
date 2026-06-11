@@ -1,0 +1,37 @@
+name: Download dashboard assets
+description: >-
+  Downloads the dashboard-dist artifact with a retry fallback via the
+  GitHub CLI. The primary path uses actions/download-artifact for digest
+  verification; on transient failure it retries three times via gh CLI.
+
+runs:
+  using: composite
+  steps:
+    - name: Download dashboard artifact
+      id: primary
+      uses: actions/download-artifact@v8
+      continue-on-error: true
+      with:
+        name: dashboard-dist
+        path: py_src/taskito/static/dashboard
+
+    - name: Retry download via GitHub CLI
+      if: steps.primary.outcome == 'failure'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "::warning::download-artifact failed — retrying via gh CLI"
+        rm -rf py_src/taskito/static/dashboard
+        for _attempt in 1 2 3; do
+          gh run download "$GITHUB_RUN_ID" \
+            -n dashboard-dist \
+            -D py_src/taskito/static/dashboard && exit 0
+          sleep 10
+        done
+        echo "::error::Dashboard artifact download failed after all retries"
+        exit 1
+
+    - name: Verify dashboard assets
+      shell: bash
+      run: test -f py_src/taskito/static/dashboard/index.html
