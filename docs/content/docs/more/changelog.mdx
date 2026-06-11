@@ -7,22 +7,7 @@ All notable changes to taskito are documented here.
 
 ## 0.16.1
 
-Patch release: publish workflow hardening.
-
-### Fixed
-
-- **PyPI publish pre-check.** Publish job now queries PyPI before uploading,
-  compares SHA-256 hashes per artifact, and skips upload when all wheels are
-  already present. Prevents `400 File already exists` on workflow reruns.
-- **PEP 639 compatibility.** Replaced `twine check` with `check-wheel-contents`
-  for wheel validation. `twine check` broke on PEP 639 `License-File` metadata
-  emitted by maturin 1.13.3 (`packaging` library incompatibility). Structural
-  validation via `check-wheel-contents`; PyPI validates metadata on upload.
-- **Timeout guards.** Added `timeout=30` on PyPI API calls and
-  `--connect-timeout 10 --max-time 30` on verification curl.
-- **Dashboard artifact download retry.** Extracted dashboard download into a
-  reusable composite action with `gh` CLI fallback on transient
-  `download-artifact` failures (hit on Windows in 0.16.0 publish).
+Patch release with no user-facing changes.
 
 ## 0.16.0
 
