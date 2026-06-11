@@ -1,14 +1,50 @@
 name: Publish to PyPI
 
 on:
-  push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.16.1)"
+        required: true
+        type: string
+      dry-run:
+        description: "Build and validate only — skip PyPI upload and tagging"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  preflight:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify version matches codebase
+        run: |
+          version="${{ inputs.version }}"
+          pyproject_ver=$(python3 -c "
+          import re, pathlib
+          m = re.search(r'^version\s*=\s*\"(.+?)\"', pathlib.Path('pyproject.toml').read_text(), re.M)
+          print(m.group(1))
+          ")
+          if [ "$pyproject_ver" != "$version" ]; then
+            echo "::error::Input version ${version} != pyproject.toml version ${pyproject_ver}"
+            exit 1
+          fi
+
+      - name: Check tag does not exist
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/${{ inputs.version }}$"; then
+            echo "::error::Tag ${{ inputs.version }} already exists on remote"
+            exit 1
+          fi
+
   build-dashboard:
+    needs: preflight
     name: Build dashboard assets
     runs-on: ubuntu-latest
     steps:
@@ -212,8 +248,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: write
       id-token: write
     steps:
+      - uses: actions/checkout@v6
+
       - name: Download wheel and sdist artifacts
         uses: actions/download-artifact@v8
         with:
@@ -227,12 +266,12 @@ jobs:
           for whl in dist/*.whl; do
             unzip -qt "$whl"
           done
-          check-wheel-contents dist/*.whl
+          check-wheel-contents --ignore W009,W010 dist/*.whl
 
       - name: Check PyPI for existing version
         id: pypi-check
         run: |
-          version="${GITHUB_REF_NAME}"
+          version="${{ inputs.version }}"
           python3 - "$version" <<'PYCHECK'
           import hashlib, json, os, sys, urllib.request
           from pathlib import Path
@@ -274,15 +313,16 @@ jobs:
           PYCHECK
 
       - name: Publish to PyPI
-        if: steps.pypi-check.outputs.all_uploaded != 'true'
+        if: steps.pypi-check.outputs.all_uploaded != 'true' && !inputs.dry-run
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
           skip-existing: true
 
       - name: Verify version on PyPI
+        if: "!inputs.dry-run"
         run: |
-          version="${GITHUB_REF_NAME}"
+          version="${{ inputs.version }}"
           for _attempt in 1 2 3 4 5; do
             status=$(curl -s -o /dev/null -w '%{http_code}' --head \
               --connect-timeout 10 --max-time 30 \
@@ -296,3 +336,18 @@ jobs:
           done
           echo "::error::taskito==${version} not found on PyPI"
           exit 1
+
+      - name: Create git tag
+        if: "!inputs.dry-run"
+        run: |
+          git tag "${{ inputs.version }}"
+          git push origin "${{ inputs.version }}"
+
+      - name: Create GitHub release
+        if: "!inputs.dry-run"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.version }}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes

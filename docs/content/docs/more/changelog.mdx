@@ -23,6 +23,11 @@ Patch release: publish workflow hardening.
 - **Dashboard artifact download retry.** Extracted dashboard download into a
   reusable composite action with `gh` CLI fallback on transient
   `download-artifact` failures (hit on Windows in 0.16.0 publish).
+- **Publish workflow overhaul.** Switched from tag-push trigger to
+  `workflow_dispatch` with version input and dry-run toggle. Tag and GitHub
+  Release are created only after successful PyPI upload — eliminates orphaned
+  tags from failed publishes. Preflight job verifies version matches
+  `pyproject.toml` and checks tag doesn't already exist.
 
 ## 0.16.0
 
