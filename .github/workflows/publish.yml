@@ -223,7 +223,7 @@ jobs:
 
       - name: Validate wheels
         run: |
-          pip install "twine>=6.1"
+          pip install "twine>=6.1,<6.2"
           for whl in dist/*.whl; do
             unzip -qt "$whl"
           done
