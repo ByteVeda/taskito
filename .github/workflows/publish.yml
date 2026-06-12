@@ -338,12 +338,13 @@ jobs:
                   print(f"::notice::{len(missing)}/{len(local)} artifact(s) missing on PyPI")
           PYCHECK
 
+      - name: Set up uv
+        if: steps.pypi-check.outputs.all_uploaded != 'true' && !inputs.dry-run
+        uses: astral-sh/setup-uv@v7
+
       - name: Publish to PyPI
         if: steps.pypi-check.outputs.all_uploaded != 'true' && !inputs.dry-run
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
-        with:
-          packages-dir: dist/
-          skip-existing: true
+        run: uv publish --trusted-publishing always dist/*
 
       - name: Verify version on PyPI
         if: "!inputs.dry-run"
