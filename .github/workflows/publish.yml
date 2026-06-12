@@ -1,6 +1,10 @@
 name: Publish to PyPI
 
 on:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
     inputs:
       version:
@@ -20,12 +24,31 @@ jobs:
   preflight:
     name: Preflight checks
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
+      - name: Resolve version
+        id: resolve
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${VERSION_INPUT}"
+            version="${version#v}"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: ${version}"
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
       - name: Verify version matches codebase
         run: |
-          version="${{ inputs.version }}"
+          version="${{ steps.resolve.outputs.version }}"
           pyproject_ver=$(python3 -c "
           import re, pathlib
           m = re.search(r'^version\s*=\s*\"(.+?)\"', pathlib.Path('pyproject.toml').read_text(), re.M)
@@ -37,8 +60,9 @@ jobs:
           fi
 
       - name: Check tag does not exist
+        if: github.event_name != 'push'
         run: |
-          version="${{ inputs.version }}"
+          version="${{ steps.resolve.outputs.version }}"
           if git ls-remote --tags origin | awk -v tag="refs/tags/${version}" '$2 == tag { found=1 } END { exit !found }'; then
             echo "::error::Tag ${version} already exists on remote"
             exit 1
@@ -245,12 +269,14 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [build-wheels-linux, build-wheels-musllinux, build-wheels-macos, build-wheels-windows, build-sdist]
+    needs: [preflight, build-wheels-linux, build-wheels-musllinux, build-wheels-macos, build-wheels-windows, build-sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       contents: write
       id-token: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -272,8 +298,7 @@ jobs:
       - name: Check PyPI for existing version
         id: pypi-check
         run: |
-          version="${{ inputs.version }}"
-          python3 - "$version" <<'PYCHECK'
+          python3 - "$VERSION" <<'PYCHECK'
           import hashlib, json, os, sys, urllib.request
           from pathlib import Path
 
@@ -323,32 +348,31 @@ jobs:
       - name: Verify version on PyPI
         if: "!inputs.dry-run"
         run: |
-          version="${{ inputs.version }}"
           for _attempt in 1 2 3 4 5; do
             status=$(curl -s -o /dev/null -w '%{http_code}' --head \
               --connect-timeout 10 --max-time 30 \
               -H "User-Agent: taskito-release/1.0" \
-              "https://pypi.org/pypi/taskito/${version}/json")
+              "https://pypi.org/pypi/taskito/${VERSION}/json")
             if [ "$status" = "200" ]; then
-              echo "taskito==${version} live on PyPI"
+              echo "taskito==${VERSION} live on PyPI"
               exit 0
             fi
             sleep 15
           done
-          echo "::error::taskito==${version} not found on PyPI"
+          echo "::error::taskito==${VERSION} not found on PyPI"
           exit 1
 
       - name: Create git tag
-        if: "!inputs.dry-run"
+        if: github.event_name != 'push' && !inputs.dry-run
         run: |
-          git tag "${{ inputs.version }}"
-          git push origin "${{ inputs.version }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
 
       - name: Create GitHub release
         if: "!inputs.dry-run"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ inputs.version }}" \
-            --title "v${{ inputs.version }}" \
+          gh release create "$VERSION" \
+            --title "v${VERSION}" \
             --generate-notes
