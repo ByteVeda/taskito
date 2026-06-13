@@ -166,20 +166,23 @@ impl RedisStorage {
         let archived_by_queue = self.key(&["archived", "by_queue", &job.queue]);
         let archived_all = self.key(&["archived", "all"]);
 
-        pipe.del(&job_key);
-        pipe.srem(&status_key, &job.id);
-        pipe.srem(&by_queue_key, &job.id);
-        pipe.srem(&by_task_key, &job.id);
-        pipe.zrem(&all_key, &job.id);
+        // Results are ignored so callers can query the pipe as `()` (or
+        // `Option<()>` inside a WATCH transaction).
+        pipe.del(&job_key).ignore();
+        pipe.srem(&status_key, &job.id).ignore();
+        pipe.srem(&by_queue_key, &job.id).ignore();
+        pipe.srem(&by_task_key, &job.id).ignore();
+        pipe.zrem(&all_key, &job.id).ignore();
         // Pending jobs still sit in the per-queue pending zset; running jobs
         // were removed at dequeue, so only remove on a Pending→terminal move.
         if old_status == JobStatus::Pending {
-            pipe.zrem(&pending_key, &job.id);
+            pipe.zrem(&pending_key, &job.id).ignore();
         }
-        pipe.set(&archived_key, job_json);
-        pipe.sadd(&archived_status_key, &job.id);
-        pipe.sadd(&archived_by_queue, &job.id);
-        pipe.zadd(&archived_all, &job.id, completed_at as f64);
+        pipe.set(&archived_key, job_json).ignore();
+        pipe.sadd(&archived_status_key, &job.id).ignore();
+        pipe.sadd(&archived_by_queue, &job.id).ignore();
+        pipe.zadd(&archived_all, &job.id, completed_at as f64)
+            .ignore();
     }
 
     /// Move a terminal job out of the live indices into the archive in one

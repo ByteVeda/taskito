@@ -662,6 +662,7 @@ fn redis_storage_tests() {
     redis_complete_preserves_reused_unique_key(&storage);
     redis_update_progress_never_resurrects_archived(&storage);
     redis_move_to_dlq_leaves_consistent_state(&storage);
+    redis_move_to_dlq_skips_already_archived(&storage);
 }
 
 /// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
@@ -818,6 +819,36 @@ fn redis_move_to_dlq_leaves_consistent_state(s: &taskito_core::RedisStorage) {
     let all = rkey(s, &["jobs", "all"]);
     let score: Option<f64> = conn.zscore(&all, &job.id).unwrap();
     assert!(score.is_none(), "dead job must be removed from jobs:all");
+}
+
+/// A stale caller that lost a race to `complete`/`fail`/the reaper must not
+/// dead-letter a job that was already archived — no duplicate DLQ entry, and the
+/// terminal archive is left intact.
+#[cfg(feature = "redis")]
+fn redis_move_to_dlq_skips_already_archived(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-dlq-guard";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "dlq_guard")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+
+    // A racer archives the job first (Complete).
+    s.complete(&job.id, None).unwrap();
+    let before = s.list_dead(1000, 0).unwrap().len();
+
+    // The stale move_to_dlq must be a no-op.
+    s.move_to_dlq(&running, "boom", None).unwrap();
+
+    assert_eq!(
+        s.list_dead(1000, 0).unwrap().len(),
+        before,
+        "move_to_dlq must not dead-letter an already-archived job"
+    );
+    assert_eq!(
+        s.get_job(&job.id).unwrap().unwrap().status,
+        JobStatus::Complete,
+        "terminal archive must not be overwritten to Dead"
+    );
 }
 
 /// A terminal job has left the live indices, so a mutator that resolves the
