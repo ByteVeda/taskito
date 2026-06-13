@@ -22,10 +22,12 @@ impl RedisStorage {
         job.result = result_bytes;
         self.archive_job_immediately(&mut conn, &job, old_status)?;
 
-        // Clean up unique key if present
+        // Release the unique-key pointer only if it still points at THIS job —
+        // a concurrent enqueue_unique reusing the key after the archive removed
+        // `job:<id>` may have already repointed it to a new job, whose dedup
+        // lock an unconditional DEL would clobber.
         if let Some(ref uk) = job.unique_key {
-            let unique_key = self.key(&["jobs", "unique", uk]);
-            conn.del::<_, ()>(&unique_key).map_err(map_err)?;
+            self.release_unique_key(&mut conn, uk, id)?;
         }
 
         Ok(())

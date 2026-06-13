@@ -7,6 +7,18 @@ use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage};
 
+/// Lua: release a unique-key pointer only if it still points at `ARGV[1]`.
+/// A newer job may have reused the same `unique_key` after this job left the
+/// live indices, so an unconditional `DEL` would clobber the new job's dedup
+/// lock. Mirrors `RELEASE_LOCK_SCRIPT` in `locks.rs`.
+const RELEASE_UNIQUE_IF_OWNER: &str = r#"
+    if redis.call('GET', KEYS[1]) == ARGV[1] then
+        redis.call('DEL', KEYS[1])
+        return 1
+    end
+    return 0
+"#;
+
 impl RedisStorage {
     pub(in crate::storage::redis_backend) fn load_job(
         &self,
@@ -107,6 +119,24 @@ impl RedisStorage {
         pipe.zadd(&queue_key, &job.id, score);
         pipe.query::<()>(conn).map_err(map_err)?;
 
+        Ok(())
+    }
+
+    /// Release a job's unique-key pointer iff it still belongs to this job, via
+    /// an atomic compare-and-delete (mirrors `RELEASE_LOCK_SCRIPT`). Safe to
+    /// call when a newer job may have reused the same `unique_key`.
+    pub(in crate::storage::redis_backend) fn release_unique_key(
+        &self,
+        conn: &mut redis::Connection,
+        unique_key: &str,
+        job_id: &str,
+    ) -> Result<()> {
+        let key = self.key(&["jobs", "unique", unique_key]);
+        redis::Script::new(RELEASE_UNIQUE_IF_OWNER)
+            .key(&key)
+            .arg(job_id)
+            .invoke::<i32>(conn)
+            .map_err(map_err)?;
         Ok(())
     }
 

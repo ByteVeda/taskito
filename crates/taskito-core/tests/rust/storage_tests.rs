@@ -659,6 +659,7 @@ fn redis_storage_tests() {
     redis_purge_preserves_reused_unique_key(&storage);
     redis_claim_skips_job_dropped_from_pending_set(&storage);
     redis_retry_keeps_job_dequeuable(&storage);
+    redis_complete_preserves_reused_unique_key(&storage);
 }
 
 /// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
@@ -722,6 +723,36 @@ fn redis_retry_keeps_job_dequeuable(s: &taskito_core::RedisStorage) {
         Some(job.id.clone()),
         "retried job must be back in the pending zset and dequeuable"
     );
+}
+
+/// #63: completing a job must not clobber a `jobs:unique` pointer a different
+/// live job has reused — the release is a compare-and-delete. Simulated by
+/// repointing the pointer before `complete`.
+#[cfg(feature = "redis")]
+fn redis_complete_preserves_reused_unique_key(s: &taskito_core::RedisStorage) {
+    use redis::Commands;
+    let q = "q-redis-complete-unique";
+    let shared = "redis-complete-reuse";
+    drain_queue(s, q);
+
+    let mut a = make_job(q, "complete_unique_a");
+    a.unique_key = Some(shared.to_string());
+    let a = s.enqueue_unique(a).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+
+    let mut conn = s.conn().unwrap();
+    let ukey = rkey(s, &["jobs", "unique", shared]);
+    let _: () = conn.set(&ukey, "other-live-job-id").unwrap();
+
+    s.complete(&a.id, None).unwrap();
+
+    let owner: Option<String> = conn.get(&ukey).unwrap();
+    assert_eq!(
+        owner.as_deref(),
+        Some("other-live-job-id"),
+        "complete must not delete a unique key reused by another job"
+    );
+    let _: () = conn.del(&ukey).unwrap();
 }
 
 /// A terminal job has left the live indices, so a mutator that resolves the
