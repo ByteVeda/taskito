@@ -114,6 +114,19 @@ def test_primitives_accepted() -> None:
     assert encoded == '{"b":true,"f":1.5,"i":1,"n":null,"s":"x"}'
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_non_finite_floats_rejected(bad: float) -> None:
+    # NaN/Infinity serialize to invalid JSON tokens that break strict readers
+    # (the dashboard JSON.parse, Rust serde_json) — reject at the boundary.
+    with pytest.raises(NotesValidationError, match="must be a finite number"):
+        validate_and_encode_notes({"x": bad})
+
+
+def test_non_finite_float_rejected_when_nested() -> None:
+    with pytest.raises(NotesValidationError, match="must be a finite number"):
+        validate_and_encode_notes({"outer": {"inner": [1, float("nan")]}})
+
+
 # ── End-to-end through Queue.enqueue ----------------------------------------
 
 

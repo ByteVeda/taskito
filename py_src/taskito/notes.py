@@ -25,6 +25,7 @@ full note set as a fixed-size key/value table without truncation.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from taskito.exceptions import NotesValidationError
@@ -73,7 +74,12 @@ def validate_and_encode_notes(notes: dict[str, Any] | None) -> str | None:
         _validate_key(key)
         _validate_value(key, value, depth=1)
 
-    encoded = json.dumps(notes, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    # allow_nan=False is a belt-and-suspenders guard: _validate_value already
+    # rejects non-finite floats, but this ensures the encoder can never emit
+    # invalid JSON tokens even if a new code path slips one through.
+    encoded = json.dumps(
+        notes, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    )
     # For the common all-ASCII payload, byte length == char length, so skip the
     # throwaway UTF-8 encode just to measure size.
     encoded_bytes = len(encoded) if encoded.isascii() else len(encoded.encode("utf-8"))
@@ -107,6 +113,13 @@ def _validate_value(path: str, value: Any, *, depth: int) -> None:
                 f"limit of {MAX_NOTE_VALUE_LENGTH}"
             )
         return
+    if isinstance(value, float) and not math.isfinite(value):
+        # NaN/Infinity serialize to bare ``NaN``/``Infinity`` tokens that are
+        # invalid JSON — any strict reader (the dashboard's JS JSON.parse,
+        # Rust serde_json) rejects them, breaking the whole API response.
+        raise NotesValidationError(
+            f"note value at {path!r} must be a finite number, got {value!r}"
+        )
     if isinstance(value, (bool, int, float)) or value is None:
         return
     if isinstance(value, list):
