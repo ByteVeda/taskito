@@ -118,6 +118,7 @@ mod tests {
             handles.push(std::thread::spawn(move || {
                 barrier.wait();
                 // Retry on lock contention (SQLite busy)
+                let mut last_err = None;
                 for _ in 0..10 {
                     match limiter.try_acquire("concurrent_test", &config) {
                         Ok(true) => {
@@ -125,12 +126,14 @@ mod tests {
                             return;
                         }
                         Ok(false) => return,
-                        Err(_) => {
+                        Err(e) => {
+                            last_err = Some(e.to_string());
                             std::thread::sleep(std::time::Duration::from_millis(10));
                             continue;
                         }
                     }
                 }
+                panic!("exhausted retries in SQLite rate-limit test: {last_err:?}");
             }));
         }
 
@@ -140,5 +143,80 @@ mod tests {
 
         // With 10 tokens and no refill, exactly 10 should succeed
         assert_eq!(acquired.load(Ordering::Relaxed), 10);
+    }
+
+    /// Postgres lost-update guard: under concurrency the row is seeded once and
+    /// read `FOR UPDATE`, so a fresh bucket must admit exactly `max_tokens` — not
+    /// more. Skips unless `TASKITO_POSTGRES_TEST_URL` is set (CI Postgres job).
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn test_postgres_concurrent_token_acquisition_no_over_admit() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let url = match std::env::var("TASKITO_POSTGRES_TEST_URL") {
+            Ok(u) => u,
+            Err(_) => {
+                eprintln!("Skipping Postgres rate-limit test (TASKITO_POSTGRES_TEST_URL not set)");
+                return;
+            }
+        };
+        let num_threads = 12;
+        let storage = match crate::storage::postgres::PostgresStorage::with_pool_size(
+            &url,
+            num_threads as u32 + 4,
+        ) {
+            Ok(s) => StorageBackend::Postgres(s),
+            Err(e) => {
+                eprintln!("Skipping Postgres rate-limit test (cannot connect): {e}");
+                return;
+            }
+        };
+        let limiter = Arc::new(RateLimiter::new(storage));
+        let config = RateLimitConfig {
+            max_tokens: 5.0,
+            refill_rate: 0.0,
+        };
+        // Unique key so repeated runs against the same DB start from a full bucket.
+        let key = format!("pg-conc-{}", crate::job::now_millis());
+
+        let acquired = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let mut handles = vec![];
+        for _ in 0..num_threads {
+            let limiter = limiter.clone();
+            let config = config.clone();
+            let acquired = acquired.clone();
+            let barrier = barrier.clone();
+            let key = key.clone();
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                let mut last_err = None;
+                for _ in 0..10 {
+                    match limiter.try_acquire(&key, &config) {
+                        Ok(true) => {
+                            acquired.fetch_add(1, Ordering::Relaxed);
+                            return;
+                        }
+                        Ok(false) => return,
+                        Err(e) => {
+                            last_err = Some(e.to_string());
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                            continue;
+                        }
+                    }
+                }
+                panic!("exhausted retries in Postgres rate-limit test: {last_err:?}");
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(
+            acquired.load(Ordering::Relaxed),
+            5,
+            "FOR UPDATE + seed must admit exactly max_tokens, never over-admit"
+        );
     }
 }

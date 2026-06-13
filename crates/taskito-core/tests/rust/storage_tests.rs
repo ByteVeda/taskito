@@ -655,6 +655,25 @@ fn run_storage_tests(s: &impl Storage) {
     test_dependent_blocked_by_cancelled_parent(s);
     test_payload_side_table(s);
     test_archived_job_payload_resolves(s);
+    test_rate_limit_token_exhaustion(s);
+}
+
+fn test_rate_limit_token_exhaustion(s: &impl Storage) {
+    // With no refill, exactly `max_tokens` acquisitions succeed and the next
+    // fails. Locks the token-bucket contract on every backend (Postgres reads
+    // the row FOR UPDATE so this also guards the lost-update fix).
+    let key = "q-rate-exhaust";
+    let max_tokens = 5.0;
+    for i in 0..5 {
+        assert!(
+            s.try_acquire_token(key, max_tokens, 0.0).unwrap(),
+            "token {i} should be granted"
+        );
+    }
+    assert!(
+        !s.try_acquire_token(key, max_tokens, 0.0).unwrap(),
+        "bucket must be empty after max_tokens acquisitions"
+    );
 }
 
 // ── Backend-specific wiring ──────────────────────────────────────────

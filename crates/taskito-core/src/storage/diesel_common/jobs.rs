@@ -164,9 +164,8 @@ macro_rules! impl_diesel_job_ops {
             pub fn enqueue(&self, new_job: NewJob) -> Result<Job> {
                 let depends_on = new_job.depends_on.clone();
                 let job = new_job.into_job();
-                let mut conn = self.conn()?;
 
-                conn.transaction(|conn| {
+                self.write_transaction(|conn| {
                     // Validate dependencies exist and aren't dead/cancelled.
                     // Terminal deps live in `archived_jobs`, so a missing live
                     // row falls back to the archive.
@@ -226,10 +225,12 @@ macro_rules! impl_diesel_job_ops {
                     Ok(())
                 })
                 .map_err(|e| match e {
-                    diesel::result::Error::RollbackTransaction => QueueError::DependencyNotFound(
-                        "dependency not found or already dead/cancelled".to_string(),
-                    ),
-                    other => QueueError::Storage(other),
+                    QueueError::Storage(diesel::result::Error::RollbackTransaction) => {
+                        QueueError::DependencyNotFound(
+                            "dependency not found or already dead/cancelled".to_string(),
+                        )
+                    }
+                    other => other,
                 })?;
 
                 Ok(job)
@@ -243,10 +244,9 @@ macro_rules! impl_diesel_job_ops {
                 // chunk size keeps the macro-generated code identical.
                 const BATCH_INSERT_CHUNK: usize = 50;
 
-                let mut conn = self.conn()?;
                 let jobs: Vec<Job> = new_jobs.into_iter().map(|nj| nj.into_job()).collect();
 
-                conn.transaction(|conn| {
+                self.write_transaction(|conn| {
                     let rows: Vec<NewJobRow> = jobs
                         .iter()
                         .map(|job| NewJobRow {
@@ -304,7 +304,6 @@ macro_rules! impl_diesel_job_ops {
             pub fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
                 let depends_on = new_job.depends_on.clone();
                 let job = new_job.into_job();
-                let mut conn = self.conn()?;
 
                 // A UniqueViolation means a concurrent insert won the unique slot.
                 // If that job is still active we return it; if it has since gone
@@ -313,7 +312,7 @@ macro_rules! impl_diesel_job_ops {
                 // an error instead of a phantom job that was never persisted.
                 const MAX_ENQUEUE_ATTEMPTS: usize = 3;
                 for _ in 0..MAX_ENQUEUE_ATTEMPTS {
-                    let result = conn.transaction(|conn| {
+                    let result = self.write_transaction(|conn| {
                         // Return any existing active job with the same unique_key.
                         if let Some(ref uk) = job.unique_key {
                             let existing: Option<JobRow> =
@@ -387,13 +386,17 @@ macro_rules! impl_diesel_job_ops {
 
                     match result {
                         Ok(j) => return Ok(j),
-                        Err(diesel::result::Error::DatabaseError(
+                        Err(QueueError::Storage(diesel::result::Error::DatabaseError(
                             diesel::result::DatabaseErrorKind::UniqueViolation,
                             _,
-                        )) => {
+                        ))) => {
                             // Concurrent winner: return it if still active, else the
                             // slot was freed by a terminal transition — retry insert.
+                            // Acquire the connection here (not before the loop) so
+                            // it never overlaps `write_transaction`'s own checkout —
+                            // the in-memory test pool has a single connection.
                             if let Some(ref uk) = job.unique_key {
+                                let mut conn = self.conn()?;
                                 let existing: Option<JobRow> = jobs::table
                                     .filter(jobs::unique_key.eq(uk))
                                     .filter(jobs::status.eq_any([
@@ -409,12 +412,12 @@ macro_rules! impl_diesel_job_ops {
                             }
                             continue;
                         }
-                        Err(diesel::result::Error::RollbackTransaction) => {
+                        Err(QueueError::Storage(diesel::result::Error::RollbackTransaction)) => {
                             return Err(QueueError::DependencyNotFound(
                                 "dependency not found or already dead/cancelled".to_string(),
                             ));
                         }
-                        Err(e) => return Err(QueueError::Storage(e)),
+                        Err(e) => return Err(e),
                     }
                 }
 
@@ -432,9 +435,7 @@ macro_rules! impl_diesel_job_ops {
                 now: i64,
                 namespace: Option<&str>,
             ) -> Result<Option<Job>> {
-                let mut conn = self.conn()?;
-
-                conn.transaction(|conn| {
+                self.write_transaction(|conn| {
                     let mut query = jobs::table
                         .filter(jobs::queue.eq(queue_name))
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
@@ -559,9 +560,7 @@ macro_rules! impl_diesel_job_ops {
                 // to keep the loaded set small.
                 let scan_limit = (max.saturating_mul(4)).min(400) as i64;
 
-                let mut conn = self.conn()?;
-
-                conn.transaction(|conn| {
+                self.write_transaction(|conn| {
                     let mut query = jobs::table
                         .filter(jobs::queue.eq(queue_name))
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
@@ -661,7 +660,7 @@ macro_rules! impl_diesel_job_ops {
             pub fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
                 let now = now_millis();
 
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let mut row: JobRow = match jobs::table
                         .find(id)
                         .filter(jobs::status.eq(JobStatus::Running as i32))
@@ -686,7 +685,7 @@ macro_rules! impl_diesel_job_ops {
             pub fn fail(&self, id: &str, error: &str) -> Result<()> {
                 let now = now_millis();
 
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let mut row: JobRow = match jobs::table
                         .find(id)
                         .filter(jobs::status.eq(JobStatus::Running as i32))
@@ -758,7 +757,7 @@ macro_rules! impl_diesel_job_ops {
             pub fn cancel_job(&self, id: &str) -> Result<bool> {
                 let now = now_millis();
 
-                let archived = self.archive_transaction(|conn| {
+                let archived = self.write_transaction(|conn| {
                     let mut row: JobRow = match jobs::table
                         .find(id)
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
@@ -814,7 +813,7 @@ macro_rules! impl_diesel_job_ops {
             pub fn mark_cancelled(&self, id: &str) -> Result<()> {
                 let now = now_millis();
 
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let mut row: JobRow = match jobs::table
                         .find(id)
                         .select(JobRow::as_select())
@@ -870,7 +869,7 @@ macro_rules! impl_diesel_job_ops {
 
                 if !queue.is_empty() {
                     let error_msg = format!("{reason}: {failed_job_id}");
-                    self.archive_transaction(|conn| {
+                    self.write_transaction(|conn| {
                         let rows: Vec<JobRow> = jobs::table
                             .filter(jobs::id.eq_any(&queue))
                             .filter(jobs::status.eq(JobStatus::Pending as i32))
@@ -1283,7 +1282,7 @@ macro_rules! impl_diesel_job_ops {
             /// Purge completed jobs older than the given timestamp. Terminal
             /// jobs live in `archived_jobs`, so the purge targets that table.
             pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let job_ids: Vec<String> = archived_jobs::table
                         .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
                         .filter(archived_jobs::completed_at.lt(older_than_ms))
@@ -1306,7 +1305,7 @@ macro_rules! impl_diesel_job_ops {
             pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
                 let now = now_millis();
 
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let global_ids: Vec<String> = archived_jobs::table
                         .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
                         .filter(archived_jobs::result_ttl_ms.is_null())
@@ -1418,7 +1417,7 @@ macro_rules! impl_diesel_job_ops {
 
             /// Expire pending jobs that have passed their expires_at.
             pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let rows: Vec<JobRow> = jobs::table
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
                         .filter(jobs::expires_at.is_not_null())
@@ -1434,7 +1433,7 @@ macro_rules! impl_diesel_job_ops {
             pub fn cancel_pending_by_queue(&self, queue: &str) -> Result<u64> {
                 let now = now_millis();
 
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let rows: Vec<JobRow> = jobs::table
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
                         .filter(jobs::queue.eq(queue))
@@ -1449,7 +1448,7 @@ macro_rules! impl_diesel_job_ops {
             pub fn cancel_pending_by_task(&self, task_name: &str) -> Result<u64> {
                 let now = now_millis();
 
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let rows: Vec<JobRow> = jobs::table
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
                         .filter(jobs::task_name.eq(task_name))

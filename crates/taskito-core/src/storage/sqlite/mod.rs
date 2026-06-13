@@ -16,19 +16,19 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool};
 use diesel::sqlite::SqliteConnection;
 
-use crate::error::Result;
+use crate::error::{QueueError, Result};
 use crate::storage::diesel_common::migrations as common_migrations;
 
-/// Run an ALTER TABLE migration, suppressing "duplicate column" errors (SQLite).
-fn migration_alter(conn: &mut SqliteConnection, sql: &str) {
+/// Run an ALTER TABLE migration. SQLite has no `ADD COLUMN IF NOT EXISTS`, so a
+/// "duplicate column" error means the column already exists and is ignored;
+/// every other failure (locked DB, disk full, bad type) is propagated — a
+/// silently-skipped ALTER would leave the schema missing a column and surface
+/// later as a confusing query error far from the cause.
+fn migration_alter(conn: &mut SqliteConnection, sql: &str) -> Result<()> {
     match diesel::sql_query(sql).execute(conn) {
-        Ok(_) => {}
-        Err(e) => {
-            let msg = e.to_string();
-            if !msg.contains("duplicate column") {
-                log::warn!("migration failed for '{sql}': {e}");
-            }
-        }
+        Ok(_) => Ok(()),
+        Err(e) if e.to_string().contains("duplicate column") => Ok(()),
+        Err(e) => Err(QueueError::Storage(e)),
     }
 }
 
@@ -140,7 +140,7 @@ impl SqliteStorage {
             diesel::sql_query(*sql).execute(&mut conn)?;
         }
         for sql in common_migrations::alter_statements(&common_migrations::SQLITE) {
-            migration_alter(&mut conn, &sql);
+            migration_alter(&mut conn, &sql)?;
         }
         // Data backfills must fail loudly — a swallowed failure would leave
         // has_deps wrong and let dequeue bypass dependency enforcement.

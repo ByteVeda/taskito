@@ -22,12 +22,13 @@ use diesel::r2d2::{ConnectionManager, Pool};
 use crate::error::Result;
 use crate::storage::diesel_common::migrations as common_migrations;
 
-/// Run an ALTER TABLE migration, logging a warning on any failure.
-/// Postgres migrations use IF NOT EXISTS, so any error is genuinely unexpected.
-fn migration_alter(conn: &mut PgConnection, sql: &str) {
-    if let Err(e) = diesel::sql_query(sql).execute(conn) {
-        log::warn!("migration failed for '{sql}': {e}");
-    }
+/// Run an ALTER TABLE migration. Postgres statements use `ADD COLUMN IF NOT
+/// EXISTS`, so the already-applied case succeeds silently and any error is a
+/// genuine failure (locked table, permissions, disk) that must be propagated
+/// rather than leaving the schema missing a column.
+fn migration_alter(conn: &mut PgConnection, sql: &str) -> Result<()> {
+    diesel::sql_query(sql).execute(conn)?;
+    Ok(())
 }
 
 type PgPool = Pool<ConnectionManager<PgConnection>>;
@@ -151,7 +152,7 @@ impl PostgresStorage {
             diesel::sql_query(*sql).execute(&mut conn)?;
         }
         for sql in common_migrations::alter_statements(&common_migrations::POSTGRES) {
-            migration_alter(&mut conn, &sql);
+            migration_alter(&mut conn, &sql)?;
         }
         // Data backfills must fail loudly — a swallowed failure would leave
         // has_deps wrong and let dequeue bypass dependency enforcement.
