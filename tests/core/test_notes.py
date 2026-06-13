@@ -7,6 +7,7 @@ end-to-end round trip through ``Queue.enqueue`` /
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -137,6 +138,23 @@ def test_enqueue_round_trip(queue: Queue) -> None:
 
     job = noop.apply_async(notes={"customer_id": "cus_abc", "tier": "gold"})
     assert job.notes == {"customer_id": "cus_abc", "tier": "gold"}
+
+
+def test_to_dict_emits_notes_as_json_string(queue: Queue) -> None:
+    # The dashboard API contract is ``notes: string | null`` (the client
+    # JSON.parse-s it). to_dict() must emit the canonical string, not the
+    # parsed dict the ``notes`` property returns for Python callers.
+    @queue.task()
+    def noop() -> str:
+        return "ok"
+
+    job = noop.apply_async(notes={"customer_id": "cus_abc", "tier": "gold"})
+    raw = job.to_dict()["notes"]
+    assert isinstance(raw, str)
+    assert json.loads(raw) == {"customer_id": "cus_abc", "tier": "gold"}
+
+    plain = noop.apply_async()
+    assert plain.to_dict()["notes"] is None
 
 
 def test_enqueue_without_notes_returns_none(queue: Queue) -> None:

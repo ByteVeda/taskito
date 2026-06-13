@@ -285,7 +285,11 @@ class JobResult(AsyncJobResultMixin):
             "timeout_ms": self._py_job.timeout_ms,
             "unique_key": self._py_job.unique_key,
             "metadata": self._py_job.metadata,
-            "notes": self.notes,
+            # Emit the raw canonical JSON string (the dashboard API contract is
+            # ``notes: string | null`` and the client JSON.parse-s it). The
+            # ``notes`` property returns a parsed dict for Python callers, but
+            # serializing that dict here would break the typed client contract.
+            "notes": self._py_job.notes,
             "namespace": self._py_job.namespace,
         }
 
