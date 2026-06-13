@@ -3,10 +3,29 @@
 
 use redis::Commands;
 
-use super::dequeue_score;
 use crate::error::{QueueError, Result};
 use crate::job::{now_millis, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage};
+
+/// Lua: write the precomputed job JSON only if the job is still live (its
+/// `job:<id>` key exists). Guards `update_progress` so a concurrent archive
+/// (complete/fail/reap) can't be clobbered into a resurrected orphan key that
+/// belongs to no index. Returns 1 on write, 0 if the job is already gone.
+const SET_IF_LIVE: &str = r#"
+    if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+    redis.call('SET', KEYS[1], ARGV[1])
+    return 1
+"#;
+
+/// Lua: mark a job cancel-requested (write JSON + add to the cancel set) only
+/// if it is still live-Running (member of `jobs:status:1`). Prevents resurrecting
+/// a job that was archived concurrently. Returns 1 if applied, 0 otherwise.
+const REQUEST_CANCEL_IF_RUNNING: &str = r#"
+    if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 0 end
+    redis.call('SET', KEYS[1], ARGV[2])
+    redis.call('SADD', KEYS[3], ARGV[1])
+    return 1
+"#;
 
 impl RedisStorage {
     pub fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
@@ -23,10 +42,12 @@ impl RedisStorage {
         job.result = result_bytes;
         self.archive_job_immediately(&mut conn, &job, old_status)?;
 
-        // Clean up unique key if present
+        // Release the unique-key pointer only if it still points at THIS job —
+        // a concurrent enqueue_unique reusing the key after the archive removed
+        // `job:<id>` may have already repointed it to a new job, whose dedup
+        // lock an unconditional DEL would clobber.
         if let Some(ref uk) = job.unique_key {
-            let unique_key = self.key(&["jobs", "unique", uk]);
-            conn.del::<_, ()>(&unique_key).map_err(map_err)?;
+            self.release_unique_key(&mut conn, uk, id)?;
         }
 
         Ok(())
@@ -61,13 +82,8 @@ impl RedisStorage {
         job.completed_at = None;
         job.error = None;
 
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
-
-        // Re-add to pending queue
-        let queue_key = self.key(&["queue", &job.queue, "pending"]);
-        let score = dequeue_score(job.priority, job.scheduled_at);
-        conn.zadd::<_, _, _, ()>(&queue_key, &job.id, score)
-            .map_err(map_err)?;
+        // Atomic status-move + pending-zset insert (see `requeue_pending`).
+        self.requeue_pending(&mut conn, &job, old_status)?;
 
         Ok(())
     }
@@ -86,13 +102,8 @@ impl RedisStorage {
         job.completed_at = None;
         job.error = None;
 
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
-
-        // Re-add to pending queue
-        let queue_key = self.key(&["queue", &job.queue, "pending"]);
-        let score = dequeue_score(job.priority, job.scheduled_at);
-        conn.zadd::<_, _, _, ()>(&queue_key, &job.id, score)
-            .map_err(map_err)?;
+        // Atomic status-move + pending-zset insert (see `requeue_pending`).
+        self.requeue_pending(&mut conn, &job, old_status)?;
 
         Ok(())
     }
@@ -138,12 +149,22 @@ impl RedisStorage {
         job.cancel_requested = true;
         let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
         let job_key = self.key(&["job", id]);
-        conn.set::<_, _, ()>(&job_key, &job_json).map_err(map_err)?;
-
+        let running_key = self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
         let cancel_set = self.key(&["jobs", "cancel_requested"]);
-        conn.sadd::<_, _, ()>(&cancel_set, id).map_err(map_err)?;
 
-        Ok(true)
+        // Guarded write: only mark the job if it is still live-Running. If it was
+        // archived between the read above and here, the script is a no-op (returns
+        // 0) and we report "not cancellable" rather than resurrecting it.
+        let applied: i32 = redis::Script::new(REQUEST_CANCEL_IF_RUNNING)
+            .key(&job_key)
+            .key(&running_key)
+            .key(&cancel_set)
+            .arg(id)
+            .arg(&job_json)
+            .invoke(&mut conn)
+            .map_err(map_err)?;
+
+        Ok(applied == 1)
     }
 
     pub fn is_cancel_requested(&self, id: &str) -> Result<bool> {
@@ -240,7 +261,20 @@ impl RedisStorage {
         job.progress = Some(progress);
         let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
         let job_key = self.key(&["job", id]);
-        conn.set::<_, _, ()>(&job_key, &job_json).map_err(map_err)?;
+
+        // Guarded write: only update if `job:<id>` still exists. If the job was
+        // archived (completed/failed/reaped) between the read and here, the plain
+        // SET would otherwise recreate it as a Running orphan outside every index.
+        let applied: i32 = redis::Script::new(SET_IF_LIVE)
+            .key(&job_key)
+            .arg(&job_json)
+            .invoke(&mut conn)
+            .map_err(map_err)?;
+        if applied == 0 {
+            // The job was archived concurrently — surface it like the read path
+            // rather than reporting a silent success that wrote nothing.
+            return Err(QueueError::JobNotFound(id.to_string()));
+        }
         Ok(())
     }
 }

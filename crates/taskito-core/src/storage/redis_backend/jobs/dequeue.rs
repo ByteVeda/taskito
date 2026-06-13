@@ -6,7 +6,54 @@ use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage};
 
+/// Lua: claim a candidate by flipping it Pending→Running, but only if it is
+/// still a member of the pending status set (`jobs:status:0`). This is the
+/// Redis equivalent of the Diesel `UPDATE ... WHERE status = Pending`
+/// affected-row guard: a concurrent cancel/expire that already archived the
+/// job has removed it from `jobs:status:0`, so the claim is refused (returns 0)
+/// instead of resurrecting the job as a Running orphan. Redis runs the script
+/// atomically, which also closes the double-claim window between schedulers.
+///
+/// KEYS: job_key, pending_status_set, running_status_set, pending_zset
+/// ARGV: job_id, running_json
+const CLAIM_JOB_SCRIPT: &str = r#"
+    if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 0 end
+    redis.call('SET', KEYS[1], ARGV[2])
+    redis.call('SREM', KEYS[2], ARGV[1])
+    redis.call('SADD', KEYS[3], ARGV[1])
+    redis.call('ZREM', KEYS[4], ARGV[1])
+    return 1
+"#;
+
 impl RedisStorage {
+    /// Atomically claim a candidate job (Pending→Running) via [`CLAIM_JOB_SCRIPT`].
+    /// The caller must have already set `job.status = Running` and `started_at`.
+    /// Returns `false` if the job was concurrently cancelled/expired/claimed, so
+    /// the dequeue scan should skip it.
+    fn claim_pending(
+        &self,
+        conn: &mut redis::Connection,
+        job: &Job,
+        queue_key: &str,
+    ) -> Result<bool> {
+        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_key = self.key(&["job", &job.id]);
+        let pending_status =
+            self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);
+        let running_status =
+            self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
+        let claimed: i32 = redis::Script::new(CLAIM_JOB_SCRIPT)
+            .key(&job_key)
+            .key(&pending_status)
+            .key(&running_status)
+            .key(queue_key)
+            .arg(&job.id)
+            .arg(&job_json)
+            .invoke(conn)
+            .map_err(map_err)?;
+        Ok(claimed == 1)
+    }
+
     pub fn dequeue(
         &self,
         queue_name: &str,
@@ -101,14 +148,13 @@ impl RedisStorage {
                 }
             }
 
-            // Claim the job
+            // Claim the job atomically; if we lost the race (cancelled / expired
+            // / claimed by another scheduler) skip to the next candidate.
             job.status = JobStatus::Running;
             job.started_at = Some(now);
-            self.save_job_and_move_status(&mut conn, &job, JobStatus::Pending)?;
-            conn.zrem::<_, _, ()>(&queue_key, &job_id)
-                .map_err(map_err)?;
-
-            return Ok(Some(job));
+            if self.claim_pending(&mut conn, &job, &queue_key)? {
+                return Ok(Some(job));
+            }
         }
 
         Ok(None)
@@ -240,14 +286,13 @@ impl RedisStorage {
                 }
             }
 
-            // Claim the job
+            // Claim the job atomically; skip candidates lost to a concurrent
+            // cancel / expire / claim instead of resurrecting them.
             job.status = JobStatus::Running;
             job.started_at = Some(now);
-            self.save_job_and_move_status(&mut conn, &job, JobStatus::Pending)?;
-            conn.zrem::<_, _, ()>(&queue_key, &job_id)
-                .map_err(map_err)?;
-
-            claimed.push(job);
+            if self.claim_pending(&mut conn, &job, &queue_key)? {
+                claimed.push(job);
+            }
         }
 
         Ok(claimed)

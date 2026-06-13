@@ -201,7 +201,7 @@ jobs:
 
   build-wheels-windows:
     needs: build-dashboard
-    runs-on: windows-latest
+    runs-on: windows-2025
     strategy:
       fail-fast: false
       matrix:

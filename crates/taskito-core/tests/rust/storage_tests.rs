@@ -646,9 +646,209 @@ fn redis_storage_tests() {
         }
     };
 
+    // The contract tests use fixed queue names and assert exact counts, so they
+    // need a clean DB. Flush it up front (DB 15 is the designated throwaway test
+    // database per the URL default) so the suite is deterministic across repeated
+    // local runs, not only against a fresh CI container.
+    let mut conn = storage.conn().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+    drop(conn);
+
     run_storage_tests(&storage);
     redis_mutators_reject_archived_jobs(&storage);
     redis_purge_preserves_reused_unique_key(&storage);
+    redis_claim_skips_job_dropped_from_pending_set(&storage);
+    redis_retry_keeps_job_dequeuable(&storage);
+    redis_complete_preserves_reused_unique_key(&storage);
+    redis_update_progress_never_resurrects_archived(&storage);
+    redis_move_to_dlq_leaves_consistent_state(&storage);
+    redis_move_to_dlq_skips_already_archived(&storage);
+}
+
+/// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
+#[cfg(feature = "redis")]
+fn rkey(s: &taskito_core::RedisStorage, parts: &[&str]) -> String {
+    format!("{}{}", s.prefix(), parts.join(":"))
+}
+
+/// Drain any pending jobs left in `q` by earlier runs so the test that follows
+/// deterministically dequeues the job it just enqueued (the shared test DB is
+/// not flushed between runs).
+#[cfg(feature = "redis")]
+fn drain_queue(s: &taskito_core::RedisStorage, q: &str) {
+    while s
+        .dequeue(q, now_millis() + 1_000_000, None)
+        .unwrap()
+        .is_some()
+    {}
+}
+
+/// The atomic claim must refuse a candidate that a concurrent cancel/expire
+/// already removed from the pending status set, rather than resurrecting it as a
+/// Running orphan. Simulated by dropping the job from `jobs:status:0` while it
+/// lingers in the pending zset.
+#[cfg(feature = "redis")]
+fn redis_claim_skips_job_dropped_from_pending_set(s: &taskito_core::RedisStorage) {
+    use redis::Commands;
+    let q = "q-redis-claim-guard";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "claim_guard")).unwrap();
+
+    let mut conn = s.conn().unwrap();
+    let status_pending = rkey(s, &["jobs", "status", "0"]);
+    let _: () = conn.srem(&status_pending, &job.id).unwrap();
+
+    // No claimable candidate remains, and the job is not flipped to Running.
+    assert!(s.dequeue(q, now_millis() + 1000, None).unwrap().is_none());
+    let fetched = s.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(
+        fetched.status,
+        JobStatus::Pending,
+        "claim guard must not resurrect a job dropped from the pending set"
+    );
+}
+
+/// Retry must leave the job dequeuable — the status-set move and the pending-zset
+/// add commit together, so the job is never stranded Pending but absent from the
+/// queue.
+#[cfg(feature = "redis")]
+fn redis_retry_keeps_job_dequeuable(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-retry-requeue";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "retry_requeue")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+
+    s.retry(&job.id, now_millis()).unwrap();
+
+    let again = s.dequeue(q, now_millis() + 1000, None).unwrap();
+    assert_eq!(
+        again.map(|j| j.id),
+        Some(job.id.clone()),
+        "retried job must be back in the pending zset and dequeuable"
+    );
+}
+
+/// Completing a job must not clobber a `jobs:unique` pointer a different live job
+/// has reused — the release is a compare-and-delete. Simulated by repointing the
+/// pointer before `complete`.
+#[cfg(feature = "redis")]
+fn redis_complete_preserves_reused_unique_key(s: &taskito_core::RedisStorage) {
+    use redis::Commands;
+    let q = "q-redis-complete-unique";
+    let shared = "redis-complete-reuse";
+    drain_queue(s, q);
+
+    let mut a = make_job(q, "complete_unique_a");
+    a.unique_key = Some(shared.to_string());
+    let a = s.enqueue_unique(a).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+
+    let mut conn = s.conn().unwrap();
+    let ukey = rkey(s, &["jobs", "unique", shared]);
+    let _: () = conn.set(&ukey, "other-live-job-id").unwrap();
+
+    s.complete(&a.id, None).unwrap();
+
+    let owner: Option<String> = conn.get(&ukey).unwrap();
+    assert_eq!(
+        owner.as_deref(),
+        Some("other-live-job-id"),
+        "complete must not delete a unique key reused by another job"
+    );
+    let _: () = conn.del(&ukey).unwrap();
+}
+
+/// A progress update must never recreate `job:<id>` once the job has been
+/// archived. The Lua existence gate (and the live-only required lookup) keep a
+/// stale update from leaving an orphan key outside every index.
+#[cfg(feature = "redis")]
+fn redis_update_progress_never_resurrects_archived(s: &taskito_core::RedisStorage) {
+    use redis::Commands;
+    let q = "q-redis-progress-guard";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "progress_guard")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+
+    // Live update goes through the guard and writes.
+    s.update_progress(&job.id, 42).unwrap();
+    assert_eq!(s.get_job(&job.id).unwrap().unwrap().progress, Some(42));
+
+    // After archival the job key is gone; a stale update must not resurrect it.
+    s.complete(&job.id, None).unwrap();
+    assert!(matches!(
+        s.update_progress(&job.id, 99),
+        Err(taskito_core::error::QueueError::JobNotFound(_))
+    ));
+    let mut conn = s.conn().unwrap();
+    let jkey = rkey(s, &["job", &job.id]);
+    let exists: bool = conn.exists(&jkey).unwrap();
+    assert!(
+        !exists,
+        "archived job key must not be resurrected by a progress update"
+    );
+}
+
+/// The DLQ write and the live→archive move commit in one atomic pipeline, so a
+/// dead-lettered job is fully out of every live index and present in the DLQ —
+/// never a half state.
+#[cfg(feature = "redis")]
+fn redis_move_to_dlq_leaves_consistent_state(s: &taskito_core::RedisStorage) {
+    use redis::Commands;
+    let q = "q-redis-dlq-atomic";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "dlq_atomic")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+
+    s.move_to_dlq(&running, "boom", None).unwrap();
+
+    let dead = s.list_dead(10, 0).unwrap();
+    assert!(
+        dead.iter().any(|d| d.original_job_id == job.id),
+        "job must be present in the DLQ"
+    );
+
+    let mut conn = s.conn().unwrap();
+    for set in [
+        rkey(s, &["jobs", "status", "1"]),
+        rkey(s, &["jobs", "by_queue", q]),
+    ] {
+        let member: bool = conn.sismember(&set, &job.id).unwrap();
+        assert!(!member, "dead job must be removed from live index {set}");
+    }
+    let all = rkey(s, &["jobs", "all"]);
+    let score: Option<f64> = conn.zscore(&all, &job.id).unwrap();
+    assert!(score.is_none(), "dead job must be removed from jobs:all");
+}
+
+/// A stale caller that lost a race to `complete`/`fail`/the reaper must not
+/// dead-letter a job that was already archived — no duplicate DLQ entry, and the
+/// terminal archive is left intact.
+#[cfg(feature = "redis")]
+fn redis_move_to_dlq_skips_already_archived(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-dlq-guard";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "dlq_guard")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+
+    // A racer archives the job first (Complete).
+    s.complete(&job.id, None).unwrap();
+    let before = s.list_dead(1000, 0).unwrap().len();
+
+    // The stale move_to_dlq must be a no-op.
+    s.move_to_dlq(&running, "boom", None).unwrap();
+
+    assert_eq!(
+        s.list_dead(1000, 0).unwrap().len(),
+        before,
+        "move_to_dlq must not dead-letter an already-archived job"
+    );
+    assert_eq!(
+        s.get_job(&job.id).unwrap().unwrap().status,
+        JobStatus::Complete,
+        "terminal archive must not be overwritten to Dead"
+    );
 }
 
 /// A terminal job has left the live indices, so a mutator that resolves the

@@ -89,22 +89,38 @@ impl RedisStorage {
         let dlq_key = self.key(&["dlq", &dlq_id]);
         let dlq_all = self.key(&["dlq", "all"]);
 
-        let pipe = &mut redis::pipe();
-        pipe.set(&dlq_key, &json);
-        pipe.zadd(&dlq_all, &dlq_id, now as f64);
-        pipe.query::<()>(&mut conn).map_err(map_err)?;
-
-        // Archive the now-Dead job out of the live indices.
         let mut dead_job = job.clone();
         let old_status = dead_job.status;
         dead_job.status = JobStatus::Dead;
         dead_job.error = Some(error.to_string());
         dead_job.completed_at = Some(now);
-        self.archive_job_immediately(&mut conn, &dead_job, old_status)?;
+        let dead_json =
+            serde_json::to_string(&dead_job).map_err(|e| QueueError::Other(e.to_string()))?;
 
-        // Cascade cancel dependents
+        // Commit the DLQ entry and the live→archive move together, but only if the
+        // job is still live in its expected state. A racing complete/fail or the
+        // stale-job reaper may have archived it first; WATCH aborts the EXEC if
+        // `job:<id>` changes between the liveness check and the commit, so we never
+        // create a duplicate DLQ entry or overwrite a terminal archive.
+        let job_live_key = self.key(&["job", &job.id]);
+        let dead_lettered: bool =
+            redis::transaction(&mut conn, &[job_live_key.as_str()], |conn, pipe| {
+                if !conn.exists::<_, bool>(&job_live_key)? {
+                    return Ok(Some(false));
+                }
+                pipe.set(&dlq_key, &json).ignore();
+                pipe.zadd(&dlq_all, &dlq_id, now as f64).ignore();
+                self.push_archive_ops(pipe, &dead_job, old_status, &dead_json);
+                Ok(pipe.query::<Option<()>>(conn)?.map(|()| true))
+            })
+            .map_err(map_err)?;
+
+        // Cascade-cancel dependents only if we actually dead-lettered the job
+        // (skipped when a racer had already archived it).
         drop(conn);
-        self.cascade_cancel(&job.id, "dependency failed")?;
+        if dead_lettered {
+            self.cascade_cancel(&job.id, "dependency failed")?;
+        }
 
         Ok(())
     }
