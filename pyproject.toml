@@ -31,7 +31,7 @@ dependencies = [
 Homepage = "https://github.com/ByteVeda/taskito"
 Documentation = "https://docs.byteveda.org/taskito"
 Repository = "https://github.com/ByteVeda/taskito"
-Changelog = "https://docs.byteveda.org/taskito/docs/more/changelog"
+Changelog = "https://docs.byteveda.org/taskito/more/changelog"
 Issues = "https://github.com/ByteVeda/taskito/issues"
 
 [project.optional-dependencies]

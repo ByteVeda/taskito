@@ -298,88 +298,24 @@ macro_rules! impl_diesel_job_ops {
                 })
             }
 
-            /// Enqueue with unique_key deduplication. Returns existing job if duplicate.
+            /// Enqueue with unique_key deduplication. Returns the existing active
+            /// job on a duplicate, validates dependencies exactly like `enqueue`,
+            /// and never returns a job whose insert was rolled back.
             pub fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
                 let depends_on = new_job.depends_on.clone();
                 let job = new_job.into_job();
                 let mut conn = self.conn()?;
 
-                let result = conn.transaction(|conn| {
-                    // Check for existing active job with same unique_key
-                    if let Some(ref uk) = job.unique_key {
-                        let existing: Option<JobRow> = jobs::table
-                            .filter(jobs::unique_key.eq(uk))
-                            .filter(
-                                jobs::status
-                                    .eq_any([JobStatus::Pending as i32, JobStatus::Running as i32]),
-                            )
-                            .select(JobRow::as_select())
-                            .first(conn)
-                            .optional()?;
-
-                        if let Some(row) = existing {
-                            return Ok(Job::from(row));
-                        }
-                    }
-
-                    let row = NewJobRow {
-                        id: &job.id,
-                        queue: &job.queue,
-                        task_name: &job.task_name,
-                        payload: &job.payload,
-                        status: job.status as i32,
-                        priority: job.priority,
-                        created_at: job.created_at,
-                        scheduled_at: job.scheduled_at,
-                        retry_count: job.retry_count,
-                        max_retries: job.max_retries,
-                        timeout_ms: job.timeout_ms,
-                        unique_key: job.unique_key.as_deref(),
-                        metadata: job.metadata.as_deref(),
-                        notes: job.notes.as_deref(),
-                        cancel_requested: 0,
-                        expires_at: job.expires_at,
-                        result_ttl_ms: job.result_ttl_ms,
-                        namespace: job.namespace.as_deref(),
-                        has_deps: job.has_deps,
-                    };
-
-                    diesel::insert_into(jobs::table)
-                        .values(&row)
-                        .execute(conn)?;
-
-                    diesel::insert_into(job_payloads::table)
-                        .values(&NewJobPayloadRow {
-                            job_id: &job.id,
-                            payload: &job.payload,
-                            result: None,
-                        })
-                        .execute(conn)?;
-
-                    // Insert dependency rows
-                    for dep_id in &depends_on {
-                        let dep_row = NewJobDependencyRow {
-                            id: &uuid::Uuid::now_v7().to_string(),
-                            job_id: &job.id,
-                            depends_on_job_id: dep_id,
-                        };
-                        diesel::insert_into(job_dependencies::table)
-                            .values(&dep_row)
-                            .execute(conn)?;
-                    }
-
-                    Ok(job.clone())
-                });
-
-                // Handle unique constraint violation by returning existing job
-                match result {
-                    Ok(j) => Ok(j),
-                    Err(diesel::result::Error::DatabaseError(
-                        diesel::result::DatabaseErrorKind::UniqueViolation,
-                        _,
-                    )) => {
+                // A UniqueViolation means a concurrent insert won the unique slot.
+                // If that job is still active we return it; if it has since gone
+                // terminal — freeing the partial unique index — we retry the
+                // insert. Bound the attempts so persistent contention surfaces as
+                // an error instead of a phantom job that was never persisted.
+                const MAX_ENQUEUE_ATTEMPTS: usize = 3;
+                for _ in 0..MAX_ENQUEUE_ATTEMPTS {
+                    let result = conn.transaction(|conn| {
+                        // Return any existing active job with the same unique_key.
                         if let Some(ref uk) = job.unique_key {
-                            let mut conn = self.conn()?;
                             let existing: Option<JobRow> =
                                 jobs::table
                                     .filter(jobs::unique_key.eq(uk))
@@ -388,16 +324,103 @@ macro_rules! impl_diesel_job_ops {
                                         JobStatus::Running as i32,
                                     ]))
                                     .select(JobRow::as_select())
-                                    .first(&mut conn)
+                                    .first(conn)
                                     .optional()?;
                             if let Some(row) = existing {
                                 return Ok(Job::from(row));
                             }
                         }
-                        Ok(job)
+
+                        // Validate dependencies exist and aren't dead/cancelled,
+                        // matching `enqueue` (RollbackTransaction → DependencyNotFound).
+                        for dep_id in &depends_on {
+                            Self::validate_dependency(conn, dep_id)?;
+                        }
+
+                        let row = NewJobRow {
+                            id: &job.id,
+                            queue: &job.queue,
+                            task_name: &job.task_name,
+                            payload: &job.payload,
+                            status: job.status as i32,
+                            priority: job.priority,
+                            created_at: job.created_at,
+                            scheduled_at: job.scheduled_at,
+                            retry_count: job.retry_count,
+                            max_retries: job.max_retries,
+                            timeout_ms: job.timeout_ms,
+                            unique_key: job.unique_key.as_deref(),
+                            metadata: job.metadata.as_deref(),
+                            notes: job.notes.as_deref(),
+                            cancel_requested: 0,
+                            expires_at: job.expires_at,
+                            result_ttl_ms: job.result_ttl_ms,
+                            namespace: job.namespace.as_deref(),
+                            has_deps: job.has_deps,
+                        };
+
+                        diesel::insert_into(jobs::table)
+                            .values(&row)
+                            .execute(conn)?;
+
+                        diesel::insert_into(job_payloads::table)
+                            .values(&NewJobPayloadRow {
+                                job_id: &job.id,
+                                payload: &job.payload,
+                                result: None,
+                            })
+                            .execute(conn)?;
+
+                        for dep_id in &depends_on {
+                            let dep_row = NewJobDependencyRow {
+                                id: &uuid::Uuid::now_v7().to_string(),
+                                job_id: &job.id,
+                                depends_on_job_id: dep_id,
+                            };
+                            diesel::insert_into(job_dependencies::table)
+                                .values(&dep_row)
+                                .execute(conn)?;
+                        }
+
+                        Ok(job.clone())
+                    });
+
+                    match result {
+                        Ok(j) => return Ok(j),
+                        Err(diesel::result::Error::DatabaseError(
+                            diesel::result::DatabaseErrorKind::UniqueViolation,
+                            _,
+                        )) => {
+                            // Concurrent winner: return it if still active, else the
+                            // slot was freed by a terminal transition — retry insert.
+                            if let Some(ref uk) = job.unique_key {
+                                let existing: Option<JobRow> = jobs::table
+                                    .filter(jobs::unique_key.eq(uk))
+                                    .filter(jobs::status.eq_any([
+                                        JobStatus::Pending as i32,
+                                        JobStatus::Running as i32,
+                                    ]))
+                                    .select(JobRow::as_select())
+                                    .first(&mut conn)
+                                    .optional()?;
+                                if let Some(row) = existing {
+                                    return Ok(Job::from(row));
+                                }
+                            }
+                            continue;
+                        }
+                        Err(diesel::result::Error::RollbackTransaction) => {
+                            return Err(QueueError::DependencyNotFound(
+                                "dependency not found or already dead/cancelled".to_string(),
+                            ));
+                        }
+                        Err(e) => return Err(QueueError::Storage(e)),
                     }
-                    Err(e) => Err(QueueError::Storage(e)),
                 }
+
+                Err(QueueError::Other(
+                    "enqueue_unique: unique key contended across retries".to_string(),
+                ))
             }
 
             /// Atomically dequeue the highest-priority ready job from the given queue.

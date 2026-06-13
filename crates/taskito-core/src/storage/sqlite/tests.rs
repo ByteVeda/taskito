@@ -465,6 +465,64 @@ fn test_unique_key_dedup() {
 }
 
 #[test]
+fn test_enqueue_unique_rejects_missing_dependency() {
+    // enqueue_unique must validate dependencies like enqueue (it previously
+    // inserted dep rows blind, treating a bogus dep as satisfied).
+    let storage = test_storage();
+    let mut job = make_job("unique_orphan");
+    job.unique_key = Some("uk-missing-dep".to_string());
+    job.depends_on = vec!["nonexistent-id".to_string()];
+    assert!(matches!(
+        storage.enqueue_unique(job),
+        Err(QueueError::DependencyNotFound(_))
+    ));
+}
+
+#[test]
+fn test_enqueue_unique_rejects_dead_dependency() {
+    let storage = test_storage();
+    // A cancelled (archived, non-Complete) dependency must be rejected.
+    let dep = storage.enqueue(make_job("dep_to_cancel")).unwrap();
+    assert!(storage.cancel_job(&dep.id).unwrap());
+
+    let mut job = make_job("unique_blocked");
+    job.unique_key = Some("uk-dead-dep".to_string());
+    job.depends_on = vec![dep.id.clone()];
+    assert!(matches!(
+        storage.enqueue_unique(job),
+        Err(QueueError::DependencyNotFound(_))
+    ));
+}
+
+#[test]
+fn test_enqueue_unique_after_dup_completes() {
+    // Once the prior holder of a unique_key completes (archived, freeing the
+    // partial index), a fresh enqueue_unique must return a real, persisted job —
+    // never the phantom (rolled-back) job the old fallback could return.
+    let storage = test_storage();
+    let mut a = make_job("unique_reuse");
+    a.unique_key = Some("uk-reuse".to_string());
+    let a = storage.enqueue_unique(a).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+    storage.complete(&a.id, None).unwrap();
+
+    let mut b = make_job("unique_reuse");
+    b.unique_key = Some("uk-reuse".to_string());
+    let b = storage.enqueue_unique(b).unwrap();
+
+    assert_ne!(
+        a.id, b.id,
+        "freed unique key must yield a new job, not dedup to A"
+    );
+    assert!(
+        storage.get_job(&b.id).unwrap().is_some(),
+        "returned job must actually be persisted (no phantom)"
+    );
+}
+
+#[test]
 fn test_enqueue_batch() {
     let storage = test_storage();
     let jobs: Vec<NewJob> = (0..5)

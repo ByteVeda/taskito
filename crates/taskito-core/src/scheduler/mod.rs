@@ -566,6 +566,46 @@ mod tests {
     }
 
     #[test]
+    fn test_explicit_zero_max_retries_no_retry() {
+        // The task policy would retry 3×, but an explicit per-job max_retries=0
+        // (at-most-once) must override it and go straight to the DLQ.
+        let mut scheduler = test_scheduler();
+        scheduler.register_task(
+            "noretry_task".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy {
+                    max_retries: 3,
+                    base_delay_ms: 100,
+                    max_delay_ms: 1000,
+                    custom_delays_ms: None,
+                },
+                rate_limit: None,
+                circuit_breaker: None,
+                max_concurrent: None,
+            },
+        );
+
+        let job = enqueue_and_run(&scheduler, "noretry_task");
+
+        let outcome = scheduler
+            .handle_result(JobResult::Failure {
+                job_id: job.id.clone(),
+                error: "boom".to_string(),
+                retry_count: 0,
+                max_retries: 0,
+                task_name: "noretry_task".to_string(),
+                wall_time_ns: 500_000,
+                should_retry: true,
+                timed_out: false,
+            })
+            .unwrap();
+
+        assert!(matches!(outcome, ResultOutcome::DeadLettered { .. }));
+        let dead = scheduler.storage.list_dead(10, 0).unwrap();
+        assert!(dead.iter().any(|d| d.original_job_id == job.id));
+    }
+
+    #[test]
     fn test_handle_failure_exhausted() {
         let scheduler = test_scheduler();
         let job = enqueue_and_run(&scheduler, "exhausted_task");

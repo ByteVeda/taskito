@@ -104,11 +104,11 @@ impl Scheduler {
                     .map(|c| c.retry_policy.clone())
                     .unwrap_or_default();
 
-                let effective_max = if max_retries > 0 {
-                    max_retries
-                } else {
-                    policy.max_retries
-                };
+                // job.max_retries is the budget resolved at enqueue (the queue
+                // default or the caller's explicit value), so honor it exactly —
+                // treating a stored 0 as "unset" would silently re-run a job the
+                // caller marked at-most-once. policy is still used for backoff.
+                let effective_max = max_retries;
 
                 if retry_count < effective_max {
                     let next_at = policy.next_retry_at(retry_count);
