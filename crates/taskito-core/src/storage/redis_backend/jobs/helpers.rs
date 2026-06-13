@@ -140,22 +140,18 @@ impl RedisStorage {
         Ok(())
     }
 
-    /// Move a terminal job out of the live indices into the archive in a single
-    /// pipeline. Removes it from `job:<id>`, the live status / by_queue /
-    /// by_task sets and the `jobs:all` zset, then writes `archived:<id>`, adds
-    /// it to `archived:status:<n>` and scores it into `archived:all` by
-    /// completed_at.
-    ///
-    /// `old_status` is the status the job held in the live `jobs:status:<n>`
-    /// set; the caller must have already set the job's terminal `status`,
-    /// `completed_at` (and `error`/`result` as appropriate).
-    pub(in crate::storage::redis_backend) fn archive_job_immediately(
+    /// Append the live→archive command sequence to `pipe` (no MULTI/EXEC of its
+    /// own). Removes the job from the live indices and writes the archived row.
+    /// Shared by `archive_job_immediately` and `move_to_dlq` so the DLQ write and
+    /// the archive can commit in one transaction. The caller must have already
+    /// set the terminal `status`/`completed_at` and serialized `job_json`.
+    pub(in crate::storage::redis_backend) fn push_archive_ops(
         &self,
-        conn: &mut redis::Connection,
+        pipe: &mut redis::Pipeline,
         job: &Job,
         old_status: JobStatus,
-    ) -> Result<()> {
-        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        job_json: &str,
+    ) {
         let completed_at = job.completed_at.unwrap_or_else(crate::job::now_millis);
 
         let job_key = self.key(&["job", &job.id]);
@@ -170,10 +166,6 @@ impl RedisStorage {
         let archived_by_queue = self.key(&["archived", "by_queue", &job.queue]);
         let archived_all = self.key(&["archived", "all"]);
 
-        // `.atomic()` wraps the live→archive move in MULTI/EXEC so the job is
-        // never observable in both the live and archived indices at once.
-        let pipe = &mut redis::pipe();
-        pipe.atomic();
         pipe.del(&job_key);
         pipe.srem(&status_key, &job.id);
         pipe.srem(&by_queue_key, &job.id);
@@ -184,10 +176,25 @@ impl RedisStorage {
         if old_status == JobStatus::Pending {
             pipe.zrem(&pending_key, &job.id);
         }
-        pipe.set(&archived_key, &job_json);
+        pipe.set(&archived_key, job_json);
         pipe.sadd(&archived_status_key, &job.id);
         pipe.sadd(&archived_by_queue, &job.id);
         pipe.zadd(&archived_all, &job.id, completed_at as f64);
+    }
+
+    /// Move a terminal job out of the live indices into the archive in one
+    /// atomic pipeline (`.atomic()` MULTI/EXEC), so it is never observable in
+    /// both the live and archived indices at once.
+    pub(in crate::storage::redis_backend) fn archive_job_immediately(
+        &self,
+        conn: &mut redis::Connection,
+        job: &Job,
+        old_status: JobStatus,
+    ) -> Result<()> {
+        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let pipe = &mut redis::pipe();
+        pipe.atomic();
+        self.push_archive_ops(pipe, job, old_status, &job_json);
         pipe.query::<()>(conn).map_err(map_err)?;
 
         Ok(())

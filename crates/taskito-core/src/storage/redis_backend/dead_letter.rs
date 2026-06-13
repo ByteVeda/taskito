@@ -89,18 +89,23 @@ impl RedisStorage {
         let dlq_key = self.key(&["dlq", &dlq_id]);
         let dlq_all = self.key(&["dlq", "all"]);
 
-        let pipe = &mut redis::pipe();
-        pipe.set(&dlq_key, &json);
-        pipe.zadd(&dlq_all, &dlq_id, now as f64);
-        pipe.query::<()>(&mut conn).map_err(map_err)?;
-
-        // Archive the now-Dead job out of the live indices.
+        // Commit the DLQ entry and the live→archive move in one atomic pipeline,
+        // so a crash can't leave the job both DLQ'd and still live-Running (which
+        // a reaper would dead-letter again, or retry_dead would duplicate).
         let mut dead_job = job.clone();
         let old_status = dead_job.status;
         dead_job.status = JobStatus::Dead;
         dead_job.error = Some(error.to_string());
         dead_job.completed_at = Some(now);
-        self.archive_job_immediately(&mut conn, &dead_job, old_status)?;
+        let dead_json =
+            serde_json::to_string(&dead_job).map_err(|e| QueueError::Other(e.to_string()))?;
+
+        let pipe = &mut redis::pipe();
+        pipe.atomic();
+        pipe.set(&dlq_key, &json);
+        pipe.zadd(&dlq_all, &dlq_id, now as f64);
+        self.push_archive_ops(pipe, &dead_job, old_status, &dead_json);
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         // Cascade cancel dependents
         drop(conn);
