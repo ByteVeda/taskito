@@ -495,6 +495,34 @@ fn test_enqueue_unique_rejects_dead_dependency() {
 }
 
 #[test]
+fn test_enqueue_unique_after_dup_completes() {
+    // Once the prior holder of a unique_key completes (archived, freeing the
+    // partial index), a fresh enqueue_unique must return a real, persisted job —
+    // never the phantom (rolled-back) job the old fallback could return.
+    let storage = test_storage();
+    let mut a = make_job("unique_reuse");
+    a.unique_key = Some("uk-reuse".to_string());
+    let a = storage.enqueue_unique(a).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+    storage.complete(&a.id, None).unwrap();
+
+    let mut b = make_job("unique_reuse");
+    b.unique_key = Some("uk-reuse".to_string());
+    let b = storage.enqueue_unique(b).unwrap();
+
+    assert_ne!(
+        a.id, b.id,
+        "freed unique key must yield a new job, not dedup to A"
+    );
+    assert!(
+        storage.get_job(&b.id).unwrap().is_some(),
+        "returned job must actually be persisted (no phantom)"
+    );
+}
+
+#[test]
 fn test_enqueue_batch() {
     let storage = test_storage();
     let jobs: Vec<NewJob> = (0..5)
