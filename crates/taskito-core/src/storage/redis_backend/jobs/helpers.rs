@@ -229,20 +229,14 @@ impl RedisStorage {
         pipe.del(&errors_key);
         pipe.del(&deps_key);
         pipe.del(&dependents_key);
-
-        // Only release the unique-key pointer if it still points at THIS job.
-        // `enqueue_unique` stores the job id at `jobs:unique:<uk>`; a newer live
-        // job may have reused the same `unique_key` after this row was archived,
-        // and deleting the pointer would clobber the new job's lock.
-        if let Some(ref uk) = job.unique_key {
-            let unique_key = self.key(&["jobs", "unique", uk]);
-            let owner: Option<String> = conn.get(&unique_key).map_err(map_err)?;
-            if owner.as_deref() == Some(job.id.as_str()) {
-                pipe.del(&unique_key);
-            }
-        }
-
         pipe.query::<()>(conn).map_err(map_err)?;
+
+        // Release the unique-key pointer through the atomic compare-and-delete so
+        // a `enqueue_unique` that reused the key between a plain GET and DEL can't
+        // have its lock clobbered.
+        if let Some(ref uk) = job.unique_key {
+            self.release_unique_key(conn, uk, &job.id)?;
+        }
 
         Ok(())
     }
