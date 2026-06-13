@@ -660,6 +660,7 @@ fn redis_storage_tests() {
     redis_claim_skips_job_dropped_from_pending_set(&storage);
     redis_retry_keeps_job_dequeuable(&storage);
     redis_complete_preserves_reused_unique_key(&storage);
+    redis_update_progress_never_resurrects_archived(&storage);
 }
 
 /// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
@@ -753,6 +754,36 @@ fn redis_complete_preserves_reused_unique_key(s: &taskito_core::RedisStorage) {
         "complete must not delete a unique key reused by another job"
     );
     let _: () = conn.del(&ukey).unwrap();
+}
+
+/// #64: a progress update must never recreate `job:<id>` once the job has been
+/// archived. The Lua existence gate (and the live-only required lookup) keep a
+/// stale update from leaving an orphan key outside every index.
+#[cfg(feature = "redis")]
+fn redis_update_progress_never_resurrects_archived(s: &taskito_core::RedisStorage) {
+    use redis::Commands;
+    let q = "q-redis-progress-guard";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "progress_guard")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+
+    // Live update goes through the guard and writes.
+    s.update_progress(&job.id, 42).unwrap();
+    assert_eq!(s.get_job(&job.id).unwrap().unwrap().progress, Some(42));
+
+    // After archival the job key is gone; a stale update must not resurrect it.
+    s.complete(&job.id, None).unwrap();
+    assert!(matches!(
+        s.update_progress(&job.id, 99),
+        Err(taskito_core::error::QueueError::JobNotFound(_))
+    ));
+    let mut conn = s.conn().unwrap();
+    let jkey = rkey(s, &["job", &job.id]);
+    let exists: bool = conn.exists(&jkey).unwrap();
+    assert!(
+        !exists,
+        "archived job key must not be resurrected by a progress update"
+    );
 }
 
 /// A terminal job has left the live indices, so a mutator that resolves the
