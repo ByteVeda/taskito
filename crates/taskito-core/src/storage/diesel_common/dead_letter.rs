@@ -18,7 +18,7 @@ macro_rules! impl_diesel_dead_letter_ops {
 
                 // Write-priority transaction: this reads the job row then writes
                 // it to `archived_jobs`, which would deadlock under SQLite's
-                // deferred lock-upgrade. See `archive_transaction`.
+                // deferred lock-upgrade. See `write_transaction`.
                 let dlq_retry_count = job
                     .metadata
                     .as_deref()
@@ -26,7 +26,7 @@ macro_rules! impl_diesel_dead_letter_ops {
                     .and_then(|v| v.get("__dlq_retry_count")?.as_i64())
                     .unwrap_or(0) as i32;
 
-                self.archive_transaction(|conn| {
+                self.write_transaction(|conn| {
                     let dlq_row = NewDeadLetterRow {
                         id: &dlq_id,
                         original_job_id: &job.id,

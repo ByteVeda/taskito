@@ -16,9 +16,9 @@ crate::storage::diesel_common::impl_diesel_job_ops!(PostgresStorage, PgConnectio
 impl PostgresStorage {
     /// Run a read-then-write unit of work in a transaction. Postgres serializes
     /// row-level writes without the SQLite lock-upgrade deadlock, so a regular
-    /// transaction suffices; this mirrors [`SqliteStorage::archive_transaction`]
+    /// transaction suffices; this mirrors [`SqliteStorage::write_transaction`]
     /// so the shared job-ops macro can call one name on both backends.
-    pub(crate) fn archive_transaction<T, F>(&self, f: F) -> Result<T>
+    pub(crate) fn write_transaction<T, F>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&mut PgConnection) -> std::result::Result<T, QueueError>,
     {

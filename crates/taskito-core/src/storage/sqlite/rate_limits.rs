@@ -30,13 +30,14 @@ impl SqliteStorage {
     }
 
     /// Atomically try to acquire a rate limit token.
-    /// Does the read-refill-consume-write in a single transaction to prevent
-    /// race conditions between concurrent workers.
+    /// Does the read-refill-consume-write in a single write transaction to
+    /// prevent race conditions between concurrent workers. Uses
+    /// [`SqliteStorage::write_transaction`] (BEGIN IMMEDIATE) so the read-then-
+    /// write can't hit the deferred-lock-upgrade `SQLITE_BUSY` deadlock.
     pub fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> {
-        let mut conn = self.conn()?;
         let now = now_millis();
 
-        conn.transaction(|conn| {
+        self.write_transaction(|conn| {
             let existing: Option<RateLimitRow> = rate_limits::table
                 .find(key)
                 .select(RateLimitRow::as_select())
