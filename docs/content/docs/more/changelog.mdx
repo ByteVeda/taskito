@@ -5,6 +5,30 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.16.2
+
+Reliability patch — correctness fixes across the scheduler, dashboard, and Redis backend. No API changes.
+
+### Fixed
+
+- **Scheduler retry budget.** Soft-gate reschedules (rate limit, circuit breaker,
+  concurrency cap, channel backpressure) no longer consume a job's retry budget; a
+  job that never executed is rescheduled without incrementing `retry_count`, so it
+  is no longer dead-lettered early on its first real failure.
+- **Webhook secrets.** Webhook signing secrets and delivery logs (stored under
+  `webhooks:` keys) are no longer readable through `GET /api/settings`.
+- **Structured notes.** The dashboard job detail page no longer crashes on jobs
+  with notes (the API now emits notes as a canonical JSON string), and non-finite
+  floats (`NaN`/`Infinity`) are rejected at enqueue instead of producing invalid
+  JSON that broke the jobs API.
+- **Redis write-path atomicity.** Closed a cluster of races in the Redis backend:
+  the dequeue claim is now an atomic compare-and-set (a cancelled/expired job can
+  no longer be resurrected and executed); retry/reschedule requeue atomically (no
+  stranded jobs); `complete` and purge release the unique-key pointer with a
+  compare-and-delete (no clobbering a reused key); progress/cancel writes are
+  guarded against resurrecting an archived job; and the dead-letter move commits
+  the DLQ entry and the archive together.
+
 ## 0.16.1
 
 Patch release with no user-facing changes.
