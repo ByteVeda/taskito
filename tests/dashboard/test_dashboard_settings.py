@@ -137,6 +137,26 @@ def test_get_unknown_setting_returns_404(dashboard_server: tuple[AuthedClient, Q
     assert exc_info.value.code == 404
 
 
+def test_get_settings_hides_webhook_keys(dashboard_server: tuple[AuthedClient, Queue]) -> None:
+    client, queue = dashboard_server
+    # Webhook subscriptions carry plaintext HMAC signing secrets; delivery logs
+    # carry full request payloads. Both live under ``webhooks:`` in the same KV
+    # store as /api/settings and must never leak through the generic endpoints.
+    queue.set_setting(
+        "webhooks:subscriptions",
+        json.dumps([{"id": "wh1", "url": "https://x.example", "secret": "topsecret"}]),
+    )
+    queue.set_setting("webhooks:deliveries:wh1", json.dumps([{"payload": "sensitive"}]))
+
+    snapshot = client.get("/api/settings")
+    assert not any(k.startswith("webhooks:") for k in snapshot)
+
+    # Direct fetch of a protected key is reported as absent, not leaked.
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        client.get("/api/settings/webhooks:subscriptions")
+    assert exc_info.value.code == 404
+
+
 def test_put_setting_with_missing_value_field_returns_400(
     dashboard_server: tuple[AuthedClient, Queue],
 ) -> None:
