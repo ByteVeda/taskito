@@ -127,7 +127,7 @@ impl Scheduler {
         // If we exceed the cap, roll back: clear the claim row and reset
         // status to `Pending` so the job can be dispatched again later.
         if !self.check_post_claim_concurrency(&job)? {
-            self.rollback_claim_and_retry(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
+            self.rollback_claim_and_reschedule(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
             return Ok(false);
         }
 
@@ -140,14 +140,20 @@ impl Scheduler {
             Ok(()) => Ok(true),
             Err(TrySendError::Full(_)) => {
                 warn!("worker channel full; rescheduling job {job_id} (worker pool is behind)",);
-                self.rollback_claim_and_retry(&job_id, now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS)?;
+                self.rollback_claim_and_reschedule(
+                    &job_id,
+                    now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS,
+                )?;
                 Ok(false)
             }
             Err(TrySendError::Closed(_)) => {
                 warn!(
                     "worker channel closed; rescheduling job {job_id} (worker pool shutting down)",
                 );
-                self.rollback_claim_and_retry(&job_id, now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS)?;
+                self.rollback_claim_and_reschedule(
+                    &job_id,
+                    now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS,
+                )?;
                 Ok(false)
             }
         }
@@ -193,7 +199,7 @@ impl Scheduler {
                 let key = format!("queue:{}", job.queue);
                 if !self.rate_limiter.try_acquire(&key, rl_config)? {
                     self.storage
-                        .retry(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
+                        .reschedule(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
                     return Ok(false);
                 }
             }
@@ -202,14 +208,14 @@ impl Scheduler {
         if let Some(config) = self.task_configs.get(&job.task_name) {
             if config.circuit_breaker.is_some() && !self.circuit_breaker.allow(&job.task_name)? {
                 self.storage
-                    .retry(&job.id, now + CIRCUIT_BREAKER_RETRY_DELAY_MS)?;
+                    .reschedule(&job.id, now + CIRCUIT_BREAKER_RETRY_DELAY_MS)?;
                 return Ok(false);
             }
 
             if let Some(ref rl_config) = config.rate_limit {
                 if !self.rate_limiter.try_acquire(&job.task_name, rl_config)? {
                     self.storage
-                        .retry(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
+                        .reschedule(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
                     return Ok(false);
                 }
             }
@@ -265,11 +271,12 @@ impl Scheduler {
 
     /// Reverse a successful `claim_execution` and reschedule the job. Used
     /// when a post-claim gate rejects the job after the claim row has
-    /// already been written.
-    fn rollback_claim_and_retry(&self, job_id: &str, next_at: i64) -> Result<()> {
+    /// already been written. Uses `reschedule` (not `retry`) so a job that
+    /// never executed does not lose retry budget.
+    fn rollback_claim_and_reschedule(&self, job_id: &str, next_at: i64) -> Result<()> {
         if let Err(e) = self.storage.complete_execution(job_id) {
             warn!("failed to clear execution claim during rollback for job {job_id}: {e}");
         }
-        self.storage.retry(job_id, next_at)
+        self.storage.reschedule(job_id, next_at)
     }
 }

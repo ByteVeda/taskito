@@ -124,6 +124,25 @@ fn test_retry(s: &impl Storage) {
     assert_eq!(fetched.scheduled_at, future);
 }
 
+fn test_reschedule(s: &impl Storage) {
+    // reschedule() must restore the job to Pending without incrementing
+    // retry_count — the soft-gate parity contract across all backends.
+    let q = "q-reschedule";
+    let job = s.enqueue(make_job(q, "reschedule_task")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+
+    let future = now_millis() + 5000;
+    s.reschedule(&job.id, future).unwrap();
+
+    let fetched = s.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.status, JobStatus::Pending);
+    assert_eq!(fetched.scheduled_at, future);
+    assert_eq!(
+        fetched.retry_count, 0,
+        "reschedule must not burn retry budget"
+    );
+}
+
 fn test_cancel_job(s: &impl Storage) {
     let job = s.enqueue(make_job("q-cancel", "cancel_me")).unwrap();
     assert!(s.cancel_job(&job.id).unwrap());
@@ -579,6 +598,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_complete(s);
     test_fail(s);
     test_retry(s);
+    test_reschedule(s);
     test_cancel_job(s);
     test_stats(s);
     test_stats_by_queue_and_task(s);

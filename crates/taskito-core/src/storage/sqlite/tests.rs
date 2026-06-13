@@ -295,6 +295,39 @@ fn test_retry_reschedule() {
 }
 
 #[test]
+fn test_reschedule_preserves_retry_count() {
+    // Soft-gate reschedules (rate limit, circuit breaker, concurrency,
+    // backpressure) must NOT consume the job's retry budget, unlike retry().
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("reschedule_task")).unwrap();
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+
+    let future = now_millis() + 5000;
+    storage.reschedule(&job.id, future).unwrap();
+
+    let fetched = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.status, JobStatus::Pending);
+    assert_eq!(fetched.scheduled_at, future);
+    assert_eq!(
+        fetched.retry_count, 0,
+        "reschedule must not burn retry budget"
+    );
+
+    // Repeated reschedules still never touch retry_count.
+    storage
+        .dequeue("default", now_millis() + 1000, None)
+        .unwrap();
+    storage.reschedule(&job.id, future + 1000).unwrap();
+    let again = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(again.retry_count, 0);
+
+    // Unknown id is reported, matching retry().
+    assert!(storage.reschedule("missing-id", future).is_err());
+}
+
+#[test]
 fn test_dead_letter_queue() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("dlq_task")).unwrap();
