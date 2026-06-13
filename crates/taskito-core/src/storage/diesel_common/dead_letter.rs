@@ -36,7 +36,9 @@ macro_rules! impl_diesel_dead_letter_ops {
                         error: Some(error),
                         retry_count: job.retry_count,
                         failed_at: now,
-                        metadata,
+                        // Preserve the job's own metadata so it survives the
+                        // round trip; an explicit `metadata` arg overrides it.
+                        metadata: metadata.or(job.metadata.as_deref()),
                         notes: job.notes.as_deref(),
                         priority: job.priority,
                         max_retries: job.max_retries,
@@ -258,13 +260,26 @@ macro_rules! impl_diesel_dead_letter_ops {
                 &self,
                 cutoff_ms: i64,
                 max_retries: i32,
+                namespace: Option<&str>,
+                queues: &[String],
                 limit: i64,
             ) -> Result<Vec<DeadJob>> {
                 let mut conn = self.conn()?;
 
-                let rows: Vec<DeadLetterRow> = dead_letter::table
+                // Scope to the worker's own namespace + served queues, mirroring
+                // the poller's dequeue scoping, so auto-retry never resurrects
+                // entries belonging to other namespaces/queues.
+                let mut query = dead_letter::table
                     .filter(dead_letter::failed_at.le(cutoff_ms))
                     .filter(dead_letter::dlq_retry_count.lt(max_retries))
+                    .filter(dead_letter::queue.eq_any(queues))
+                    .into_boxed();
+                match namespace {
+                    Some(ns) => query = query.filter(dead_letter::namespace.eq(ns)),
+                    None => query = query.filter(dead_letter::namespace.is_null()),
+                }
+
+                let rows: Vec<DeadLetterRow> = query
                     .order(dead_letter::failed_at.asc())
                     .limit(limit)
                     .select(DeadLetterRow::as_select())

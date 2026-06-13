@@ -260,9 +260,11 @@ macro_rules! impl_storage {
                 &self,
                 cutoff_ms: i64,
                 max_retries: i32,
+                namespace: Option<&str>,
+                queues: &[String],
                 limit: i64,
             ) -> $crate::error::Result<Vec<$crate::storage::DeadJob>> {
-                self.list_dead_for_retry(cutoff_ms, max_retries, limit)
+                self.list_dead_for_retry(cutoff_ms, max_retries, namespace, queues, limit)
             }
             fn get_rate_limit(
                 &self,
@@ -766,9 +768,19 @@ impl Storage for StorageBackend {
         &self,
         cutoff_ms: i64,
         max_retries: i32,
+        namespace: Option<&str>,
+        queues: &[String],
         limit: i64,
     ) -> Result<Vec<DeadJob>> {
-        delegate!(self, list_dead_for_retry, cutoff_ms, max_retries, limit)
+        delegate!(
+            self,
+            list_dead_for_retry,
+            cutoff_ms,
+            max_retries,
+            namespace,
+            queues,
+            limit
+        )
     }
     fn get_rate_limit(&self, key: &str) -> Result<Option<models::RateLimitRow>> {
         delegate!(self, get_rate_limit, key)

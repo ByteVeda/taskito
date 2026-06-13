@@ -74,7 +74,11 @@ impl RedisStorage {
             error: Some(error.to_string()),
             retry_count: job.retry_count,
             failed_at: now,
-            metadata: metadata.map(|s| s.to_string()),
+            // Preserve the job's own metadata so it survives the round trip;
+            // an explicit `metadata` arg overrides it.
+            metadata: metadata
+                .map(|s| s.to_string())
+                .or_else(|| job.metadata.clone()),
             notes: job.notes.clone(),
             priority: job.priority,
             max_retries: job.max_retries,
@@ -296,6 +300,8 @@ impl RedisStorage {
         &self,
         cutoff_ms: i64,
         max_retries: i32,
+        namespace: Option<&str>,
+        queues: &[String],
         limit: i64,
     ) -> Result<Vec<DeadJob>> {
         let mut conn = self.conn()?;
@@ -314,7 +320,12 @@ impl RedisStorage {
             let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
             if let Some(d) = data {
                 if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
-                    if entry.dlq_retry_count < max_retries {
+                    // Scope to the worker's own namespace + served queues, matching
+                    // the Diesel backend (the poller's dequeue scoping).
+                    if entry.dlq_retry_count < max_retries
+                        && entry.namespace.as_deref() == namespace
+                        && queues.iter().any(|q| q == &entry.queue)
+                    {
                         results.push(DeadJob::from(entry));
                     }
                 }

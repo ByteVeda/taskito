@@ -48,26 +48,36 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Purge old completed/dead jobs and their errors if result_ttl_ms is set.
+    /// Purge expired completed/dead jobs and their side data. The per-entry TTL
+    /// purges run every tick — a job or DLQ entry can carry its own `result_ttl`
+    /// even when no queue-wide `result_ttl` is configured. The global-cutoff
+    /// deletes (and the side tables, which have no per-entry TTL) only run when a
+    /// global `result_ttl` is set.
     pub(super) fn auto_cleanup(&self) -> Result<()> {
-        let ttl = match self.config.result_ttl_ms {
-            Some(t) => t,
-            None => return Ok(()),
+        let now = now_millis();
+        let global_cutoff = self.config.result_ttl_ms.map(|ttl| now.saturating_sub(ttl));
+        // `i64::MIN` disables the methods' global-cutoff branch (`failed_at < MIN`
+        // never matches), leaving only the per-entry TTL deletes.
+        let ttl_cutoff = global_cutoff.unwrap_or(i64::MIN);
+
+        let completed = self.storage.purge_completed_with_ttl(ttl_cutoff)?;
+        let dead = self.storage.purge_dead_with_ttl(ttl_cutoff)?;
+
+        let (errors, metrics, logs) = match global_cutoff {
+            Some(cutoff) => {
+                let errors = self.storage.purge_job_errors(cutoff)?;
+                let metrics = self.storage.purge_metrics(cutoff).unwrap_or_else(|e| {
+                    warn!("purge_metrics failed: {e}");
+                    0
+                });
+                let logs = self.storage.purge_task_logs(cutoff).unwrap_or_else(|e| {
+                    warn!("purge_task_logs failed: {e}");
+                    0
+                });
+                (errors, metrics, logs)
+            }
+            None => (0, 0, 0),
         };
-
-        let cutoff = now_millis().saturating_sub(ttl);
-
-        let completed = self.storage.purge_completed_with_ttl(cutoff)?;
-        let dead = self.storage.purge_dead_with_ttl(cutoff)?;
-        let errors = self.storage.purge_job_errors(cutoff)?;
-        let metrics = self.storage.purge_metrics(cutoff).unwrap_or_else(|e| {
-            warn!("purge_metrics failed: {e}");
-            0
-        });
-        let logs = self.storage.purge_task_logs(cutoff).unwrap_or_else(|e| {
-            warn!("purge_task_logs failed: {e}");
-            0
-        });
 
         if completed + dead + errors + metrics + logs > 0 {
             info!(
@@ -141,7 +151,16 @@ impl Scheduler {
         let cutoff = now.saturating_sub(delay);
         let max_retries = self.config.dlq_auto_retry_max;
 
-        let candidates = self.storage.list_dead_for_retry(cutoff, max_retries, 50)?;
+        // Only retry entries this worker actually serves (its namespace + active,
+        // non-paused queues), mirroring the poller's dequeue scoping.
+        let active_queues = self.active_queues();
+        let candidates = self.storage.list_dead_for_retry(
+            cutoff,
+            max_retries,
+            self.namespace.as_deref(),
+            &active_queues,
+            50,
+        )?;
 
         if candidates.is_empty() {
             return Ok(());
