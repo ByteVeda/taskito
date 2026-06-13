@@ -118,6 +118,7 @@ mod tests {
             handles.push(std::thread::spawn(move || {
                 barrier.wait();
                 // Retry on lock contention (SQLite busy)
+                let mut last_err = None;
                 for _ in 0..10 {
                     match limiter.try_acquire("concurrent_test", &config) {
                         Ok(true) => {
@@ -125,12 +126,14 @@ mod tests {
                             return;
                         }
                         Ok(false) => return,
-                        Err(_) => {
+                        Err(e) => {
+                            last_err = Some(e.to_string());
                             std::thread::sleep(std::time::Duration::from_millis(10));
                             continue;
                         }
                     }
                 }
+                panic!("exhausted retries in SQLite rate-limit test: {last_err:?}");
             }));
         }
 
@@ -188,6 +191,7 @@ mod tests {
             let key = key.clone();
             handles.push(std::thread::spawn(move || {
                 barrier.wait();
+                let mut last_err = None;
                 for _ in 0..10 {
                     match limiter.try_acquire(&key, &config) {
                         Ok(true) => {
@@ -195,12 +199,14 @@ mod tests {
                             return;
                         }
                         Ok(false) => return,
-                        Err(_) => {
+                        Err(e) => {
+                            last_err = Some(e.to_string());
                             std::thread::sleep(std::time::Duration::from_millis(10));
                             continue;
                         }
                     }
                 }
+                panic!("exhausted retries in Postgres rate-limit test: {last_err:?}");
             }));
         }
         for h in handles {
