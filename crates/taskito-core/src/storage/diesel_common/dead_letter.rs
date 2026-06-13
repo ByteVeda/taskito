@@ -36,7 +36,9 @@ macro_rules! impl_diesel_dead_letter_ops {
                         error: Some(error),
                         retry_count: job.retry_count,
                         failed_at: now,
-                        metadata,
+                        // Preserve the job's own metadata so it survives the
+                        // round trip; an explicit `metadata` arg overrides it.
+                        metadata: metadata.or(job.metadata.as_deref()),
                         notes: job.notes.as_deref(),
                         priority: job.priority,
                         max_retries: job.max_retries,

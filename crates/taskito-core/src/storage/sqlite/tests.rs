@@ -81,6 +81,40 @@ fn test_notes_survive_dlq_round_trip() {
 }
 
 #[test]
+fn test_metadata_survives_dlq_round_trip() {
+    // User metadata attached at enqueue must survive job → DLQ → retry_dead, with
+    // __dlq_retry_count merged in (it was previously dropped to NULL).
+    let storage = test_storage();
+    let mut new_job = make_job("dlq_meta_task");
+    new_job.metadata = Some(r#"{"user_id":"u1"}"#.to_string());
+    let job = storage.enqueue(new_job).unwrap();
+
+    storage
+        .move_to_dlq(&job, "boom", None)
+        .expect("move_to_dlq");
+
+    let dead = storage.list_dead(10, 0).unwrap();
+    let entry = dead
+        .iter()
+        .find(|d| d.original_job_id == job.id)
+        .expect("dead entry");
+    assert_eq!(entry.metadata.as_deref(), Some(r#"{"user_id":"u1"}"#));
+
+    let new_id = storage.retry_dead(&entry.id).expect("retry_dead");
+    let retried = storage.get_job(&new_id).unwrap().unwrap();
+    let meta: serde_json::Value =
+        serde_json::from_str(retried.metadata.as_deref().expect("metadata")).unwrap();
+    assert_eq!(
+        meta["user_id"], "u1",
+        "user metadata must survive the round trip"
+    );
+    assert_eq!(
+        meta["__dlq_retry_count"], 1,
+        "retry count must be merged in"
+    );
+}
+
+#[test]
 fn test_dequeue() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("dequeue_task")).unwrap();

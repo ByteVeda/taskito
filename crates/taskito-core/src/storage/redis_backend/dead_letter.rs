@@ -74,7 +74,11 @@ impl RedisStorage {
             error: Some(error.to_string()),
             retry_count: job.retry_count,
             failed_at: now,
-            metadata: metadata.map(|s| s.to_string()),
+            // Preserve the job's own metadata so it survives the round trip;
+            // an explicit `metadata` arg overrides it.
+            metadata: metadata
+                .map(|s| s.to_string())
+                .or_else(|| job.metadata.clone()),
             notes: job.notes.clone(),
             priority: job.priority,
             max_retries: job.max_retries,
