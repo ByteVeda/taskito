@@ -210,6 +210,18 @@ fn test_unique_key_dedup(s: &impl Storage) {
     assert_eq!(j1.id, j2.id);
 }
 
+fn test_enqueue_unique_validates_deps(s: &impl Storage) {
+    // enqueue_unique must reject a missing dependency on every backend, matching
+    // enqueue (Redis already validated; the Diesel backends did not).
+    let mut job = make_job("q-unique-deps", "unique_dep_task");
+    job.unique_key = Some("unique-dep-key".to_string());
+    job.depends_on = vec!["nonexistent-dep".to_string()];
+    assert!(matches!(
+        s.enqueue_unique(job),
+        Err(taskito_core::error::QueueError::DependencyNotFound(_))
+    ));
+}
+
 fn test_enqueue_batch(s: &impl Storage) {
     let jobs: Vec<NewJob> = (0..5)
         .map(|i| {
@@ -603,6 +615,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_stats(s);
     test_stats_by_queue_and_task(s);
     test_unique_key_dedup(s);
+    test_enqueue_unique_validates_deps(s);
     test_enqueue_batch(s);
     test_dead_letter_queue(s);
     test_delete_dead(s);

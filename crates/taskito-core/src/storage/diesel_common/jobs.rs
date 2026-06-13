@@ -322,6 +322,12 @@ macro_rules! impl_diesel_job_ops {
                         }
                     }
 
+                    // Validate dependencies exist and aren't dead/cancelled,
+                    // matching `enqueue` (RollbackTransaction → DependencyNotFound).
+                    for dep_id in &depends_on {
+                        Self::validate_dependency(conn, dep_id)?;
+                    }
+
                     let row = NewJobRow {
                         id: &job.id,
                         queue: &job.queue,
@@ -395,6 +401,11 @@ macro_rules! impl_diesel_job_ops {
                             }
                         }
                         Ok(job)
+                    }
+                    Err(diesel::result::Error::RollbackTransaction) => {
+                        Err(QueueError::DependencyNotFound(
+                            "dependency not found or already dead/cancelled".to_string(),
+                        ))
                     }
                     Err(e) => Err(QueueError::Storage(e)),
                 }

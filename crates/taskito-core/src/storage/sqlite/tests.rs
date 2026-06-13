@@ -465,6 +465,36 @@ fn test_unique_key_dedup() {
 }
 
 #[test]
+fn test_enqueue_unique_rejects_missing_dependency() {
+    // enqueue_unique must validate dependencies like enqueue (it previously
+    // inserted dep rows blind, treating a bogus dep as satisfied).
+    let storage = test_storage();
+    let mut job = make_job("unique_orphan");
+    job.unique_key = Some("uk-missing-dep".to_string());
+    job.depends_on = vec!["nonexistent-id".to_string()];
+    assert!(matches!(
+        storage.enqueue_unique(job),
+        Err(QueueError::DependencyNotFound(_))
+    ));
+}
+
+#[test]
+fn test_enqueue_unique_rejects_dead_dependency() {
+    let storage = test_storage();
+    // A cancelled (archived, non-Complete) dependency must be rejected.
+    let dep = storage.enqueue(make_job("dep_to_cancel")).unwrap();
+    assert!(storage.cancel_job(&dep.id).unwrap());
+
+    let mut job = make_job("unique_blocked");
+    job.unique_key = Some("uk-dead-dep".to_string());
+    job.depends_on = vec![dep.id.clone()];
+    assert!(matches!(
+        storage.enqueue_unique(job),
+        Err(QueueError::DependencyNotFound(_))
+    ));
+}
+
+#[test]
 fn test_enqueue_batch() {
     let storage = test_storage();
     let jobs: Vec<NewJob> = (0..5)
