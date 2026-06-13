@@ -72,6 +72,31 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Re-schedule a job back to `Pending` without consuming retry budget.
+    /// Mirrors [`retry`](Self::retry) for soft-gate reschedules where the job
+    /// never executed, so `retry_count` must be preserved.
+    pub fn reschedule(&self, id: &str, next_scheduled_at: i64) -> Result<()> {
+        let mut conn = self.conn()?;
+        let mut job = self.get_job_required(id)?;
+        let old_status = job.status;
+
+        job.status = JobStatus::Pending;
+        job.scheduled_at = next_scheduled_at;
+        job.started_at = None;
+        job.completed_at = None;
+        job.error = None;
+
+        self.save_job_and_move_status(&mut conn, &job, old_status)?;
+
+        // Re-add to pending queue
+        let queue_key = self.key(&["queue", &job.queue, "pending"]);
+        let score = dequeue_score(job.priority, job.scheduled_at);
+        conn.zadd::<_, _, _, ()>(&queue_key, &job.id, score)
+            .map_err(map_err)?;
+
+        Ok(())
+    }
+
     pub fn cancel_job(&self, id: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let job = match self.get_job(id)? {

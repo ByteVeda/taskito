@@ -7,6 +7,7 @@ end-to-end round trip through ``Queue.enqueue`` /
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -114,6 +115,19 @@ def test_primitives_accepted() -> None:
     assert encoded == '{"b":true,"f":1.5,"i":1,"n":null,"s":"x"}'
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_non_finite_floats_rejected(bad: float) -> None:
+    # NaN/Infinity serialize to invalid JSON tokens that break strict readers
+    # (the dashboard JSON.parse, Rust serde_json) — reject at the boundary.
+    with pytest.raises(NotesValidationError, match="must be a finite number"):
+        validate_and_encode_notes({"x": bad})
+
+
+def test_non_finite_float_rejected_when_nested() -> None:
+    with pytest.raises(NotesValidationError, match="must be a finite number"):
+        validate_and_encode_notes({"outer": {"inner": [1, float("nan")]}})
+
+
 # ── End-to-end through Queue.enqueue ----------------------------------------
 
 
@@ -124,6 +138,23 @@ def test_enqueue_round_trip(queue: Queue) -> None:
 
     job = noop.apply_async(notes={"customer_id": "cus_abc", "tier": "gold"})
     assert job.notes == {"customer_id": "cus_abc", "tier": "gold"}
+
+
+def test_to_dict_emits_notes_as_json_string(queue: Queue) -> None:
+    # The dashboard API contract is ``notes: string | null`` (the client
+    # JSON.parse-s it). to_dict() must emit the canonical string, not the
+    # parsed dict the ``notes`` property returns for Python callers.
+    @queue.task()
+    def noop() -> str:
+        return "ok"
+
+    job = noop.apply_async(notes={"customer_id": "cus_abc", "tier": "gold"})
+    raw = job.to_dict()["notes"]
+    assert isinstance(raw, str)
+    assert json.loads(raw) == {"customer_id": "cus_abc", "tier": "gold"}
+
+    plain = noop.apply_async()
+    assert plain.to_dict()["notes"] is None
 
 
 def test_enqueue_without_notes_returns_none(queue: Queue) -> None:

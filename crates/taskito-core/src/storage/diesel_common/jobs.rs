@@ -705,6 +705,31 @@ macro_rules! impl_diesel_job_ops {
                 Ok(())
             }
 
+            /// Re-schedule a job back to `Pending` without touching
+            /// `retry_count`. Mirrors [`retry`](Self::retry) for soft-gate
+            /// reschedules (rate limit, circuit breaker, concurrency cap,
+            /// backpressure) where the job never executed, so its retry
+            /// budget must be preserved.
+            pub fn reschedule(&self, id: &str, next_scheduled_at: i64) -> Result<()> {
+                let mut conn = self.conn()?;
+
+                let affected = diesel::update(jobs::table)
+                    .filter(jobs::id.eq(id))
+                    .set((
+                        jobs::status.eq(JobStatus::Pending as i32),
+                        jobs::scheduled_at.eq(next_scheduled_at),
+                        jobs::started_at.eq(None::<i64>),
+                        jobs::completed_at.eq(None::<i64>),
+                        jobs::error.eq(None::<String>),
+                    ))
+                    .execute(&mut conn)?;
+
+                if affected == 0 {
+                    return Err(QueueError::JobNotFound(id.to_string()));
+                }
+                Ok(())
+            }
+
             /// Cancel a pending job and cascade-cancel its dependents. The
             /// cancelled job moves from `jobs` into `archived_jobs`.
             pub fn cancel_job(&self, id: &str) -> Result<bool> {

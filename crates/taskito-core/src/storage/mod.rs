@@ -152,6 +152,9 @@ macro_rules! impl_storage {
             fn retry(&self, id: &str, next_scheduled_at: i64) -> $crate::error::Result<()> {
                 self.retry(id, next_scheduled_at)
             }
+            fn reschedule(&self, id: &str, next_scheduled_at: i64) -> $crate::error::Result<()> {
+                self.reschedule(id, next_scheduled_at)
+            }
             fn cancel_job(&self, id: &str) -> $crate::error::Result<bool> {
                 self.cancel_job(id)
             }
@@ -678,6 +681,9 @@ impl Storage for StorageBackend {
     }
     fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()> {
         delegate!(self, retry, id, next_scheduled_at)
+    }
+    fn reschedule(&self, id: &str, next_scheduled_at: i64) -> Result<()> {
+        delegate!(self, reschedule, id, next_scheduled_at)
     }
     fn cancel_job(&self, id: &str) -> Result<bool> {
         delegate!(self, cancel_job, id)

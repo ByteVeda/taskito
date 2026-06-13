@@ -43,6 +43,11 @@ pub trait Storage: Send + Sync + Clone {
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()>;
     fn fail(&self, id: &str, error: &str) -> Result<()>;
     fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()>;
+    /// Re-schedule a job back to `Pending` **without** consuming its retry
+    /// budget. Used for soft-gate reschedules (rate limit, circuit breaker,
+    /// concurrency cap, channel backpressure) where the job never executed,
+    /// unlike [`retry`](Self::retry) which increments `retry_count`.
+    fn reschedule(&self, id: &str, next_scheduled_at: i64) -> Result<()>;
     fn cancel_job(&self, id: &str) -> Result<bool>;
     fn request_cancel(&self, id: &str) -> Result<bool>;
     fn is_cancel_requested(&self, id: &str) -> Result<bool>;
