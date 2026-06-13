@@ -265,11 +265,16 @@ impl RedisStorage {
         // Guarded write: only update if `job:<id>` still exists. If the job was
         // archived (completed/failed/reaped) between the read and here, the plain
         // SET would otherwise recreate it as a Running orphan outside every index.
-        redis::Script::new(SET_IF_LIVE)
+        let applied: i32 = redis::Script::new(SET_IF_LIVE)
             .key(&job_key)
             .arg(&job_json)
-            .invoke::<i32>(&mut conn)
+            .invoke(&mut conn)
             .map_err(map_err)?;
+        if applied == 0 {
+            // The job was archived concurrently — surface it like the read path
+            // rather than reporting a silent success that wrote nothing.
+            return Err(QueueError::JobNotFound(id.to_string()));
+        }
         Ok(())
     }
 }
