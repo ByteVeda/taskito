@@ -156,7 +156,17 @@ pub struct NewDeadLetterRow<'a> {
 }
 
 /// A row in the `rate_limits` table.
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Queryable,
+    QueryableByName,
+    Selectable,
+    Insertable,
+    AsChangeset,
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+)]
 #[diesel(table_name = rate_limits)]
 pub struct RateLimitRow {
     pub key: String,

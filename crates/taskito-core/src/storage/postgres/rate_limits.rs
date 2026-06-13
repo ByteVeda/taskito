@@ -34,17 +34,22 @@ impl PostgresStorage {
 
     /// Atomically try to acquire a rate limit token.
     /// Does the read-refill-consume-write in a single transaction to prevent
-    /// race conditions between concurrent workers.
+    /// race conditions between concurrent workers. The row is read `FOR UPDATE`
+    /// so a contender waits for and re-reads the committed token count instead of
+    /// racing on a stale snapshot (a plain SELECT lost-updates under concurrency).
+    /// Mirrors the `FOR UPDATE` pattern in `acquire_lock`.
     pub fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();
 
         conn.transaction(|conn| {
-            let existing: Option<RateLimitRow> = rate_limits::table
-                .find(key)
-                .select(RateLimitRow::as_select())
-                .first(conn)
-                .optional()?;
+            let existing: Option<RateLimitRow> = diesel::sql_query(
+                "SELECT key, tokens, max_tokens, refill_rate, last_refill \
+                 FROM rate_limits WHERE key = $1 FOR UPDATE",
+            )
+            .bind::<diesel::sql_types::Text, _>(key)
+            .get_result(conn)
+            .optional()?;
 
             let mut row = match existing {
                 Some(r) => r,
