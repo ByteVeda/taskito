@@ -32,3 +32,7 @@ redis = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+# Raw connection access in the Redis contract tests, to set up race-window
+# state and assert on internal index keys. Only used by `#[cfg(feature = "redis")]`
+# tests; harmless when the feature is off.
+redis = { workspace = true }

@@ -646,9 +646,61 @@ fn redis_storage_tests() {
         }
     };
 
+    // The contract tests use fixed queue names and assert exact counts, so they
+    // need a clean DB. Flush it up front (DB 15 is the designated throwaway test
+    // database per the URL default) so the suite is deterministic across repeated
+    // local runs, not only against a fresh CI container.
+    let mut conn = storage.conn().unwrap();
+    let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+    drop(conn);
+
     run_storage_tests(&storage);
     redis_mutators_reject_archived_jobs(&storage);
     redis_purge_preserves_reused_unique_key(&storage);
+    redis_claim_skips_job_dropped_from_pending_set(&storage);
+}
+
+/// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
+#[cfg(feature = "redis")]
+fn rkey(s: &taskito_core::RedisStorage, parts: &[&str]) -> String {
+    format!("{}{}", s.prefix(), parts.join(":"))
+}
+
+/// Drain any pending jobs left in `q` by earlier runs so the test that follows
+/// deterministically dequeues the job it just enqueued (the shared test DB is
+/// not flushed between runs).
+#[cfg(feature = "redis")]
+fn drain_queue(s: &taskito_core::RedisStorage, q: &str) {
+    while s
+        .dequeue(q, now_millis() + 1_000_000, None)
+        .unwrap()
+        .is_some()
+    {}
+}
+
+/// #17: the atomic claim must refuse a candidate that a concurrent cancel/expire
+/// already removed from the pending status set, instead of resurrecting it as a
+/// Running orphan. Simulated deterministically by dropping the job from
+/// `jobs:status:0` while it lingers in the pending zset.
+#[cfg(feature = "redis")]
+fn redis_claim_skips_job_dropped_from_pending_set(s: &taskito_core::RedisStorage) {
+    use redis::Commands;
+    let q = "q-redis-claim-guard";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "claim_guard")).unwrap();
+
+    let mut conn = s.conn().unwrap();
+    let status_pending = rkey(s, &["jobs", "status", "0"]);
+    let _: () = conn.srem(&status_pending, &job.id).unwrap();
+
+    // No claimable candidate remains, and the job is not flipped to Running.
+    assert!(s.dequeue(q, now_millis() + 1000, None).unwrap().is_none());
+    let fetched = s.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(
+        fetched.status,
+        JobStatus::Pending,
+        "claim guard must not resurrect a job dropped from the pending set"
+    );
 }
 
 /// A terminal job has left the live indices, so a mutator that resolves the
