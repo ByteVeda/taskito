@@ -34,33 +34,36 @@ impl PostgresStorage {
 
     /// Atomically try to acquire a rate limit token.
     /// Does the read-refill-consume-write in a single transaction to prevent
-    /// race conditions between concurrent workers. The row is read `FOR UPDATE`
-    /// so a contender waits for and re-reads the committed token count instead of
-    /// racing on a stale snapshot (a plain SELECT lost-updates under concurrency).
-    /// Mirrors the `FOR UPDATE` pattern in `acquire_lock`.
+    /// race conditions between concurrent workers.
+    ///
+    /// The bucket row is seeded with `INSERT ... ON CONFLICT DO NOTHING` and then
+    /// read `FOR UPDATE`. A bare `SELECT ... FOR UPDATE` locks nothing when the
+    /// row is absent, so concurrent first-writers would each start from a full
+    /// bucket and over-admit; seeding first guarantees the row exists exactly once
+    /// (the unique-index conflict serializes the first writers) so the subsequent
+    /// `FOR UPDATE` always locks a committed row and the read-modify-write is
+    /// serialized. Mirrors the `FOR UPDATE` pattern in `acquire_lock`.
     pub fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();
 
         conn.transaction(|conn| {
-            let existing: Option<RateLimitRow> = diesel::sql_query(
+            diesel::sql_query(
+                "INSERT INTO rate_limits (key, tokens, max_tokens, refill_rate, last_refill) \
+                 VALUES ($1, $2, $2, $3, $4) ON CONFLICT (key) DO NOTHING",
+            )
+            .bind::<diesel::sql_types::Text, _>(key)
+            .bind::<diesel::sql_types::Double, _>(max_tokens)
+            .bind::<diesel::sql_types::Double, _>(refill_rate)
+            .bind::<diesel::sql_types::BigInt, _>(now)
+            .execute(conn)?;
+
+            let mut row: RateLimitRow = diesel::sql_query(
                 "SELECT key, tokens, max_tokens, refill_rate, last_refill \
                  FROM rate_limits WHERE key = $1 FOR UPDATE",
             )
             .bind::<diesel::sql_types::Text, _>(key)
-            .get_result(conn)
-            .optional()?;
-
-            let mut row = match existing {
-                Some(r) => r,
-                None => RateLimitRow {
-                    key: key.to_string(),
-                    tokens: max_tokens,
-                    max_tokens,
-                    refill_rate,
-                    last_refill: now,
-                },
-            };
+            .get_result(conn)?;
 
             // Refill tokens based on elapsed time
             let elapsed_ms = (now - row.last_refill).max(0) as f64;
