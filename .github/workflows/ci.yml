@@ -268,9 +268,9 @@ jobs:
             python-version: "3.13"
           - os: macos-latest
             python-version: "3.10"
-          - os: windows-latest
+          - os: windows-2025
             python-version: "3.13"
-          - os: windows-latest
+          - os: windows-2025
             python-version: "3.10"
     steps:
       - name: Check out repository
