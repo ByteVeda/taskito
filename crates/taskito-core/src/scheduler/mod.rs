@@ -1048,6 +1048,36 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_cleanup_per_entry_ttl_without_global() {
+        // With no queue-wide result_ttl, a per-job result_ttl must still be
+        // honored (the per-entry purge runs every tick).
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            result_ttl_ms: None,
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+
+        let mut nj = make_job("per_entry_ttl");
+        nj.result_ttl_ms = Some(1); // 1ms per-job TTL
+        let job = scheduler.storage.enqueue(nj).unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap();
+        scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
+
+        std::thread::sleep(Duration::from_millis(10));
+        scheduler.auto_cleanup().unwrap();
+
+        assert!(
+            scheduler.storage.get_job(&job.id).unwrap().is_none(),
+            "per-job result_ttl must be purged even without a global result_ttl"
+        );
+    }
+
+    #[test]
     fn test_tick_dispatches_and_maintains() {
         let storage =
             StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
