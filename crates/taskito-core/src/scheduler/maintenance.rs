@@ -141,7 +141,16 @@ impl Scheduler {
         let cutoff = now.saturating_sub(delay);
         let max_retries = self.config.dlq_auto_retry_max;
 
-        let candidates = self.storage.list_dead_for_retry(cutoff, max_retries, 50)?;
+        // Only retry entries this worker actually serves (its namespace + active,
+        // non-paused queues), mirroring the poller's dequeue scoping.
+        let active_queues = self.active_queues();
+        let candidates = self.storage.list_dead_for_retry(
+            cutoff,
+            max_retries,
+            self.namespace.as_deref(),
+            &active_queues,
+            50,
+        )?;
 
         if candidates.is_empty() {
             return Ok(());

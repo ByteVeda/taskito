@@ -1165,17 +1165,23 @@ fn test_list_dead_for_retry() {
     let running = storage.get_job(&job.id).unwrap().unwrap();
     storage.move_to_dlq(&running, "err", None).unwrap();
 
+    let qs = [String::from("default")];
+
     // Cutoff in the future, max_retries=3 — should find it
-    let cands = storage.list_dead_for_retry(now + 5000, 3, 10).unwrap();
+    let cands = storage
+        .list_dead_for_retry(now + 5000, 3, None, &qs, 10)
+        .unwrap();
     assert_eq!(cands.len(), 1);
     assert_eq!(cands[0].dlq_retry_count, 0);
 
     // max_retries=0 — should find nothing
-    let cands = storage.list_dead_for_retry(now + 5000, 0, 10).unwrap();
+    let cands = storage
+        .list_dead_for_retry(now + 5000, 0, None, &qs, 10)
+        .unwrap();
     assert!(cands.is_empty());
 
     // Cutoff in the past — should find nothing
-    let cands = storage.list_dead_for_retry(0, 3, 10).unwrap();
+    let cands = storage.list_dead_for_retry(0, 3, None, &qs, 10).unwrap();
     assert!(cands.is_empty());
 }
 

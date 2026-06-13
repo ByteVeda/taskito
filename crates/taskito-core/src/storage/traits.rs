@@ -86,6 +86,8 @@ pub trait Storage: Send + Sync + Clone {
         &self,
         cutoff_ms: i64,
         max_retries: i32,
+        namespace: Option<&str>,
+        queues: &[String],
         limit: i64,
     ) -> Result<Vec<DeadJob>>;
 

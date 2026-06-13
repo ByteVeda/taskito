@@ -163,7 +163,7 @@ impl Scheduler {
     /// list is cached for 1s to avoid hammering storage on every tick. Borrows
     /// the queue list directly in the common case (nothing paused), allocating
     /// only when a filtered copy is actually needed.
-    fn active_queues(&self) -> std::borrow::Cow<'_, [String]> {
+    pub(super) fn active_queues(&self) -> std::borrow::Cow<'_, [String]> {
         let mut cache = self.paused_cache.lock().unwrap_or_else(|poisoned| {
             warn!("paused_cache mutex was poisoned, recovering");
             poisoned.into_inner()

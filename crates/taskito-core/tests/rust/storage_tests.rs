@@ -277,7 +277,10 @@ fn test_list_dead_for_retry(s: &impl Storage) {
     s.move_to_dlq(&running, "err", None).unwrap();
 
     let now = now_millis();
-    let cands = s.list_dead_for_retry(now + 5000, 3, 100).unwrap();
+    let qs = [q.to_string()];
+    let cands = s
+        .list_dead_for_retry(now + 5000, 3, None, &qs, 100)
+        .unwrap();
     let ours = cands
         .iter()
         .find(|d| d.original_job_id == job.id)
@@ -285,10 +288,30 @@ fn test_list_dead_for_retry(s: &impl Storage) {
     assert_eq!(ours.dlq_retry_count, 0);
 
     // max_retries=0 should exclude everything
-    let empty = s.list_dead_for_retry(now + 5000, 0, 100).unwrap();
+    let empty = s
+        .list_dead_for_retry(now + 5000, 0, None, &qs, 100)
+        .unwrap();
     assert!(
         empty.iter().all(|d| d.original_job_id != job.id),
         "max_retries=0 should exclude our entry"
+    );
+
+    // Scoping: a different namespace or a queue we don't serve must exclude it
+    // (our entry has no namespace and lives in queue `q`).
+    let other_ns = s
+        .list_dead_for_retry(now + 5000, 3, Some("other-ns"), &qs, 100)
+        .unwrap();
+    assert!(
+        other_ns.iter().all(|d| d.original_job_id != job.id),
+        "a different namespace must exclude our entry"
+    );
+    let other_q = [String::from("q-not-served")];
+    let other_queue = s
+        .list_dead_for_retry(now + 5000, 3, None, &other_q, 100)
+        .unwrap();
+    assert!(
+        other_queue.iter().all(|d| d.original_job_id != job.id),
+        "an unserved queue must exclude our entry"
     );
 }
 
