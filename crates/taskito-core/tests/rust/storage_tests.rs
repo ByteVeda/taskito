@@ -658,6 +658,7 @@ fn redis_storage_tests() {
     redis_mutators_reject_archived_jobs(&storage);
     redis_purge_preserves_reused_unique_key(&storage);
     redis_claim_skips_job_dropped_from_pending_set(&storage);
+    redis_retry_keeps_job_dequeuable(&storage);
 }
 
 /// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
@@ -700,6 +701,26 @@ fn redis_claim_skips_job_dropped_from_pending_set(s: &taskito_core::RedisStorage
         fetched.status,
         JobStatus::Pending,
         "claim guard must not resurrect a job dropped from the pending set"
+    );
+}
+
+/// #62: retry must leave the job dequeuable — the status-set move and the
+/// pending-zset add now commit together, so the job is never stranded Pending
+/// but absent from the queue.
+#[cfg(feature = "redis")]
+fn redis_retry_keeps_job_dequeuable(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-retry-requeue";
+    drain_queue(s, q);
+    let job = s.enqueue(make_job(q, "retry_requeue")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+
+    s.retry(&job.id, now_millis()).unwrap();
+
+    let again = s.dequeue(q, now_millis() + 1000, None).unwrap();
+    assert_eq!(
+        again.map(|j| j.id),
+        Some(job.id.clone()),
+        "retried job must be back in the pending zset and dequeuable"
     );
 }
 

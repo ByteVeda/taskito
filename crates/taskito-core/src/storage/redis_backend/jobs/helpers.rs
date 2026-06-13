@@ -2,6 +2,7 @@
 
 use redis::Commands;
 
+use super::dequeue_score;
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage};
@@ -69,6 +70,41 @@ impl RedisStorage {
             pipe.srem(&old_status_key, &job.id);
             pipe.sadd(&new_status_key, &job.id);
         }
+        pipe.query::<()>(conn).map_err(map_err)?;
+
+        Ok(())
+    }
+
+    /// Reset a job to `Pending` and (re)insert it into the per-queue pending
+    /// zset in a single MULTI/EXEC. Folding the status-set move and the zset
+    /// add into one transaction means a crash can no longer strand the job as
+    /// `Pending` in the status set but absent from the queue zset (where it
+    /// would never be dequeued and never reaped).
+    ///
+    /// The caller must have already set the job's `status = Pending`,
+    /// `scheduled_at`, and cleared `started_at`/`completed_at`/`error`.
+    pub(in crate::storage::redis_backend) fn requeue_pending(
+        &self,
+        conn: &mut redis::Connection,
+        job: &Job,
+        old_status: JobStatus,
+    ) -> Result<()> {
+        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_key = self.key(&["job", &job.id]);
+        let old_status_key = self.key(&["jobs", "status", &(old_status as i32).to_string()]);
+        let pending_status_key =
+            self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);
+        let queue_key = self.key(&["queue", &job.queue, "pending"]);
+        let score = dequeue_score(job.priority, job.scheduled_at);
+
+        let pipe = &mut redis::pipe();
+        pipe.atomic();
+        pipe.set(&job_key, &job_json);
+        if old_status != JobStatus::Pending {
+            pipe.srem(&old_status_key, &job.id);
+            pipe.sadd(&pending_status_key, &job.id);
+        }
+        pipe.zadd(&queue_key, &job.id, score);
         pipe.query::<()>(conn).map_err(map_err)?;
 
         Ok(())

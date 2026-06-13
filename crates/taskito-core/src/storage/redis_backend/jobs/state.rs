@@ -3,7 +3,6 @@
 
 use redis::Commands;
 
-use super::dequeue_score;
 use crate::error::{QueueError, Result};
 use crate::job::{now_millis, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage};
@@ -61,13 +60,8 @@ impl RedisStorage {
         job.completed_at = None;
         job.error = None;
 
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
-
-        // Re-add to pending queue
-        let queue_key = self.key(&["queue", &job.queue, "pending"]);
-        let score = dequeue_score(job.priority, job.scheduled_at);
-        conn.zadd::<_, _, _, ()>(&queue_key, &job.id, score)
-            .map_err(map_err)?;
+        // Atomic status-move + pending-zset insert (see `requeue_pending`).
+        self.requeue_pending(&mut conn, &job, old_status)?;
 
         Ok(())
     }
@@ -86,13 +80,8 @@ impl RedisStorage {
         job.completed_at = None;
         job.error = None;
 
-        self.save_job_and_move_status(&mut conn, &job, old_status)?;
-
-        // Re-add to pending queue
-        let queue_key = self.key(&["queue", &job.queue, "pending"]);
-        let score = dequeue_score(job.priority, job.scheduled_at);
-        conn.zadd::<_, _, _, ()>(&queue_key, &job.id, score)
-            .map_err(map_err)?;
+        // Atomic status-move + pending-zset insert (see `requeue_pending`).
+        self.requeue_pending(&mut conn, &job, old_status)?;
 
         Ok(())
     }
