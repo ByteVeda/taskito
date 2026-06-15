@@ -5,6 +5,35 @@ description: "Release history for taskito — every notable change, fix, and fea
 
 All notable changes to taskito are documented here.
 
+## 0.16.3
+
+Reliability patch — correctness fixes across the scheduler and storage layer, plus the missing Django admin templates. No API changes.
+
+### Fixed
+
+- **Django admin templates.** The `taskito.contrib.django` admin views shipped
+  without their templates, so every admin page raised `TemplateDoesNotExist`. The
+  templates are now authored and packaged, and the integration guide documents the
+  required `taskito.contrib.django` entry in `INSTALLED_APPS`.
+- **At-most-once retries.** An explicit per-call `max_retries=0` is no longer
+  overridden by the task-policy default, so a no-retry job is no longer
+  re-executed up to the policy limit.
+- **Unique enqueue.** `enqueue_unique` now validates dependencies inside the
+  transaction — a missing dependency no longer runs the job and a dead/cancelled
+  dependency no longer strands it `Pending` — and never returns a phantom
+  (rolled-back) job under unique-key contention.
+- **Dead-letter policy.** DLQ auto-retry is scoped to the worker's namespace and
+  served queues (no longer resurrecting other workers' entries); per-entry and
+  per-job result TTLs are purged even without a global `result_ttl`; and job
+  metadata survives the dead-letter round trip.
+- **SQLite transaction safety.** Read-then-write operations (dequeue, enqueue,
+  rate-limit) use immediate write-priority transactions, avoiding `SQLITE_BUSY`
+  deadlocks; migration `ALTER TABLE` failures now propagate instead of being
+  downgraded to warnings.
+- **Postgres rate limiting.** The rate-limit row is seeded and locked
+  `FOR UPDATE`, preventing concurrent workers from over-admitting beyond the
+  configured limit.
+
 ## 0.16.2
 
 Reliability patch — correctness fixes across the scheduler, dashboard, and Redis backend. No API changes.
