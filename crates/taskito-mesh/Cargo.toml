@@ -8,7 +8,7 @@ taskito-core = { path = "../taskito-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-bincode = "1"
+bincode = "3"
 log = { workspace = true }
 rand = { workspace = true }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
