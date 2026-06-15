@@ -16,6 +16,24 @@ pip install taskito[django]
 
 ## Setup
 
+Add the integration to `INSTALLED_APPS`. This is required for the admin
+templates to load — Django's app-directories template loader only scans
+installed apps — and for task autodiscovery:
+
+```python
+# settings.py
+INSTALLED_APPS = [
+    # ...
+    "django.contrib.admin",
+    "taskito.contrib.django",
+]
+```
+
+<Callout type="info" title="Template loading">
+  Keep the default `APP_DIRS = True` in your `TEMPLATES` setting (Django's
+  default) so the bundled admin templates are discovered.
+</Callout>
+
 ### Option 1: register on the default admin site
 
 In your project's `admin.py` or `urls.py`:

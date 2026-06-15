@@ -12,19 +12,41 @@ try:
     from django.contrib import admin
     from django.http import HttpRequest, HttpResponse
     from django.template.response import TemplateResponse
-    from django.urls import path
+    from django.urls import path, reverse
 except ImportError as e:
     raise ImportError(
         "Django integration requires 'django'. Install with: pip install taskito[django]"
     ) from e
 
 
+def _base_context(request: HttpRequest, site: Any, **extra: Any) -> dict[str, Any]:
+    """Build the shared template context for every taskito admin view.
+
+    Resolves the nav URLs against the *current* admin site's namespace
+    (``site.name``) so the templates work on both the default admin site and a
+    custom :class:`TaskitoAdminSite`. ``job_detail_name`` is passed as a view
+    name (not a resolved URL) so templates can reverse it per-row with the job
+    id via ``{% url %}``.
+    """
+    namespace = site.name
+    context: dict[str, Any] = {
+        **site.each_context(request),
+        "taskito_urls": {
+            "dashboard": reverse(f"{namespace}:taskito_dashboard"),
+            "jobs": reverse(f"{namespace}:taskito_jobs"),
+            "dead_letters": reverse(f"{namespace}:taskito_dead_letters"),
+            "job_detail_name": f"{namespace}:taskito_job_detail",
+        },
+    }
+    context.update(extra)
+    return context
+
+
 def _dashboard_view(request: HttpRequest, site: Any) -> HttpResponse:
     from taskito.contrib.django.settings import get_queue
 
     queue = get_queue()
-    stats = queue.stats()
-    context = {**site.each_context(request), "stats": stats, "title": "Taskito Dashboard"}
+    context = _base_context(request, site, stats=queue.stats(), title="Taskito Dashboard")
     return TemplateResponse(request, "taskito/admin/dashboard.html", context)
 
 
@@ -57,13 +79,15 @@ def _jobs_view(request: HttpRequest, site: Any) -> HttpResponse:
 
         logging.getLogger(__name__).exception("Failed to list jobs")
         jobs = []
-    context = {
-        **site.each_context(request),
-        "jobs": [j.to_dict() for j in jobs],
-        "filters": {"status": status, "queue": queue_name, "task_name": task_name},
-        "page": page,
-        "title": "Taskito Jobs",
-    }
+    context = _base_context(
+        request,
+        site,
+        jobs=[j.to_dict() for j in jobs],
+        filters={"status": status, "queue": queue_name, "task_name": task_name},
+        page=page,
+        has_next=len(jobs) == per_page,
+        title="Taskito Jobs",
+    )
     return TemplateResponse(request, "taskito/admin/jobs.html", context)
 
 
@@ -73,12 +97,13 @@ def _job_detail_view(request: HttpRequest, site: Any, job_id: str) -> HttpRespon
     queue = get_queue()
     job = queue.get_job(job_id)
     errors = queue.job_errors(job_id) if job else []
-    context = {
-        **site.each_context(request),
-        "job": job.to_dict() if job else None,
-        "errors": errors,
-        "title": f"Job {job_id}",
-    }
+    context = _base_context(
+        request,
+        site,
+        job=job.to_dict() if job else None,
+        errors=errors,
+        title=f"Job {job_id}",
+    )
     return TemplateResponse(request, "taskito/admin/job_detail.html", context)
 
 
@@ -102,12 +127,14 @@ def _dead_letters_view(request: HttpRequest, site: Any) -> HttpResponse:
 
     per_page = getattr(django_settings, "TASKITO_ADMIN_PER_PAGE", 50)
     dead = queue.dead_letters(limit=per_page, offset=(page - 1) * per_page)
-    context = {
-        **site.each_context(request),
-        "dead_letters": dead,
-        "page": page,
-        "title": "Taskito Dead Letters",
-    }
+    context = _base_context(
+        request,
+        site,
+        dead_letters=dead,
+        page=page,
+        has_next=len(dead) == per_page,
+        title="Taskito Dead Letters",
+    )
     return TemplateResponse(request, "taskito/admin/dead_letters.html", context)
 
 
@@ -179,6 +206,12 @@ def register_taskito_admin(site: Any = None) -> None:
     def jobs_view(request: HttpRequest) -> HttpResponse:
         return _jobs_view(request, target)
 
+    def job_detail_view(request: HttpRequest, job_id: str) -> HttpResponse:
+        return _job_detail_view(request, target, job_id)
+
+    def dead_letters_view(request: HttpRequest) -> HttpResponse:
+        return _dead_letters_view(request, target)
+
     original_get_urls = target.get_urls
 
     def patched_get_urls() -> list:
@@ -186,6 +219,16 @@ def register_taskito_admin(site: Any = None) -> None:
         custom = [
             path("taskito/", target.admin_view(dashboard_view), name="taskito_dashboard"),
             path("taskito/jobs/", target.admin_view(jobs_view), name="taskito_jobs"),
+            path(
+                "taskito/jobs/<str:job_id>/",
+                target.admin_view(job_detail_view),
+                name="taskito_job_detail",
+            ),
+            path(
+                "taskito/dead-letters/",
+                target.admin_view(dead_letters_view),
+                name="taskito_dead_letters",
+            ),
         ]
         return custom + urls  # type: ignore[no-any-return]
 
