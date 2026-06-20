@@ -15,7 +15,7 @@ use taskito_core::scheduler::JobResult;
 use taskito_core::worker::WorkerDispatcher;
 use tokio::sync::oneshot;
 
-use crate::conversion::JsTaskInvocation;
+use crate::convert::JsTaskInvocation;
 
 /// Task callback registered from JS: `(invocation) => Promise<Buffer>`.
 type TaskCallback = ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>;

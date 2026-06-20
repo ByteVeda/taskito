@@ -6,7 +6,7 @@ use napi_derive::napi;
 use taskito_core::{SqliteStorage, Storage, StorageBackend};
 
 use crate::config::{EnqueueOptions, WorkerOptions};
-use crate::conversion::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
+use crate::convert::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
 use crate::error::to_napi_err;
 use crate::worker::{start_worker, JsWorker};
 

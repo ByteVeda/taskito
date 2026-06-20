@@ -10,7 +10,7 @@ use taskito_core::{Scheduler, SchedulerConfig, StorageBackend};
 use tokio::sync::Notify;
 
 use crate::config::WorkerOptions;
-use crate::conversion::JsTaskInvocation;
+use crate::convert::JsTaskInvocation;
 use crate::dispatcher::NodeDispatcher;
 
 const DEFAULT_QUEUE: &str = "default";

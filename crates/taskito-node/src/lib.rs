@@ -6,7 +6,7 @@
 //! execution back into JavaScript.
 
 mod config;
-mod conversion;
+mod convert;
 mod dispatcher;
 mod error;
 mod queue;
