@@ -134,6 +134,12 @@ export class WorkflowManager {
   private async waitForRun(runId: string, options?: WorkflowWaitOptions): Promise<WorkflowRun> {
     const timeoutMs = options?.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
     const pollMs = options?.pollMs ?? DEFAULT_WAIT_POLL_MS;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error(`workflow wait timeoutMs must be a positive number, got ${timeoutMs}`);
+    }
+    if (!Number.isFinite(pollMs) || pollMs <= 0) {
+      throw new Error(`workflow wait pollMs must be a positive number, got ${pollMs}`);
+    }
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const run = this.native.getWorkflowRun(runId);

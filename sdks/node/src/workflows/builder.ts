@@ -92,6 +92,19 @@ export class WorkflowBuilder {
         throw new Error(`step '${edge.to}' depends on unknown step '${edge.from}'`);
       }
     }
+    // A fan-in node is only ever enqueued by its fan-out's completion, so its
+    // `after` must point at a fan-out step — otherwise the run would hang.
+    for (const [name, meta] of Object.entries(this.stepMetadata)) {
+      if (!meta.fan_in) {
+        continue;
+      }
+      const { from } = JSON.parse(meta.fan_in) as { from: string };
+      if (!this.stepMetadata[from]?.fan_out) {
+        throw new Error(
+          `fan-in step '${name}' must target a fan-out step, but '${from}' is not one`,
+        );
+      }
+    }
     const deferred = transitiveDeferred(this.deferredSeeds, successorsOf(this.edges));
     return {
       name: this.name,
