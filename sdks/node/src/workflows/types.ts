@@ -111,6 +111,37 @@ export interface StepMetadataJson {
   condition?: string;
   /** JSON `{timeoutMs?, onTimeout?, message?}` marking an approval gate node. */
   gate?: string;
+  /** JSON {@link SubWorkflowTransport} marking a sub-workflow node. */
+  sub_workflow?: string;
+}
+
+/**
+ * Options for a sub-workflow step. The step runs no task of its own; at runtime
+ * the tracker submits `workflow` as a child run and resolves this node when the
+ * child finalizes (success → completed, failure → failed).
+ */
+export interface SubWorkflowStepOptions {
+  /** Predecessor step name(s) the sub-workflow runs after. */
+  after: string | string[];
+  /** The child workflow to run — build it with `queue.workflows.define(...).build()`. */
+  workflow: WorkflowSpec;
+}
+
+/**
+ * A child workflow flattened to base64/JSON so it round-trips through storage
+ * (in a parent node's `sub_workflow` metadata) and can be submitted as a child
+ * run by the tracker without re-serializing user args.
+ */
+export interface SubWorkflowTransport {
+  name: string;
+  version: number;
+  /** base64 of the serialized DAG (`SerializableGraph` JSON). */
+  dag: string;
+  /** JSON-encoded `Record<string, StepMetadataJson>`. */
+  stepMetadata: string;
+  /** Node name → base64 of the node's serialized args payload. */
+  nodePayloads: Record<string, string>;
+  deferredNodeNames: string[];
 }
 
 /** A built workflow definition, ready to submit. */
@@ -123,6 +154,8 @@ export interface WorkflowSpec {
   stepArgs: Record<string, unknown[]>;
   /** Nodes the tracker enqueues on demand (fan-out/fan-in ∪ their descendants). */
   deferredNodeNames: string[];
+  /** Child workflows keyed by their sub-workflow node name. */
+  subWorkflows?: Record<string, WorkflowSpec>;
 }
 
 /** Submit-time options. */

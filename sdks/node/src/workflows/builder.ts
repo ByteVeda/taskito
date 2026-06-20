@@ -4,13 +4,15 @@ import type {
   FanOutStepOptions,
   GateStepOptions,
   StepMetadataJson,
+  SubWorkflowStepOptions,
   WorkflowHandle,
   WorkflowSpec,
   WorkflowStepOptions,
 } from "./types";
 
-/** Sentinel task name for nodes that run no job (gates, sub-workflows). */
+/** Sentinel task names for nodes that run no job of their own. */
 const GATE_TASK = "__gate__";
+const SUBWORKFLOW_TASK = "__subworkflow__";
 
 /**
  * Fluent builder for a workflow DAG. Each {@link WorkflowBuilder.step} adds a
@@ -30,6 +32,8 @@ export class WorkflowBuilder {
   private readonly seen = new Set<string>();
   /** Nodes that run no static job — expanded/enqueued by the tracker. */
   private readonly deferredSeeds = new Set<string>();
+  /** Child workflows keyed by their sub-workflow node name. */
+  private readonly subWorkflows: Record<string, WorkflowSpec> = {};
 
   constructor(
     private readonly name: string,
@@ -115,6 +119,20 @@ export class WorkflowBuilder {
     return this;
   }
 
+  /**
+   * Add a sub-workflow step. At runtime the tracker submits `options.workflow`
+   * as a child run and resolves this node when the child finalizes. Build the
+   * child with `queue.workflows.define(...)….build()`.
+   */
+  subWorkflow(name: string, options: SubWorkflowStepOptions): this {
+    this.addNode(name, options.after);
+    this.stepMetadata[name] = { task_name: SUBWORKFLOW_TASK };
+    this.stepArgs[name] = [];
+    this.subWorkflows[name] = options.workflow;
+    this.deferredSeeds.add(name);
+    return this;
+  }
+
   /** Materialize the validated spec without submitting. */
   build(): WorkflowSpec {
     for (const edge of this.edges) {
@@ -144,6 +162,7 @@ export class WorkflowBuilder {
       stepMetadata: { ...this.stepMetadata },
       stepArgs: { ...this.stepArgs },
       deferredNodeNames: [...deferred],
+      subWorkflows: { ...this.subWorkflows },
     };
   }
 

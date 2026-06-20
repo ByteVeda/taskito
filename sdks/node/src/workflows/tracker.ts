@@ -2,6 +2,7 @@ import type { JsOutcome, NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
 import { createLogger } from "../utils";
 import { predecessorsOf, successorsOf, transitiveDeferred } from "./plan";
+import type { SubWorkflowTransport } from "./types";
 
 const log = createLogger("workflow-tracker");
 
@@ -39,6 +40,8 @@ interface StepMeta {
   condition?: string;
   /** JSON `{timeoutMs?, onTimeout?, message?}` marking an approval gate node. */
   gate?: string;
+  /** JSON `SubWorkflowTransport` marking a sub-workflow node. */
+  sub_workflow?: string;
 }
 
 /** Parsed gate config from a node's `gate` metadata. */
@@ -119,7 +122,7 @@ export class WorkflowTracker {
     // Record the node's outcome. For plain DAGs the core also cascades + finalizes.
     const advance = this.native.markWorkflowNodeResult(jobId, succeeded, error, managed);
     if (!managed) {
-      this.evictIfTerminal(runId, advance?.finalState ?? null);
+      this.settle(runId, advance?.finalState ?? null);
       return;
     }
 
@@ -133,7 +136,45 @@ export class WorkflowTracker {
       this.evaluateSuccessors(runId, nodeName, plan);
     }
 
-    this.evictIfTerminal(runId, this.native.finalizeRunIfTerminal(runId));
+    this.settle(runId, this.native.finalizeRunIfTerminal(runId));
+  }
+
+  /** Evict a terminal run's plan and, if it's a sub-workflow child, resolve its parent. */
+  private settle(runId: string, finalState: string | null): void {
+    this.evictIfTerminal(runId, finalState);
+    if (finalState !== null) {
+      this.resolveParentIfChild(runId, finalState);
+    }
+  }
+
+  /**
+   * If `childRunId` is a sub-workflow child, resolve its parent node (success →
+   * complete, failure → fail), advance the parent's successors, and recurse for
+   * nested parents. Idempotent: a parent node already resolved is left alone.
+   */
+  private resolveParentIfChild(childRunId: string, finalState: string): void {
+    const child = this.native.getWorkflowRun(childRunId);
+    const parentRunId = child?.parentRunId;
+    const parentNode = child?.parentNodeName;
+    if (!parentRunId || !parentNode) {
+      return;
+    }
+    const parentStatus = this.nodeStatuses(parentRunId).get(parentNode);
+    if (parentStatus === undefined || TERMINAL_NODE_STATUS.has(parentStatus)) {
+      return; // parent gone, or already resolved (e.g. by a racing worker)
+    }
+    const succeeded = finalState === "completed";
+    this.native.resolveWorkflowGate(
+      parentRunId,
+      parentNode,
+      succeeded,
+      succeeded ? null : `sub-workflow ${finalState}`,
+    );
+    const parentPlan = this.plan(parentRunId);
+    if (parentPlan) {
+      this.evaluateSuccessors(parentRunId, parentNode, parentPlan);
+    }
+    this.settle(parentRunId, this.native.finalizeRunIfTerminal(parentRunId));
   }
 
   /** Drop a finished run's cached plan so the cache doesn't grow unbounded. */
@@ -249,15 +290,44 @@ export class WorkflowTracker {
         continue;
       }
       const meta = plan.meta.get(succ);
+      if (meta?.fan_in) {
+        continue; // fan-in jobs are created from the fan-out completion path
+      }
       if (meta?.gate) {
         this.enterGate(runId, succ, meta);
-      } else if (meta?.fan_in) {
+      } else if (meta?.sub_workflow) {
+        this.submitSubWorkflow(runId, succ, meta);
       } else if (meta?.fan_out) {
         this.expandFanOut(runId, succ, plan);
       } else {
         this.createDeferredJob(runId, succ, plan);
       }
     }
+  }
+
+  /** Submit a node's child workflow as a linked run; mark the node `running`. */
+  private submitSubWorkflow(runId: string, node: string, meta: StepMeta): void {
+    if (!meta.sub_workflow) {
+      return;
+    }
+    const child: SubWorkflowTransport = JSON.parse(meta.sub_workflow);
+    const payloads: Record<string, Buffer> = {};
+    for (const [name, b64] of Object.entries(child.nodePayloads)) {
+      payloads[name] = Buffer.from(b64, "base64");
+    }
+    this.native.submitWorkflow(
+      child.name,
+      child.version,
+      Buffer.from(child.dag, "base64"),
+      child.stepMetadata,
+      payloads,
+      null,
+      null,
+      child.deferredNodeNames,
+      runId,
+      node,
+    );
+    this.native.setWorkflowNodeRunning(runId, node);
   }
 
   /** Park a gate node at `waiting_approval` and arm its timeout, if any. */
@@ -409,7 +479,7 @@ export class WorkflowTracker {
     );
     const successors = successorsOf(edges);
     const seeds = [...meta]
-      .filter(([, m]) => m.fan_out || m.fan_in || m.condition || m.gate)
+      .filter(([, m]) => m.fan_out || m.fan_in || m.condition || m.gate || m.sub_workflow)
       .map(([name]) => name);
     const plan: RunPlan = {
       successors,

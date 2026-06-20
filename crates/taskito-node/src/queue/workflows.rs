@@ -1,11 +1,11 @@
 //! Workflow submission, advancement, and queries.
 //!
 //! Static DAG steps are pre-enqueued with a `depends_on` chain so the core
-//! scheduler runs them in topological order. Fan-out / fan-in steps are
-//! deferred — submitted without a job — and the worker-side tracker (see
-//! `sdks/node/src/workflows/tracker.ts`) expands and enqueues them at runtime
-//! via the primitives below. Gates, sub-workflows, and saga compensation are
-//! not yet bound.
+//! scheduler runs them in topological order. Deferred steps — fan-out / fan-in,
+//! conditioned steps, gates, and sub-workflows — are submitted without a job;
+//! the worker-side tracker (see `sdks/node/src/workflows/tracker.ts`) expands,
+//! resolves, and enqueues them at runtime via the primitives below. Saga
+//! compensation is not yet bound.
 
 use std::collections::{HashMap, HashSet};
 
@@ -57,6 +57,8 @@ impl JsQueue {
         queue_default: Option<String>,
         params_json: Option<String>,
         deferred_node_names: Option<Vec<String>>,
+        parent_run_id: Option<String>,
+        parent_node_name: Option<String>,
     ) -> Result<String> {
         let wf = self.workflow_store()?;
         let dag = dag_bytes.to_vec();
@@ -109,8 +111,8 @@ impl JsQueue {
             started_at: Some(now),
             completed_at: None,
             error: None,
-            parent_run_id: None,
-            parent_node_name: None,
+            parent_run_id,
+            parent_node_name,
             created_at: now,
         };
         wf.create_workflow_run(&run).map_err(to_napi_err)?;
@@ -611,6 +613,17 @@ impl JsQueue {
             wf.set_workflow_node_error(&run_id, &node_name, &msg)
                 .map_err(to_napi_err)?;
         }
+        Ok(())
+    }
+
+    /// Promote a node to `Running` — used when its sub-workflow child has been
+    /// submitted, so the parent node reflects in-flight work until the child
+    /// finalizes and resolves it.
+    #[napi]
+    pub fn set_workflow_node_running(&self, run_id: String, node_name: String) -> Result<()> {
+        let wf = self.workflow_store()?;
+        wf.set_workflow_node_running(&run_id, &node_name, now_millis())
+            .map_err(to_napi_err)?;
         Ok(())
     }
 

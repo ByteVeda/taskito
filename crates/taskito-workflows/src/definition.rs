@@ -29,6 +29,10 @@ pub struct StepMetadata {
     /// JSON `{timeoutMs, onTimeout, message}` marking an approval gate node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<String>,
+    /// Serialized child-workflow spec marking a sub-workflow node (the tracker
+    /// submits it as a child run and resolves this node when the child finalizes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_workflow: Option<String>,
 }
 
 /// A persisted workflow definition: the DAG structure plus per-step metadata.
