@@ -1,5 +1,5 @@
 {
   "title": "Node SDK",
   "root": true,
-  "pages": ["index", "workflows"]
+  "pages": ["index", "workflows", "contrib"]
 }

@@ -20,6 +20,14 @@ export type WorkflowRunState =
   | "compensated"
   | "compensation_failed";
 
+/**
+ * When a step runs, based on its predecessors' outcomes:
+ * - `on_success` (default) — every predecessor completed
+ * - `on_failure` — at least one predecessor failed (an error handler)
+ * - `always` — regardless of predecessor outcomes
+ */
+export type WorkflowCondition = "on_success" | "on_failure" | "always";
+
 /** Per-step options when building a workflow. */
 export interface WorkflowStepOptions {
   /** Predecessor step name(s) this step runs after. */
@@ -31,6 +39,13 @@ export interface WorkflowStepOptions {
   maxRetries?: number;
   timeoutMs?: number;
   priority?: number;
+  /** Gate this step on its predecessors' outcomes (default `on_success`). */
+  condition?: WorkflowCondition;
+  /**
+   * Rollback task name for saga compensation. If the run fails, this task is run
+   * with the step's result as its single argument, in reverse-dependency order.
+   */
+  compensate?: string;
 }
 
 /** Common per-step task config shared by every step kind. */
@@ -67,6 +82,23 @@ export interface FanInStepOptions extends StepTaskOptions {
   task: string;
 }
 
+/**
+ * Options for an approval gate. The gate runs no task: the run pauses at the
+ * gate (status `waiting_approval`) until resolved via
+ * `queue.workflows.resolveGate` / `approveGate` / `rejectGate`, or until
+ * `timeoutMs` elapses (then `onTimeout` decides the outcome).
+ */
+export interface GateStepOptions {
+  /** Predecessor step name(s) the gate runs after. */
+  after: string | string[];
+  /** Auto-resolve after this many ms (no timeout if omitted). */
+  timeoutMs?: number;
+  /** What a timeout does — `"approve"` or `"reject"` (default `"reject"`). */
+  onTimeout?: "approve" | "reject";
+  /** Human-readable reason shown to approvers (recorded in metadata). */
+  message?: string;
+}
+
 /** snake_case step metadata, matching the Rust `StepMetadata` shape. */
 export interface StepMetadataJson {
   task_name: string;
@@ -80,6 +112,43 @@ export interface StepMetadataJson {
   fan_out?: string;
   /** JSON `{from}` marking a fan-in node (the fan-out it collects). */
   fan_in?: string;
+  /** Entry condition: `on_success` | `on_failure` | `always`. */
+  condition?: string;
+  /** JSON `{timeoutMs?, onTimeout?, message?}` marking an approval gate node. */
+  gate?: string;
+  /** JSON {@link SubWorkflowTransport} marking a sub-workflow node. */
+  sub_workflow?: string;
+  /** Rollback task name for saga compensation. */
+  compensate?: string;
+}
+
+/**
+ * Options for a sub-workflow step. The step runs no task of its own; at runtime
+ * the tracker submits `workflow` as a child run and resolves this node when the
+ * child finalizes (success → completed, failure → failed).
+ */
+export interface SubWorkflowStepOptions {
+  /** Predecessor step name(s) the sub-workflow runs after. */
+  after: string | string[];
+  /** The child workflow to run — build it with `queue.workflows.define(...).build()`. */
+  workflow: WorkflowSpec;
+}
+
+/**
+ * A child workflow flattened to base64/JSON so it round-trips through storage
+ * (in a parent node's `sub_workflow` metadata) and can be submitted as a child
+ * run by the tracker without re-serializing user args.
+ */
+export interface SubWorkflowTransport {
+  name: string;
+  version: number;
+  /** base64 of the serialized DAG (`SerializableGraph` JSON). */
+  dag: string;
+  /** JSON-encoded `Record<string, StepMetadataJson>`. */
+  stepMetadata: string;
+  /** Node name → base64 of the node's serialized args payload. */
+  nodePayloads: Record<string, string>;
+  deferredNodeNames: string[];
 }
 
 /** A built workflow definition, ready to submit. */
@@ -92,6 +161,8 @@ export interface WorkflowSpec {
   stepArgs: Record<string, unknown[]>;
   /** Nodes the tracker enqueues on demand (fan-out/fan-in ∪ their descendants). */
   deferredNodeNames: string[];
+  /** Child workflows keyed by their sub-workflow node name. */
+  subWorkflows?: Record<string, WorkflowSpec>;
 }
 
 /** Submit-time options. */

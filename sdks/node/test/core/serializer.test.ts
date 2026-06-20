@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { JsonSerializer, MsgpackSerializer, Queue, type Worker } from "../src/index";
+import { JsonSerializer, MsgpackSerializer, Queue, type Worker } from "../../src/index";
 
 describe("JsonSerializer", () => {
   it("round-trips structured values", () => {

@@ -92,6 +92,7 @@ impl PyWorkflowBuilder {
                 fan_out,
                 fan_in,
                 condition,
+                ..Default::default()
             },
         );
         self.step_order.push(name.to_string());

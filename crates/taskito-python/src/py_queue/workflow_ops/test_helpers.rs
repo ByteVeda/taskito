@@ -226,15 +226,7 @@ pub(crate) fn make_step_metadata_json(steps: &[(&str, &str)]) -> String {
                 (*node).to_string(),
                 StepMetadata {
                     task_name: (*task).to_string(),
-                    queue: None,
-                    args_template: None,
-                    kwargs_template: None,
-                    max_retries: None,
-                    timeout_ms: None,
-                    priority: None,
-                    fan_out: None,
-                    fan_in: None,
-                    condition: None,
+                    ..Default::default()
                 },
             )
         })

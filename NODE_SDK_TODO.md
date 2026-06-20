@@ -34,6 +34,8 @@ SDK, zero Python dependency, over the shared Rust core.
 | **Periodic + circuit-breaker** | `a4cc9a4` | `queue.registerPeriodic`; per-task `circuitBreaker` config |
 | **Workflows: fan-out / fan-in** | (this branch) | TS `WorkflowTracker` brain (`src/workflows/tracker.ts`) driven by the outcome callback; `.fanOut()` / `.fanIn()` builder steps; napi primitives `expandFanOut`/`checkFanOutCompletion`/`createDeferredJob`/`finalizeRunIfTerminal`/`getWorkflowRunPlan`/`workflowNodeForJob`/`cascadeSkipPending`; deferred-node submit. Storage-reconstructable (no submit-time registration) |
 | **Dashboard DAG completeness** | (this branch) | `JsWorkflowNode` carries `fanOutCount` + `compensation_*`; `/dag` handler enriches the raw graph with per-node `deps[]` + live `status` + job-id `id` so the SPA visualizer renders edges/colours/links |
+| **Contrib integrations** | (this branch) | `src/contrib/{otel,prometheus,express,fastify,nest,sentry}.ts` — each an optional subpath export (`taskito/contrib/*`) with an optional peer dep. OTel + Prometheus + Sentry = `Middleware` over the events layer; Express/Fastify = REST router (shared `rest.ts` table) + dashboard mount (via extracted `createDashboardHandler`); Nest = `TaskitoModule.forRoot` + injectable `TaskitoService`. 17 new vitest tests |
+| **Workflows: conditions / gates / sub-workflows / saga** | (this branch) | `WorkflowTracker` drives all deferred kinds. Conditions (`on_success`/`on_failure`/`always`), approval gates (`.gate`, `resolveGate`/`approveGate`/`rejectGate`, timeouts), nested sub-workflows (`.subWorkflow`, parent linkage + storage-driven child→parent resolve), saga compensation (`.step({compensate})`, reverse-dependency storage-driven rollback). `StepMetadata` + napi (`skip`/gate/sub-workflow/saga) extended. 12 new tests |
 
 **Verify everything green:**
 ```bash
@@ -68,48 +70,44 @@ context managers) — do **not** port 1:1. Design Node-native equivalents:
 **Effort:** large (design-heavy). **Recommendation:** scope a minimal resource DI
 first (worker-scoped singletons + task-scoped factories); defer proxies entirely.
 
-### 2. Contrib integrations — MEDIUM
+### 2. Contrib integrations — DONE
 
-Python ships `contrib/` (OpenTelemetry, Sentry, Prometheus, Flask, Django,
-FastAPI). Node equivalents:
+Shipped: OpenTelemetry + Prometheus + Sentry middleware, Express + Fastify (REST router +
+dashboard mount), and a NestJS module
+(`src/contrib/{otel,prometheus,sentry,express,fastify,nest}.ts`). Each is an optional
+`taskito/contrib/*` subpath export with an optional peer dependency, its own tsup entry,
+and tests. The REST logic is shared via a framework-neutral `src/contrib/rest.ts` route
+table; the dashboard mount reuses `createDashboardHandler` (extracted from
+`dashboard/server.ts`). NestJS uses an explicit `@Inject(TASKITO_QUEUE)` token to avoid
+relying on esbuild decorator-metadata emission (`experimentalDecorators` on; biome
+`unsafeParameterDecoratorsEnabled`). Sentry captures the real exception from `onError`
+and reports it on dead-letter (one event/dead job), optional per-retry warnings.
 
-- **Observability:** OpenTelemetry (`@opentelemetry/api`), Prometheus
-  (`prom-client`) — implement as middleware over the existing events/middleware
-  layer (`src/middleware.ts`). Each = a `Middleware` that records spans/metrics.
-- **Web frameworks:** Express / Fastify / Nest helpers (enqueue from a request,
-  mount the dashboard). Python's Flask/Django/FastAPI map to these.
+### 3. Advanced workflow features — DONE
 
-**Where:** new `sdks/node/src/contrib/` (one file per integration, optional peer
-deps). **Effort:** medium. Each integration is small and independent → **one
-commit each**.
+The TS `WorkflowTracker` (`src/workflows/tracker.ts`) reconstructs the run plan from
+storage and drives every deferred step kind off the worker outcome stream:
+- **fan-out / fan-in** — `expandFanOut` / `checkFanOutCompletion` + collector.
+- **conditions** — `.step({ condition })` (`on_success`/`on_failure`/`always`);
+  `shouldExecute` gates dispatch in `evaluateSuccessors`, skips propagate via
+  `skipWorkflowNode`. (String predicates only — JS callables can't cross the
+  storage-reconstructable boundary.)
+- **gates** — `.gate({ timeoutMs, onTimeout, message })` parks at `waiting_approval`;
+  `setWorkflowNodeWaitingApproval` + `resolveWorkflowGate` napi, JS `setTimeout`
+  (unref'd) for timeouts; `queue.workflows.resolveGate`/`approveGate`/`rejectGate`
+  resolve from any process (idempotent via a terminal-status guard).
+- **sub-workflows** — `.subWorkflow({ workflow })`; child spec persisted as base64
+  `SubWorkflowTransport` in `sub_workflow` metadata; `submit_workflow` gained
+  `parent_run_id`/`parent_node_name`; child→parent resolution is storage-driven
+  (read parent linkage on child finalize → `resolveWorkflowGate`). Nesting supported.
+- **saga** — `.step({ compensate })`; on a failed run the tracker re-derives the next
+  compensable nodes from node status each rollback outcome (reverse-dependency,
+  storage-driven, no in-memory waves), enqueues idempotent rollback jobs
+  (`enqueueCompensation`, dedup `unique_key`), routes their outcomes via
+  `compensationNodeForJob`, and finalizes `compensated` / `compensation_failed`.
 
-### 3. Advanced workflow features — LARGE (fan-out DONE; gates / sub-workflows / saga remain)
-
-DAG/linear + **fan-out / fan-in** work. The tracker-brain foundation is built:
-a TS `WorkflowTracker` (`src/workflows/tracker.ts`) reacts to the worker outcome
-callback, reconstructs the run plan from storage (DAG + step metadata — no
-submit-time registration), and drives on-demand orchestration via napi
-primitives (`expandFanOut`, `checkFanOutCompletion`, `createDeferredJob`,
-`finalizeRunIfTerminal`, `getWorkflowRunPlan`, `workflowNodeForJob`,
-`cascadeSkipPending`). `submit_workflow` takes `deferredNodeNames` (fan-out /
-fan-in ∪ descendants get a node but no static job). Failures are fail-fast.
-
-**Still unbound: gates/conditions, sub-workflows, saga compensation.** They build
-on this same foundation (the Python references are
-`crates/taskito-python/src/py_queue/workflow_ops/{gates,saga}.rs` + the Python
-`WorkflowTracker`):
-- **gates/conditions** — a deferred node enters `waiting_approval`; resolve via a
-  new `resolveWorkflowGate` napi method + a JS-side timer (`setTimeout`) for
-  timeouts. Conditions = a `should_execute` check in `evaluateSuccessors`.
-- **sub-workflows** — extend `submit_workflow` with `parent_run_id` /
-  `parent_node_name`; the tracker submits a child run for a sub-workflow node and
-  resolves the parent node when the child finalizes (populates `/children`).
-- **saga** — reverse-topo compensation waves driven by the tracker; needs the
-  `setWorkflowNodeCompensation*` + run-state napi setters bound (storage methods
-  already exist on the `WorkflowStorage` trait).
-
-**Where:** `crates/taskito-node/src/queue/workflows.rs` + `src/workflows/tracker.ts`.
-**Effort:** medium each now the brain exists. Each is a separate feature/commit.
+`StepMetadata` (taskito-workflows crate) gained `gate` / `sub_workflow` / `compensate`
+fields (JSON blob, no schema migration; `#[derive(Default)]` + spread literals).
 
 ### 4. Dashboard workflows DAG panel completeness — DONE
 
@@ -239,7 +237,7 @@ pnpm run build:native      # napi build, all features
 pnpm run build:ts          # tsup dual ESM/CJS + .d.ts
 pnpm typecheck             # tsc --noEmit (includes test/)
 pnpm lint                  # biome
-pnpm test                  # vitest (48 tests)
+pnpm test                  # vitest (81 tests)
 pnpm run build:dashboard   # build the React SPA into static/dashboard
 ```
 
@@ -261,8 +259,9 @@ sdks/node/src/
   webhooks/{store,deliverer,manager,types,index}.ts
   serializers/{serializer,json,msgpack,index}.ts
   dashboard/{server,routes,handlers,contract,static,metrics,api,index}.ts
+  contrib/{otel,prometheus,sentry,express,fastify,nest,rest}.ts   # optional subpath exports
   cli/{index,connect,output,commands/*}.ts
-sdks/node/test/*.test.ts        # grouped by feature area
+sdks/node/test/{core,worker,observability,integrations,workflows,dashboard}/*.test.ts  # grouped by feature area
 ```
 
 Memory: see `.claude/memory/session-history.md` (Node SDK section) for the running

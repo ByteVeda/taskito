@@ -19,6 +19,36 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./contrib/otel": {
+      "types": "./dist/contrib/otel.d.ts",
+      "import": "./dist/contrib/otel.js",
+      "require": "./dist/contrib/otel.cjs"
+    },
+    "./contrib/prometheus": {
+      "types": "./dist/contrib/prometheus.d.ts",
+      "import": "./dist/contrib/prometheus.js",
+      "require": "./dist/contrib/prometheus.cjs"
+    },
+    "./contrib/express": {
+      "types": "./dist/contrib/express.d.ts",
+      "import": "./dist/contrib/express.js",
+      "require": "./dist/contrib/express.cjs"
+    },
+    "./contrib/fastify": {
+      "types": "./dist/contrib/fastify.d.ts",
+      "import": "./dist/contrib/fastify.js",
+      "require": "./dist/contrib/fastify.cjs"
+    },
+    "./contrib/nest": {
+      "types": "./dist/contrib/nest.d.ts",
+      "import": "./dist/contrib/nest.js",
+      "require": "./dist/contrib/nest.cjs"
+    },
+    "./contrib/sentry": {
+      "types": "./dist/contrib/sentry.d.ts",
+      "import": "./dist/contrib/sentry.js",
+      "require": "./dist/contrib/sentry.cjs"
     }
   },
   "files": [
@@ -60,7 +90,18 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@napi-rs/cli": "^2.18.4",
+    "@nestjs/common": "^11.1.27",
+    "@nestjs/core": "^11.1.27",
+    "@nestjs/testing": "^11.1.27",
+    "@opentelemetry/api": "^1.9.1",
+    "@sentry/node": "^10.58.0",
+    "@types/express": "^5.0.6",
     "@types/node": "^25.9.2",
+    "express": "^5.2.1",
+    "fastify": "^5.8.5",
+    "prom-client": "^15.1.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
     "tsup": "^8.5.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
@@ -68,5 +109,37 @@
   "dependencies": {
     "@msgpack/msgpack": "^3.1.3",
     "commander": "^15.0.0"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@sentry/node": "^8.0.0 || ^9.0.0 || ^10.0.0",
+    "express": "^4.18.0 || ^5.0.0",
+    "fastify": "^4.0.0 || ^5.0.0",
+    "prom-client": "^15.0.0",
+    "reflect-metadata": "^0.1.13 || ^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@nestjs/common": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
+      "optional": true
+    },
+    "@sentry/node": {
+      "optional": true
+    },
+    "express": {
+      "optional": true
+    },
+    "fastify": {
+      "optional": true
+    },
+    "prom-client": {
+      "optional": true
+    },
+    "reflect-metadata": {
+      "optional": true
+    }
   }
 }

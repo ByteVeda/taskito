@@ -2,6 +2,7 @@ import type { JsOutcome, NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
 import { createLogger } from "../utils";
 import { predecessorsOf, successorsOf, transitiveDeferred } from "./plan";
+import type { SubWorkflowTransport } from "./types";
 
 const log = createLogger("workflow-tracker");
 
@@ -22,6 +23,9 @@ const TERMINAL_NODE_STATUS = new Set([
 /** A fan-out child node name (`parent[3]`) → its parent (`parent`), else null. */
 const FAN_OUT_CHILD = /^(.+)\[\d+\]$/;
 
+/** Predecessor outcomes that satisfy an `on_success` condition. */
+const SUCCEEDED_STATUS = new Set(["completed", "cache_hit"]);
+
 /** snake_case step metadata as stored in the workflow definition. */
 interface StepMeta {
   task_name: string;
@@ -32,6 +36,21 @@ interface StepMeta {
   args_template?: string;
   fan_out?: string;
   fan_in?: string;
+  /** `"on_success"` (default) | `"on_failure"` | `"always"` — gates node entry. */
+  condition?: string;
+  /** JSON `{timeoutMs?, onTimeout?, message?}` marking an approval gate node. */
+  gate?: string;
+  /** JSON `SubWorkflowTransport` marking a sub-workflow node. */
+  sub_workflow?: string;
+  /** Rollback task name run if the workflow fails (saga compensation). */
+  compensate?: string;
+}
+
+/** Parsed gate config from a node's `gate` metadata. */
+interface GateConfig {
+  timeoutMs?: number;
+  onTimeout?: "approve" | "reject";
+  message?: string;
 }
 
 /** The reconstructed structure + config of a workflow run. */
@@ -40,7 +59,12 @@ interface RunPlan {
   predecessors: Map<string, string[]>;
   deferred: Set<string>;
   meta: Map<string, StepMeta>;
+  /** True if any node declares a compensator (the run can run a saga rollback). */
+  hasCompensation: boolean;
 }
+
+/** Node statuses still awaiting (or undergoing) compensation rollback. */
+const COMPENSABLE_STATUS = new Set(["completed", "cache_hit"]);
 
 /**
  * The runtime workflow brain. Driven from the worker's outcome callback, it
@@ -58,6 +82,8 @@ interface RunPlan {
  */
 export class WorkflowTracker {
   private readonly plans = new Map<string, RunPlan>();
+  /** Pending gate-timeout timers, keyed `runId\0node` (unref'd). */
+  private readonly gateTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly native: NativeQueue,
@@ -76,6 +102,12 @@ export class WorkflowTracker {
     }
 
     try {
+      // A rollback job advances the saga, not the forward run — check it first.
+      const comp = this.native.compensationNodeForJob(outcome.jobId);
+      if (comp) {
+        this.onCompensationOutcome(comp.runId, comp.nodeName, succeeded, outcome.error ?? null);
+        return;
+      }
       const ref = this.native.workflowNodeForJob(outcome.jobId);
       if (!ref) {
         return; // not a workflow job
@@ -103,20 +135,202 @@ export class WorkflowTracker {
     // Record the node's outcome. For plain DAGs the core also cascades + finalizes.
     const advance = this.native.markWorkflowNodeResult(jobId, succeeded, error, managed);
     if (!managed) {
-      this.evictIfTerminal(runId, advance?.finalState ?? null);
+      this.settle(runId, advance?.finalState ?? null);
       return;
     }
 
     const parent = fanOutParentOf(nodeName);
     if (parent !== null && isFanOut(plan, parent)) {
       this.onFanOutChild(runId, parent, plan);
-    } else if (succeeded) {
-      this.evaluateSuccessors(runId, nodeName, plan);
     } else {
-      this.native.cascadeSkipPending(runId); // fail-fast
+      // Success and failure both flow through successor evaluation: each
+      // successor's condition decides whether it runs or is skipped, so an
+      // `on_failure` handler fires and an `on_success` step skips after a fault.
+      this.evaluateSuccessors(runId, nodeName, plan);
     }
 
-    this.evictIfTerminal(runId, this.native.finalizeRunIfTerminal(runId));
+    this.settle(runId, this.native.finalizeRunIfTerminal(runId));
+  }
+
+  /**
+   * Wrap up after a node settles. A failed run with compensable nodes starts a
+   * saga rollback instead of finishing; otherwise the plan is evicted and, if
+   * this run is a sub-workflow child, its parent node is resolved.
+   */
+  private settle(runId: string, finalState: string | null): void {
+    if (finalState === "failed" && this.startCompensationIfEligible(runId)) {
+      return; // run moved to `compensating`; it finalizes when rollback completes
+    }
+    this.evictIfTerminal(runId, finalState);
+    if (finalState !== null) {
+      this.resolveParentIfChild(runId, finalState);
+    }
+  }
+
+  /**
+   * If `childRunId` is a sub-workflow child, resolve its parent node (success →
+   * complete, failure → fail), advance the parent's successors, and recurse for
+   * nested parents. Idempotent: a parent node already resolved is left alone.
+   */
+  private resolveParentIfChild(childRunId: string, finalState: string): void {
+    const child = this.native.getWorkflowRun(childRunId);
+    const parentRunId = child?.parentRunId;
+    const parentNode = child?.parentNodeName;
+    if (!parentRunId || !parentNode) {
+      return;
+    }
+    const parentStatus = this.nodeStatuses(parentRunId).get(parentNode);
+    if (parentStatus === undefined || TERMINAL_NODE_STATUS.has(parentStatus)) {
+      return; // parent gone, or already resolved (e.g. by a racing worker)
+    }
+    const succeeded = finalState === "completed";
+    this.native.resolveWorkflowGate(
+      parentRunId,
+      parentNode,
+      succeeded,
+      succeeded ? null : `sub-workflow ${finalState}`,
+    );
+    const parentPlan = this.plan(parentRunId);
+    if (parentPlan) {
+      this.evaluateSuccessors(parentRunId, parentNode, parentPlan);
+    }
+    this.settle(parentRunId, this.native.finalizeRunIfTerminal(parentRunId));
+  }
+
+  /** Whether a node declares a compensator (saga rollback task). */
+  private isCompensable(node: string, plan: RunPlan): boolean {
+    return Boolean(plan.meta.get(node)?.compensate);
+  }
+
+  /**
+   * Begin saga compensation for a failed run that has completed compensable
+   * nodes: move the run to `compensating` and dispatch the first rollback wave.
+   * Returns false (run finalizes normally) when there's nothing to roll back.
+   */
+  private startCompensationIfEligible(runId: string): boolean {
+    const plan = this.plan(runId);
+    if (!plan?.hasCompensation) {
+      return false;
+    }
+    const eligible = this.native
+      .getWorkflowNodes(runId)
+      .some((n) => this.isCompensable(n.nodeName, plan) && COMPENSABLE_STATUS.has(n.status));
+    if (!eligible) {
+      return false;
+    }
+    this.native.setWorkflowRunState(runId, "compensating", null, null);
+    this.advanceCompensation(runId, plan);
+    return true;
+  }
+
+  /**
+   * Drive one step of compensation: dispatch every compensable node that's ready
+   * (all its compensable successors already rolled back) in reverse-dependency
+   * order, then finalize the run once nothing is in flight. Storage-driven and
+   * idempotent — re-derived from node status on every rollback outcome.
+   */
+  private advanceCompensation(runId: string, plan: RunPlan): void {
+    let nodes = this.native.getWorkflowNodes(runId);
+    const compensable = (node: { nodeName: string }) => this.isCompensable(node.nodeName, plan);
+    const anyFailed = nodes.some((n) => compensable(n) && n.status === "compensation_failed");
+
+    if (!anyFailed) {
+      const status = new Map(nodes.map((n) => [n.nodeName, n.status]));
+      for (const node of nodes) {
+        if (!compensable(node) || !COMPENSABLE_STATUS.has(node.status)) {
+          continue;
+        }
+        if (this.compensationReady(node.nodeName, status, plan)) {
+          this.enqueueCompensation(runId, node.nodeName, node.jobId ?? null, plan);
+        }
+      }
+      nodes = this.native.getWorkflowNodes(runId); // re-read after dispatch
+    }
+
+    // Still working while any rollback is in flight, or (absent a failure) any
+    // compensable node is still awaiting rollback.
+    const working = nodes.some((n) => {
+      if (!compensable(n)) {
+        return false;
+      }
+      return n.status === "compensating" || (!anyFailed && COMPENSABLE_STATUS.has(n.status));
+    });
+    if (working) {
+      return;
+    }
+
+    const failed = nodes.some((n) => compensable(n) && n.status === "compensation_failed");
+    const now = Date.now();
+    if (failed) {
+      this.native.setWorkflowRunState(runId, "compensation_failed", "compensation failed", now);
+    } else {
+      this.native.setWorkflowRunState(runId, "compensated", null, now);
+    }
+    this.plans.delete(runId);
+  }
+
+  /** A node is ready to roll back once all its compensable successors have. */
+  private compensationReady(node: string, status: Map<string, string>, plan: RunPlan): boolean {
+    for (const succ of plan.successors.get(node) ?? []) {
+      if (!this.isCompensable(succ, plan)) {
+        continue; // a non-compensable successor did nothing to undo
+      }
+      const s = status.get(succ);
+      if (s !== "compensated" && s !== "compensation_failed") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Enqueue a node's rollback job, passing the node's forward result as its arg. */
+  private enqueueCompensation(
+    runId: string,
+    node: string,
+    jobId: string | null,
+    plan: RunPlan,
+  ): void {
+    const meta = plan.meta.get(node);
+    if (!meta?.compensate) {
+      return;
+    }
+    const job = jobId ? this.native.getJob(jobId) : null;
+    const result = job?.result ? this.serializer.deserialize(job.result) : null;
+    const payload = Buffer.from(this.serializer.serialize([result]));
+    this.native.enqueueCompensation(
+      runId,
+      node,
+      payload,
+      meta.compensate,
+      meta.queue ?? DEFAULT_QUEUE,
+      meta.max_retries ?? DEFAULT_MAX_RETRIES,
+      meta.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+      meta.priority ?? 0,
+    );
+  }
+
+  /** Record a rollback's outcome and advance (or finalize) the saga. */
+  private onCompensationOutcome(
+    runId: string,
+    node: string,
+    succeeded: boolean,
+    error: string | null,
+  ): void {
+    const now = Date.now();
+    if (succeeded) {
+      this.native.setWorkflowNodeCompensated(runId, node, now);
+    } else {
+      this.native.setWorkflowNodeCompensationFailed(
+        runId,
+        node,
+        error ?? "compensation failed",
+        now,
+      );
+    }
+    const plan = this.plan(runId);
+    if (plan) {
+      this.advanceCompensation(runId, plan);
+    }
   }
 
   /** Drop a finished run's cached plan so the cache doesn't grow unbounded. */
@@ -135,7 +349,9 @@ export class WorkflowTracker {
     if (completion.succeeded) {
       this.onFanOutParentDone(runId, parent, completion.childJobIds, plan);
     } else {
-      this.native.cascadeSkipPending(runId); // a child failed → fail-fast
+      // A child failed → the parent is now `failed`; evaluating its successors
+      // skips the (on_success) fan-in and anything downstream.
+      this.evaluateSuccessors(runId, parent, plan);
     }
   }
 
@@ -217,22 +433,124 @@ export class WorkflowTracker {
     );
   }
 
-  /** Enqueue/expand any deferred successor whose predecessors are now all terminal. */
+  /** Enqueue/expand/skip any deferred successor whose predecessors are now all terminal. */
   private evaluateSuccessors(runId: string, nodeName: string, plan: RunPlan): void {
     for (const succ of plan.successors.get(nodeName) ?? []) {
       if (!plan.deferred.has(succ) || !this.allPredecessorsTerminal(runId, succ, plan)) {
+        continue;
+      }
+      // Evaluate the condition first: a not-taken branch is skipped (and the
+      // skip propagates) before we consider what kind of node it is.
+      if (!this.shouldExecute(runId, succ, plan)) {
+        this.skipNode(runId, succ, plan);
         continue;
       }
       const meta = plan.meta.get(succ);
       if (meta?.fan_in) {
         continue; // fan-in jobs are created from the fan-out completion path
       }
-      if (meta?.fan_out) {
+      if (meta?.gate) {
+        this.enterGate(runId, succ, meta);
+      } else if (meta?.sub_workflow) {
+        this.submitSubWorkflow(runId, succ, meta);
+      } else if (meta?.fan_out) {
         this.expandFanOut(runId, succ, plan);
       } else {
         this.createDeferredJob(runId, succ, plan);
       }
     }
+  }
+
+  /** Submit a node's child workflow as a linked run; mark the node `running`. */
+  private submitSubWorkflow(runId: string, node: string, meta: StepMeta): void {
+    if (!meta.sub_workflow) {
+      return;
+    }
+    const child: SubWorkflowTransport = JSON.parse(meta.sub_workflow);
+    const payloads: Record<string, Buffer> = {};
+    for (const [name, b64] of Object.entries(child.nodePayloads)) {
+      payloads[name] = Buffer.from(b64, "base64");
+    }
+    this.native.submitWorkflow(
+      child.name,
+      child.version,
+      Buffer.from(child.dag, "base64"),
+      child.stepMetadata,
+      payloads,
+      null,
+      null,
+      child.deferredNodeNames,
+      runId,
+      node,
+    );
+    this.native.setWorkflowNodeRunning(runId, node);
+  }
+
+  /** Park a gate node at `waiting_approval` and arm its timeout, if any. */
+  private enterGate(runId: string, node: string, meta: StepMeta): void {
+    this.native.setWorkflowNodeWaitingApproval(runId, node);
+    const gate: GateConfig = meta.gate ? JSON.parse(meta.gate) : {};
+    if (!gate.timeoutMs || gate.timeoutMs <= 0) {
+      return;
+    }
+    const key = gateKey(runId, node);
+    const approved = gate.onTimeout === "approve";
+    const timer = setTimeout(() => {
+      this.gateTimers.delete(key);
+      this.resolveGate(runId, node, approved, approved ? undefined : "gate timeout");
+    }, gate.timeoutMs);
+    timer.unref(); // never keep the process alive waiting on an approval
+    this.gateTimers.set(key, timer);
+  }
+
+  /**
+   * Approve or reject a waiting gate, then advance (or skip) its successors.
+   * Safe to call from any process and idempotent: a gate already resolved (by
+   * the other of manual-vs-timeout) is a no-op.
+   */
+  resolveGate(runId: string, node: string, approved: boolean, error?: string): void {
+    this.clearGateTimer(runId, node);
+    const current = this.nodeStatuses(runId).get(node);
+    if (current === undefined || TERMINAL_NODE_STATUS.has(current)) {
+      return; // gone, or already resolved by the timeout / another caller
+    }
+    this.native.resolveWorkflowGate(runId, node, approved, error ?? null);
+    const plan = this.plan(runId);
+    if (!plan) {
+      return;
+    }
+    this.evaluateSuccessors(runId, node, plan);
+    this.evictIfTerminal(runId, this.native.finalizeRunIfTerminal(runId));
+  }
+
+  private clearGateTimer(runId: string, node: string): void {
+    const key = gateKey(runId, node);
+    const timer = this.gateTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.gateTimers.delete(key);
+    }
+  }
+
+  /** Whether a node's condition is satisfied by its predecessors' outcomes. */
+  private shouldExecute(runId: string, node: string, plan: RunPlan): boolean {
+    const condition = plan.meta.get(node)?.condition ?? "on_success";
+    const preds = plan.predecessors.get(node) ?? [];
+    if (preds.length === 0 || condition === "always") {
+      return true;
+    }
+    const status = this.nodeStatuses(runId);
+    const predStatuses = preds.map((p) => status.get(p) ?? "");
+    if (condition === "on_failure") {
+      return predStatuses.some((s) => s === "failed");
+    }
+    return predStatuses.every((s) => SUCCEEDED_STATUS.has(s)); // on_success
+  }
+
+  /** Mark a not-taken node skipped, then propagate the skip to its successors. */
+  private skipNode(runId: string, node: string, plan: RunPlan): void {
+    this.native.skipWorkflowNode(runId, node);
+    this.evaluateSuccessors(runId, node, plan);
   }
 
   /** Enqueue a plain deferred node using its persisted args. */
@@ -316,16 +634,24 @@ export class WorkflowTracker {
       Object.entries(JSON.parse(raw.stepMetadata) as Record<string, StepMeta>),
     );
     const successors = successorsOf(edges);
-    const seeds = [...meta].filter(([, m]) => m.fan_out || m.fan_in).map(([name]) => name);
+    const seeds = [...meta]
+      .filter(([, m]) => m.fan_out || m.fan_in || m.condition || m.gate || m.sub_workflow)
+      .map(([name]) => name);
     const plan: RunPlan = {
       successors,
       predecessors: predecessorsOf(edges),
       deferred: transitiveDeferred(seeds, successors),
       meta,
+      hasCompensation: [...meta.values()].some((m) => m.compensate),
     };
     this.plans.set(runId, plan);
     return plan;
   }
+}
+
+/** Stable key for a run's gate node in the timer map. */
+function gateKey(runId: string, node: string): string {
+  return `${runId} ${node}`;
 }
 
 /** `parent[3]` → `parent`; a non-child name → null. */

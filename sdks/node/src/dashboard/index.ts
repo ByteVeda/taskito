@@ -27,4 +27,4 @@ export function serveDashboard(queue: Queue, options: DashboardOptions = {}): Se
   return server;
 }
 
-export { createDashboardServer } from "./server";
+export { createDashboardHandler, createDashboardServer } from "./server";

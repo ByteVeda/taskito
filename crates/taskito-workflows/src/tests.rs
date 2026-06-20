@@ -122,15 +122,7 @@ fn test_get_ready_nodes_diamond_dag() {
             name.to_string(),
             StepMetadata {
                 task_name: format!("task_{name}"),
-                queue: None,
-                args_template: None,
-                kwargs_template: None,
-                max_retries: None,
-                timeout_ms: None,
-                priority: None,
-                fan_out: None,
-                fan_in: None,
-                condition: None,
+                ..Default::default()
             },
         );
     }

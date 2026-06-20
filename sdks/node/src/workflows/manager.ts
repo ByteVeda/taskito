@@ -1,7 +1,10 @@
 import type { NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
 import { WorkflowBuilder } from "./builder";
+import { WorkflowTracker } from "./tracker";
 import type {
+  StepMetadataJson,
+  SubWorkflowTransport,
   WorkflowHandle,
   WorkflowNode,
   WorkflowRun,
@@ -27,9 +30,9 @@ const DEFAULT_WAIT_POLL_MS = 100;
  * The `queue.workflows` facade: define and submit workflows, then query runs.
  *
  * Supports DAG / linear workflows (steps pre-enqueued with `depends_on` chains,
- * sequenced by the core scheduler) plus fan-out / fan-in steps the worker-side
- * tracker expands at runtime (see `tracker.ts`). Gates, sub-workflows, and saga
- * compensation are not yet available in the Node SDK.
+ * sequenced by the core scheduler) plus the deferred step kinds the worker-side
+ * tracker drives at runtime (see `tracker.ts`): fan-out / fan-in, conditions,
+ * approval gates, sub-workflows, and saga compensation.
  */
 export class WorkflowManager {
   constructor(
@@ -71,6 +74,25 @@ export class WorkflowManager {
     return this.native.getWorkflowChildren(runId);
   }
 
+  /**
+   * Resolve a workflow gate that is `waiting_approval`, then advance (or skip)
+   * its successors. Works from any process — the run plan is read from storage.
+   * Idempotent: resolving an already-resolved gate is a no-op.
+   */
+  resolveGate(runId: string, nodeName: string, approved: boolean, error?: string): void {
+    new WorkflowTracker(this.native, this.serializer).resolveGate(runId, nodeName, approved, error);
+  }
+
+  /** Approve a waiting gate (shorthand for `resolveGate(runId, node, true)`). */
+  approveGate(runId: string, nodeName: string): void {
+    this.resolveGate(runId, nodeName, true);
+  }
+
+  /** Reject a waiting gate (shorthand for `resolveGate(runId, node, false, error)`). */
+  rejectGate(runId: string, nodeName: string, error?: string): void {
+    this.resolveGate(runId, nodeName, false, error);
+  }
+
   /** List runs, optionally filtered by definition name and/or state. */
   list(options?: {
     definitionName?: string;
@@ -87,39 +109,68 @@ export class WorkflowManager {
   }
 
   private submitSpec(spec: WorkflowSpec, options?: WorkflowSubmitOptions): WorkflowHandle {
+    const transport = this.toTransport(spec);
+    const nodePayloads: Record<string, Buffer> = {};
+    for (const [name, b64] of Object.entries(transport.nodePayloads)) {
+      nodePayloads[name] = Buffer.from(b64, "base64");
+    }
+    const paramsJson = options?.params === undefined ? null : JSON.stringify(options.params);
+    const runId = this.native.submitWorkflow(
+      transport.name,
+      transport.version,
+      Buffer.from(transport.dag, "base64"),
+      transport.stepMetadata,
+      nodePayloads,
+      options?.queueDefault ?? null,
+      paramsJson,
+      transport.deferredNodeNames,
+      null,
+      null,
+    );
+    return this.makeHandle(runId);
+  }
+
+  /**
+   * Flatten a spec (and any nested sub-workflows) to its base64/JSON transport
+   * form: serialize each node's args once, stamp deferred nodes' `args_template`
+   * (the only storage-reconstructable channel for the tracker), and embed each
+   * child workflow into its parent node's `sub_workflow` metadata.
+   */
+  private toTransport(spec: WorkflowSpec): SubWorkflowTransport {
     const dag = {
       nodes: spec.nodes.map((name) => ({ name })),
       edges: spec.edges.map((edge) => ({ from: edge.from, to: edge.to, weight: 1.0 })),
     };
-    const dagBytes = Buffer.from(JSON.stringify(dag));
-
-    // Static nodes are enqueued by `submitWorkflow` from these payloads. For
-    // deferred nodes the tracker enqueues later, so we persist their args in
-    // `args_template` (base64) — the only storage-reconstructable channel.
     const deferred = new Set(spec.deferredNodeNames);
-    const stepMetadata = { ...spec.stepMetadata };
-    const nodePayloads: Record<string, Buffer> = {};
+    const stepMetadata: Record<string, StepMetadataJson> = {};
+    const nodePayloads: Record<string, string> = {};
     for (const name of spec.nodes) {
-      const payload = Buffer.from(this.serializer.serialize(spec.stepArgs[name] ?? []));
-      nodePayloads[name] = payload;
-      const meta = stepMetadata[name];
-      if (deferred.has(name) && meta) {
-        stepMetadata[name] = { ...meta, args_template: payload.toString("base64") };
+      const base = spec.stepMetadata[name];
+      if (!base) {
+        throw new Error(`workflow step '${name}' is missing metadata`);
       }
+      const b64 = Buffer.from(this.serializer.serialize(spec.stepArgs[name] ?? [])).toString(
+        "base64",
+      );
+      nodePayloads[name] = b64;
+      const meta: StepMetadataJson = { ...base };
+      if (deferred.has(name)) {
+        meta.args_template = b64;
+      }
+      const child = spec.subWorkflows?.[name];
+      if (child) {
+        meta.sub_workflow = JSON.stringify(this.toTransport(child));
+      }
+      stepMetadata[name] = meta;
     }
-
-    const paramsJson = options?.params === undefined ? null : JSON.stringify(options.params);
-    const runId = this.native.submitWorkflow(
-      spec.name,
-      spec.version,
-      dagBytes,
-      JSON.stringify(stepMetadata),
+    return {
+      name: spec.name,
+      version: spec.version,
+      dag: Buffer.from(JSON.stringify(dag)).toString("base64"),
+      stepMetadata: JSON.stringify(stepMetadata),
       nodePayloads,
-      options?.queueDefault ?? null,
-      paramsJson,
-      spec.deferredNodeNames,
-    );
-    return this.makeHandle(runId);
+      deferredNodeNames: spec.deferredNodeNames,
+    };
   }
 
   private makeHandle(runId: string): WorkflowHandle {

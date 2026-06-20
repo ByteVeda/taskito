@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { LockNotAcquiredError, Queue } from "../src/index";
+import { LockNotAcquiredError, Queue } from "../../src/index";
 
 function freshQueue(): Queue {
   const dbPath = join(mkdtempSync(join(tmpdir(), "taskito-node-lock-")), "queue.db");

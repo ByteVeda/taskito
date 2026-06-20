@@ -1,11 +1,11 @@
 //! Workflow submission, advancement, and queries.
 //!
 //! Static DAG steps are pre-enqueued with a `depends_on` chain so the core
-//! scheduler runs them in topological order. Fan-out / fan-in steps are
-//! deferred — submitted without a job — and the worker-side tracker (see
-//! `sdks/node/src/workflows/tracker.ts`) expands and enqueues them at runtime
-//! via the primitives below. Gates, sub-workflows, and saga compensation are
-//! not yet bound.
+//! scheduler runs them in topological order. Deferred steps — fan-out / fan-in,
+//! conditioned steps, gates, and sub-workflows — are submitted without a job;
+//! the worker-side tracker (see `sdks/node/src/workflows/tracker.ts`) expands,
+//! resolves, and enqueues them at runtime via the primitives below. On failure
+//! the tracker can drive saga compensation, rolling nodes back in reverse order.
 
 use std::collections::{HashMap, HashSet};
 
@@ -57,6 +57,8 @@ impl JsQueue {
         queue_default: Option<String>,
         params_json: Option<String>,
         deferred_node_names: Option<Vec<String>>,
+        parent_run_id: Option<String>,
+        parent_node_name: Option<String>,
     ) -> Result<String> {
         let wf = self.workflow_store()?;
         let dag = dag_bytes.to_vec();
@@ -109,8 +111,8 @@ impl JsQueue {
             started_at: Some(now),
             completed_at: None,
             error: None,
-            parent_run_id: None,
-            parent_node_name: None,
+            parent_run_id,
+            parent_node_name,
             created_at: now,
         };
         wf.create_workflow_run(&run).map_err(to_napi_err)?;
@@ -555,6 +557,188 @@ impl JsQueue {
         }))
     }
 
+    /// Skip a single node whose condition evaluated false: cancel any backing
+    /// job (best-effort) and mark it `Skipped`. The tracker propagates the skip
+    /// to the node's successors so a not-taken branch settles cleanly.
+    #[napi]
+    pub fn skip_workflow_node(&self, run_id: String, node_name: String) -> Result<()> {
+        let wf = self.workflow_store()?;
+        if let Some(node) = wf
+            .get_workflow_node(&run_id, &node_name)
+            .map_err(to_napi_err)?
+        {
+            if let Some(job_id) = &node.job_id {
+                if let Err(e) = self.storage.cancel_job(job_id) {
+                    log::warn!("[taskito-node] cancel_job({job_id}) during skip: {e}");
+                }
+            }
+        }
+        wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::Skipped)
+            .map_err(to_napi_err)?;
+        Ok(())
+    }
+
+    /// Park a gate node at `WaitingApproval`. The run pauses here until
+    /// `resolve_workflow_gate` approves or rejects it (or a tracker timeout does).
+    #[napi]
+    pub fn set_workflow_node_waiting_approval(
+        &self,
+        run_id: String,
+        node_name: String,
+    ) -> Result<()> {
+        let wf = self.workflow_store()?;
+        wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::WaitingApproval)
+            .map_err(to_napi_err)?;
+        Ok(())
+    }
+
+    /// Resolve a waiting gate: approve → mark the node `Completed`; reject →
+    /// mark it `Failed` with `error`. The tracker then advances or skips the
+    /// gate's successors. Also used to resolve a parent node when its
+    /// sub-workflow child finalizes.
+    #[napi]
+    pub fn resolve_workflow_gate(
+        &self,
+        run_id: String,
+        node_name: String,
+        approved: bool,
+        error: Option<String>,
+    ) -> Result<()> {
+        let wf = self.workflow_store()?;
+        if approved {
+            wf.set_workflow_node_completed(&run_id, &node_name, now_millis(), None)
+                .map_err(to_napi_err)?;
+        } else {
+            let msg = error.unwrap_or_else(|| "rejected".to_string());
+            wf.set_workflow_node_error(&run_id, &node_name, &msg)
+                .map_err(to_napi_err)?;
+        }
+        Ok(())
+    }
+
+    /// Promote a node to `Running` — used when its sub-workflow child has been
+    /// submitted, so the parent node reflects in-flight work until the child
+    /// finalizes and resolves it.
+    #[napi]
+    pub fn set_workflow_node_running(&self, run_id: String, node_name: String) -> Result<()> {
+        let wf = self.workflow_store()?;
+        wf.set_workflow_node_running(&run_id, &node_name, now_millis())
+            .map_err(to_napi_err)?;
+        Ok(())
+    }
+
+    /// Set a run's state (and optional error + completion timestamp). Used by the
+    /// saga tracker to transition through `compensating` → `compensated` /
+    /// `compensation_failed`.
+    #[napi]
+    pub fn set_workflow_run_state(
+        &self,
+        run_id: String,
+        state: String,
+        error: Option<String>,
+        completed_at: Option<i64>,
+    ) -> Result<()> {
+        let wf = self.workflow_store()?;
+        let state = WorkflowState::from_str_val(&state)
+            .ok_or_else(|| reason(format!("unknown workflow state '{state}'")))?;
+        wf.update_workflow_run_state(&run_id, state, error.as_deref())
+            .map_err(to_napi_err)?;
+        if let Some(ts) = completed_at {
+            wf.set_workflow_run_completed(&run_id, ts)
+                .map_err(to_napi_err)?;
+        }
+        Ok(())
+    }
+
+    /// Mark a node's compensation succeeded (status `Compensated`).
+    #[napi]
+    pub fn set_workflow_node_compensated(
+        &self,
+        run_id: String,
+        node_name: String,
+        completed_at: i64,
+    ) -> Result<()> {
+        let wf = self.workflow_store()?;
+        wf.set_workflow_node_compensated(&run_id, &node_name, completed_at)
+            .map_err(to_napi_err)?;
+        Ok(())
+    }
+
+    /// Mark a node's compensation failed (status `CompensationFailed`).
+    #[napi]
+    pub fn set_workflow_node_compensation_failed(
+        &self,
+        run_id: String,
+        node_name: String,
+        error: String,
+        completed_at: i64,
+    ) -> Result<()> {
+        let wf = self.workflow_store()?;
+        wf.set_workflow_node_compensation_failed(&run_id, &node_name, &error, completed_at)
+            .map_err(to_napi_err)?;
+        Ok(())
+    }
+
+    /// Enqueue a node's rollback (compensation) job and bind it to the node
+    /// (status `Compensating`). The job carries a compensation marker so its
+    /// outcome routes to saga handling, and a dedup `unique_key` so concurrent
+    /// workers never double-compensate the same node. Returns the job id.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_compensation(
+        &self,
+        run_id: String,
+        node_name: String,
+        payload: Buffer,
+        task_name: String,
+        queue: String,
+        max_retries: i32,
+        timeout_ms: i64,
+        priority: i32,
+    ) -> Result<String> {
+        let wf = self.workflow_store()?;
+        let now = now_millis();
+        let new_job = NewJob {
+            queue,
+            task_name,
+            payload: payload.to_vec(),
+            priority,
+            scheduled_at: now,
+            max_retries,
+            timeout_ms,
+            unique_key: Some(format!("compensation:{run_id}:{node_name}")),
+            metadata: Some(compensation_metadata_json(&run_id, &node_name)),
+            notes: None,
+            depends_on: vec![],
+            expires_at: None,
+            result_ttl_ms: None,
+            namespace: self.namespace.clone(),
+        };
+        let job = self.storage.enqueue(new_job).map_err(to_napi_err)?;
+        // Cancel the job if binding fails, so a compensation job can't run
+        // untracked by the saga state machine (mirrors create_deferred_job).
+        if let Err(err) = wf
+            .set_workflow_node_compensation_job(&run_id, &node_name, &job.id, now)
+            .map_err(to_napi_err)
+        {
+            let _ = self.storage.cancel_job(&job.id);
+            return Err(err);
+        }
+        Ok(job.id)
+    }
+
+    /// The run + node a compensation job belongs to, or `null` if `job_id` is not
+    /// a compensation job. The tracker checks this before normal node handling so
+    /// a rollback outcome advances the saga rather than the forward run.
+    #[napi]
+    pub fn compensation_node_for_job(&self, job_id: String) -> Result<Option<JsWorkflowNodeRef>> {
+        let Some(job) = self.storage.get_job(&job_id).map_err(to_napi_err)? else {
+            return Ok(None);
+        };
+        Ok(parse_compensation_metadata(job.metadata.as_deref())
+            .map(|(run_id, node_name)| JsWorkflowNodeRef { run_id, node_name }))
+    }
+
     /// Fail-fast cascade: skip every still-pending node of a run and cancel its
     /// job. Called by the tracker when a managed run's node fails.
     #[napi]
@@ -658,9 +842,43 @@ fn workflow_metadata_json(run_id: &str, node_name: &str) -> String {
     .to_string()
 }
 
+/// Like `workflow_metadata_json` but flags a node's rollback (compensation) job.
+fn compensation_metadata_json(run_id: &str, node_name: &str) -> String {
+    serde_json::json!({
+        "workflow_run_id": run_id,
+        "workflow_node_name": node_name,
+        "compensation": true,
+    })
+    .to_string()
+}
+
 /// Parse `{workflow_run_id, workflow_node_name}` from a job's metadata blob.
+/// Returns `None` for compensation jobs so they never advance the forward run.
 fn parse_workflow_metadata(metadata: Option<&str>) -> Option<(String, String)> {
     let parsed: serde_json::Value = serde_json::from_str(metadata?).ok()?;
+    if parsed
+        .get("compensation")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        return None;
+    }
+    let run_id = parsed.get("workflow_run_id")?.as_str()?.to_string();
+    let node_name = parsed.get("workflow_node_name")?.as_str()?.to_string();
+    Some((run_id, node_name))
+}
+
+/// Parse a compensation job's `{workflow_run_id, workflow_node_name}` — `None`
+/// unless the metadata carries `compensation: true`.
+fn parse_compensation_metadata(metadata: Option<&str>) -> Option<(String, String)> {
+    let parsed: serde_json::Value = serde_json::from_str(metadata?).ok()?;
+    if parsed
+        .get("compensation")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return None;
+    }
     let run_id = parsed.get("workflow_run_id")?.as_str()?.to_string();
     let node_name = parsed.get("workflow_node_name")?.as_str()?.to_string();
     Some((run_id, node_name))

@@ -26,15 +26,7 @@ use taskito_workflows::{
 fn make_step(task_name: &str) -> StepMetadata {
     StepMetadata {
         task_name: task_name.to_string(),
-        queue: None,
-        args_template: None,
-        kwargs_template: None,
-        max_retries: None,
-        timeout_ms: None,
-        priority: None,
-        fan_out: None,
-        fan_in: None,
-        condition: None,
+        ..Default::default()
     }
 }
 

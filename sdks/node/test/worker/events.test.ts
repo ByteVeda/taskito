@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { type Middleware, type OutcomeEvent, Queue, type Worker } from "../src/index";
+import { type Middleware, type OutcomeEvent, Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 

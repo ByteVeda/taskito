@@ -1,4 +1,4 @@
 {
   "title": "Workflows",
-  "pages": ["index", "fan-out"]
+  "pages": ["index", "fan-out", "conditions", "gates", "sub-workflows", "saga"]
 }

@@ -60,17 +60,17 @@ new Queue({ backend: "redis",   dsn: "redis://localhost" });  // Redis
 
 <Cards>
   <Card
-    title="Fan-out / Fan-in"
-    href="/node/workflows/fan-out"
-    description="Split a step's result into parallel children, collect results into a downstream step."
+    title="Workflows"
+    href="/node/workflows"
+    description="Fan-out, conditions, approval gates, sub-workflows, and saga compensation."
+  />
+  <Card
+    title="Contrib integrations"
+    href="/node/contrib"
+    description="OpenTelemetry, Prometheus, Express, Fastify, and NestJS helpers."
   />
 </Cards>
 
 For the full API surface — serializers, cancellation, events, middleware,
 webhooks, distributed locks, periodic tasks, the CLI, and the dashboard — see
 the [Node SDK README](https://github.com/pratyushsharma/taskito/blob/master/sdks/node/README.md).
-
-<Callout type="info">
-  Gates, sub-workflows, and saga compensation are not yet available in the Node
-  SDK. Use the [Python SDK](/guides/workflows/gates) in the meantime.
-</Callout>
