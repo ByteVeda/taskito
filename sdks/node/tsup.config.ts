@@ -8,6 +8,7 @@ export default defineConfig({
     "contrib/prometheus": "src/contrib/prometheus.ts",
     "contrib/express": "src/contrib/express.ts",
     "contrib/fastify": "src/contrib/fastify.ts",
+    "contrib/nest": "src/contrib/nest.ts",
   },
   format: ["esm", "cjs"],
   dts: true,
