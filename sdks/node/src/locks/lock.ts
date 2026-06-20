@@ -34,7 +34,11 @@ export class Lock {
     options: LockOptions = {},
   ) {
     this.name = name;
-    this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
+    const ttl = options.ttlMs ?? DEFAULT_TTL_MS;
+    if (!Number.isFinite(ttl) || ttl <= 0) {
+      throw new RangeError(`Lock ttlMs must be a positive finite number, got ${ttl}`);
+    }
+    this.ttlMs = Math.floor(ttl);
     this.ownerId = options.ownerId ?? randomUUID();
     this.autoExtend = options.autoExtend ?? true;
   }
@@ -47,7 +51,14 @@ export class Lock {
   /** Try to acquire. Returns false if another owner holds a live lock. */
   acquire(): boolean {
     if (this.held) {
-      return true;
+      // Re-validate the lease rather than trusting local state indefinitely:
+      // with autoExtend off the remote lock may have already expired. `extend`
+      // succeeds only if we still hold it; otherwise fall through to re-acquire.
+      if (this.extend()) {
+        return true;
+      }
+      this.held = false;
+      this.stopAutoExtend();
     }
     const ok = this.native.acquireLock(this.name, this.ownerId, this.ttlMs);
     if (ok) {
