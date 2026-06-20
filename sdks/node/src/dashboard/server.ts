@@ -2,14 +2,23 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Queue } from "../index";
+import { WebhookValidationError } from "../webhooks";
 import { routes } from "./routes";
 import { StaticAssets } from "./static";
+
+/** Max request body size (1 MiB) — reject larger payloads to bound memory. */
+const MAX_BODY_BYTES = 1024 * 1024;
 
 /** Build (but do not start) the dashboard server over `queue`, serving the SPA from `staticDir`. */
 export function createDashboardServer(queue: Queue, staticDir: string): Server {
   const assets = new StaticAssets(staticDir);
   return createServer((req, res) => {
-    void dispatch(queue, assets, req, res);
+    void dispatch(queue, assets, req, res).catch((error) => {
+      console.error("[taskito] dashboard dispatch failed:", error);
+      if (!res.headersSent) {
+        sendJson(res, 500, { error: "internal server error" });
+      }
+    });
   });
 }
 
@@ -51,6 +60,10 @@ async function dispatch(
       }
       sendJson(res, 200, result);
     } catch (error) {
+      if (error instanceof WebhookValidationError) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
       // Log internally but never leak error/stack details to the HTTP client.
       console.error("[taskito] dashboard request failed:", error);
       sendJson(res, 500, { error: "internal server error" });
@@ -61,24 +74,41 @@ async function dispatch(
   sendJson(res, 404, { error: "not found" });
 }
 
-/** Read and JSON-parse a request body (undefined when empty or invalid). */
+/** Read and JSON-parse a request body (undefined when empty, invalid, or oversized).
+ * Caps total size at {@link MAX_BODY_BYTES} and resolves on stream error/abort. */
 function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve) => {
     let data = "";
-    req.on("data", (chunk) => {
+    let size = 0;
+    let aborted = false;
+    const finish = (value: unknown) => {
+      if (!aborted) {
+        aborted = true;
+        resolve(value);
+      }
+    };
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        req.destroy();
+        finish(undefined);
+        return;
+      }
       data += chunk;
     });
     req.on("end", () => {
       if (!data) {
-        resolve(undefined);
+        finish(undefined);
         return;
       }
       try {
-        resolve(JSON.parse(data));
+        finish(JSON.parse(data));
       } catch {
-        resolve(undefined);
+        finish(undefined);
       }
     });
+    req.on("error", () => finish(undefined));
+    req.on("aborted", () => finish(undefined));
   });
 }
 

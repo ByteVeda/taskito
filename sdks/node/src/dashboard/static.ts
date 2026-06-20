@@ -4,6 +4,7 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { extname, join, normalize, sep } from "node:path";
+import { pipeline } from "node:stream";
 
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -69,5 +70,11 @@ function send(res: ServerResponse, file: string): void {
     "content-type": type,
     "cache-control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
   });
-  createReadStream(file).pipe(res);
+  // pipeline handles stream errors (e.g. a TOCTOU delete after the existsSync
+  // check) — destroy the response instead of crashing the request handler.
+  pipeline(createReadStream(file), res, (error) => {
+    if (error) {
+      res.destroy();
+    }
+  });
 }
