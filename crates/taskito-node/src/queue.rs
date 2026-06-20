@@ -1,12 +1,14 @@
 //! `JsQueue` — the producer/inspection surface over the core storage.
 
 use napi::bindgen_prelude::{Buffer, Result};
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi_derive::napi;
 use taskito_core::{SqliteStorage, Storage, StorageBackend};
 
-use crate::config::EnqueueOptions;
-use crate::conversion::{build_new_job, job_to_js, JsJob};
+use crate::config::{EnqueueOptions, WorkerOptions};
+use crate::conversion::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
 use crate::error::to_napi_err;
+use crate::worker::{start_worker, JsWorker};
 
 /// A SQLite-backed Taskito queue handle exposed to JavaScript.
 #[napi]
@@ -43,5 +45,16 @@ impl JsQueue {
     pub fn get_job(&self, id: String) -> Result<Option<JsJob>> {
         let job = self.storage.get_job(&id).map_err(to_napi_err)?;
         Ok(job.map(job_to_js))
+    }
+
+    /// Start a worker that runs `callback` for each dequeued job. Returns a
+    /// [`JsWorker`] handle — call `stop()` on it to shut the worker down.
+    #[napi]
+    pub fn run_worker(
+        &self,
+        callback: ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>,
+        options: Option<WorkerOptions>,
+    ) -> JsWorker {
+        start_worker(self.storage.clone(), options.unwrap_or_default(), callback)
     }
 }

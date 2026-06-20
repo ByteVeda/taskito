@@ -13,3 +13,11 @@ pub struct EnqueueOptions {
     pub max_retries: Option<i32>,
     pub timeout_ms: Option<i64>,
 }
+
+/// Options for a running worker. `queues` defaults to `["default"]`.
+#[napi(object)]
+#[derive(Default)]
+pub struct WorkerOptions {
+    pub queues: Option<Vec<String>>,
+    pub channel_capacity: Option<u32>,
+}

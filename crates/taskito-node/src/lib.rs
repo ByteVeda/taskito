@@ -7,7 +7,10 @@
 
 mod config;
 mod conversion;
+mod dispatcher;
 mod error;
 mod queue;
+mod worker;
 
 pub use queue::JsQueue;
+pub use worker::JsWorker;

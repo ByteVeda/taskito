@@ -33,6 +33,15 @@ pub fn build_new_job(task_name: String, payload: Vec<u8>, opts: EnqueueOptions) 
     }
 }
 
+/// Passed to the JS task callback for each dispatched job. `payload` is the
+/// opaque arg blob the shell deserializes before running the task.
+#[napi(object)]
+pub struct JsTaskInvocation {
+    pub id: String,
+    pub task_name: String,
+    pub payload: Buffer,
+}
+
 /// JS-facing view of a stored [`Job`]. `result` is the opaque result blob (or
 /// `null`); the shell deserializes it.
 #[napi(object)]
