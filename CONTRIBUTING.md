@@ -14,7 +14,7 @@ Thanks for your interest in contributing! taskito is a hybrid Rust + Python proj
 
 ```bash
 git clone https://github.com/ByteVeda/taskito.git
-cd taskito
+cd taskito/sdks/python   # the Python SDK lives here; node/ and java/ are peers
 
 # Create a virtual environment
 python -m venv .venv
@@ -60,19 +60,19 @@ taskito uses [ruff](https://github.com/astral-sh/ruff) for linting and formattin
 
 ```bash
 # Lint
-ruff check py_src/
+ruff check taskito/
 
 # Format
-ruff format py_src/
+ruff format taskito/
 
 # Auto-fix
-ruff check --fix py_src/
+ruff check --fix taskito/
 ```
 
 Type checking with [mypy](https://mypy-lang.org/):
 
 ```bash
-mypy py_src/taskito/
+mypy taskito/
 ```
 
 ### Rust

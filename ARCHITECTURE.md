@@ -28,7 +28,7 @@ and Rust never imports Python types except at the PyO3 binding edge.**
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ PYTHON API SURFACE             py_src/taskito/                             │
+│ PYTHON API SURFACE             sdks/python/taskito/                        │
 │   Queue (app.py) = 15 mixins · async_support/ · CLI · serializers          │
 │                                                                            │
 │ FEATURE SUBSYSTEMS             (pure-Python, composed onto Queue)          │
@@ -66,7 +66,7 @@ the codebase changeable — guard it.
 
 ## Layers & responsibilities
 
-### 1. Python API surface — `py_src/taskito/`
+### 1. Python API surface — `sdks/python/taskito/`
 
 The user-facing object is `Queue` in `app.py`. It is intentionally thin: a
 constructor, the core `enqueue` / `enqueue_many` path, and serializer/idempotency
@@ -171,7 +171,7 @@ bridges the Python executor back to the Rust scheduler.
 ## Annotated folder structure
 
 ```text
-py_src/taskito/
+sdks/python/taskito/
 ├── app.py                 # Queue: constructor + core enqueue path
 ├── mixins/                # 15 Queue mixins (one responsibility each)
 ├── async_support/         # ALL asyncio lives here (sync layer stays asyncio-free)
@@ -240,7 +240,7 @@ detailed versions.
 4. Implement it for Redis in `redis_backend/`.
 5. Wire it through the `delegate!` macro in `storage/mod.rs`.
 6. Expose it via PyO3 in `crates/taskito-python/src/py_queue/`.
-7. Add the signature to `py_src/taskito/_taskito.pyi`.
+7. Add the signature to `sdks/python/taskito/_taskito.pyi`.
 8. Test: a Rust test in `storage/sqlite/tests.rs` + the contract suite (runs
    against all three backends in CI).
 
