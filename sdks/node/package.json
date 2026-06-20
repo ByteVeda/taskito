@@ -34,6 +34,11 @@
       "types": "./dist/contrib/express.d.ts",
       "import": "./dist/contrib/express.js",
       "require": "./dist/contrib/express.cjs"
+    },
+    "./contrib/fastify": {
+      "types": "./dist/contrib/fastify.d.ts",
+      "import": "./dist/contrib/fastify.js",
+      "require": "./dist/contrib/fastify.cjs"
     }
   },
   "files": [
@@ -79,6 +84,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.2",
     "express": "^5.2.1",
+    "fastify": "^5.8.5",
     "tsup": "^8.5.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
@@ -90,6 +96,7 @@
   "peerDependencies": {
     "@opentelemetry/api": "^1.9.0",
     "express": "^4.18.0 || ^5.0.0",
+    "fastify": "^4.0.0 || ^5.0.0",
     "prom-client": "^15.0.0"
   },
   "peerDependenciesMeta": {
@@ -97,6 +104,9 @@
       "optional": true
     },
     "express": {
+      "optional": true
+    },
+    "fastify": {
       "optional": true
     },
     "prom-client": {

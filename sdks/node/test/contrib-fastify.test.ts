@@ -1,0 +1,83 @@
+import { mkdtempSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Fastify from "fastify";
+import { afterEach, expect, it } from "vitest";
+import { taskitoDashboardPlugin, taskitoFastify } from "../src/contrib/fastify";
+import { Queue, type Worker } from "../src/index";
+
+let worker: Worker | undefined;
+
+afterEach(() => {
+  worker?.stop();
+  worker = undefined;
+});
+
+function newQueue(): Queue {
+  return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-fastify-")), "q.db") });
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return false;
+}
+
+it("serves the REST API through a prefixed plugin", async () => {
+  const queue = newQueue();
+  queue.task("add", (a: number, b: number) => a + b);
+  const app = Fastify();
+  await app.register(taskitoFastify, { queue, prefix: "/tasks" });
+  await app.ready();
+
+  const enqueued = await app.inject({
+    method: "POST",
+    url: "/tasks/enqueue",
+    payload: { task: "add", args: [4, 5] },
+  });
+  expect(enqueued.statusCode).toBe(201);
+  const { jobId } = enqueued.json() as { jobId: string };
+
+  worker = queue.runWorker();
+  expect(await waitFor(() => queue.stats().completed >= 1)).toBe(true);
+
+  const result = await app.inject({ method: "GET", url: `/tasks/jobs/${jobId}/result` });
+  expect(result.json()).toMatchObject({ jobId, status: "completed", result: 9 });
+
+  const stats = await app.inject({ method: "GET", url: "/tasks/stats" });
+  expect((stats.json() as { completed: number }).completed).toBeGreaterThanOrEqual(1);
+
+  await app.close();
+});
+
+it("applies excludeRoutes", async () => {
+  const queue = newQueue();
+  const app = Fastify();
+  await app.register(taskitoFastify, { queue, prefix: "/tasks", excludeRoutes: ["stats"] });
+  await app.ready();
+
+  expect((await app.inject({ method: "GET", url: "/tasks/stats" })).statusCode).toBe(404);
+  expect((await app.inject({ method: "GET", url: "/tasks/dead-letters" })).statusCode).toBe(200);
+
+  await app.close();
+});
+
+it("mounts the dashboard JSON API under a prefix", async () => {
+  const queue = newQueue();
+  const app = Fastify();
+  await app.register(taskitoDashboardPlugin, { queue, prefix: "/admin" });
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const { port } = app.server.address() as AddressInfo;
+
+  const res = await fetch(`http://127.0.0.1:${port}/admin/api/auth/status`);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toMatchObject({ setup_required: false });
+
+  await app.close();
+});

@@ -7,6 +7,7 @@ export default defineConfig({
     "contrib/otel": "src/contrib/otel.ts",
     "contrib/prometheus": "src/contrib/prometheus.ts",
     "contrib/express": "src/contrib/express.ts",
+    "contrib/fastify": "src/contrib/fastify.ts",
   },
   format: ["esm", "cjs"],
   dts: true,
