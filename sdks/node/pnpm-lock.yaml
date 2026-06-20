@@ -21,6 +21,9 @@ importers:
       '@napi-rs/cli':
         specifier: ^2.18.4
         version: 2.18.4
+      '@opentelemetry/api':
+        specifier: ^1.9.1
+        version: 1.9.1
       '@types/node':
         specifier: ^25.9.2
         version: 25.9.3
@@ -32,7 +35,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: ^4.1.8
-        version: 4.1.9(@types/node@25.9.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.7))
+        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.7))
 
 packages:
 
@@ -285,6 +288,10 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
+
+  '@opentelemetry/api@1.9.1':
+    resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
+    engines: {node: '>=8.0.0'}
 
   '@oxc-project/types@0.133.0':
     resolution: {integrity: sha512-KzkdCd6Uxqnf6l3HOw1xfatAlUURA0g14cvBYFyJ5SaNOQbOUvBr9PKArcPcrNIeRsBdgcUzOGrhKveVpvOIGA==}
@@ -1168,6 +1175,8 @@ snapshots:
       '@tybys/wasm-util': 0.10.2
     optional: true
 
+  '@opentelemetry/api@1.9.1': {}
+
   '@oxc-project/types@0.133.0': {}
 
   '@rolldown/binding-android-arm64@1.0.3':
@@ -1700,7 +1709,7 @@ snapshots:
       esbuild: 0.27.7
       fsevents: 2.3.3
 
-  vitest@4.1.9(@types/node@25.9.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.7)):
+  vitest@4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.7)):
     dependencies:
       '@vitest/expect': 4.1.9
       '@vitest/mocker': 4.1.9(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.7))
@@ -1723,6 +1732,7 @@ snapshots:
       vite: 8.0.16(@types/node@25.9.3)(esbuild@0.27.7)
       why-is-node-running: 2.3.0
     optionalDependencies:
+      '@opentelemetry/api': 1.9.1
       '@types/node': 25.9.3
     transitivePeerDependencies:
       - msw
