@@ -1,0 +1,173 @@
+---
+title: Web Frameworks
+description: "REST routers and dashboard mounts for Express, Fastify, and NestJS."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+## Express
+
+Peer dependency: `express`.
+
+```ts
+import express from "express";
+import { taskitoRouter, taskitoDashboard } from "taskito/contrib/express";
+
+const app = express();
+
+// REST API — mounted at /tasks
+app.use("/tasks", taskitoRouter(queue));
+
+// Dashboard SPA — mounted at /admin
+app.use("/admin", taskitoDashboard(queue));
+
+app.listen(3000);
+```
+
+### REST routes
+
+JSON body parsing is mounted internally on the router.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/enqueue` | Enqueue a job. Body: `{ task, args?, options? }`. Returns `{ jobId }` with status 201. |
+| `GET` | `/stats` | Overall queue statistics. |
+| `GET` | `/stats/queues?queue=` | Per-queue statistics. |
+| `GET` | `/jobs/:id` | Fetch a job by ID. |
+| `GET` | `/jobs/:id/errors` | Error history for a job. |
+| `GET` | `/jobs/:id/result?timeoutMs=` | Wait for a result (long-poll). |
+| `POST` | `/jobs/:id/cancel` | Request cancellation. |
+| `GET` | `/dead-letters?limit=&offset=` | List dead-lettered jobs. |
+| `POST` | `/dead-letters/:id/retry` | Retry a dead-lettered job. |
+
+### `taskitoRouter` options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `includeRoutes` | `string[]` | all | Route names to expose (see below). |
+| `excludeRoutes` | `string[]` | none | Route names to suppress. |
+| `resultTimeoutMs` | `number` | `5000` | Max wait for `/jobs/:id/result`. |
+
+Route names: `enqueue`, `stats`, `queue-stats`, `job`, `job-errors`,
+`job-result`, `cancel`, `dead-letters`, `retry-dead`.
+
+### Dashboard
+
+`taskitoDashboard(queue, { staticDir? })` returns a request handler that serves
+the built dashboard SPA and proxies `/api/*` to the queue. Mount it under a
+path prefix:
+
+```ts
+app.use("/admin", taskitoDashboard(queue));
+```
+
+<Callout type="warning">
+  The SPA assets must be built first: `pnpm build:dashboard`. The built files
+  land in `node_modules/taskito/static/dashboard` by default; pass `staticDir`
+  to point elsewhere.
+</Callout>
+
+---
+
+## Fastify
+
+Peer dependency: `fastify`.
+
+```ts
+import Fastify from "fastify";
+import {
+  taskitoFastify,
+  taskitoDashboardPlugin,
+} from "taskito/contrib/fastify";
+
+const app = Fastify();
+
+// REST API
+await app.register(taskitoFastify, { queue, prefix: "/tasks" });
+
+// Dashboard SPA
+await app.register(taskitoDashboardPlugin, { queue, prefix: "/admin" });
+
+await app.listen({ port: 3000 });
+```
+
+`taskitoFastify` is a `FastifyPluginAsync`. It exposes the same nine routes as
+the Express router (see the table above), mounted under `prefix`.
+
+The same `includeRoutes`, `excludeRoutes`, and `resultTimeoutMs` options are
+accepted and passed in the register options object alongside `queue`:
+
+```ts
+await app.register(taskitoFastify, {
+  queue,
+  prefix: "/tasks",
+  excludeRoutes: ["enqueue"],   // read-only API
+  resultTimeoutMs: 10_000,
+});
+```
+
+`taskitoDashboardPlugin` accepts `queue`, `prefix`, and an optional
+`staticDir`:
+
+```ts
+await app.register(taskitoDashboardPlugin, {
+  queue,
+  prefix: "/admin",
+  staticDir: "/app/dashboard-assets",
+});
+```
+
+---
+
+## NestJS
+
+Peer dependencies: `@nestjs/common` + `reflect-metadata`.
+
+```ts
+import { Module } from "@nestjs/common";
+import { TaskitoModule } from "taskito/contrib/nest";
+
+@Module({
+  imports: [TaskitoModule.forRoot(queue)],
+})
+export class AppModule {}
+```
+
+`TaskitoModule.forRoot(queue)` returns a `DynamicModule` that exports
+`TaskitoService` to any module that imports it.
+
+### Injecting `TaskitoService`
+
+```ts
+import { Injectable } from "@nestjs/common";
+import { TaskitoService } from "taskito/contrib/nest";
+
+@Injectable()
+export class ReportService {
+  constructor(private readonly tasks: TaskitoService) {}
+
+  scheduleReport(reportId: string): string {
+    return this.tasks.enqueue("generateReport", [reportId], {
+      maxRetries: 2,
+      timeoutMs: 60_000,
+    });
+  }
+}
+```
+
+### `TaskitoService` methods
+
+| Method | Description |
+|---|---|
+| `enqueue(task, args?, options?)` | Enqueue a job, returns the job ID. |
+| `result(id, options?)` | Wait for a result. |
+| `getJob(id)` | Fetch job details by ID. |
+| `stats()` | Overall queue statistics. |
+| `requestCancel(id)` | Request cancellation of a running job. |
+| `deadLetters(limit?, offset?)` | List dead-lettered jobs. |
+| `tasks.queue` | The raw `Queue` instance for the full API surface. |
+
+<Callout type="info">
+  `TaskitoService` wraps the most common operations. For anything not listed —
+  workflows, distributed locks, metrics, etc. — access `tasks.queue` directly.
+</Callout>

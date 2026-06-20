@@ -324,6 +324,61 @@ queue.runWorker({
 Other tunables: `bindAddr`, `advertiseAddr` (NAT), `affinityWeight`,
 `localBuffer`, `stealBatch`, `stealThreshold`, `virtualNodes`, `stealRateLimit`.
 
+## Contrib integrations
+
+Optional integrations live under the `taskito/contrib/*` subpaths. Each requires its
+framework as a peer dependency you install yourself; none are pulled in by the main
+package or exported from the `taskito` barrel.
+
+### Observability
+
+```ts
+import { otelMiddleware } from "taskito/contrib/otel"; // peer: @opentelemetry/api
+import { prometheusMiddleware, PrometheusStatsCollector } from "taskito/contrib/prometheus"; // peer: prom-client
+
+queue.use(otelMiddleware());        // one span per execution: taskito.execute.<task>
+queue.use(prometheusMiddleware());  // taskito_jobs_total, _job_duration_seconds, _active_workers, _retries_total
+
+const collector = new PrometheusStatsCollector(queue); // polls queue depth + DLQ size
+collector.start();
+// expose `await register.metrics()` from your HTTP server
+```
+
+OTel options: `tracerName`, `attributePrefix`, `spanName(ctx)`, `extraAttributes(ctx)`,
+`taskFilter(name)`. Prometheus options: `namespace`, `register`, `taskFilter`, `buckets`
+(metrics for one namespace are built once per registry, so multiple middlewares are safe).
+
+### Web frameworks
+
+`taskitoRouter` / the Fastify plugin expose a JSON API (enqueue + inspection); a separate
+helper mounts the dashboard (SPA + `/api/*`) into your app.
+
+```ts
+import { taskitoRouter, taskitoDashboard } from "taskito/contrib/express"; // peer: express
+app.use("/tasks", taskitoRouter(queue));   // POST /enqueue, GET /stats, /jobs/:id, ...
+app.use("/admin", taskitoDashboard(queue)); // dashboard SPA + /api/*
+
+import { taskitoFastify, taskitoDashboardPlugin } from "taskito/contrib/fastify"; // peer: fastify
+app.register(taskitoFastify, { queue, prefix: "/tasks" });
+app.register(taskitoDashboardPlugin, { queue, prefix: "/admin" });
+```
+
+Both routers take `includeRoutes` / `excludeRoutes` (route names: `enqueue`, `stats`,
+`queue-stats`, `job`, `job-errors`, `job-result`, `cancel`, `dead-letters`, `retry-dead`)
+and `resultTimeoutMs`.
+
+NestJS exposes an injectable service:
+
+```ts
+import { TaskitoModule, TaskitoService } from "taskito/contrib/nest"; // peers: @nestjs/common, reflect-metadata
+
+@Module({ imports: [TaskitoModule.forRoot(queue)] })
+export class AppModule {}
+
+// constructor(private readonly tasks: TaskitoService) {}
+// this.tasks.enqueue("add", [2, 3]); this.tasks.queue gives the full API
+```
+
 ## Development
 
 ```bash
@@ -341,6 +396,5 @@ compiled in via `--features postgres,redis`.
 ## Not yet covered
 
 Advanced workflow features (gates, sub-workflows, saga compensation — fan-out is
-covered above), resources/proxies/interception, contrib integrations, prebuilt
-platform binaries + npm publish (host-only build for now), and Python⇄Node
-cross-language interop.
+covered above), resources/proxies/interception, prebuilt platform binaries + npm
+publish (host-only build for now), and Python⇄Node cross-language interop.

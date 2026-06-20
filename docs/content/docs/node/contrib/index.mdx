@@ -1,0 +1,41 @@
+---
+title: Contrib Integrations
+description: "Optional helpers for OpenTelemetry, Prometheus, Express, Fastify, and NestJS."
+---
+
+import { Cards, Card } from "fumadocs-ui/components/card";
+import { Callout } from "fumadocs-ui/components/callout";
+
+Contrib modules are optional integrations that ship alongside the core SDK but
+are **not exported from the main `taskito` barrel**. Each lives behind its own
+subpath import and requires you to install its peer dependency separately.
+
+```bash
+# Only install what you use.
+pnpm add @opentelemetry/api          # for taskito/contrib/otel
+pnpm add prom-client                 # for taskito/contrib/prometheus
+pnpm add express                     # for taskito/contrib/express
+pnpm add fastify                     # for taskito/contrib/fastify
+pnpm add @nestjs/common reflect-metadata  # for taskito/contrib/nest
+```
+
+<Callout type="info">
+  Contrib modules never auto-initialize. Nothing runs until you call the export
+  and register it with your framework or queue. If a peer dependency is missing,
+  importing its subpath fails with a standard module-not-found error.
+</Callout>
+
+## What's in contrib
+
+<Cards>
+  <Card
+    title="Observability"
+    href="/node/contrib/observability"
+    description="OpenTelemetry tracing and Prometheus metrics for every job execution."
+  />
+  <Card
+    title="Web frameworks"
+    href="/node/contrib/web-frameworks"
+    description="REST routers and dashboard mounts for Express, Fastify, and NestJS."
+  />
+</Cards>
