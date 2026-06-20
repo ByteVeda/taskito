@@ -55,6 +55,9 @@ pub fn start_worker(
         config.batch_size = batch.max(1) as usize;
     }
 
+    // The dispatcher reads cancel flags directly, so it needs its own handle.
+    let dispatcher_storage = storage.clone();
+
     // Per-task/queue config must be registered before the scheduler is shared
     // (register_* take &mut self).
     let mut scheduler = Scheduler::new(storage, queues, config, namespace);
@@ -77,7 +80,7 @@ pub fn start_worker(
     });
 
     // Dispatcher loop: execute each job in JS, report results on `result_tx`.
-    let dispatcher = NodeDispatcher::new(callback);
+    let dispatcher = NodeDispatcher::new(callback, dispatcher_storage);
     spawn(async move {
         dispatcher.run(job_rx, result_tx).await;
     });

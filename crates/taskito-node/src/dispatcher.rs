@@ -13,6 +13,7 @@ use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFun
 use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
 use taskito_core::worker::WorkerDispatcher;
+use taskito_core::{Storage, StorageBackend};
 use tokio::sync::oneshot;
 
 use crate::convert::JsTaskInvocation;
@@ -23,11 +24,12 @@ type TaskCallback = ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>;
 /// Executes jobs by dispatching them to a JavaScript callback.
 pub struct NodeDispatcher {
     callback: TaskCallback,
+    storage: StorageBackend,
 }
 
 impl NodeDispatcher {
-    pub fn new(callback: TaskCallback) -> Self {
-        Self { callback }
+    pub fn new(callback: TaskCallback, storage: StorageBackend) -> Self {
+        Self { callback, storage }
     }
 }
 
@@ -43,9 +45,10 @@ impl WorkerDispatcher for NodeDispatcher {
         // channel capacity and per-task/queue concurrency gates.
         while let Some(job) = job_rx.recv().await {
             let callback = self.callback.clone();
+            let storage = self.storage.clone();
             let result_tx = result_tx.clone();
             spawn(async move {
-                let result = run_one(&callback, job).await;
+                let result = run_one(&callback, &storage, job).await;
                 let _ = result_tx.send(result);
             });
         }
@@ -55,7 +58,7 @@ impl WorkerDispatcher for NodeDispatcher {
 }
 
 /// Invoke the JS task for one job and translate the outcome into a [`JobResult`].
-async fn run_one(callback: &TaskCallback, job: Job) -> JobResult {
+async fn run_one(callback: &TaskCallback, storage: &StorageBackend, job: Job) -> JobResult {
     let started = Instant::now();
     let invocation = JsTaskInvocation {
         id: job.id.clone(),
@@ -93,7 +96,19 @@ async fn run_one(callback: &TaskCallback, job: Job) -> JobResult {
             task_name: job.task_name,
             wall_time_ns,
         },
-        Ok(Ok(Err(err))) => failure(job, err.to_string(), wall_time_ns, false),
+        Ok(Ok(Err(err))) => {
+            // A rejected task that was cancel-requested is a cancellation, not a
+            // failure (the JS side aborts via the cancel signal).
+            if storage.is_cancel_requested(&job.id).unwrap_or(false) {
+                JobResult::Cancelled {
+                    job_id: job.id,
+                    task_name: job.task_name,
+                    wall_time_ns,
+                }
+            } else {
+                failure(job, err.to_string(), wall_time_ns, false)
+            }
+        }
         Ok(Err(_)) => failure(
             job,
             "node task channel dropped".to_string(),
