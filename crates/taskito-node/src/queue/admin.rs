@@ -1,5 +1,7 @@
 //! Management (mutating) methods on `JsQueue`.
 
+use std::collections::HashMap;
+
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
 use taskito_core::Storage;
@@ -69,5 +71,29 @@ impl JsQueue {
     #[napi]
     pub fn list_paused_queues(&self) -> Result<Vec<String>> {
         self.storage.list_paused_queues().map_err(to_napi_err)
+    }
+
+    /// Read a key/value setting (the shared KV store), or `null`.
+    #[napi]
+    pub fn get_setting(&self, key: String) -> Result<Option<String>> {
+        self.storage.get_setting(&key).map_err(to_napi_err)
+    }
+
+    /// Write a key/value setting.
+    #[napi]
+    pub fn set_setting(&self, key: String, value: String) -> Result<()> {
+        self.storage.set_setting(&key, &value).map_err(to_napi_err)
+    }
+
+    /// Delete a setting. Returns false if it didn't exist.
+    #[napi]
+    pub fn delete_setting(&self, key: String) -> Result<bool> {
+        self.storage.delete_setting(&key).map_err(to_napi_err)
+    }
+
+    /// All settings as a key/value map.
+    #[napi]
+    pub fn list_settings(&self) -> Result<HashMap<String, String>> {
+        self.storage.list_settings().map_err(to_napi_err)
     }
 }
