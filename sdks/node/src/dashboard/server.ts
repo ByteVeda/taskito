@@ -78,7 +78,7 @@ async function dispatch(
  * Caps total size at {@link MAX_BODY_BYTES} and resolves on stream error/abort. */
 function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve) => {
-    let data = "";
+    const chunks: Buffer[] = [];
     let size = 0;
     let aborted = false;
     const finish = (value: unknown) => {
@@ -94,15 +94,17 @@ function readBody(req: IncomingMessage): Promise<unknown> {
         finish(undefined);
         return;
       }
-      data += chunk;
+      chunks.push(chunk);
     });
     req.on("end", () => {
-      if (!data) {
+      if (chunks.length === 0) {
         finish(undefined);
         return;
       }
       try {
-        finish(JSON.parse(data));
+        // Decode once over the joined buffer so multi-byte UTF-8 split across
+        // chunk boundaries isn't corrupted into replacement characters.
+        finish(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       } catch {
         finish(undefined);
       }
