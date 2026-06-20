@@ -28,4 +28,6 @@ export type {
   WorkerInfo,
   WorkerRunOptions,
 } from "./types";
+export type { Delivery, Webhook, WebhookInput } from "./webhooks";
+export { WebhookManager } from "./webhooks";
 export { Worker } from "./worker";

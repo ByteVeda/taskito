@@ -20,6 +20,7 @@ import type {
   WorkerInfo,
   WorkerRunOptions,
 } from "./types";
+import { WebhookManager } from "./webhooks";
 import { Worker } from "./worker";
 
 /** Construction options for a {@link Queue}. */
@@ -53,10 +54,17 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
   private readonly emitter = new Emitter();
+  private readonly webhookManager: WebhookManager;
 
   constructor(options: QueueOptions) {
     this.native = JsQueue.open(toOpenOptions(options));
     this.serializer = options.serializer ?? new JsonSerializer();
+    this.webhookManager = new WebhookManager(this.native, this.emitter);
+  }
+
+  /** Webhook subscriptions — create/list/delete and deliver job events to URLs. */
+  get webhooks(): WebhookManager {
+    return this.webhookManager;
   }
 
   /**
