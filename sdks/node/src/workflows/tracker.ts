@@ -37,6 +37,15 @@ interface StepMeta {
   fan_in?: string;
   /** `"on_success"` (default) | `"on_failure"` | `"always"` — gates node entry. */
   condition?: string;
+  /** JSON `{timeoutMs?, onTimeout?, message?}` marking an approval gate node. */
+  gate?: string;
+}
+
+/** Parsed gate config from a node's `gate` metadata. */
+interface GateConfig {
+  timeoutMs?: number;
+  onTimeout?: "approve" | "reject";
+  message?: string;
 }
 
 /** The reconstructed structure + config of a workflow run. */
@@ -63,6 +72,8 @@ interface RunPlan {
  */
 export class WorkflowTracker {
   private readonly plans = new Map<string, RunPlan>();
+  /** Pending gate-timeout timers, keyed `runId\0node` (unref'd). */
+  private readonly gateTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly native: NativeQueue,
@@ -238,14 +249,60 @@ export class WorkflowTracker {
         continue;
       }
       const meta = plan.meta.get(succ);
-      if (meta?.fan_in) {
-        continue; // fan-in jobs are created from the fan-out completion path
-      }
-      if (meta?.fan_out) {
+      if (meta?.gate) {
+        this.enterGate(runId, succ, meta);
+      } else if (meta?.fan_in) {
+      } else if (meta?.fan_out) {
         this.expandFanOut(runId, succ, plan);
       } else {
         this.createDeferredJob(runId, succ, plan);
       }
+    }
+  }
+
+  /** Park a gate node at `waiting_approval` and arm its timeout, if any. */
+  private enterGate(runId: string, node: string, meta: StepMeta): void {
+    this.native.setWorkflowNodeWaitingApproval(runId, node);
+    const gate: GateConfig = meta.gate ? JSON.parse(meta.gate) : {};
+    if (!gate.timeoutMs || gate.timeoutMs <= 0) {
+      return;
+    }
+    const key = gateKey(runId, node);
+    const approved = gate.onTimeout === "approve";
+    const timer = setTimeout(() => {
+      this.gateTimers.delete(key);
+      this.resolveGate(runId, node, approved, approved ? undefined : "gate timeout");
+    }, gate.timeoutMs);
+    timer.unref(); // never keep the process alive waiting on an approval
+    this.gateTimers.set(key, timer);
+  }
+
+  /**
+   * Approve or reject a waiting gate, then advance (or skip) its successors.
+   * Safe to call from any process and idempotent: a gate already resolved (by
+   * the other of manual-vs-timeout) is a no-op.
+   */
+  resolveGate(runId: string, node: string, approved: boolean, error?: string): void {
+    this.clearGateTimer(runId, node);
+    const current = this.nodeStatuses(runId).get(node);
+    if (current === undefined || TERMINAL_NODE_STATUS.has(current)) {
+      return; // gone, or already resolved by the timeout / another caller
+    }
+    this.native.resolveWorkflowGate(runId, node, approved, error ?? null);
+    const plan = this.plan(runId);
+    if (!plan) {
+      return;
+    }
+    this.evaluateSuccessors(runId, node, plan);
+    this.evictIfTerminal(runId, this.native.finalizeRunIfTerminal(runId));
+  }
+
+  private clearGateTimer(runId: string, node: string): void {
+    const key = gateKey(runId, node);
+    const timer = this.gateTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.gateTimers.delete(key);
     }
   }
 
@@ -352,7 +409,7 @@ export class WorkflowTracker {
     );
     const successors = successorsOf(edges);
     const seeds = [...meta]
-      .filter(([, m]) => m.fan_out || m.fan_in || m.condition)
+      .filter(([, m]) => m.fan_out || m.fan_in || m.condition || m.gate)
       .map(([name]) => name);
     const plan: RunPlan = {
       successors,
@@ -363,6 +420,11 @@ export class WorkflowTracker {
     this.plans.set(runId, plan);
     return plan;
   }
+}
+
+/** Stable key for a run's gate node in the timer map. */
+function gateKey(runId: string, node: string): string {
+  return `${runId} ${node}`;
 }
 
 /** `parent[3]` → `parent`; a non-child name → null. */

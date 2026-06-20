@@ -77,6 +77,23 @@ export interface FanInStepOptions extends StepTaskOptions {
   task: string;
 }
 
+/**
+ * Options for an approval gate. The gate runs no task: the run pauses at the
+ * gate (status `waiting_approval`) until resolved via
+ * `queue.workflows.resolveGate` / `approveGate` / `rejectGate`, or until
+ * `timeoutMs` elapses (then `onTimeout` decides the outcome).
+ */
+export interface GateStepOptions {
+  /** Predecessor step name(s) the gate runs after. */
+  after: string | string[];
+  /** Auto-resolve after this many ms (no timeout if omitted). */
+  timeoutMs?: number;
+  /** What a timeout does — `"approve"` or `"reject"` (default `"reject"`). */
+  onTimeout?: "approve" | "reject";
+  /** Human-readable reason shown to approvers (recorded in metadata). */
+  message?: string;
+}
+
 /** snake_case step metadata, matching the Rust `StepMetadata` shape. */
 export interface StepMetadataJson {
   task_name: string;
@@ -92,6 +109,8 @@ export interface StepMetadataJson {
   fan_in?: string;
   /** Entry condition: `on_success` | `on_failure` | `always`. */
   condition?: string;
+  /** JSON `{timeoutMs?, onTimeout?, message?}` marking an approval gate node. */
+  gate?: string;
 }
 
 /** A built workflow definition, ready to submit. */

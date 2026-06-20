@@ -576,6 +576,44 @@ impl JsQueue {
         Ok(())
     }
 
+    /// Park a gate node at `WaitingApproval`. The run pauses here until
+    /// `resolve_workflow_gate` approves or rejects it (or a tracker timeout does).
+    #[napi]
+    pub fn set_workflow_node_waiting_approval(
+        &self,
+        run_id: String,
+        node_name: String,
+    ) -> Result<()> {
+        let wf = self.workflow_store()?;
+        wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::WaitingApproval)
+            .map_err(to_napi_err)?;
+        Ok(())
+    }
+
+    /// Resolve a waiting gate: approve → mark the node `Completed`; reject →
+    /// mark it `Failed` with `error`. The tracker then advances or skips the
+    /// gate's successors. Also used to resolve a parent node when its
+    /// sub-workflow child finalizes.
+    #[napi]
+    pub fn resolve_workflow_gate(
+        &self,
+        run_id: String,
+        node_name: String,
+        approved: bool,
+        error: Option<String>,
+    ) -> Result<()> {
+        let wf = self.workflow_store()?;
+        if approved {
+            wf.set_workflow_node_completed(&run_id, &node_name, now_millis(), None)
+                .map_err(to_napi_err)?;
+        } else {
+            let msg = error.unwrap_or_else(|| "rejected".to_string());
+            wf.set_workflow_node_error(&run_id, &node_name, &msg)
+                .map_err(to_napi_err)?;
+        }
+        Ok(())
+    }
+
     /// Fail-fast cascade: skip every still-pending node of a run and cancel its
     /// job. Called by the tracker when a managed run's node fails.
     #[napi]

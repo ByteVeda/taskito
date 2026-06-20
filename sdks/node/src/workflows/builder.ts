@@ -2,11 +2,15 @@ import { successorsOf, transitiveDeferred } from "./plan";
 import type {
   FanInStepOptions,
   FanOutStepOptions,
+  GateStepOptions,
   StepMetadataJson,
   WorkflowHandle,
   WorkflowSpec,
   WorkflowStepOptions,
 } from "./types";
+
+/** Sentinel task name for nodes that run no job (gates, sub-workflows). */
+const GATE_TASK = "__gate__";
 
 /**
  * Fluent builder for a workflow DAG. Each {@link WorkflowBuilder.step} adds a
@@ -85,6 +89,26 @@ export class WorkflowBuilder {
       timeout_ms: options.timeoutMs,
       priority: options.priority,
       fan_in: JSON.stringify({ from: options.after }),
+    };
+    this.stepArgs[name] = [];
+    this.deferredSeeds.add(name);
+    return this;
+  }
+
+  /**
+   * Add an approval gate. The run pauses here (status `waiting_approval`) until
+   * resolved via `queue.workflows.resolveGate`/`approveGate`/`rejectGate`, or
+   * until `timeoutMs` elapses (then `onTimeout` decides).
+   */
+  gate(name: string, options: GateStepOptions): this {
+    this.addNode(name, options.after);
+    this.stepMetadata[name] = {
+      task_name: GATE_TASK,
+      gate: JSON.stringify({
+        timeoutMs: options.timeoutMs,
+        onTimeout: options.onTimeout ?? "reject",
+        message: options.message,
+      }),
     };
     this.stepArgs[name] = [];
     this.deferredSeeds.add(name);

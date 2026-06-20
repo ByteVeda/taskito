@@ -4,6 +4,7 @@ export { WorkflowTracker } from "./tracker";
 export type {
   FanInStepOptions,
   FanOutStepOptions,
+  GateStepOptions,
   WorkflowAdvance,
   WorkflowCondition,
   WorkflowHandle,

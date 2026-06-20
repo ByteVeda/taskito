@@ -1,6 +1,7 @@
 import type { NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
 import { WorkflowBuilder } from "./builder";
+import { WorkflowTracker } from "./tracker";
 import type {
   WorkflowHandle,
   WorkflowNode,
@@ -69,6 +70,25 @@ export class WorkflowManager {
   /** Sub-workflow runs spawned by a run (empty for Node-submitted runs). */
   children(runId: string): WorkflowRun[] {
     return this.native.getWorkflowChildren(runId);
+  }
+
+  /**
+   * Resolve a workflow gate that is `waiting_approval`, then advance (or skip)
+   * its successors. Works from any process — the run plan is read from storage.
+   * Idempotent: resolving an already-resolved gate is a no-op.
+   */
+  resolveGate(runId: string, nodeName: string, approved: boolean, error?: string): void {
+    new WorkflowTracker(this.native, this.serializer).resolveGate(runId, nodeName, approved, error);
+  }
+
+  /** Approve a waiting gate (shorthand for `resolveGate(runId, node, true)`). */
+  approveGate(runId: string, nodeName: string): void {
+    this.resolveGate(runId, nodeName, true);
+  }
+
+  /** Reject a waiting gate (shorthand for `resolveGate(runId, node, false, error)`). */
+  rejectGate(runId: string, nodeName: string, error?: string): void {
+    this.resolveGate(runId, nodeName, false, error);
   }
 
   /** List runs, optionally filtered by definition name and/or state. */
