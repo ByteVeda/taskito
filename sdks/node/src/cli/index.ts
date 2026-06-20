@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { registerCancel } from "./commands/cancel";
-import { registerDlq } from "./commands/dlq";
-import { registerEnqueue } from "./commands/enqueue";
-import { registerJobs } from "./commands/jobs";
-import { registerQueues } from "./commands/queues";
-import { registerRun } from "./commands/run";
-import { registerStats } from "./commands/stats";
+import {
+  registerCancel,
+  registerDlq,
+  registerEnqueue,
+  registerJobs,
+  registerQueues,
+  registerRun,
+  registerStats,
+} from "./commands";
 
 const program = new Command();
 
