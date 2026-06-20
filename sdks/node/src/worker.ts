@@ -13,6 +13,10 @@ import type {
 } from "./native";
 import type { Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
+import { createLogger } from "./utils";
+import { WorkflowTracker } from "./workflows";
+
+const log = createLogger("worker");
 
 /** How often a running job polls the storage cancel flag. */
 const CANCEL_POLL_INTERVAL_MS = 200;
@@ -48,6 +52,12 @@ export class Worker {
   static start(queue: NativeQueue, params: WorkerStartParams): Worker {
     const { tasks, queueLimits, serializer, middleware, emitter, run } = params;
 
+    // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
+    const tracker =
+      (run?.advanceWorkflows ?? true) && typeof queue.markWorkflowNodeResult === "function"
+        ? new WorkflowTracker(queue, serializer)
+        : null;
+
     const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
       const task = tasks.get(invocation.taskName);
       if (!task) {
@@ -68,8 +78,9 @@ export class Worker {
           if (queue.isCancelRequested(invocation.id)) {
             controller.abort();
           }
-        } catch {
+        } catch (error) {
           // transient storage error — retry on the next tick
+          log.debug(() => `cancel poll for ${invocation.id} failed`, error);
         }
       }, CANCEL_POLL_INTERVAL_MS);
       poller.unref();
@@ -115,10 +126,12 @@ export class Worker {
         const hook = mw[mapping.hook] as ((e: OutcomeEvent) => void) | undefined;
         try {
           hook?.(event);
-        } catch {
+        } catch (error) {
           // outcome hook errors must not break the worker
+          log.debug(() => `${mapping.hook} middleware hook threw for ${outcome.jobId}`, error);
         }
       }
+      tracker?.onOutcome(outcome);
     };
 
     const nativeOptions: NativeWorkerOptions = {
@@ -127,6 +140,7 @@ export class Worker {
       batchSize: run?.batchSize,
       taskConfigs: buildTaskConfigs(tasks),
       queueConfigs: buildQueueConfigs(queueLimits),
+      mesh: run?.mesh,
     };
     return new Worker(queue.runWorker(taskCallback, outcomeCallback, nativeOptions));
   }
@@ -147,7 +161,8 @@ function buildTaskConfigs(tasks: ReadonlyMap<string, RegisteredTask>): TaskConfi
       (options.maxRetries === undefined &&
         options.retryBackoff === undefined &&
         options.maxConcurrent === undefined &&
-        options.rateLimit === undefined)
+        options.rateLimit === undefined &&
+        options.circuitBreaker === undefined)
     ) {
       continue;
     }
@@ -158,6 +173,7 @@ function buildTaskConfigs(tasks: ReadonlyMap<string, RegisteredTask>): TaskConfi
       retryMaxDelayMs: options.retryBackoff?.maxMs,
       maxConcurrent: options.maxConcurrent,
       rateLimit: options.rateLimit,
+      circuitBreaker: options.circuitBreaker,
     });
   }
   return configs;

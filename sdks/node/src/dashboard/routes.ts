@@ -47,6 +47,26 @@ export const routes: Route[] = [
     handle: (q, _url, p) => h.resume(q, id(p)),
   },
   { method: "GET", pattern: /^\/api\/event-types$/, handle: (q) => h.eventTypes(q) },
+  {
+    method: "GET",
+    pattern: /^\/api\/workflows\/runs$/,
+    handle: (q, url) => h.workflowRuns(q, url),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/workflows\/runs\/([^/]+)\/dag$/,
+    handle: (q, _url, p) => h.workflowDag(q, id(p)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/workflows\/runs\/([^/]+)\/children$/,
+    handle: (q, _url, p) => h.workflowChildren(q, id(p)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/workflows\/runs\/([^/]+)$/,
+    handle: (q, _url, p) => h.workflowRun(q, id(p)),
+  },
   { method: "GET", pattern: /^\/api\/webhooks$/, handle: (q) => h.webhooks(q) },
   {
     method: "POST",

@@ -1,0 +1,700 @@
+//! Workflow submission, advancement, and queries.
+//!
+//! Static DAG steps are pre-enqueued with a `depends_on` chain so the core
+//! scheduler runs them in topological order. Fan-out / fan-in steps are
+//! deferred — submitted without a job — and the worker-side tracker (see
+//! `sdks/node/src/workflows/tracker.ts`) expands and enqueues them at runtime
+//! via the primitives below. Gates, sub-workflows, and saga compensation are
+//! not yet bound.
+
+use std::collections::{HashMap, HashSet};
+
+use napi::bindgen_prelude::{Buffer, Error, Result};
+use napi_derive::napi;
+use taskito_core::job::{now_millis, NewJob};
+use taskito_core::{Storage, StorageBackend};
+use taskito_workflows::{
+    topological_order, StepMetadata, WorkflowDefinition, WorkflowNode, WorkflowNodeStatus,
+    WorkflowRun, WorkflowSqliteStorage, WorkflowState, WorkflowStorage, WorkflowStorageBackend,
+};
+
+use super::JsQueue;
+use crate::convert::{
+    node_to_js, run_to_js, JsFanOutCompletion, JsWorkflowAdvance, JsWorkflowNode,
+    JsWorkflowNodeRef, JsWorkflowRun, JsWorkflowRunPlan,
+};
+use crate::error::{invalid_arg, to_napi_err};
+
+/// Largest number of children a single fan-out may expand into — guards against
+/// a producer returning an enormous list and flooding storage in one batch.
+const MAX_FAN_OUT: usize = 10_000;
+
+const DEFAULT_QUEUE: &str = "default";
+const DEFAULT_MAX_RETRIES: i32 = 3;
+const DEFAULT_TIMEOUT_MS: i64 = 300_000;
+const DEFAULT_LIST_LIMIT: i64 = 50;
+
+#[napi]
+impl JsQueue {
+    /// Submit a workflow run from a serialized DAG plus per-step metadata and
+    /// payloads. Pre-enqueues a job per step with a `depends_on` chain and
+    /// records a `WorkflowRun` + a `WorkflowNode` per step. Returns the run id.
+    ///
+    /// `deferred_node_names` lists steps the tracker enqueues on demand at
+    /// runtime (fan-out parents, fan-in collectors, and anything downstream of
+    /// them). A deferred node gets a `Pending` node row but **no job**, and is
+    /// excluded from its successors' `depends_on` so the static scheduler never
+    /// blocks on a job that will not exist until expansion.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_workflow(
+        &self,
+        name: String,
+        version: i32,
+        dag_bytes: Buffer,
+        step_metadata_json: String,
+        node_payloads: HashMap<String, Buffer>,
+        queue_default: Option<String>,
+        params_json: Option<String>,
+        deferred_node_names: Option<Vec<String>>,
+    ) -> Result<String> {
+        let wf = self.workflow_store()?;
+        let dag = dag_bytes.to_vec();
+        let step_meta: HashMap<String, StepMetadata> =
+            serde_json::from_str(&step_metadata_json).map_err(|e| reason(e.to_string()))?;
+        let ordered = topological_order(&dag).map_err(to_napi_err)?;
+        let queue_default = queue_default.unwrap_or_else(|| DEFAULT_QUEUE.to_string());
+        let deferred: HashSet<String> = deferred_node_names
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let definition_id = match wf
+            .get_workflow_definition(&name, Some(version))
+            .map_err(to_napi_err)?
+        {
+            // Reuse the stored id only when the DAG matches; otherwise the run
+            // would execute one topology while `definition_id` points at another,
+            // breaking run-plan reconstruction. Force a version bump instead.
+            Some(existing) => {
+                if existing.dag_data != dag {
+                    return Err(invalid_arg(format!(
+                        "workflow '{name}' v{version} already exists with a different DAG; bump the version"
+                    )));
+                }
+                existing.id
+            }
+            None => {
+                let def = WorkflowDefinition {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    name: name.clone(),
+                    version,
+                    dag_data: dag.clone(),
+                    step_metadata: step_meta.clone(),
+                    created_at: now_millis(),
+                };
+                let id = def.id.clone();
+                wf.create_workflow_definition(&def).map_err(to_napi_err)?;
+                id
+            }
+        };
+
+        let run_id = uuid::Uuid::now_v7().to_string();
+        let now = now_millis();
+        let run = WorkflowRun {
+            id: run_id.clone(),
+            definition_id,
+            params: params_json,
+            state: WorkflowState::Pending,
+            started_at: Some(now),
+            completed_at: None,
+            error: None,
+            parent_run_id: None,
+            parent_node_name: None,
+            created_at: now,
+        };
+        wf.create_workflow_run(&run).map_err(to_napi_err)?;
+
+        let mut job_ids: HashMap<String, String> = HashMap::new();
+        for topo in &ordered {
+            let meta = step_meta.get(&topo.name).ok_or_else(|| {
+                reason(format!("step '{}' missing from step_metadata", topo.name))
+            })?;
+
+            // Deferred node: tracked but not enqueued. The tracker creates its
+            // job (or expands it) once its predecessors settle.
+            if deferred.contains(&topo.name) {
+                wf.create_workflow_node(&new_workflow_node(&run_id, &topo.name, None))
+                    .map_err(to_napi_err)?;
+                continue;
+            }
+
+            let payload = node_payloads
+                .get(&topo.name)
+                .map(|b| b.to_vec())
+                .ok_or_else(|| {
+                    reason(format!("step '{}' missing from node_payloads", topo.name))
+                })?;
+            // Only static predecessors gate this job; deferred ones have no job
+            // to wait on, so the tracker is responsible for enqueuing nodes that
+            // sit downstream of them.
+            let depends_on = topo
+                .predecessors
+                .iter()
+                .filter(|p| !deferred.contains(*p))
+                .map(|p| {
+                    job_ids.get(p).cloned().ok_or_else(|| {
+                        reason(format!(
+                            "predecessor '{}' of step '{}' has no job id",
+                            p, topo.name
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<String>>>()?;
+
+            let new_job = NewJob {
+                queue: meta.queue.clone().unwrap_or_else(|| queue_default.clone()),
+                task_name: meta.task_name.clone(),
+                payload,
+                priority: meta.priority.unwrap_or(0),
+                scheduled_at: now,
+                max_retries: meta.max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
+                timeout_ms: meta.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
+                unique_key: None,
+                metadata: Some(workflow_metadata_json(&run_id, &topo.name)),
+                notes: None,
+                depends_on,
+                expires_at: None,
+                result_ttl_ms: None,
+                namespace: self.namespace.clone(),
+            };
+            let job = self.storage.enqueue(new_job).map_err(to_napi_err)?;
+            job_ids.insert(topo.name.clone(), job.id.clone());
+
+            wf.create_workflow_node(&new_workflow_node(&run_id, &topo.name, Some(job.id)))
+                .map_err(to_napi_err)?;
+        }
+
+        wf.update_workflow_run_state(&run_id, WorkflowState::Running, None)
+            .map_err(to_napi_err)?;
+        Ok(run_id)
+    }
+
+    /// Record the terminal outcome of a workflow node's job. A no-op (returns
+    /// `null`) for non-workflow jobs. On failure, cascades a fail-fast skip to
+    /// the run's remaining pending nodes. When the run reaches a terminal state,
+    /// the returned advance carries `finalState`.
+    ///
+    /// `skip_cascade` is set by the tracker for runs it manages (those with
+    /// deferred/fan-out nodes): the node's status is recorded but cascade and
+    /// run finalization are left to the tracker, which drives them after
+    /// expanding/aggregating. For plain DAGs it is false and behaviour is
+    /// unchanged.
+    #[napi]
+    pub fn mark_workflow_node_result(
+        &self,
+        job_id: String,
+        succeeded: bool,
+        error: Option<String>,
+        skip_cascade: Option<bool>,
+    ) -> Result<Option<JsWorkflowAdvance>> {
+        let skip_cascade = skip_cascade.unwrap_or(false);
+        let wf = self.workflow_store()?;
+        let job = match self.storage.get_job(&job_id).map_err(to_napi_err)? {
+            Some(j) => j,
+            None => return Ok(None),
+        };
+        let (run_id, node_name) = match parse_workflow_metadata(job.metadata.as_deref()) {
+            Some(pair) => pair,
+            None => return Ok(None),
+        };
+
+        let now = now_millis();
+        if succeeded {
+            wf.set_workflow_node_completed(&run_id, &node_name, now, None)
+                .map_err(to_napi_err)?;
+        } else {
+            let msg = error.clone().unwrap_or_else(|| "failed".to_string());
+            wf.set_workflow_node_error(&run_id, &node_name, &msg)
+                .map_err(to_napi_err)?;
+            if !skip_cascade {
+                let nodes = wf.get_workflow_nodes(&run_id).map_err(to_napi_err)?;
+                cascade_skip_pending(&self.storage, &wf, &run_id, &nodes);
+            }
+        }
+
+        // Tracker-managed run: it owns cascade + finalization (it may still need
+        // to expand a fan-out or enqueue a deferred successor first).
+        if skip_cascade {
+            return Ok(Some(JsWorkflowAdvance {
+                run_id,
+                node_name,
+                final_state: None,
+            }));
+        }
+
+        let nodes = wf.get_workflow_nodes(&run_id).map_err(to_napi_err)?;
+        if !nodes.iter().all(|n| n.status.is_terminal()) {
+            return Ok(Some(JsWorkflowAdvance {
+                run_id,
+                node_name,
+                final_state: None,
+            }));
+        }
+
+        let any_failed = nodes.iter().any(|n| n.status == WorkflowNodeStatus::Failed);
+        let final_state = if any_failed || !succeeded {
+            WorkflowState::Failed
+        } else {
+            WorkflowState::Completed
+        };
+        wf.update_workflow_run_state(
+            &run_id,
+            final_state,
+            if final_state == WorkflowState::Failed {
+                error.as_deref()
+            } else {
+                None
+            },
+        )
+        .map_err(to_napi_err)?;
+        wf.set_workflow_run_completed(&run_id, now)
+            .map_err(to_napi_err)?;
+
+        Ok(Some(JsWorkflowAdvance {
+            run_id,
+            node_name,
+            final_state: Some(final_state.as_str().to_string()),
+        }))
+    }
+
+    /// Fetch a workflow run by id, or `null` if no such run exists.
+    #[napi]
+    pub fn get_workflow_run(&self, run_id: String) -> Result<Option<JsWorkflowRun>> {
+        let wf = self.workflow_store()?;
+        Ok(wf
+            .get_workflow_run(&run_id)
+            .map_err(to_napi_err)?
+            .map(run_to_js))
+    }
+
+    /// List the nodes (steps) of a workflow run.
+    #[napi]
+    pub fn get_workflow_nodes(&self, run_id: String) -> Result<Vec<JsWorkflowNode>> {
+        let wf = self.workflow_store()?;
+        Ok(wf
+            .get_workflow_nodes(&run_id)
+            .map_err(to_napi_err)?
+            .into_iter()
+            .map(node_to_js)
+            .collect())
+    }
+
+    /// List workflow runs, optionally filtered by definition name and/or state.
+    #[napi]
+    pub fn list_workflow_runs(
+        &self,
+        definition_name: Option<String>,
+        state: Option<String>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<JsWorkflowRun>> {
+        let wf = self.workflow_store()?;
+        let state = match state {
+            Some(s) => Some(
+                WorkflowState::from_str_val(&s)
+                    .ok_or_else(|| reason(format!("unknown workflow state '{s}'")))?,
+            ),
+            None => None,
+        };
+        let runs = wf
+            .list_workflow_runs(
+                definition_name.as_deref(),
+                state,
+                limit.unwrap_or(DEFAULT_LIST_LIMIT),
+                offset.unwrap_or(0),
+            )
+            .map_err(to_napi_err)?;
+        Ok(runs.into_iter().map(run_to_js).collect())
+    }
+
+    /// The serialized DAG (a `SerializableGraph` JSON string) backing a run, or
+    /// `null` if the run or its definition no longer exists.
+    #[napi]
+    pub fn get_workflow_dag(&self, run_id: String) -> Result<Option<String>> {
+        let wf = self.workflow_store()?;
+        let Some(run) = wf.get_workflow_run(&run_id).map_err(to_napi_err)? else {
+            return Ok(None);
+        };
+        let Some(def) = wf
+            .get_workflow_definition_by_id(&run.definition_id)
+            .map_err(to_napi_err)?
+        else {
+            return Ok(None);
+        };
+        String::from_utf8(def.dag_data)
+            .map(Some)
+            .map_err(|e| reason(e.to_string()))
+    }
+
+    /// Child (sub-workflow) runs spawned by a run. Always empty for runs
+    /// submitted by the Node SDK, which does not yet create sub-workflows.
+    #[napi]
+    pub fn get_workflow_children(&self, run_id: String) -> Result<Vec<JsWorkflowRun>> {
+        let wf = self.workflow_store()?;
+        Ok(wf
+            .get_child_workflow_runs(&run_id)
+            .map_err(to_napi_err)?
+            .into_iter()
+            .map(run_to_js)
+            .collect())
+    }
+
+    /// The run + node a job belongs to, or `null` for a non-workflow job. Lets
+    /// the tracker classify any worker outcome without an in-memory job→run map.
+    #[napi]
+    pub fn workflow_node_for_job(&self, job_id: String) -> Result<Option<JsWorkflowNodeRef>> {
+        let Some(job) = self.storage.get_job(&job_id).map_err(to_napi_err)? else {
+            return Ok(None);
+        };
+        Ok(parse_workflow_metadata(job.metadata.as_deref())
+            .map(|(run_id, node_name)| JsWorkflowNodeRef { run_id, node_name }))
+    }
+
+    /// The DAG + step metadata backing a run, so the tracker can reconstruct
+    /// the workflow structure from storage. `null` if the run or its definition
+    /// no longer exists.
+    #[napi]
+    pub fn get_workflow_run_plan(&self, run_id: String) -> Result<Option<JsWorkflowRunPlan>> {
+        let wf = self.workflow_store()?;
+        let Some(run) = wf.get_workflow_run(&run_id).map_err(to_napi_err)? else {
+            return Ok(None);
+        };
+        let Some(def) = wf
+            .get_workflow_definition_by_id(&run.definition_id)
+            .map_err(to_napi_err)?
+        else {
+            return Ok(None);
+        };
+        let dag = String::from_utf8(def.dag_data).map_err(|e| reason(e.to_string()))?;
+        let step_metadata =
+            serde_json::to_string(&def.step_metadata).map_err(|e| reason(e.to_string()))?;
+        Ok(Some(JsWorkflowRunPlan { dag, step_metadata }))
+    }
+
+    /// Expand a fan-out parent into one child node + job per item. Sets the
+    /// parent's `fan_out_count` and transitions it to `Running`; an empty item
+    /// list completes the parent immediately. Returns the child job ids.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn expand_fan_out(
+        &self,
+        run_id: String,
+        parent_node_name: String,
+        child_names: Vec<String>,
+        child_payloads: Vec<Buffer>,
+        task_name: String,
+        queue: String,
+        max_retries: i32,
+        timeout_ms: i64,
+        priority: i32,
+    ) -> Result<Vec<String>> {
+        if child_names.len() != child_payloads.len() {
+            return Err(reason(
+                "child_names and child_payloads must have equal length",
+            ));
+        }
+        if child_names.len() > MAX_FAN_OUT {
+            return Err(reason(format!(
+                "fan-out of {} children exceeds the limit of {MAX_FAN_OUT}",
+                child_names.len()
+            )));
+        }
+        let wf = self.workflow_store()?;
+        let now = now_millis();
+        let count = child_names.len() as i32;
+
+        if count == 0 {
+            wf.set_workflow_node_fan_out_count(&run_id, &parent_node_name, 0)
+                .map_err(to_napi_err)?;
+            wf.set_workflow_node_completed(&run_id, &parent_node_name, now, None)
+                .map_err(to_napi_err)?;
+            return Ok(Vec::new());
+        }
+
+        // Enqueue every child job first, then batch-insert their nodes in one
+        // transaction so a crash partway through never leaves half-tracked
+        // children.
+        let mut child_job_ids = Vec::with_capacity(child_names.len());
+        let mut nodes = Vec::with_capacity(child_names.len());
+        for (child_name, payload) in child_names.iter().zip(child_payloads) {
+            let new_job = NewJob {
+                queue: queue.clone(),
+                task_name: task_name.clone(),
+                payload: payload.to_vec(),
+                priority,
+                scheduled_at: now,
+                max_retries,
+                timeout_ms,
+                unique_key: None,
+                metadata: Some(workflow_metadata_json(&run_id, child_name)),
+                notes: None,
+                depends_on: vec![],
+                expires_at: None,
+                result_ttl_ms: None,
+                namespace: self.namespace.clone(),
+            };
+            let job = self.storage.enqueue(new_job).map_err(to_napi_err)?;
+            child_job_ids.push(job.id.clone());
+            nodes.push(new_workflow_node(&run_id, child_name, Some(job.id)));
+        }
+
+        // Child jobs are already enqueued; if node creation fails, cancel them
+        // so they don't run untracked (orphaned) outside the workflow.
+        if let Err(err) = wf.create_workflow_nodes_batch(&nodes).map_err(to_napi_err) {
+            for id in &child_job_ids {
+                let _ = self.storage.cancel_job(id);
+            }
+            return Err(err);
+        }
+        wf.set_workflow_node_fan_out_count(&run_id, &parent_node_name, count)
+            .map_err(to_napi_err)?;
+        Ok(child_job_ids)
+    }
+
+    /// Enqueue a job for a deferred node and bind it to that node. Used for the
+    /// fan-in collector and for static nodes downstream of a deferred one whose
+    /// predecessors are now all terminal. Returns the new job id.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_deferred_job(
+        &self,
+        run_id: String,
+        node_name: String,
+        payload: Buffer,
+        task_name: String,
+        queue: String,
+        max_retries: i32,
+        timeout_ms: i64,
+        priority: i32,
+    ) -> Result<String> {
+        let wf = self.workflow_store()?;
+        let new_job = NewJob {
+            queue,
+            task_name,
+            payload: payload.to_vec(),
+            priority,
+            scheduled_at: now_millis(),
+            max_retries,
+            timeout_ms,
+            unique_key: None,
+            metadata: Some(workflow_metadata_json(&run_id, &node_name)),
+            notes: None,
+            depends_on: vec![],
+            expires_at: None,
+            result_ttl_ms: None,
+            namespace: self.namespace.clone(),
+        };
+        let job = self.storage.enqueue(new_job).map_err(to_napi_err)?;
+        // Cancel the job if we can't bind it to its node, so it doesn't run
+        // unbound (the tracker would never see its outcome).
+        if let Err(err) = wf
+            .set_workflow_node_job(&run_id, &node_name, &job.id)
+            .map_err(to_napi_err)
+        {
+            let _ = self.storage.cancel_job(&job.id);
+            return Err(err);
+        }
+        Ok(job.id)
+    }
+
+    /// Check whether all fan-out children of a parent are terminal. When they
+    /// are, atomically finalizes the parent exactly once (compare-and-swap) and
+    /// returns the outcome; otherwise — or if another caller already finalized —
+    /// returns `null`.
+    #[napi]
+    pub fn check_fan_out_completion(
+        &self,
+        run_id: String,
+        parent_node_name: String,
+    ) -> Result<Option<JsFanOutCompletion>> {
+        let wf = self.workflow_store()?;
+        let prefix = format!("{parent_node_name}[");
+        let children = wf
+            .get_workflow_nodes_by_prefix(&run_id, &prefix)
+            .map_err(to_napi_err)?;
+
+        if children.is_empty() || !children.iter().all(|n| n.status.is_terminal()) {
+            return Ok(None);
+        }
+
+        let any_failed = children
+            .iter()
+            .any(|n| n.status == WorkflowNodeStatus::Failed);
+        let child_job_ids: Vec<String> = children.iter().filter_map(|n| n.job_id.clone()).collect();
+
+        let transitioned = wf
+            .finalize_fan_out_parent(
+                &run_id,
+                &parent_node_name,
+                !any_failed,
+                if any_failed {
+                    Some("fan-out child failed")
+                } else {
+                    None
+                },
+                now_millis(),
+            )
+            .map_err(to_napi_err)?;
+        if !transitioned {
+            return Ok(None);
+        }
+        Ok(Some(JsFanOutCompletion {
+            succeeded: !any_failed,
+            child_job_ids,
+        }))
+    }
+
+    /// Fail-fast cascade: skip every still-pending node of a run and cancel its
+    /// job. Called by the tracker when a managed run's node fails.
+    #[napi]
+    pub fn cascade_skip_pending(&self, run_id: String) -> Result<()> {
+        let wf = self.workflow_store()?;
+        let nodes = wf.get_workflow_nodes(&run_id).map_err(to_napi_err)?;
+        cascade_skip_pending(&self.storage, &wf, &run_id, &nodes);
+        Ok(())
+    }
+
+    /// Finalize a run if every node has reached a terminal state: set it
+    /// `Completed`, or `Failed` if any node failed. Returns the final state, or
+    /// `null` if the run still has work in flight.
+    #[napi]
+    pub fn finalize_run_if_terminal(&self, run_id: String) -> Result<Option<String>> {
+        let wf = self.workflow_store()?;
+        let nodes = wf.get_workflow_nodes(&run_id).map_err(to_napi_err)?;
+        if nodes.is_empty() || !nodes.iter().all(|n| n.status.is_terminal()) {
+            return Ok(None);
+        }
+        let any_failed = nodes.iter().any(|n| n.status == WorkflowNodeStatus::Failed);
+        let final_state = if any_failed {
+            WorkflowState::Failed
+        } else {
+            WorkflowState::Completed
+        };
+        wf.update_workflow_run_state(
+            &run_id,
+            final_state,
+            if any_failed {
+                Some("a workflow node failed")
+            } else {
+                None
+            },
+        )
+        .map_err(to_napi_err)?;
+        wf.set_workflow_run_completed(&run_id, now_millis())
+            .map_err(to_napi_err)?;
+        Ok(Some(final_state.as_str().to_string()))
+    }
+
+    /// Lazily build the workflow storage from this queue's backend (runs the
+    /// workflow migrations on first use). Not exported to JS.
+    fn workflow_store(&self) -> Result<WorkflowStorageBackend> {
+        if let Some(wf) = self.workflow_storage.get() {
+            return Ok(wf.clone());
+        }
+        let wf = build_workflow_storage(&self.storage)?;
+        // If another thread raced us, either handle wraps the same pool.
+        let _ = self.workflow_storage.set(wf.clone());
+        Ok(wf)
+    }
+}
+
+/// Construct the workflow storage matching the queue's core backend.
+fn build_workflow_storage(storage: &StorageBackend) -> Result<WorkflowStorageBackend> {
+    let wf = match storage {
+        StorageBackend::Sqlite(s) => WorkflowSqliteStorage::new(s.clone())
+            .map(WorkflowStorageBackend::Sqlite)
+            .map_err(to_napi_err)?,
+        #[cfg(feature = "postgres")]
+        StorageBackend::Postgres(s) => taskito_workflows::WorkflowPostgresStorage::new(s.clone())
+            .map(WorkflowStorageBackend::Postgres)
+            .map_err(to_napi_err)?,
+        #[cfg(feature = "redis")]
+        StorageBackend::Redis(s) => taskito_workflows::WorkflowRedisStorage::new(s.clone())
+            .map(WorkflowStorageBackend::Redis)
+            .map_err(to_napi_err)?,
+    };
+    Ok(wf)
+}
+
+/// Build a fresh `Pending` workflow node. `job_id` is `None` for deferred nodes
+/// (fan-out/fan-in/downstream) that the tracker enqueues later.
+fn new_workflow_node(run_id: &str, node_name: &str, job_id: Option<String>) -> WorkflowNode {
+    WorkflowNode {
+        id: uuid::Uuid::now_v7().to_string(),
+        run_id: run_id.to_string(),
+        node_name: node_name.to_string(),
+        job_id,
+        status: WorkflowNodeStatus::Pending,
+        result_hash: None,
+        fan_out_count: None,
+        fan_in_data: None,
+        started_at: None,
+        completed_at: None,
+        error: None,
+        compensation_job_id: None,
+        compensation_started_at: None,
+        compensation_completed_at: None,
+        compensation_error: None,
+    }
+}
+
+/// Job-metadata blob that links a job back to its workflow node.
+fn workflow_metadata_json(run_id: &str, node_name: &str) -> String {
+    serde_json::json!({
+        "workflow_run_id": run_id,
+        "workflow_node_name": node_name,
+    })
+    .to_string()
+}
+
+/// Parse `{workflow_run_id, workflow_node_name}` from a job's metadata blob.
+fn parse_workflow_metadata(metadata: Option<&str>) -> Option<(String, String)> {
+    let parsed: serde_json::Value = serde_json::from_str(metadata?).ok()?;
+    let run_id = parsed.get("workflow_run_id")?.as_str()?.to_string();
+    let node_name = parsed.get("workflow_node_name")?.as_str()?.to_string();
+    Some((run_id, node_name))
+}
+
+/// Fail-fast: mark every still-pending node skipped and cancel its job.
+/// Best-effort — per-node failures are logged, not propagated.
+fn cascade_skip_pending(
+    storage: &StorageBackend,
+    wf: &WorkflowStorageBackend,
+    run_id: &str,
+    nodes: &[WorkflowNode],
+) {
+    for node in nodes {
+        if !matches!(
+            node.status,
+            WorkflowNodeStatus::Pending | WorkflowNodeStatus::Ready
+        ) {
+            continue;
+        }
+        if let Some(job_id) = &node.job_id {
+            if let Err(e) = storage.cancel_job(job_id) {
+                log::warn!("[taskito-node] cancel_job({job_id}) during workflow cascade: {e}");
+            }
+        }
+        if let Err(e) =
+            wf.update_workflow_node_status(run_id, &node.node_name, WorkflowNodeStatus::Skipped)
+        {
+            log::warn!("[taskito-node] skip node '{}' failed: {e}", node.node_name);
+        }
+    }
+}
+
+/// A JS error carrying a plain message (for validation / serde failures).
+fn reason(message: impl Into<String>) -> Error {
+    Error::new(napi::Status::GenericFailure, message.into())
+}

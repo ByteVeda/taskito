@@ -147,3 +147,58 @@ it("aggregates metrics after a job completes", async () => {
     srv.close();
   }
 });
+
+it("serves workflow runs, detail, dag, and children", async () => {
+  const db = join(mkdtempSync(join(tmpdir(), "taskito-dash-")), "q.db");
+  const queue = new Queue({ dbPath: db });
+  queue.task("a", () => 1);
+  queue.task("b", () => 2);
+  const handle = queue.workflows
+    .define("etl")
+    .step("a", "a")
+    .step("b", "b", { after: "a" })
+    .submit();
+  const worker: Worker = queue.runWorker();
+  const srv = serveDashboard(queue, { port: 0, staticDir });
+  await once(srv, "listening");
+  const { port } = srv.address() as AddressInfo;
+  const root = `http://127.0.0.1:${port}/api/workflows/runs`;
+
+  try {
+    await handle.wait({ timeoutMs: 8000 });
+
+    const list = (await (await fetch(root)).json()) as {
+      runs: Array<{ id: string; state: string }>;
+    };
+    expect(list.runs.find((r) => r.id === handle.runId)?.state).toBe("completed");
+
+    const detail = (await (await fetch(`${root}/${handle.runId}`)).json()) as {
+      run: { state: string };
+      nodes: Array<{ node_name: string; status: string }>;
+    };
+    expect(detail.run.state).toBe("completed");
+    expect(detail.nodes.map((n) => n.node_name).sort()).toEqual(["a", "b"]);
+
+    const dag = (await (await fetch(`${root}/${handle.runId}/dag`)).json()) as { dag: string };
+    const parsed = JSON.parse(dag.dag) as {
+      edges: Array<{ from: string; to: string; weight: number }>;
+      nodes: Array<{ name: string; node_name: string; status: string; id: string; deps: string[] }>;
+    };
+    expect(parsed.edges).toEqual([{ from: "a", to: "b", weight: 1.0 }]);
+    // The SPA's DAG visualizer reads per-node deps / status / id, so the handler
+    // enriches the raw graph with live status, edges-as-deps, and job-id links.
+    const b = parsed.nodes.find((n) => n.name === "b");
+    expect(b?.deps).toEqual(["a"]);
+    expect(b?.status).toBe("completed");
+    expect(b?.id).not.toBe("b"); // resolved to the job id, not the node name
+    expect(parsed.nodes.find((n) => n.name === "a")?.deps).toEqual([]);
+
+    const children = (await (await fetch(`${root}/${handle.runId}/children`)).json()) as {
+      children: unknown[];
+    };
+    expect(children.children).toEqual([]);
+  } finally {
+    worker.stop();
+    srv.close();
+  }
+});

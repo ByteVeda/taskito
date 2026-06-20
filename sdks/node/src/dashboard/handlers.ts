@@ -5,7 +5,15 @@ import { randomBytes } from "node:crypto";
 import type { EventName } from "../events";
 import type { Queue } from "../index";
 import type { WebhookInput } from "../webhooks";
-import { deadToContract, jobToContract, webhookToContract, workerToContract } from "./contract";
+import type { WorkflowNode } from "../workflows";
+import {
+  deadToContract,
+  jobToContract,
+  webhookToContract,
+  workerToContract,
+  workflowNodeToContract,
+  workflowRunToContract,
+} from "./contract";
 import { aggregateByTask, bucketTimeseries } from "./metrics";
 
 /** Finite, non-negative number from a query string, or `undefined`. */
@@ -86,6 +94,69 @@ export function workers(queue: Queue) {
 
 export function eventTypes(queue: Queue) {
   return queue.webhooks.eventTypes();
+}
+
+export function workflowRuns(queue: Queue, url: URL) {
+  const limit = num(url, "limit") ?? 50;
+  const offset = num(url, "offset") ?? 0;
+  const runs = queue.workflows.list({
+    state: url.searchParams.get("state") ?? undefined,
+    definitionName: url.searchParams.get("definition_name") ?? undefined,
+    limit,
+    offset,
+  });
+  return { runs: runs.map(workflowRunToContract), limit, offset };
+}
+
+export function workflowRun(queue: Queue, id: string) {
+  const run = queue.workflows.run(id);
+  if (!run) {
+    return undefined;
+  }
+  return {
+    run: workflowRunToContract(run),
+    nodes: queue.workflows.nodes(id).map(workflowNodeToContract),
+  };
+}
+
+export function workflowDag(queue: Queue, id: string) {
+  const dag = queue.workflows.dag(id);
+  return dag === undefined ? undefined : { dag: enrichDag(dag, queue.workflows.nodes(id)) };
+}
+
+export function workflowChildren(queue: Queue, id: string) {
+  // Always empty until sub-workflows are bound (the Node SDK creates no child runs).
+  return { children: queue.workflows.children(id).map(workflowRunToContract) };
+}
+
+/**
+ * Rewrite the raw `SerializableGraph` into the shape the SPA's DAG visualizer
+ * consumes: it builds edges from each node's `deps[]` (ignoring top-level
+ * `edges`), colours by per-node `status`, and links via `id`. We fold the live
+ * node statuses + job ids in so the DAG tab renders real edges, live colours,
+ * and correct `/jobs/$id` links. Returns a JSON **string** (the SPA `JSON.parse`s it).
+ */
+function enrichDag(dagJson: string, nodes: readonly WorkflowNode[]): string {
+  let graph: { nodes?: Array<{ name?: string }>; edges?: Array<{ from: string; to: string }> };
+  try {
+    graph = JSON.parse(dagJson);
+  } catch {
+    return dagJson; // not our JSON — pass through untouched
+  }
+  const byName = new Map(nodes.map((n) => [n.nodeName, n]));
+  const edges = graph.edges ?? [];
+  const enriched = (graph.nodes ?? []).map((raw) => {
+    const name = raw.name ?? "";
+    const node = byName.get(name);
+    return {
+      name,
+      node_name: name,
+      status: node?.status ?? "pending",
+      id: node?.jobId ?? name,
+      deps: edges.filter((edge) => edge.to === name).map((edge) => edge.from),
+    };
+  });
+  return JSON.stringify({ nodes: enriched, edges });
 }
 
 export function webhooks(queue: Queue) {

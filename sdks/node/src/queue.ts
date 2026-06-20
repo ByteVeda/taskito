@@ -1,5 +1,12 @@
-import { JobCancelledError, JobFailedError, TaskitoError } from "./errors";
+import {
+  JobCancelledError,
+  JobFailedError,
+  LockLostError,
+  LockNotAcquiredError,
+  TaskitoError,
+} from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
+import { Lock, type LockOptions } from "./locks";
 import type { Middleware } from "./middleware";
 import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
 import { JsonSerializer, type Serializer } from "./serializers";
@@ -11,6 +18,7 @@ import type {
   JobError,
   JobFilter,
   Metric,
+  PeriodicOptions,
   QueueLimits,
   RegisteredTask,
   ResultOptions,
@@ -22,6 +30,7 @@ import type {
 } from "./types";
 import { WebhookManager } from "./webhooks";
 import { Worker } from "./worker";
+import { WorkflowManager } from "./workflows";
 
 /** Construction options for a {@link Queue}. */
 export interface QueueOptions {
@@ -55,6 +64,8 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly middleware: Middleware[] = [];
   private readonly emitter = new Emitter();
   private readonly webhookManager: WebhookManager;
+  /** Built lazily — its constructor throws on addons lacking the `workflows` feature. */
+  private workflowManager?: WorkflowManager;
 
   constructor(options: QueueOptions) {
     this.native = JsQueue.open(toOpenOptions(options));
@@ -65,6 +76,66 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Webhook subscriptions — create/list/delete and deliver job events to URLs. */
   get webhooks(): WebhookManager {
     return this.webhookManager;
+  }
+
+  /** Workflow definitions and runs — DAG/linear orchestration over the queue. */
+  get workflows(): WorkflowManager {
+    if (!this.workflowManager) {
+      this.workflowManager = new WorkflowManager(this.native, this.serializer);
+    }
+    return this.workflowManager;
+  }
+
+  /** Create a distributed lock handle (not yet acquired). */
+  lock(name: string, options?: LockOptions): Lock {
+    return new Lock(this.native, name, options);
+  }
+
+  /**
+   * Run `fn` while holding the named lock, releasing it afterwards. Rejects with
+   * {@link LockNotAcquiredError} if another owner holds the lock.
+   */
+  async withLock<T>(name: string, fn: () => T | Promise<T>, options?: LockOptions): Promise<T> {
+    const lock = this.lock(name, options);
+    if (!lock.acquire()) {
+      throw new LockNotAcquiredError(name);
+    }
+    let result: T;
+    try {
+      result = await fn();
+    } catch (error) {
+      lock.release();
+      throw error;
+    }
+    // `release()` returns false when the lease was lost mid-run — surface that
+    // rather than pretending the critical section ran under a held lock.
+    if (!lock.release()) {
+      throw new LockLostError(name);
+    }
+    return result;
+  }
+
+  /**
+   * Register (or replace) a cron-scheduled task. A running worker enqueues
+   * `taskName` with the serialized `args` each time the schedule fires. Returns
+   * the next fire time (Unix ms); throws on an invalid cron expression.
+   */
+  registerPeriodic(
+    name: string,
+    taskName: string,
+    cronExpr: string,
+    options?: PeriodicOptions,
+  ): number {
+    const args = Buffer.from(this.serializer.serialize(options?.args ?? []));
+    return this.native.registerPeriodic(
+      name,
+      taskName,
+      cronExpr,
+      args,
+      options?.queue,
+      options?.timezone,
+      options?.enabled,
+    );
   }
 
   /**

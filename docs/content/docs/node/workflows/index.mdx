@@ -1,0 +1,44 @@
+---
+title: Workflows
+description: "Orchestrate multi-step DAGs in Node.js with the Taskito workflow builder."
+---
+
+import { Cards, Card } from "fumadocs-ui/components/card";
+import { Callout } from "fumadocs-ui/components/callout";
+
+Orchestrate multi-step DAGs where each step is a registered task and `after`
+declares its dependencies. The Rust core schedules steps in topological order;
+a worker advances the run as each step settles.
+
+```ts
+const handle = queue.workflows
+  .define("etl")
+  .step("extract", "extractTask", { args: ["s3://bucket/in"] })
+  .step("transform", "transformTask", { after: "extract" })
+  .step("load", "loadTask", { after: "transform", maxRetries: 5 })
+  .submit();
+
+queue.runWorker();
+
+const run = await handle.wait();  // resolves when terminal
+console.log(run.state);           // "completed" | "failed" | ...
+handle.nodes();                   // per-step status snapshot
+```
+
+Requires the addon built with the `workflows` cargo feature (enabled by
+`pnpm build:native`).
+
+<Cards>
+  <Card
+    title="Fan-out / Fan-in"
+    href="/node/workflows/fan-out"
+    description="Split a step's result into parallel children and collect results."
+  />
+</Cards>
+
+<Callout type="info">
+  Gates, sub-workflows, and saga compensation are not yet available in the Node
+  SDK. See the Python SDK for [gates](/guides/workflows/gates),
+  [composition](/guides/workflows/composition), and
+  [sagas](/guides/workflows/sagas).
+</Callout>

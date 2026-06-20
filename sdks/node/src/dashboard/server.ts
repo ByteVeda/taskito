@@ -2,9 +2,12 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Queue } from "../index";
+import { createLogger } from "../utils";
 import { WebhookValidationError } from "../webhooks";
 import { routes } from "./routes";
 import { StaticAssets } from "./static";
+
+const log = createLogger("dashboard");
 
 /** Max request body size (1 MiB) — reject larger payloads to bound memory. */
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -14,7 +17,7 @@ export function createDashboardServer(queue: Queue, staticDir: string): Server {
   const assets = new StaticAssets(staticDir);
   return createServer((req, res) => {
     void dispatch(queue, assets, req, res).catch((error) => {
-      console.error("[taskito] dashboard dispatch failed:", error);
+      log.error(() => "dashboard dispatch failed", error);
       if (!res.headersSent) {
         sendJson(res, 500, { error: "internal server error" });
       }
@@ -65,7 +68,7 @@ async function dispatch(
         return;
       }
       // Log internally but never leak error/stack details to the HTTP client.
-      console.error("[taskito] dashboard request failed:", error);
+      log.error(() => `${req.method} ${path} failed`, error);
       sendJson(res, 500, { error: "internal server error" });
     }
     return;

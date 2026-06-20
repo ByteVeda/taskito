@@ -1,9 +1,12 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { EventName, OutcomeEvent } from "../events";
+import { createLogger } from "../utils";
 import type { Delivery, Webhook } from "./types";
 
 const MAX_RECENT = 100;
 const MAX_BACKOFF_MS = 30_000;
+
+const log = createLogger("webhooks");
 
 /** Signs and POSTs webhook payloads with retries; keeps a recent-delivery log. */
 export class Deliverer {
@@ -65,7 +68,26 @@ export class Deliverer {
     if (this.recent.length > MAX_RECENT) {
       this.recent.shift();
     }
+    if (!delivery.ok) {
+      log.warn(
+        () =>
+          `delivery of ${event} to ${redactUrl(webhook.url)} failed after ${attempts} attempt(s): ${error}`,
+      );
+    }
     return delivery;
+  }
+}
+
+/** Strip credentials and query string from a URL before logging it. */
+function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    return url.toString();
+  } catch {
+    return "<invalid-url>";
   }
 }
 

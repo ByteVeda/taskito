@@ -26,6 +26,7 @@ queue.task("add", (a: number, b: number) => a + b, {
   retryBackoff: { baseMs: 1000, maxMs: 60_000 },
   timeoutMs: 30_000,
   maxConcurrent: 4,
+  circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
 });
 
 // Producer.
@@ -145,6 +146,52 @@ Events: `job.completed`, `job.retrying`, `job.dead`, `job.cancelled`. `before`/
 `after`/`onError` wrap execution (awaited); the outcome hooks fire after the core
 decides the result.
 
+## Distributed locks
+
+TTL-bounded, owner-scoped locks backed by the queue's storage — coordinate
+across processes without a separate lock server. A held lock auto-extends at
+`ttlMs / 3` so a slow section never loses it.
+
+```ts
+// Scoped helper — acquires, runs, releases (throws if held elsewhere).
+await queue.withLock("report:2026-06", async () => {
+  await rebuildReport();
+});
+
+// Manual handle with explicit release.
+const lock = queue.lock("resource", { ttlMs: 30_000 });
+if (lock.acquire()) {
+  try {
+    // ... critical section
+  } finally {
+    lock.release();
+  }
+}
+```
+
+`Lock` also implements `Symbol.dispose`, so on Node 20.4+ you can use `using lock =
+queue.lock("resource")` for automatic release at block exit.
+
+`lock.extend(ms)`, `lock.info()`, and `lock.ownerId` round out the API. Expired
+locks are reaped by the worker's maintenance loop.
+
+## Periodic (cron) tasks
+
+Schedule a registered task on a cron expression. A running worker enqueues it
+when due (the scheduler's maintenance loop drives this).
+
+```ts
+queue.task("digest", (date: string) => sendDigest(date));
+
+// cron is 6/7-field, seconds first: sec min hour day-of-month month day-of-week
+queue.registerPeriodic("daily-digest", "digest", "0 0 9 * * *", {
+  args: ["2026-06-16"],
+  timezone: "America/New_York",
+});
+```
+
+Returns the next fire time (Unix ms). Re-registering the same name replaces it.
+
 ## Webhooks
 
 Deliver job events to HTTP endpoints — HMAC-SHA256 signed, retried with backoff,
@@ -164,6 +211,70 @@ queue.webhooks.delete(hook.id);
 
 Deliveries fire from the worker process (where events originate). The dashboard
 exposes `/api/webhooks` for managing them.
+
+## Workflows
+
+Orchestrate multi-step DAGs. Each step is a registered task; `after` declares
+dependencies. Steps are pre-enqueued with `depends_on` chains, so the core
+scheduler runs them in topological order — and a worker advances the run as each
+step settles.
+
+```ts
+const handle = queue.workflows
+  .define("etl")
+  .step("extract", "extractTask", { args: ["s3://bucket/in"] })
+  .step("transform", "transformTask", { after: "extract" })
+  .step("load", "loadTask", { after: "transform", maxRetries: 5 })
+  .submit();
+
+queue.runWorker(); // advances workflow nodes by default
+
+const run = await handle.wait();      // resolves when terminal
+console.log(run.state);               // "completed" | "failed" | ...
+handle.nodes();                       // per-step status
+queue.workflows.list({ state: "running" });
+```
+
+If a step dead-letters, the run fails and remaining steps are skipped
+(fail-fast). Per-step options: `after`, `args`, `queue`, `maxRetries`,
+`timeoutMs`, `priority`. Workers that never process workflow steps can skip the
+per-job bookkeeping with `runWorker({ advanceWorkflows: false })`. Requires the
+addon built with the `workflows` cargo feature (enabled by `build:native`).
+
+### Fan-out / fan-in
+
+A `fanOut` step expands at runtime into one child job per item, each running the
+same task. The items come from the array result of a predecessor (`itemsFrom`,
+defaulting to the sole predecessor) — each item is passed to the child task as
+its single argument. An optional `fanIn` step collects the children's results
+into an array and runs a combiner task over it.
+
+```ts
+queue.task("listFiles", () => ["a.csv", "b.csv", "c.csv"]); // returns the items
+queue.task("processFile", (file: string) => file.length);  // runs once per item
+queue.task("summarize", (sizes: number[]) => sizes.reduce((a, b) => a + b, 0));
+
+const handle = queue.workflows
+  .define("batch")
+  .step("list", "listFiles")
+  .fanOut("process", { after: "list", task: "processFile", itemsFrom: "list" })
+  .fanIn("collect", { after: "process", task: "summarize" })
+  .submit();
+
+queue.runWorker();
+const run = await handle.wait();
+// handle.nodes(): "process" carries fanOutCount; children are "process[0]", "process[1]", …
+```
+
+The worker-side tracker drives expansion from the outcome stream and
+reconstructs the plan from storage, so submission and execution may run in
+different processes. Fan-out is fail-fast: if any child dead-letters, the parent
+and run fail and downstream steps are skipped. An empty item list completes the
+fan-out immediately and runs the fan-in with `[]`. Children and the combiner each
+run on the fan-out step's `queue` / `maxRetries` / `timeoutMs` / `priority`.
+
+Gates, sub-workflows, and saga compensation are not yet bound — for those, use
+the Python SDK.
 
 ## Dashboard
 
@@ -186,9 +297,32 @@ const server = serveDashboard(queue, { port: 8787 });
 ```
 
 It serves the SPA plus the `/api/*` REST contract (stats, jobs, dead-letters,
-queues, metrics, workers, webhooks, cancel/retry/pause/resume) over the queue.
-Auth runs open (localhost); the metrics and workers panels populate from live
-job history and running workers.
+queues, metrics, workers, webhooks, workflow runs, cancel/retry/pause/resume)
+over the queue. Auth runs open (localhost); the metrics and workers panels
+populate from live job history and running workers.
+
+## Mesh (work-stealing overlay)
+
+Workers can form a decentralized mesh — SWIM gossip for peer discovery plus
+consistent-hash placement and TCP work-stealing — so idle nodes pull work from
+busy ones. The database stays the source of truth; the mesh only optimizes
+dispatch locality. Requires the addon built with the `mesh` cargo feature
+(`build:native` enables it).
+
+```ts
+queue.runWorker({
+  queues: ["default"],
+  mesh: {
+    port: 7946,                       // UDP gossip; TCP steal binds port + 1
+    seeds: ["10.0.0.2:7946"],         // peers to join (empty = standalone)
+    steal: true,
+    encryptionKey: process.env.MESH_KEY, // optional XOR-encrypt gossip
+  },
+});
+```
+
+Other tunables: `bindAddr`, `advertiseAddr` (NAT), `affinityWeight`,
+`localBuffer`, `stealBatch`, `stealThreshold`, `virtualNodes`, `stealRateLimit`.
 
 ## Development
 
@@ -206,6 +340,7 @@ compiled in via `--features postgres,redis`.
 
 ## Not yet covered
 
-Workflows, mesh, middleware/events, distributed locks, periodic/cron tasks,
-prebuilt platform binaries + npm publish (host-only build for now), and
-Python⇄Node cross-language interop.
+Advanced workflow features (gates, sub-workflows, saga compensation — fan-out is
+covered above), resources/proxies/interception, contrib integrations, prebuilt
+platform binaries + npm publish (host-only build for now), and Python⇄Node
+cross-language interop.

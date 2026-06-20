@@ -1,4 +1,7 @@
+import type { CircuitBreakerInput, MeshWorkerConfig } from "./native";
+
 export type {
+  CircuitBreakerInput as CircuitBreakerOptions,
   EnqueueOptions,
   JobFilter,
   JsDeadJob as DeadJob,
@@ -7,6 +10,7 @@ export type {
   JsMetric as Metric,
   JsStats as Stats,
   JsWorkerRow as WorkerInfo,
+  MeshWorkerConfig,
 } from "./native";
 
 /** Options for {@link Queue.result}. */
@@ -47,6 +51,20 @@ export interface TaskOptions {
   maxConcurrent?: number;
   /** Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`. */
   rateLimit?: RateLimit;
+  /** Trip the task's circuit breaker after repeated failures. */
+  circuitBreaker?: CircuitBreakerInput;
+}
+
+/** Options for {@link Queue.registerPeriodic}. */
+export interface PeriodicOptions {
+  /** Positional args passed to the task each time it fires. */
+  args?: unknown[];
+  /** Queue the periodic job runs on (default `"default"`). */
+  queue?: string;
+  /** IANA timezone for the cron schedule (default UTC). */
+  timezone?: string;
+  /** Register disabled (won't fire until re-registered enabled). Default true. */
+  enabled?: boolean;
 }
 
 /** Per-queue resilience config. */
@@ -69,4 +87,15 @@ export interface WorkerRunOptions {
   channelCapacity?: number;
   /** Jobs claimed per scheduler poll (default 1). */
   batchSize?: number;
+  /**
+   * Opt-in decentralized mesh overlay (peer gossip + work-stealing). Requires
+   * the native addon to be built with the `mesh` cargo feature; ignored otherwise.
+   */
+  mesh?: MeshWorkerConfig;
+  /**
+   * Advance workflow runs as this worker's node-jobs settle (default true when
+   * the addon supports workflows). Adds one job lookup per terminal job; set
+   * false on workers that never process workflow steps.
+   */
+  advanceWorkflows?: boolean;
 }
