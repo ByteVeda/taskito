@@ -8,15 +8,17 @@ import { StaticAssets } from "./static";
 /** Build (but do not start) the dashboard server over `queue`, serving the SPA from `staticDir`. */
 export function createDashboardServer(queue: Queue, staticDir: string): Server {
   const assets = new StaticAssets(staticDir);
-  return createServer((req, res) => dispatch(queue, assets, req, res));
+  return createServer((req, res) => {
+    void dispatch(queue, assets, req, res);
+  });
 }
 
-function dispatch(
+async function dispatch(
   queue: Queue,
   assets: StaticAssets,
   req: IncomingMessage,
   res: ServerResponse,
-): void {
+): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
 
@@ -37,16 +39,17 @@ function dispatch(
       continue;
     }
     const params = match.slice(1).map((value) => decodeURIComponent(value ?? ""));
+    const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
     try {
-      const body = route.handle(queue, url, params);
-      if (body === undefined) {
+      const result = await route.handle(queue, url, params, body);
+      if (result === undefined) {
         sendJson(res, 404, { error: "not found" });
         return;
       }
       if (path === "/api/auth/whoami") {
         setAuthCookies(res);
       }
-      sendJson(res, 200, body);
+      sendJson(res, 200, result);
     } catch (error) {
       sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
     }
@@ -54,6 +57,27 @@ function dispatch(
   }
 
   sendJson(res, 404, { error: "not found" });
+}
+
+/** Read and JSON-parse a request body (undefined when empty or invalid). */
+function readBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+    });
+    req.on("end", () => {
+      if (!data) {
+        resolve(undefined);
+        return;
+      }
+      try {
+        resolve(JSON.parse(data));
+      } catch {
+        resolve(undefined);
+      }
+    });
+  });
 }
 
 /** Open-mode session/CSRF cookies so the SPA proceeds without a login. */

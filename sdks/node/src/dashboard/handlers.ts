@@ -1,8 +1,11 @@
 // JSON API handlers over a Queue, returning the SPA's snake_case contract.
 // `undefined` from a handler means 404.
 
+import { randomBytes } from "node:crypto";
+import type { EventName } from "../events";
 import type { Queue } from "../index";
-import { deadToContract, jobToContract, workerToContract } from "./contract";
+import type { WebhookInput } from "../webhooks";
+import { deadToContract, jobToContract, webhookToContract, workerToContract } from "./contract";
 import { aggregateByTask, bucketTimeseries } from "./metrics";
 
 function num(url: URL, key: string): number | undefined {
@@ -65,6 +68,72 @@ export function timeseries(queue: Queue, url: URL) {
 
 export function workers(queue: Queue) {
   return queue.listWorkers().map(workerToContract);
+}
+
+export function eventTypes(queue: Queue) {
+  return queue.webhooks.eventTypes();
+}
+
+export function webhooks(queue: Queue) {
+  return queue.webhooks.list().map(webhookToContract);
+}
+
+export function webhook(queue: Queue, id: string) {
+  const found = queue.webhooks.get(id);
+  return found ? webhookToContract(found) : undefined;
+}
+
+export function createWebhook(queue: Queue, body: unknown) {
+  const input = parseWebhookInput(body);
+  const created = queue.webhooks.create({ ...input, url: input.url ?? "" });
+  // The secret is returned exactly once, on creation.
+  return { ...webhookToContract(created), secret: created.secret ?? null };
+}
+
+export function updateWebhook(queue: Queue, id: string, body: unknown) {
+  const updated = queue.webhooks.update(id, parseWebhookInput(body));
+  return updated ? webhookToContract(updated) : undefined;
+}
+
+export function deleteWebhook(queue: Queue, id: string) {
+  return { deleted: queue.webhooks.delete(id) };
+}
+
+export async function testWebhook(queue: Queue, id: string) {
+  const delivery = await queue.webhooks.test(id);
+  return delivery ? { status: delivery.status, delivered: delivery.ok } : undefined;
+}
+
+export function webhookDeliveries(queue: Queue, id: string) {
+  return queue.webhooks.deliveries(id).map((delivery) => ({
+    id: delivery.id,
+    subscription_id: delivery.webhookId,
+    event: delivery.event,
+    status: delivery.status,
+    ok: delivery.ok,
+    attempts: delivery.attempts,
+    error: delivery.error ?? null,
+    at: delivery.at,
+  }));
+}
+
+/** Parse a snake_case webhook request body into a {@link WebhookInput}. */
+function parseWebhookInput(body: unknown): Partial<WebhookInput> {
+  const raw = (body ?? {}) as Record<string, unknown>;
+  const input: Partial<WebhookInput> = {};
+  if (typeof raw.url === "string") input.url = raw.url;
+  if (Array.isArray(raw.events)) input.events = raw.events as EventName[];
+  if (typeof raw.secret === "string") input.secret = raw.secret;
+  if (raw.generate_secret === true) input.secret = randomBytes(24).toString("hex");
+  if (raw.headers && typeof raw.headers === "object") {
+    input.headers = raw.headers as Record<string, string>;
+  }
+  if (Array.isArray(raw.task_filter)) input.taskFilter = raw.task_filter as string[];
+  if (typeof raw.description === "string") input.description = raw.description;
+  if (typeof raw.enabled === "boolean") input.enabled = raw.enabled;
+  if (typeof raw.max_retries === "number") input.maxRetries = raw.max_retries;
+  if (typeof raw.timeout_seconds === "number") input.timeoutMs = raw.timeout_seconds * 1000;
+  return input;
 }
 
 // Open-mode auth (no login): the minimal boot responses the SPA needs.

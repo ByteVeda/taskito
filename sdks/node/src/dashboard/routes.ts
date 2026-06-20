@@ -4,7 +4,7 @@ import * as h from "./handlers";
 export interface Route {
   method: string;
   pattern: RegExp;
-  handle: (queue: Queue, url: URL, params: string[]) => unknown;
+  handle: (queue: Queue, url: URL, params: string[], body: unknown) => unknown | Promise<unknown>;
 }
 
 const id = (params: string[]): string => params[0] ?? "";
@@ -45,5 +45,37 @@ export const routes: Route[] = [
     method: "POST",
     pattern: /^\/api\/queues\/([^/]+)\/resume$/,
     handle: (q, _url, p) => h.resume(q, id(p)),
+  },
+  { method: "GET", pattern: /^\/api\/event-types$/, handle: (q) => h.eventTypes(q) },
+  { method: "GET", pattern: /^\/api\/webhooks$/, handle: (q) => h.webhooks(q) },
+  {
+    method: "POST",
+    pattern: /^\/api\/webhooks$/,
+    handle: (q, _url, _p, body) => h.createWebhook(q, body),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/webhooks\/([^/]+)\/test$/,
+    handle: (q, _url, p) => h.testWebhook(q, id(p)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/webhooks\/([^/]+)\/deliveries$/,
+    handle: (q, _url, p) => h.webhookDeliveries(q, id(p)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/webhooks\/([^/]+)$/,
+    handle: (q, _url, p) => h.webhook(q, id(p)),
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/webhooks\/([^/]+)$/,
+    handle: (q, _url, p, body) => h.updateWebhook(q, id(p), body),
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/webhooks\/([^/]+)$/,
+    handle: (q, _url, p) => h.deleteWebhook(q, id(p)),
   },
 ];

@@ -2,6 +2,26 @@
 // (`dashboard/`) expects. Timestamps are Unix milliseconds throughout.
 
 import type { DeadJob, Job, WorkerInfo } from "../types";
+import type { Webhook } from "../webhooks";
+
+/** Map a webhook to the SPA contract — the secret is never exposed here. */
+export function webhookToContract(webhook: Webhook) {
+  return {
+    id: webhook.id,
+    url: webhook.url,
+    events: webhook.events,
+    task_filter: webhook.taskFilter ?? null,
+    headers: webhook.headers,
+    has_secret: Boolean(webhook.secret),
+    max_retries: webhook.maxRetries,
+    timeout_seconds: webhook.timeoutMs / 1000,
+    retry_backoff: 2.0,
+    enabled: webhook.enabled,
+    description: webhook.description ?? null,
+    created_at: webhook.createdAt,
+    updated_at: webhook.updatedAt,
+  };
+}
 
 export function jobToContract(job: Job) {
   return {
