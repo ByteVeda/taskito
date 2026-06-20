@@ -124,6 +124,30 @@ taskito run ./app.js --queues default,emails
 
 `--json` on any read command prints machine-readable output.
 
+## Dashboard
+
+A web dashboard (the same React UI the Python SDK serves) runs over the queue —
+no Python required. Build the SPA assets once, then serve:
+
+```bash
+pnpm build:dashboard          # builds the SPA into static/dashboard (one-time)
+taskito --db taskito.db dashboard --port 8787
+```
+
+Or programmatically:
+
+```ts
+import { Queue, serveDashboard } from "taskito";
+
+const queue = new Queue({ dbPath: "taskito.db" });
+const server = serveDashboard(queue, { port: 8787 });
+// ... server.close() to stop
+```
+
+It serves the SPA plus the `/api/*` REST contract (stats, jobs, dead-letters,
+queues, cancel/retry/pause/resume) over the queue. Auth runs open (localhost);
+metrics and workers panels are empty until those are wired up.
+
 ## Development
 
 ```bash
