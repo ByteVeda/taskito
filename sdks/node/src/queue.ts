@@ -4,6 +4,7 @@ import type { Middleware } from "./middleware";
 import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
 import { JsonSerializer, type Serializer } from "./serializers";
 import type {
+  AnyHandler,
   DeadJob,
   EnqueueOptions,
   Job,
@@ -14,7 +15,7 @@ import type {
   RegisteredTask,
   ResultOptions,
   Stats,
-  TaskHandler,
+  TaskMap,
   TaskOptions,
   WorkerInfo,
   WorkerRunOptions,
@@ -45,7 +46,7 @@ export interface QueueOptions {
  * A Taskito queue: register tasks, enqueue work, read results, and run workers.
  * Backed by the Rust core over SQLite, Postgres, or Redis.
  */
-export class Queue {
+export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly native: NativeQueue;
   private readonly serializer: Serializer;
   private readonly tasks = new Map<string, RegisteredTask>();
@@ -58,9 +59,17 @@ export class Queue {
     this.serializer = options.serializer ?? new JsonSerializer();
   }
 
-  /** Register a task handler under `name`, with optional per-task config. */
-  task(name: string, handler: TaskHandler, options?: TaskOptions): void {
+  /**
+   * Register a task handler under `name`. Chain calls to build a typed registry —
+   * {@link Queue.enqueue} then infers each task's argument types.
+   */
+  task<Name extends string, Handler extends AnyHandler>(
+    name: Name,
+    handler: Handler,
+    options?: TaskOptions,
+  ): Queue<TTasks & Record<Name, Handler>> {
     this.tasks.set(name, { handler, options });
+    return this as unknown as Queue<TTasks & Record<Name, Handler>>;
   }
 
   /** Set per-queue concurrency / rate-limit applied when a worker runs. */
@@ -83,15 +92,19 @@ export class Queue {
     this.emitter.off(event, handler);
   }
 
-  /** Enqueue `name` with positional `args`. Returns the new job id. */
-  enqueue(name: string, args: unknown[] = [], options?: EnqueueOptions): string {
+  /** Enqueue `name` with positional `args` (typed per the registered task). Returns the job id. */
+  enqueue<Name extends keyof TTasks & string>(
+    name: Name,
+    args?: Parameters<TTasks[Name]>,
+    options?: EnqueueOptions,
+  ): string {
     const defaults = this.tasks.get(name)?.options;
     const merged: EnqueueOptions = {
       ...options,
       maxRetries: options?.maxRetries ?? defaults?.maxRetries,
       timeoutMs: options?.timeoutMs ?? defaults?.timeoutMs,
     };
-    const payload = Buffer.from(this.serializer.serialize(args));
+    const payload = Buffer.from(this.serializer.serialize(args ?? []));
     return this.native.enqueue(name, payload, merged);
   }
 

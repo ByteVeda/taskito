@@ -11,6 +11,7 @@ export type { Middleware, TaskContext } from "./middleware";
 export { Queue, type QueueOptions } from "./queue";
 export { JsonSerializer, MsgpackSerializer, type Serializer } from "./serializers";
 export type {
+  AnyHandler,
   DeadJob,
   EnqueueOptions,
   Job,
@@ -18,9 +19,11 @@ export type {
   JobFilter,
   Metric,
   QueueLimits,
+  RateLimit,
   ResultOptions,
   Stats,
   TaskHandler,
+  TaskMap,
   TaskOptions,
   WorkerInfo,
   WorkerRunOptions,
