@@ -141,7 +141,9 @@ fn spawn_worker_lifecycle(
     let worker_id = format!("node-{}", uuid::Uuid::now_v7());
     let hostname = gethostname::gethostname().to_string_lossy().to_string();
     let pid = std::process::id() as i32;
-    let _ = storage.register_worker(
+    // Log lifecycle failures: a worker that can't register/heartbeat goes
+    // invisible or stale in the dashboard, and a silent error hides that.
+    if let Err(err) = storage.register_worker(
         &worker_id,
         &queues_csv,
         None,
@@ -151,17 +153,23 @@ fn spawn_worker_lifecycle(
         Some(&hostname),
         Some(pid),
         Some("node"),
-    );
+    ) {
+        log::warn!("[taskito-node] worker registration failed: {err}");
+    }
 
     spawn(async move {
         loop {
             tokio::select! {
                 _ = stop.notified() => break,
                 _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {
-                    let _ = storage.heartbeat(&worker_id, None);
+                    if let Err(err) = storage.heartbeat(&worker_id, None) {
+                        log::warn!("[taskito-node] worker heartbeat failed: {err}");
+                    }
                 }
             }
         }
-        let _ = storage.unregister_worker(&worker_id);
+        if let Err(err) = storage.unregister_worker(&worker_id) {
+            log::warn!("[taskito-node] worker unregister failed: {err}");
+        }
     });
 }
