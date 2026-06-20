@@ -9,6 +9,7 @@ export default defineConfig({
     "contrib/express": "src/contrib/express.ts",
     "contrib/fastify": "src/contrib/fastify.ts",
     "contrib/nest": "src/contrib/nest.ts",
+    "contrib/sentry": "src/contrib/sentry.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

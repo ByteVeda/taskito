@@ -44,6 +44,11 @@
       "types": "./dist/contrib/nest.d.ts",
       "import": "./dist/contrib/nest.js",
       "require": "./dist/contrib/nest.cjs"
+    },
+    "./contrib/sentry": {
+      "types": "./dist/contrib/sentry.d.ts",
+      "import": "./dist/contrib/sentry.js",
+      "require": "./dist/contrib/sentry.cjs"
     }
   },
   "files": [
@@ -89,6 +94,7 @@
     "@nestjs/core": "^11.1.27",
     "@nestjs/testing": "^11.1.27",
     "@opentelemetry/api": "^1.9.1",
+    "@sentry/node": "^10.58.0",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.2",
     "express": "^5.2.1",
@@ -107,6 +113,7 @@
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",
     "@opentelemetry/api": "^1.9.0",
+    "@sentry/node": "^8.0.0 || ^9.0.0 || ^10.0.0",
     "express": "^4.18.0 || ^5.0.0",
     "fastify": "^4.0.0 || ^5.0.0",
     "prom-client": "^15.0.0",
@@ -117,6 +124,9 @@
       "optional": true
     },
     "@opentelemetry/api": {
+      "optional": true
+    },
+    "@sentry/node": {
       "optional": true
     },
     "express": {
