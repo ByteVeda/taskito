@@ -85,7 +85,11 @@ export class Worker {
         return Buffer.from(serializer.serialize(result));
       } catch (error) {
         for (const mw of middleware) {
-          await mw.onError?.(ctx, error);
+          try {
+            await mw.onError?.(ctx, error);
+          } catch {
+            // onError hooks must not mask the original task failure.
+          }
         }
         throw error;
       } finally {
