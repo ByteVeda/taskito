@@ -1,4 +1,4 @@
-export type { EnqueueOptions, JsJob as Job, WorkerOptions } from "./native.js";
+export type { EnqueueOptions, JsJob as Job, WorkerOptions } from "./native";
 
 /**
  * A registered task: receives the deserialized positional args and returns a

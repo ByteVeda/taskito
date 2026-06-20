@@ -1,7 +1,7 @@
-import { JsQueue, type NativeQueue } from "./native.js";
-import { JsonSerializer, type Serializer } from "./serializer.js";
-import type { EnqueueOptions, Job, TaskHandler, WorkerOptions } from "./types.js";
-import { Worker } from "./worker.js";
+import { JsQueue, type NativeQueue } from "./native";
+import { JsonSerializer, type Serializer } from "./serializers";
+import type { EnqueueOptions, Job, TaskHandler, WorkerOptions } from "./types";
+import { Worker } from "./worker";
 
 /** Construction options for a {@link Queue}. */
 export interface QueueOptions {

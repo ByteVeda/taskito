@@ -8,12 +8,14 @@
   "engines": {
     "node": ">=18"
   },
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     }
   },
   "files": [
@@ -43,7 +45,7 @@
   "scripts": {
     "build": "pnpm run build:native && pnpm run build:ts",
     "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node native",
-    "build:ts": "tsc -p tsconfig.json",
+    "build:ts": "tsup",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src test",
     "format": "biome format --write src test",
@@ -53,6 +55,7 @@
     "@biomejs/biome": "^2.4.16",
     "@napi-rs/cli": "^2.18.4",
     "@types/node": "^25.9.2",
+    "tsup": "^8.5.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }

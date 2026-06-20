@@ -1,7 +1,7 @@
-import { TaskNotRegisteredError } from "./errors.js";
-import type { JsTaskInvocation, NativeQueue, NativeWorker } from "./native.js";
-import type { Serializer } from "./serializer.js";
-import type { TaskHandler, WorkerOptions } from "./types.js";
+import { TaskNotRegisteredError } from "./errors";
+import type { JsTaskInvocation, NativeQueue, NativeWorker } from "./native";
+import type { Serializer } from "./serializers";
+import type { TaskHandler, WorkerOptions } from "./types";
 
 /** A running worker. Hold it for the worker's lifetime; call {@link Worker.stop}. */
 export class Worker {

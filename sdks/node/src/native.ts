@@ -1,10 +1,13 @@
 // Typed loader for the napi-rs binding. The generated `native/index.js` is
-// CommonJS (see native/package.json), so it is loaded via createRequire rather
-// than a static import.
+// CommonJS (see native/package.json). The path is computed at runtime so the
+// bundler leaves the addon external (it is shipped alongside dist/, not inlined),
+// and `import.meta.url` is shimmed in the CJS build by tsup.
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const binding = require("../native/index.js") as typeof import("../native/index.js");
+const bindingPath = fileURLToPath(new URL("../native/index.js", import.meta.url));
+const binding = require(bindingPath) as typeof import("../native/index");
 
 export const { JsQueue, JsWorker } = binding;
 
@@ -12,9 +15,4 @@ export const { JsQueue, JsWorker } = binding;
 export type NativeQueue = InstanceType<typeof JsQueue>;
 export type NativeWorker = InstanceType<typeof JsWorker>;
 
-export type {
-  EnqueueOptions,
-  JsJob,
-  JsTaskInvocation,
-  WorkerOptions,
-} from "../native/index.js";
+export type { EnqueueOptions, JsJob, JsTaskInvocation, WorkerOptions } from "../native/index";
