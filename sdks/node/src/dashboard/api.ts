@@ -4,7 +4,12 @@ import type { Queue } from "../index";
 
 function numParam(query: URLSearchParams, key: string): number | undefined {
   const value = query.get(key);
-  return value === null ? undefined : Number(value);
+  if (value === null) {
+    return undefined;
+  }
+  const num = Number(value);
+  // Drop NaN/negative so they never reach the backend as bogus limit/offset.
+  return Number.isFinite(num) && num >= 0 ? num : undefined;
 }
 
 export function getStats(queue: Queue) {

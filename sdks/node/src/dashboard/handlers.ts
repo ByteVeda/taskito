@@ -8,9 +8,23 @@ import type { WebhookInput } from "../webhooks";
 import { deadToContract, jobToContract, webhookToContract, workerToContract } from "./contract";
 import { aggregateByTask, bucketTimeseries } from "./metrics";
 
+/** Finite, non-negative number from a query string, or `undefined`. */
 function num(url: URL, key: string): number | undefined {
-  const value = url.searchParams.get(key);
-  return value === null ? undefined : Number(value);
+  return toNonNegative(url.searchParams.get(key));
+}
+
+function toNonNegative(value: string | null | undefined): number | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/** Positive number from a query string, falling back to `fallback` when invalid. */
+function positiveOr(value: string | null, fallback: number): number {
+  const parsed = value === null ? Number.NaN : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function stats(queue: Queue) {
@@ -39,8 +53,8 @@ export function jobs(queue: Queue, url: URL) {
       status: sp.get("status") ?? undefined,
       queue: sp.get("queue") ?? undefined,
       task: sp.get("task") ?? undefined,
-      limit: limit !== undefined ? Number(limit) : undefined,
-      offset: offset !== undefined ? Number(offset) : undefined,
+      limit: toNonNegative(limit),
+      offset: toNonNegative(offset),
     })
     .map(jobToContract);
 }
@@ -55,14 +69,14 @@ export function deadLetters(queue: Queue, url: URL) {
 }
 
 export function metrics(queue: Queue, url: URL) {
-  const since = Number(url.searchParams.get("since") ?? 3600);
+  const since = positiveOr(url.searchParams.get("since"), 3600);
   const task = url.searchParams.get("task") ?? undefined;
   return aggregateByTask(queue.getMetrics(Date.now() - since * 1000, task));
 }
 
 export function timeseries(queue: Queue, url: URL) {
-  const since = Number(url.searchParams.get("since") ?? 3600);
-  const bucket = Number(url.searchParams.get("bucket") ?? 60);
+  const since = positiveOr(url.searchParams.get("since"), 3600);
+  const bucket = positiveOr(url.searchParams.get("bucket"), 60);
   return bucketTimeseries(queue.getMetrics(Date.now() - since * 1000, undefined), bucket * 1000);
 }
 
@@ -84,8 +98,8 @@ export function webhook(queue: Queue, id: string) {
 }
 
 export function createWebhook(queue: Queue, body: unknown) {
-  const input = parseWebhookInput(body);
-  const created = queue.webhooks.create({ ...input, url: input.url ?? "" });
+  // `url` presence + validity is enforced in the manager (throws → 400).
+  const created = queue.webhooks.create(parseWebhookInput(body) as WebhookInput);
   // The secret is returned exactly once, on creation.
   return { ...webhookToContract(created), secret: created.secret ?? null };
 }
