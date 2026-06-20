@@ -158,7 +158,11 @@ export class PrometheusStatsCollector {
     const namespace = options.namespace ?? "taskito";
     const register = options.register ?? defaultRegister;
     this.metrics = getMetrics(register, namespace);
-    this.intervalMs = options.intervalMs ?? 10_000;
+    const intervalMs = options.intervalMs ?? 10_000;
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      throw new RangeError(`intervalMs must be a positive finite number, got ${intervalMs}`);
+    }
+    this.intervalMs = intervalMs;
   }
 
   /** Begin polling. Sampling runs immediately, then every `intervalMs`. */
