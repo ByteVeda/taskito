@@ -3,6 +3,7 @@
   "pages": [
     "capabilities",
     "getting-started",
+    "node",
     "guides",
     "architecture",
     "api-reference",

@@ -1,0 +1,171 @@
+---
+title: Fan-Out & Fan-In
+description: "Split a step's result into parallel children, collect results into a downstream step."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Split a step's result into parallel child jobs, then collect all results into
+a downstream step.
+
+<Mermaid
+  chart={`graph LR
+    fetch:::source --> process_0["process[0]"]
+    fetch --> process_1["process[1]"]
+    fetch --> process_2["process[2]"]
+    process_0 --> aggregate:::sink
+    process_1 --> aggregate
+    process_2 --> aggregate
+
+    classDef source fill:#bbf7d0,color:#14532d,stroke:#16a34a
+    classDef sink fill:#bfdbfe,color:#1e3a8a,stroke:#3b82f6`}
+/>
+
+## Basic fan-out and fan-in
+
+Use `.fanOut()` to expand a predecessor's array result into one child job per
+item, and `.fanIn()` to collect the children's results into a combiner task.
+
+```ts
+queue.task("listFiles", () => ["a.csv", "b.csv", "c.csv"]); // returns the items array
+queue.task("processFile", (file: string) => file.length);   // runs once per item
+queue.task("summarize", (sizes: number[]) => sizes.reduce((a, b) => a + b, 0));
+
+const handle = queue.workflows
+  .define("batch")
+  .step("list", "listFiles")
+  .fanOut("process", { after: "list", task: "processFile", itemsFrom: "list" })
+  .fanIn("collect", { after: "process", task: "summarize" })
+  .submit();
+
+queue.runWorker(); // advances workflow nodes by default
+
+const run = await handle.wait();
+console.log(run.state); // "completed"
+```
+
+`itemsFrom` names the predecessor whose result is the item array. It defaults
+to the sole predecessor when omitted. Each item is passed to the child task as
+its single positional argument.
+
+Child nodes are named `process[0]`, `process[1]`, `process[2]` and appear in
+status queries. The parent node carries `fanOutCount` (the number of children
+spawned).
+
+```ts
+const nodes = handle.nodes();
+// nodes.find(n => n.nodeName === "process")?.fanOutCount === 3
+// nodes.find(n => n.nodeName === "process[0]")?.status  === "completed"
+```
+
+## How it works
+
+1. `list` completes — the tracker reads its return value (must be an array)
+2. The tracker calls `expandFanOut`, creating N child nodes and N jobs — each
+   receives one item from the array; children are ready immediately (no
+   `depends_on`)
+3. Children execute in parallel; their statuses surface as `process[0]`,
+   `process[1]`, …
+4. As each child settles, the tracker calls `checkFanOutCompletion`
+5. When all children complete, the tracker collects results in index order and
+   calls `createDeferredJob` for the fan-in step
+6. `summarize` runs with the results array as its single argument
+
+<Mermaid
+  chart={`sequenceDiagram
+    participant L as list job
+    participant T as WorkflowTracker
+    participant R as Rust Engine
+
+    L->>T: outcome(list, success)
+    T->>R: getWorkflowRunPlan(runId)
+    T->>R: expandFanOut(3 children)
+    R-->>T: [childJobIds]
+    Note over R: Children execute in parallel
+    R->>T: outcome(process[0], success)
+    R->>T: outcome(process[1], success)
+    R->>T: outcome(process[2], success)
+    T->>R: checkFanOutCompletion → all done
+    T->>R: createDeferredJob(collect)`}
+/>
+
+The `WorkflowTracker` is driven entirely by the worker outcome stream and
+reconstructs the run plan from storage on each event, so submission and
+execution may run in different processes — no submit-time coordinator is needed.
+
+## Empty fan-out
+
+If the predecessor returns an empty array, the fan-out parent is marked
+completed immediately with `fanOutCount` 0 and the fan-in runs with `[]`:
+
+```ts
+queue.task("listFiles", () => []);     // nothing to process
+queue.task("summarize", (sizes: number[]) => sizes.reduce((a, b) => a + b, 0));
+
+const handle = queue.workflows
+  .define("batch")
+  .step("list", "listFiles")
+  .fanOut("process", { after: "list", task: "processFile" })
+  .fanIn("collect", { after: "process", task: "summarize" })
+  .submit();
+
+// summarize receives [] → result is 0
+```
+
+## Downstream steps
+
+Steps after the fan-in work normally — declare them with `after` pointing to
+the fan-in node:
+
+```ts
+queue.task("notify", (total: number) => sendSlack(`Processed ${total} bytes`));
+
+const handle = queue.workflows
+  .define("full-pipeline")
+  .step("list", "listFiles")
+  .fanOut("process", { after: "list", task: "processFile", itemsFrom: "list" })
+  .fanIn("collect", { after: "process", task: "summarize" })
+  .step("notify", "notify", { after: "collect" }) // runs after summarize
+  .submit();
+```
+
+## Per-step options
+
+`.fanOut()` accepts the same per-step options as `.step()`:
+
+| Option | Description |
+|--------|-------------|
+| `after` | Predecessor node name (required) |
+| `task` | Registered task name for each child (required) |
+| `itemsFrom` | Node whose result is the items array (defaults to `after`) |
+| `queue` | Queue name to run children on |
+| `maxRetries` | Retry limit for each child |
+| `timeoutMs` | Timeout for each child |
+| `priority` | Priority for each child |
+
+Children and the combiner each inherit the fan-out step's `queue`, `maxRetries`,
+`timeoutMs`, and `priority` unless overridden.
+
+## Failure handling
+
+Fan-out is **fail-fast**: if any child dead-letters:
+
+- Remaining pending children are cancelled
+- The fan-out parent is marked `failed`
+- The fan-in and downstream steps are `skipped`
+- The workflow run transitions to `failed`
+
+```ts
+const run = await handle.wait();
+if (run.state === "failed") {
+  const failed = handle.nodes().filter(n => n.status === "failed");
+  console.error("failed nodes:", failed.map(n => n.nodeName));
+}
+```
+
+<Callout type="info">
+  Gates, sub-workflows, and saga compensation are not yet available in the Node
+  SDK. For those, use the Python SDK — see [gates](/guides/workflows/gates),
+  [composition](/guides/workflows/composition), and
+  [sagas](/guides/workflows/sagas).
+</Callout>
