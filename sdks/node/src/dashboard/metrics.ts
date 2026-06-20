@@ -35,7 +35,9 @@ function pct(sorted: number[], p: number): number {
   if (sorted.length === 0) {
     return 0;
   }
-  const index = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  // Nearest-rank: ceil(p/100 * n) - 1, clamped into [0, n-1].
+  const rank = Math.ceil((p / 100) * sorted.length) - 1;
+  const index = Math.min(sorted.length - 1, Math.max(0, rank));
   return sorted[index] ?? 0;
 }
 
