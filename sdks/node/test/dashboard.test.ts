@@ -73,6 +73,28 @@ it("serves the SPA shell with deep-link fallback", async () => {
   expect((await fetch(`${base}/assets/missing-xyz.js`)).status).toBe(404);
 });
 
+it("creates and lists webhooks via the dashboard api", async () => {
+  const created = (await (
+    await fetch(`${base}/api/webhooks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "http://example.com/h", events: ["job.completed"], secret: "x" }),
+    })
+  ).json()) as { id: string; has_secret: boolean; secret: string | null };
+  expect(created.has_secret).toBe(true);
+  expect(created.secret).toBe("x");
+
+  const list = (await (await fetch(`${base}/api/webhooks`)).json()) as Array<{
+    id: string;
+    secret?: unknown;
+  }>;
+  expect(list.map((w) => w.id)).toContain(created.id);
+  expect(list[0]?.secret).toBeUndefined();
+
+  const eventTypes = (await (await fetch(`${base}/api/event-types`)).json()) as string[];
+  expect(eventTypes).toContain("job.completed");
+});
+
 it("lists a running worker", async () => {
   const db = join(mkdtempSync(join(tmpdir(), "taskito-dash-")), "q.db");
   const queue = new Queue({ dbPath: db });
