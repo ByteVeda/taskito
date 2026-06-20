@@ -1,0 +1,27 @@
+[package]
+name = "taskito-node"
+version = "0.16.3"
+edition = "2021"
+description = "Node.js (napi-rs) bindings for the Taskito task-queue core"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+postgres = ["taskito-core/postgres"]
+redis = ["taskito-core/redis"]
+
+[dependencies]
+taskito-core = { path = "../taskito-core" }
+napi = { version = "2", default-features = false, features = ["napi8", "tokio_rt"] }
+napi-derive = "2"
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }
+async-trait = { workspace = true }
+log = { workspace = true }
+
+[build-dependencies]
+napi-build = "2"
