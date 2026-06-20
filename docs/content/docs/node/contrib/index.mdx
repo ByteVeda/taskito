@@ -14,6 +14,7 @@ subpath import and requires you to install its peer dependency separately.
 # Only install what you use.
 pnpm add @opentelemetry/api          # for taskito/contrib/otel
 pnpm add prom-client                 # for taskito/contrib/prometheus
+pnpm add @sentry/node                # for taskito/contrib/sentry
 pnpm add express                     # for taskito/contrib/express
 pnpm add fastify                     # for taskito/contrib/fastify
 pnpm add @nestjs/common reflect-metadata  # for taskito/contrib/nest
@@ -31,7 +32,7 @@ pnpm add @nestjs/common reflect-metadata  # for taskito/contrib/nest
   <Card
     title="Observability"
     href="/node/contrib/observability"
-    description="OpenTelemetry tracing and Prometheus metrics for every job execution."
+    description="OpenTelemetry tracing, Prometheus metrics, and Sentry error reporting."
   />
   <Card
     title="Web frameworks"

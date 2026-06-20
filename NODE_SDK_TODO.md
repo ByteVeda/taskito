@@ -34,7 +34,7 @@ SDK, zero Python dependency, over the shared Rust core.
 | **Periodic + circuit-breaker** | `a4cc9a4` | `queue.registerPeriodic`; per-task `circuitBreaker` config |
 | **Workflows: fan-out / fan-in** | (this branch) | TS `WorkflowTracker` brain (`src/workflows/tracker.ts`) driven by the outcome callback; `.fanOut()` / `.fanIn()` builder steps; napi primitives `expandFanOut`/`checkFanOutCompletion`/`createDeferredJob`/`finalizeRunIfTerminal`/`getWorkflowRunPlan`/`workflowNodeForJob`/`cascadeSkipPending`; deferred-node submit. Storage-reconstructable (no submit-time registration) |
 | **Dashboard DAG completeness** | (this branch) | `JsWorkflowNode` carries `fanOutCount` + `compensation_*`; `/dag` handler enriches the raw graph with per-node `deps[]` + live `status` + job-id `id` so the SPA visualizer renders edges/colours/links |
-| **Contrib integrations** | (this branch) | `src/contrib/{otel,prometheus,express,fastify,nest}.ts` — each an optional subpath export (`taskito/contrib/*`) with an optional peer dep. OTel + Prometheus = `Middleware` over the events layer; Express/Fastify = REST router (shared `rest.ts` table) + dashboard mount (via extracted `createDashboardHandler`); Nest = `TaskitoModule.forRoot` + injectable `TaskitoService`. 14 new vitest tests |
+| **Contrib integrations** | (this branch) | `src/contrib/{otel,prometheus,express,fastify,nest,sentry}.ts` — each an optional subpath export (`taskito/contrib/*`) with an optional peer dep. OTel + Prometheus + Sentry = `Middleware` over the events layer; Express/Fastify = REST router (shared `rest.ts` table) + dashboard mount (via extracted `createDashboardHandler`); Nest = `TaskitoModule.forRoot` + injectable `TaskitoService`. 17 new vitest tests |
 
 **Verify everything green:**
 ```bash
@@ -69,20 +69,18 @@ context managers) — do **not** port 1:1. Design Node-native equivalents:
 **Effort:** large (design-heavy). **Recommendation:** scope a minimal resource DI
 first (worker-scoped singletons + task-scoped factories); defer proxies entirely.
 
-### 2. Contrib integrations — DONE (Sentry remains)
+### 2. Contrib integrations — DONE
 
-Shipped: OpenTelemetry + Prometheus middleware, Express + Fastify (REST router +
-dashboard mount), and a NestJS module (`src/contrib/{otel,prometheus,express,fastify,nest}.ts`).
-Each is an optional `taskito/contrib/*` subpath export with an optional peer dependency,
-its own tsup entry, and tests. The REST logic is shared via a framework-neutral
-`src/contrib/rest.ts` route table; the dashboard mount reuses
-`createDashboardHandler` (extracted from `dashboard/server.ts`). NestJS uses an
-explicit `@Inject(TASKITO_QUEUE)` token to avoid relying on esbuild decorator-metadata
-emission (`experimentalDecorators` on; biome `unsafeParameterDecoratorsEnabled`).
-
-**Still open:** a **Sentry** integration (Python ships one) — small, a `Middleware`
-that captures exceptions on `onError`/`onDeadLetter` via `@sentry/node`. One more
-commit when wanted.
+Shipped: OpenTelemetry + Prometheus + Sentry middleware, Express + Fastify (REST router +
+dashboard mount), and a NestJS module
+(`src/contrib/{otel,prometheus,sentry,express,fastify,nest}.ts`). Each is an optional
+`taskito/contrib/*` subpath export with an optional peer dependency, its own tsup entry,
+and tests. The REST logic is shared via a framework-neutral `src/contrib/rest.ts` route
+table; the dashboard mount reuses `createDashboardHandler` (extracted from
+`dashboard/server.ts`). NestJS uses an explicit `@Inject(TASKITO_QUEUE)` token to avoid
+relying on esbuild decorator-metadata emission (`experimentalDecorators` on; biome
+`unsafeParameterDecoratorsEnabled`). Sentry captures the real exception from `onError`
+and reports it on dead-letter (one event/dead job), optional per-retry warnings.
 
 ### 3. Advanced workflow features — LARGE (fan-out DONE; gates / sub-workflows / saga remain)
 
@@ -240,7 +238,7 @@ pnpm run build:native      # napi build, all features
 pnpm run build:ts          # tsup dual ESM/CJS + .d.ts
 pnpm typecheck             # tsc --noEmit (includes test/)
 pnpm lint                  # biome
-pnpm test                  # vitest (66 tests)
+pnpm test                  # vitest (69 tests)
 pnpm run build:dashboard   # build the React SPA into static/dashboard
 ```
 
@@ -262,9 +260,13 @@ sdks/node/src/
   webhooks/{store,deliverer,manager,types,index}.ts
   serializers/{serializer,json,msgpack,index}.ts
   dashboard/{server,routes,handlers,contract,static,metrics,api,index}.ts
-  contrib/{otel,prometheus,express,fastify,nest,rest}.ts   # optional subpath exports
+  contrib/{otel,prometheus,sentry,express,fastify,nest,rest}.ts   # optional subpath exports
   cli/{index,connect,output,commands/*}.ts
+<<<<<<< HEAD
 sdks/node/test/*.test.ts        # grouped by feature area
+=======
+sdks/node/test/*.test.ts        # 22 files, 69 tests
+>>>>>>> 9394bcb (docs(node): document Sentry contrib middleware)
 ```
 
 Memory: see `.claude/memory/session-history.md` (Node SDK section) for the running

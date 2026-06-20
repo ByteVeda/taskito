@@ -348,6 +348,16 @@ OTel options: `tracerName`, `attributePrefix`, `spanName(ctx)`, `extraAttributes
 `taskFilter(name)`. Prometheus options: `namespace`, `register`, `taskFilter`, `buckets`
 (metrics for one namespace are built once per registry, so multiple middlewares are safe).
 
+```ts
+import { sentryMiddleware } from "taskito/contrib/sentry"; // peer: @sentry/node
+queue.use(sentryMiddleware()); // call Sentry.init(...) yourself first
+```
+
+The exception (with its stack) is captured from `onError` and reported when the job
+dead-letters — one event per dead job, tagged with task/job/queue. Set `captureRetries`
+to also report each intermediate failure as a warning. Other options: `tagPrefix`,
+`level`, `extraTags(event)`, `taskFilter`.
+
 ### Web frameworks
 
 `taskitoRouter` / the Fastify plugin expose a JSON API (enqueue + inspection); a separate
