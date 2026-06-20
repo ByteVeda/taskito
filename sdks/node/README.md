@@ -145,6 +145,26 @@ Events: `job.completed`, `job.retrying`, `job.dead`, `job.cancelled`. `before`/
 `after`/`onError` wrap execution (awaited); the outcome hooks fire after the core
 decides the result.
 
+## Webhooks
+
+Deliver job events to HTTP endpoints — HMAC-SHA256 signed, retried with backoff,
+persisted across restarts:
+
+```ts
+const hook = queue.webhooks.create({
+  url: "https://hooks.example.com/jobs",
+  events: ["job.dead", "job.completed"], // omit for all
+  secret: process.env.WEBHOOK_SECRET,    // signs X-Taskito-Signature: sha256=...
+  taskFilter: ["send_email"],            // optional
+});
+
+queue.webhooks.list();
+queue.webhooks.delete(hook.id);
+```
+
+Deliveries fire from the worker process (where events originate). The dashboard
+exposes `/api/webhooks` for managing them.
+
 ## Dashboard
 
 A web dashboard (the same React UI the Python SDK serves) runs over the queue —
