@@ -64,7 +64,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../py_src/taskito/static/dashboard",
+    outDir: "../sdks/python/taskito/static/dashboard",
     emptyOutDir: true,
     sourcemap: false,
     target: "es2022",

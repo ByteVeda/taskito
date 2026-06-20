@@ -52,13 +52,13 @@ docs = ["playwright>=1.59"]
 oauth = ["authlib>=1.7,<2", "joserfc>=0.12", "requests>=2.31"]
 
 [tool.maturin]
-manifest-path = "crates/taskito-python/Cargo.toml"
-python-source = "py_src"
+manifest-path = "../../crates/taskito-python/Cargo.toml"
+python-source = "."
 module-name = "taskito._taskito"
 features = ["extension-module", "postgres", "redis", "workflows"]
 include = [
-    { path = "py_src/taskito/static/dashboard/**/*", format = ["wheel", "sdist"] },
-    { path = "py_src/taskito/contrib/django/templates/**/*", format = ["wheel", "sdist"] },
+    { path = "taskito/static/dashboard/**/*", format = ["wheel", "sdist"] },
+    { path = "taskito/contrib/django/templates/**/*", format = ["wheel", "sdist"] },
 ]
 
 [project.scripts]
@@ -88,7 +88,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"py_src/taskito/dashboard.py" = ["E501"]  # embedded HTML/JS strings
+"taskito/dashboard.py" = ["E501"]  # embedded HTML/JS strings
 
 [tool.ruff.lint.isort]
 known-first-party = ["taskito"]
