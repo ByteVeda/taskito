@@ -192,7 +192,8 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Build a cloudpickle-compatible payload from stored args.
+    /// Build a payload from stored args. Opaque to the core — the binding
+    /// (de)serializes it with whatever serializer it chose at enqueue.
     fn build_periodic_payload(args: &Option<Vec<u8>>) -> Vec<u8> {
         match args {
             Some(blob) => blob.clone(),

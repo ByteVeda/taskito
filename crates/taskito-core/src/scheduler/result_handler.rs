@@ -9,7 +9,7 @@ impl Scheduler {
     /// Handle a completed or failed job result from a worker.
     ///
     /// Returns a [`ResultOutcome`] describing the action taken, so the
-    /// caller can dispatch Python-side middleware hooks and events.
+    /// caller (the binding) can dispatch its middleware hooks and events.
     pub fn handle_result(&self, result: JobResult) -> Result<ResultOutcome> {
         match result {
             JobResult::Success {

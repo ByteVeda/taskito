@@ -89,8 +89,8 @@ pub enum JobResult {
     },
 }
 
-/// Outcome of processing a job result, returned to the caller for
-/// Python-side middleware hook dispatch.
+/// Outcome of processing a job result, returned to the caller (the binding)
+/// for its middleware hook dispatch.
 #[derive(Debug, Clone)]
 pub enum ResultOutcome {
     /// Task completed successfully.

@@ -353,7 +353,7 @@ pub fn alter_statements(d: &Dialect) -> Vec<String> {
         // namespace backfill on dead_letter / archived_jobs (after circuit-breaker columns)
         format!("ALTER TABLE dead_letter ADD COLUMN {ife}namespace TEXT"),
         format!("ALTER TABLE archived_jobs ADD COLUMN {ife}namespace TEXT"),
-        // structured notes (≤15 fields, validated at the Python boundary)
+        // structured notes (≤15 fields, validated at the binding boundary)
         format!("ALTER TABLE jobs ADD COLUMN {ife}notes TEXT"),
         format!("ALTER TABLE dead_letter ADD COLUMN {ife}notes TEXT"),
         format!("ALTER TABLE archived_jobs ADD COLUMN {ife}notes TEXT"),
