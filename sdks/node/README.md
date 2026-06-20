@@ -104,6 +104,26 @@ import { Queue, MsgpackSerializer } from "taskito";
 new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 ```
 
+## CLI
+
+A standalone `taskito` command (no Python) operates the queue from the terminal:
+
+```bash
+# Connect with --db <path> (or --backend/--dsn for postgres/redis).
+taskito --db taskito.db enqueue add '[2,3]'
+taskito --db taskito.db stats
+taskito --db taskito.db jobs --status failed
+taskito --db taskito.db dlq list
+taskito --db taskito.db dlq retry <deadId>
+taskito --db taskito.db pause default
+taskito --db taskito.db cancel <jobId>
+
+# Run a worker from a module that exports a configured Queue.
+taskito run ./app.js --queues default,emails
+```
+
+`--json` on any read command prints machine-readable output.
+
 ## Development
 
 ```bash
