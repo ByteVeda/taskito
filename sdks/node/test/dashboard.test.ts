@@ -38,14 +38,17 @@ afterEach(() => {
 });
 
 it("serves queue stats", async () => {
-  const stats = await (await fetch(`${base}/api/stats`)).json();
+  const stats = (await (await fetch(`${base}/api/stats`)).json()) as { pending: number };
   expect(stats.pending).toBe(1);
 });
 
 it("serves jobs in the snake_case SPA contract", async () => {
-  const jobs = await (await fetch(`${base}/api/jobs`)).json();
-  expect(jobs[0].task_name).toBe("add");
-  expect(typeof jobs[0].created_at).toBe("number");
+  const jobs = (await (await fetch(`${base}/api/jobs`)).json()) as Array<{
+    task_name: string;
+    created_at: number;
+  }>;
+  expect(jobs[0]?.task_name).toBe("add");
+  expect(typeof jobs[0]?.created_at).toBe("number");
 });
 
 it("exposes paused queues", async () => {
@@ -54,11 +57,14 @@ it("exposes paused queues", async () => {
 });
 
 it("fakes open-mode auth so the SPA boots", async () => {
-  const status = await (await fetch(`${base}/api/auth/status`)).json();
+  const status = (await (await fetch(`${base}/api/auth/status`)).json()) as {
+    setup_required: boolean;
+  };
   expect(status.setup_required).toBe(false);
   const who = await fetch(`${base}/api/auth/whoami`);
   expect(who.headers.get("set-cookie") ?? "").toMatch(/taskito_csrf/);
-  expect((await who.json()).user.role).toBe("admin");
+  const body = (await who.json()) as { user: { role: string } };
+  expect(body.user.role).toBe("admin");
 });
 
 it("serves the SPA shell with deep-link fallback", async () => {
@@ -77,10 +83,13 @@ it("lists a running worker", async () => {
   const { port } = srv.address() as AddressInfo;
 
   try {
-    const workers = await (await fetch(`http://127.0.0.1:${port}/api/workers`)).json();
+    const workers = (await (await fetch(`http://127.0.0.1:${port}/api/workers`)).json()) as Array<{
+      pool_type: string;
+      worker_id: string;
+    }>;
     expect(workers.length).toBeGreaterThanOrEqual(1);
-    expect(workers[0].pool_type).toBe("node");
-    expect(typeof workers[0].worker_id).toBe("string");
+    expect(workers[0]?.pool_type).toBe("node");
+    expect(typeof workers[0]?.worker_id).toBe("string");
   } finally {
     worker.stop();
     srv.close();
@@ -101,7 +110,9 @@ it("aggregates metrics after a job completes", async () => {
     await queue.result(id);
     let metrics: Record<string, { count: number; success_count: number }> = {};
     for (let i = 0; i < 60 && metrics.add === undefined; i++) {
-      metrics = await (await fetch(`http://127.0.0.1:${port}/api/metrics?since=3600`)).json();
+      metrics = (await (
+        await fetch(`http://127.0.0.1:${port}/api/metrics?since=3600`)
+      ).json()) as Record<string, { count: number; success_count: number }>;
       if (metrics.add === undefined) {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
