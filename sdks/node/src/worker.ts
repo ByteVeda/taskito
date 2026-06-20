@@ -1,6 +1,9 @@
 import { type JobContext, runInContext } from "./context";
 import { TaskNotRegisteredError } from "./errors";
+import type { Emitter, EventName, OutcomeEvent } from "./events";
+import type { Middleware, TaskContext } from "./middleware";
 import type {
+  JsOutcome,
   JsTaskInvocation,
   NativeQueue,
   NativeWorker,
@@ -14,11 +17,21 @@ import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 /** How often a running job polls the storage cancel flag. */
 const CANCEL_POLL_INTERVAL_MS = 200;
 
+/** Outcome kind -> event name + the middleware hook it triggers. */
+const OUTCOMES: Record<string, { event: EventName; hook: keyof Middleware }> = {
+  success: { event: "job.completed", hook: "onCompleted" },
+  retry: { event: "job.retrying", hook: "onRetry" },
+  dead: { event: "job.dead", hook: "onDeadLetter" },
+  cancelled: { event: "job.cancelled", hook: "onCancel" },
+};
+
 /** Inputs assembled by {@link Queue.runWorker}. */
 export interface WorkerStartParams {
   tasks: ReadonlyMap<string, RegisteredTask>;
   queueLimits: ReadonlyMap<string, QueueLimits>;
   serializer: Serializer;
+  middleware: readonly Middleware[];
+  emitter: Emitter;
   run?: WorkerRunOptions;
 }
 
@@ -33,16 +46,17 @@ export class Worker {
    * @internal
    */
   static start(queue: NativeQueue, params: WorkerStartParams): Worker {
-    const { tasks, queueLimits, serializer, run } = params;
-    const callback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
+    const { tasks, queueLimits, serializer, middleware, emitter, run } = params;
+
+    const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
       const task = tasks.get(invocation.taskName);
       if (!task) {
         throw new TaskNotRegisteredError(invocation.taskName);
       }
       const args = serializer.deserialize(invocation.payload) as unknown[];
+      const ctx: TaskContext = { jobId: invocation.id, taskName: invocation.taskName, args };
 
-      // Drive a cooperative cancel signal from the storage flag, and expose the
-      // job context (id, signal, progress) to the handler.
+      // Cooperative cancel signal + job context exposed to the handler.
       const controller = new AbortController();
       const context: JobContext = {
         jobId: invocation.id,
@@ -61,10 +75,49 @@ export class Worker {
       poller.unref();
 
       try {
+        for (const mw of middleware) {
+          await mw.before?.(ctx);
+        }
         const result = await runInContext(context, () => task.handler(...args));
+        for (const mw of middleware) {
+          await mw.after?.(ctx, result);
+        }
         return Buffer.from(serializer.serialize(result));
+      } catch (error) {
+        for (const mw of middleware) {
+          try {
+            await mw.onError?.(ctx, error);
+          } catch {
+            // onError hooks must not mask the original task failure.
+          }
+        }
+        throw error;
       } finally {
         clearInterval(poller);
+      }
+    };
+
+    const outcomeCallback = (outcome: JsOutcome): void => {
+      const mapping = OUTCOMES[outcome.kind];
+      if (!mapping) {
+        return;
+      }
+      const event: OutcomeEvent = {
+        jobId: outcome.jobId,
+        taskName: outcome.taskName,
+        queue: outcome.queue ?? undefined,
+        error: outcome.error ?? undefined,
+        retryCount: outcome.retryCount ?? undefined,
+        timedOut: outcome.timedOut ?? undefined,
+      };
+      emitter.emit(mapping.event, event);
+      for (const mw of middleware) {
+        const hook = mw[mapping.hook] as ((e: OutcomeEvent) => void) | undefined;
+        try {
+          hook?.(event);
+        } catch {
+          // outcome hook errors must not break the worker
+        }
       }
     };
 
@@ -75,7 +128,7 @@ export class Worker {
       taskConfigs: buildTaskConfigs(tasks),
       queueConfigs: buildQueueConfigs(queueLimits),
     };
-    return new Worker(queue.runWorker(callback, nativeOptions));
+    return new Worker(queue.runWorker(taskCallback, outcomeCallback, nativeOptions));
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */

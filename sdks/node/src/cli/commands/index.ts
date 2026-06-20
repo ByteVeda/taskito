@@ -1,4 +1,5 @@
 export { registerCancel } from "./cancel";
+export { registerDashboard } from "./dashboard";
 export { registerDlq } from "./dlq";
 export { registerEnqueue } from "./enqueue";
 export { registerJobs } from "./jobs";

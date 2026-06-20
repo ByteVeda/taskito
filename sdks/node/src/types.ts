@@ -6,6 +6,7 @@ export type {
   JsJobError as JobError,
   JsMetric as Metric,
   JsStats as Stats,
+  JsWorkerRow as WorkerInfo,
 } from "./native";
 
 /** Options for {@link Queue.result}. */
@@ -24,6 +25,16 @@ export type TaskHandler<Args extends unknown[] = unknown[], Result = unknown> = 
   ...args: Args
 ) => Result | Promise<Result>;
 
+/** A heterogeneous task handler, as stored in the registry. */
+// biome-ignore lint/suspicious/noExplicitAny: registry handlers have varied signatures
+export type AnyHandler = (...args: any[]) => any;
+
+/** Task name -> handler signature, accumulated by chaining {@link Queue.task}. */
+export type TaskMap = Record<string, AnyHandler>;
+
+/** A rate-limit spec: `<count>/<unit>` with unit `s | m | h` (e.g. `"100/m"`). */
+export type RateLimit = `${number}/${"s" | "m" | "h"}`;
+
 /** Per-task defaults and resilience config, applied when registering a task. */
 export interface TaskOptions {
   /** Retry budget (also the per-job default at enqueue). */
@@ -35,18 +46,18 @@ export interface TaskOptions {
   /** Cap on concurrently-running jobs of this task. */
   maxConcurrent?: number;
   /** Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`. */
-  rateLimit?: string;
+  rateLimit?: RateLimit;
 }
 
 /** Per-queue resilience config. */
 export interface QueueLimits {
   maxConcurrent?: number;
-  rateLimit?: string;
+  rateLimit?: RateLimit;
 }
 
 /** A task handler plus its registration options. */
 export interface RegisteredTask {
-  handler: TaskHandler;
+  handler: AnyHandler;
   options?: TaskOptions;
 }
 

@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import {
   registerCancel,
+  registerDashboard,
   registerDlq,
   registerEnqueue,
   registerJobs,
@@ -32,6 +33,7 @@ registerCancel(program);
 registerQueues(program);
 registerDlq(program);
 registerRun(program);
+registerDashboard(program);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

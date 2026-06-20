@@ -22,6 +22,8 @@ tokio = { workspace = true }
 crossbeam-channel = { workspace = true }
 async-trait = { workspace = true }
 log = { workspace = true }
+uuid = { workspace = true }
+gethostname = "1"
 
 [build-dependencies]
 napi-build = "2"

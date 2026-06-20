@@ -1,7 +1,7 @@
 //! JS-facing shapes for inspection/management results.
 
 use napi_derive::napi;
-use taskito_core::storage::models::{JobErrorRow, TaskMetricRow};
+use taskito_core::storage::models::{JobErrorRow, TaskMetricRow, WorkerRow};
 use taskito_core::storage::{DeadJob, QueueStats};
 
 /// Queue job counts by status.
@@ -93,6 +93,36 @@ pub fn metric_to_js(metric: TaskMetricRow) -> JsMetric {
         memory_bytes: metric.memory_bytes,
         succeeded: metric.succeeded,
         recorded_at: metric.recorded_at,
+    }
+}
+
+/// A registered worker (heartbeat + identity).
+#[napi(object)]
+pub struct JsWorkerRow {
+    pub worker_id: String,
+    pub queues: String,
+    pub status: String,
+    pub last_heartbeat: i64,
+    pub started_at: Option<i64>,
+    pub hostname: Option<String>,
+    pub pid: Option<i32>,
+    pub pool_type: Option<String>,
+    pub threads: i32,
+    pub tags: Option<String>,
+}
+
+pub fn worker_to_js(worker: WorkerRow) -> JsWorkerRow {
+    JsWorkerRow {
+        worker_id: worker.worker_id,
+        queues: worker.queues,
+        status: worker.status,
+        last_heartbeat: worker.last_heartbeat,
+        started_at: worker.started_at,
+        hostname: worker.hostname,
+        pid: worker.pid,
+        pool_type: worker.pool_type,
+        threads: worker.threads,
+        tags: worker.tags,
     }
 }
 

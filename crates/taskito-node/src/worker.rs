@@ -1,37 +1,42 @@
-//! Worker wiring — spawns the scheduler, dispatcher, and result-drain loops.
+//! Worker wiring — scheduler, dispatcher, result-drain, and worker lifecycle
+//! (registration + heartbeat) so the worker shows up in the dashboard.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use napi::bindgen_prelude::{spawn, spawn_blocking, Result};
-use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use taskito_core::worker::WorkerDispatcher;
-use taskito_core::{Scheduler, SchedulerConfig, StorageBackend};
+use taskito_core::{Scheduler, SchedulerConfig, Storage, StorageBackend};
 use tokio::sync::Notify;
 
 use crate::config::WorkerOptions;
-use crate::convert::JsTaskInvocation;
+use crate::convert::{outcome_to_js, JsOutcome, JsTaskInvocation};
 use crate::dispatcher::NodeDispatcher;
 
 const DEFAULT_QUEUE: &str = "default";
 const DEFAULT_CHANNEL_CAPACITY: usize = 128;
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Handle to a running worker. Hold it for the worker's lifetime; call
 /// [`JsWorker::stop`] to shut it down.
 #[napi]
 pub struct JsWorker {
     shutdown: Arc<Notify>,
+    heartbeat_stop: Arc<Notify>,
 }
 
 #[napi]
 impl JsWorker {
-    /// Stop the worker: the scheduler stops dispatching new jobs and the
-    /// background tasks exit once in-flight results drain.
+    /// Stop the worker: the scheduler stops dispatching, the heartbeat loop ends
+    /// and unregisters, and the background tasks exit once in-flight results drain.
     #[napi]
     pub fn stop(&self) {
         // `notify_one` stores a permit if no waiter is parked yet, so the signal
-        // is never lost between scheduler poll iterations.
+        // is never lost between loop iterations.
         self.shutdown.notify_one();
+        self.heartbeat_stop.notify_one();
     }
 }
 
@@ -42,6 +47,7 @@ pub fn start_worker(
     namespace: Option<String>,
     options: WorkerOptions,
     callback: ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>,
+    outcome_callback: ThreadsafeFunction<JsOutcome, ErrorStrategy::Fatal>,
 ) -> Result<JsWorker> {
     let queues = options
         .queues
@@ -57,8 +63,11 @@ pub fn start_worker(
         config.batch_size = batch.max(1) as usize;
     }
 
-    // The dispatcher reads cancel flags directly, so it needs its own handle.
+    // The dispatcher reads cancel flags, and the lifecycle loop registers/heartbeats
+    // — both need their own storage handle before `storage` moves into the scheduler.
     let dispatcher_storage = storage.clone();
+    let lifecycle_storage = storage.clone();
+    let queues_csv = queues.join(",");
 
     // Per-task/queue config must be registered before the scheduler is shared
     // (register_* take &mut self).
@@ -74,6 +83,15 @@ pub fn start_worker(
 
     let (job_tx, job_rx) = tokio::sync::mpsc::channel(capacity);
     let (result_tx, result_rx) = crossbeam_channel::bounded(capacity);
+
+    // Worker lifecycle: register, heartbeat every 5s, unregister on stop.
+    let heartbeat_stop = Arc::new(Notify::new());
+    spawn_worker_lifecycle(
+        lifecycle_storage,
+        queues_csv,
+        capacity,
+        heartbeat_stop.clone(),
+    );
 
     // Scheduler loop: poll storage, dispatch ready jobs onto `job_tx`.
     let scheduler_run = scheduler.clone();
@@ -93,11 +111,65 @@ pub fn start_worker(
     let scheduler_results = scheduler;
     spawn_blocking(move || {
         while let Ok(result) = result_rx.recv() {
-            if let Err(err) = scheduler_results.handle_result(result) {
-                log::error!("[taskito-node] result handling error: {err}");
+            match scheduler_results.handle_result(result) {
+                // Surface each outcome to JS so the shell can emit events and run
+                // middleware (the events layer).
+                Ok(outcome) => {
+                    outcome_callback.call(
+                        outcome_to_js(&outcome),
+                        ThreadsafeFunctionCallMode::NonBlocking,
+                    );
+                }
+                Err(err) => log::error!("[taskito-node] result handling error: {err}"),
             }
         }
     });
 
-    Ok(JsWorker { shutdown })
+    Ok(JsWorker {
+        shutdown,
+        heartbeat_stop,
+    })
+}
+
+/// Register this worker and heartbeat until `stop` is signalled, then unregister.
+fn spawn_worker_lifecycle(
+    storage: StorageBackend,
+    queues_csv: String,
+    capacity: usize,
+    stop: Arc<Notify>,
+) {
+    let worker_id = format!("node-{}", uuid::Uuid::now_v7());
+    let hostname = gethostname::gethostname().to_string_lossy().to_string();
+    let pid = std::process::id() as i32;
+    // Log lifecycle failures: a worker that can't register/heartbeat goes
+    // invisible or stale in the dashboard, and a silent error hides that.
+    if let Err(err) = storage.register_worker(
+        &worker_id,
+        &queues_csv,
+        None,
+        None,
+        None,
+        capacity as i32,
+        Some(&hostname),
+        Some(pid),
+        Some("node"),
+    ) {
+        log::warn!("[taskito-node] worker registration failed: {err}");
+    }
+
+    spawn(async move {
+        loop {
+            tokio::select! {
+                _ = stop.notified() => break,
+                _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {
+                    if let Err(err) = storage.heartbeat(&worker_id, None) {
+                        log::warn!("[taskito-node] worker heartbeat failed: {err}");
+                    }
+                }
+            }
+        }
+        if let Err(err) = storage.unregister_worker(&worker_id) {
+            log::warn!("[taskito-node] worker unregister failed: {err}");
+        }
+    });
 }

@@ -6,7 +6,7 @@ use napi_derive::napi;
 use taskito_core::{Storage, StorageBackend};
 
 use crate::config::{EnqueueOptions, OpenOptions, WorkerOptions};
-use crate::convert::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
+use crate::convert::{build_new_job, job_to_js, JsJob, JsOutcome, JsTaskInvocation};
 use crate::error::to_napi_err;
 use crate::worker::{start_worker, JsWorker};
 
@@ -92,6 +92,7 @@ impl JsQueue {
     pub fn run_worker(
         &self,
         callback: ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>,
+        outcome_callback: ThreadsafeFunction<JsOutcome, ErrorStrategy::Fatal>,
         options: Option<WorkerOptions>,
     ) -> Result<JsWorker> {
         start_worker(
@@ -99,6 +100,7 @@ impl JsQueue {
             self.namespace.clone(),
             options.unwrap_or_default(),
             callback,
+            outcome_callback,
         )
     }
 }

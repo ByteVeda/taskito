@@ -124,6 +124,72 @@ taskito run ./app.js --queues default,emails
 
 `--json` on any read command prints machine-readable output.
 
+## Events & middleware
+
+Subscribe to job lifecycle events, or register middleware around execution:
+
+```ts
+queue.on("job.completed", (e) => console.log("done", e.jobId));
+queue.on("job.dead", (e) => alertOps(e));
+
+queue.use({
+  before: (ctx) => log.info("start", ctx.taskName),
+  after: (ctx, result) => log.info("ok", ctx.taskName),
+  onError: (ctx, err) => log.error("threw", ctx.taskName, err),
+  onRetry: (e) => metrics.inc("retry", e.taskName),
+  onDeadLetter: (e) => alertOps(e),
+});
+```
+
+Events: `job.completed`, `job.retrying`, `job.dead`, `job.cancelled`. `before`/
+`after`/`onError` wrap execution (awaited); the outcome hooks fire after the core
+decides the result.
+
+## Webhooks
+
+Deliver job events to HTTP endpoints — HMAC-SHA256 signed, retried with backoff,
+persisted across restarts:
+
+```ts
+const hook = queue.webhooks.create({
+  url: "https://hooks.example.com/jobs",
+  events: ["job.dead", "job.completed"], // omit for all
+  secret: process.env.WEBHOOK_SECRET,    // signs X-Taskito-Signature: sha256=...
+  taskFilter: ["send_email"],            // optional
+});
+
+queue.webhooks.list();
+queue.webhooks.delete(hook.id);
+```
+
+Deliveries fire from the worker process (where events originate). The dashboard
+exposes `/api/webhooks` for managing them.
+
+## Dashboard
+
+A web dashboard (the same React UI the Python SDK serves) runs over the queue —
+no Python required. Build the SPA assets once, then serve:
+
+```bash
+pnpm build:dashboard          # builds the SPA into static/dashboard (one-time)
+taskito --db taskito.db dashboard --port 8787
+```
+
+Or programmatically:
+
+```ts
+import { Queue, serveDashboard } from "taskito";
+
+const queue = new Queue({ dbPath: "taskito.db" });
+const server = serveDashboard(queue, { port: 8787 });
+// ... server.close() to stop
+```
+
+It serves the SPA plus the `/api/*` REST contract (stats, jobs, dead-letters,
+queues, metrics, workers, webhooks, cancel/retry/pause/resume) over the queue.
+Auth runs open (localhost); the metrics and workers panels populate from live
+job history and running workers.
+
 ## Development
 
 ```bash

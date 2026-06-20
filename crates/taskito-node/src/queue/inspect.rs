@@ -9,8 +9,8 @@ use taskito_core::Storage;
 use super::JsQueue;
 use crate::config::JobFilter;
 use crate::convert::{
-    job_error_to_js, job_to_js, metric_to_js, stats_to_js, status_code, JsJob, JsJobError,
-    JsMetric, JsStats,
+    job_error_to_js, job_to_js, metric_to_js, stats_to_js, status_code, worker_to_js, JsJob,
+    JsJobError, JsMetric, JsStats, JsWorkerRow,
 };
 use crate::error::{invalid_arg, non_negative, to_napi_err};
 
@@ -84,5 +84,12 @@ impl JsQueue {
             .get_metrics(task.as_deref(), since_ms)
             .map_err(to_napi_err)?;
         Ok(metrics.into_iter().map(metric_to_js).collect())
+    }
+
+    /// List registered workers (heartbeat + identity).
+    #[napi]
+    pub fn list_workers(&self) -> Result<Vec<JsWorkerRow>> {
+        let workers = self.storage.list_workers().map_err(to_napi_err)?;
+        Ok(workers.into_iter().map(worker_to_js).collect())
     }
 }
