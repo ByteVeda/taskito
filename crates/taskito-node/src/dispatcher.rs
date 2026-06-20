@@ -115,6 +115,10 @@ async fn run_one(callback: &TaskCallback, storage: &StorageBackend, job: Job) ->
             wall_time_ns,
             false,
         ),
+        // We report the timeout, but the underlying JS promise cannot be force-
+        // killed and keeps running in the background — same limitation as the
+        // Python shell. Non-idempotent tasks should cooperate via the cancel
+        // signal (`currentJob().signal`) and check it on long operations.
         Err(_) => failure(job, "task timed out".to_string(), wall_time_ns, true),
     }
 }
