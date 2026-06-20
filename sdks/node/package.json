@@ -51,6 +51,7 @@
     "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node --features postgres,redis native",
     "build:ts": "tsup",
     "build:dashboard": "pnpm -C ../../dashboard exec vite build --outDir ../sdks/node/static/dashboard --emptyOutDir",
+    "prepack": "pnpm run build:dashboard",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src test",
     "format": "biome format --write src test",
