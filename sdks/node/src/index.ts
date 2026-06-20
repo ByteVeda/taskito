@@ -6,7 +6,7 @@ export {
   TaskNotRegisteredError,
 } from "./errors";
 export { Queue, type QueueOptions } from "./queue";
-export { JsonSerializer, type Serializer } from "./serializers";
+export { JsonSerializer, MsgpackSerializer, type Serializer } from "./serializers";
 export type {
   DeadJob,
   EnqueueOptions,
