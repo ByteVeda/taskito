@@ -51,7 +51,7 @@ jobs:
           version="${{ steps.resolve.outputs.version }}"
           pyproject_ver=$(python3 -c "
           import re, pathlib
-          m = re.search(r'^version\s*=\s*\"(.+?)\"', pathlib.Path('pyproject.toml').read_text(), re.M)
+          m = re.search(r'^version\s*=\s*\"(.+?)\"', pathlib.Path('sdks/python/pyproject.toml').read_text(), re.M)
           print(m.group(1))
           ")
           if [ "$pyproject_ver" != "$version" ]; then
@@ -81,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dashboard-dist
-          path: py_src/taskito/static/dashboard
+          path: sdks/python/taskito/static/dashboard
           if-no-files-found: error
           retention-days: 1
 
@@ -108,6 +108,7 @@ jobs:
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
           manylinux: 2_28
           maturin-version: v1.13.3
+          working-directory: sdks/python
           before-script-linux: |
             dnf install -y openssl-devel perl-core perl-IPC-Cmd
 
@@ -115,7 +116,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.target }}
-          path: dist/*.whl
+          path: sdks/python/dist/*.whl
           if-no-files-found: error
 
   build-wheels-musllinux:
@@ -141,6 +142,7 @@ jobs:
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
           manylinux: musllinux_1_2
           maturin-version: v1.13.3
+          working-directory: sdks/python
           before-script-linux: |
             apt-get update && apt-get install -y libssl-dev perl pkg-config
 
@@ -148,7 +150,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: wheels-musllinux-${{ matrix.target }}
-          path: dist/*.whl
+          path: sdks/python/dist/*.whl
           if-no-files-found: error
 
   build-wheels-macos:
@@ -191,12 +193,13 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
           maturin-version: v1.13.3
+          working-directory: sdks/python
 
       - name: Upload wheels
         uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.target }}
-          path: dist/*.whl
+          path: sdks/python/dist/*.whl
           if-no-files-found: error
 
   build-wheels-windows:
@@ -238,12 +241,13 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
           maturin-version: v1.13.3
+          working-directory: sdks/python
 
       - name: Upload wheels
         uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.target }}
-          path: dist/*.whl
+          path: sdks/python/dist/*.whl
           if-no-files-found: error
 
   build-sdist:
@@ -260,12 +264,13 @@ jobs:
           command: sdist
           args: --out dist
           maturin-version: v1.13.3
+          working-directory: sdks/python
 
       - name: Upload sdist
         uses: actions/upload-artifact@v7
         with:
           name: sdist
-          path: dist/*.tar.gz
+          path: sdks/python/dist/*.tar.gz
           if-no-files-found: error
 
   publish:

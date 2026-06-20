@@ -2,7 +2,7 @@ name: Build dashboard
 description: >-
   Sets up Node and pnpm, installs dashboard dependencies, generates the
   TanStack Router tree, and runs the Vite production build. Output is
-  written to `py_src/taskito/static/dashboard/` for packaging into the
+  written to `sdks/python/taskito/static/dashboard/` for packaging into the
   Python wheel.
 
 runs:
@@ -39,7 +39,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        if [ ! -f py_src/taskito/static/dashboard/index.html ]; then
-          echo "::error::Dashboard build did not produce py_src/taskito/static/dashboard/index.html"
+        if [ ! -f sdks/python/taskito/static/dashboard/index.html ]; then
+          echo "::error::Dashboard build did not produce sdks/python/taskito/static/dashboard/index.html"
           exit 1
         fi
