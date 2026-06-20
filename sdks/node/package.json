@@ -1,0 +1,21 @@
+{
+  "name": "taskito",
+  "version": "0.16.3",
+  "description": "Rust-powered task queue for Node.js — no broker required.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "napi": {
+    "name": "taskito"
+  },
+  "scripts": {
+    "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node native",
+    "build": "pnpm run build:native"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  }
+}
