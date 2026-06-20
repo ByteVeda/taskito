@@ -8,8 +8,9 @@ must implement or call to reuse this Rust core. The core is **binding-agnostic**
 
 ## Invariant
 The generic crates must never depend on `pyo3` or any language runtime. CI fails if
-`pyo3` appears in the source or normal dependency tree of `taskito-core`,
-`taskito-workflows`, or `taskito-mesh`. Keep Python/Node/Java specifics in the shell.
+`pyo3` appears in the normal dependency tree of `taskito-core`, `taskito-workflows`,
+or `taskito-mesh` (`cargo tree` is authoritative — you cannot `use pyo3` without
+depending on it). Keep Python/Node/Java specifics in the shell.
 
 ## The payload is opaque
 `Job.payload` and `Job.result` are `Vec<u8>` blobs. The core **never** interprets

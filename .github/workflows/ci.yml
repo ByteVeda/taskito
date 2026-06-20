@@ -78,6 +78,21 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Generic crates stay PyO3-free
+        # The engine crates (core/workflows/mesh) must remain binding-agnostic so
+        # Node/Java shells can reuse them. A pyo3 dep would let Python-specific code
+        # creep back in. cargo tree is authoritative — you cannot `use pyo3` without
+        # depending on it. See crates/taskito-core/BINDING_CONTRACT.md.
+        run: |
+          set -euo pipefail
+          for crate in taskito-core taskito-workflows taskito-mesh; do
+            if cargo tree -p "$crate" -e normal --all-features 2>/dev/null | grep -qi pyo3; then
+              echo "::error::pyo3 is in the dependency tree of $crate — generic crates must stay binding-agnostic"
+              exit 1
+            fi
+          done
+          echo "Generic crates are PyO3-free."
+
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
