@@ -36,6 +36,20 @@ repos:
         types: [python]
         pass_filenames: false
 
+      - id: node-lint
+        name: node lint (biome)
+        entry: bash -c 'cd sdks/node && pnpm exec biome ci src test'
+        language: system
+        files: ^sdks/node/(src/|test/|biome\.json)
+        pass_filenames: false
+
+      - id: node-typecheck
+        name: node typecheck (tsc)
+        entry: bash -c 'cd sdks/node && pnpm exec tsc --noEmit -p tsconfig.json'
+        language: system
+        files: ^sdks/node/(src/|test/|tsconfig\.json|package\.json)
+        pass_filenames: false
+
       - id: dashboard-lint
         name: dashboard lint (biome)
         entry: bash -c 'cd dashboard && pnpm exec biome ci src/'
