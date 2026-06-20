@@ -1,4 +1,5 @@
 export { currentJob, type JobContext } from "./context";
+export { type DashboardOptions, serveDashboard } from "./dashboard";
 export {
   JobCancelledError,
   JobFailedError,
