@@ -160,7 +160,7 @@ it("serves workflow runs, detail, dag, and children", async () => {
     .submit();
   const worker: Worker = queue.runWorker();
   const srv = serveDashboard(queue, { port: 0, staticDir });
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await once(srv, "listening");
   const { port } = srv.address() as AddressInfo;
   const root = `http://127.0.0.1:${port}/api/workflows/runs`;
 

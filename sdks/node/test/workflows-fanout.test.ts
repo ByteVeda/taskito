@@ -141,3 +141,14 @@ it("runs a fan-out without a fan-in collector", async () => {
   expect(seen.slice().sort((a, b) => a - b)).toEqual([10, 20]);
   expect(nodesByName(handle).process?.fanOutCount).toBe(2);
 });
+
+it("rejects a fan-in whose target is not a fan-out step", () => {
+  const queue = freshQueue();
+  expect(() =>
+    queue.workflows
+      .define("bad-fanin")
+      .step("plain", "noop")
+      .fanIn("collect", { after: "plain", task: "sum" })
+      .build(),
+  ).toThrow(/must target a fan-out step/);
+});

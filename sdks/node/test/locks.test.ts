@@ -73,3 +73,10 @@ it("releases via Symbol.dispose", () => {
   lock[Symbol.dispose]();
   expect(queue.lock("disp").info()).toBeUndefined();
 });
+
+it("rejects a non-positive or non-finite ttl at construction", () => {
+  const queue = freshQueue();
+  expect(() => queue.lock("bad", { ttlMs: 0 })).toThrow(RangeError);
+  expect(() => queue.lock("bad", { ttlMs: -5 })).toThrow(RangeError);
+  expect(() => queue.lock("bad", { ttlMs: Number.NaN })).toThrow(RangeError);
+});
