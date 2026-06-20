@@ -100,7 +100,9 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     this.emitter.off(event, handler);
   }
 
-  /** Enqueue `name` with positional `args` (typed per the registered task). Returns the job id. */
+  /** Enqueue `name` with positional `args` (typed per the registered task). Returns the job id.
+   * `args` stays optional so the in-place `queue.task(...)` registration pattern (where the
+   * variable's type isn't refined) keeps working for zero-arg tasks. */
   enqueue<Name extends keyof TTasks & string>(
     name: Name,
     args?: Parameters<TTasks[Name]>,

@@ -186,8 +186,9 @@ const server = serveDashboard(queue, { port: 8787 });
 ```
 
 It serves the SPA plus the `/api/*` REST contract (stats, jobs, dead-letters,
-queues, cancel/retry/pause/resume) over the queue. Auth runs open (localhost);
-metrics and workers panels are empty until those are wired up.
+queues, metrics, workers, webhooks, cancel/retry/pause/resume) over the queue.
+Auth runs open (localhost); the metrics and workers panels populate from live
+job history and running workers.
 
 ## Development
 
