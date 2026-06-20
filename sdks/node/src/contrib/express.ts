@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import express, { type RequestHandler, type Router } from "express";
 import { createDashboardHandler } from "../dashboard";
 import type { Queue } from "../queue";
-import { buildRestRoutes, type RestOptions, type RestRequest } from "./rest";
+import { buildRestRoutes, flattenQueryParams, type RestOptions, type RestRequest } from "./rest";
 
 /** Options for {@link taskitoRouter}. */
 export type TaskitoRouterOptions = RestOptions;
@@ -17,19 +17,6 @@ export type TaskitoRouterOptions = RestOptions;
 export interface TaskitoDashboardOptions {
   /** Path to the built SPA assets (defaults to the package's bundled `static/dashboard`). */
   staticDir?: string;
-}
-
-/** Flatten Express's parsed query into plain `string | undefined` values. */
-function flattenQuery(query: unknown): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(query as Record<string, unknown>)) {
-    if (typeof value === "string") {
-      out[key] = value;
-    } else if (Array.isArray(value) && typeof value[0] === "string") {
-      out[key] = value[0];
-    }
-  }
-  return out;
 }
 
 /**
@@ -44,7 +31,7 @@ export function taskitoRouter(queue: Queue, options: TaskitoRouterOptions = {}):
     const handler: RequestHandler = async (req, res) => {
       const request: RestRequest = {
         params: req.params as Record<string, string | undefined>,
-        query: flattenQuery(req.query),
+        query: flattenQueryParams(req.query),
         body: req.body,
       };
       try {

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { createDashboardHandler } from "../dashboard";
 import type { Queue } from "../queue";
-import { buildRestRoutes, type RestOptions, type RestRequest } from "./rest";
+import { buildRestRoutes, flattenQueryParams, type RestOptions, type RestRequest } from "./rest";
 
 /** Options for {@link taskitoFastify}. */
 export interface TaskitoFastifyOptions extends RestOptions {
@@ -22,19 +22,6 @@ export interface TaskitoDashboardPluginOptions {
   queue: Queue;
   /** Path to the built SPA assets (defaults to the package's bundled `static/dashboard`). */
   staticDir?: string;
-}
-
-/** Flatten Fastify's parsed query into plain `string | undefined` values. */
-function flattenQuery(query: unknown): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries((query as Record<string, unknown>) ?? {})) {
-    if (typeof value === "string") {
-      out[key] = value;
-    } else if (Array.isArray(value) && typeof value[0] === "string") {
-      out[key] = value[0];
-    }
-  }
-  return out;
 }
 
 /**
@@ -53,7 +40,7 @@ export const taskitoFastify: FastifyPluginAsync<TaskitoFastifyOptions> = async (
       handler: async (request: FastifyRequest, reply: FastifyReply) => {
         const request_: RestRequest = {
           params: request.params as Record<string, string | undefined>,
-          query: flattenQuery(request.query),
+          query: flattenQueryParams(request.query),
           body: request.body,
         };
         const result = await route.handle(queue, request_);

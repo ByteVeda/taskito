@@ -22,6 +22,29 @@ export interface RestRequest {
   body: unknown;
 }
 
+// Keys that would pollute Object.prototype if assigned from user-controlled query.
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Flatten a framework's parsed query (`string | string[]`) into plain
+ * `string | undefined` values. Uses a null-prototype object and skips
+ * prototype-polluting keys, so user-controlled query names are safe to assign.
+ */
+export function flattenQueryParams(query: unknown): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = Object.create(null);
+  for (const [key, value] of Object.entries((query as Record<string, unknown>) ?? {})) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      continue;
+    }
+    if (typeof value === "string") {
+      out[key] = value;
+    } else if (Array.isArray(value) && typeof value[0] === "string") {
+      out[key] = value[0];
+    }
+  }
+  return out;
+}
+
 /** A framework-neutral response: HTTP status + a JSON-serializable body. */
 export interface RestResponse {
   status: number;
