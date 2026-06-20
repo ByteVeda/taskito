@@ -180,7 +180,18 @@ it("serves workflow runs, detail, dag, and children", async () => {
     expect(detail.nodes.map((n) => n.node_name).sort()).toEqual(["a", "b"]);
 
     const dag = (await (await fetch(`${root}/${handle.runId}/dag`)).json()) as { dag: string };
-    expect(JSON.parse(dag.dag).edges).toEqual([{ from: "a", to: "b", weight: 1.0 }]);
+    const parsed = JSON.parse(dag.dag) as {
+      edges: Array<{ from: string; to: string; weight: number }>;
+      nodes: Array<{ name: string; node_name: string; status: string; id: string; deps: string[] }>;
+    };
+    expect(parsed.edges).toEqual([{ from: "a", to: "b", weight: 1.0 }]);
+    // The SPA's DAG visualizer reads per-node deps / status / id, so the handler
+    // enriches the raw graph with live status, edges-as-deps, and job-id links.
+    const b = parsed.nodes.find((n) => n.name === "b");
+    expect(b?.deps).toEqual(["a"]);
+    expect(b?.status).toBe("completed");
+    expect(b?.id).not.toBe("b"); // resolved to the job id, not the node name
+    expect(parsed.nodes.find((n) => n.name === "a")?.deps).toEqual([]);
 
     const children = (await (await fetch(`${root}/${handle.runId}/children`)).json()) as {
       children: unknown[];
