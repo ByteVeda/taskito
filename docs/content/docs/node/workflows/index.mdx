@@ -34,11 +34,24 @@ Requires the addon built with the `workflows` cargo feature (enabled by
     href="/node/workflows/fan-out"
     description="Split a step's result into parallel children and collect results."
   />
+  <Card
+    title="Conditions"
+    href="/node/workflows/conditions"
+    description="Run a step only on success, on failure, or always."
+  />
+  <Card
+    title="Approval Gates"
+    href="/node/workflows/gates"
+    description="Pause a run until a human or external system approves or rejects."
+  />
+  <Card
+    title="Sub-Workflows"
+    href="/node/workflows/sub-workflows"
+    description="Compose workflow runs hierarchically — delegate a step to a child workflow."
+  />
+  <Card
+    title="Saga Compensation"
+    href="/node/workflows/saga"
+    description="Automatically roll back completed steps in reverse order when a run fails."
+  />
 </Cards>
-
-<Callout type="info">
-  Gates, sub-workflows, and saga compensation are not yet available in the Node
-  SDK. See the Python SDK for [gates](/guides/workflows/gates),
-  [composition](/guides/workflows/composition), and
-  [sagas](/guides/workflows/sagas).
-</Callout>

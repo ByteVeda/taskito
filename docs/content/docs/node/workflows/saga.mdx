@@ -1,0 +1,151 @@
+---
+title: Saga Compensation
+description: "Automatically roll back completed steps in reverse order when a workflow run fails."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Saga compensation runs rollback tasks in reverse-dependency order when a
+workflow run fails. Each step that completed and has a `compensate` task gets
+rolled back; steps that never ran are left alone.
+
+## Basic example
+
+```ts
+queue.task("reserveInventory", (orderId: string) => ({ reserved: true, orderId }));
+queue.task("unreserveInventory", (result: { reserved: boolean; orderId: string }) => { /* undo */ });
+
+queue.task("chargePayment", (orderId: string) => ({ charged: true, orderId }));
+queue.task("refundPayment", (result: { charged: boolean; orderId: string }) => { /* undo */ });
+
+queue.task("shipOrder", (orderId: string) => { throw new Error("Warehouse offline"); });
+// No compensate for ship — if it never succeeded, there's nothing to undo.
+
+const handle = queue.workflows
+  .define("checkout")
+  .step("reserve", "reserveInventory", { compensate: "unreserveInventory" })
+  .step("charge", "chargePayment", { after: "reserve", compensate: "refundPayment" })
+  .step("ship", "shipOrder", { after: "charge" })
+  .submit();
+
+queue.runWorker();
+
+const run = await handle.wait();
+// ship fails → charge rolled back (refundPayment) → reserve rolled back (unreserveInventory)
+// run.state === "compensated"
+```
+
+<Mermaid
+  chart={`graph LR
+    reserve["reserve\n✓ compensate: unreserveInventory"]:::done
+    charge["charge\n✓ compensate: refundPayment"]:::done
+    ship["ship\n✗ fails"]:::fail
+    refund["refundPayment\n(rollback charge)"]:::comp
+    unreserve["unreserveInventory\n(rollback reserve)"]:::comp
+
+    reserve --> charge --> ship
+    ship -. "run fails" .-> refund
+    refund --> unreserve
+
+    classDef done fill:#bbf7d0,color:#14532d,stroke:#16a34a
+    classDef fail fill:#fee2e2,color:#7f1d1d,stroke:#ef4444
+    classDef comp fill:#ede9fe,color:#4c1d95,stroke:#7c3aed`}
+/>
+
+## How it works
+
+1. `ship` dead-letters — the run's failure is detected by the tracker.
+2. The tracker collects every completed node that has a `compensate` task,
+   ordered in reverse-dependency order (most downstream first).
+3. It enqueues each compensate task, passing the forward step's result as the
+   single argument. Compensate tasks are ordinary registered tasks — they run in
+   the worker pool like any other job.
+4. Rollbacks execute sequentially in that reverse order. Each inherits the
+   forward step's `queue`, `maxRetries`, and `timeoutMs`.
+5. When all rollbacks complete the run transitions to `"compensated"`.
+6. If a rollback itself dead-letters, the run ends in `"compensation_failed"` —
+   remaining un-rolled-back steps are left as-is (fail-stop; no partial retry).
+
+Compensation is storage-driven and idempotent: each rollback enqueue is
+deduplicated, so a worker restart during compensation does not double-run a
+rollback.
+
+## Run terminal states
+
+| State | Meaning |
+|---|---|
+| `"completed"` | All steps succeeded |
+| `"failed"` | A step failed; no compensators were defined |
+| `"compensated"` | A step failed; all compensators completed |
+| `"compensation_failed"` | A step failed; at least one compensator also failed |
+
+<Callout type="warning">
+  `"compensation_failed"` is a manual-intervention state. Inspect
+  `handle.nodes()` to identify which rollback failed and whether data is
+  partially consistent.
+</Callout>
+
+## Compensate task signature
+
+The compensate task receives the forward step's return value as its single
+positional argument. Design forward tasks to return enough context for the
+compensator to act:
+
+```ts
+queue.task("chargePayment", async (orderId: string) => {
+  const charge = await stripe.charge(orderId);
+  return { chargeId: charge.id, orderId }; // compensator needs chargeId
+});
+
+queue.task("refundPayment", async (result: { chargeId: string; orderId: string }) => {
+  await stripe.refund(result.chargeId);
+});
+```
+
+## Steps without compensators
+
+Steps that do not declare `compensate` are skipped during rollback. A step that
+never ran (because it was downstream of the failing step) is also skipped — only
+**completed** steps with a compensate task are rolled back.
+
+```ts
+queue.workflows
+  .define("partial-saga")
+  .step("a", "taskA", { compensate: "undoA" }) // rolled back if run fails after a completes
+  .step("b", "taskB", { after: "a" })           // no compensate — left as-is
+  .step("c", "taskC", { after: "b", compensate: "undoC" })
+  .submit();
+
+// If b fails: only a is rolled back (b never completed; c never ran).
+// If c fails: c has no result yet, so only a is rolled back.
+```
+
+## Step options
+
+| Option | Type | Description |
+|---|---|---|
+| `after` | `string \| string[]` | Predecessor node name(s) |
+| `compensate` | `string` | Registered task name to run as the rollback for this step |
+| `maxRetries` | `number` | Retry limit for the forward step (inherited by compensate) |
+| `timeoutMs` | `number` | Timeout for the forward step (inherited by compensate) |
+| `priority` | `number` | Queue priority |
+| `queue` | `string` | Queue name |
+
+## Combining with conditions
+
+Conditions and compensation compose. An `on_failure` handler runs first (as the
+run settles toward failure); once the run is failed, the tracker then rolls back
+the completed compensable steps:
+
+```ts
+queue.workflows
+  .define("safe-checkout")
+  .step("reserve", "reserveInventory", { compensate: "unreserveInventory" })
+  .step("charge", "chargePayment", { after: "reserve", compensate: "refundPayment" })
+  .step("ship", "shipOrder", { after: "charge" })
+  .step("notifyFailure", "sendFailureEmail", {
+    after: "ship",
+    condition: "on_failure",
+  })
+  .submit();
+```

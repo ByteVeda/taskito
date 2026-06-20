@@ -30,9 +30,9 @@ const DEFAULT_WAIT_POLL_MS = 100;
  * The `queue.workflows` facade: define and submit workflows, then query runs.
  *
  * Supports DAG / linear workflows (steps pre-enqueued with `depends_on` chains,
- * sequenced by the core scheduler) plus fan-out / fan-in steps the worker-side
- * tracker expands at runtime (see `tracker.ts`). Gates, sub-workflows, and saga
- * compensation are not yet available in the Node SDK.
+ * sequenced by the core scheduler) plus the deferred step kinds the worker-side
+ * tracker drives at runtime (see `tracker.ts`): fan-out / fan-in, conditions,
+ * approval gates, sub-workflows, and saga compensation.
  */
 export class WorkflowManager {
   constructor(

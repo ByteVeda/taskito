@@ -273,8 +273,73 @@ and run fail and downstream steps are skipped. An empty item list completes the
 fan-out immediately and runs the fan-in with `[]`. Children and the combiner each
 run on the fan-out step's `queue` / `maxRetries` / `timeoutMs` / `priority`.
 
-Gates, sub-workflows, and saga compensation are not yet bound — for those, use
-the Python SDK.
+### Conditions
+
+A step's `condition` gates it on its predecessors' outcomes: `on_success`
+(default — all predecessors completed), `on_failure` (a predecessor failed — an
+error handler), or `always`. A step whose condition isn't met is `skipped`, and
+the skip propagates downstream.
+
+```ts
+queue.workflows
+  .define("with-handler")
+  .step("risky", "risky")
+  .step("recover", "rollback", { after: "risky", condition: "on_failure" })
+  .step("notify", "notifyOk", { after: "risky", condition: "on_success" })
+  .submit();
+```
+
+### Approval gates
+
+A `gate` step pauses the run (`waiting_approval`) until resolved out-of-band.
+Resolve from any process (it reads the plan from storage); an optional timeout
+auto-resolves per `onTimeout`.
+
+```ts
+const handle = queue.workflows
+  .define("publish")
+  .step("build", "build")
+  .gate("review", { after: "build", timeoutMs: 86_400_000, onTimeout: "reject" })
+  .step("ship", "ship", { after: "review" })
+  .submit();
+
+queue.workflows.approveGate(handle.runId, "review"); // or rejectGate(..., reason)
+```
+
+### Sub-workflows
+
+A `subWorkflow` step runs a child workflow as a node; the parent advances when
+the child finalizes (child failure fails the parent node). Build the child with
+`.build()` (don't submit it directly).
+
+```ts
+const child = queue.workflows.define("child").step("a", "taskA").build();
+
+queue.workflows
+  .define("parent")
+  .step("prep", "prep")
+  .subWorkflow("sub", { after: "prep", workflow: child })
+  .step("finish", "finish", { after: "sub" })
+  .submit();
+
+queue.workflows.children(handle.runId); // the spawned child run(s)
+```
+
+### Saga compensation
+
+Give a step a `compensate` task and, if the run fails, the tracker rolls back
+each completed compensable step in reverse-dependency order, passing the step's
+result to its compensator. The run ends `compensated`, or `compensation_failed`
+if a rollback itself fails.
+
+```ts
+queue.workflows
+  .define("checkout")
+  .step("reserve", "reserve", { compensate: "unreserve" })
+  .step("charge", "charge", { after: "reserve", compensate: "refund" })
+  .step("ship", "ship", { after: "charge" }) // if this fails → refund, then unreserve
+  .submit();
+```
 
 ## Dashboard
 
@@ -405,6 +470,5 @@ compiled in via `--features postgres,redis`.
 
 ## Not yet covered
 
-Advanced workflow features (gates, sub-workflows, saga compensation — fan-out is
-covered above), resources/proxies/interception, prebuilt platform binaries + npm
-publish (host-only build for now), and Python⇄Node cross-language interop.
+Resources / dependency-injection, prebuilt platform binaries + npm publish
+(host-only build for now), and Python⇄Node cross-language interop.
