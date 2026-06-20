@@ -18,4 +18,7 @@ pub use stats::{
 };
 pub use task_config::{queue_config, task_config};
 #[cfg(feature = "workflows")]
-pub use workflow::{node_to_js, run_to_js, JsWorkflowAdvance, JsWorkflowNode, JsWorkflowRun};
+pub use workflow::{
+    node_to_js, run_to_js, JsFanOutCompletion, JsWorkflowAdvance, JsWorkflowNode,
+    JsWorkflowNodeRef, JsWorkflowRun, JsWorkflowRunPlan,
+};
