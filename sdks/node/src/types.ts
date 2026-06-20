@@ -1,6 +1,7 @@
-import type { MeshWorkerConfig } from "./native";
+import type { CircuitBreakerInput, MeshWorkerConfig } from "./native";
 
 export type {
+  CircuitBreakerInput as CircuitBreakerOptions,
   EnqueueOptions,
   JobFilter,
   JsDeadJob as DeadJob,
@@ -50,6 +51,20 @@ export interface TaskOptions {
   maxConcurrent?: number;
   /** Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`. */
   rateLimit?: RateLimit;
+  /** Trip the task's circuit breaker after repeated failures. */
+  circuitBreaker?: CircuitBreakerInput;
+}
+
+/** Options for {@link Queue.registerPeriodic}. */
+export interface PeriodicOptions {
+  /** Positional args passed to the task each time it fires. */
+  args?: unknown[];
+  /** Queue the periodic job runs on (default `"default"`). */
+  queue?: string;
+  /** IANA timezone for the cron schedule (default UTC). */
+  timezone?: string;
+  /** Register disabled (won't fire until re-registered enabled). Default true. */
+  enabled?: boolean;
 }
 
 /** Per-queue resilience config. */

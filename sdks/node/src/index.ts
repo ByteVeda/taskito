@@ -14,6 +14,7 @@ export { Queue, type QueueOptions } from "./queue";
 export { JsonSerializer, MsgpackSerializer, type Serializer } from "./serializers";
 export type {
   AnyHandler,
+  CircuitBreakerOptions,
   DeadJob,
   EnqueueOptions,
   Job,
@@ -21,6 +22,7 @@ export type {
   JobFilter,
   MeshWorkerConfig,
   Metric,
+  PeriodicOptions,
   QueueLimits,
   RateLimit,
   ResultOptions,

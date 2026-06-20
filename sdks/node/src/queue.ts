@@ -12,6 +12,7 @@ import type {
   JobError,
   JobFilter,
   Metric,
+  PeriodicOptions,
   QueueLimits,
   RegisteredTask,
   ResultOptions,
@@ -98,6 +99,29 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     } finally {
       lock.release();
     }
+  }
+
+  /**
+   * Register (or replace) a cron-scheduled task. A running worker enqueues
+   * `taskName` with the serialized `args` each time the schedule fires. Returns
+   * the next fire time (Unix ms); throws on an invalid cron expression.
+   */
+  registerPeriodic(
+    name: string,
+    taskName: string,
+    cronExpr: string,
+    options?: PeriodicOptions,
+  ): number {
+    const args = Buffer.from(this.serializer.serialize(options?.args ?? []));
+    return this.native.registerPeriodic(
+      name,
+      taskName,
+      cronExpr,
+      args,
+      options?.queue,
+      options?.timezone,
+      options?.enabled,
+    );
   }
 
   /**

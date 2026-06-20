@@ -178,7 +178,8 @@ function buildTaskConfigs(tasks: ReadonlyMap<string, RegisteredTask>): TaskConfi
       (options.maxRetries === undefined &&
         options.retryBackoff === undefined &&
         options.maxConcurrent === undefined &&
-        options.rateLimit === undefined)
+        options.rateLimit === undefined &&
+        options.circuitBreaker === undefined)
     ) {
       continue;
     }
@@ -189,6 +190,7 @@ function buildTaskConfigs(tasks: ReadonlyMap<string, RegisteredTask>): TaskConfi
       retryMaxDelayMs: options.retryBackoff?.maxMs,
       maxConcurrent: options.maxConcurrent,
       rateLimit: options.rateLimit,
+      circuitBreaker: options.circuitBreaker,
     });
   }
   return configs;

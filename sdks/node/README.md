@@ -26,6 +26,7 @@ queue.task("add", (a: number, b: number) => a + b, {
   retryBackoff: { baseMs: 1000, maxMs: 60_000 },
   timeoutMs: 30_000,
   maxConcurrent: 4,
+  circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
 });
 
 // Producer.
@@ -167,6 +168,23 @@ if (lock.acquire()) {
 `lock.extend(ms)`, `lock.info()`, and `lock.ownerId` round out the API. Expired
 locks are reaped by the worker's maintenance loop.
 
+## Periodic (cron) tasks
+
+Schedule a registered task on a cron expression. A running worker enqueues it
+when due (the scheduler's maintenance loop drives this).
+
+```ts
+queue.task("digest", (date: string) => sendDigest(date));
+
+// cron is 6/7-field, seconds first: sec min hour day-of-month month day-of-week
+queue.registerPeriodic("daily-digest", "digest", "0 0 9 * * *", {
+  args: ["2026-06-16"],
+  timezone: "America/New_York",
+});
+```
+
+Returns the next fire time (Unix ms). Re-registering the same name replaces it.
+
 ## Webhooks
 
 Deliver job events to HTTP endpoints — HMAC-SHA256 signed, retried with backoff,
@@ -284,5 +302,5 @@ compiled in via `--features postgres,redis`.
 ## Not yet covered
 
 Advanced workflow features (fan-out, gates, sub-workflows, saga compensation),
-periodic/cron tasks, prebuilt platform binaries + npm publish (host-only build
-for now), and Python⇄Node cross-language interop.
+resources/proxies/interception, contrib integrations, prebuilt platform binaries +
+npm publish (host-only build for now), and Python⇄Node cross-language interop.

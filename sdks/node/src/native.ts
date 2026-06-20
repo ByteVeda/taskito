@@ -16,6 +16,7 @@ export type NativeQueue = InstanceType<typeof JsQueue>;
 export type NativeWorker = InstanceType<typeof JsWorker>;
 
 export type {
+  CircuitBreakerInput,
   EnqueueOptions,
   JobFilter,
   JsDeadJob,

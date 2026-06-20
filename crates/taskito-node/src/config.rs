@@ -53,6 +53,19 @@ pub struct JobFilter {
     pub offset: Option<i64>,
 }
 
+/// Circuit-breaker config for a task: trip after `threshold` failures within
+/// `windowMs`, stay open for `cooldownMs`, then probe before fully closing.
+#[napi(object)]
+pub struct CircuitBreakerInput {
+    pub threshold: i32,
+    pub window_ms: i64,
+    pub cooldown_ms: i64,
+    /// Probe requests allowed while half-open (default 5).
+    pub half_open_max_probes: Option<i32>,
+    /// Success rate (0.0–1.0) required to close from half-open (default 0.8).
+    pub half_open_success_rate: Option<f64>,
+}
+
 /// Per-task configuration registered on the scheduler before the worker runs.
 #[napi(object)]
 pub struct TaskConfigInput {
@@ -63,6 +76,7 @@ pub struct TaskConfigInput {
     pub max_concurrent: Option<i32>,
     /// Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`.
     pub rate_limit: Option<String>,
+    pub circuit_breaker: Option<CircuitBreakerInput>,
 }
 
 /// Per-queue configuration registered on the scheduler before the worker runs.
