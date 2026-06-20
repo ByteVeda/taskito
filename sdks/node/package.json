@@ -8,14 +8,52 @@
   "engines": {
     "node": ">=18"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "native/index.js",
+    "native/index.d.ts",
+    "native/package.json",
+    "native/*.node",
+    "README.md"
+  ],
+  "keywords": [
+    "task-queue",
+    "queue",
+    "jobs",
+    "worker",
+    "rust",
+    "napi"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ByteVeda/taskito.git",
+    "directory": "sdks/node"
+  },
   "napi": {
     "name": "taskito"
   },
   "scripts": {
+    "build": "pnpm run build:native && pnpm run build:ts",
     "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node native",
-    "build": "pnpm run build:native"
+    "build:ts": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check src test",
+    "format": "biome format --write src test",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.4"
+    "@biomejs/biome": "^2.4.16",
+    "@napi-rs/cli": "^2.18.4",
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }
