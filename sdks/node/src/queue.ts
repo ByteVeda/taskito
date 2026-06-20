@@ -1,5 +1,6 @@
-import { JobCancelledError, JobFailedError, TaskitoError } from "./errors";
+import { JobCancelledError, JobFailedError, LockNotAcquiredError, TaskitoError } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
+import { Lock, type LockOptions } from "./locks";
 import type { Middleware } from "./middleware";
 import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
 import { JsonSerializer, type Serializer } from "./serializers";
@@ -76,6 +77,27 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       this.workflowManager = new WorkflowManager(this.native, this.serializer);
     }
     return this.workflowManager;
+  }
+
+  /** Create a distributed lock handle (not yet acquired). */
+  lock(name: string, options?: LockOptions): Lock {
+    return new Lock(this.native, name, options);
+  }
+
+  /**
+   * Run `fn` while holding the named lock, releasing it afterwards. Rejects with
+   * {@link LockNotAcquiredError} if another owner holds the lock.
+   */
+  async withLock<T>(name: string, fn: () => T | Promise<T>, options?: LockOptions): Promise<T> {
+    const lock = this.lock(name, options);
+    if (!lock.acquire()) {
+      throw new LockNotAcquiredError(name);
+    }
+    try {
+      return await fn();
+    } finally {
+      lock.release();
+    }
   }
 
   /**

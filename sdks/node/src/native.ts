@@ -21,6 +21,7 @@ export type {
   JsDeadJob,
   JsJob,
   JsJobError,
+  JsLockInfo,
   JsMetric,
   JsOutcome,
   JsStats,

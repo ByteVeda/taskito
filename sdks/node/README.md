@@ -145,6 +145,28 @@ Events: `job.completed`, `job.retrying`, `job.dead`, `job.cancelled`. `before`/
 `after`/`onError` wrap execution (awaited); the outcome hooks fire after the core
 decides the result.
 
+## Distributed locks
+
+TTL-bounded, owner-scoped locks backed by the queue's storage — coordinate
+across processes without a separate lock server. A held lock auto-extends at
+`ttlMs / 3` so a slow section never loses it.
+
+```ts
+// Scoped helper — acquires, runs, releases (throws if held elsewhere).
+await queue.withLock("report:2026-06", async () => {
+  await rebuildReport();
+});
+
+// Manual handle, or `using` for automatic release.
+using lock = queue.lock("resource", { ttlMs: 30_000 });
+if (lock.acquire()) {
+  // ... critical section
+} // released at block exit
+```
+
+`lock.extend(ms)`, `lock.info()`, and `lock.ownerId` round out the API. Expired
+locks are reaped by the worker's maintenance loop.
+
 ## Webhooks
 
 Deliver job events to HTTP endpoints — HMAC-SHA256 signed, retried with backoff,
@@ -262,5 +284,5 @@ compiled in via `--features postgres,redis`.
 ## Not yet covered
 
 Advanced workflow features (fan-out, gates, sub-workflows, saga compensation),
-distributed locks, periodic/cron tasks, prebuilt platform binaries + npm publish
-(host-only build for now), and Python⇄Node cross-language interop.
+periodic/cron tasks, prebuilt platform binaries + npm publish (host-only build
+for now), and Python⇄Node cross-language interop.

@@ -32,3 +32,11 @@ export class JobCancelledError extends TaskitoError {
     this.name = "JobCancelledError";
   }
 }
+
+/** Thrown by {@link Queue.withLock} when the lock is held by another owner. */
+export class LockNotAcquiredError extends TaskitoError {
+  constructor(readonly lockName: string) {
+    super(`Could not acquire lock "${lockName}"`);
+    this.name = "LockNotAcquiredError";
+  }
+}

@@ -3,10 +3,12 @@ export { type DashboardOptions, serveDashboard } from "./dashboard";
 export {
   JobCancelledError,
   JobFailedError,
+  LockNotAcquiredError,
   TaskitoError,
   TaskNotRegisteredError,
 } from "./errors";
 export type { EventHandler, EventName, OutcomeEvent } from "./events";
+export { Lock, type LockInfo, type LockOptions } from "./locks";
 export type { Middleware, TaskContext } from "./middleware";
 export { Queue, type QueueOptions } from "./queue";
 export { JsonSerializer, MsgpackSerializer, type Serializer } from "./serializers";
