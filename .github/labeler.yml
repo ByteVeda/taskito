@@ -8,9 +8,7 @@ rust:
 python:
   - changed-files:
       - any-glob-to-any-file:
-          - "py_src/**"
-          - "pyproject.toml"
-          - "uv.lock"
+          - "sdks/python/**"
 
 dashboard:
   - changed-files:
@@ -28,7 +26,7 @@ docs:
 tests:
   - changed-files:
       - any-glob-to-any-file:
-          - "tests/**"
+          - "sdks/python/tests/**"
           - "**/*_test.py"
           - "**/test_*.py"
           - "**/*.test.ts"
@@ -54,4 +52,4 @@ workflows:
   - changed-files:
       - any-glob-to-any-file:
           - "crates/taskito-core/src/workflow*/**"
-          - "py_src/taskito/workflows/**"
+          - "sdks/python/taskito/workflows/**"

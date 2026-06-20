@@ -14,7 +14,7 @@ pub struct TopologicalNode {
 /// Parse a JSON-encoded DAG and return nodes in topological order.
 ///
 /// Each returned entry carries the node name and the names of its direct
-/// predecessors. Callers (e.g. the Python submit path) use this to create
+/// predecessors. Callers (e.g. the binding's submit path) use this to create
 /// jobs with the correct `depends_on` chain.
 pub fn topological_order(dag_bytes: &[u8]) -> Result<Vec<TopologicalNode>> {
     let dag_json = std::str::from_utf8(dag_bytes)

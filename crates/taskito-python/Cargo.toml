@@ -8,7 +8,7 @@ default = []
 extension-module = ["pyo3/extension-module"]
 postgres = ["taskito-core/postgres", "taskito-workflows?/postgres"]
 redis = ["taskito-core/redis", "taskito-workflows?/redis"]
-native-async = ["dep:taskito-async"]
+native-async = []
 workflows = ["dep:taskito-workflows"]
 # Event-driven scheduler wakeups. OFF by default (not in maturin defaults).
 push-dispatch = ["taskito-core/push-dispatch"]
@@ -25,7 +25,6 @@ tokio = { workspace = true }
 crossbeam-channel = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
-taskito-async = { path = "../taskito-async", optional = true }
 taskito-workflows = { path = "../taskito-workflows", optional = true }
 taskito-mesh = { path = "../taskito-mesh", optional = true }
 serde_json = { workspace = true }

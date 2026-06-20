@@ -1,6 +1,6 @@
 //! PyO3 entry points for the saga orchestrator (Python-side).
 //!
-//! The orchestrator lives in `py_src/taskito/workflows/saga/orchestrator.py`
+//! The orchestrator lives in `sdks/python/taskito/workflows/saga/orchestrator.py`
 //! and drives reverse-order compensation. It needs to:
 //!
 //! - Transition the workflow run's state to `Compensating`, then to one

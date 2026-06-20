@@ -80,9 +80,9 @@ pub struct Job {
     pub progress: Option<i32>,
     pub metadata: Option<String>,
     /// Structured, user-readable annotations attached to the job (canonical
-    /// JSON object, ≤ 15 top-level fields). Validated at the Python
-    /// boundary by `taskito.notes.validate_and_encode_notes`; stored as the
-    /// already-encoded JSON string here.
+    /// JSON object, ≤ 15 top-level fields). Validated at the binding
+    /// boundary (e.g. `taskito.notes.validate_and_encode_notes` in the Python
+    /// shell); stored as the already-encoded JSON string here.
     #[serde(default)]
     pub notes: Option<String>,
     pub cancel_requested: bool,

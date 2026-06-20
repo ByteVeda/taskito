@@ -1,6 +1,6 @@
 """Static asset delivery for the dashboard SPA.
 
-Resolves files bundled at ``py_src/taskito/static/dashboard/`` (the Vite
+Resolves files bundled at ``sdks/python/taskito/static/dashboard/`` (the Vite
 build output) and serves them with the right Content-Type. Treat
 ``StaticAssets`` instances as immutable — the root is fixed at
 construction.

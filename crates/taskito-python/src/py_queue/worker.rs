@@ -438,7 +438,7 @@ impl PyQueue {
         // Create the async executor for native async tasks (if feature enabled)
         #[cfg(feature = "native-async")]
         let async_executor = {
-            let sender = taskito_async::PyResultSender::new(result_tx.clone());
+            let sender = crate::native_async::PyResultSender::new(result_tx.clone());
             Python::with_gil(|py| -> PyResult<Arc<PyObject>> {
                 let sender_obj = pyo3::Py::new(py, sender)?;
                 let mod_ = py.import_bound("taskito.async_support.executor")?;
@@ -482,7 +482,7 @@ impl PyQueue {
             #[cfg(feature = "native-async")]
             {
                 let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> =
-                    Arc::new(taskito_async::NativeAsyncPool::new(
+                    Arc::new(crate::native_async::NativeAsyncPool::new(
                         num_workers,
                         registry_arc.clone(),
                         filters_arc.clone(),

@@ -37,10 +37,7 @@ jobs:
               - 'rust-toolchain.toml'
               - '.github/workflows/ci.yml'
             python:
-              - 'py_src/**'
-              - 'tests/**'
-              - 'pyproject.toml'
-              - 'uv.lock'
+              - 'sdks/python/**'
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -81,23 +78,45 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Generic crates stay PyO3-free
+        # The engine crates (core/workflows/mesh) must remain binding-agnostic so
+        # Node/Java shells can reuse them. A pyo3 dep would let Python-specific code
+        # creep back in. cargo tree is authoritative — you cannot `use pyo3` without
+        # depending on it. See crates/taskito-core/BINDING_CONTRACT.md.
+        run: |
+          set -euo pipefail
+          for crate in taskito-core taskito-workflows taskito-mesh; do
+            # Capture first so a `cargo tree` failure aborts (set -e) instead of
+            # being swallowed by the pipe and silently passing the check.
+            tree_output="$(cargo tree -p "$crate" -e normal --all-features)"
+            if grep -qi pyo3 <<<"$tree_output"; then
+              echo "::error::pyo3 is in the dependency tree of $crate — generic crates must stay binding-agnostic"
+              exit 1
+            fi
+          done
+          echo "Generic crates are PyO3-free."
+
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.10.12"
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: sdks/python/pyproject.toml
 
       - name: Install Python dependencies
+        working-directory: sdks/python
         run: uv sync --extra dev --extra oauth
 
       - name: Lint Python with Ruff
-        run: uv run ruff check py_src/ tests/
+        working-directory: sdks/python
+        run: uv run ruff check taskito/ tests/
 
       - name: Check Python formatting with Ruff
-        run: uv run ruff format --check py_src/ tests/
+        working-directory: sdks/python
+        run: uv run ruff format --check taskito/ tests/
 
       - name: Type-check Python with mypy
-        run: uv run mypy py_src/taskito/ tests/ --no-incremental
+        working-directory: sdks/python
+        run: uv run mypy taskito/ tests/ --no-incremental
 
   rust-test:
     name: Rust Tests (SQLite)
@@ -295,9 +314,10 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.10.12"
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: sdks/python/pyproject.toml
 
       - name: Install Python dependencies
+        working-directory: sdks/python
         run: uv sync --extra dev --extra oauth
 
       - name: Build native extension with maturin
@@ -306,8 +326,10 @@ jobs:
           command: develop
           args: --release --features extension-module,postgres,redis,native-async,workflows,mesh
           maturin-version: v1.13.3
+          working-directory: sdks/python
 
       - name: Run Python test suite
+        working-directory: sdks/python
         # The pytest_unconfigure hook in tests/conftest.py calls
         # ``os._exit(0)`` on a clean run to bypass CPython finalization and
         # avoid the PyO3 daemon-thread SIGABRT we used to paper over here.

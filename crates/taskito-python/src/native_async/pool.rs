@@ -11,7 +11,7 @@ use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
 use taskito_core::worker::WorkerDispatcher;
 
-use crate::task_executor::execute_sync_task;
+use super::task_executor::execute_sync_task;
 
 /// Dual-dispatch worker pool: async tasks run natively on a Python event loop,
 /// sync tasks use `spawn_blocking` (bounded by a semaphore).

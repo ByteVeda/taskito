@@ -10,7 +10,7 @@ Or programmatically::
     from taskito.dashboard import serve_dashboard
     serve_dashboard(queue, host="0.0.0.0", port=8080)
 
-Serves the SPA at ``py_src/taskito/static/dashboard/`` (``index.html`` plus
+Serves the SPA at ``sdks/python/taskito/static/dashboard/`` (``index.html`` plus
 hashed ``assets/`` produced by the Vite build) plus the JSON API under
 ``/api/*``. Requests for client-side routes fall back to ``index.html`` so
 deep links work.
