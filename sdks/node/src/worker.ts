@@ -127,6 +127,7 @@ export class Worker {
       batchSize: run?.batchSize,
       taskConfigs: buildTaskConfigs(tasks),
       queueConfigs: buildQueueConfigs(queueLimits),
+      mesh: run?.mesh,
     };
     return new Worker(queue.runWorker(taskCallback, outcomeCallback, nativeOptions));
   }

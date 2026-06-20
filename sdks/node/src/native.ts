@@ -26,6 +26,7 @@ export type {
   JsStats,
   JsTaskInvocation,
   JsWorkerRow,
+  MeshWorkerConfig,
   OpenOptions,
   QueueConfigInput,
   TaskConfigInput,

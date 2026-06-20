@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 default = []
 postgres = ["taskito-core/postgres"]
 redis = ["taskito-core/redis"]
+mesh = ["dep:taskito-mesh"]
 
 [dependencies]
 taskito-core = { path = "../taskito-core" }
@@ -24,6 +25,7 @@ async-trait = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }
 gethostname = "1"
+taskito-mesh = { path = "../taskito-mesh", optional = true }
 
 [build-dependencies]
 napi-build = "2"

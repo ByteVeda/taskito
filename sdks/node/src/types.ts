@@ -1,3 +1,5 @@
+import type { MeshWorkerConfig } from "./native";
+
 export type {
   EnqueueOptions,
   JobFilter,
@@ -7,6 +9,7 @@ export type {
   JsMetric as Metric,
   JsStats as Stats,
   JsWorkerRow as WorkerInfo,
+  MeshWorkerConfig,
 } from "./native";
 
 /** Options for {@link Queue.result}. */
@@ -69,4 +72,9 @@ export interface WorkerRunOptions {
   channelCapacity?: number;
   /** Jobs claimed per scheduler poll (default 1). */
   batchSize?: number;
+  /**
+   * Opt-in decentralized mesh overlay (peer gossip + work-stealing). Requires
+   * the native addon to be built with the `mesh` cargo feature; ignored otherwise.
+   */
+  mesh?: MeshWorkerConfig;
 }

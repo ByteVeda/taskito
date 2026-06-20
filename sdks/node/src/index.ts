@@ -17,6 +17,7 @@ export type {
   Job,
   JobError,
   JobFilter,
+  MeshWorkerConfig,
   Metric,
   QueueLimits,
   RateLimit,

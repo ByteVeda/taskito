@@ -190,6 +190,29 @@ queues, metrics, workers, webhooks, cancel/retry/pause/resume) over the queue.
 Auth runs open (localhost); the metrics and workers panels populate from live
 job history and running workers.
 
+## Mesh (work-stealing overlay)
+
+Workers can form a decentralized mesh — SWIM gossip for peer discovery plus
+consistent-hash placement and TCP work-stealing — so idle nodes pull work from
+busy ones. The database stays the source of truth; the mesh only optimizes
+dispatch locality. Requires the addon built with the `mesh` cargo feature
+(`build:native` enables it).
+
+```ts
+queue.runWorker({
+  queues: ["default"],
+  mesh: {
+    port: 7946,                       // UDP gossip; TCP steal binds port + 1
+    seeds: ["10.0.0.2:7946"],         // peers to join (empty = standalone)
+    steal: true,
+    encryptionKey: process.env.MESH_KEY, // optional XOR-encrypt gossip
+  },
+});
+```
+
+Other tunables: `bindAddr`, `advertiseAddr` (NAT), `affinityWeight`,
+`localBuffer`, `stealBatch`, `stealThreshold`, `virtualNodes`, `stealRateLimit`.
+
 ## Development
 
 ```bash
@@ -206,6 +229,5 @@ compiled in via `--features postgres,redis`.
 
 ## Not yet covered
 
-Workflows, mesh, middleware/events, distributed locks, periodic/cron tasks,
-prebuilt platform binaries + npm publish (host-only build for now), and
-Python⇄Node cross-language interop.
+Workflows, distributed locks, periodic/cron tasks, prebuilt platform binaries +
+npm publish (host-only build for now), and Python⇄Node cross-language interop.
