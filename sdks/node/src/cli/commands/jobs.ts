@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { connect, type GlobalOptions } from "../connect";
 import { printJson, printTable } from "../output";
+import { nonNegativeIntFlag } from "../parse";
 
 interface JobsOptions {
   status?: string;
@@ -26,8 +27,8 @@ export function registerJobs(program: Command): void {
         status: options.status,
         queue: options.queue,
         task: options.task,
-        limit: options.limit ? Number(options.limit) : undefined,
-        offset: options.offset ? Number(options.offset) : undefined,
+        limit: nonNegativeIntFlag(options.limit, "limit"),
+        offset: nonNegativeIntFlag(options.offset, "offset"),
       });
       if (globals.json) {
         printJson(jobs);

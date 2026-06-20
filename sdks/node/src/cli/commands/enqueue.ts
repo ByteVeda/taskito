@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { connect, type GlobalOptions } from "../connect";
 import { printJson } from "../output";
+import { numberFlag, parseArgsArray } from "../parse";
 
 interface EnqueueOptions {
   queue?: string;
@@ -22,19 +23,15 @@ export function registerEnqueue(program: Command): void {
     .action(
       (task: string, argsJson: string | undefined, options: EnqueueOptions, command: Command) => {
         const queue = connect(command.optsWithGlobals() as GlobalOptions);
-        const args = argsJson ? (JSON.parse(argsJson) as unknown[]) : [];
+        const args = parseArgsArray(argsJson);
         const id = queue.enqueue(task, args, {
           queue: options.queue,
-          priority: numeric(options.priority),
-          maxRetries: numeric(options.maxRetries),
-          delayMs: numeric(options.delayMs),
+          priority: numberFlag(options.priority, "priority"),
+          maxRetries: numberFlag(options.maxRetries, "max-retries"),
+          delayMs: numberFlag(options.delayMs, "delay-ms"),
           uniqueKey: options.uniqueKey,
         });
         printJson({ id });
       },
     );
-}
-
-function numeric(value: string | undefined): number | undefined {
-  return value === undefined ? undefined : Number(value);
 }

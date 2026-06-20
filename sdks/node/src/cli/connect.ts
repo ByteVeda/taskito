@@ -1,4 +1,5 @@
 import { Queue, type QueueOptions } from "../index";
+import { positiveIntFlag } from "./parse";
 
 /** Global connection options shared by every CLI command. */
 export interface GlobalOptions {
@@ -18,7 +19,7 @@ export function connect(options: GlobalOptions): Queue {
     dbPath: options.db,
     backend: options.backend as QueueOptions["backend"],
     dsn: options.dsn,
-    poolSize: options.poolSize ? Number(options.poolSize) : undefined,
+    poolSize: positiveIntFlag(options.poolSize, "pool-size"),
     schema: options.schema,
     prefix: options.prefix,
     namespace: options.namespace,

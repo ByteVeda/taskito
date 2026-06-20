@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { connect, type GlobalOptions } from "../connect";
 import { printJson, printTable } from "../output";
+import { nonNegativeIntFlag } from "../parse";
 
 export function registerDlq(program: Command): void {
   const dlq = program.command("dlq").description("Dead-letter queue operations");
@@ -14,8 +15,8 @@ export function registerDlq(program: Command): void {
       const globals = command.optsWithGlobals() as GlobalOptions;
       const queue = connect(globals);
       const dead = queue.deadLetters(
-        options.limit ? Number(options.limit) : undefined,
-        options.offset ? Number(options.offset) : undefined,
+        nonNegativeIntFlag(options.limit, "limit"),
+        nonNegativeIntFlag(options.offset, "offset"),
       );
       if (globals.json) {
         printJson(dead);
@@ -53,6 +54,7 @@ export function registerDlq(program: Command): void {
     .option("--older-than-ms <n>", "age cutoff in ms", "0")
     .action((options: { olderThanMs?: string }, command: Command) => {
       const queue = connect(command.optsWithGlobals() as GlobalOptions);
-      printJson({ purged: queue.purgeDead(Number(options.olderThanMs ?? 0)) });
+      const olderThanMs = nonNegativeIntFlag(options.olderThanMs, "older-than-ms") ?? 0;
+      printJson({ purged: queue.purgeDead(olderThanMs) });
     });
 }

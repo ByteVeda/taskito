@@ -2,6 +2,10 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Command } from "commander";
 import type { Worker } from "../../index";
+import { positiveIntFlag } from "../parse";
+
+/** Grace period for in-flight results to drain after a stop signal. */
+const SHUTDOWN_GRACE_MS = 200;
 
 interface RunOptions {
   queues?: string;
@@ -26,14 +30,17 @@ export function registerRun(program: Command): void {
       const queues = options.queues ? options.queues.split(",") : undefined;
       const worker = app.runWorker({
         queues,
-        batchSize: options.batchSize ? Number(options.batchSize) : undefined,
+        batchSize: positiveIntFlag(options.batchSize, "batch-size"),
       });
 
       process.stdout.write(
         `taskito worker running (queues: ${queues?.join(",") ?? "default"}) — Ctrl-C to stop\n`,
       );
-      const stop = () => {
+      // `stop()` only signals shutdown; give in-flight results a moment to drain
+      // before exiting so completed work isn't lost.
+      const stop = async () => {
         worker.stop();
+        await new Promise((done) => setTimeout(done, SHUTDOWN_GRACE_MS));
         process.exit(0);
       };
       process.once("SIGINT", stop);
