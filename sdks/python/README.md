@@ -10,7 +10,7 @@ A Rust-powered task queue for Python. No broker required — just SQLite or Post
 
 </div>
 
-```
+```bash
 pip install taskito                # SQLite (default)
 pip install taskito[postgres]      # with Postgres backend
 ```
