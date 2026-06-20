@@ -124,6 +124,27 @@ taskito run ./app.js --queues default,emails
 
 `--json` on any read command prints machine-readable output.
 
+## Events & middleware
+
+Subscribe to job lifecycle events, or register middleware around execution:
+
+```ts
+queue.on("job.completed", (e) => console.log("done", e.jobId));
+queue.on("job.dead", (e) => alertOps(e));
+
+queue.use({
+  before: (ctx) => log.info("start", ctx.taskName),
+  after: (ctx, result) => log.info("ok", ctx.taskName),
+  onError: (ctx, err) => log.error("threw", ctx.taskName, err),
+  onRetry: (e) => metrics.inc("retry", e.taskName),
+  onDeadLetter: (e) => alertOps(e),
+});
+```
+
+Events: `job.completed`, `job.retrying`, `job.dead`, `job.cancelled`. `before`/
+`after`/`onError` wrap execution (awaited); the outcome hooks fire after the core
+decides the result.
+
 ## Dashboard
 
 A web dashboard (the same React UI the Python SDK serves) runs over the queue —
