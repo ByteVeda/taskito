@@ -93,10 +93,10 @@ Setting `timeoutMs` without `onTimeout` defaults to `"reject"`.
 
 ## Rejection behaviour
 
-Rejecting a gate marks the gate node `failed` and all downstream nodes
-`skipped`. The workflow run ends in state `"failed"`. There is no partial
-recovery — if you need a rejection branch, use
-[conditions](/node/workflows/conditions) (an `on_failure` step) downstream.
+Rejecting a gate marks the gate node `failed` and skips its default
+(`on_success`) successors; the workflow run ends in state `"failed"`. Any
+`on_failure` / `always` successors still run — use those (see
+[conditions](/node/workflows/conditions)) if you need a rejection branch.
 
 <Callout type="warning">
   Calling `approveGate` or `rejectGate` on a gate that has already been
@@ -112,6 +112,8 @@ server that receives a webhook and calls `approveGate`:
 
 ```ts
 app.post("/hooks/deploy-approval", async (req, res) => {
+  // Resolving a gate is a privileged state transition: authenticate the caller,
+  // verify the webhook signature, and authorize access to this run first.
   const { runId, approved, reason } = req.body;
   queue.workflows.resolveGate(runId, "approve-deploy", approved, reason);
   res.sendStatus(204);
