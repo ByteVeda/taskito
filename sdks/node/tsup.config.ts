@@ -6,6 +6,7 @@ export default defineConfig({
     cli: "src/cli/index.ts",
     "contrib/otel": "src/contrib/otel.ts",
     "contrib/prometheus": "src/contrib/prometheus.ts",
+    "contrib/express": "src/contrib/express.ts",
   },
   format: ["esm", "cjs"],
   dts: true,
