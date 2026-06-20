@@ -26,9 +26,10 @@ const DEFAULT_WAIT_POLL_MS = 100;
 /**
  * The `queue.workflows` facade: define and submit workflows, then query runs.
  *
- * v1 supports DAG / linear workflows — steps are pre-enqueued with `depends_on`
- * chains and the core scheduler sequences them. Fan-out, gates, sub-workflows,
- * and saga compensation are not yet available in the Node SDK.
+ * Supports DAG / linear workflows (steps pre-enqueued with `depends_on` chains,
+ * sequenced by the core scheduler) plus fan-out / fan-in steps the worker-side
+ * tracker expands at runtime (see `tracker.ts`). Gates, sub-workflows, and saga
+ * compensation are not yet available in the Node SDK.
  */
 export class WorkflowManager {
   constructor(
@@ -92,9 +93,19 @@ export class WorkflowManager {
     };
     const dagBytes = Buffer.from(JSON.stringify(dag));
 
+    // Static nodes are enqueued by `submitWorkflow` from these payloads. For
+    // deferred nodes the tracker enqueues later, so we persist their args in
+    // `args_template` (base64) — the only storage-reconstructable channel.
+    const deferred = new Set(spec.deferredNodeNames);
+    const stepMetadata = { ...spec.stepMetadata };
     const nodePayloads: Record<string, Buffer> = {};
     for (const name of spec.nodes) {
-      nodePayloads[name] = Buffer.from(this.serializer.serialize(spec.stepArgs[name] ?? []));
+      const payload = Buffer.from(this.serializer.serialize(spec.stepArgs[name] ?? []));
+      nodePayloads[name] = payload;
+      const meta = stepMetadata[name];
+      if (deferred.has(name) && meta) {
+        stepMetadata[name] = { ...meta, args_template: payload.toString("base64") };
+      }
     }
 
     const paramsJson = options?.params === undefined ? null : JSON.stringify(options.params);
@@ -102,10 +113,11 @@ export class WorkflowManager {
       spec.name,
       spec.version,
       dagBytes,
-      JSON.stringify(spec.stepMetadata),
+      JSON.stringify(stepMetadata),
       nodePayloads,
       options?.queueDefault ?? null,
       paramsJson,
+      spec.deferredNodeNames,
     );
     return this.makeHandle(runId);
   }

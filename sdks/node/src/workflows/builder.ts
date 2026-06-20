@@ -1,9 +1,20 @@
-import type { StepMetadataJson, WorkflowHandle, WorkflowSpec, WorkflowStepOptions } from "./types";
+import { successorsOf, transitiveDeferred } from "./plan";
+import type {
+  FanInStepOptions,
+  FanOutStepOptions,
+  StepMetadataJson,
+  WorkflowHandle,
+  WorkflowSpec,
+  WorkflowStepOptions,
+} from "./types";
 
 /**
  * Fluent builder for a workflow DAG. Each {@link WorkflowBuilder.step} adds a
  * node; `after` declares edges. Steps may reference predecessors that are added
  * later — the DAG is validated (and topologically ordered) at submit time.
+ *
+ * {@link WorkflowBuilder.fanOut} / {@link WorkflowBuilder.fanIn} add dynamic
+ * steps the tracker expands at runtime (see `tracker.ts`).
  *
  * Obtain one via `queue.workflows.define(name)`; finish with `.submit()`.
  */
@@ -13,6 +24,8 @@ export class WorkflowBuilder {
   private readonly stepMetadata: Record<string, StepMetadataJson> = {};
   private readonly stepArgs: Record<string, unknown[]> = {};
   private readonly seen = new Set<string>();
+  /** Nodes that run no static job — expanded/enqueued by the tracker. */
+  private readonly deferredSeeds = new Set<string>();
 
   constructor(
     private readonly name: string,
@@ -22,22 +35,7 @@ export class WorkflowBuilder {
 
   /** Add a step `name` that runs the registered task `taskName`. */
   step(name: string, taskName: string, options: WorkflowStepOptions = {}): this {
-    if (this.seen.has(name)) {
-      throw new Error(`duplicate workflow step '${name}'`);
-    }
-    this.seen.add(name);
-    this.nodes.push(name);
-
-    const after =
-      options.after === undefined
-        ? []
-        : Array.isArray(options.after)
-          ? options.after
-          : [options.after];
-    for (const from of after) {
-      this.edges.push({ from, to: name });
-    }
-
+    this.addNode(name, options.after);
     this.stepMetadata[name] = {
       task_name: taskName,
       queue: options.queue,
@@ -49,6 +47,44 @@ export class WorkflowBuilder {
     return this;
   }
 
+  /**
+   * Add a fan-out step. At runtime the tracker reads the array result of
+   * `itemsFrom` and expands one child per item, each running `options.task`.
+   */
+  fanOut(name: string, options: FanOutStepOptions): this {
+    this.addNode(name, options.after);
+    this.stepMetadata[name] = {
+      task_name: options.task,
+      queue: options.queue,
+      max_retries: options.maxRetries,
+      timeout_ms: options.timeoutMs,
+      priority: options.priority,
+      fan_out: JSON.stringify({ itemsFrom: options.itemsFrom ?? null }),
+    };
+    this.stepArgs[name] = [];
+    this.deferredSeeds.add(name);
+    return this;
+  }
+
+  /**
+   * Add a fan-in step that collects the children of fan-out `options.after`
+   * and runs `options.task` with `[childResult, …]` as its single argument.
+   */
+  fanIn(name: string, options: FanInStepOptions): this {
+    this.addNode(name, options.after);
+    this.stepMetadata[name] = {
+      task_name: options.task,
+      queue: options.queue,
+      max_retries: options.maxRetries,
+      timeout_ms: options.timeoutMs,
+      priority: options.priority,
+      fan_in: JSON.stringify({ from: options.after }),
+    };
+    this.stepArgs[name] = [];
+    this.deferredSeeds.add(name);
+    return this;
+  }
+
   /** Materialize the validated spec without submitting. */
   build(): WorkflowSpec {
     for (const edge of this.edges) {
@@ -56,6 +92,7 @@ export class WorkflowBuilder {
         throw new Error(`step '${edge.to}' depends on unknown step '${edge.from}'`);
       }
     }
+    const deferred = transitiveDeferred(this.deferredSeeds, successorsOf(this.edges));
     return {
       name: this.name,
       version: this.version,
@@ -63,11 +100,25 @@ export class WorkflowBuilder {
       edges: [...this.edges],
       stepMetadata: { ...this.stepMetadata },
       stepArgs: { ...this.stepArgs },
+      deferredNodeNames: [...deferred],
     };
   }
 
   /** Build, then submit the run. Returns a handle carrying the run id. */
   submit(): WorkflowHandle {
     return this.submitFn(this.build());
+  }
+
+  /** Register a node + its incoming edges, rejecting duplicate names. */
+  private addNode(name: string, after: string | string[] | undefined): void {
+    if (this.seen.has(name)) {
+      throw new Error(`duplicate workflow step '${name}'`);
+    }
+    this.seen.add(name);
+    this.nodes.push(name);
+    const predecessors = after === undefined ? [] : Array.isArray(after) ? after : [after];
+    for (const from of predecessors) {
+      this.edges.push({ from, to: name });
+    }
   }
 }

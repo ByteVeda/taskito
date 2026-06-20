@@ -14,6 +14,7 @@ import type {
 import type { Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
+import { WorkflowTracker } from "./workflows";
 
 const log = createLogger("worker");
 
@@ -52,8 +53,10 @@ export class Worker {
     const { tasks, queueLimits, serializer, middleware, emitter, run } = params;
 
     // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
-    const advanceWorkflows =
-      (run?.advanceWorkflows ?? true) && typeof queue.markWorkflowNodeResult === "function";
+    const tracker =
+      (run?.advanceWorkflows ?? true) && typeof queue.markWorkflowNodeResult === "function"
+        ? new WorkflowTracker(queue, serializer)
+        : null;
 
     const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
       const task = tasks.get(invocation.taskName);
@@ -128,9 +131,7 @@ export class Worker {
           log.debug(() => `${mapping.hook} middleware hook threw for ${outcome.jobId}`, error);
         }
       }
-      if (advanceWorkflows) {
-        advanceWorkflowNode(queue, outcome);
-      }
+      tracker?.onOutcome(outcome);
     };
 
     const nativeOptions: NativeWorkerOptions = {
@@ -147,24 +148,6 @@ export class Worker {
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
     this.native.stop();
-  }
-}
-
-/**
- * Advance a workflow run when one of its node-jobs reaches a terminal state.
- * A no-op for non-workflow jobs (the native call returns null); errors are
- * swallowed so workflow bookkeeping never breaks the worker loop.
- */
-function advanceWorkflowNode(queue: NativeQueue, outcome: JsOutcome): void {
-  try {
-    if (outcome.kind === "success") {
-      queue.markWorkflowNodeResult(outcome.jobId, true, null);
-    } else if (outcome.kind === "dead") {
-      queue.markWorkflowNodeResult(outcome.jobId, false, outcome.error ?? null);
-    }
-  } catch (error) {
-    // non-workflow job or transient storage error
-    log.debug(() => `workflow advance for ${outcome.jobId} failed`, error);
   }
 }
 

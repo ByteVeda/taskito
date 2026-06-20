@@ -1,6 +1,9 @@
 export { WorkflowBuilder } from "./builder";
 export { WorkflowManager } from "./manager";
+export { WorkflowTracker } from "./tracker";
 export type {
+  FanInStepOptions,
+  FanOutStepOptions,
   WorkflowAdvance,
   WorkflowHandle,
   WorkflowNode,

@@ -33,6 +33,40 @@ export interface WorkflowStepOptions {
   priority?: number;
 }
 
+/** Common per-step task config shared by every step kind. */
+interface StepTaskOptions {
+  queue?: string;
+  maxRetries?: number;
+  timeoutMs?: number;
+  priority?: number;
+}
+
+/**
+ * Options for a fan-out step. The step itself runs no job; at runtime the
+ * tracker reads the array result of `itemsFrom` (its sole predecessor by
+ * default) and expands one child per item, each running `task` with that item
+ * as its single argument.
+ */
+export interface FanOutStepOptions extends StepTaskOptions {
+  /** Predecessor step name(s). At least one is required. */
+  after: string | string[];
+  /** Task each child runs, once per item. */
+  task: string;
+  /** Predecessor whose array result supplies the items. Defaults to the sole predecessor. */
+  itemsFrom?: string;
+}
+
+/**
+ * Options for a fan-in step. Collects the results of a fan-out's children into
+ * an array and runs `task` with that array as its single argument.
+ */
+export interface FanInStepOptions extends StepTaskOptions {
+  /** The fan-out step to collect. */
+  after: string;
+  /** Combiner task; receives `[childResult, …]` as its single argument. */
+  task: string;
+}
+
 /** snake_case step metadata, matching the Rust `StepMetadata` shape. */
 export interface StepMetadataJson {
   task_name: string;
@@ -40,6 +74,12 @@ export interface StepMetadataJson {
   max_retries?: number;
   timeout_ms?: number;
   priority?: number;
+  /** Base64 of the serialized args, persisted so the tracker can enqueue deferred nodes. */
+  args_template?: string;
+  /** JSON `{itemsFrom}` marking a fan-out node. */
+  fan_out?: string;
+  /** JSON `{from}` marking a fan-in node (the fan-out it collects). */
+  fan_in?: string;
 }
 
 /** A built workflow definition, ready to submit. */
@@ -50,6 +90,8 @@ export interface WorkflowSpec {
   edges: Array<{ from: string; to: string }>;
   stepMetadata: Record<string, StepMetadataJson>;
   stepArgs: Record<string, unknown[]>;
+  /** Nodes the tracker enqueues on demand (fan-out/fan-in ∪ their descendants). */
+  deferredNodeNames: string[];
 }
 
 /** Submit-time options. */
