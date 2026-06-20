@@ -158,12 +158,19 @@ await queue.withLock("report:2026-06", async () => {
   await rebuildReport();
 });
 
-// Manual handle, or `using` for automatic release.
-using lock = queue.lock("resource", { ttlMs: 30_000 });
+// Manual handle with explicit release.
+const lock = queue.lock("resource", { ttlMs: 30_000 });
 if (lock.acquire()) {
-  // ... critical section
-} // released at block exit
+  try {
+    // ... critical section
+  } finally {
+    lock.release();
+  }
+}
 ```
+
+`Lock` also implements `Symbol.dispose`, so on Node 20.4+ you can use `using lock =
+queue.lock("resource")` for automatic release at block exit.
 
 `lock.extend(ms)`, `lock.info()`, and `lock.ownerId` round out the API. Expired
 locks are reaped by the worker's maintenance loop.

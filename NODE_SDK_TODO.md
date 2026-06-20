@@ -4,7 +4,7 @@ Living plan for the **Node.js SDK** (`crates/taskito-node` napi-rs crate + `sdks
 TS package). Goal: a fully standalone Node SDK with feature parity to the Python
 SDK, zero Python dependency, over the shared Rust core.
 
-- **Branch:** `feat/sdks-node` (local commits only — not pushed, no PRs yet).
+- **Branch:** landing as a sequence of focused PRs off `master` (see `tasks/branch-split-plan.md`).
 - **Engine crates stay binding-agnostic:** `taskito-core`, `taskito-workflows`,
   `taskito-mesh` must never depend on `pyo3` or `napi`. Enforced by a `cargo tree`
   tripwire in CI. The napi shell lives only in `crates/taskito-node`.
@@ -39,7 +39,7 @@ SDK, zero Python dependency, over the shared Rust core.
 ```bash
 cargo clippy -p taskito-node --features postgres,redis,mesh,workflows -- -D warnings
 cargo check -p taskito-node                          # default build (mesh/workflows off)
-cd sdks/node && pnpm run build:native && pnpm typecheck && pnpm lint && pnpm test   # 48 tests
+cd sdks/node && pnpm run build:native && pnpm typecheck && pnpm lint && pnpm test   # full Node suite
 ```
 `build:native` ships `--features postgres,redis,mesh,workflows`.
 
@@ -247,7 +247,7 @@ pnpm run build:dashboard   # build the React SPA into static/dashboard
 
 ## File map (Node SDK)
 
-```
+```text
 crates/taskito-node/src/
   lib.rs            backend.rs  dispatcher.rs  worker.rs  error.rs  config.rs
   queue/{mod,inspect,admin,locks,periodic,workflows}.rs
@@ -262,7 +262,7 @@ sdks/node/src/
   serializers/{serializer,json,msgpack,index}.ts
   dashboard/{server,routes,handlers,contract,static,metrics,api,index}.ts
   cli/{index,connect,output,commands/*}.ts
-sdks/node/test/*.test.ts        # 16 files, 52 tests
+sdks/node/test/*.test.ts        # grouped by feature area
 ```
 
 Memory: see `.claude/memory/session-history.md` (Node SDK section) for the running
