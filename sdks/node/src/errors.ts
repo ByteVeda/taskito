@@ -13,3 +13,22 @@ export class TaskNotRegisteredError extends TaskitoError {
     this.name = "TaskNotRegisteredError";
   }
 }
+
+/** Thrown by {@link Queue.result} when the awaited job failed or dead-lettered. */
+export class JobFailedError extends TaskitoError {
+  constructor(
+    readonly jobId: string,
+    reason: string,
+  ) {
+    super(`Job ${jobId} failed: ${reason}`);
+    this.name = "JobFailedError";
+  }
+}
+
+/** Thrown by {@link Queue.result} when the awaited job was cancelled. */
+export class JobCancelledError extends TaskitoError {
+  constructor(readonly jobId: string) {
+    super(`Job ${jobId} was cancelled`);
+    this.name = "JobCancelledError";
+  }
+}

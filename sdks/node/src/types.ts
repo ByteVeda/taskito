@@ -1,4 +1,20 @@
-export type { EnqueueOptions, JsJob as Job } from "./native";
+export type {
+  EnqueueOptions,
+  JobFilter,
+  JsDeadJob as DeadJob,
+  JsJob as Job,
+  JsJobError as JobError,
+  JsMetric as Metric,
+  JsStats as Stats,
+} from "./native";
+
+/** Options for {@link Queue.result}. */
+export interface ResultOptions {
+  /** Max time to wait for a terminal state (ms). Default 30000. */
+  timeoutMs?: number;
+  /** Poll interval (ms). Default 50. */
+  pollMs?: number;
+}
 
 /**
  * A registered task: receives the deserialized positional args and returns a

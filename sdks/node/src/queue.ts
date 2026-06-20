@@ -1,11 +1,17 @@
-import { TaskitoError } from "./errors";
+import { JobCancelledError, JobFailedError, TaskitoError } from "./errors";
 import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
 import { JsonSerializer, type Serializer } from "./serializers";
 import type {
+  DeadJob,
   EnqueueOptions,
   Job,
+  JobError,
+  JobFilter,
+  Metric,
   QueueLimits,
   RegisteredTask,
+  ResultOptions,
+  Stats,
   TaskHandler,
   TaskOptions,
   WorkerRunOptions,
@@ -96,6 +102,103 @@ export class Queue {
   /** Whether cancellation has been requested for a job. */
   isCancelRequested(id: string): boolean {
     return this.native.isCancelRequested(id);
+  }
+
+  /**
+   * Await a job's terminal state and return its deserialized result. Rejects
+   * with {@link JobFailedError} / {@link JobCancelledError} on failure, and with
+   * {@link TaskitoError} if the wait times out.
+   */
+  async result(id: string, options?: ResultOptions): Promise<unknown> {
+    const timeoutMs = options?.timeoutMs ?? 30_000;
+    const pollMs = options?.pollMs ?? 50;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const job = this.native.getJob(id);
+      if (job) {
+        switch (job.status) {
+          case "complete":
+            return job.result ? this.serializer.deserialize(job.result) : undefined;
+          case "failed":
+          case "dead":
+            throw new JobFailedError(id, job.error ?? "job failed");
+          case "cancelled":
+            throw new JobCancelledError(id);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    throw new TaskitoError(`timed out waiting for job ${id}`);
+  }
+
+  /** Job counts by status across all queues. */
+  stats(): Stats {
+    return this.native.stats();
+  }
+
+  /** Job counts by status for a single queue. */
+  statsByQueue(queue: string): Stats {
+    return this.native.statsByQueue(queue);
+  }
+
+  /** Job counts by status, keyed by queue name. */
+  statsAllQueues(): Record<string, Stats> {
+    return this.native.statsAllQueues();
+  }
+
+  /** List jobs, optionally filtered and paginated. */
+  listJobs(filter?: JobFilter): Job[] {
+    return this.native.listJobs(filter);
+  }
+
+  /** Error history for a job (one entry per failed attempt). */
+  getJobErrors(id: string): JobError[] {
+    return this.native.getJobErrors(id);
+  }
+
+  /** Per-execution task metrics within the last `sinceMs` milliseconds. */
+  getMetrics(sinceMs: number, task?: string): Metric[] {
+    return this.native.getMetrics(task ?? null, sinceMs);
+  }
+
+  /** List dead-letter entries (paginated). */
+  deadLetters(limit?: number, offset?: number): DeadJob[] {
+    return this.native.deadLetters(limit, offset);
+  }
+
+  /** Re-enqueue a dead-letter entry. Returns the new job id. */
+  retryDead(deadId: string): string {
+    return this.native.retryDead(deadId);
+  }
+
+  /** Delete a dead-letter entry. Returns false if it didn't exist. */
+  deleteDead(deadId: string): boolean {
+    return this.native.deleteDead(deadId);
+  }
+
+  /** Purge dead-letter entries older than `olderThanMs`. Returns the count removed. */
+  purgeDead(olderThanMs: number): number {
+    return this.native.purgeDead(olderThanMs);
+  }
+
+  /** Purge completed jobs older than `olderThanMs`. Returns the count removed. */
+  purgeCompleted(olderThanMs: number): number {
+    return this.native.purgeCompleted(olderThanMs);
+  }
+
+  /** Pause a queue — workers stop dispatching its jobs until resumed. */
+  pauseQueue(queue: string): void {
+    this.native.pauseQueue(queue);
+  }
+
+  /** Resume a paused queue. */
+  resumeQueue(queue: string): void {
+    this.native.resumeQueue(queue);
+  }
+
+  /** Names of currently-paused queues. */
+  listPausedQueues(): string[] {
+    return this.native.listPausedQueues();
   }
 
   /** Start a worker that runs the registered tasks. Hold the returned {@link Worker}. */

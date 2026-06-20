@@ -17,7 +17,12 @@ export type NativeWorker = InstanceType<typeof JsWorker>;
 
 export type {
   EnqueueOptions,
+  JobFilter,
+  JsDeadJob,
   JsJob,
+  JsJobError,
+  JsMetric,
+  JsStats,
   JsTaskInvocation,
   OpenOptions,
   QueueConfigInput,
