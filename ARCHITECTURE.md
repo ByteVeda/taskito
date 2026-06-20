@@ -54,7 +54,8 @@ and Rust never imports Python types except at the PyO3 binding edge.**
   WORKFLOWS    crates/taskito-workflows/ — separate crate, own schema & stores
                (SQLite · Postgres · Redis), surfaced via py_queue/workflow_ops/
 
-  NATIVE ASYNC crates/taskito-async/ — optional native-async pool
+  NATIVE ASYNC taskito-python/src/native_async/ — optional native-async pool
+               (Python-coupled; behind the `native-async` feature)
 ```
 
 The dependency arrows point **downward only**. `taskito-core` knows nothing about
@@ -160,11 +161,13 @@ independently of the job queue. It now ships stores for **all three backends** �
 the `WorkflowStorageBackend` enum (`workflow_ops/mod.rs::workflow_storage`), with
 Postgres/Redis behind cargo features.
 
-### 7. Native async — `crates/taskito-async/`
+### 7. Native async — `taskito-python/src/native_async/`
 
-Optional (`native-async` feature). `NativeAsyncPool` dual-dispatches: async tasks
-run on the Python event loop, sync tasks via `spawn_blocking`. `PyResultSender`
-bridges the Python executor back to the Rust scheduler.
+Optional (`native-async` feature). Python-specific binding code (was the separate
+`taskito-async` crate; folded in because every line is Python-coupled).
+`NativeAsyncPool` dual-dispatches: async tasks run on the Python event loop, sync
+tasks via `spawn_blocking`. `PyResultSender` bridges the Python executor back to
+the Rust scheduler.
 
 ---
 
@@ -197,9 +200,10 @@ crates/
 │       ├── worker.rs      # WorkerDispatcher trait
 │       └── resilience/ periodic.rs job.rs error.rs
 ├── taskito-python/        # PyO3 bindings — the only Python↔Rust seam
-│   └── src/py_queue/      # PyQueue + workflow_ops/
-├── taskito-workflows/     # separate crate, own schema + 3 backend stores
-└── taskito-async/         # optional native-async pool
+│   └── src/
+│       ├── py_queue/      # PyQueue + workflow_ops/
+│       └── native_async/  # optional native-async pool (native-async feature)
+└── taskito-workflows/     # separate crate, own schema + 3 backend stores
 ```
 
 ---
