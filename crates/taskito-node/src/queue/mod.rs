@@ -42,7 +42,7 @@ impl JsQueue {
     ) -> Result<String> {
         let opts = options.unwrap_or_default();
         let unique = opts.unique_key.is_some();
-        let new_job = build_new_job(task_name, payload.to_vec(), opts, self.namespace.as_deref());
+        let new_job = build_new_job(task_name, payload.to_vec(), opts, self.namespace.as_deref())?;
         let job = if unique {
             self.storage.enqueue_unique(new_job)
         } else {
@@ -93,7 +93,7 @@ impl JsQueue {
         &self,
         callback: ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>,
         options: Option<WorkerOptions>,
-    ) -> JsWorker {
+    ) -> Result<JsWorker> {
         start_worker(
             self.storage.clone(),
             self.namespace.clone(),

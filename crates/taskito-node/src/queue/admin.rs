@@ -6,7 +6,7 @@ use taskito_core::Storage;
 
 use super::JsQueue;
 use crate::convert::{dead_job_to_js, JsDeadJob};
-use crate::error::to_napi_err;
+use crate::error::{non_negative, to_napi_err};
 
 const DEFAULT_LIMIT: i64 = 50;
 
@@ -15,10 +15,9 @@ impl JsQueue {
     /// List dead-letter entries (paginated).
     #[napi]
     pub fn dead_letters(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<JsDeadJob>> {
-        let dead = self
-            .storage
-            .list_dead(limit.unwrap_or(DEFAULT_LIMIT), offset.unwrap_or(0))
-            .map_err(to_napi_err)?;
+        let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let offset = non_negative(offset.unwrap_or(0), "offset")?;
+        let dead = self.storage.list_dead(limit, offset).map_err(to_napi_err)?;
         Ok(dead.into_iter().map(dead_job_to_js).collect())
     }
 
@@ -37,6 +36,7 @@ impl JsQueue {
     /// Purge dead-letter entries older than `older_than_ms`. Returns the count removed.
     #[napi]
     pub fn purge_dead(&self, older_than_ms: i64) -> Result<i64> {
+        let older_than_ms = non_negative(older_than_ms, "olderThanMs")?;
         self.storage
             .purge_dead(older_than_ms)
             .map(|n| n as i64)
@@ -46,6 +46,7 @@ impl JsQueue {
     /// Purge completed jobs older than `older_than_ms`. Returns the count removed.
     #[napi]
     pub fn purge_completed(&self, older_than_ms: i64) -> Result<i64> {
+        let older_than_ms = non_negative(older_than_ms, "olderThanMs")?;
         self.storage
             .purge_completed(older_than_ms)
             .map(|n| n as i64)

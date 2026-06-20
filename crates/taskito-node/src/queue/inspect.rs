@@ -12,7 +12,7 @@ use crate::convert::{
     job_error_to_js, job_to_js, metric_to_js, stats_to_js, status_code, JsJob, JsJobError,
     JsMetric, JsStats,
 };
-use crate::error::to_napi_err;
+use crate::error::{invalid_arg, non_negative, to_napi_err};
 
 const DEFAULT_LIMIT: i64 = 50;
 
@@ -44,14 +44,25 @@ impl JsQueue {
     #[napi]
     pub fn list_jobs(&self, filter: Option<JobFilter>) -> Result<Vec<JsJob>> {
         let filter = filter.unwrap_or_default();
+        // An unrecognized status would otherwise silently widen the result set
+        // to every job; reject it so a typo fails loudly.
+        let status = match filter.status.as_deref() {
+            Some(s) => Some(
+                status_code(s)
+                    .ok_or_else(|| invalid_arg(format!("unknown status filter '{s}'")))?,
+            ),
+            None => None,
+        };
+        let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let offset = non_negative(filter.offset.unwrap_or(0), "offset")?;
         let jobs = self
             .storage
             .list_jobs(
-                filter.status.as_deref().and_then(status_code),
+                status,
                 filter.queue.as_deref(),
                 filter.task.as_deref(),
-                filter.limit.unwrap_or(DEFAULT_LIMIT),
-                filter.offset.unwrap_or(0),
+                limit,
+                offset,
                 self.namespace.as_deref(),
             )
             .map_err(to_napi_err)?;

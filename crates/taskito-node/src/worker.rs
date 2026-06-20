@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use napi::bindgen_prelude::{spawn, spawn_blocking};
+use napi::bindgen_prelude::{spawn, spawn_blocking, Result};
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi_derive::napi;
 use taskito_core::worker::WorkerDispatcher;
@@ -36,18 +36,20 @@ impl JsWorker {
 }
 
 /// Start a worker over `storage` that runs `callback` for each dequeued job.
+/// Fails fast if any task/queue config is invalid (e.g. a malformed rate limit).
 pub fn start_worker(
     storage: StorageBackend,
     namespace: Option<String>,
     options: WorkerOptions,
     callback: ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>,
-) -> JsWorker {
+) -> Result<JsWorker> {
     let queues = options
         .queues
         .unwrap_or_else(|| vec![DEFAULT_QUEUE.to_string()]);
+    // Clamp to >= 1: a zero-capacity Tokio/crossbeam channel panics on creation.
     let capacity = options
         .channel_capacity
-        .map(|c| c as usize)
+        .map(|c| (c as usize).max(1))
         .unwrap_or(DEFAULT_CHANNEL_CAPACITY);
 
     let mut config = SchedulerConfig::default();
@@ -62,10 +64,10 @@ pub fn start_worker(
     // (register_* take &mut self).
     let mut scheduler = Scheduler::new(storage, queues, config, namespace);
     for input in options.task_configs.iter().flatten() {
-        scheduler.register_task(input.name.clone(), crate::convert::task_config(input));
+        scheduler.register_task(input.name.clone(), crate::convert::task_config(input)?);
     }
     for input in options.queue_configs.iter().flatten() {
-        scheduler.register_queue_config(input.name.clone(), crate::convert::queue_config(input));
+        scheduler.register_queue_config(input.name.clone(), crate::convert::queue_config(input)?);
     }
     let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
@@ -97,5 +99,5 @@ pub fn start_worker(
         }
     });
 
-    JsWorker { shutdown }
+    Ok(JsWorker { shutdown })
 }

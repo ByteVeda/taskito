@@ -1,12 +1,13 @@
 //! Marshalling between core job types and JS-facing shapes. Kept out of the
 //! logic modules so `queue`/`worker` read as intent, not plumbing.
 
-use napi::bindgen_prelude::Buffer;
+use napi::bindgen_prelude::{Buffer, Result};
 use napi_derive::napi;
 use taskito_core::job::now_millis;
 use taskito_core::{Job, NewJob};
 
 use crate::config::EnqueueOptions;
+use crate::error::non_negative;
 
 const DEFAULT_QUEUE: &str = "default";
 const DEFAULT_MAX_RETRIES: i32 = 3;
@@ -21,16 +22,27 @@ pub fn build_new_job(
     payload: Vec<u8>,
     opts: EnqueueOptions,
     queue_namespace: Option<&str>,
-) -> NewJob {
-    let delay = opts.delay_ms.unwrap_or(0).max(0);
-    NewJob {
+) -> Result<NewJob> {
+    // Signed types reach us from JS; reject the negatives that would silently
+    // corrupt scheduling (premature timeout, retries disabled, past schedule).
+    let delay = non_negative(opts.delay_ms.unwrap_or(0), "delayMs")?;
+    let max_retries = match opts.max_retries {
+        Some(n) => non_negative(n as i64, "maxRetries")? as i32,
+        None => DEFAULT_MAX_RETRIES,
+    };
+    let timeout_ms = match opts.timeout_ms {
+        Some(n) => non_negative(n, "timeoutMs")?,
+        None => DEFAULT_TIMEOUT_MS,
+    };
+    Ok(NewJob {
         queue: opts.queue.unwrap_or_else(|| DEFAULT_QUEUE.to_string()),
         task_name,
         payload,
         priority: opts.priority.unwrap_or(0),
-        scheduled_at: now_millis() + delay,
-        max_retries: opts.max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
-        timeout_ms: opts.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
+        // Saturate so an extreme delay can't overflow into a past schedule.
+        scheduled_at: now_millis().saturating_add(delay),
+        max_retries,
+        timeout_ms,
         unique_key: opts.unique_key,
         metadata: opts.metadata,
         notes: None,
@@ -40,7 +52,7 @@ pub fn build_new_job(
         namespace: opts
             .namespace
             .or_else(|| queue_namespace.map(str::to_string)),
-    }
+    })
 }
 
 /// Passed to the JS task callback for each dispatched job. `payload` is the

@@ -4,7 +4,7 @@ use napi::bindgen_prelude::{Error, Result, Status};
 use taskito_core::{SqliteStorage, StorageBackend};
 
 use crate::config::OpenOptions;
-use crate::error::to_napi_err;
+use crate::error::{invalid_arg, to_napi_err};
 
 const DEFAULT_SQLITE_POOL: u32 = 8;
 #[cfg(feature = "postgres")]
@@ -12,19 +12,29 @@ const DEFAULT_POSTGRES_POOL: u32 = 10;
 #[cfg(feature = "postgres")]
 const DEFAULT_POSTGRES_SCHEMA: &str = "taskito";
 
+/// Resolve a connection pool size, rejecting an explicit zero — r2d2 requires
+/// `max_size > 0` and panics otherwise, which would crash the whole process.
+fn resolve_pool_size(pool_size: Option<u32>, default: u32) -> Result<u32> {
+    match pool_size {
+        Some(0) => Err(invalid_arg("poolSize must be greater than 0")),
+        Some(n) => Ok(n),
+        None => Ok(default),
+    }
+}
+
 /// Open the storage backend named by `options.backend` (default `"sqlite"`).
 /// Returns an error if a requested backend was not compiled into this addon.
 pub fn open(options: &OpenOptions) -> Result<StorageBackend> {
     match options.backend.as_deref().unwrap_or("sqlite") {
         "sqlite" => {
-            let pool = options.pool_size.unwrap_or(DEFAULT_SQLITE_POOL);
+            let pool = resolve_pool_size(options.pool_size, DEFAULT_SQLITE_POOL)?;
             let storage = SqliteStorage::with_pool_size(&options.dsn, pool).map_err(to_napi_err)?;
             Ok(StorageBackend::Sqlite(storage))
         }
         #[cfg(feature = "postgres")]
         "postgres" => {
             let schema = options.schema.as_deref().unwrap_or(DEFAULT_POSTGRES_SCHEMA);
-            let pool = options.pool_size.unwrap_or(DEFAULT_POSTGRES_POOL);
+            let pool = resolve_pool_size(options.pool_size, DEFAULT_POSTGRES_POOL)?;
             let storage =
                 taskito_core::PostgresStorage::with_schema_and_pool_size(&options.dsn, schema, pool)
                     .map_err(to_napi_err)?;
