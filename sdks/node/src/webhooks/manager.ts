@@ -2,12 +2,31 @@ import { randomUUID } from "node:crypto";
 import type { Emitter, EventName, OutcomeEvent } from "../events";
 import type { NativeQueue } from "../native";
 import { Deliverer } from "./deliverer";
+import { WebhookValidationError } from "./errors";
 import { WebhookStore } from "./store";
 import type { Delivery, Webhook, WebhookInput } from "./types";
 
 const ALL_EVENTS: EventName[] = ["job.completed", "job.retrying", "job.dead", "job.cancelled"];
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** Reject misconfigured webhooks before they reach persistence. */
+function validateWebhook(webhook: Webhook): void {
+  if (!webhook.url) {
+    throw new WebhookValidationError("webhook url is required");
+  }
+  try {
+    new URL(webhook.url);
+  } catch {
+    throw new WebhookValidationError(`invalid webhook url: ${webhook.url}`);
+  }
+  if (!Number.isInteger(webhook.maxRetries) || webhook.maxRetries < 0) {
+    throw new WebhookValidationError("webhook maxRetries must be a non-negative integer");
+  }
+  if (!Number.isFinite(webhook.timeoutMs) || webhook.timeoutMs <= 0) {
+    throw new WebhookValidationError("webhook timeout must be a positive number");
+  }
+}
 
 /** Manages webhook subscriptions and delivers job events to them. */
 export class WebhookManager {
@@ -43,6 +62,7 @@ export class WebhookManager {
       createdAt: now,
       updatedAt: now,
     };
+    validateWebhook(webhook);
     this.store.put(webhook);
     this.cache = undefined;
     return webhook;
@@ -67,6 +87,7 @@ export class WebhookManager {
       headers: patch.headers ?? existing.headers,
       updatedAt: Date.now(),
     };
+    validateWebhook(updated);
     this.store.put(updated);
     this.cache = undefined;
     return updated;

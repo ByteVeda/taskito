@@ -29,5 +29,5 @@ export type {
   WorkerRunOptions,
 } from "./types";
 export type { Delivery, Webhook, WebhookInput } from "./webhooks";
-export { WebhookManager } from "./webhooks";
+export { WebhookManager, WebhookValidationError } from "./webhooks";
 export { Worker } from "./worker";
