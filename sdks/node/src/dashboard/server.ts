@@ -51,7 +51,9 @@ async function dispatch(
       }
       sendJson(res, 200, result);
     } catch (error) {
-      sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      // Log internally but never leak error/stack details to the HTTP client.
+      console.error("[taskito] dashboard request failed:", error);
+      sendJson(res, 500, { error: "internal server error" });
     }
     return;
   }
