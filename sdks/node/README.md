@@ -234,8 +234,40 @@ If a step dead-letters, the run fails and remaining steps are skipped
 per-job bookkeeping with `runWorker({ advanceWorkflows: false })`. Requires the
 addon built with the `workflows` cargo feature (enabled by `build:native`).
 
-Fan-out, gates, sub-workflows, and saga compensation are not yet bound — for
-those, use the Python SDK.
+### Fan-out / fan-in
+
+A `fanOut` step expands at runtime into one child job per item, each running the
+same task. The items come from the array result of a predecessor (`itemsFrom`,
+defaulting to the sole predecessor) — each item is passed to the child task as
+its single argument. An optional `fanIn` step collects the children's results
+into an array and runs a combiner task over it.
+
+```ts
+queue.task("listFiles", () => ["a.csv", "b.csv", "c.csv"]); // returns the items
+queue.task("processFile", (file: string) => file.length);  // runs once per item
+queue.task("summarize", (sizes: number[]) => sizes.reduce((a, b) => a + b, 0));
+
+const handle = queue.workflows
+  .define("batch")
+  .step("list", "listFiles")
+  .fanOut("process", { after: "list", task: "processFile", itemsFrom: "list" })
+  .fanIn("collect", { after: "process", task: "summarize" })
+  .submit();
+
+queue.runWorker();
+const run = await handle.wait();
+// handle.nodes(): "process" carries fanOutCount; children are "process[0]", "process[1]", …
+```
+
+The worker-side tracker drives expansion from the outcome stream and
+reconstructs the plan from storage, so submission and execution may run in
+different processes. Fan-out is fail-fast: if any child dead-letters, the parent
+and run fail and downstream steps are skipped. An empty item list completes the
+fan-out immediately and runs the fan-in with `[]`. Children and the combiner each
+run on the fan-out step's `queue` / `maxRetries` / `timeoutMs` / `priority`.
+
+Gates, sub-workflows, and saga compensation are not yet bound — for those, use
+the Python SDK.
 
 ## Dashboard
 
@@ -301,6 +333,7 @@ compiled in via `--features postgres,redis`.
 
 ## Not yet covered
 
-Advanced workflow features (fan-out, gates, sub-workflows, saga compensation),
-resources/proxies/interception, contrib integrations, prebuilt platform binaries +
-npm publish (host-only build for now), and Python⇄Node cross-language interop.
+Advanced workflow features (gates, sub-workflows, saga compensation — fan-out is
+covered above), resources/proxies/interception, contrib integrations, prebuilt
+platform binaries + npm publish (host-only build for now), and Python⇄Node
+cross-language interop.
