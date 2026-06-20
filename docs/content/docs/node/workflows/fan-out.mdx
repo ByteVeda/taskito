@@ -4,13 +4,12 @@ description: "Split a step's result into parallel children, collect results into
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
-import { Mermaid } from "fumadocs-ui/components/mermaid";
 
 Split a step's result into parallel child jobs, then collect all results into
 a downstream step.
 
-<Mermaid
-  chart={`graph LR
+```mermaid
+graph LR
     fetch:::source --> process_0["process[0]"]
     fetch --> process_1["process[1]"]
     fetch --> process_2["process[2]"]
@@ -19,8 +18,8 @@ a downstream step.
     process_2 --> aggregate
 
     classDef source fill:#bbf7d0,color:#14532d,stroke:#16a34a
-    classDef sink fill:#bfdbfe,color:#1e3a8a,stroke:#3b82f6`}
-/>
+    classDef sink fill:#bfdbfe,color:#1e3a8a,stroke:#3b82f6
+```
 
 ## Basic fan-out and fan-in
 
@@ -72,8 +71,8 @@ const nodes = handle.nodes();
    calls `createDeferredJob` for the fan-in step
 6. `summarize` runs with the results array as its single argument
 
-<Mermaid
-  chart={`sequenceDiagram
+```mermaid
+sequenceDiagram
     participant L as list job
     participant T as WorkflowTracker
     participant R as Rust Engine
@@ -87,8 +86,8 @@ const nodes = handle.nodes();
     R->>T: outcome(process[1], success)
     R->>T: outcome(process[2], success)
     T->>R: checkFanOutCompletion → all done
-    T->>R: createDeferredJob(collect)`}
-/>
+    T->>R: createDeferredJob(collect)
+```
 
 The `WorkflowTracker` is driven entirely by the worker outcome stream and
 reconstructs the run plan from storage on each event, so submission and
