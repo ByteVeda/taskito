@@ -9,8 +9,8 @@ import {
   trace,
 } from "@opentelemetry/api";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { otelMiddleware } from "../src/contrib/otel";
-import { Queue, type Worker } from "../src/index";
+import { otelMiddleware } from "../../src/contrib/otel";
+import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 

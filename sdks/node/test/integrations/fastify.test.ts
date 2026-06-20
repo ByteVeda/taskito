@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
 import { afterEach, expect, it } from "vitest";
-import { taskitoDashboardPlugin, taskitoFastify } from "../src/contrib/fastify";
-import { Queue, type Worker } from "../src/index";
+import { taskitoDashboardPlugin, taskitoFastify } from "../../src/contrib/fastify";
+import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 

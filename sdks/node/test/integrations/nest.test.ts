@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Test } from "@nestjs/testing";
 import { afterEach, expect, it } from "vitest";
-import { TaskitoModule, TaskitoService } from "../src/contrib/nest";
-import { Queue, type Worker } from "../src/index";
+import { TaskitoModule, TaskitoService } from "../../src/contrib/nest";
+import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 

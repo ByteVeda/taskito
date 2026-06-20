@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { ErrorEvent } from "@sentry/node";
 import * as Sentry from "@sentry/node";
 import { afterEach, expect, it } from "vitest";
-import { sentryMiddleware } from "../src/contrib/sentry";
-import { Queue, type Worker } from "../src/index";
+import { sentryMiddleware } from "../../src/contrib/sentry";
+import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 

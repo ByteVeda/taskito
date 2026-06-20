@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Registry } from "prom-client";
 import { afterEach, expect, it } from "vitest";
-import { PrometheusStatsCollector, prometheusMiddleware } from "../src/contrib/prometheus";
-import { Queue, type Worker } from "../src/index";
+import { PrometheusStatsCollector, prometheusMiddleware } from "../../src/contrib/prometheus";
+import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 

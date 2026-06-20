@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Queue, WebhookValidationError, type Worker } from "../src/index";
+import { Queue, WebhookValidationError, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 let target: Server | undefined;

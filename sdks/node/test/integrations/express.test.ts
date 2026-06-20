@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import express from "express";
 import { afterEach, expect, it } from "vitest";
-import { taskitoDashboard, taskitoRouter } from "../src/contrib/express";
-import { Queue, type Worker } from "../src/index";
+import { taskitoDashboard, taskitoRouter } from "../../src/contrib/express";
+import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
 let close: (() => Promise<void>) | undefined;

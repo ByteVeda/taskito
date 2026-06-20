@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from "vitest";
-import { createLogger, setLogLevel, setLogSink } from "../src/index";
+import { createLogger, setLogLevel, setLogSink } from "../../src/index";
 
 let lines: string[];
 

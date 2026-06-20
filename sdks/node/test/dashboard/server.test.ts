@@ -7,9 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, expect, it } from "vitest";
-import { Queue, serveDashboard, type Worker } from "../src/index";
+import { Queue, serveDashboard, type Worker } from "../../src/index";
 
-const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
+const pkgRoot = fileURLToPath(new URL("../..", import.meta.url));
 const staticDir = join(pkgRoot, "static", "dashboard");
 
 beforeAll(() => {

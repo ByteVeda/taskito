@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
-const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
-const cliPath = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
-const indexUrl = pathToFileURL(fileURLToPath(new URL("../dist/index.js", import.meta.url))).href;
+const pkgRoot = fileURLToPath(new URL("../..", import.meta.url));
+const cliPath = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
+const indexUrl = pathToFileURL(fileURLToPath(new URL("../../dist/index.js", import.meta.url))).href;
 
 beforeAll(() => {
   if (!existsSync(cliPath)) {
