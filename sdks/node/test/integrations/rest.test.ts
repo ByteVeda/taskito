@@ -1,5 +1,12 @@
 import { expect, it } from "vitest";
-import { flattenQueryParams } from "../../src/contrib/rest";
+import { buildRestRoutes, flattenQueryParams } from "../../src/contrib/rest";
+
+it("rejects mutually exclusive include/exclude route options", () => {
+  expect(() => buildRestRoutes({ includeRoutes: ["stats"], excludeRoutes: ["jobs"] })).toThrow(
+    /mutually exclusive/,
+  );
+  expect(buildRestRoutes({ includeRoutes: ["stats"] }).map((r) => r.name)).toEqual(["stats"]);
+});
 
 it("flattens string and first-of-array query values", () => {
   const out = flattenQueryParams({ status: "failed", tag: ["a", "b"], n: 5 });

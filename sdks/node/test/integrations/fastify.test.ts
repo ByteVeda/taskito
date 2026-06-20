@@ -8,10 +8,13 @@ import { taskitoDashboardPlugin, taskitoFastify } from "../../src/contrib/fastif
 import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
+let app: ReturnType<typeof Fastify> | undefined;
 
-afterEach(() => {
+afterEach(async () => {
   worker?.stop();
   worker = undefined;
+  await app?.close();
+  app = undefined;
 });
 
 function newQueue(): Queue {
@@ -32,7 +35,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<bool
 it("serves the REST API through a prefixed plugin", async () => {
   const queue = newQueue();
   queue.task("add", (a: number, b: number) => a + b);
-  const app = Fastify();
+  app = Fastify();
   await app.register(taskitoFastify, { queue, prefix: "/tasks" });
   await app.ready();
 
@@ -52,25 +55,21 @@ it("serves the REST API through a prefixed plugin", async () => {
 
   const stats = await app.inject({ method: "GET", url: "/tasks/stats" });
   expect((stats.json() as { completed: number }).completed).toBeGreaterThanOrEqual(1);
-
-  await app.close();
 });
 
 it("applies excludeRoutes", async () => {
   const queue = newQueue();
-  const app = Fastify();
+  app = Fastify();
   await app.register(taskitoFastify, { queue, prefix: "/tasks", excludeRoutes: ["stats"] });
   await app.ready();
 
   expect((await app.inject({ method: "GET", url: "/tasks/stats" })).statusCode).toBe(404);
   expect((await app.inject({ method: "GET", url: "/tasks/dead-letters" })).statusCode).toBe(200);
-
-  await app.close();
 });
 
 it("mounts the dashboard JSON API under a prefix", async () => {
   const queue = newQueue();
-  const app = Fastify();
+  app = Fastify();
   await app.register(taskitoDashboardPlugin, { queue, prefix: "/admin" });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
@@ -78,6 +77,4 @@ it("mounts the dashboard JSON API under a prefix", async () => {
   const res = await fetch(`http://127.0.0.1:${port}/admin/api/auth/status`);
   expect(res.status).toBe(200);
   expect(await res.json()).toMatchObject({ setup_required: false });
-
-  await app.close();
 });

@@ -1,16 +1,19 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Test } from "@nestjs/testing";
+import { Test, type TestingModule } from "@nestjs/testing";
 import { afterEach, expect, it } from "vitest";
 import { TaskitoModule, TaskitoService } from "../../src/contrib/nest";
 import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
+let moduleRef: TestingModule | undefined;
 
-afterEach(() => {
+afterEach(async () => {
   worker?.stop();
   worker = undefined;
+  await moduleRef?.close();
+  moduleRef = undefined;
 });
 
 function newQueue(): Queue {
@@ -32,7 +35,7 @@ it("injects TaskitoService bound to the queue", async () => {
   const queue = newQueue();
   queue.task("add", (a: number, b: number) => a + b);
 
-  const moduleRef = await Test.createTestingModule({
+  moduleRef = await Test.createTestingModule({
     imports: [TaskitoModule.forRoot(queue)],
   }).compile();
   const service = moduleRef.get(TaskitoService);
@@ -45,6 +48,4 @@ it("injects TaskitoService bound to the queue", async () => {
 
   expect(await service.result(id)).toBe(13);
   expect(service.stats().completed).toBeGreaterThanOrEqual(1);
-
-  await moduleRef.close();
 });
