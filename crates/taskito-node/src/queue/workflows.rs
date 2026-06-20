@@ -715,8 +715,15 @@ impl JsQueue {
             namespace: self.namespace.clone(),
         };
         let job = self.storage.enqueue(new_job).map_err(to_napi_err)?;
-        wf.set_workflow_node_compensation_job(&run_id, &node_name, &job.id, now)
-            .map_err(to_napi_err)?;
+        // Cancel the job if binding fails, so a compensation job can't run
+        // untracked by the saga state machine (mirrors create_deferred_job).
+        if let Err(err) = wf
+            .set_workflow_node_compensation_job(&run_id, &node_name, &job.id, now)
+            .map_err(to_napi_err)
+        {
+            let _ = self.storage.cancel_job(&job.id);
+            return Err(err);
+        }
         Ok(job.id)
     }
 
