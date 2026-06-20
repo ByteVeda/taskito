@@ -12,17 +12,30 @@ const log = createLogger("dashboard");
 /** Max request body size (1 MiB) — reject larger payloads to bound memory. */
 const MAX_BODY_BYTES = 1024 * 1024;
 
-/** Build (but do not start) the dashboard server over `queue`, serving the SPA from `staticDir`. */
-export function createDashboardServer(queue: Queue, staticDir: string): Server {
+/**
+ * Build a Node `http` request handler that serves the dashboard SPA from `staticDir`
+ * plus the `/api/*` JSON contract over `queue`. Use this to mount the dashboard into an
+ * existing server (e.g. an Express or Fastify app); {@link createDashboardServer} wraps
+ * it in a standalone server.
+ */
+export function createDashboardHandler(
+  queue: Queue,
+  staticDir: string,
+): (req: IncomingMessage, res: ServerResponse) => void {
   const assets = new StaticAssets(staticDir);
-  return createServer((req, res) => {
+  return (req, res) => {
     void dispatch(queue, assets, req, res).catch((error) => {
       log.error(() => "dashboard dispatch failed", error);
       if (!res.headersSent) {
         sendJson(res, 500, { error: "internal server error" });
       }
     });
-  });
+  };
+}
+
+/** Build (but do not start) the dashboard server over `queue`, serving the SPA from `staticDir`. */
+export function createDashboardServer(queue: Queue, staticDir: string): Server {
+  return createServer(createDashboardHandler(queue, staticDir));
 }
 
 async function dispatch(
