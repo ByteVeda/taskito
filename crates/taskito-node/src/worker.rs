@@ -14,6 +14,8 @@ use tokio::sync::Notify;
 use crate::config::WorkerOptions;
 use crate::convert::{outcome_to_js, JsOutcome, JsTaskInvocation};
 use crate::dispatcher::NodeDispatcher;
+#[cfg(feature = "mesh")]
+use crate::error::invalid_arg;
 
 const DEFAULT_QUEUE: &str = "default";
 const DEFAULT_CHANNEL_CAPACITY: usize = 128;
@@ -25,18 +27,23 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 pub struct JsWorker {
     shutdown: Arc<Notify>,
     heartbeat_stop: Arc<Notify>,
+    #[cfg(feature = "mesh")]
+    mesh_shutdown: Arc<Notify>,
 }
 
 #[napi]
 impl JsWorker {
     /// Stop the worker: the scheduler stops dispatching, the heartbeat loop ends
-    /// and unregisters, and the background tasks exit once in-flight results drain.
+    /// and unregisters, mesh gossip/steal tasks shut down, and the background
+    /// tasks exit once in-flight results drain.
     #[napi]
     pub fn stop(&self) {
         // `notify_one` stores a permit if no waiter is parked yet, so the signal
         // is never lost between loop iterations.
         self.shutdown.notify_one();
         self.heartbeat_stop.notify_one();
+        #[cfg(feature = "mesh")]
+        self.mesh_shutdown.notify_one();
     }
 }
 
@@ -52,6 +59,19 @@ pub fn start_worker(
     let queues = options
         .queues
         .unwrap_or_else(|| vec![DEFAULT_QUEUE.to_string()]);
+    // Validate the mesh port up front: the steal server binds `port + 1`, and
+    // both narrow to u16, so anything outside 1..=65534 wraps to a wrong port.
+    #[cfg(feature = "mesh")]
+    if let Some(mesh_cfg) = options.mesh.as_ref() {
+        if mesh_cfg.port < 1 || mesh_cfg.port > 65534 {
+            return Err(invalid_arg(format!(
+                "mesh port must be in 1..=65534 (got {})",
+                mesh_cfg.port
+            )));
+        }
+    }
+    #[cfg(feature = "mesh")]
+    let mesh_shutdown = Arc::new(Notify::new());
     // Clamp to >= 1: a zero-capacity Tokio/crossbeam channel panics on creation.
     let capacity = options
         .channel_capacity
@@ -117,6 +137,14 @@ pub fn start_worker(
             spawn(async move {
                 run_mesh_bridge(bridge_scheduler, bridge_node, job_tx).await;
             });
+            // On stop, signal the mesh node so gossip + steal-server tasks exit
+            // instead of leaking for the process lifetime.
+            let mesh_stop = mesh_shutdown.clone();
+            let stop_node = mesh_node.clone();
+            spawn(async move {
+                mesh_stop.notified().await;
+                stop_node.request_shutdown();
+            });
             // Keep the gossip + steal-server tasks alive for the worker's lifetime.
             spawn(async move {
                 let _ = tokio::join!(gossip, steal_server);
@@ -165,6 +193,8 @@ pub fn start_worker(
     Ok(JsWorker {
         shutdown,
         heartbeat_stop,
+        #[cfg(feature = "mesh")]
+        mesh_shutdown,
     })
 }
 
