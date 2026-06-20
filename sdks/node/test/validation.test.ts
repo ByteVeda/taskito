@@ -42,7 +42,9 @@ describe("N-API boundary validation", () => {
 
   it("fails fast on a malformed task rate limit instead of disabling it", () => {
     const queue = newQueue();
-    queue.task("rated", () => "ok", { rateLimit: "not-a-rate" });
+    // Cast past the typed RateLimit template: we're testing the runtime guard
+    // for malformed strings that untyped JS callers can still pass.
+    queue.task("rated", () => "ok", { rateLimit: "not-a-rate" as `${number}/s` });
     expect(() => queue.runWorker()).toThrow(/rateLimit/);
   });
 });
