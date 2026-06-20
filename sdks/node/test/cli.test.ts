@@ -56,13 +56,15 @@ describe("taskito CLI", () => {
     const db = join(dir, "cli.db");
     const marker = join(dir, "done.txt");
     const app = join(dir, "app.mjs");
+    // Static module body — paths are passed via env, never interpolated into
+    // source, so there is no dynamic-code-construction sink.
     writeFileSync(
       app,
       [
-        `import { Queue } from ${JSON.stringify(indexUrl)};`,
-        `import { writeFileSync } from "node:fs";`,
-        `const queue = new Queue({ dbPath: ${JSON.stringify(db)} });`,
-        `queue.task("mark", () => { writeFileSync(${JSON.stringify(marker)}, "ok"); return "ok"; });`,
+        `const { Queue } = await import(process.env.TASKITO_INDEX);`,
+        `const { writeFileSync } = await import("node:fs");`,
+        `const queue = new Queue({ dbPath: process.env.TASKITO_DB });`,
+        `queue.task("mark", () => { writeFileSync(process.env.TASKITO_MARKER, "ok"); return "ok"; });`,
         `queue.enqueue("mark");`,
         `export default queue;`,
       ].join("\n"),
@@ -70,7 +72,10 @@ describe("taskito CLI", () => {
 
     let child: ChildProcess | undefined;
     try {
-      child = spawn(process.execPath, [cliPath, "run", app], { stdio: "ignore" });
+      child = spawn(process.execPath, [cliPath, "run", app], {
+        stdio: "ignore",
+        env: { ...process.env, TASKITO_INDEX: indexUrl, TASKITO_DB: db, TASKITO_MARKER: marker },
+      });
       expect(await waitForFile(marker, 6000)).toBe(true);
     } finally {
       child?.kill("SIGTERM");
