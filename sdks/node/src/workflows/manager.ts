@@ -60,6 +60,16 @@ export class WorkflowManager {
     return this.native.getWorkflowNodes(runId);
   }
 
+  /** The serialized DAG (graph JSON) for a run, or `undefined` if unknown. */
+  dag(runId: string): string | undefined {
+    return this.native.getWorkflowDag(runId) ?? undefined;
+  }
+
+  /** Sub-workflow runs spawned by a run (empty for Node-submitted runs). */
+  children(runId: string): WorkflowRun[] {
+    return this.native.getWorkflowChildren(runId);
+  }
+
   /** List runs, optionally filtered by definition name and/or state. */
   list(options?: {
     definitionName?: string;

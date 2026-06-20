@@ -3,6 +3,7 @@
 
 import type { DeadJob, Job, WorkerInfo } from "../types";
 import type { Webhook } from "../webhooks";
+import type { WorkflowNode, WorkflowRun } from "../workflows";
 
 /** Replace header values with a mask so outbound credentials aren't exposed. */
 function maskHeaderValues(headers: Record<string, string>): Record<string, string> {
@@ -64,6 +65,39 @@ export function workerToContract(worker: WorkerInfo) {
     pid: worker.pid ?? null,
     pool_type: worker.poolType ?? null,
     tags: worker.tags ?? null,
+  };
+}
+
+export function workflowRunToContract(run: WorkflowRun) {
+  return {
+    id: run.id,
+    definition_id: run.definitionId,
+    state: run.state,
+    params: run.params ?? null,
+    started_at: run.startedAt ?? null,
+    completed_at: run.completedAt ?? null,
+    error: run.error ?? null,
+    parent_run_id: run.parentRunId ?? null,
+    parent_node_name: run.parentNodeName ?? null,
+    created_at: run.createdAt,
+  };
+}
+
+export function workflowNodeToContract(node: WorkflowNode) {
+  // fan-out / saga fields are always null in the Node SDK (v1 = plain DAGs).
+  return {
+    node_name: node.nodeName,
+    status: node.status,
+    job_id: node.jobId ?? null,
+    result_hash: node.resultHash ?? null,
+    fan_out_count: null,
+    started_at: node.startedAt ?? null,
+    completed_at: node.completedAt ?? null,
+    error: node.error ?? null,
+    compensation_job_id: null,
+    compensation_started_at: null,
+    compensation_completed_at: null,
+    compensation_error: null,
   };
 }
 

@@ -5,7 +5,14 @@ import { randomBytes } from "node:crypto";
 import type { EventName } from "../events";
 import type { Queue } from "../index";
 import type { WebhookInput } from "../webhooks";
-import { deadToContract, jobToContract, webhookToContract, workerToContract } from "./contract";
+import {
+  deadToContract,
+  jobToContract,
+  webhookToContract,
+  workerToContract,
+  workflowNodeToContract,
+  workflowRunToContract,
+} from "./contract";
 import { aggregateByTask, bucketTimeseries } from "./metrics";
 
 /** Finite, non-negative number from a query string, or `undefined`. */
@@ -86,6 +93,38 @@ export function workers(queue: Queue) {
 
 export function eventTypes(queue: Queue) {
   return queue.webhooks.eventTypes();
+}
+
+export function workflowRuns(queue: Queue, url: URL) {
+  const limit = num(url, "limit") ?? 50;
+  const offset = num(url, "offset") ?? 0;
+  const runs = queue.workflows.list({
+    state: url.searchParams.get("state") ?? undefined,
+    definitionName: url.searchParams.get("definition_name") ?? undefined,
+    limit,
+    offset,
+  });
+  return { runs: runs.map(workflowRunToContract), limit, offset };
+}
+
+export function workflowRun(queue: Queue, id: string) {
+  const run = queue.workflows.run(id);
+  if (!run) {
+    return undefined;
+  }
+  return {
+    run: workflowRunToContract(run),
+    nodes: queue.workflows.nodes(id).map(workflowNodeToContract),
+  };
+}
+
+export function workflowDag(queue: Queue, id: string) {
+  const dag = queue.workflows.dag(id);
+  return dag === undefined ? undefined : { dag };
+}
+
+export function workflowChildren(queue: Queue, id: string) {
+  return { children: queue.workflows.children(id).map(workflowRunToContract) };
 }
 
 export function webhooks(queue: Queue) {

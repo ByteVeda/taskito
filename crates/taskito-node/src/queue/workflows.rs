@@ -272,6 +272,38 @@ impl JsQueue {
         Ok(runs.into_iter().map(run_to_js).collect())
     }
 
+    /// The serialized DAG (a `SerializableGraph` JSON string) backing a run, or
+    /// `null` if the run or its definition no longer exists.
+    #[napi]
+    pub fn get_workflow_dag(&self, run_id: String) -> Result<Option<String>> {
+        let wf = self.workflow_store()?;
+        let Some(run) = wf.get_workflow_run(&run_id).map_err(to_napi_err)? else {
+            return Ok(None);
+        };
+        let Some(def) = wf
+            .get_workflow_definition_by_id(&run.definition_id)
+            .map_err(to_napi_err)?
+        else {
+            return Ok(None);
+        };
+        String::from_utf8(def.dag_data)
+            .map(Some)
+            .map_err(|e| reason(e.to_string()))
+    }
+
+    /// Child (sub-workflow) runs spawned by a run. Always empty for runs
+    /// submitted by the Node SDK, which does not yet create sub-workflows.
+    #[napi]
+    pub fn get_workflow_children(&self, run_id: String) -> Result<Vec<JsWorkflowRun>> {
+        let wf = self.workflow_store()?;
+        Ok(wf
+            .get_child_workflow_runs(&run_id)
+            .map_err(to_napi_err)?
+            .into_iter()
+            .map(run_to_js)
+            .collect())
+    }
+
     /// Lazily build the workflow storage from this queue's backend (runs the
     /// workflow migrations on first use). Not exported to JS.
     fn workflow_store(&self) -> Result<WorkflowStorageBackend> {
