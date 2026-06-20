@@ -42,6 +42,8 @@ interface StepMeta {
   gate?: string;
   /** JSON `SubWorkflowTransport` marking a sub-workflow node. */
   sub_workflow?: string;
+  /** Rollback task name run if the workflow fails (saga compensation). */
+  compensate?: string;
 }
 
 /** Parsed gate config from a node's `gate` metadata. */
@@ -57,7 +59,12 @@ interface RunPlan {
   predecessors: Map<string, string[]>;
   deferred: Set<string>;
   meta: Map<string, StepMeta>;
+  /** True if any node declares a compensator (the run can run a saga rollback). */
+  hasCompensation: boolean;
 }
+
+/** Node statuses still awaiting (or undergoing) compensation rollback. */
+const COMPENSABLE_STATUS = new Set(["completed", "cache_hit"]);
 
 /**
  * The runtime workflow brain. Driven from the worker's outcome callback, it
@@ -95,6 +102,12 @@ export class WorkflowTracker {
     }
 
     try {
+      // A rollback job advances the saga, not the forward run — check it first.
+      const comp = this.native.compensationNodeForJob(outcome.jobId);
+      if (comp) {
+        this.onCompensationOutcome(comp.runId, comp.nodeName, succeeded, outcome.error ?? null);
+        return;
+      }
       const ref = this.native.workflowNodeForJob(outcome.jobId);
       if (!ref) {
         return; // not a workflow job
@@ -139,8 +152,15 @@ export class WorkflowTracker {
     this.settle(runId, this.native.finalizeRunIfTerminal(runId));
   }
 
-  /** Evict a terminal run's plan and, if it's a sub-workflow child, resolve its parent. */
+  /**
+   * Wrap up after a node settles. A failed run with compensable nodes starts a
+   * saga rollback instead of finishing; otherwise the plan is evicted and, if
+   * this run is a sub-workflow child, its parent node is resolved.
+   */
   private settle(runId: string, finalState: string | null): void {
+    if (finalState === "failed" && this.startCompensationIfEligible(runId)) {
+      return; // run moved to `compensating`; it finalizes when rollback completes
+    }
     this.evictIfTerminal(runId, finalState);
     if (finalState !== null) {
       this.resolveParentIfChild(runId, finalState);
@@ -175,6 +195,142 @@ export class WorkflowTracker {
       this.evaluateSuccessors(parentRunId, parentNode, parentPlan);
     }
     this.settle(parentRunId, this.native.finalizeRunIfTerminal(parentRunId));
+  }
+
+  /** Whether a node declares a compensator (saga rollback task). */
+  private isCompensable(node: string, plan: RunPlan): boolean {
+    return Boolean(plan.meta.get(node)?.compensate);
+  }
+
+  /**
+   * Begin saga compensation for a failed run that has completed compensable
+   * nodes: move the run to `compensating` and dispatch the first rollback wave.
+   * Returns false (run finalizes normally) when there's nothing to roll back.
+   */
+  private startCompensationIfEligible(runId: string): boolean {
+    const plan = this.plan(runId);
+    if (!plan?.hasCompensation) {
+      return false;
+    }
+    const eligible = this.native
+      .getWorkflowNodes(runId)
+      .some((n) => this.isCompensable(n.nodeName, plan) && COMPENSABLE_STATUS.has(n.status));
+    if (!eligible) {
+      return false;
+    }
+    this.native.setWorkflowRunState(runId, "compensating", null, null);
+    this.advanceCompensation(runId, plan);
+    return true;
+  }
+
+  /**
+   * Drive one step of compensation: dispatch every compensable node that's ready
+   * (all its compensable successors already rolled back) in reverse-dependency
+   * order, then finalize the run once nothing is in flight. Storage-driven and
+   * idempotent — re-derived from node status on every rollback outcome.
+   */
+  private advanceCompensation(runId: string, plan: RunPlan): void {
+    let nodes = this.native.getWorkflowNodes(runId);
+    const compensable = (node: { nodeName: string }) => this.isCompensable(node.nodeName, plan);
+    const anyFailed = nodes.some((n) => compensable(n) && n.status === "compensation_failed");
+
+    if (!anyFailed) {
+      const status = new Map(nodes.map((n) => [n.nodeName, n.status]));
+      for (const node of nodes) {
+        if (!compensable(node) || !COMPENSABLE_STATUS.has(node.status)) {
+          continue;
+        }
+        if (this.compensationReady(node.nodeName, status, plan)) {
+          this.enqueueCompensation(runId, node.nodeName, node.jobId ?? null, plan);
+        }
+      }
+      nodes = this.native.getWorkflowNodes(runId); // re-read after dispatch
+    }
+
+    // Still working while any rollback is in flight, or (absent a failure) any
+    // compensable node is still awaiting rollback.
+    const working = nodes.some((n) => {
+      if (!compensable(n)) {
+        return false;
+      }
+      return n.status === "compensating" || (!anyFailed && COMPENSABLE_STATUS.has(n.status));
+    });
+    if (working) {
+      return;
+    }
+
+    const failed = nodes.some((n) => compensable(n) && n.status === "compensation_failed");
+    const now = Date.now();
+    if (failed) {
+      this.native.setWorkflowRunState(runId, "compensation_failed", "compensation failed", now);
+    } else {
+      this.native.setWorkflowRunState(runId, "compensated", null, now);
+    }
+    this.plans.delete(runId);
+  }
+
+  /** A node is ready to roll back once all its compensable successors have. */
+  private compensationReady(node: string, status: Map<string, string>, plan: RunPlan): boolean {
+    for (const succ of plan.successors.get(node) ?? []) {
+      if (!this.isCompensable(succ, plan)) {
+        continue; // a non-compensable successor did nothing to undo
+      }
+      const s = status.get(succ);
+      if (s !== "compensated" && s !== "compensation_failed") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Enqueue a node's rollback job, passing the node's forward result as its arg. */
+  private enqueueCompensation(
+    runId: string,
+    node: string,
+    jobId: string | null,
+    plan: RunPlan,
+  ): void {
+    const meta = plan.meta.get(node);
+    if (!meta?.compensate) {
+      return;
+    }
+    const job = jobId ? this.native.getJob(jobId) : null;
+    const result = job?.result ? this.serializer.deserialize(job.result) : null;
+    const payload = Buffer.from(this.serializer.serialize([result]));
+    this.native.enqueueCompensation(
+      runId,
+      node,
+      payload,
+      meta.compensate,
+      meta.queue ?? DEFAULT_QUEUE,
+      meta.max_retries ?? DEFAULT_MAX_RETRIES,
+      meta.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+      meta.priority ?? 0,
+    );
+  }
+
+  /** Record a rollback's outcome and advance (or finalize) the saga. */
+  private onCompensationOutcome(
+    runId: string,
+    node: string,
+    succeeded: boolean,
+    error: string | null,
+  ): void {
+    const now = Date.now();
+    if (succeeded) {
+      this.native.setWorkflowNodeCompensated(runId, node, now);
+    } else {
+      this.native.setWorkflowNodeCompensationFailed(
+        runId,
+        node,
+        error ?? "compensation failed",
+        now,
+      );
+    }
+    const plan = this.plan(runId);
+    if (plan) {
+      this.advanceCompensation(runId, plan);
+    }
   }
 
   /** Drop a finished run's cached plan so the cache doesn't grow unbounded. */
@@ -486,6 +642,7 @@ export class WorkflowTracker {
       predecessors: predecessorsOf(edges),
       deferred: transitiveDeferred(seeds, successors),
       meta,
+      hasCompensation: [...meta.values()].some((m) => m.compensate),
     };
     this.plans.set(runId, plan);
     return plan;

@@ -33,6 +33,10 @@ pub struct StepMetadata {
     /// submits it as a child run and resolves this node when the child finalizes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sub_workflow: Option<String>,
+    /// Rollback task name — if the run fails, the tracker compensates this node
+    /// (in reverse-dependency order) by running this task with the node's result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compensate: Option<String>,
 }
 
 /// A persisted workflow definition: the DAG structure plus per-step metadata.

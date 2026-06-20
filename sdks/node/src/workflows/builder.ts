@@ -51,6 +51,7 @@ export class WorkflowBuilder {
       timeout_ms: options.timeoutMs,
       priority: options.priority,
       condition: options.condition,
+      compensate: options.compensate,
     };
     this.stepArgs[name] = options.args ?? [];
     // A conditioned step is enqueued by the tracker once its predecessors

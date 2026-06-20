@@ -41,6 +41,11 @@ export interface WorkflowStepOptions {
   priority?: number;
   /** Gate this step on its predecessors' outcomes (default `on_success`). */
   condition?: WorkflowCondition;
+  /**
+   * Rollback task name for saga compensation. If the run fails, this task is run
+   * with the step's result as its single argument, in reverse-dependency order.
+   */
+  compensate?: string;
 }
 
 /** Common per-step task config shared by every step kind. */
@@ -113,6 +118,8 @@ export interface StepMetadataJson {
   gate?: string;
   /** JSON {@link SubWorkflowTransport} marking a sub-workflow node. */
   sub_workflow?: string;
+  /** Rollback task name for saga compensation. */
+  compensate?: string;
 }
 
 /**
