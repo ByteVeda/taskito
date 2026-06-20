@@ -29,6 +29,16 @@ export type {
   WorkerInfo,
   WorkerRunOptions,
 } from "./types";
+export {
+  createLogger,
+  type Logger,
+  type LogLevel,
+  type LogMessage,
+  type LogSink,
+  logger,
+  setLogLevel,
+  setLogSink,
+} from "./utils";
 export type { Delivery, Webhook, WebhookInput } from "./webhooks";
 export { WebhookManager, WebhookValidationError } from "./webhooks";
 export { Worker } from "./worker";

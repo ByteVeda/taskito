@@ -1,9 +1,12 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { EventName, OutcomeEvent } from "../events";
+import { createLogger } from "../utils";
 import type { Delivery, Webhook } from "./types";
 
 const MAX_RECENT = 100;
 const MAX_BACKOFF_MS = 30_000;
+
+const log = createLogger("webhooks");
 
 /** Signs and POSTs webhook payloads with retries; keeps a recent-delivery log. */
 export class Deliverer {
@@ -64,6 +67,12 @@ export class Deliverer {
     this.recent.push(delivery);
     if (this.recent.length > MAX_RECENT) {
       this.recent.shift();
+    }
+    if (!delivery.ok) {
+      log.warn(
+        () =>
+          `delivery of ${event} to ${webhook.url} failed after ${attempts} attempt(s): ${error}`,
+      );
     }
     return delivery;
   }

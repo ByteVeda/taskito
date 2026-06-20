@@ -13,6 +13,9 @@ import type {
 } from "./native";
 import type { Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
+import { createLogger } from "./utils";
+
+const log = createLogger("worker");
 
 /** How often a running job polls the storage cancel flag. */
 const CANCEL_POLL_INTERVAL_MS = 200;
@@ -72,8 +75,9 @@ export class Worker {
           if (queue.isCancelRequested(invocation.id)) {
             controller.abort();
           }
-        } catch {
+        } catch (error) {
           // transient storage error — retry on the next tick
+          log.debug(() => `cancel poll for ${invocation.id} failed`, error);
         }
       }, CANCEL_POLL_INTERVAL_MS);
       poller.unref();
@@ -119,8 +123,9 @@ export class Worker {
         const hook = mw[mapping.hook] as ((e: OutcomeEvent) => void) | undefined;
         try {
           hook?.(event);
-        } catch {
+        } catch (error) {
           // outcome hook errors must not break the worker
+          log.debug(() => `${mapping.hook} middleware hook threw for ${outcome.jobId}`, error);
         }
       }
       if (advanceWorkflows) {
@@ -157,8 +162,9 @@ function advanceWorkflowNode(queue: NativeQueue, outcome: JsOutcome): void {
     } else if (outcome.kind === "dead") {
       queue.markWorkflowNodeResult(outcome.jobId, false, outcome.error ?? null);
     }
-  } catch {
+  } catch (error) {
     // non-workflow job or transient storage error
+    log.debug(() => `workflow advance for ${outcome.jobId} failed`, error);
   }
 }
 
