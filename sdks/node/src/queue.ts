@@ -1,4 +1,10 @@
-import { JobCancelledError, JobFailedError, LockNotAcquiredError, TaskitoError } from "./errors";
+import {
+  JobCancelledError,
+  JobFailedError,
+  LockLostError,
+  LockNotAcquiredError,
+  TaskitoError,
+} from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
 import { Lock, type LockOptions } from "./locks";
 import type { Middleware } from "./middleware";
@@ -94,11 +100,19 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     if (!lock.acquire()) {
       throw new LockNotAcquiredError(name);
     }
+    let result: T;
     try {
-      return await fn();
-    } finally {
+      result = await fn();
+    } catch (error) {
       lock.release();
+      throw error;
     }
+    // `release()` returns false when the lease was lost mid-run — surface that
+    // rather than pretending the critical section ran under a held lock.
+    if (!lock.release()) {
+      throw new LockLostError(name);
+    }
+    return result;
   }
 
   /**

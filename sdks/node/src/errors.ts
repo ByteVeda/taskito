@@ -40,3 +40,11 @@ export class LockNotAcquiredError extends TaskitoError {
     this.name = "LockNotAcquiredError";
   }
 }
+
+/** Thrown when a held lock's lease was lost before the guarded section finished. */
+export class LockLostError extends TaskitoError {
+  constructor(readonly lockName: string) {
+    super(`Lost lock "${lockName}" before the guarded section completed`);
+    this.name = "LockLostError";
+  }
+}

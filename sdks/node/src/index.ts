@@ -3,6 +3,7 @@ export { type DashboardOptions, serveDashboard } from "./dashboard";
 export {
   JobCancelledError,
   JobFailedError,
+  LockLostError,
   LockNotAcquiredError,
   TaskitoError,
   TaskNotRegisteredError,
