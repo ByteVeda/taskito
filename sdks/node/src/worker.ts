@@ -1,3 +1,4 @@
+import { type JobContext, runInContext } from "./context";
 import { TaskNotRegisteredError } from "./errors";
 import type {
   JsTaskInvocation,
@@ -9,6 +10,9 @@ import type {
 } from "./native";
 import type { Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
+
+/** How often a running job polls the storage cancel flag. */
+const CANCEL_POLL_INTERVAL_MS = 200;
 
 /** Inputs assembled by {@link Queue.runWorker}. */
 export interface WorkerStartParams {
@@ -36,8 +40,32 @@ export class Worker {
         throw new TaskNotRegisteredError(invocation.taskName);
       }
       const args = serializer.deserialize(invocation.payload) as unknown[];
-      const result = await task.handler(...args);
-      return Buffer.from(serializer.serialize(result));
+
+      // Drive a cooperative cancel signal from the storage flag, and expose the
+      // job context (id, signal, progress) to the handler.
+      const controller = new AbortController();
+      const context: JobContext = {
+        jobId: invocation.id,
+        signal: controller.signal,
+        setProgress: (progress) => queue.updateProgress(invocation.id, progress),
+      };
+      const poller = setInterval(() => {
+        try {
+          if (queue.isCancelRequested(invocation.id)) {
+            controller.abort();
+          }
+        } catch {
+          // transient storage error — retry on the next tick
+        }
+      }, CANCEL_POLL_INTERVAL_MS);
+      poller.unref();
+
+      try {
+        const result = await runInContext(context, () => task.handler(...args));
+        return Buffer.from(serializer.serialize(result));
+      } finally {
+        clearInterval(poller);
+      }
     };
 
     const nativeOptions: NativeWorkerOptions = {

@@ -83,6 +83,21 @@ export class Queue {
     return this.serializer.deserialize(job.result);
   }
 
+  /** Cancel a pending job. Returns false if it was not pending. */
+  cancelJob(id: string): boolean {
+    return this.native.cancelJob(id);
+  }
+
+  /** Request cooperative cancellation of a running job. Returns false if it is not running. */
+  requestCancel(id: string): boolean {
+    return this.native.requestCancel(id);
+  }
+
+  /** Whether cancellation has been requested for a job. */
+  isCancelRequested(id: string): boolean {
+    return this.native.isCancelRequested(id);
+  }
+
   /** Start a worker that runs the registered tasks. Hold the returned {@link Worker}. */
   runWorker(options?: WorkerRunOptions): Worker {
     return Worker.start(this.native, {
