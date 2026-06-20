@@ -7,7 +7,7 @@ use taskito_core::Storage;
 
 use super::JsQueue;
 use crate::convert::{lock_info_to_js, JsLockInfo};
-use crate::error::to_napi_err;
+use crate::error::{invalid_arg, to_napi_err};
 
 #[napi]
 impl JsQueue {
@@ -15,6 +15,9 @@ impl JsQueue {
     /// another owner already holds a live lock.
     #[napi]
     pub fn acquire_lock(&self, name: String, owner_id: String, ttl_ms: i64) -> Result<bool> {
+        if ttl_ms <= 0 {
+            return Err(invalid_arg(format!("ttlMs must be > 0 (got {ttl_ms})")));
+        }
         self.storage
             .acquire_lock(&name, &owner_id, ttl_ms)
             .map_err(to_napi_err)
@@ -31,6 +34,9 @@ impl JsQueue {
     /// Extend `name`'s TTL to `ttlMs` if held by `ownerId`. Returns false otherwise.
     #[napi]
     pub fn extend_lock(&self, name: String, owner_id: String, ttl_ms: i64) -> Result<bool> {
+        if ttl_ms <= 0 {
+            return Err(invalid_arg(format!("ttlMs must be > 0 (got {ttl_ms})")));
+        }
         self.storage
             .extend_lock(&name, &owner_id, ttl_ms)
             .map_err(to_napi_err)
