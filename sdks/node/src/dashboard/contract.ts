@@ -4,14 +4,21 @@
 import type { DeadJob, Job, WorkerInfo } from "../types";
 import type { Webhook } from "../webhooks";
 
-/** Map a webhook to the SPA contract — the secret is never exposed here. */
+/** Replace header values with a mask so outbound credentials aren't exposed. */
+function maskHeaderValues(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.keys(headers).map((name) => [name, "***"]));
+}
+
+/** Map a webhook to the SPA contract — secret and header values are never exposed. */
 export function webhookToContract(webhook: Webhook) {
   return {
     id: webhook.id,
     url: webhook.url,
     events: webhook.events,
     task_filter: webhook.taskFilter ?? null,
-    headers: webhook.headers,
+    // Mask header values — they may carry outbound credentials. Keep names so
+    // the UI can show which headers are configured.
+    headers: maskHeaderValues(webhook.headers),
     has_secret: Boolean(webhook.secret),
     max_retries: webhook.maxRetries,
     timeout_seconds: webhook.timeoutMs / 1000,
