@@ -33,9 +33,14 @@ const defaultSink: LogSink = (_level, line) => {
   process.stderr.write(`${line}\n`);
 };
 
+function isLogLevel(value: unknown): value is LogLevel {
+  // `Object.hasOwn` avoids matching inherited props (e.g. `TASKITO_LOG_LEVEL=toString`).
+  return typeof value === "string" && Object.hasOwn(SEVERITY, value);
+}
+
 function levelFromEnv(): LogLevel {
   const raw = process.env.TASKITO_LOG_LEVEL?.toLowerCase();
-  return raw && raw in SEVERITY ? (raw as LogLevel) : "warn";
+  return isLogLevel(raw) ? raw : "warn";
 }
 
 // Shared mutable config: every logger (root + children) reads through it, so
@@ -44,11 +49,17 @@ const config = { level: levelFromEnv(), sink: defaultSink };
 
 /** Set the global threshold; messages below it are dropped (and never built). */
 export function setLogLevel(level: LogLevel): void {
+  if (!isLogLevel(level)) {
+    throw new TypeError(`invalid log level: ${String(level)}`);
+  }
   config.level = level;
 }
 
 /** Replace the output sink (default: stderr). Useful for capture in tests. */
 export function setLogSink(sink: LogSink): void {
+  if (typeof sink !== "function") {
+    throw new TypeError("log sink must be a function");
+  }
   config.sink = sink;
 }
 
