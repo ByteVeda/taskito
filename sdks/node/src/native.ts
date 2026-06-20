@@ -15,4 +15,12 @@ export const { JsQueue, JsWorker } = binding;
 export type NativeQueue = InstanceType<typeof JsQueue>;
 export type NativeWorker = InstanceType<typeof JsWorker>;
 
-export type { EnqueueOptions, JsJob, JsTaskInvocation, WorkerOptions } from "../native/index";
+export type {
+  EnqueueOptions,
+  JsJob,
+  JsTaskInvocation,
+  OpenOptions,
+  QueueConfigInput,
+  TaskConfigInput,
+  WorkerOptions,
+} from "../native/index";

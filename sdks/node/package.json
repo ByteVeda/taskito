@@ -44,7 +44,7 @@
   },
   "scripts": {
     "build": "pnpm run build:native && pnpm run build:ts",
-    "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node native",
+    "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node --features postgres,redis native",
     "build:ts": "tsup",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src test",
