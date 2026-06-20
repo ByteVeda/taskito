@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdtempSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -27,7 +28,7 @@ beforeEach(async () => {
   queue.enqueue("add", [1, 2]);
   queue.pauseQueue("emails");
   server = serveDashboard(queue, { port: 0, staticDir });
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await once(server, "listening");
   const address = server.address() as AddressInfo;
   base = `http://127.0.0.1:${address.port}`;
 });
@@ -101,7 +102,7 @@ it("lists a running worker", async () => {
   queue.task("noop", () => null);
   const worker: Worker = queue.runWorker({ queues: ["default"] });
   const srv = serveDashboard(queue, { port: 0, staticDir });
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await once(srv, "listening");
   const { port } = srv.address() as AddressInfo;
 
   try {
@@ -125,7 +126,7 @@ it("aggregates metrics after a job completes", async () => {
   const id = queue.enqueue("add", [2, 3]);
   const worker: Worker = queue.runWorker();
   const srv = serveDashboard(queue, { port: 0, staticDir });
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await once(srv, "listening");
   const { port } = srv.address() as AddressInfo;
 
   try {

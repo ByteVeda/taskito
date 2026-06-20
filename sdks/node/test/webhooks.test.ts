@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Queue, type Worker } from "../src/index";
+import { Queue, WebhookValidationError, type Worker } from "../src/index";
 
 let worker: Worker | undefined;
 let target: Server | undefined;
@@ -79,4 +79,19 @@ it("creates, lists, and deletes webhooks", () => {
   expect(queue.webhooks.list().map((w) => w.id)).toContain(hook.id);
   expect(queue.webhooks.delete(hook.id)).toBe(true);
   expect(queue.webhooks.list().map((w) => w.id)).not.toContain(hook.id);
+});
+
+it("rejects malformed webhook definitions before persisting", () => {
+  const queue = newQueue();
+  expect(() => queue.webhooks.create({ url: "", events: [] })).toThrow(WebhookValidationError);
+  expect(() => queue.webhooks.create({ url: "not-a-url", events: [] })).toThrow(
+    /invalid webhook url/,
+  );
+  expect(() =>
+    queue.webhooks.create({ url: "https://x.test", events: [], maxRetries: -1 }),
+  ).toThrow(/maxRetries/);
+  expect(() => queue.webhooks.create({ url: "https://x.test", events: [], timeoutMs: 0 })).toThrow(
+    /timeout/,
+  );
+  expect(queue.webhooks.list()).toHaveLength(0);
 });
