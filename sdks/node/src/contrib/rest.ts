@@ -176,6 +176,9 @@ function defineRoutes(resultTimeoutMs: number): RestRoute[] {
 
 /** Build the route set for a helper, applying `includeRoutes`/`excludeRoutes`. */
 export function buildRestRoutes(options: RestOptions = {}): RestRoute[] {
+  if (options.includeRoutes && options.excludeRoutes) {
+    throw new Error("includeRoutes and excludeRoutes are mutually exclusive");
+  }
   const routes = defineRoutes(options.resultTimeoutMs ?? 5000);
   if (options.includeRoutes) {
     const allow = new Set(options.includeRoutes);
