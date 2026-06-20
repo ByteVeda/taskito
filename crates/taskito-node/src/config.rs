@@ -41,6 +41,18 @@ pub struct EnqueueOptions {
     pub namespace: Option<String>,
 }
 
+/// Filter for [`crate::queue::JsQueue::list_jobs`]. All fields optional.
+#[napi(object)]
+#[derive(Default)]
+pub struct JobFilter {
+    /// Lowercase status (`"pending"`, `"running"`, `"complete"`, `"failed"`, `"dead"`, `"cancelled"`).
+    pub status: Option<String>,
+    pub queue: Option<String>,
+    pub task: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 /// Per-task configuration registered on the scheduler before the worker runs.
 #[napi(object)]
 pub struct TaskConfigInput {

@@ -10,6 +10,9 @@ use crate::convert::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
 use crate::error::to_napi_err;
 use crate::worker::{start_worker, JsWorker};
 
+mod admin;
+mod inspect;
+
 /// A Taskito queue handle (SQLite/Postgres/Redis) exposed to JavaScript.
 #[napi]
 pub struct JsQueue {
