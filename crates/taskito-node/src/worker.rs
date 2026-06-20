@@ -38,6 +38,7 @@ impl JsWorker {
 /// Start a worker over `storage` that runs `callback` for each dequeued job.
 pub fn start_worker(
     storage: StorageBackend,
+    namespace: Option<String>,
     options: WorkerOptions,
     callback: ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>,
 ) -> JsWorker {
@@ -49,12 +50,21 @@ pub fn start_worker(
         .map(|c| c as usize)
         .unwrap_or(DEFAULT_CHANNEL_CAPACITY);
 
-    let scheduler = Arc::new(Scheduler::new(
-        storage,
-        queues,
-        SchedulerConfig::default(),
-        None,
-    ));
+    let mut config = SchedulerConfig::default();
+    if let Some(batch) = options.batch_size {
+        config.batch_size = batch.max(1) as usize;
+    }
+
+    // Per-task/queue config must be registered before the scheduler is shared
+    // (register_* take &mut self).
+    let mut scheduler = Scheduler::new(storage, queues, config, namespace);
+    for input in options.task_configs.iter().flatten() {
+        scheduler.register_task(input.name.clone(), crate::convert::task_config(input));
+    }
+    for input in options.queue_configs.iter().flatten() {
+        scheduler.register_queue_config(input.name.clone(), crate::convert::queue_config(input));
+    }
+    let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
 
     let (job_tx, job_rx) = tokio::sync::mpsc::channel(capacity);

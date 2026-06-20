@@ -9,6 +9,11 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = []
+postgres = ["taskito-core/postgres"]
+redis = ["taskito-core/redis"]
+
 [dependencies]
 taskito-core = { path = "../taskito-core" }
 napi = { version = "2", default-features = false, features = ["napi8", "tokio_rt"] }

@@ -5,7 +5,7 @@
 //! `Promise<Buffer>`, and reports a [`JobResult`] back to the scheduler. This is
 //! the Node mirror of the Python shell's worker pool.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
 use napi::bindgen_prelude::{spawn, Buffer, Promise};
@@ -78,22 +78,34 @@ async fn run_one(callback: &TaskCallback, job: Job) -> JobResult {
         },
     );
 
-    let outcome = rx.await;
+    // Enforce the per-job timeout (the core stores `timeout_ms` but leaves
+    // enforcement to the shell). `timeout_ms <= 0` means no limit.
+    let timed = if job.timeout_ms > 0 {
+        tokio::time::timeout(Duration::from_millis(job.timeout_ms as u64), rx).await
+    } else {
+        Ok(rx.await)
+    };
     let wall_time_ns = started.elapsed().as_nanos() as i64;
-    match outcome {
-        Ok(Ok(result)) => JobResult::Success {
+    match timed {
+        Ok(Ok(Ok(result))) => JobResult::Success {
             job_id: job.id,
             result: Some(result),
             task_name: job.task_name,
             wall_time_ns,
         },
-        Ok(Err(err)) => failure(job, err.to_string(), wall_time_ns),
-        Err(_) => failure(job, "node task channel dropped".to_string(), wall_time_ns),
+        Ok(Ok(Err(err))) => failure(job, err.to_string(), wall_time_ns, false),
+        Ok(Err(_)) => failure(
+            job,
+            "node task channel dropped".to_string(),
+            wall_time_ns,
+            false,
+        ),
+        Err(_) => failure(job, "task timed out".to_string(), wall_time_ns, true),
     }
 }
 
 /// Build a retryable [`JobResult::Failure`] from a job and error message.
-fn failure(job: Job, error: String, wall_time_ns: i64) -> JobResult {
+fn failure(job: Job, error: String, wall_time_ns: i64, timed_out: bool) -> JobResult {
     JobResult::Failure {
         job_id: job.id,
         error,
@@ -102,6 +114,6 @@ fn failure(job: Job, error: String, wall_time_ns: i64) -> JobResult {
         task_name: job.task_name,
         wall_time_ns,
         should_retry: true,
-        timed_out: false,
+        timed_out,
     }
 }

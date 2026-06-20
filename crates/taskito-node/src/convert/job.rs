@@ -14,22 +14,32 @@ const DEFAULT_TIMEOUT_MS: i64 = 300_000;
 
 /// Build a [`NewJob`] from a task name, opaque payload bytes, and JS options.
 /// The core never interprets `payload` — the shell owns (de)serialization.
-pub fn build_new_job(task_name: String, payload: Vec<u8>, opts: EnqueueOptions) -> NewJob {
+/// `queue_namespace` is the queue-level default applied when the enqueue call
+/// doesn't override it.
+pub fn build_new_job(
+    task_name: String,
+    payload: Vec<u8>,
+    opts: EnqueueOptions,
+    queue_namespace: Option<&str>,
+) -> NewJob {
+    let delay = opts.delay_ms.unwrap_or(0).max(0);
     NewJob {
         queue: opts.queue.unwrap_or_else(|| DEFAULT_QUEUE.to_string()),
         task_name,
         payload,
         priority: opts.priority.unwrap_or(0),
-        scheduled_at: now_millis(),
+        scheduled_at: now_millis() + delay,
         max_retries: opts.max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
         timeout_ms: opts.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
-        unique_key: None,
-        metadata: None,
+        unique_key: opts.unique_key,
+        metadata: opts.metadata,
         notes: None,
         depends_on: Vec::new(),
         expires_at: None,
         result_ttl_ms: None,
-        namespace: None,
+        namespace: opts
+            .namespace
+            .or_else(|| queue_namespace.map(str::to_string)),
     }
 }
 
@@ -65,7 +75,7 @@ pub fn job_to_js(job: Job) -> JsJob {
         id: job.id,
         queue: job.queue,
         task_name: job.task_name,
-        status: job.status.wire_name().to_string(),
+        status: job.status.as_str().to_string(),
         priority: job.priority,
         retry_count: job.retry_count,
         max_retries: job.max_retries,
