@@ -23,7 +23,7 @@ use crate::convert::{
     node_to_js, run_to_js, JsFanOutCompletion, JsWorkflowAdvance, JsWorkflowNode,
     JsWorkflowNodeRef, JsWorkflowRun, JsWorkflowRunPlan,
 };
-use crate::error::to_napi_err;
+use crate::error::{invalid_arg, to_napi_err};
 
 /// Largest number of children a single fan-out may expand into — guards against
 /// a producer returning an enormous list and flooding storage in one batch.
@@ -73,7 +73,17 @@ impl JsQueue {
             .get_workflow_definition(&name, Some(version))
             .map_err(to_napi_err)?
         {
-            Some(existing) => existing.id,
+            // Reuse the stored id only when the DAG matches; otherwise the run
+            // would execute one topology while `definition_id` points at another,
+            // breaking run-plan reconstruction. Force a version bump instead.
+            Some(existing) => {
+                if existing.dag_data != dag {
+                    return Err(invalid_arg(format!(
+                        "workflow '{name}' v{version} already exists with a different DAG; bump the version"
+                    )));
+                }
+                existing.id
+            }
             None => {
                 let def = WorkflowDefinition {
                     id: uuid::Uuid::now_v7().to_string(),
@@ -439,8 +449,14 @@ impl JsQueue {
             nodes.push(new_workflow_node(&run_id, child_name, Some(job.id)));
         }
 
-        wf.create_workflow_nodes_batch(&nodes)
-            .map_err(to_napi_err)?;
+        // Child jobs are already enqueued; if node creation fails, cancel them
+        // so they don't run untracked (orphaned) outside the workflow.
+        if let Err(err) = wf.create_workflow_nodes_batch(&nodes).map_err(to_napi_err) {
+            for id in &child_job_ids {
+                let _ = self.storage.cancel_job(id);
+            }
+            return Err(err);
+        }
         wf.set_workflow_node_fan_out_count(&run_id, &parent_node_name, count)
             .map_err(to_napi_err)?;
         Ok(child_job_ids)
@@ -480,8 +496,15 @@ impl JsQueue {
             namespace: self.namespace.clone(),
         };
         let job = self.storage.enqueue(new_job).map_err(to_napi_err)?;
-        wf.set_workflow_node_job(&run_id, &node_name, &job.id)
-            .map_err(to_napi_err)?;
+        // Cancel the job if we can't bind it to its node, so it doesn't run
+        // unbound (the tracker would never see its outcome).
+        if let Err(err) = wf
+            .set_workflow_node_job(&run_id, &node_name, &job.id)
+            .map_err(to_napi_err)
+        {
+            let _ = self.storage.cancel_job(&job.id);
+            return Err(err);
+        }
         Ok(job.id)
     }
 
