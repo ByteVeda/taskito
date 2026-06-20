@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, expect, it } from "vitest";
-import { Queue, serveDashboard } from "../src/index";
+import { Queue, serveDashboard, type Worker } from "../src/index";
 
 const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
 const staticDir = join(pkgRoot, "static", "dashboard");
@@ -65,4 +65,31 @@ it("serves the SPA shell with deep-link fallback", async () => {
   expect((await fetch(`${base}/`)).status).toBe(200);
   expect((await fetch(`${base}/jobs`)).status).toBe(200);
   expect((await fetch(`${base}/assets/missing-xyz.js`)).status).toBe(404);
+});
+
+it("aggregates metrics after a job completes", async () => {
+  const db = join(mkdtempSync(join(tmpdir(), "taskito-dash-")), "q.db");
+  const queue = new Queue({ dbPath: db });
+  queue.task("add", (a: number, b: number) => a + b);
+  const id = queue.enqueue("add", [2, 3]);
+  const worker: Worker = queue.runWorker();
+  const srv = serveDashboard(queue, { port: 0, staticDir });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const { port } = srv.address() as AddressInfo;
+
+  try {
+    await queue.result(id);
+    let metrics: Record<string, { count: number; success_count: number }> = {};
+    for (let i = 0; i < 60 && metrics.add === undefined; i++) {
+      metrics = await (await fetch(`http://127.0.0.1:${port}/api/metrics?since=3600`)).json();
+      if (metrics.add === undefined) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    expect(metrics.add?.count).toBeGreaterThanOrEqual(1);
+    expect(metrics.add?.success_count).toBeGreaterThanOrEqual(1);
+  } finally {
+    worker.stop();
+    srv.close();
+  }
 });

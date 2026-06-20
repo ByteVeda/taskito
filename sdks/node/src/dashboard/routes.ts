@@ -19,8 +19,12 @@ export const routes: Route[] = [
   { method: "GET", pattern: /^\/api\/jobs$/, handle: (q, url) => h.jobs(q, url) },
   { method: "GET", pattern: /^\/api\/jobs\/([^/]+)$/, handle: (q, _url, p) => h.job(q, id(p)) },
   { method: "GET", pattern: /^\/api\/dead-letters$/, handle: (q, url) => h.deadLetters(q, url) },
-  { method: "GET", pattern: /^\/api\/metrics$/, handle: () => h.metrics() },
-  { method: "GET", pattern: /^\/api\/metrics\/timeseries$/, handle: () => h.timeseries() },
+  { method: "GET", pattern: /^\/api\/metrics$/, handle: (q, url) => h.metrics(q, url) },
+  {
+    method: "GET",
+    pattern: /^\/api\/metrics\/timeseries$/,
+    handle: (q, url) => h.timeseries(q, url),
+  },
   { method: "GET", pattern: /^\/api\/workers$/, handle: () => h.workers() },
   {
     method: "POST",

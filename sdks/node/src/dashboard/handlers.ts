@@ -3,6 +3,7 @@
 
 import type { Queue } from "../index";
 import { deadToContract, jobToContract } from "./contract";
+import { aggregateByTask, bucketTimeseries } from "./metrics";
 
 function num(url: URL, key: string): number | undefined {
   const value = url.searchParams.get(key);
@@ -50,13 +51,18 @@ export function deadLetters(queue: Queue, url: URL) {
   return queue.deadLetters(num(url, "limit"), num(url, "offset")).map(deadToContract);
 }
 
-// Not yet available over the Node SDK — return empty so the SPA renders cleanly.
-export function metrics() {
-  return {};
+export function metrics(queue: Queue, url: URL) {
+  const since = Number(url.searchParams.get("since") ?? 3600);
+  const task = url.searchParams.get("task") ?? undefined;
+  return aggregateByTask(queue.getMetrics(Date.now() - since * 1000, task));
 }
-export function timeseries() {
-  return [];
+
+export function timeseries(queue: Queue, url: URL) {
+  const since = Number(url.searchParams.get("since") ?? 3600);
+  const bucket = Number(url.searchParams.get("bucket") ?? 60);
+  return bucketTimeseries(queue.getMetrics(Date.now() - since * 1000, undefined), bucket * 1000);
 }
+
 export function workers() {
   return [];
 }
