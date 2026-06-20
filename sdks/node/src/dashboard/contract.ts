@@ -84,20 +84,21 @@ export function workflowRunToContract(run: WorkflowRun) {
 }
 
 export function workflowNodeToContract(node: WorkflowNode) {
-  // fan-out / saga fields are always null in the Node SDK (v1 = plain DAGs).
+  // saga fields stay null until saga compensation is bound; fan_out_count is
+  // real once a node has expanded.
   return {
     node_name: node.nodeName,
     status: node.status,
     job_id: node.jobId ?? null,
     result_hash: node.resultHash ?? null,
-    fan_out_count: null,
+    fan_out_count: node.fanOutCount ?? null,
     started_at: node.startedAt ?? null,
     completed_at: node.completedAt ?? null,
     error: node.error ?? null,
-    compensation_job_id: null,
-    compensation_started_at: null,
-    compensation_completed_at: null,
-    compensation_error: null,
+    compensation_job_id: node.compensationJobId ?? null,
+    compensation_started_at: node.compensationStartedAt ?? null,
+    compensation_completed_at: node.compensationCompletedAt ?? null,
+    compensation_error: node.compensationError ?? null,
   };
 }
 
