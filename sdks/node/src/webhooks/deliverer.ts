@@ -71,10 +71,23 @@ export class Deliverer {
     if (!delivery.ok) {
       log.warn(
         () =>
-          `delivery of ${event} to ${webhook.url} failed after ${attempts} attempt(s): ${error}`,
+          `delivery of ${event} to ${redactUrl(webhook.url)} failed after ${attempts} attempt(s): ${error}`,
       );
     }
     return delivery;
+  }
+}
+
+/** Strip credentials and query string from a URL before logging it. */
+function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    return url.toString();
+  } catch {
+    return "<invalid-url>";
   }
 }
 
