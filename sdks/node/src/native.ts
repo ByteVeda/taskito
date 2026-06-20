@@ -22,6 +22,7 @@ export type {
   JsJob,
   JsJobError,
   JsMetric,
+  JsOutcome,
   JsStats,
   JsTaskInvocation,
   JsWorkerRow,

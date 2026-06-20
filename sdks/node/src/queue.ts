@@ -1,4 +1,6 @@
 import { JobCancelledError, JobFailedError, TaskitoError } from "./errors";
+import { Emitter, type EventHandler, type EventName } from "./events";
+import type { Middleware } from "./middleware";
 import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
 import { JsonSerializer, type Serializer } from "./serializers";
 import type {
@@ -48,6 +50,8 @@ export class Queue {
   private readonly serializer: Serializer;
   private readonly tasks = new Map<string, RegisteredTask>();
   private readonly queueLimits = new Map<string, QueueLimits>();
+  private readonly middleware: Middleware[] = [];
+  private readonly emitter = new Emitter();
 
   constructor(options: QueueOptions) {
     this.native = JsQueue.open(toOpenOptions(options));
@@ -62,6 +66,21 @@ export class Queue {
   /** Set per-queue concurrency / rate-limit applied when a worker runs. */
   configureQueue(name: string, limits: QueueLimits): void {
     this.queueLimits.set(name, limits);
+  }
+
+  /** Register middleware (execution + outcome hooks). Runs in registration order. */
+  use(middleware: Middleware): void {
+    this.middleware.push(middleware);
+  }
+
+  /** Subscribe to a job lifecycle event. */
+  on(event: EventName, handler: EventHandler): void {
+    this.emitter.on(event, handler);
+  }
+
+  /** Unsubscribe from a job lifecycle event. */
+  off(event: EventName, handler: EventHandler): void {
+    this.emitter.off(event, handler);
   }
 
   /** Enqueue `name` with positional `args`. Returns the new job id. */
@@ -213,6 +232,8 @@ export class Queue {
       tasks: this.tasks,
       queueLimits: this.queueLimits,
       serializer: this.serializer,
+      middleware: this.middleware,
+      emitter: this.emitter,
       run: options,
     });
   }
