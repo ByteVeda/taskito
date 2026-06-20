@@ -14,6 +14,7 @@ import type {
   Stats,
   TaskHandler,
   TaskOptions,
+  WorkerInfo,
   WorkerRunOptions,
 } from "./types";
 import { Worker } from "./worker";
@@ -199,6 +200,11 @@ export class Queue {
   /** Names of currently-paused queues. */
   listPausedQueues(): string[] {
     return this.native.listPausedQueues();
+  }
+
+  /** Registered workers (heartbeat + identity). */
+  listWorkers(): WorkerInfo[] {
+    return this.native.listWorkers();
   }
 
   /** Start a worker that runs the registered tasks. Hold the returned {@link Worker}. */

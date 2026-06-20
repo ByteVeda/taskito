@@ -25,7 +25,7 @@ export const routes: Route[] = [
     pattern: /^\/api\/metrics\/timeseries$/,
     handle: (q, url) => h.timeseries(q, url),
   },
-  { method: "GET", pattern: /^\/api\/workers$/, handle: () => h.workers() },
+  { method: "GET", pattern: /^\/api\/workers$/, handle: (q) => h.workers(q) },
   {
     method: "POST",
     pattern: /^\/api\/jobs\/([^/]+)\/cancel$/,

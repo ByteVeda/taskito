@@ -20,6 +20,7 @@ export type {
   Stats,
   TaskHandler,
   TaskOptions,
+  WorkerInfo,
   WorkerRunOptions,
 } from "./types";
 export { Worker } from "./worker";

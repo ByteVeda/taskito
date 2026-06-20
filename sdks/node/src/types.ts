@@ -6,6 +6,7 @@ export type {
   JsJobError as JobError,
   JsMetric as Metric,
   JsStats as Stats,
+  JsWorkerRow as WorkerInfo,
 } from "./native";
 
 /** Options for {@link Queue.result}. */

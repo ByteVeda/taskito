@@ -1,7 +1,7 @@
 // Map the SDK's camelCase shapes to the snake_case JSON contract the React SPA
 // (`dashboard/`) expects. Timestamps are Unix milliseconds throughout.
 
-import type { DeadJob, Job } from "../types";
+import type { DeadJob, Job, WorkerInfo } from "../types";
 
 export function jobToContract(job: Job) {
   return {
@@ -23,6 +23,20 @@ export function jobToContract(job: Job) {
     metadata: job.metadata ?? null,
     notes: job.notes ?? null,
     namespace: job.namespace ?? null,
+  };
+}
+
+export function workerToContract(worker: WorkerInfo) {
+  return {
+    worker_id: worker.workerId,
+    queues: worker.queues,
+    status: worker.status,
+    last_heartbeat: worker.lastHeartbeat,
+    registered_at: worker.startedAt ?? worker.lastHeartbeat,
+    hostname: worker.hostname ?? null,
+    pid: worker.pid ?? null,
+    pool_type: worker.poolType ?? null,
+    tags: worker.tags ?? null,
   };
 }
 

@@ -67,6 +67,26 @@ it("serves the SPA shell with deep-link fallback", async () => {
   expect((await fetch(`${base}/assets/missing-xyz.js`)).status).toBe(404);
 });
 
+it("lists a running worker", async () => {
+  const db = join(mkdtempSync(join(tmpdir(), "taskito-dash-")), "q.db");
+  const queue = new Queue({ dbPath: db });
+  queue.task("noop", () => null);
+  const worker: Worker = queue.runWorker({ queues: ["default"] });
+  const srv = serveDashboard(queue, { port: 0, staticDir });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const { port } = srv.address() as AddressInfo;
+
+  try {
+    const workers = await (await fetch(`http://127.0.0.1:${port}/api/workers`)).json();
+    expect(workers.length).toBeGreaterThanOrEqual(1);
+    expect(workers[0].pool_type).toBe("node");
+    expect(typeof workers[0].worker_id).toBe("string");
+  } finally {
+    worker.stop();
+    srv.close();
+  }
+});
+
 it("aggregates metrics after a job completes", async () => {
   const db = join(mkdtempSync(join(tmpdir(), "taskito-dash-")), "q.db");
   const queue = new Queue({ dbPath: db });

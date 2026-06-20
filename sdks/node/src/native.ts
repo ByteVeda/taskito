@@ -24,6 +24,7 @@ export type {
   JsMetric,
   JsStats,
   JsTaskInvocation,
+  JsWorkerRow,
   OpenOptions,
   QueueConfigInput,
   TaskConfigInput,

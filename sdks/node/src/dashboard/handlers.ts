@@ -2,7 +2,7 @@
 // `undefined` from a handler means 404.
 
 import type { Queue } from "../index";
-import { deadToContract, jobToContract } from "./contract";
+import { deadToContract, jobToContract, workerToContract } from "./contract";
 import { aggregateByTask, bucketTimeseries } from "./metrics";
 
 function num(url: URL, key: string): number | undefined {
@@ -63,8 +63,8 @@ export function timeseries(queue: Queue, url: URL) {
   return bucketTimeseries(queue.getMetrics(Date.now() - since * 1000, undefined), bucket * 1000);
 }
 
-export function workers() {
-  return [];
+export function workers(queue: Queue) {
+  return queue.listWorkers().map(workerToContract);
 }
 
 // Open-mode auth (no login): the minimal boot responses the SPA needs.
