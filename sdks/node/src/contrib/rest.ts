@@ -22,27 +22,32 @@ export interface RestRequest {
   body: unknown;
 }
 
-// Keys that would pollute Object.prototype if assigned from user-controlled query.
+// Keys that would pollute Object.prototype if carried over from user-controlled query.
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/** Pick a single string from a parsed query value (`string` or `string[]`). */
+function firstString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value) && typeof value[0] === "string") {
+    return value[0];
+  }
+  return undefined;
+}
 
 /**
  * Flatten a framework's parsed query (`string | string[]`) into plain
- * `string | undefined` values. Uses a null-prototype object and skips
- * prototype-polluting keys, so user-controlled query names are safe to assign.
+ * `string | undefined` values. Built via `Object.fromEntries` over filtered
+ * entries — never a dynamic `obj[userKey] =` write — and prototype-polluting
+ * keys are dropped, so user-controlled query names can't inject properties.
  */
 export function flattenQueryParams(query: unknown): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = Object.create(null);
-  for (const [key, value] of Object.entries((query as Record<string, unknown>) ?? {})) {
-    if (FORBIDDEN_KEYS.has(key)) {
-      continue;
-    }
-    if (typeof value === "string") {
-      out[key] = value;
-    } else if (Array.isArray(value) && typeof value[0] === "string") {
-      out[key] = value[0];
-    }
-  }
-  return out;
+  const entries = Object.entries((query as Record<string, unknown>) ?? {})
+    .filter(([key]) => !FORBIDDEN_KEYS.has(key))
+    .map(([key, value]) => [key, firstString(value)] as const)
+    .filter((entry): entry is readonly [string, string] => entry[1] !== undefined);
+  return Object.fromEntries(entries);
 }
 
 /** A framework-neutral response: HTTP status + a JSON-serializable body. */
