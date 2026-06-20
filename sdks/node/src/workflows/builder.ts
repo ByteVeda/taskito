@@ -42,8 +42,14 @@ export class WorkflowBuilder {
       max_retries: options.maxRetries,
       timeout_ms: options.timeoutMs,
       priority: options.priority,
+      condition: options.condition,
     };
     this.stepArgs[name] = options.args ?? [];
+    // A conditioned step is enqueued by the tracker once its predecessors
+    // settle (so it can evaluate the condition), not statically at submit.
+    if (options.condition) {
+      this.deferredSeeds.add(name);
+    }
     return this;
   }
 

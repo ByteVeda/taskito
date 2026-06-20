@@ -20,6 +20,14 @@ export type WorkflowRunState =
   | "compensated"
   | "compensation_failed";
 
+/**
+ * When a step runs, based on its predecessors' outcomes:
+ * - `on_success` (default) — every predecessor completed
+ * - `on_failure` — at least one predecessor failed (an error handler)
+ * - `always` — regardless of predecessor outcomes
+ */
+export type WorkflowCondition = "on_success" | "on_failure" | "always";
+
 /** Per-step options when building a workflow. */
 export interface WorkflowStepOptions {
   /** Predecessor step name(s) this step runs after. */
@@ -31,6 +39,8 @@ export interface WorkflowStepOptions {
   maxRetries?: number;
   timeoutMs?: number;
   priority?: number;
+  /** Gate this step on its predecessors' outcomes (default `on_success`). */
+  condition?: WorkflowCondition;
 }
 
 /** Common per-step task config shared by every step kind. */
@@ -80,6 +90,8 @@ export interface StepMetadataJson {
   fan_out?: string;
   /** JSON `{from}` marking a fan-in node (the fan-out it collects). */
   fan_in?: string;
+  /** Entry condition: `on_success` | `on_failure` | `always`. */
+  condition?: string;
 }
 
 /** A built workflow definition, ready to submit. */

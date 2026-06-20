@@ -5,6 +5,7 @@ export type {
   FanInStepOptions,
   FanOutStepOptions,
   WorkflowAdvance,
+  WorkflowCondition,
   WorkflowHandle,
   WorkflowNode,
   WorkflowRun,

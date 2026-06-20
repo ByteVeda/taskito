@@ -22,6 +22,9 @@ const TERMINAL_NODE_STATUS = new Set([
 /** A fan-out child node name (`parent[3]`) → its parent (`parent`), else null. */
 const FAN_OUT_CHILD = /^(.+)\[\d+\]$/;
 
+/** Predecessor outcomes that satisfy an `on_success` condition. */
+const SUCCEEDED_STATUS = new Set(["completed", "cache_hit"]);
+
 /** snake_case step metadata as stored in the workflow definition. */
 interface StepMeta {
   task_name: string;
@@ -32,6 +35,8 @@ interface StepMeta {
   args_template?: string;
   fan_out?: string;
   fan_in?: string;
+  /** `"on_success"` (default) | `"on_failure"` | `"always"` — gates node entry. */
+  condition?: string;
 }
 
 /** The reconstructed structure + config of a workflow run. */
@@ -110,10 +115,11 @@ export class WorkflowTracker {
     const parent = fanOutParentOf(nodeName);
     if (parent !== null && isFanOut(plan, parent)) {
       this.onFanOutChild(runId, parent, plan);
-    } else if (succeeded) {
-      this.evaluateSuccessors(runId, nodeName, plan);
     } else {
-      this.native.cascadeSkipPending(runId); // fail-fast
+      // Success and failure both flow through successor evaluation: each
+      // successor's condition decides whether it runs or is skipped, so an
+      // `on_failure` handler fires and an `on_success` step skips after a fault.
+      this.evaluateSuccessors(runId, nodeName, plan);
     }
 
     this.evictIfTerminal(runId, this.native.finalizeRunIfTerminal(runId));
@@ -135,7 +141,9 @@ export class WorkflowTracker {
     if (completion.succeeded) {
       this.onFanOutParentDone(runId, parent, completion.childJobIds, plan);
     } else {
-      this.native.cascadeSkipPending(runId); // a child failed → fail-fast
+      // A child failed → the parent is now `failed`; evaluating its successors
+      // skips the (on_success) fan-in and anything downstream.
+      this.evaluateSuccessors(runId, parent, plan);
     }
   }
 
@@ -217,10 +225,16 @@ export class WorkflowTracker {
     );
   }
 
-  /** Enqueue/expand any deferred successor whose predecessors are now all terminal. */
+  /** Enqueue/expand/skip any deferred successor whose predecessors are now all terminal. */
   private evaluateSuccessors(runId: string, nodeName: string, plan: RunPlan): void {
     for (const succ of plan.successors.get(nodeName) ?? []) {
       if (!plan.deferred.has(succ) || !this.allPredecessorsTerminal(runId, succ, plan)) {
+        continue;
+      }
+      // Evaluate the condition first: a not-taken branch is skipped (and the
+      // skip propagates) before we consider what kind of node it is.
+      if (!this.shouldExecute(runId, succ, plan)) {
+        this.skipNode(runId, succ, plan);
         continue;
       }
       const meta = plan.meta.get(succ);
@@ -233,6 +247,27 @@ export class WorkflowTracker {
         this.createDeferredJob(runId, succ, plan);
       }
     }
+  }
+
+  /** Whether a node's condition is satisfied by its predecessors' outcomes. */
+  private shouldExecute(runId: string, node: string, plan: RunPlan): boolean {
+    const condition = plan.meta.get(node)?.condition ?? "on_success";
+    const preds = plan.predecessors.get(node) ?? [];
+    if (preds.length === 0 || condition === "always") {
+      return true;
+    }
+    const status = this.nodeStatuses(runId);
+    const predStatuses = preds.map((p) => status.get(p) ?? "");
+    if (condition === "on_failure") {
+      return predStatuses.some((s) => s === "failed");
+    }
+    return predStatuses.every((s) => SUCCEEDED_STATUS.has(s)); // on_success
+  }
+
+  /** Mark a not-taken node skipped, then propagate the skip to its successors. */
+  private skipNode(runId: string, node: string, plan: RunPlan): void {
+    this.native.skipWorkflowNode(runId, node);
+    this.evaluateSuccessors(runId, node, plan);
   }
 
   /** Enqueue a plain deferred node using its persisted args. */
@@ -316,7 +351,9 @@ export class WorkflowTracker {
       Object.entries(JSON.parse(raw.stepMetadata) as Record<string, StepMeta>),
     );
     const successors = successorsOf(edges);
-    const seeds = [...meta].filter(([, m]) => m.fan_out || m.fan_in).map(([name]) => name);
+    const seeds = [...meta]
+      .filter(([, m]) => m.fan_out || m.fan_in || m.condition)
+      .map(([name]) => name);
     const plan: RunPlan = {
       successors,
       predecessors: predecessorsOf(edges),

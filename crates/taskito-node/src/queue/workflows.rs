@@ -555,6 +555,27 @@ impl JsQueue {
         }))
     }
 
+    /// Skip a single node whose condition evaluated false: cancel any backing
+    /// job (best-effort) and mark it `Skipped`. The tracker propagates the skip
+    /// to the node's successors so a not-taken branch settles cleanly.
+    #[napi]
+    pub fn skip_workflow_node(&self, run_id: String, node_name: String) -> Result<()> {
+        let wf = self.workflow_store()?;
+        if let Some(node) = wf
+            .get_workflow_node(&run_id, &node_name)
+            .map_err(to_napi_err)?
+        {
+            if let Some(job_id) = &node.job_id {
+                if let Err(e) = self.storage.cancel_job(job_id) {
+                    log::warn!("[taskito-node] cancel_job({job_id}) during skip: {e}");
+                }
+            }
+        }
+        wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::Skipped)
+            .map_err(to_napi_err)?;
+        Ok(())
+    }
+
     /// Fail-fast cascade: skip every still-pending node of a run and cancel its
     /// job. Called by the tracker when a managed run's node fails.
     #[napi]
