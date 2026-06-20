@@ -165,6 +165,38 @@ queue.webhooks.delete(hook.id);
 Deliveries fire from the worker process (where events originate). The dashboard
 exposes `/api/webhooks` for managing them.
 
+## Workflows
+
+Orchestrate multi-step DAGs. Each step is a registered task; `after` declares
+dependencies. Steps are pre-enqueued with `depends_on` chains, so the core
+scheduler runs them in topological order — and a worker advances the run as each
+step settles.
+
+```ts
+const handle = queue.workflows
+  .define("etl")
+  .step("extract", "extractTask", { args: ["s3://bucket/in"] })
+  .step("transform", "transformTask", { after: "extract" })
+  .step("load", "loadTask", { after: "transform", maxRetries: 5 })
+  .submit();
+
+queue.runWorker(); // advances workflow nodes by default
+
+const run = await handle.wait();      // resolves when terminal
+console.log(run.state);               // "completed" | "failed" | ...
+handle.nodes();                       // per-step status
+queue.workflows.list({ state: "running" });
+```
+
+If a step dead-letters, the run fails and remaining steps are skipped
+(fail-fast). Per-step options: `after`, `args`, `queue`, `maxRetries`,
+`timeoutMs`, `priority`. Workers that never process workflow steps can skip the
+per-job bookkeeping with `runWorker({ advanceWorkflows: false })`. Requires the
+addon built with the `workflows` cargo feature (enabled by `build:native`).
+
+Fan-out, gates, sub-workflows, and saga compensation are not yet bound — for
+those, use the Python SDK.
+
 ## Dashboard
 
 A web dashboard (the same React UI the Python SDK serves) runs over the queue —
@@ -229,5 +261,6 @@ compiled in via `--features postgres,redis`.
 
 ## Not yet covered
 
-Workflows, distributed locks, periodic/cron tasks, prebuilt platform binaries +
-npm publish (host-only build for now), and Python⇄Node cross-language interop.
+Advanced workflow features (fan-out, gates, sub-workflows, saga compensation),
+distributed locks, periodic/cron tasks, prebuilt platform binaries + npm publish
+(host-only build for now), and Python⇄Node cross-language interop.

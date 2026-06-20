@@ -11,9 +11,10 @@ crate-type = ["cdylib"]
 
 [features]
 default = []
-postgres = ["taskito-core/postgres"]
-redis = ["taskito-core/redis"]
+postgres = ["taskito-core/postgres", "taskito-workflows?/postgres"]
+redis = ["taskito-core/redis", "taskito-workflows?/redis"]
 mesh = ["dep:taskito-mesh"]
+workflows = ["dep:taskito-workflows"]
 
 [dependencies]
 taskito-core = { path = "../taskito-core" }
@@ -24,8 +25,10 @@ crossbeam-channel = { workspace = true }
 async-trait = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }
+serde_json = { workspace = true }
 gethostname = "1"
 taskito-mesh = { path = "../taskito-mesh", optional = true }
+taskito-workflows = { path = "../taskito-workflows", optional = true }
 
 [build-dependencies]
 napi-build = "2"

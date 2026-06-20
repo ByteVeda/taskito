@@ -22,6 +22,7 @@ import type {
 } from "./types";
 import { WebhookManager } from "./webhooks";
 import { Worker } from "./worker";
+import { WorkflowManager } from "./workflows";
 
 /** Construction options for a {@link Queue}. */
 export interface QueueOptions {
@@ -55,6 +56,8 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly middleware: Middleware[] = [];
   private readonly emitter = new Emitter();
   private readonly webhookManager: WebhookManager;
+  /** Built lazily — its constructor throws on addons lacking the `workflows` feature. */
+  private workflowManager?: WorkflowManager;
 
   constructor(options: QueueOptions) {
     this.native = JsQueue.open(toOpenOptions(options));
@@ -65,6 +68,14 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Webhook subscriptions — create/list/delete and deliver job events to URLs. */
   get webhooks(): WebhookManager {
     return this.webhookManager;
+  }
+
+  /** Workflow definitions and runs — DAG/linear orchestration over the queue. */
+  get workflows(): WorkflowManager {
+    if (!this.workflowManager) {
+      this.workflowManager = new WorkflowManager(this.native, this.serializer);
+    }
+    return this.workflowManager;
   }
 
   /**

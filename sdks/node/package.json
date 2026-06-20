@@ -48,7 +48,7 @@
   },
   "scripts": {
     "build": "pnpm run build:native && pnpm run build:ts",
-    "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node --features postgres,redis,mesh native",
+    "build:native": "napi build --platform --release --cargo-cwd ../../crates/taskito-node --features postgres,redis,mesh,workflows native",
     "build:ts": "tsup",
     "build:dashboard": "pnpm -C ../../dashboard exec vite build --outDir ../sdks/node/static/dashboard --emptyOutDir",
     "prepack": "pnpm run build:dashboard",

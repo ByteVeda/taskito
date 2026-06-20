@@ -5,6 +5,8 @@ mod job;
 mod outcome;
 mod stats;
 mod task_config;
+#[cfg(feature = "workflows")]
+mod workflow;
 
 pub use job::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
 pub use outcome::{outcome_to_js, JsOutcome};
@@ -13,3 +15,5 @@ pub use stats::{
     JsDeadJob, JsJobError, JsMetric, JsStats, JsWorkerRow,
 };
 pub use task_config::{queue_config, task_config};
+#[cfg(feature = "workflows")]
+pub use workflow::{node_to_js, run_to_js, JsWorkflowAdvance, JsWorkflowNode, JsWorkflowRun};

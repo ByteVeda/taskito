@@ -77,4 +77,10 @@ export interface WorkerRunOptions {
    * the native addon to be built with the `mesh` cargo feature; ignored otherwise.
    */
   mesh?: MeshWorkerConfig;
+  /**
+   * Advance workflow runs as this worker's node-jobs settle (default true when
+   * the addon supports workflows). Adds one job lookup per terminal job; set
+   * false on workers that never process workflow steps.
+   */
+  advanceWorkflows?: boolean;
 }

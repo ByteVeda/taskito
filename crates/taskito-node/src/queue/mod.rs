@@ -12,12 +12,18 @@ use crate::worker::{start_worker, JsWorker};
 
 mod admin;
 mod inspect;
+#[cfg(feature = "workflows")]
+mod workflows;
 
 /// A Taskito queue handle (SQLite/Postgres/Redis) exposed to JavaScript.
 #[napi]
 pub struct JsQueue {
     storage: StorageBackend,
     namespace: Option<String>,
+    /// Workflow storage, lazily initialized on first workflow call so the
+    /// workflow migrations only run when workflows are actually used.
+    #[cfg(feature = "workflows")]
+    workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowStorageBackend>,
 }
 
 #[napi]
@@ -27,7 +33,12 @@ impl JsQueue {
     pub fn open(options: OpenOptions) -> Result<Self> {
         let namespace = options.namespace.clone();
         let storage = crate::backend::open(&options)?;
-        Ok(Self { storage, namespace })
+        Ok(Self {
+            storage,
+            namespace,
+            #[cfg(feature = "workflows")]
+            workflow_storage: std::sync::OnceLock::new(),
+        })
     }
 
     /// Enqueue `task_name` with an opaque serialized `payload`. Returns the job

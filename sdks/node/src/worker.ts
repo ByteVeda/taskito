@@ -48,6 +48,10 @@ export class Worker {
   static start(queue: NativeQueue, params: WorkerStartParams): Worker {
     const { tasks, queueLimits, serializer, middleware, emitter, run } = params;
 
+    // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
+    const advanceWorkflows =
+      (run?.advanceWorkflows ?? true) && typeof queue.markWorkflowNodeResult === "function";
+
     const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
       const task = tasks.get(invocation.taskName);
       if (!task) {
@@ -119,6 +123,9 @@ export class Worker {
           // outcome hook errors must not break the worker
         }
       }
+      if (advanceWorkflows) {
+        advanceWorkflowNode(queue, outcome);
+      }
     };
 
     const nativeOptions: NativeWorkerOptions = {
@@ -135,6 +142,23 @@ export class Worker {
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
     this.native.stop();
+  }
+}
+
+/**
+ * Advance a workflow run when one of its node-jobs reaches a terminal state.
+ * A no-op for non-workflow jobs (the native call returns null); errors are
+ * swallowed so workflow bookkeeping never breaks the worker loop.
+ */
+function advanceWorkflowNode(queue: NativeQueue, outcome: JsOutcome): void {
+  try {
+    if (outcome.kind === "success") {
+      queue.markWorkflowNodeResult(outcome.jobId, true, null);
+    } else if (outcome.kind === "dead") {
+      queue.markWorkflowNodeResult(outcome.jobId, false, outcome.error ?? null);
+    }
+  } catch {
+    // non-workflow job or transient storage error
   }
 }
 

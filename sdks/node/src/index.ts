@@ -32,3 +32,15 @@ export type {
 export type { Delivery, Webhook, WebhookInput } from "./webhooks";
 export { WebhookManager, WebhookValidationError } from "./webhooks";
 export { Worker } from "./worker";
+export type {
+  WorkflowAdvance,
+  WorkflowHandle,
+  WorkflowNode,
+  WorkflowRun,
+  WorkflowRunState,
+  WorkflowSpec,
+  WorkflowStepOptions,
+  WorkflowSubmitOptions,
+  WorkflowWaitOptions,
+} from "./workflows";
+export { WorkflowBuilder, WorkflowManager } from "./workflows";
