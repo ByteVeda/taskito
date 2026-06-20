@@ -8,7 +8,10 @@ import { fileURLToPath } from "node:url";
 import express, { type RequestHandler, type Router } from "express";
 import { createDashboardHandler } from "../dashboard";
 import type { Queue } from "../queue";
+import { createLogger } from "../utils";
 import { buildRestRoutes, flattenQueryParams, type RestOptions, type RestRequest } from "./rest";
+
+const log = createLogger("contrib:express");
 
 /** Options for {@link taskitoRouter}. */
 export type TaskitoRouterOptions = RestOptions;
@@ -38,7 +41,9 @@ export function taskitoRouter(queue: Queue, options: TaskitoRouterOptions = {}):
         const result = await route.handle(queue, request);
         res.status(result.status).json(result.body);
       } catch (err) {
-        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+        // Log internally; don't leak internal error details to API callers.
+        log.error(() => `${route.method} ${route.path} failed`, err);
+        res.status(500).json({ error: "internal server error" });
       }
     };
     if (route.method === "GET") {
