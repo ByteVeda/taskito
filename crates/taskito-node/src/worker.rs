@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use napi::bindgen_prelude::{spawn, spawn_blocking, Result};
-use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use taskito_core::worker::WorkerDispatcher;
 use taskito_core::{Scheduler, SchedulerConfig, Storage, StorageBackend};
 use tokio::sync::Notify;
 
 use crate::config::WorkerOptions;
-use crate::convert::JsTaskInvocation;
+use crate::convert::{outcome_to_js, JsOutcome, JsTaskInvocation};
 use crate::dispatcher::NodeDispatcher;
 
 const DEFAULT_QUEUE: &str = "default";
@@ -47,6 +47,7 @@ pub fn start_worker(
     namespace: Option<String>,
     options: WorkerOptions,
     callback: ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>,
+    outcome_callback: ThreadsafeFunction<JsOutcome, ErrorStrategy::Fatal>,
 ) -> Result<JsWorker> {
     let queues = options
         .queues
@@ -110,8 +111,16 @@ pub fn start_worker(
     let scheduler_results = scheduler;
     spawn_blocking(move || {
         while let Ok(result) = result_rx.recv() {
-            if let Err(err) = scheduler_results.handle_result(result) {
-                log::error!("[taskito-node] result handling error: {err}");
+            match scheduler_results.handle_result(result) {
+                // Surface each outcome to JS so the shell can emit events and run
+                // middleware (the events layer).
+                Ok(outcome) => {
+                    outcome_callback.call(
+                        outcome_to_js(&outcome),
+                        ThreadsafeFunctionCallMode::NonBlocking,
+                    );
+                }
+                Err(err) => log::error!("[taskito-node] result handling error: {err}"),
             }
         }
     });
