@@ -32,6 +32,8 @@ SDK, zero Python dependency, over the shared Rust core.
 | **Dashboard workflows panel** | `1be346b` | 4 GET endpoints serving the SPA workflows page |
 | **Distributed locks** | `0655349` | `queue.lock` / `queue.withLock`, auto-extend, `Symbol.dispose` |
 | **Periodic + circuit-breaker** | `a4cc9a4` | `queue.registerPeriodic`; per-task `circuitBreaker` config |
+| **Workflows: fan-out / fan-in** | (this branch) | TS `WorkflowTracker` brain (`src/workflows/tracker.ts`) driven by the outcome callback; `.fanOut()` / `.fanIn()` builder steps; napi primitives `expandFanOut`/`checkFanOutCompletion`/`createDeferredJob`/`finalizeRunIfTerminal`/`getWorkflowRunPlan`/`workflowNodeForJob`/`cascadeSkipPending`; deferred-node submit. Storage-reconstructable (no submit-time registration) |
+| **Dashboard DAG completeness** | (this branch) | `JsWorkflowNode` carries `fanOutCount` + `compensation_*`; `/dag` handler enriches the raw graph with per-node `deps[]` + live `status` + job-id `id` so the SPA visualizer renders edges/colours/links |
 
 **Verify everything green:**
 ```bash
@@ -81,31 +83,43 @@ FastAPI). Node equivalents:
 deps). **Effort:** medium. Each integration is small and independent → **one
 commit each**.
 
-### 3. Advanced workflow features — LARGE
+### 3. Advanced workflow features — LARGE (fan-out DONE; gates / sub-workflows / saga remain)
 
-DAG/linear workflows work (v1). Still unbound: **fan-out, gates/conditions,
-sub-workflows, saga compensation**. These are **deferred** in the Python engine
-too — they are NOT in the `taskito-workflows` crate; they live in
-`crates/taskito-python/src/py_queue/workflow_ops/{fan_out,gates,saga}.rs` plus a
-Python `WorkflowTracker` that reacts to job events and enqueues nodes on-demand.
+DAG/linear + **fan-out / fan-in** work. The tracker-brain foundation is built:
+a TS `WorkflowTracker` (`src/workflows/tracker.ts`) reacts to the worker outcome
+callback, reconstructs the run plan from storage (DAG + step metadata — no
+submit-time registration), and drives on-demand orchestration via napi
+primitives (`expandFanOut`, `checkFanOutCompletion`, `createDeferredJob`,
+`finalizeRunIfTerminal`, `getWorkflowRunPlan`, `workflowNodeForJob`,
+`cascadeSkipPending`). `submit_workflow` takes `deferredNodeNames` (fan-out /
+fan-in ∪ descendants get a node but no static job). Failures are fail-fast.
 
-**To bind:** port that on-demand orchestration into `taskito-node` (the tracker
-brain), driven from the worker outcome callback (already wired for v1
-advancement). Fan-out = expand N child nodes at runtime; gates = pause/approve;
-saga = run compensation jobs on failure in reverse order.
+**Still unbound: gates/conditions, sub-workflows, saga compensation.** They build
+on this same foundation (the Python references are
+`crates/taskito-python/src/py_queue/workflow_ops/{gates,saga}.rs` + the Python
+`WorkflowTracker`):
+- **gates/conditions** — a deferred node enters `waiting_approval`; resolve via a
+  new `resolveWorkflowGate` napi method + a JS-side timer (`setTimeout`) for
+  timeouts. Conditions = a `should_execute` check in `evaluateSuccessors`.
+- **sub-workflows** — extend `submit_workflow` with `parent_run_id` /
+  `parent_node_name`; the tracker submits a child run for a sub-workflow node and
+  resolves the parent node when the child finalizes (populates `/children`).
+- **saga** — reverse-topo compensation waves driven by the tracker; needs the
+  `setWorkflowNodeCompensation*` + run-state napi setters bound (storage methods
+  already exist on the `WorkflowStorage` trait).
 
-**Where:** extend `crates/taskito-node/src/queue/workflows.rs` + `src/workflows/`.
-**Effort:** large. **Recommendation:** fan-out first (most-requested), then gates,
-then saga. Each is a separate feature/commit.
+**Where:** `crates/taskito-node/src/queue/workflows.rs` + `src/workflows/tracker.ts`.
+**Effort:** medium each now the brain exists. Each is a separate feature/commit.
 
-### 4. Dashboard workflows DAG panel completeness — SMALL
+### 4. Dashboard workflows DAG panel completeness — DONE
 
-The 4 workflow endpoints exist; `/runs/:id/dag` returns the `SerializableGraph`
-JSON. Verify the SPA's DAG **visualizer** renders it correctly against Node-shaped
-data, and that `/runs/:id/children` is correct once sub-workflows exist (#3).
-Currently children is always `[]` for Node-submitted runs.
-
-**Where:** `sdks/node/src/dashboard/{handlers,contract,routes}.ts`. **Effort:** small.
+`JsWorkflowNode` now carries `fanOutCount` + `compensation_*`; `contract.ts` maps
+them (saga fields stay null until saga is bound). The `/runs/:id/dag` handler
+(`dashboard/handlers.ts::enrichDag`) rewrites the raw `SerializableGraph` into the
+shape the SPA visualizer actually consumes — per-node `deps[]` (from edges), live
+`status` (merged from the nodes list), and `id` = job id for correct `/jobs/$id`
+links — so the DAG tab renders real edges, colours, and links. `/runs/:id/children`
+stays `[]` until sub-workflows exist (#3).
 
 ### 5. Prebuilt platform matrix + npm publish — MEDIUM (infra)
 
@@ -243,12 +257,12 @@ sdks/node/src/
   index.ts native.ts queue.ts worker.ts context.ts errors.ts types.ts
   utils/{logger,index}.ts
   locks/{lock,types,index}.ts
-  workflows/{builder,manager,types,index}.ts
+  workflows/{builder,manager,tracker,plan,types,index}.ts
   webhooks/{store,deliverer,manager,types,index}.ts
   serializers/{serializer,json,msgpack,index}.ts
   dashboard/{server,routes,handlers,contract,static,metrics,api,index}.ts
   cli/{index,connect,output,commands/*}.ts
-sdks/node/test/*.test.ts        # 15 files, 48 tests
+sdks/node/test/*.test.ts        # 16 files, 52 tests
 ```
 
 Memory: see `.claude/memory/session-history.md` (Node SDK section) for the running
