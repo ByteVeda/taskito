@@ -19,7 +19,6 @@ function GithubMark() {
 
 const LINKS = [
   { label: "Getting Started", href: "/getting-started/installation" },
-  { label: "Node", href: "/node" },
   { label: "Guides", href: "/guides" },
   { label: "Architecture", href: "/architecture" },
   { label: "API", href: "/api-reference" },
