@@ -1,0 +1,63 @@
+---
+title: Error handling
+description: "What happens when a task throws — retries, timeouts, and the dead-letter queue."
+---
+
+When a task throws (or its promise rejects), Taskito decides the job's fate from
+its retry budget. Each failing attempt runs the `onError` middleware hook, then:
+
+1. **Retry** — if attempts remain, the job is rescheduled with
+   [backoff](/node/guides/reliability/retries).
+2. **Dead-letter** — once the budget is exhausted, the job moves to the
+   [dead-letter queue](/node/guides/reliability/dead-letter).
+
+```ts
+queue.task("fetch", fetchUrl, {
+  maxRetries: 3,
+  retryBackoff: { baseMs: 1000, maxMs: 60_000 },
+});
+```
+
+Returning normally is success; an uncaught throw is failure. There is no
+in-handler "stop retrying" signal — set `maxRetries: 0` for fire-once tasks.
+
+## Timeouts
+
+A per-attempt [timeout](/node/guides/reliability/timeouts) aborts the job's
+`AbortSignal` and counts as a failure; the outcome carries `timedOut: true` so
+hooks can tell timeouts apart from other errors.
+
+```ts
+queue.task("slow", handler, { timeoutMs: 30_000 });
+```
+
+## Inspecting failures
+
+Every attempt's error is recorded:
+
+```ts
+queue.getJobErrors(id); // one entry per failed attempt
+queue.listJobs({ status: "failed" });
+queue.deadLetters(); // exhausted jobs
+```
+
+## Reacting to outcomes
+
+[Middleware](/node/guides/extensibility/middleware) and
+[events](/node/guides/extensibility/events) fire as the core decides each
+outcome:
+
+```ts
+queue.use({
+  onError: (ctx, err) => log.error(ctx.taskName, err), // each throwing attempt
+  onRetry: (e) => metrics.inc("retry", e.taskName),
+  onDeadLetter: (e) => alertOps(e),
+});
+queue.on("job.dead", (e) => pageOncall(e));
+```
+
+<Callout type="info">
+  A throw fails only the current *attempt*. To fail fast with no retries, set
+  `maxRetries: 0`; to make failures safe to retry, keep handlers
+  [idempotent](/node/guides/reliability/idempotency).
+</Callout>
