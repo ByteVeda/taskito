@@ -1,0 +1,75 @@
+---
+title: Monitoring
+description: "Queue stats, per-task metrics, job progress, and worker heartbeats."
+---
+
+Read live queue health straight from the `Queue` handle — no extra service. The
+same data powers the [dashboard](/node/guides/operations/dashboard) and the
+[CLI](/node/guides/operations/cli) read commands.
+
+## Stats
+
+Counts by status, globally or per queue:
+
+```ts
+queue.stats(); // { pending, running, completed, failed, dead, cancelled }
+queue.statsByQueue("default");
+queue.statsAllQueues(); // Record<queue, stats>
+```
+
+## Metrics
+
+`getMetrics(windowMs, task?)` aggregates finished jobs over a trailing window
+into per-task counts, a success/failure split, and latency percentiles
+(p50/p95/p99):
+
+```ts
+queue.getMetrics(3_600_000); // last hour, all tasks
+queue.getMetrics(3_600_000, "add"); // one task
+```
+
+## Progress
+
+A running task reports progress through its job context; inspection and the
+dashboard surface it live:
+
+```ts
+import { currentJob } from "taskito";
+
+queue.task("import", async (rows: Row[]) => {
+  const job = currentJob();
+  for (let i = 0; i < rows.length; i++) {
+    await importRow(rows[i]);
+    job?.setProgress(Math.round(((i + 1) / rows.length) * 100));
+  }
+});
+```
+
+## Workers
+
+Each running worker registers and heartbeats every 5 seconds; list the live
+fleet:
+
+```ts
+queue.listWorkers();
+// [{ workerId, hostname, pid, queues, status, lastHeartbeat, threads, ... }]
+```
+
+A worker appears on the dashboard Workers panel while it heartbeats; `stop()`
+unregisters it. See [Workers](/node/guides/core/workers) for the worker
+lifecycle.
+
+## Prometheus & tracing
+
+For metric scraping and distributed traces, the contrib integrations wrap the
+events layer:
+
+- [Prometheus](/node/guides/integrations/prometheus) — counters and histograms behind a `/metrics` endpoint.
+- [OpenTelemetry](/node/guides/integrations/otel) — a span per task.
+- [Sentry](/node/guides/integrations/sentry) — error capture.
+
+<Callout type="info">
+  Lifecycle [events](/node/guides/extensibility/events) and
+  [middleware](/node/guides/extensibility/middleware) hooks let you push the same
+  signals to any backend.
+</Callout>

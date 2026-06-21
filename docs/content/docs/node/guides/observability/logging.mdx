@@ -1,0 +1,72 @@
+---
+title: Logging
+description: "The built-in leveled logger — levels, namespaces, and a pluggable sink."
+---
+
+The SDK ships a tiny zero-dependency leveled logger. It writes to **stderr** by
+default, so it never pollutes stdout (the CLI's `--json` output and piped data
+stay clean). Taskito uses it internally; it is exported for your own use too.
+
+```ts
+import { createLogger } from "taskito";
+
+const log = createLogger("billing"); // tagged [taskito:billing]
+
+queue.task("charge", async (amount: number) => {
+  log.info("charging", { amount });
+  // ...
+});
+```
+
+## Levels
+
+`debug < info < warn < error < silent`. The threshold defaults to `warn` and is
+read once from `TASKITO_LOG_LEVEL`; override it at runtime:
+
+```ts
+import { setLogLevel } from "taskito";
+
+setLogLevel("debug"); // global, immediate
+```
+
+A message can be a string or a **thunk** that is only evaluated when the level
+passes the threshold — so expensive log lines cost nothing when filtered out:
+
+```ts
+log.debug(() => `payload=${JSON.stringify(bigObject)}`);
+```
+
+Extra arguments are appended: `Error`s render their stack, objects are
+JSON-stringified.
+
+```ts
+log.error("delivery failed", err, { webhookId });
+```
+
+## Namespaces
+
+`createLogger(ns)` tags every line `[taskito:ns]`; `child()` nests further:
+
+```ts
+const log = createLogger("worker"); // [taskito:worker]
+const poolLog = log.child("pool"); // [taskito:worker:pool]
+```
+
+## Custom sink
+
+Replace the output sink to route logs to a file, JSON transport, or a test
+buffer — globally and immediately:
+
+```ts
+import { setLogSink } from "taskito";
+
+setLogSink((level, line) => myTransport.write({ level, line }));
+```
+
+<Callout type="info">
+  This is a process-level logger, not per-job structured logging — it is not
+  attached to a job or queryable from the dashboard. For per-job signal, use
+  [progress](/node/guides/observability/monitoring), job
+  [metadata](/node/guides/core/enqueue-options), or
+  [events](/node/guides/extensibility/events).
+</Callout>
