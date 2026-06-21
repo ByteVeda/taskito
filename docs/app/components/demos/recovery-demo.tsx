@@ -194,6 +194,12 @@ export default function RecoveryDemo(_props: DemoProps) {
     setPlaying(true);
   }, [reduced, DUR]);
 
+  // Auto-play on open; startPlay() shows the finished frame under reduced motion.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount.
+  useEffect(() => {
+    startPlay();
+  }, []);
+
   const setFromX = useCallback(
     (clientX: number) => {
       const track = trackRef.current;
