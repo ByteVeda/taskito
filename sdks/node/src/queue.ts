@@ -17,7 +17,12 @@ import {
   type OpenOptions,
 } from "./native";
 import { encodeNotes } from "./notes";
-import { type ResourceContext, ResourceRuntime, type ResourceScope } from "./resources";
+import {
+  type ResourceContext,
+  type ResourceMetrics,
+  ResourceRuntime,
+  type ResourceScope,
+} from "./resources";
 import { JsonSerializer, type Serializer } from "./serializers";
 import type {
   AnyHandler,
@@ -189,6 +194,11 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       dispose: options?.dispose,
     });
     return this;
+  }
+
+  /** Per-resource lifecycle metrics (created / disposed / active), keyed by name. */
+  resourceMetrics(): ResourceMetrics {
+    return this.resources.metrics();
   }
 
   /** Set per-queue concurrency / rate-limit applied when a worker runs. */

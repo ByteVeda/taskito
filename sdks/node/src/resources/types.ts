@@ -25,3 +25,16 @@ export interface ResourceDefinition<T = unknown> {
 
 /** Resolves a resource by name within the current scope. @internal */
 export type ResourceResolver = (name: string) => Promise<unknown>;
+
+/** Lifecycle counters for one resource. */
+export interface ResourceStat {
+  /** Successful factory builds so far. */
+  created: number;
+  /** Disposals run so far. */
+  disposed: number;
+  /** Currently-live instances (`created - disposed`). */
+  active: number;
+}
+
+/** Per-resource lifecycle metrics, keyed by resource name. */
+export type ResourceMetrics = Record<string, ResourceStat>;

@@ -21,9 +21,13 @@ export { Lock, type LockInfo, type LockOptions } from "./locks";
 export type { EnqueueContext, Middleware, TaskContext } from "./middleware";
 export { Queue, type QueueOptions } from "./queue";
 export {
+  type MockResource,
+  mockResource,
   type ResourceContext,
   type ResourceDefinition,
+  type ResourceMetrics,
   type ResourceScope,
+  type ResourceStat,
   useResource,
 } from "./resources";
 export {
