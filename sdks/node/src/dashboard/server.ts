@@ -4,6 +4,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Queue } from "../index";
 import { createLogger } from "../utils";
 import { WebhookValidationError } from "../webhooks";
+import {
+  type DashboardAuth,
+  isPublicApiPath,
+  presentedToken,
+  setTokenCookie,
+  tokenMatches,
+} from "./auth";
 import { routes } from "./routes";
 import { StaticAssets } from "./static";
 
@@ -16,15 +23,17 @@ const MAX_BODY_BYTES = 1024 * 1024;
  * Build a Node `http` request handler that serves the dashboard SPA from `staticDir`
  * plus the `/api/*` JSON contract over `queue`. Use this to mount the dashboard into an
  * existing server (e.g. an Express or Fastify app); {@link createDashboardServer} wraps
- * it in a standalone server.
+ * it in a standalone server. When `auth` is given, every `/api/*` request (except
+ * `/api/auth/status`) requires the token.
  */
 export function createDashboardHandler(
   queue: Queue,
   staticDir: string,
+  auth?: DashboardAuth,
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const assets = new StaticAssets(staticDir);
   return (req, res) => {
-    void dispatch(queue, assets, req, res).catch((error) => {
+    void dispatch(queue, assets, req, res, auth).catch((error) => {
       log.error(() => "dashboard dispatch failed", error);
       if (!res.headersSent) {
         sendJson(res, 500, { error: "internal server error" });
@@ -34,8 +43,12 @@ export function createDashboardHandler(
 }
 
 /** Build (but do not start) the dashboard server over `queue`, serving the SPA from `staticDir`. */
-export function createDashboardServer(queue: Queue, staticDir: string): Server {
-  return createServer(createDashboardHandler(queue, staticDir));
+export function createDashboardServer(
+  queue: Queue,
+  staticDir: string,
+  auth?: DashboardAuth,
+): Server {
+  return createServer(createDashboardHandler(queue, staticDir, auth));
 }
 
 async function dispatch(
@@ -43,15 +56,27 @@ async function dispatch(
   assets: StaticAssets,
   req: IncomingMessage,
   res: ServerResponse,
+  auth: DashboardAuth | undefined,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
+
+  // A valid `?token=` bootstraps an httpOnly cookie so the SPA's later API calls
+  // authenticate without re-passing the token.
+  if (auth && url.searchParams.get("token") && tokenMatches(auth.token, presentedToken(req, url))) {
+    setTokenCookie(res, auth.token);
+  }
 
   if (!path.startsWith("/api/")) {
     if (assets.serve(path, res)) {
       return;
     }
     sendJson(res, 503, { error: "dashboard assets not built — run `pnpm build:dashboard`" });
+    return;
+  }
+
+  if (auth && !isPublicApiPath(path) && !tokenMatches(auth.token, presentedToken(req, url))) {
+    sendJson(res, 401, { error: "unauthorized" });
     return;
   }
 
