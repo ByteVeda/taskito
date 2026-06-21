@@ -50,6 +50,19 @@ export default defineConfig({
               // Emit only --shiki-light/--shiki-dark CSS vars (no inline color/bg),
               // so app.css can switch them on our [data-theme] selector.
               defaultColor: false,
+              // Tag each <pre> with its language so the CodeBlock wrapper can
+              // render the design's header bar.
+              transformers: [
+                {
+                  name: "code-language",
+                  pre(
+                    this: { options: { lang: string } },
+                    node: { properties: Record<string, unknown> },
+                  ) {
+                    node.properties["data-language"] = this.options.lang;
+                  },
+                },
+              ],
             },
           ],
           [rehypeAutolinkHeadings, { behavior: "wrap" }],

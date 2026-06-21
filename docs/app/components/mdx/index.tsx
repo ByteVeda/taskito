@@ -6,6 +6,7 @@ import { DiagramCarousel, DiagramSlide } from "@/components/diagram-carousel";
 import { Mermaid } from "@/components/mermaid";
 import { Callout } from "./callout";
 import { Card, Cards } from "./card";
+import { CodeBlock } from "./code-block";
 import { Tab, Tabs } from "./tabs";
 
 // Internal links use the router for client navigation; external/anchor links
@@ -34,6 +35,7 @@ function Anchor({ href, children, ...rest }: ComponentProps<"a">) {
 /** Components made available to every MDX page via `<MDXProvider>`. */
 export const mdxComponents: MDXComponents = {
   a: Anchor,
+  pre: CodeBlock,
   Callout,
   Tabs,
   Tab,
