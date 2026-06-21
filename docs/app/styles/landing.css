@@ -167,6 +167,13 @@ main {
   transform: translateX(3px);
 }
 
+/* Grid items must be allowed to shrink below their content's intrinsic width,
+   else the terminal's `white-space: pre` code + the language tab row blow the
+   1fr track past the viewport (horizontal overflow on mobile). */
+.hero .left,
+.hero .right {
+  min-width: 0;
+}
 .right {
   display: flex;
   flex-direction: column;
@@ -266,6 +273,8 @@ main {
   white-space: pre;
   min-height: 296px;
   tab-size: 4;
+  /* Long lines scroll within the terminal instead of being clipped on mobile. */
+  overflow-x: auto;
 }
 .code .cur {
   display: inline-block;
@@ -329,6 +338,15 @@ main {
   padding: 9px 11px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in oklch, var(--panel) 65%, #000);
+  /* The tab row scrolls on narrow screens rather than widening the terminal. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.langtabs::-webkit-scrollbar {
+  display: none;
+}
+.langtab {
+  flex: none;
 }
 [data-theme="light"] .langtabs {
   background: var(--panel2);
@@ -1368,6 +1386,12 @@ main {
   grid-template-columns: 0.92fr 1.08fr;
   gap: 18px;
   align-items: start;
+}
+/* Both panes must shrink below their content's intrinsic width so the snippet
+   (`white-space: pre`) and CTA buttons never widen the track past the viewport. */
+.fd-ask,
+.fd-answer {
+  min-width: 0;
 }
 .fd-ask {
   background: var(--panel);
