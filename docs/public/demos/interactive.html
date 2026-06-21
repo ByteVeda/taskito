@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Interactive — taskito docs</title>
-<meta name="description" content="Three runnable simulations — rate limiting, failure recovery, and worker scaling — built on SVG and Canvas 2D. No WebGL required.">
+<meta name="description" content="Seven runnable simulations — rate limiting, failure recovery, worker scaling, workflows, mesh routing, sagas, and a playground — built on SVG and Canvas 2D. No WebGL required.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&family=Shantell+Sans:wght@500;600;700&display=swap" rel="stylesheet">
@@ -43,7 +43,7 @@
   <!-- INTRO -->
   <section class="ihero">
     <h1>See the queue <span class="grad">actually run.</span></h1>
-    <p class="sub">Four runnable simulations of what taskito does under load — rate limiting, failure recovery, worker scaling, and workflow execution. Drive them yourself: trigger a <code>429</code>, scrub a job through retries, push a worker pool until it backs up, or fire a DAG and watch it propagate.</p>
+    <p class="sub">Seven runnable simulations of what taskito does under load — rate limiting, failure recovery, worker scaling, workflows, mesh routing, sagas, and a free-form playground. Drive them yourself: trigger a <code>429</code>, scrub a job through retries, push a worker pool until it backs up, or fire a DAG and watch it propagate.</p>
     <div class="capnote">
       <span class="lead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 12 2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Renders on</span>
       <span class="tier on" id="cap-svg"><span class="pip"></span><b>SVG</b><span class="st">+ Canvas 2D</span></span>
@@ -333,15 +333,18 @@ var TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
     root.setAttribute('data-density', state.density);
     [].forEach.call(densEl.children,function(b){ b.setAttribute('data-on', b.dataset.id===state.density?'1':'0'); });
   }
-  function persist(key,val){ try{ window.parent.postMessage({type:'__edit_mode_set_keys',edits:(function(){var o={};o[key]=val;return o;})()},'*'); }catch(e){} }
+  // Target the embedding parent's exact origin (from the referrer) instead of
+  // broadcasting to "*", and ignore inbound messages from anywhere else.
+  var parentOrigin=(function(){ try{ return new URL(document.referrer).origin; }catch(_){ return window.location.origin; } })();
+  function persist(key,val){ try{ window.parent.postMessage({type:'__edit_mode_set_keys',edits:(function(){var o={};o[key]=val;return o;})()},parentOrigin); }catch(e){} }
 
   new MutationObserver(function(){ if(state.accent!=='brand') applyAccent(state.accent); })
     .observe(root,{attributes:true,attributeFilter:['data-theme']});
 
   function show(){ panel.hidden=false; } function hide(){ panel.hidden=true; }
-  document.getElementById('twkClose').addEventListener('click',function(){ hide(); try{ window.parent.postMessage({type:'__edit_mode_dismissed'},'*'); }catch(e){} });
-  window.addEventListener('message',function(e){ if(e.origin!==window.location.origin||e.source!==window.parent) return; var t=e&&e.data&&e.data.type; if(t==='__activate_edit_mode') show(); else if(t==='__deactivate_edit_mode') hide(); });
-  try{ window.parent.postMessage({type:'__edit_mode_available'},'*'); }catch(e){}
+  document.getElementById('twkClose').addEventListener('click',function(){ hide(); try{ window.parent.postMessage({type:'__edit_mode_dismissed'},parentOrigin); }catch(e){} });
+  window.addEventListener('message',function(e){ if(e.origin!==parentOrigin||e.source!==window.parent) return; var t=e&&e.data&&e.data.type; if(t==='__activate_edit_mode') show(); else if(t==='__deactivate_edit_mode') hide(); });
+  try{ window.parent.postMessage({type:'__edit_mode_available'},parentOrigin); }catch(e){}
 
   paintAccent(); applyMotion(); applyDensity();
 })();
