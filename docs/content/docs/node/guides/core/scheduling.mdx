@@ -1,0 +1,35 @@
+---
+title: Scheduling (cron)
+description: "Register periodic tasks on a cron expression; a worker fires them when due."
+---
+
+Schedule a registered task on a cron expression. A running worker enqueues it
+when due — the scheduler's maintenance loop drives this, so no extra process is
+needed.
+
+```ts
+queue.task("digest", (date: string) => sendDigest(date));
+
+// cron is 6/7-field, seconds first: sec min hour day-of-month month day-of-week
+queue.registerPeriodic("daily-digest", "digest", "0 0 9 * * *", {
+  args: ["2026-06-16"],
+  timezone: "America/New_York",
+});
+```
+
+`registerPeriodic(name, taskName, cron, options?)` returns the next fire time
+(Unix ms). Re-registering the same `name` replaces the schedule.
+
+| Option | Description |
+|---|---|
+| `args` | Arguments passed to the task on each fire. |
+| `timezone` | IANA timezone for the cron expression (default UTC). |
+| `queue` | Queue to enqueue into. |
+
+<Callout type="info">
+  The cron field order is **seconds first** (`sec min hour dom mon dow`).
+  `"0 0 9 * * *"` is 09:00:00 daily, not every minute.
+</Callout>
+
+For a one-off future run, use [`delayMs`](/node/guides/core/enqueue-options#delayed-jobs)
+instead of a periodic schedule.
