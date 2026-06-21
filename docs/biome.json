@@ -7,15 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": [
-      "**",
-      "!node_modules",
-      "!.next",
-      "!dist",
-      "!build",
-      "!.source",
-      "!src/app/global.css"
-    ]
+    "includes": ["**", "!node_modules", "!build", "!.react-router", "!content"]
   },
   "formatter": {
     "enabled": true,
@@ -28,7 +20,6 @@
       "recommended": true
     },
     "domains": {
-      "next": "recommended",
       "react": "recommended"
     }
   },

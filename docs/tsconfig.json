@@ -1,35 +1,30 @@
 {
-  "compilerOptions": {
-    "target": "ESNext",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "react-jsx",
-    "incremental": true,
-    "paths": {
-      "@/*": ["./src/*"],
-      "collections/*": ["./.source/*"]
-    },
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ]
-  },
   "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "*.ts",
+    "*.tsx",
+    ".react-router/types/**/*"
   ],
-  "exclude": ["node_modules"]
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["@react-router/node", "vite/client"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "allowJs": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "rootDirs": [".", "./.react-router/types"],
+    "paths": {
+      "@/*": ["./app/*"]
+    }
+  },
+  "exclude": ["node_modules", "build"]
 }

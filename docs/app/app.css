@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+/* Minimal theme tokens for Phase 1; the full design system (theme.css + docs.css
+   port) lands in Phase 2. */
+:root {
+  --bg: #08080c;
+  --txt: #ececf4;
+  --accent: #3bbf72;
+}
+html[data-theme="light"] {
+  --bg: #f6f4ee;
+  --txt: #1b1a15;
+  --accent: #13a44e;
+}
+
+body {
+  background: var(--bg);
+  color: var(--txt);
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  margin: 0;
+}
+
+.landing-stub {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 120px 32px;
+}
+.landing-stub h1 {
+  font-size: 48px;
+  letter-spacing: -0.03em;
+}
+.landing-stub p {
+  color: var(--accent);
+  font-family: "IBM Plex Mono", monospace;
+}
