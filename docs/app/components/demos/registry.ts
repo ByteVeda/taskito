@@ -11,6 +11,7 @@ type LazyDemo = LazyExoticComponent<ComponentType<DemoProps>>;
  * `public/demos/` are removed.
  */
 export const DEMO_COMPONENTS: Partial<Record<DemoId, LazyDemo>> = {
+  mesh: lazy(() => import("./mesh-demo")),
   saga: lazy(() => import("./saga-demo")),
 };
 
