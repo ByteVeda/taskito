@@ -36,6 +36,8 @@ const queue = new Queue(options);
 | Method | Description |
 |---|---|
 | `result(id, { timeoutMs? })` | Await a job's result. |
+| `stream(id, { timeoutMs?, pollMs? })` | Async-iterate a job's [published partials](/node/guides/core/streaming). |
+| `taskLogs(id)` | Raw task-log entries for a job. |
 | `requestCancel(id)` | Abort a running job's signal. |
 | `cancelJob(id)` | Cancel a pending job. |
 
