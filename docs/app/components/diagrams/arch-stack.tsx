@@ -1,15 +1,21 @@
-import type { ReactNode } from "react";
+import { type CSSProperties, Fragment, type ReactNode } from "react";
 
-// Layered architecture stack — ports the prototype's `.archstack` HTML (clean
-// semantic layers + PyO3/store boundaries), replacing the old sketch SVG.
+// Layered architecture stack — exact port of the prototype's `.archstack` HTML
+// (semantic layers + PyO3/store boundaries as direct children).
+
+type Kind = "py" | "rust" | "store" | "";
 
 interface Layer {
   tag: string;
-  tagKind?: "py" | "rust" | "store";
+  /** Pill colour: `.ltag t-*`. */
+  tagKind?: Kind;
+  /** `.layer` modifier; defaults to `tagKind`. The prototype sometimes pairs a
+   *  `rust` layer surface with a `py` pill (e.g. the resource-proxy layer). */
+  layerKind?: Kind;
+  style?: CSSProperties;
   title: string;
   body: ReactNode;
   role?: string;
-  accent?: boolean;
 }
 
 function ArchStack({
@@ -25,8 +31,11 @@ function ArchStack({
     <div className="archstack">
       {legend ? <div className="arch-legend">{legend}</div> : null}
       {layers.map((l, i) => (
-        <div key={l.title}>
-          <div className={`layer ${l.tagKind ?? ""}`.trim()}>
+        <Fragment key={l.title}>
+          <div
+            className={`layer ${l.layerKind ?? l.tagKind ?? ""}`.trim()}
+            style={l.style}
+          >
             <span className={`ltag t-${l.tagKind ?? "store"}`}>{l.tag}</span>
             <div className="lbody">
               <div className="lt">{l.title}</div>
@@ -35,7 +44,7 @@ function ArchStack({
             {l.role ? <span className="lrole">{l.role}</span> : null}
           </div>
           {i < bounds.length ? <div className="bound">{bounds[i]}</div> : null}
-        </div>
+        </Fragment>
       ))}
     </div>
   );
@@ -133,17 +142,22 @@ export function ResourcePipeline() {
         },
         {
           tag: "Layer 3",
-          tagKind: "rust",
-          title: "Transparent proxy",
+          tagKind: "py",
+          layerKind: "rust",
+          style: {
+            borderColor: "var(--indigo-line)",
+            background:
+              "linear-gradient(100deg,var(--indigo-soft),var(--panel))",
+          },
+          title: "Resource proxies",
           body: (
             <>
-              Non-serializable handles (files, clients, sessions) are
-              deconstructed on enqueue and reconstructed on the worker via
-              registered <code>ProxyHandler</code>s — HMAC-signed,
-              schema-validated, LIFO-cleaned.
+              <code>ProxyHandler</code>s deconstruct live objects (file handles,
+              HTTP sessions, cloud clients) into a JSON recipe and reconstruct
+              them on the worker. Recipes are optionally HMAC-signed for tamper
+              detection.
             </>
           ),
-          accent: true,
         },
       ]}
       bounds={["enqueue → worker", "before task()"]}
