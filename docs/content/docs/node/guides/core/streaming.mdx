@@ -1,0 +1,56 @@
+---
+title: Streaming partial results
+description: "Publish intermediate values from a task and consume them live."
+---
+
+A long-running task can publish intermediate results as it works; a consumer
+streams them as they arrive — useful for ETL, ML training steps, or batch
+progress.
+
+## Publish
+
+Call `currentJob().publish(value)` from inside the task. The value must be
+JSON-serializable.
+
+```ts
+import { currentJob } from "taskito";
+
+queue.task("train", async (epochs: number) => {
+  const job = currentJob();
+  for (let epoch = 1; epoch <= epochs; epoch++) {
+    const loss = await trainEpoch(epoch);
+    job?.publish({ epoch, loss });
+  }
+  return "trained";
+});
+```
+
+## Consume
+
+`queue.stream(jobId)` is an async iterator that yields each published value in
+order, then ends when the job reaches a terminal state.
+
+```ts
+const id = queue.enqueue("train", [10]);
+
+for await (const update of queue.stream(id)) {
+  console.log(`epoch ${update.epoch}: loss ${update.loss}`);
+}
+
+const result = await queue.result(id); // "trained"
+```
+
+`stream(jobId, { timeoutMs, pollMs })` bounds the wait (default 60 s) and poll
+interval (default 200 ms). It works from any process sharing the storage, and a
+late consumer still drains every value already published.
+
+## Raw logs
+
+`queue.taskLogs(jobId)` returns the raw log entries (published partials have
+`level: "result"`).
+
+<Callout type="info">
+  Partials are stored as task-log rows, so they survive until the log is purged.
+  Pipe a stream straight to an SSE / WebSocket endpoint to push progress to a
+  browser.
+</Callout>

@@ -8,6 +8,7 @@ import {
   registerJobs,
   registerQueues,
   registerRun,
+  registerScaler,
   registerStats,
 } from "./commands";
 
@@ -34,6 +35,7 @@ registerQueues(program);
 registerDlq(program);
 registerRun(program);
 registerDashboard(program);
+registerScaler(program);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

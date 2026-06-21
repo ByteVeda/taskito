@@ -3,12 +3,28 @@ import {
   JobFailedError,
   LockLostError,
   LockNotAcquiredError,
+  PredicateRejectedError,
+  QueueError,
+  ResultTimeoutError,
   TaskitoError,
 } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
 import { Lock, type LockOptions } from "./locks";
-import type { Middleware } from "./middleware";
-import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
+import type { EnqueueContext, Middleware } from "./middleware";
+import {
+  JsQueue,
+  type EnqueueOptions as NativeEnqueueOptions,
+  type NativeQueue,
+  type OpenOptions,
+} from "./native";
+import { encodeNotes } from "./notes";
+import type { Predicate } from "./predicates";
+import {
+  type ResourceContext,
+  type ResourceMetrics,
+  ResourceRuntime,
+  type ResourceScope,
+} from "./resources";
 import { JsonSerializer, type Serializer } from "./serializers";
 import type {
   AnyHandler,
@@ -23,6 +39,8 @@ import type {
   RegisteredTask,
   ResultOptions,
   Stats,
+  StreamOptions,
+  TaskLog,
   TaskMap,
   TaskOptions,
   WorkerInfo,
@@ -62,7 +80,9 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly tasks = new Map<string, RegisteredTask>();
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
+  private readonly gates = new Map<string, Predicate[]>();
   private readonly emitter = new Emitter();
+  private readonly resources = new ResourceRuntime();
   private readonly webhookManager: WebhookManager;
   /** Built lazily — its constructor throws on addons lacking the `workflows` feature. */
   private workflowManager?: WorkflowManager;
@@ -139,6 +159,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /**
+   * Register a task that receives injected resources as a trailing `deps` object
+   * (`handler(...args, deps)`). The `deps` param is stripped from the typed
+   * {@link Queue.enqueue} args. Annotate `deps` to type the injected resources.
+   */
+  task<Name extends string, A extends unknown[], D, R>(
+    name: Name,
+    handler: (...args: [...A, deps: D]) => R | Promise<R>,
+    options: TaskOptions & { inject: readonly string[] },
+  ): Queue<TTasks & Record<Name, (...args: A) => R>>;
+  /**
    * Register a task handler under `name`. Chain calls to build a typed registry —
    * {@link Queue.enqueue} then infers each task's argument types.
    */
@@ -146,9 +176,34 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     name: Name,
     handler: Handler,
     options?: TaskOptions,
-  ): Queue<TTasks & Record<Name, Handler>> {
+  ): Queue<TTasks & Record<Name, Handler>>;
+  task(name: string, handler: AnyHandler, options?: TaskOptions): Queue<TaskMap> {
     this.tasks.set(name, { handler, options });
-    return this as unknown as Queue<TTasks & Record<Name, Handler>>;
+    return this as unknown as Queue<TaskMap>;
+  }
+
+  /**
+   * Register an injectable resource. Worker-scoped (default) values are built
+   * once and shared across the worker's lifetime; task-scoped values are built
+   * per job invocation. Reach them from a handler via `useResource(name)` or the
+   * declarative `inject` option on {@link Queue.task}.
+   */
+  resource<T>(
+    name: string,
+    factory: (ctx: ResourceContext) => T | Promise<T>,
+    options?: { scope?: ResourceScope; dispose?: (value: T) => void | Promise<void> },
+  ): this {
+    this.resources.register<T>(name, {
+      factory,
+      scope: options?.scope ?? "worker",
+      dispose: options?.dispose,
+    });
+    return this;
+  }
+
+  /** Per-resource lifecycle metrics (created / disposed / active), keyed by name. */
+  resourceMetrics(): ResourceMetrics {
+    return this.resources.metrics();
   }
 
   /** Set per-queue concurrency / rate-limit applied when a worker runs. */
@@ -159,6 +214,21 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Register middleware (execution + outcome hooks). Runs in registration order. */
   use(middleware: Middleware): void {
     this.middleware.push(middleware);
+  }
+
+  /**
+   * Gate enqueues of `name` with a predicate evaluated at enqueue time (after
+   * `onEnqueue`). If it returns `false`, the enqueue throws
+   * {@link PredicateRejectedError}. Multiple gates on a task all must pass.
+   */
+  gate<Name extends keyof TTasks & string>(
+    name: Name,
+    predicate: (ctx: { taskName: Name; args: Parameters<TTasks[Name]> }) => boolean,
+  ): this {
+    const list = this.gates.get(name) ?? [];
+    list.push(predicate as Predicate);
+    this.gates.set(name, list);
+    return this;
   }
 
   /** Subscribe to a job lifecycle event. */
@@ -179,14 +249,54 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     args?: Parameters<TTasks[Name]>,
     options?: EnqueueOptions,
   ): string {
+    const { payload, options: nativeOpts } = this.prepareEnqueue(name, args, options);
+    return this.native.enqueue(name, payload, nativeOpts);
+  }
+
+  /**
+   * Enqueue many jobs of `name` in one storage round-trip. Each entry is its own
+   * typed `args` + `options`. Returns the new job ids in input order. Unlike
+   * {@link Queue.enqueue}, the batch path does not apply `uniqueKey` dedup.
+   */
+  enqueueMany<Name extends keyof TTasks & string>(
+    name: Name,
+    jobs: ReadonlyArray<{ args?: Parameters<TTasks[Name]>; options?: EnqueueOptions }>,
+  ): string[] {
+    const prepared = jobs.map((job) => this.prepareEnqueue(name, job.args, job.options));
+    return this.native.enqueueMany(name, prepared);
+  }
+
+  /**
+   * Merge per-task defaults, run the `onEnqueue` interception hooks, then
+   * serialize the args and encode the options — the shared path for
+   * {@link Queue.enqueue} and {@link Queue.enqueueMany}.
+   */
+  private prepareEnqueue<Name extends keyof TTasks & string>(
+    name: Name,
+    args: Parameters<TTasks[Name]> | undefined,
+    options: EnqueueOptions | undefined,
+  ): { payload: Buffer; options: NativeEnqueueOptions } {
     const defaults = this.tasks.get(name)?.options;
     const merged: EnqueueOptions = {
       ...options,
       maxRetries: options?.maxRetries ?? defaults?.maxRetries,
       timeoutMs: options?.timeoutMs ?? defaults?.timeoutMs,
     };
-    const payload = Buffer.from(this.serializer.serialize(args ?? []));
-    return this.native.enqueue(name, payload, merged);
+    // Interception seam: let middleware validate/redact/rewrite before serializing.
+    const ctx: EnqueueContext = { taskName: name, args: [...(args ?? [])], options: merged };
+    for (const mw of this.middleware) {
+      mw.onEnqueue?.(ctx);
+    }
+    // Gate: predicates see the (possibly rewritten) args and may reject the enqueue.
+    for (const gate of this.gates.get(name) ?? []) {
+      if (!gate({ taskName: name, args: ctx.args })) {
+        throw new PredicateRejectedError(name);
+      }
+    }
+    return {
+      payload: Buffer.from(this.serializer.serialize(ctx.args)),
+      options: toNativeEnqueueOptions(ctx.options),
+    };
   }
 
   /** Fetch a job by id, or `null` if unknown. */
@@ -242,7 +352,47 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
-    throw new TaskitoError(`timed out waiting for job ${id}`);
+    throw new ResultTimeoutError(id, timeoutMs);
+  }
+
+  /**
+   * Async-iterate the partial results a job publishes via `currentJob().publish()`,
+   * in order, until the job terminates (or the timeout elapses). Each value is the
+   * JSON-deserialized argument passed to `publish`.
+   */
+  async *stream(id: string, options?: StreamOptions): AsyncIterableIterator<unknown> {
+    const timeoutMs = options?.timeoutMs ?? 60_000;
+    const pollMs = options?.pollMs ?? 200;
+    const deadline = Date.now() + timeoutMs;
+    const seen = new Set<string>();
+    for (;;) {
+      yield* this.newPartials(id, seen);
+      const job = this.native.getJob(id);
+      if (job && TERMINAL_STATUSES.has(job.status)) {
+        yield* this.newPartials(id, seen); // final drain for values committed at completion
+        return;
+      }
+      if (Date.now() >= deadline) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+
+  /** Raw task-log entries for a job (oldest first), including published partials. */
+  taskLogs(id: string): TaskLog[] {
+    return this.native.getTaskLogs(id);
+  }
+
+  /** Yield not-yet-seen partial-result entries (dedup by id, robust to same-ms writes). */
+  private *newPartials(id: string, seen: Set<string>): Generator<unknown> {
+    for (const log of this.native.getTaskLogs(id)) {
+      if (log.level !== STREAM_LEVEL || seen.has(log.id)) {
+        continue;
+      }
+      seen.add(log.id);
+      yield decodePartial(log.extra);
+    }
   }
 
   /** Job counts by status across all queues. */
@@ -328,16 +478,43 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       serializer: this.serializer,
       middleware: this.middleware,
       emitter: this.emitter,
+      resources: this.resources,
       run: options,
     });
   }
+}
+
+/** Log level used for published partial results (matches the cross-SDK contract). */
+const STREAM_LEVEL = "result";
+/** Job statuses at which a stream stops. */
+const TERMINAL_STATUSES = new Set(["complete", "failed", "dead", "cancelled"]);
+
+/** Decode a partial-result log's `extra` (JSON, falling back to the raw string). */
+function decodePartial(extra: string | null | undefined): unknown {
+  if (!extra) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(extra);
+  } catch {
+    return extra;
+  }
+}
+
+/**
+ * Convert public enqueue options to the native shape: structured `notes` is
+ * validated and encoded to canonical JSON; all other fields pass through.
+ */
+function toNativeEnqueueOptions(options: EnqueueOptions): NativeEnqueueOptions {
+  const { notes, ...rest } = options;
+  return notes === undefined ? rest : { ...rest, notes: encodeNotes(notes) };
 }
 
 /** Resolve a {@link QueueOptions} into the native open options. */
 function toOpenOptions(options: QueueOptions): OpenOptions {
   const dsn = options.dsn ?? options.dbPath;
   if (!dsn) {
-    throw new TaskitoError("Queue requires `dbPath` (SQLite) or `dsn`");
+    throw new QueueError("Queue requires `dbPath` (SQLite) or `dsn`");
   }
   return {
     backend: options.backend ?? (options.dbPath ? "sqlite" : undefined),

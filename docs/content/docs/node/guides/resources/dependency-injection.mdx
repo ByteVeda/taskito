@@ -1,0 +1,153 @@
+---
+title: Dependency injection
+description: "Register external dependencies once and inject them into tasks by scope."
+---
+
+Tasks often need a database pool, an HTTP client, or a cloud SDK. Rather than
+constructing those inside every handler, register them once as **resources** and
+let the worker build, share, and tear them down with the right lifetime.
+
+```ts
+import { Queue, useResource } from "taskito";
+import { Pool } from "pg";
+
+const queue = new Queue({ dbPath: "tasks.db" });
+
+queue.resource("db", () => new Pool({ connectionString: process.env.DATABASE_URL }), {
+  dispose: (pool) => pool.end(),
+});
+
+queue.task("sync-user", async (userId: string) => {
+  const db = await useResource<Pool>("db");
+  await db.query("UPDATE users SET synced = now() WHERE id = $1", [userId]);
+});
+```
+
+The pool is created once when the worker first needs it, shared across every
+job, and closed when the worker stops. No connection is ever serialized into the
+queue.
+
+## Scopes
+
+A resource's scope decides its lifetime:
+
+| Scope | Built | Lifetime | Use for |
+|---|---|---|---|
+| `worker` (default) | Lazily, on first use | The worker — a shared singleton | Connection pools, HTTP clients, SDK clients |
+| `task` | Once per job invocation | That job — disposed when it finishes | Per-job transactions, request-scoped clients |
+
+```ts
+queue.resource("tx", async () => db.begin(), {
+  scope: "task",
+  dispose: (tx) => tx.rollback(), // no-op if already committed
+});
+```
+
+Worker-scoped resources are built once even under concurrency — concurrent
+initialization is de-duplicated. A factory that throws is **not** cached, so the
+next job retries it.
+
+## Injecting resources
+
+Two equivalent ways to reach a resource from a handler.
+
+### Accessor — `useResource`
+
+Call `useResource(name)` anywhere inside a running task. It resolves against the
+current job's scope and is typed through its generic:
+
+```ts
+queue.task("report", async () => {
+  const db = await useResource<Pool>("db");
+  const cache = await useResource<Redis>("cache");
+  // ...
+});
+```
+
+Calling `useResource` outside a task throws — it is only available while a
+handler runs.
+
+### Declarative — `inject`
+
+List resources on the task and receive them as a trailing `deps` object. The
+`deps` argument is stripped from the typed `enqueue` signature, so producers
+still call the task with its real arguments only:
+
+```ts
+queue.task(
+  "sync-user",
+  async (userId: string, deps: { db: Pool }) => {
+    await deps.db.query("UPDATE users SET synced = now() WHERE id = $1", [userId]);
+  },
+  { inject: ["db"] },
+);
+
+queue.enqueue("sync-user", ["u_123"]); // db is injected, not passed
+```
+
+<Callout type="info">
+  Annotate the `deps` parameter with the resource types you injected — that
+  annotation is what types `deps.db`. The names in `inject` must match the keys
+  you read off `deps`.
+</Callout>
+
+## Resources that depend on resources
+
+A factory receives a context whose `use` resolves another resource, so you can
+compose them:
+
+```ts
+queue.resource("config", async () => loadConfig());
+queue.resource("db", async (ctx) => {
+  const config = await ctx.use<Config>("config");
+  return new Pool({ connectionString: config.databaseUrl });
+});
+```
+
+A worker-scoped factory may only depend on other worker-scoped resources;
+reaching for a task-scoped one throws (it has no job to bind to). Task-scoped
+factories may depend on either.
+
+## Teardown
+
+Pass `dispose` to release a resource when its scope ends — worker resources on
+`worker.stop()`, task resources when the job finishes. Disposal runs in
+**reverse order** of construction (LIFO), so a resource is always torn down
+before anything it depended on:
+
+```ts
+queue.resource("db", () => openPool(), { dispose: (p) => p.end() });
+```
+
+Disposal errors are logged, never thrown — they cannot fail an already-settled
+job.
+
+## Metrics
+
+`queue.resourceMetrics()` returns per-resource lifecycle counters — how many
+instances were built, disposed, and are currently live:
+
+```ts
+queue.resourceMetrics();
+// { db: { created: 1, disposed: 0, active: 1 }, tx: { created: 12, disposed: 12, active: 0 } }
+```
+
+A worker-scoped resource shows `active: 1` while the worker runs and `0` after
+`stop()`; a task-scoped resource's `created`/`disposed` climb per job with
+`active` near zero.
+
+## Testing
+
+Register a stub factory to swap a real dependency in tests. `mockResource(value)`
+wraps a value as a factory and records how often it was built:
+
+```ts
+import { mockResource } from "taskito";
+
+const db = mockResource({ query: async () => fakeRows });
+queue.resource("db", db.factory);
+// ... run the task ...
+expect(db.resolutions).toBe(1);
+```
+
+See [testing](/node/guides/operations/testing) for the full worker test setup.

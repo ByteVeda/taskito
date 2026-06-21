@@ -35,7 +35,7 @@ queue.resumeQueue("emails");
 
 ```ts
 queue.configureQueue("emails", {
-  rateLimit: { limit: 50, windowMs: 1000 },
+  rateLimit: "50/s",
   maxConcurrent: 10,
 });
 ```

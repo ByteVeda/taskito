@@ -21,16 +21,22 @@ queue.use({
 
 | Hook | When | Awaited |
 |---|---|---|
+| `onEnqueue(ctx)` | Producer-side, inside `enqueue`, before serialization. | no (sync) |
 | `before(ctx)` | Before each execution attempt. | yes |
 | `after(ctx, result)` | After a successful attempt. | yes |
-| `onError(ctx, err)` | When an attempt throws (before retry/dead decision). | yes |
+| `onError(ctx, err)` | When an attempt throws (before the retry/dead decision). | yes |
+| `onCompleted(e)` | After a job completes successfully. | no |
 | `onRetry(e)` | After the core schedules a retry. | no |
 | `onDeadLetter(e)` | After a job dead-letters. | no |
-| `onTimeout(e)` | After an attempt times out. | no |
+| `onCancel(e)` | After a job is cancelled. | no |
 
-`ctx` carries `taskName`, `jobId`, `queue`, and `retryCount`. Multiple
-middlewares run in registration order; `before` outermost-first, `after`
-in reverse.
+The execution hooks (`before`/`after`/`onError`) receive a context with
+`taskName`, `jobId`, and `args`. The outcome hooks receive an event with
+`taskName`, `jobId`, `queue`, `retryCount`, and `timedOut` (which separates a
+timeout from other failures). `onEnqueue` receives a *mutable* enqueue context —
+see [Enqueue interception](/node/guides/resources/interception). Multiple
+middlewares run in registration order; `before` outermost-first, `after` in
+reverse.
 
 <Callout type="info">
   Middleware wraps execution and can do async work in the hot path — keep it

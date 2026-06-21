@@ -46,6 +46,21 @@ export interface WorkflowStepOptions {
    * with the step's result as its single argument, in reverse-dependency order.
    */
   compensate?: string;
+  /**
+   * Reuse this step's result across runs when its task, args, and upstream
+   * results are unchanged. `{ ttlMs }` expires the cache. A cacheable step must
+   * have at least one predecessor.
+   */
+  cache?: boolean | { ttlMs?: number };
+}
+
+/**
+ * A step in a canvas helper ({@link WorkflowBuilder.chain} / `group` / `chord`):
+ * a node name plus its task and step options. `after` is managed by the helper.
+ */
+export interface CanvasStep extends Omit<WorkflowStepOptions, "after"> {
+  name: string;
+  task: string;
 }
 
 /** Common per-step task config shared by every step kind. */
@@ -120,6 +135,8 @@ export interface StepMetadataJson {
   sub_workflow?: string;
   /** Rollback task name for saga compensation. */
   compensate?: string;
+  /** JSON `{ttlMs?}` marking a cacheable node (result reused across runs). */
+  cache?: string;
 }
 
 /**

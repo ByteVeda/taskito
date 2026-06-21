@@ -1,0 +1,54 @@
+---
+title: Dashboard REST API
+description: "The /api/* endpoints the Node dashboard serves over the queue."
+---
+
+[`serveDashboard`](/node/guides/operations/dashboard) mounts a JSON REST API at
+`/api/*` over the queue. The bundled React SPA consumes it; you can call it
+directly too. All timestamps are Unix milliseconds.
+
+## Read
+
+| Method · Path | Returns |
+|---|---|
+| `GET /api/stats` | Counts by status across all queues. |
+| `GET /api/stats/queues` | Counts per queue. |
+| `GET /api/queues/paused` | Names of paused queues. |
+| `GET /api/jobs` | Job list (filtered via query params). |
+| `GET /api/jobs/:id` | A single job. |
+| `GET /api/dead-letters` | Dead-letter entries. |
+| `GET /api/metrics` | Aggregated per-task metrics. |
+| `GET /api/metrics/timeseries` | Metrics bucketed over time. |
+| `GET /api/workers` | Registered workers + heartbeats. |
+| `GET /api/event-types` | Known job event names. |
+| `GET /api/workflows/runs` · `/:id` | Workflow runs, and one run. |
+| `GET /api/workflows/runs/:id/dag` · `/children` | A run's DAG graph and child runs. |
+| `GET /api/webhooks` · `/:id` · `/:id/deliveries` | Webhook config and delivery log. |
+
+## Write
+
+| Method · Path | Effect |
+|---|---|
+| `POST /api/jobs/:id/cancel` | Cancel a job. |
+| `POST /api/dead-letters/:id/retry` | Re-enqueue a dead-letter entry. |
+| `POST /api/queues/:id/pause` · `/resume` | Pause / resume a queue. |
+| `POST /api/webhooks` · `PUT /:id` · `DELETE /:id` | Manage webhook subscriptions. |
+| `POST /api/webhooks/:id/test` | Send a test delivery. |
+
+## Auth
+
+By default the dashboard runs in **open mode**: `GET /api/auth/status` reports
+`{ setup_required: false }` and `GET /api/auth/whoami` returns an admin identity.
+
+Pass `auth: { token }` to [`serveDashboard`](/node/guides/operations/dashboard) to
+require a bearer token. Then every `/api/*` request except `GET /api/auth/status`
+must present the token via `Authorization: Bearer <token>`, an `X-Taskito-Token`
+header, a `?token=` query, or the `taskito_token` cookie; otherwise it returns
+`401`. This is a single shared token — there is no per-user login, RBAC, or SSO.
+
+<Callout type="warning">
+  Open mode means anyone who can reach the port has full control. Don't expose it
+  on an untrusted network — bind to localhost, or mount it behind your own auth
+  with the [Express](/node/guides/integrations/express#dashboard) /
+  [Fastify](/node/guides/integrations/fastify) helpers.
+</Callout>

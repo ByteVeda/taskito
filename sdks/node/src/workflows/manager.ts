@@ -1,6 +1,9 @@
+import { WorkflowError } from "../errors";
 import type { NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
+import { WorkflowAnalysis, type WorkflowGraph } from "./analysis";
 import { WorkflowBuilder } from "./builder";
+import { WorkflowCacheStore } from "./cache";
 import { WorkflowTracker } from "./tracker";
 import type {
   StepMetadataJson,
@@ -40,7 +43,7 @@ export class WorkflowManager {
     private readonly serializer: Serializer,
   ) {
     if (typeof this.native.submitWorkflow !== "function") {
-      throw new Error("the native addon was built without the 'workflows' feature");
+      throw new WorkflowError("the native addon was built without the 'workflows' feature");
     }
   }
 
@@ -69,9 +72,36 @@ export class WorkflowManager {
     return this.native.getWorkflowDag(runId) ?? undefined;
   }
 
+  /**
+   * Structural + status analysis of a run (ancestors, descendants, topological
+   * levels, critical path, stats). Returns `undefined` if the run is unknown or
+   * its DAG can't be parsed.
+   */
+  analyze(runId: string): WorkflowAnalysis | undefined {
+    const dagJson = this.dag(runId);
+    if (dagJson === undefined) {
+      return undefined;
+    }
+    let graph: WorkflowGraph;
+    try {
+      graph = JSON.parse(dagJson) as WorkflowGraph;
+    } catch {
+      return undefined;
+    }
+    if (!Array.isArray(graph?.nodes) || !Array.isArray(graph?.edges)) {
+      return undefined;
+    }
+    return new WorkflowAnalysis(graph, this.nodes(runId));
+  }
+
   /** Sub-workflow runs spawned by a run (empty for Node-submitted runs). */
   children(runId: string): WorkflowRun[] {
     return this.native.getWorkflowChildren(runId);
+  }
+
+  /** Drop every cached cacheable-step result. Returns the number removed. */
+  clearCache(): number {
+    return new WorkflowCacheStore(this.native).clear();
   }
 
   /**
@@ -147,7 +177,7 @@ export class WorkflowManager {
     for (const name of spec.nodes) {
       const base = spec.stepMetadata[name];
       if (!base) {
-        throw new Error(`workflow step '${name}' is missing metadata`);
+        throw new WorkflowError(`workflow step '${name}' is missing metadata`);
       }
       const b64 = Buffer.from(this.serializer.serialize(spec.stepArgs[name] ?? [])).toString(
         "base64",
@@ -195,13 +225,13 @@ export class WorkflowManager {
     for (;;) {
       const run = this.native.getWorkflowRun(runId);
       if (!run) {
-        throw new Error(`workflow run '${runId}' not found`);
+        throw new WorkflowError(`workflow run '${runId}' not found`);
       }
       if (TERMINAL_STATES.has(run.state)) {
         return run;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`workflow run '${runId}' did not finish within ${timeoutMs}ms`);
+        throw new WorkflowError(`workflow run '${runId}' did not finish within ${timeoutMs}ms`);
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }

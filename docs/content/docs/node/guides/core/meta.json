@@ -1,1 +1,1 @@
-{ "title": "Core", "pages": ["tasks", "queues", "workers", "enqueue-options", "scheduling", "cancellation"] }
+{ "title": "Core", "pages": ["tasks", "queues", "workers", "execution-model", "enqueue-options", "predicates", "scheduling", "cancellation", "streaming"] }

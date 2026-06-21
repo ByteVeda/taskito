@@ -1,0 +1,19 @@
+---
+title: Observability
+description: "Monitor queue health and emit structured logs from the Node SDK."
+---
+
+See what the queue is doing — counts, per-task latency, job progress, live
+workers — and emit structured logs, all from the `Queue` handle with no extra
+service.
+
+| Page | What it covers |
+|---|---|
+| [Monitoring](/node/guides/observability/monitoring) | Stats, per-task metrics, progress, worker heartbeats, Prometheus/OTel/Sentry pointers |
+| [Logging](/node/guides/observability/logging) | The built-in leveled logger — levels, namespaces, pluggable sink |
+
+<Callout type="info">
+  Lifecycle [events](/node/guides/extensibility/events) and
+  [middleware](/node/guides/extensibility/middleware) are the extension points
+  for pushing these signals to any external system.
+</Callout>

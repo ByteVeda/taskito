@@ -1,1 +1,1 @@
-{ "title": "Guides", "root": true, "pages": ["core", "reliability", "workflows", "extensibility", "integrations", "operations"] }
+{ "title": "Guides", "root": true, "pages": ["core", "reliability", "workflows", "extensibility", "resources", "integrations", "operations", "observability"] }

@@ -5,4 +5,5 @@ export { registerEnqueue } from "./enqueue";
 export { registerJobs } from "./jobs";
 export { registerQueues } from "./queues";
 export { registerRun } from "./run";
+export { registerScaler } from "./scaler";
 export { registerStats } from "./stats";

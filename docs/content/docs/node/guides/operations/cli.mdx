@@ -36,6 +36,14 @@ over them. Use it as your container entrypoint for worker processes.
 taskito --db taskito.db dashboard --port 8787
 ```
 
+## KEDA scaler
+
+```bash
+taskito --backend postgres --dsn "$DATABASE_URL" scaler --port 9091
+```
+
+Serves the queue-depth metric for [KEDA](/node/guides/operations/keda).
+
 <Callout type="info">
   The CLI ships in the package `bin`. Commands operate over `--db`/`--backend`/
   `--dsn`, except `run` and `dashboard`, which load your app module and serve

@@ -16,8 +16,10 @@ const queue = new Queue(options);
 | `dbPath` | `string` | SQLite file path (default backend). |
 | `backend` | `"sqlite" \| "postgres" \| "redis"` | Storage backend. |
 | `dsn` | `string` | Connection string for postgres/redis. |
+| `poolSize` | `number` | Connection pool size (sqlite/postgres). |
 | `schema` | `string` | Postgres schema (default `taskito`). |
 | `prefix` | `string` | Redis key prefix. |
+| `namespace` | `string` | Namespace applied to enqueued jobs + the worker scheduler. |
 | `serializer` | `Serializer` | Arg/result serializer (default `JsonSerializer`). |
 
 ## Tasks & enqueue
@@ -27,13 +29,15 @@ const queue = new Queue(options);
 | `task(name, fn, config?)` | Register a task. See [Task](/node/api-reference/task). |
 | `configureQueue(name, config)` | Set per-queue rate limit / concurrency. |
 | `enqueue(task, args?, options?)` | Enqueue a job → job id. |
-| `enqueueMany(task, jobs[])` | Enqueue a batch. |
+| `enqueueMany(task, jobs[])` | Batch-enqueue `{ args?, options? }[]` → job ids (no dedup). |
 
 ## Results & cancellation
 
 | Method | Description |
 |---|---|
 | `result(id, { timeoutMs? })` | Await a job's result. |
+| `stream(id, { timeoutMs?, pollMs? })` | Async-iterate a job's [published partials](/node/guides/core/streaming). |
+| `taskLogs(id)` | Raw task-log entries for a job. |
 | `requestCancel(id)` | Abort a running job's signal. |
 | `cancelJob(id)` | Cancel a pending job. |
 
@@ -56,7 +60,8 @@ const queue = new Queue(options);
 |---|---|
 | `runWorker(options?)` | Start a [worker](/node/api-reference/worker). |
 | `on(event, handler)` | [Events](/node/guides/extensibility/events). |
-| `use(middleware)` | [Middleware](/node/guides/extensibility/middleware). |
+| `use(middleware)` | [Middleware](/node/guides/extensibility/middleware) (incl. the `onEnqueue` [interception](/node/guides/resources/interception) hook). |
+| `resource(name, factory, opts?)` | Register an injectable [resource](/node/guides/resources/dependency-injection) (`scope`, `dispose`). |
 | `webhooks` | [Webhooks](/node/guides/extensibility/webhooks) manager. |
 | `workflows` | [Workflow](/node/api-reference/workflows) builder + queries. |
 | `lock(name, opts)` / `withLock(name, fn)` | [Distributed locks](/node/guides/reliability/locks). |

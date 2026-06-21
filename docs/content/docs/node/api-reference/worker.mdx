@@ -4,20 +4,22 @@ description: "runWorker options and the worker handle."
 ---
 
 ```ts
-const worker = queue.runWorker(options?: WorkerOptions): Worker;
+const worker = queue.runWorker(options?: WorkerRunOptions): Worker;
 ```
 
 Starts a background worker over the Rust core and returns a handle.
 
-## `WorkerOptions`
+## `WorkerRunOptions`
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `queues` | `string[]` | `["default"]` | Queue names to serve. |
+| `channelCapacity` | `number` | `128` | In-flight dispatch channel capacity. |
+| `batchSize` | `number` | `1` | Jobs claimed per scheduler poll. |
 | `advanceWorkflows` | `boolean` | `true` | Drive workflow bookkeeping. |
-| `mesh` | `MeshOptions` | — | Join a [mesh](/node/guides/operations/mesh). |
+| `mesh` | `MeshWorkerConfig` | — | Join a [mesh](/node/guides/operations/mesh). |
 
-## `MeshOptions`
+## `MeshWorkerConfig`
 
 `port`, `seeds`, `steal`, `encryptionKey`, `bindAddr`, `advertiseAddr`,
 `affinityWeight`, `localBuffer`, `stealBatch`, `stealThreshold`, `virtualNodes`,

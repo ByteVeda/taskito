@@ -2,8 +2,8 @@
 // Each route maps a plain request (params/query/body) to a status + JSON body, so the
 // adapters only translate framework request/response objects — no logic duplicated.
 
-import type { EnqueueOptions } from "../native";
 import type { Queue } from "../queue";
+import type { EnqueueOptions } from "../types";
 
 /** Options controlling which routes a helper exposes. */
 export interface RestOptions {

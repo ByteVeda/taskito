@@ -1,0 +1,64 @@
+---
+title: Troubleshooting
+description: "Common Node SDK issues and how to diagnose them."
+---
+
+Turn on debug logs first — they show the worker claiming, running, and settling
+jobs:
+
+```ts
+import { setLogLevel } from "taskito";
+setLogLevel("debug");
+// or: TASKITO_LOG_LEVEL=debug node app.js
+```
+
+## A job stays `pending` and never runs
+
+- **No worker running** — `queue.runWorker()` must be called in a live process.
+- **Queue mismatch** — the worker only serves its `queues` (default
+  `["default"]`); a job enqueued to another `namespace`/queue is ignored. Match
+  them.
+- **Queue paused** — check `queue.listPausedQueues()`; `resumeQueue(name)`.
+- **Producer and worker use different storage** — they must point at the same
+  `dbPath`/`dsn`. A relative SQLite path resolves per working directory.
+
+## Worker runs but throws `TaskNotRegisteredError`
+
+The worker dequeued a job whose task name was never registered on it. Register
+the handler (`queue.task(name, fn)`) on the **worker** process — task functions
+don't travel through the queue, only their names and args do.
+
+## `SQLite database is locked`
+
+SQLite allows one writer at a time. Under many concurrent workers this surfaces
+as lock contention. Options:
+
+- Keep workers on one machine and moderate concurrency, or
+- Move to [Postgres or Redis](/node/guides/operations/backends) for multi-process
+  / multi-machine deployments.
+
+## `Cannot find module '.../native/index.js'`
+
+The native addon isn't built. Run `pnpm build:native`. Workflows and mesh also
+require the addon to be built **with their cargo features** (included in
+`build:native`) — a "feature not enabled" error at `queue.workflows` means the
+addon was built without them.
+
+## Jobs run, but latency is high
+
+- Raise `batchSize` and `channelCapacity` on `runWorker` to claim and buffer more
+  per poll — see the [execution model](/node/guides/core/execution-model).
+- Add more worker processes against shared storage.
+- Check you aren't capped by a per-task `maxConcurrent` or
+  [rate limit](/node/guides/reliability/rate-limiting).
+
+## A handler hangs and blocks others
+
+A long **synchronous** computation blocks the event loop and stalls every
+in-flight job. Offload CPU-bound work to `worker_threads` and `await` it, or set
+a [`timeoutMs`](/node/guides/reliability/timeouts) so a stuck attempt is aborted.
+
+<Callout type="info">
+  Inspect failures with `queue.getJobErrors(id)` and `queue.deadLetters()`; see
+  [job management](/node/guides/operations/inspection).
+</Callout>

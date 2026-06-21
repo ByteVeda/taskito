@@ -1,18 +1,51 @@
 export { currentJob, type JobContext } from "./context";
-export { type DashboardOptions, serveDashboard } from "./dashboard";
+export { type DashboardAuth, type DashboardOptions, serveDashboard } from "./dashboard";
 export {
   JobCancelledError,
   JobFailedError,
   LockLostError,
   LockNotAcquiredError,
+  NotesValidationError,
+  PredicateRejectedError,
+  QueueError,
+  ResourceError,
+  ResourceNotFoundError,
+  ResourceScopeError,
+  ResultTimeoutError,
+  SerializationError,
   TaskitoError,
   TaskNotRegisteredError,
+  WorkflowError,
 } from "./errors";
 export type { EventHandler, EventName, OutcomeEvent } from "./events";
 export { Lock, type LockInfo, type LockOptions } from "./locks";
-export type { Middleware, TaskContext } from "./middleware";
+export type { EnqueueContext, Middleware, TaskContext } from "./middleware";
+export {
+  allOf,
+  anyOf,
+  not,
+  type Predicate,
+  type PredicateContext,
+} from "./predicates";
 export { Queue, type QueueOptions } from "./queue";
-export { JsonSerializer, MsgpackSerializer, type Serializer } from "./serializers";
+export {
+  type MockResource,
+  mockResource,
+  type ResourceContext,
+  type ResourceDefinition,
+  type ResourceMetrics,
+  type ResourceScope,
+  type ResourceStat,
+  useResource,
+} from "./resources";
+export { type ScalerOptions, serveScaler } from "./scaler";
+export {
+  EncryptedSerializer,
+  JsonSerializer,
+  MsgpackSerializer,
+  type Serializer,
+  SignedSerializer,
+} from "./serializers";
 export type {
   AnyHandler,
   CircuitBreakerOptions,
@@ -28,7 +61,9 @@ export type {
   RateLimit,
   ResultOptions,
   Stats,
+  StreamOptions,
   TaskHandler,
+  TaskLog,
   TaskMap,
   TaskOptions,
   WorkerInfo,
@@ -48,14 +83,19 @@ export type { Delivery, Webhook, WebhookInput } from "./webhooks";
 export { WebhookManager, WebhookValidationError } from "./webhooks";
 export { Worker } from "./worker";
 export type {
+  CanvasStep,
+  GraphEdge,
+  GraphNode,
   WorkflowAdvance,
+  WorkflowGraph,
   WorkflowHandle,
   WorkflowNode,
   WorkflowRun,
   WorkflowRunState,
   WorkflowSpec,
+  WorkflowStats,
   WorkflowStepOptions,
   WorkflowSubmitOptions,
   WorkflowWaitOptions,
 } from "./workflows";
-export { WorkflowBuilder, WorkflowManager } from "./workflows";
+export { WorkflowAnalysis, WorkflowBuilder, WorkflowManager } from "./workflows";

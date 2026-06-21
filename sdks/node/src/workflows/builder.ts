@@ -1,5 +1,7 @@
+import { WorkflowError } from "../errors";
 import { successorsOf, transitiveDeferred } from "./plan";
 import type {
+  CanvasStep,
   FanInStepOptions,
   FanOutStepOptions,
   GateStepOptions,
@@ -52,11 +54,15 @@ export class WorkflowBuilder {
       priority: options.priority,
       condition: options.condition,
       compensate: options.compensate,
+      cache: options.cache
+        ? JSON.stringify(options.cache === true ? {} : options.cache)
+        : undefined,
     };
     this.stepArgs[name] = options.args ?? [];
-    // A conditioned step is enqueued by the tracker once its predecessors
-    // settle (so it can evaluate the condition), not statically at submit.
-    if (options.condition) {
+    // Conditioned and cacheable steps are enqueued by the tracker once their
+    // predecessors settle (to evaluate the condition / check the cache), not
+    // statically at submit.
+    if (options.condition || options.cache) {
       this.deferredSeeds.add(name);
     }
     return this;
@@ -134,24 +140,78 @@ export class WorkflowBuilder {
     return this;
   }
 
+  /**
+   * Canvas shorthand — add a sequential chain where each step runs after the
+   * previous one. The first runs after `options.after` (or as a root).
+   */
+  chain(steps: CanvasStep[], options: { after?: string | string[] } = {}): this {
+    let after = options.after;
+    for (const { name, task, ...stepOptions } of steps) {
+      this.step(name, task, { ...stepOptions, after });
+      after = name;
+    }
+    return this;
+  }
+
+  /**
+   * Canvas shorthand — add a parallel group where every step runs after
+   * `options.after` (or as roots).
+   */
+  group(steps: CanvasStep[], options: { after?: string | string[] } = {}): this {
+    for (const { name, task, ...stepOptions } of steps) {
+      this.step(name, task, { ...stepOptions, after: options.after });
+    }
+    return this;
+  }
+
+  /**
+   * Canvas shorthand — a parallel `steps` group joined by `callback`, which runs
+   * once every group member completes. The callback gets its own `args`; to
+   * aggregate the members' *results*, use {@link WorkflowBuilder.fanOut} /
+   * {@link WorkflowBuilder.fanIn} instead.
+   */
+  chord(
+    steps: CanvasStep[],
+    callback: CanvasStep,
+    options: { after?: string | string[] } = {},
+  ): this {
+    this.group(steps, options);
+    const { name, task, ...callbackOptions } = callback;
+    // Depend on every group member; fall back to the caller's `after` so an
+    // empty group still chains after its declared prerequisites.
+    const extra = options.after
+      ? Array.isArray(options.after)
+        ? options.after
+        : [options.after]
+      : [];
+    const after = [...steps.map((step) => step.name), ...extra];
+    this.step(name, task, { ...callbackOptions, after });
+    return this;
+  }
+
   /** Materialize the validated spec without submitting. */
   build(): WorkflowSpec {
+    const hasPredecessor = new Set(this.edges.map((edge) => edge.to));
     for (const edge of this.edges) {
       if (!this.seen.has(edge.from)) {
-        throw new Error(`step '${edge.to}' depends on unknown step '${edge.from}'`);
+        throw new WorkflowError(`step '${edge.to}' depends on unknown step '${edge.from}'`);
       }
     }
-    // A fan-in node is only ever enqueued by its fan-out's completion, so its
-    // `after` must point at a fan-out step — otherwise the run would hang.
     for (const [name, meta] of Object.entries(this.stepMetadata)) {
-      if (!meta.fan_in) {
-        continue;
+      // A fan-in node is only ever enqueued by its fan-out's completion, so its
+      // `after` must point at a fan-out step — otherwise the run would hang.
+      if (meta.fan_in) {
+        const { from } = JSON.parse(meta.fan_in) as { from: string };
+        if (!this.stepMetadata[from]?.fan_out) {
+          throw new WorkflowError(
+            `fan-in step '${name}' must target a fan-out step, but '${from}' is not one`,
+          );
+        }
       }
-      const { from } = JSON.parse(meta.fan_in) as { from: string };
-      if (!this.stepMetadata[from]?.fan_out) {
-        throw new Error(
-          `fan-in step '${name}' must target a fan-out step, but '${from}' is not one`,
-        );
+      // A cacheable root has no job at submit and nothing to trigger it, so it
+      // would stall; require an upstream step.
+      if (meta.cache && !hasPredecessor.has(name)) {
+        throw new WorkflowError(`cacheable step '${name}' must have at least one predecessor`);
       }
     }
     const deferred = transitiveDeferred(this.deferredSeeds, successorsOf(this.edges));
@@ -175,7 +235,7 @@ export class WorkflowBuilder {
   /** Register a node + its incoming edges, rejecting duplicate names. */
   private addNode(name: string, after: string | string[] | undefined): void {
     if (this.seen.has(name)) {
-      throw new Error(`duplicate workflow step '${name}'`);
+      throw new WorkflowError(`duplicate workflow step '${name}'`);
     }
     this.seen.add(name);
     this.nodes.push(name);

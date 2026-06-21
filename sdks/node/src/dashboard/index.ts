@@ -1,6 +1,7 @@
 import type { Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Queue } from "../index";
+import type { DashboardAuth } from "./auth";
 import { createDashboardServer } from "./server";
 
 export interface DashboardOptions {
@@ -10,6 +11,11 @@ export interface DashboardOptions {
   host?: string;
   /** Path to the built SPA assets. Defaults to the package's bundled `static/dashboard`. */
   staticDir?: string;
+  /**
+   * Require a bearer token on every `/api/*` request (except `/api/auth/status`).
+   * Omit for open mode. Open `/?token=<token>` once to use the SPA behind it.
+   */
+  auth?: DashboardAuth;
 }
 
 // Built relative to dist/ at runtime. The path is assembled dynamically so the
@@ -22,9 +28,14 @@ const defaultStaticDir = (): string => fileURLToPath(new URL(STATIC_REL, import.
  * Returns the listening HTTP server; call `.close()` to stop it.
  */
 export function serveDashboard(queue: Queue, options: DashboardOptions = {}): Server {
-  const server = createDashboardServer(queue, options.staticDir ?? defaultStaticDir());
+  const server = createDashboardServer(
+    queue,
+    options.staticDir ?? defaultStaticDir(),
+    options.auth,
+  );
   server.listen(options.port ?? 8787, options.host ?? "127.0.0.1");
   return server;
 }
 
+export type { DashboardAuth } from "./auth";
 export { createDashboardHandler, createDashboardServer } from "./server";

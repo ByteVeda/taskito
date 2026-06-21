@@ -1,0 +1,47 @@
+---
+title: Delivery guarantees
+description: "At-least-once execution, job claiming, and staying correct under retries."
+---
+
+Taskito gives **at-least-once** execution: every enqueued job runs to completion
+at least once. A job can also run *more* than once — a worker that crashes
+mid-task (after claiming it, before recording the result) leaves the job to be
+picked up again. Design handlers to tolerate that.
+
+## How a job is claimed
+
+A worker atomically claims a pending job — marking it running in a single
+guarded update — before executing, so two workers never run the same job
+concurrently. If that worker dies, the claim lapses and the scheduler dispatches
+the job again.
+
+## Staying correct: idempotency
+
+Because a job may run more than once, make side effects idempotent:
+
+- Upsert / conditional-write keyed by a stable id rather than blind inserts.
+- Dedupe external calls with the job id from `currentJob()`.
+- Collapse duplicate *enqueues* into one job with
+  [`uniqueKey`](/node/guides/reliability/idempotency).
+
+```ts
+import { currentJob } from "taskito";
+
+queue.task("charge", async (orderId: string) => {
+  const job = currentJob();
+  await payments.charge(orderId, { idempotencyKey: job?.jobId });
+});
+```
+
+## Not guaranteed
+
+- **Exactly-once** — not offered anywhere in the system; pair at-least-once with
+  idempotent handlers instead.
+- **Strict ordering** — within a queue, jobs dequeue by priority then age, but
+  concurrent workers run them in parallel; don't rely on one finishing before
+  another. Use a [workflow](/node/guides/workflows) when order matters.
+
+<Callout type="info">
+  A completed job's result is stored and can be awaited by id from any process
+  sharing the storage — see [result](/node/api-reference/result).
+</Callout>

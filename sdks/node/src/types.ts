@@ -1,23 +1,45 @@
-import type { CircuitBreakerInput, MeshWorkerConfig } from "./native";
+import type {
+  CircuitBreakerInput,
+  MeshWorkerConfig,
+  EnqueueOptions as NativeEnqueueOptions,
+} from "./native";
 
 export type {
   CircuitBreakerInput as CircuitBreakerOptions,
-  EnqueueOptions,
   JobFilter,
   JsDeadJob as DeadJob,
   JsJob as Job,
   JsJobError as JobError,
   JsMetric as Metric,
   JsStats as Stats,
+  JsTaskLog as TaskLog,
   JsWorkerRow as WorkerInfo,
   MeshWorkerConfig,
 } from "./native";
+
+/**
+ * Per-job enqueue options. Mirrors the native options, but `notes` is a
+ * structured object here (validated and JSON-encoded before it reaches the
+ * core) rather than a pre-encoded string.
+ */
+export interface EnqueueOptions extends Omit<NativeEnqueueOptions, "notes"> {
+  /** Structured annotations stored on the job — at most 15 fields, 4 KiB encoded. */
+  notes?: Record<string, unknown>;
+}
 
 /** Options for {@link Queue.result}. */
 export interface ResultOptions {
   /** Max time to wait for a terminal state (ms). Default 30000. */
   timeoutMs?: number;
   /** Poll interval (ms). Default 50. */
+  pollMs?: number;
+}
+
+/** Options for {@link Queue.stream}. */
+export interface StreamOptions {
+  /** Max time to wait for the job to terminate (ms). Default 60000. */
+  timeoutMs?: number;
+  /** Poll interval (ms). Default 200. */
   pollMs?: number;
 }
 
@@ -53,6 +75,12 @@ export interface TaskOptions {
   rateLimit?: RateLimit;
   /** Trip the task's circuit breaker after repeated failures. */
   circuitBreaker?: CircuitBreakerInput;
+  /**
+   * Resource names injected as a trailing `deps` object: the handler is called
+   * `handler(...args, deps)`. Use the {@link Queue.task} `inject` overload so the
+   * `deps` param is stripped from the typed `enqueue` args.
+   */
+  inject?: readonly string[];
 }
 
 /** Options for {@link Queue.registerPeriodic}. */

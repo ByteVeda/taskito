@@ -27,6 +27,7 @@ export type {
   JsOutcome,
   JsStats,
   JsTaskInvocation,
+  JsTaskLog,
   JsWorkerRow,
   JsWorkflowAdvance,
   JsWorkflowNode,

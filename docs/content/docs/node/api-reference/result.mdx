@@ -4,11 +4,15 @@ description: "Awaiting job results."
 ---
 
 ```ts
-const value = await queue.result(id: string, options?: { timeoutMs?: number }): Promise<R>;
+const value = await queue.result(
+  id: string,
+  options?: { timeoutMs?: number; pollMs?: number },
+): Promise<R>;
 ```
 
 Resolves with the task's return value once the job finishes. Rejects if the job
-dead-letters or the optional `timeoutMs` elapses before completion.
+dead-letters or the optional `timeoutMs` (default 30000) elapses before
+completion. `pollMs` (default 50) sets the store poll interval.
 
 ```ts
 const id = queue.enqueue("add", [2, 3]);
@@ -21,6 +25,7 @@ The result is deserialized with the queue's
 can await a result by id — the waiter polls the store.
 
 <Callout type="info">
-  `result` is for awaiting one job. To scan many jobs or read outcomes in bulk,
-  use [`listJobs` / `getMetrics`](/node/guides/operations/inspection).
+  `result` is for awaiting one job. To scan many jobs use
+  [`listJobs`](/node/guides/operations/inspection); for aggregate outcomes use
+  [`getMetrics`](/node/guides/observability/monitoring).
 </Callout>

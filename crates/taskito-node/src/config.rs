@@ -1,6 +1,7 @@
 //! Plain option objects passed from JavaScript. napi maps snake_case Rust
 //! fields to camelCase JS keys (`maxRetries`, `timeoutMs`).
 
+use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
 /// How to open a queue's storage backend.
@@ -37,8 +38,18 @@ pub struct EnqueueOptions {
     pub unique_key: Option<String>,
     /// Free-form metadata string stored with the job.
     pub metadata: Option<String>,
+    /// Structured notes — a pre-encoded canonical JSON object (the TS shell
+    /// validates the bounds and stringifies before passing it here).
+    pub notes: Option<String>,
     /// Namespace override for this job.
     pub namespace: Option<String>,
+}
+
+/// One entry in a batch enqueue: an opaque payload plus its own options.
+#[napi(object)]
+pub struct EnqueueJob {
+    pub payload: Buffer,
+    pub options: Option<EnqueueOptions>,
 }
 
 /// Filter for [`crate::queue::JsQueue::list_jobs`]. All fields optional.

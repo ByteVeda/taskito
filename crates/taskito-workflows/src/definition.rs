@@ -37,6 +37,11 @@ pub struct StepMetadata {
     /// (in reverse-dependency order) by running this task with the node's result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compensate: Option<String>,
+    /// JSON `{ttlMs}` marking a cacheable node — its result is reused across runs
+    /// when its task, args, and upstream results are unchanged. Opaque to the
+    /// core; the shell's tracker reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<String>,
 }
 
 /// A persisted workflow definition: the DAG structure plus per-step metadata.

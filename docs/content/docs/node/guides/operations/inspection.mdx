@@ -1,28 +1,18 @@
 ---
-title: Inspection & management
-description: "Stats, job listing, metrics, and queue pause/resume."
+title: Job management
+description: "List and inspect jobs, manage the dead-letter queue, and pause queues."
 ---
 
-Read and manage queue state directly from the `Queue` handle.
+Read and manage individual jobs directly from the `Queue` handle. For
+queue-wide health — stats, per-task metrics, progress, workers — see
+[Monitoring](/node/guides/observability/monitoring).
 
-## Stats
-
-```ts
-queue.stats();                  // { pending, running, completed, failed, dead, cancelled }
-queue.statsByQueue("default");
-queue.statsAllQueues();
-```
-
-## Jobs & metrics
+## Jobs
 
 ```ts
 queue.listJobs({ status: "failed", limit: 50 });
-queue.getJobErrors(id);                 // per-attempt error history
-queue.getMetrics(3600_000, "add");      // window (ms), optional task filter
+queue.getJobErrors(id); // per-attempt error history
 ```
-
-`getMetrics(windowMs, task?)` returns per-task counts, success/failure split,
-and latency percentiles (p50/p95/p99) over the window.
 
 ## Dead letters
 

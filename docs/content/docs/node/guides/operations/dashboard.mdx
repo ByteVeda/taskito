@@ -28,8 +28,22 @@ It serves the SPA plus the `/api/*` REST contract over the queue:
 - metrics and time-series, workers
 - webhooks, workflow runs
 
-Auth runs **open** (localhost). To mount the dashboard inside an existing app
-instead, use the [Express](/node/guides/integrations/express#dashboard) or
+See the [REST API reference](/node/guides/operations/dashboard-api) for the full
+endpoint list.
+
+Auth runs **open** by default. Pass `auth: { token }` to require a bearer token
+on every `/api/*` request (except `/api/auth/status`):
+
+```ts
+serveDashboard(queue, { port: 8787, auth: { token: process.env.DASH_TOKEN! } });
+```
+
+Requests authenticate via `Authorization: Bearer <token>`, an `X-Taskito-Token`
+header, or `?token=<token>`. Opening `/?token=<token>` once sets an httpOnly
+cookie so the SPA works for the rest of the session. The token is compared in
+constant time. For full login / RBAC / SSO, mount the dashboard inside an existing
+app behind your own auth via the
+[Express](/node/guides/integrations/express#dashboard) or
 [Fastify](/node/guides/integrations/fastify) helpers.
 
 <Callout type="warning">

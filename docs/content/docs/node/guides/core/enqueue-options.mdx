@@ -10,7 +10,8 @@ queue.enqueue("send_email", [user], {
   priority: 5,
   delayMs: 30_000,
   uniqueKey: `welcome:${user.id}`,
-  metadata: { source: "signup" },
+  metadata: "source=signup",
+  notes: { campaign: "welcome", attempt: 1 },
   namespace: "emails",
 });
 ```
@@ -22,7 +23,8 @@ queue.enqueue("send_email", [user], {
 | `timeoutMs` | Override the per-attempt timeout for this job. |
 | `delayMs` | Delay first execution by this many ms (scheduled run). |
 | `uniqueKey` | Idempotency key — a duplicate enqueue is a no-op while the first job is pending/running. |
-| `metadata` | Arbitrary JSON attached to the job (surfaces on the dashboard / inspection). |
+| `metadata` | Free-form string stored with the job (surfaces on the dashboard / inspection). |
+| `notes` | Structured annotations — a JSON object, ≤15 fields and ≤4 KiB encoded. |
 | `namespace` | The queue name to route to. |
 
 ## Idempotency
@@ -36,10 +38,27 @@ while an earlier one is still pending or running. See
 `delayMs` schedules the first attempt in the future; the scheduler picks it up
 when due. For recurring schedules use [periodic tasks](/node/guides/core/scheduling).
 
-## Batch enqueue
+## Structured notes
 
-`enqueueMany` enqueues an array in one call:
+`notes` attaches a small, structured object to the job — distinct from the
+free-form `metadata` string. It is validated (≤15 top-level fields, ≤4 KiB
+encoded) and rendered on the dashboard. It survives dead-letter and replay.
 
 ```ts
-queue.enqueueMany("resize", urls.map((url) => ({ args: [url] })));
+queue.enqueue("import", [fileId], { notes: { rows: 1200, source: "s3" } });
 ```
+
+## Batch enqueue
+
+`enqueueMany` inserts many jobs of one task in a single storage round-trip. Each
+entry has its own `args` and `options`; it returns the new ids in order.
+
+```ts
+const ids = queue.enqueueMany("resize", [
+  { args: ["a.png"], options: { priority: 5 } },
+  { args: ["b.png"] },
+]);
+```
+
+Unlike `enqueue`, the batch path does not apply `uniqueKey` dedup — it is a plain
+bulk insert for throughput.

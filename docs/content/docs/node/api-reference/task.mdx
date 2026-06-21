@@ -18,8 +18,9 @@ result. Re-registering a name replaces the function and config.
 | `retryBackoff` | `{ baseMs, maxMs }` | Exponential backoff bounds. |
 | `timeoutMs` | `number` | Per-attempt timeout. |
 | `maxConcurrent` | `number` | Max simultaneous running jobs of this task. |
-| `rateLimit` | `{ limit, windowMs }` | Token-bucket rate limit. |
+| `rateLimit` | `` `"100/m"` `` | Rate limit as `count/unit`, unit `s` \| `m` \| `h`. |
 | `circuitBreaker` | `{ threshold, windowMs, cooldownMs }` | Trip after repeated failures. |
+| `inject` | `string[]` | Resource names injected as a trailing `deps` argument. See [Dependency injection](/node/guides/resources/dependency-injection). |
 
 ```ts
 queue.task("add", (a: number, b: number) => a + b, {

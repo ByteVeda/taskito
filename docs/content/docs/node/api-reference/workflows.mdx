@@ -14,13 +14,18 @@ queue.workflows
 
 | Method | Description |
 |---|---|
-| `step(name, task, opts?)` | A task node. `opts`: `after`, `args`, `queue`, `maxRetries`, `timeoutMs`, `priority`, `condition`, `compensate`. |
+| `step(name, task, opts?)` | A task node. `opts`: `after`, `args`, `queue`, `maxRetries`, `timeoutMs`, `priority`, `condition`, `compensate`, `cache`. |
 | `fanOut(name, { after, task, itemsFrom })` | Expand into one child per item. |
 | `fanIn(name, { after, task })` | Collect children's results into an array. |
 | `gate(name, { after, timeoutMs?, onTimeout? })` | Pause for [approval](/node/guides/workflows/gates). |
 | `subWorkflow(name, { after, workflow })` | Run a child workflow as a node. |
+| `chain(steps[], { after? })` | Canvas: wire `steps` sequentially. |
+| `group(steps[], { after? })` | Canvas: run `steps` in parallel. |
+| `chord(steps[], callback, { after? })` | Canvas: a parallel group joined by `callback`. |
 | `submit()` | Pre-enqueue the DAG → `WorkflowHandle`. |
 | `build()` | Build (don't submit) — for use as a sub-workflow. |
+
+Canvas `steps` are `{ name, task, ...stepOptions }` (`after` is managed by the helper).
 
 `condition`: `"on_success"` (default) · `"on_failure"` · `"always"`.
 
@@ -29,6 +34,7 @@ queue.workflows
 | Member | Description |
 |---|---|
 | `runId` | The run's id. |
+| `status()` | The current `WorkflowRun` snapshot, or `undefined`. |
 | `wait()` | Resolves with the `WorkflowRun` when terminal. |
 | `nodes()` | Per-step status (fan-out parents carry `fanOutCount`). |
 
@@ -36,9 +42,31 @@ queue.workflows
 
 ```ts
 queue.workflows.list({ state: "running" });
-queue.workflows.children(runId);             // spawned sub-workflow runs
+queue.workflows.run(runId); // a single run snapshot
+queue.workflows.nodes(runId); // per-step status
+queue.workflows.dag(runId); // the DAG graph (nodes + edges)
+queue.workflows.children(runId); // spawned sub-workflow runs
 queue.workflows.approveGate(runId, "review");
 queue.workflows.rejectGate(runId, "review", reason);
+queue.workflows.resolveGate(runId, "review", approved);
+queue.workflows.clearCache(); // drop all cached step results
+```
+
+## Analysis
+
+`analyze(runId)` returns a `WorkflowAnalysis` over the run's DAG + node statuses
+(or `undefined` if the run is unknown), for graph introspection:
+
+```ts
+const a = queue.workflows.analyze(runId);
+a?.roots(); // entry nodes
+a?.leaves(); // exit nodes
+a?.ancestors("load"); // transitive upstream deps
+a?.descendants("extract"); // transitive downstream
+a?.topologicalOrder(); // a valid run order (throws on a cycle)
+a?.topologicalLevels(); // nodes grouped by dependency depth
+a?.criticalPath(); // longest dependency chain (root → leaf)
+a?.stats(); // { total, byStatus, completed, failed, running, pending }
 ```
 
 See the [Workflows guides](/node/guides/workflows) for fan-out, conditions,

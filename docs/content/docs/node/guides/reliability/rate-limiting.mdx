@@ -9,20 +9,18 @@ failing it.
 
 ```ts
 queue.task("call_api", callApi, {
-  rateLimit: { limit: 100, windowMs: 60_000 }, // 100 / minute
+  rateLimit: "100/m", // 100 per minute
 });
 ```
 
 Apply a limit to a whole queue instead:
 
 ```ts
-queue.configureQueue("emails", { rateLimit: { limit: 50, windowMs: 1000 } });
+queue.configureQueue("emails", { rateLimit: "50/s" });
 ```
 
-| Field | Description |
-|---|---|
-| `limit` | Tokens (executions) per window. |
-| `windowMs` | Window length in milliseconds. |
+`rateLimit` is a string `"<count>/<unit>"` where unit is `s` (second), `m`
+(minute), or `h` (hour) — e.g. `"100/m"`, `"50/s"`, `"3600/h"`.
 
 Queue-level limits are evaluated before per-task limits. Rate-limited jobs stay
 `pending` and retry on the next tick — they do not consume the retry budget.

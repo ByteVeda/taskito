@@ -1,0 +1,59 @@
+---
+title: Predicate gates
+description: "Gate enqueues with composable predicates evaluated at submit time."
+---
+
+A gate is a predicate evaluated when a job is enqueued. If it returns `false`,
+the enqueue is rejected with a `PredicateRejectedError` and no job is created —
+a declarative way to say "only enqueue this under condition X".
+
+```ts
+queue.task("charge", (amount: number) => settle(amount));
+
+queue.gate("charge", ({ args }) => args[0] > 0); // never enqueue a non-positive charge
+
+queue.enqueue("charge", [50]); // ok
+queue.enqueue("charge", [-1]); // throws PredicateRejectedError
+```
+
+The predicate receives the task name and the (already
+[`onEnqueue`](/node/guides/resources/interception)-rewritten) `args`, typed to the
+task's signature.
+
+## Multiple gates
+
+Register more than one — they all must pass:
+
+```ts
+queue.gate("charge", ({ args }) => args[0] > 0);
+queue.gate("charge", ({ args }) => args[0] <= 10_000);
+```
+
+## Composition
+
+Combine predicates with `allOf`, `anyOf`, and `not`:
+
+```ts
+import { allOf, anyOf, not } from "taskito";
+
+const businessHours = () => {
+  const h = new Date().getHours();
+  return h >= 9 && h < 17;
+};
+const highPriority = ({ args }) => args[0].priority === "high";
+
+queue.gate("dispatch", anyOf(businessHours, highPriority));
+queue.gate("dispatch", not(isHoliday));
+```
+
+## Batches
+
+`enqueueMany` gates each entry; a single rejection throws (no jobs are enqueued).
+Pre-filter the batch if you'd rather drop rejected entries silently.
+
+<Callout type="info">
+  Gates run on the **producer** side, so they decide whether work is created at
+  all. To react once a job is already running, use
+  [middleware](/node/guides/extensibility/middleware) or
+  [conditions](/node/guides/workflows/conditions) inside a workflow.
+</Callout>

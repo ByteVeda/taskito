@@ -9,6 +9,10 @@ concern.
 
 - `JsonSerializer` — default; human-readable, debuggable.
 - `MsgpackSerializer` — compact binary, smaller payloads.
+- `SignedSerializer(secret, inner?)` — wraps another codec with an HMAC-SHA256
+  tag and rejects tampered payloads on read (authentication, not encryption).
+- `EncryptedSerializer(secret, inner?)` — wraps another codec with AES-256-GCM
+  for confidentiality **and** integrity.
 
 ```ts
 import { Queue, MsgpackSerializer } from "taskito";
@@ -18,14 +22,14 @@ new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 
 ## Custom serializer
 
-Implement the `Serializer` interface — `dumps` to bytes, `loads` back:
+Implement the `Serializer` interface — `serialize` to bytes, `deserialize` back:
 
 ```ts
 import type { Serializer } from "taskito";
 
 const mySerializer: Serializer = {
-  dumps: (value) => Buffer.from(JSON.stringify(value)),
-  loads: (bytes) => JSON.parse(Buffer.from(bytes).toString()),
+  serialize: (value) => Buffer.from(JSON.stringify(value)),
+  deserialize: (bytes) => JSON.parse(Buffer.from(bytes).toString()),
 };
 
 new Queue({ dbPath: "taskito.db", serializer: mySerializer });
