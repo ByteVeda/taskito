@@ -20,6 +20,7 @@ result. Re-registering a name replaces the function and config.
 | `maxConcurrent` | `number` | Max simultaneous running jobs of this task. |
 | `rateLimit` | `{ limit, windowMs }` | Token-bucket rate limit. |
 | `circuitBreaker` | `{ threshold, windowMs, cooldownMs }` | Trip after repeated failures. |
+| `inject` | `string[]` | Resource names injected as a trailing `deps` argument. See [Dependency injection](/node/guides/resources/dependency-injection). |
 
 ```ts
 queue.task("add", (a: number, b: number) => a + b, {

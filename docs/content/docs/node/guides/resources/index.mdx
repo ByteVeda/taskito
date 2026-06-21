@@ -1,0 +1,34 @@
+---
+title: Resources
+description: "Inject external dependencies into tasks and intercept jobs before they enqueue."
+---
+
+Task arguments cross a process boundary, so they must be serializable — but most
+real dependencies (database pools, HTTP clients, cloud SDKs) are not. The Node
+SDK keeps those on the worker and passes only plain data through the queue.
+
+```ts
+import { Queue, useResource } from "taskito";
+import { Pool } from "pg";
+
+const queue = new Queue({ dbPath: "tasks.db" });
+
+queue.resource("db", () => new Pool(), { dispose: (p) => p.end() });
+
+queue.task("sync", async (id: string) => {
+  const db = await useResource<Pool>("db");
+  await db.query("UPDATE users SET synced = now() WHERE id = $1", [id]);
+});
+```
+
+| Page | What it covers |
+|---|---|
+| [Dependency injection](/node/guides/resources/dependency-injection) | `queue.resource()`, worker/task scopes, `useResource`, declarative `inject`, teardown |
+| [Enqueue interception](/node/guides/resources/interception) | The `onEnqueue` hook — validate, redact, and rewrite jobs before serialization |
+
+<Callout type="info">
+  Coming from Python? Node's resource system is intentionally lighter — no
+  argument-interception *strategies* and no object *proxies*, because JavaScript
+  has no pickling problem. Worker-side dependency injection plus a producer-side
+  `onEnqueue` hook cover the same ground.
+</Callout>

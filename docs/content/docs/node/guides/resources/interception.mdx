@@ -1,0 +1,72 @@
+---
+title: Enqueue interception
+description: "Validate, redact, or rewrite jobs before they are serialized."
+---
+
+The `onEnqueue` middleware hook runs on the **producer side**, inside
+`queue.enqueue`, before the arguments are serialized. Use it to validate inputs,
+redact secrets, or rewrite enqueue options across every task — in one place
+instead of at every call site.
+
+```ts
+queue.use({
+  onEnqueue: (ctx) => {
+    // redact anything that looks like a secret before it reaches storage
+    ctx.args = ctx.args.map((a) =>
+      typeof a === "string" && a.startsWith("pw:") ? "***" : a,
+    );
+  },
+});
+```
+
+## The context
+
+`onEnqueue` receives a mutable context:
+
+| Field | Description |
+|---|---|
+| `taskName` | The task being enqueued (read-only). |
+| `args` | The positional arguments — reassign or mutate before serialization. |
+| `options` | The enqueue options — set `metadata`, `priority`, `namespace`, and so on. |
+
+Mutations take effect: `args` is what gets serialized, `options` is what reaches
+the core.
+
+```ts
+queue.use({
+  onEnqueue: (ctx) => {
+    ctx.options.metadata = JSON.stringify({ enqueuedBy: currentUser() });
+  },
+});
+```
+
+## Validation
+
+Throwing from `onEnqueue` aborts the enqueue — the job is never created and the
+error propagates to the caller:
+
+```ts
+queue.use({
+  onEnqueue: (ctx) => {
+    if (ctx.taskName === "charge" && (ctx.args[0] as number) < 0) {
+      throw new Error("charge amount must be non-negative");
+    }
+  },
+});
+
+queue.enqueue("charge", [-5]); // throws — nothing is enqueued
+```
+
+<Callout type="info">
+  `onEnqueue` is synchronous (so is `enqueue`) and runs in middleware
+  registration order. It is the producer-side counterpart to the execution hooks
+  in [Middleware](/node/guides/extensibility/middleware).
+</Callout>
+
+## Why no proxies?
+
+Python's SDK also ships object *proxies* — a system for shipping non-serializable
+objects (file handles, sessions) through the queue. Node doesn't need it: a
+handler closes over its own resources, or pulls them from
+[dependency injection](/node/guides/resources/dependency-injection). Keep
+non-serializable state on the worker and pass plain data through the queue.

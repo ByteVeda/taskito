@@ -31,3 +31,15 @@ queue.task("download", async (url: string) => {
 
 See [Cancellation](/node/guides/core/cancellation) for the cooperative
 cancellation flow.
+
+## `useResource`
+
+```ts
+import { useResource } from "taskito";
+
+const db = await useResource<Pool>("db"); // inside a running task
+```
+
+Resolves a [registered resource](/node/guides/resources/dependency-injection) by
+name against the current job's scope. Also `AsyncLocalStorage`-backed, so it
+works across `await` boundaries. Throws if called outside a task.

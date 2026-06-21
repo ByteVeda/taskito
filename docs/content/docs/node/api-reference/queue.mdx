@@ -56,7 +56,8 @@ const queue = new Queue(options);
 |---|---|
 | `runWorker(options?)` | Start a [worker](/node/api-reference/worker). |
 | `on(event, handler)` | [Events](/node/guides/extensibility/events). |
-| `use(middleware)` | [Middleware](/node/guides/extensibility/middleware). |
+| `use(middleware)` | [Middleware](/node/guides/extensibility/middleware) (incl. the `onEnqueue` [interception](/node/guides/resources/interception) hook). |
+| `resource(name, factory, opts?)` | Register an injectable [resource](/node/guides/resources/dependency-injection) (`scope`, `dispose`). |
 | `webhooks` | [Webhooks](/node/guides/extensibility/webhooks) manager. |
 | `workflows` | [Workflow](/node/api-reference/workflows) builder + queries. |
 | `lock(name, opts)` / `withLock(name, fn)` | [Distributed locks](/node/guides/reliability/locks). |
