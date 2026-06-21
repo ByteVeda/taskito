@@ -29,6 +29,11 @@ export interface ScalerOptions {
  */
 export function serveScaler(queue: Queue, options: ScalerOptions = {}): Server {
   const targetValue = options.targetQueueDepth ?? 10;
+  // A non-positive target makes KEDA's ceil(metric / target) divide-by-zero or
+  // scale unboundedly, so reject it up front rather than serving a bad metric.
+  if (!Number.isFinite(targetValue) || targetValue <= 0) {
+    throw new RangeError(`targetQueueDepth must be a positive number, got ${targetValue}`);
+  }
   const defaultQueue = options.queue;
 
   const server = createServer((req, res) => {
@@ -45,8 +50,9 @@ export function serveScaler(queue: Queue, options: ScalerOptions = {}): Server {
           : queue.stats().pending;
         sendJson(res, 200, { metricValue, targetValue, queueName: queueName ?? "*" });
       } catch (error) {
+        // Keep backend/path details in the logs; never echo them to the caller.
         log.error(() => "scaler metric read failed", error);
-        sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+        sendJson(res, 500, { error: "internal server error" });
       }
       return;
     }

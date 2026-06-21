@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { serveScaler } from "../../scaler";
 import { connect, type GlobalOptions } from "../connect";
+import { positiveIntFlag } from "../parse";
 
 export function registerScaler(program: Command): void {
   program
@@ -17,11 +18,11 @@ export function registerScaler(program: Command): void {
       ) => {
         const queue = connect(command.optsWithGlobals() as GlobalOptions);
         const host = options.host ?? "0.0.0.0";
-        const port = options.port ? Number(options.port) : 9091;
+        const port = positiveIntFlag(options.port, "port") ?? 9091;
         serveScaler(queue, {
           port,
           host,
-          targetQueueDepth: options.targetQueueDepth ? Number(options.targetQueueDepth) : undefined,
+          targetQueueDepth: positiveIntFlag(options.targetQueueDepth, "target-queue-depth"),
           queue: options.queue,
         });
         process.stdout.write(`taskito scaler on http://${host}:${port}/api/scaler\n`);
