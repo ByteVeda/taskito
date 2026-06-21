@@ -14,6 +14,23 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# CI only reads the repo. Pin the token to least privilege so a compromised
+# step can't escalate. pull-requests:read lets dorny/paths-filter enumerate a
+# PR's changed files on pull_request events.
+permissions:
+  contents: read
+  pull-requests: read
+
+# Cargo's HTTP downloader intermittently aborts crate downloads on CI
+# ("Error in the HTTP2 framing layer" / "unexpected eof while reading") when
+# fetching uncached crates from crates.io. Force HTTP/1.1 and raise the retry
+# budget so a transient download error retries instead of failing the job.
+# Set at workflow level so it also covers the maturin build that `uv sync`
+# triggers inside the setup-python action, before setup-rust runs.
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   changes:
     name: Detect changed paths
@@ -21,6 +38,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
+      node: ${{ steps.filter.outputs.node }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -35,12 +53,22 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - '.github/actions/**'
               - '.github/workflows/ci.yml'
             python:
               - 'sdks/python/**'
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yml'
+            node:
+              - 'sdks/node/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'dashboard/**'
+              - '.github/actions/**'
               - '.github/workflows/ci.yml'
 
   lint:
@@ -50,27 +78,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          # Skip caching ~/.cargo/bin/ — rustup 1.28's multicall binary
-          # interacts badly with this action's cache-clean step and ends up
-          # restoring a `cargo` that responds as `rustup-init`. Proxies are
-          # reinstalled on every run by dtolnay/rust-toolchain.
-          # See: https://github.com/Swatinem/rust-cache/issues/16
-          cache-bin: false
-          # Bump to evict any v0-* caches that already contain the corrupted bin dir.
-          prefix-key: v1-rust-bin-fix
+          save-if: "true" # the lint job is the sole Cargo cache writer
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
@@ -78,33 +93,26 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Generic crates stay PyO3-free
+      - name: Generic crates stay binding-free
         # The engine crates (core/workflows/mesh) must remain binding-agnostic so
-        # Node/Java shells can reuse them. A pyo3 dep would let Python-specific code
-        # creep back in. cargo tree is authoritative — you cannot `use pyo3` without
-        # depending on it. See crates/taskito-core/BINDING_CONTRACT.md.
+        # the Python and Node shells can both reuse them. A pyo3 OR napi dep would
+        # let binding-specific code creep back in. cargo tree is authoritative —
+        # you cannot `use pyo3`/`use napi` without depending on it.
+        # See crates/taskito-core/BINDING_CONTRACT.md.
         run: |
           set -euo pipefail
           for crate in taskito-core taskito-workflows taskito-mesh; do
             # Capture first so a `cargo tree` failure aborts (set -e) instead of
             # being swallowed by the pipe and silently passing the check.
             tree_output="$(cargo tree -p "$crate" -e normal --all-features)"
-            if grep -qi pyo3 <<<"$tree_output"; then
-              echo "::error::pyo3 is in the dependency tree of $crate — generic crates must stay binding-agnostic"
-              exit 1
-            fi
+            for binding in pyo3 napi; do
+              if grep -qi "$binding" <<<"$tree_output"; then
+                echo "::error::$binding is in the dependency tree of $crate — generic crates must stay binding-agnostic"
+                exit 1
+              fi
+            done
           done
-          echo "Generic crates are PyO3-free."
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          version: "0.10.12"
-          cache-dependency-glob: sdks/python/pyproject.toml
-
-      - name: Install Python dependencies
-        working-directory: sdks/python
-        run: uv sync --extra dev --extra oauth
+          echo "Generic crates are free of pyo3 and napi."
 
       - name: Lint Python with Ruff
         working-directory: sdks/python
@@ -127,25 +135,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Python (libpython for the linked extension)
+        uses: ./.github/actions/setup-python
         with:
-          python-version: "3.12"
+          sync: "false"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-          cache-bin: false
-          prefix-key: v1-rust-bin-fix
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Run Rust test suite
-        run: cargo test --workspace
-        env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+        # $pythonLocation is exported to the job env by setup-python at runtime.
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace
 
       - name: Check build with native-async features
         run: cargo check --workspace --features native-async
@@ -176,25 +176,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Python (libpython for the linked extension)
+        uses: ./.github/actions/setup-python
         with:
-          python-version: "3.12"
+          sync: "false"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-          cache-bin: false
-          prefix-key: v1-rust-bin-fix
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Run Rust test suite (PostgreSQL backend)
-        run: cargo test --workspace --features postgres,workflows
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features postgres,workflows
         env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
 
   rust-test-redis:
@@ -216,25 +208,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Python (libpython for the linked extension)
+        uses: ./.github/actions/setup-python
         with:
-          python-version: "3.12"
+          sync: "false"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-          cache-bin: false
-          prefix-key: v1-rust-bin-fix
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Run Rust test suite (Redis backend)
-        run: cargo test --workspace --features redis,workflows
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features redis,workflows
         env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_REDIS_TEST_URL: redis://localhost:6379/15
 
   rust-test-mesh:
@@ -246,25 +230,55 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Python (libpython for the linked extension)
+        uses: ./.github/actions/setup-python
         with:
-          python-version: "3.12"
+          sync: "false"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-          cache-bin: false
-          prefix-key: v1-rust-bin-fix
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Run mesh crate tests
-        run: cargo test -p taskito-mesh
-        env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test -p taskito-mesh
+
+  node-test:
+    name: Node SDK Tests
+    needs: changes
+    if: needs.changes.outputs.node == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up Node + pnpm
+        uses: ./.github/actions/setup-node
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: pnpm install --frozen-lockfile
+
+      - name: Build addon, TypeScript, and dashboard SPA
+        working-directory: sdks/node
+        run: |
+          pnpm run build:native
+          pnpm run build:ts
+          pnpm -C ../../dashboard exec tsr generate   # route tree is gitignored
+          pnpm run build:dashboard
+
+      - name: Typecheck
+        working-directory: sdks/node
+        run: pnpm typecheck
+
+      - name: Lint
+        working-directory: sdks/node
+        run: pnpm lint
+
+      - name: Run Node test suite
+        working-directory: sdks/node
+        run: pnpm test
 
   test:
     name: Python Tests (${{ matrix.os }} / Python ${{ matrix.python-version }})
@@ -292,33 +306,30 @@ jobs:
           - os: windows-2025
             python-version: "3.10"
     steps:
+      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        # The postgres feature pulls openssl-sys (vendored), whose Configure
+        # runs perl. Under `shell: bash` the incomplete MSYS perl shadows the
+        # runner's Strawberry Perl and lacks modules OpenSSL needs
+        # (Locale::Maketext::Simple), so pin openssl-src to Strawberry Perl.
+        # Must precede the maturin build that `uv sync` triggers below.
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
+          # Only the non-Linux runners save the cache here; the Linux Cargo
+          # cache is written by the lint job.
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
-          cache-bin: false
-          prefix-key: v1-rust-bin-fix
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          version: "0.10.12"
-          cache-dependency-glob: sdks/python/pyproject.toml
-
-      - name: Install Python dependencies
-        working-directory: sdks/python
-        run: uv sync --extra dev --extra oauth
 
       - name: Build native extension with maturin
         uses: PyO3/maturin-action@v1.51.0
@@ -338,7 +349,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, rust-test, rust-test-postgres, rust-test-redis, rust-test-mesh, test]
+    needs: [changes, lint, rust-test, rust-test-postgres, rust-test-redis, rust-test-mesh, node-test, test]
     runs-on: ubuntu-latest
     steps:
       - name: Check that no required job failed

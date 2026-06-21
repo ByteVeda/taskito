@@ -1,0 +1,39 @@
+name: Set up Python + uv
+description: >-
+  Installs Python and uv. By default also syncs the Python SDK's dev
+  dependencies; pass `sync: false` for jobs that only need the interpreter
+  (e.g. Rust tests that link against libpython).
+
+inputs:
+  python-version:
+    description: "Python version to install."
+    required: false
+    default: "3.12"
+  sync:
+    description: "Run `uv sync` in sdks/python."
+    required: false
+    default: "true"
+  sync-args:
+    description: "Extra args passed to `uv sync`."
+    required: false
+    default: "--extra dev --extra oauth"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.1.0
+      with:
+        version: "0.10.12"
+        cache-dependency-glob: sdks/python/pyproject.toml
+
+    - name: Install Python dependencies
+      if: inputs.sync == 'true'
+      shell: bash
+      working-directory: sdks/python
+      run: uv sync ${{ inputs.sync-args }}

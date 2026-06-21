@@ -11,7 +11,11 @@ share storage (SQLite, PostgreSQL, or Redis).
 pnpm add taskito
 ```
 
-Requires Node.js >= 18. Ships as dual ESM + CommonJS.
+Requires Node.js >= 18. Ships as dual ESM + CommonJS. A prebuilt native binary is
+installed automatically for your platform via an optional per-platform package
+(`taskito-<os>-<arch>`) — linux x64/arm64 (gnu + musl), macOS x64/arm64, and
+Windows x64. On a platform without a prebuilt, build from source with the Rust
+toolchain + napi-rs CLI (`pnpm build:native`).
 
 ## Quickstart
 
@@ -470,5 +474,4 @@ compiled in via `--features postgres,redis`.
 
 ## Not yet covered
 
-Resources / dependency-injection, prebuilt platform binaries + npm publish
-(host-only build for now), and Python⇄Node cross-language interop.
+Resources / dependency-injection and Python⇄Node cross-language interop.

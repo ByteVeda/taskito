@@ -9,3 +9,6 @@ static/
 # native/package.json that marks the generated loader as CommonJS.
 native/*
 !native/package.json
+
+# Per-platform npm packages scaffolded by `napi create-npm-dir` at publish time.
+npm/
