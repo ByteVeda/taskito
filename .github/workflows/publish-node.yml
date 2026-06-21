@@ -202,16 +202,28 @@ jobs:
       - name: Publish per-platform packages
         if: ${{ !inputs.dry-run }}
         working-directory: sdks/node
+        # Skip any package already live at this version so a rerun after a
+        # partial publish can finish the rest instead of aborting on the first.
         run: |
           for dir in npm/*/; do
-            echo "Publishing ${dir}"
-            npm publish "$dir" --provenance --access public
+            pkg=$(node -p "require('./${dir}package.json').name")
+            if npm view "${pkg}@${VERSION}" version >/dev/null 2>&1; then
+              echo "::notice::${pkg}@${VERSION} already published — skipping"
+            else
+              echo "Publishing ${pkg}@${VERSION}"
+              npm publish "$dir" --provenance --access public
+            fi
           done
 
       - name: Publish main package
         if: ${{ !inputs.dry-run }}
         working-directory: sdks/node
-        run: npm publish --provenance --access public
+        run: |
+          if npm view "taskito@${VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::taskito@${VERSION} already published — skipping"
+          else
+            npm publish --provenance --access public
+          fi
 
       - name: Verify version on npm
         if: ${{ !inputs.dry-run }}
