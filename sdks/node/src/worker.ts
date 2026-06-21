@@ -11,6 +11,7 @@ import type {
   QueueConfigInput,
   TaskConfigInput,
 } from "./native";
+import { type ResourceRuntime, runWithResolver } from "./resources";
 import type { Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
@@ -36,12 +37,16 @@ export interface WorkerStartParams {
   serializer: Serializer;
   middleware: readonly Middleware[];
   emitter: Emitter;
+  resources: ResourceRuntime;
   run?: WorkerRunOptions;
 }
 
 /** A running worker. Hold it for the worker's lifetime; call {@link Worker.stop}. */
 export class Worker {
-  private constructor(private readonly native: NativeWorker) {}
+  private constructor(
+    private readonly native: NativeWorker,
+    private readonly resources: ResourceRuntime,
+  ) {}
 
   /**
    * Start a worker from a queue's task registry. Use {@link Queue.runWorker}
@@ -50,7 +55,7 @@ export class Worker {
    * @internal
    */
   static start(queue: NativeQueue, params: WorkerStartParams): Worker {
-    const { tasks, queueLimits, serializer, middleware, emitter, run } = params;
+    const { tasks, queueLimits, serializer, middleware, emitter, resources, run } = params;
 
     // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
     const tracker =
@@ -85,11 +90,25 @@ export class Worker {
       }, CANCEL_POLL_INTERVAL_MS);
       poller.unref();
 
+      // Per-invocation resource scope; `useResource`/`inject` resolve against it.
+      const scope = resources.createTaskScope();
+      const invoke = async (): Promise<unknown> => {
+        const inject = task.options?.inject;
+        if (inject && inject.length > 0) {
+          const deps: Record<string, unknown> = {};
+          for (const name of inject) {
+            deps[name] = await scope.resolver(name);
+          }
+          return task.handler(...args, deps);
+        }
+        return task.handler(...args);
+      };
+
       try {
         for (const mw of middleware) {
           await mw.before?.(ctx);
         }
-        const result = await runInContext(context, () => task.handler(...args));
+        const result = await runWithResolver(scope.resolver, () => runInContext(context, invoke));
         for (const mw of middleware) {
           await mw.after?.(ctx, result);
         }
@@ -105,6 +124,12 @@ export class Worker {
         throw error;
       } finally {
         clearInterval(poller);
+        try {
+          await scope.teardown();
+        } catch (error) {
+          // dispose errors must not fail an already-settled job
+          log.debug(() => `task-scope teardown for ${invocation.id} failed`, error);
+        }
       }
     };
 
@@ -142,12 +167,17 @@ export class Worker {
       queueConfigs: buildQueueConfigs(queueLimits),
       mesh: run?.mesh,
     };
-    return new Worker(queue.runWorker(taskCallback, outcomeCallback, nativeOptions));
+    return new Worker(queue.runWorker(taskCallback, outcomeCallback, nativeOptions), resources);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
     this.native.stop();
+    // Dispose worker-scoped resources after the native worker quiesces. Best
+    // effort: lazy resources mean this is a no-op when none were built.
+    void this.resources.teardownWorker().catch((error) => {
+      log.debug(() => "worker-scope resource teardown failed", error);
+    });
   }
 }
 

@@ -53,6 +53,12 @@ export interface TaskOptions {
   rateLimit?: RateLimit;
   /** Trip the task's circuit breaker after repeated failures. */
   circuitBreaker?: CircuitBreakerInput;
+  /**
+   * Resource names injected as a trailing `deps` object: the handler is called
+   * `handler(...args, deps)`. Use the {@link Queue.task} `inject` overload so the
+   * `deps` param is stripped from the typed `enqueue` args.
+   */
+  inject?: readonly string[];
 }
 
 /** Options for {@link Queue.registerPeriodic}. */

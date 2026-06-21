@@ -7,8 +7,9 @@ import {
 } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
 import { Lock, type LockOptions } from "./locks";
-import type { Middleware } from "./middleware";
+import type { EnqueueContext, Middleware } from "./middleware";
 import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
+import { type ResourceContext, ResourceRuntime, type ResourceScope } from "./resources";
 import { JsonSerializer, type Serializer } from "./serializers";
 import type {
   AnyHandler,
@@ -63,6 +64,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
   private readonly emitter = new Emitter();
+  private readonly resources = new ResourceRuntime();
   private readonly webhookManager: WebhookManager;
   /** Built lazily — its constructor throws on addons lacking the `workflows` feature. */
   private workflowManager?: WorkflowManager;
@@ -139,6 +141,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /**
+   * Register a task that receives injected resources as a trailing `deps` object
+   * (`handler(...args, deps)`). The `deps` param is stripped from the typed
+   * {@link Queue.enqueue} args. Annotate `deps` to type the injected resources.
+   */
+  task<Name extends string, A extends unknown[], D, R>(
+    name: Name,
+    handler: (...args: [...A, deps: D]) => R | Promise<R>,
+    options: TaskOptions & { inject: readonly string[] },
+  ): Queue<TTasks & Record<Name, (...args: A) => R>>;
+  /**
    * Register a task handler under `name`. Chain calls to build a typed registry —
    * {@link Queue.enqueue} then infers each task's argument types.
    */
@@ -146,9 +158,29 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     name: Name,
     handler: Handler,
     options?: TaskOptions,
-  ): Queue<TTasks & Record<Name, Handler>> {
+  ): Queue<TTasks & Record<Name, Handler>>;
+  task(name: string, handler: AnyHandler, options?: TaskOptions): Queue<TaskMap> {
     this.tasks.set(name, { handler, options });
-    return this as unknown as Queue<TTasks & Record<Name, Handler>>;
+    return this as unknown as Queue<TaskMap>;
+  }
+
+  /**
+   * Register an injectable resource. Worker-scoped (default) values are built
+   * once and shared across the worker's lifetime; task-scoped values are built
+   * per job invocation. Reach them from a handler via `useResource(name)` or the
+   * declarative `inject` option on {@link Queue.task}.
+   */
+  resource<T>(
+    name: string,
+    factory: (ctx: ResourceContext) => T | Promise<T>,
+    options?: { scope?: ResourceScope; dispose?: (value: T) => void | Promise<void> },
+  ): this {
+    this.resources.register<T>(name, {
+      factory,
+      scope: options?.scope ?? "worker",
+      dispose: options?.dispose,
+    });
+    return this;
   }
 
   /** Set per-queue concurrency / rate-limit applied when a worker runs. */
@@ -185,8 +217,13 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       maxRetries: options?.maxRetries ?? defaults?.maxRetries,
       timeoutMs: options?.timeoutMs ?? defaults?.timeoutMs,
     };
-    const payload = Buffer.from(this.serializer.serialize(args ?? []));
-    return this.native.enqueue(name, payload, merged);
+    // Interception seam: let middleware validate/redact/rewrite before serializing.
+    const ctx: EnqueueContext = { taskName: name, args: [...(args ?? [])], options: merged };
+    for (const mw of this.middleware) {
+      mw.onEnqueue?.(ctx);
+    }
+    const payload = Buffer.from(this.serializer.serialize(ctx.args));
+    return this.native.enqueue(name, payload, ctx.options);
   }
 
   /** Fetch a job by id, or `null` if unknown. */
@@ -328,6 +365,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       serializer: this.serializer,
       middleware: this.middleware,
       emitter: this.emitter,
+      resources: this.resources,
       run: options,
     });
   }
