@@ -1,0 +1,21 @@
+/* SDK-variant show/hide, driven by `<html data-sdk>` (set before paint by the
+   bootstrap in root.tsx). Every SDK's variant ships in the static HTML; only the
+   active SDK's blocks are visible — no flash, no hydration mismatch, all variants
+   stay indexable. Components mark variants with `data-sdk-variant="python|node"`. */
+
+[data-sdk="python"] [data-sdk-variant="node"],
+[data-sdk="node"] [data-sdk-variant="python"] {
+  display: none;
+}
+
+/* SDK code-tabs reuse the base `.tab`/`.tablist` styles. The active tab is keyed
+   off `<html data-sdk>` (not a reactive class) so the highlight never flashes
+   before hydration. Panels show/hide via the data-sdk-variant rule above. */
+.sdk-tabpanel {
+  margin-top: 14px;
+}
+[data-sdk="python"] .sdk-tab[data-sdk-variant="python"],
+[data-sdk="node"] .sdk-tab[data-sdk-variant="node"] {
+  color: var(--indigo-br);
+  border-bottom-color: var(--indigo);
+}
