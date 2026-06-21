@@ -43,6 +43,8 @@ a.stats();
 ```
 
 <Callout type="info">
-  Pair `analyze` with [`wait`](/node/api-reference/workflows) to inspect the shape
-  while a run progresses, or after it finishes to find the slowest chain.
+  `analyze` and [`wait`](/node/api-reference/workflows) are separate calls, not
+  chainable: `analyze(runId)` returns a snapshot now, while `handle.wait()`
+  resolves when the run finishes. Re-call `analyze(runId)` after `wait()` to see
+  the slowest chain on the completed run.
 </Callout>
