@@ -238,17 +238,21 @@
     REG.forEach(function(r){ r.q=r.id==='ap-south-1'?1:2; r.busy=[0,0]; });
     paint(performance.now());
   });
-  el('ws-pause').addEventListener('click',function(){
-    paused=!paused;
+  function syncPauseLabel(){
     el('ws-pause').innerHTML = paused
       ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>Resume'
       : '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>Pause';
+  }
+  el('ws-pause').addEventListener('click',function(){
+    paused=!paused;
+    syncPauseLabel();
     if(paused) stop(); else start();
   });
 
   window.__taskitoDemos=window.__taskitoDemos||{};
   var pm=window.__taskitoDemos.motion;
-  window.__taskitoDemos.motion=function(off){ if(pm)pm(off); if(off){ stop(); staticRender(); } else { paused=false; start(); } };
+  // Resuming via the motion toggle clears `paused`; keep the button label in sync.
+  window.__taskitoDemos.motion=function(off){ if(pm)pm(off); if(off){ stop(); staticRender(); } else { paused=false; syncPauseLabel(); start(); } };
 
   paint(performance.now());
   if(motionOff()){ staticRender(); }
