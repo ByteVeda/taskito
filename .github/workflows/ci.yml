@@ -299,6 +299,16 @@ jobs:
           - os: windows-2025
             python-version: "3.10"
     steps:
+      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        # The postgres feature pulls openssl-sys (vendored), whose Configure
+        # runs perl. Under `shell: bash` the incomplete MSYS perl shadows the
+        # runner's Strawberry Perl and lacks modules OpenSSL needs
+        # (Locale::Maketext::Simple), so pin openssl-src to Strawberry Perl.
+        # Must precede the maturin build that `uv sync` triggers below.
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
       - name: Check out repository
         uses: actions/checkout@v6
 
