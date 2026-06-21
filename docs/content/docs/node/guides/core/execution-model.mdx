@@ -1,0 +1,52 @@
+---
+title: Execution model
+description: "How the Node worker runs jobs — the event loop, concurrency, and CPU-bound work."
+---
+
+The Rust core owns scheduling — it claims due jobs from storage and dispatches
+them. Execution happens back in **your Node process**: the core hands each job to
+a JavaScript callback and awaits the returned promise. Handlers run on the
+single Node event loop, just like the rest of your app.
+
+## Concurrency
+
+Jobs run **concurrently**, not one at a time. Each dispatched job is an
+independent async invocation, so while one handler awaits I/O another can run.
+In-flight work is bounded by:
+
+- `channelCapacity` (default 128) — the worker's in-flight dispatch buffer.
+- per-task `maxConcurrent` and queue concurrency — explicit
+  [caps](/node/guides/reliability/concurrency).
+- per-task / per-queue [rate limits](/node/guides/reliability/rate-limiting).
+
+`batchSize` (default 1) controls how many jobs the scheduler claims per poll —
+raise it to amortize polling under high throughput.
+
+```ts
+queue.runWorker({ queues: ["default"], channelCapacity: 256, batchSize: 16 });
+```
+
+There is no GIL, thread-pool sizing, or prefork choice to make — concurrency is
+ordinary event-loop async.
+
+## CPU-bound work
+
+Because handlers share the event loop, a long synchronous computation blocks
+*every* in-flight job. For CPU-heavy tasks:
+
+- Offload to a [`worker_threads`](https://nodejs.org/api/worker_threads.html)
+  pool or a native addon, and `await` it.
+- Or run several worker **processes** against the same storage — the core hands
+  each job to exactly one of them.
+
+## Scaling out
+
+Horizontal scaling is just more worker processes (or machines) pointed at shared
+[Postgres or Redis](/node/guides/operations/backends) storage. The core claims
+each job for a single worker, so adding workers adds throughput without
+duplicate execution — see [guarantees](/node/guides/reliability/guarantees).
+
+<Callout type="info">
+  Async handlers are first-class: return a promise and the worker awaits it. A
+  sync handler works too — it just can't yield the loop, so keep it short.
+</Callout>
