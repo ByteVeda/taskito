@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router";
 import { SearchModal, Sidebar, Toc } from "@/components/docs";
 import { SiteNav } from "@/components/ui";
-import { useSdk } from "@/hooks";
+import { useActiveSdk, useSdk } from "@/hooks";
 import { forcedSdkForPath } from "@/lib";
 
 /** Shell for every docs page: top nav + sidebar + article outlet + on-this-page TOC. */
@@ -10,6 +10,7 @@ export default function DocsLayout() {
   const [searchOpen, setSearchOpen] = useState(false);
   const { pathname } = useLocation();
   const { setSdk } = useSdk();
+  const sdk = useActiveSdk();
 
   // Visiting an SDK-specific page (`/python/*`,`/node/*`) makes that SDK sticky,
   // so walking onto a shared page keeps the choice. No-op on shared pages.
@@ -39,7 +40,11 @@ export default function DocsLayout() {
         <Outlet />
         <Toc />
       </div>
-      <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        sdk={sdk}
+      />
     </>
   );
 }

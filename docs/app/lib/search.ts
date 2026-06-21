@@ -1,5 +1,7 @@
 import MiniSearch from "minisearch";
 import { DOC_METAS } from "./manifest";
+import { forcedSdkForPath } from "./nav";
+import type { Sdk } from "./sdk-store";
 
 export interface SearchDoc {
   id: string; // slug
@@ -78,16 +80,27 @@ const sectionRank = (s: string) => {
   return i === -1 ? SECTION_ORDER.length : i;
 };
 
-/** Empty query → the full index (browse mode); otherwise ranked matches. */
-export function searchDocs(query: string): SearchHit[] {
+// A page is in scope when it's shared (no SDK prefix) or matches the active SDK.
+function inSdk(slug: string, sdk?: Sdk): boolean {
+  if (!sdk) {
+    return true;
+  }
+  const pageSdk = forcedSdkForPath(slug);
+  return pageSdk === null || pageSdk === sdk;
+}
+
+/** Empty query → the full index (browse mode); otherwise ranked matches. When
+ *  `sdk` is given, results are scoped to that SDK's pages plus shared pages. */
+export function searchDocs(query: string, sdk?: Sdk): SearchHit[] {
   const q = query.trim();
   if (!q) {
-    return SEARCH_DOCS.map(toHit).sort(
-      (a, b) => sectionRank(a.section) - sectionRank(b.section),
-    );
+    return SEARCH_DOCS.filter((d) => inSdk(d.id, sdk))
+      .map(toHit)
+      .sort((a, b) => sectionRank(a.section) - sectionRank(b.section));
   }
   return getIndex()
     .search(q)
+    .filter((r) => inSdk(r.id as string, sdk))
     .slice(0, 20)
     .map((r) => ({
       id: r.id as string,

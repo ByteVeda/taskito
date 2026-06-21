@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import type { Sdk } from "@/hooks";
 import { type SearchHit, searchDocs } from "@/lib/search";
 
 // Section glyphs mirror the prototype's command-palette icons.
@@ -67,16 +68,21 @@ function groupBySection(hits: SearchHit[]): Group[] {
 export function SearchModal({
   open,
   onClose,
+  sdk,
 }: {
   open: boolean;
   onClose: () => void;
+  sdk?: Sdk;
 }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const groups = useMemo(() => groupBySection(searchDocs(query)), [query]);
+  const groups = useMemo(
+    () => groupBySection(searchDocs(query, sdk)),
+    [query, sdk],
+  );
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset selection as results change
