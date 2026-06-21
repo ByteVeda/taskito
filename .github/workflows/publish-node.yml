@@ -153,7 +153,11 @@ jobs:
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
     steps:
+      # Don't persist the write token in .git/config — npm/build steps don't
+      # need git auth, and the only push (the tag) gets the token explicitly.
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Node + pnpm
         uses: ./.github/actions/setup-node
@@ -240,9 +244,12 @@ jobs:
 
       - name: Create git tag
         if: github.event_name != 'push' && !inputs.dry-run
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git tag "node-v${VERSION}"
-          git push origin "node-v${VERSION}"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" \
+            push origin "node-v${VERSION}"
 
       - name: Create GitHub release
         if: ${{ !inputs.dry-run }}
