@@ -121,3 +121,33 @@ queue.resource("db", () => openPool(), { dispose: (p) => p.end() });
 
 Disposal errors are logged, never thrown — they cannot fail an already-settled
 job.
+
+## Metrics
+
+`queue.resourceMetrics()` returns per-resource lifecycle counters — how many
+instances were built, disposed, and are currently live:
+
+```ts
+queue.resourceMetrics();
+// { db: { created: 1, disposed: 0, active: 1 }, tx: { created: 12, disposed: 12, active: 0 } }
+```
+
+A worker-scoped resource shows `active: 1` while the worker runs and `0` after
+`stop()`; a task-scoped resource's `created`/`disposed` climb per job with
+`active` near zero.
+
+## Testing
+
+Register a stub factory to swap a real dependency in tests. `mockResource(value)`
+wraps a value as a factory and records how often it was built:
+
+```ts
+import { mockResource } from "taskito";
+
+const db = mockResource({ query: async () => fakeRows });
+queue.resource("db", db.factory);
+// ... run the task ...
+expect(db.resolutions).toBe(1);
+```
+
+See [testing](/node/guides/operations/testing) for the full worker test setup.
