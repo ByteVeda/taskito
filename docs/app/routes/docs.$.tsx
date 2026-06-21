@@ -68,7 +68,11 @@ export default function DocRoute({ params }: Route.ComponentProps) {
       {meta?.title ? <h1>{meta.title}</h1> : null}
       {meta?.description ? <p className="lead">{meta.description}</p> : null}
       <MDXProvider components={mdxComponents}>
-        <Suspense fallback={null}>
+        {/* Key by path: client-side navigation between two pages that share this
+            splat route re-suspends the lazy page. Without a fresh boundary per
+            path, React retains the previous committed tree for the whole route
+            during the navigation transition and never swaps in the new page. */}
+        <Suspense key={path} fallback={null}>
           <Page />
         </Suspense>
       </MDXProvider>
