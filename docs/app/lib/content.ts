@@ -1,23 +1,14 @@
 import type { ComponentType } from "react";
 
-export interface DocFrontmatter {
-  title?: string;
-  description?: string;
-}
-
 interface MdxModule {
   default: ComponentType;
-  frontmatter?: DocFrontmatter;
 }
 
-// Compile every content MDX into the bundle (the doc source — reused unchanged).
-// Eager so page lookup + prerender are synchronous; vite still splits assets.
-const MODULES = import.meta.glob<MdxModule>("../../content/docs/**/*.mdx", {
-  eager: true,
-});
+// LAZY glob: each MDX compiles to its own chunk, loaded on demand by the route
+// (React.lazy). Page metadata lives in the build-time manifest (manifest.ts), so
+// nav/search never pull these heavy (shiki-inflated) modules into a shared chunk.
+const LOADERS = import.meta.glob<MdxModule>("../../content/docs/**/*.mdx");
 
-/** `…/content/docs/getting-started/installation.mdx` → `/getting-started/installation`;
- *  `…/node/index.mdx` → `/node`. Mirrors app/lib/doc-paths.ts (build-time prerender list). */
 function keyToSlug(key: string): string {
   const rel = key.replace(/^.*\/content\/docs\//, "").replace(/\.mdx$/, "");
   const parts = rel.split("/");
@@ -27,27 +18,18 @@ function keyToSlug(key: string): string {
   return `/${parts.join("/")}`.replace(/\/$/, "") || "/";
 }
 
-export interface DocPage {
-  slug: string;
-  Component: ComponentType;
-  frontmatter: DocFrontmatter;
+const BY_SLUG = new Map<string, () => Promise<MdxModule>>();
+for (const [key, loader] of Object.entries(LOADERS)) {
+  BY_SLUG.set(keyToSlug(key), loader);
 }
 
-const PAGES = new Map<string, DocPage>();
-for (const [key, mod] of Object.entries(MODULES)) {
-  const slug = keyToSlug(key);
-  PAGES.set(slug, {
-    slug,
-    Component: mod.default,
-    frontmatter: mod.frontmatter ?? {},
-  });
-}
-
-/** Resolve a URL path (e.g. `/node/workflows/saga`) to its rendered MDX page. */
-export function getDocPage(path: string): DocPage | undefined {
-  return PAGES.get(path.replace(/\/$/, "") || "/");
+/** The dynamic import for a doc page's compiled component, or undefined if unknown. */
+export function getDocLoader(
+  path: string,
+): (() => Promise<MdxModule>) | undefined {
+  return BY_SLUG.get(path.replace(/\/$/, "") || "/");
 }
 
 export function allDocSlugs(): string[] {
-  return [...PAGES.keys()];
+  return [...BY_SLUG.keys()];
 }

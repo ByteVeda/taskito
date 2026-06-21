@@ -1,4 +1,4 @@
-import { getDocPage } from "./content";
+import { docTitle, hasDoc } from "./manifest";
 
 interface Meta {
   title?: string;
@@ -31,7 +31,7 @@ function humanize(name: string): string {
 
 function titleFor(slug: string, fallback: string): string {
   return (
-    getDocPage(slug)?.frontmatter.title ??
+    docTitle(slug) ??
     metaFor(slug.replace(/^\//, "")).title ??
     humanize(fallback)
   );
@@ -59,7 +59,7 @@ function nodesForDir(dir: string): NavNode[] {
       const indexSlug = `/${childDir}`;
       nodes.push({
         title: childMeta.title ?? humanize(name),
-        href: getDocPage(indexSlug) ? indexSlug : undefined,
+        href: hasDoc(indexSlug) ? indexSlug : undefined,
         children: nodesForDir(childDir),
       });
     } else {
@@ -76,7 +76,7 @@ function buildTree(sections: string[]): NavNode[] {
     const indexSlug = `/${dir}`;
     return {
       title: metaFor(dir).title ?? humanize(dir),
-      href: getDocPage(indexSlug) ? indexSlug : undefined,
+      href: hasDoc(indexSlug) ? indexSlug : undefined,
       children: nodesForDir(dir),
     };
   });

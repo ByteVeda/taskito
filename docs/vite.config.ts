@@ -10,6 +10,7 @@ import remarkGfm from "remark-gfm";
 import remarkMdxFrontmatter from "remark-mdx-frontmatter";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import { docsManifest } from "./vite-plugin-docs-manifest";
 
 // Deploy under /taskito on GitHub Pages; serve from root locally.
 const base = process.env.DOCS_BASE_PATH
@@ -32,6 +33,7 @@ export default defineConfig({
   },
   plugins: [
     tailwindcss(),
+    docsManifest(),
     // MDX must transform `.mdx` before React Router's plugin processes routes.
     {
       enforce: "pre",

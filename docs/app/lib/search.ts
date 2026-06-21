@@ -1,5 +1,5 @@
 import MiniSearch from "minisearch";
-import { allDocSlugs, getDocPage } from "./content";
+import { DOC_METAS } from "./manifest";
 
 export interface SearchDoc {
   id: string; // slug
@@ -19,18 +19,14 @@ function humanizeSlug(slug: string): string {
   return slug.split("/").filter(Boolean).join(" ").replace(/-/g, " ");
 }
 
-// Index built from each page's frontmatter (title + description) plus its slug
-// words. Curated and reliable — derived from the same compiled-module glob the
-// router uses, so it never drifts from the rendered pages.
-export const SEARCH_DOCS: SearchDoc[] = allDocSlugs().map((slug) => {
-  const fm = getDocPage(slug)?.frontmatter ?? {};
-  return {
-    id: slug,
-    title: fm.title || slug,
-    section: sectionOf(slug),
-    text: `${fm.description ?? ""} ${humanizeSlug(slug)}`.trim(),
-  };
-});
+// Index built from the build-time manifest (title + description + slug words).
+// No compiled MDX pulled in — keeps the search chunk tiny.
+export const SEARCH_DOCS: SearchDoc[] = DOC_METAS.map((d) => ({
+  id: d.slug,
+  title: d.title,
+  section: sectionOf(d.slug),
+  text: `${d.description} ${humanizeSlug(d.slug)}`.trim(),
+}));
 
 let index: MiniSearch<SearchDoc> | null = null;
 
