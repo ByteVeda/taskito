@@ -177,6 +177,16 @@ jobs:
       - name: Update npm (trusted publishing + provenance)
         run: npm install -g npm@latest
 
+      # First publish only: npm has no OIDC path for a not-yet-existing package
+      # (the trusted-publisher config can't be added until the package exists), so
+      # authenticate this initial release with a token. Once trusted publishing is
+      # configured on every package, delete this step + the NPM_TOKEN secret and
+      # publishing falls back to OIDC-only (provenance still works either way).
+      - name: Configure npm auth (first publish — pre-OIDC)
+        run: npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Build dashboard SPA
         uses: ./.github/actions/dashboard-build
         with:
