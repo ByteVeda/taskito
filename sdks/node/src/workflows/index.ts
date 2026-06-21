@@ -1,3 +1,10 @@
+export {
+  type GraphEdge,
+  type GraphNode,
+  WorkflowAnalysis,
+  type WorkflowGraph,
+  type WorkflowStats,
+} from "./analysis";
 export { WorkflowBuilder } from "./builder";
 export { WorkflowManager } from "./manager";
 export { WorkflowTracker } from "./tracker";

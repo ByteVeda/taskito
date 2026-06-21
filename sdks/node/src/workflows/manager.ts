@@ -1,6 +1,7 @@
 import { WorkflowError } from "../errors";
 import type { NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
+import { WorkflowAnalysis, type WorkflowGraph } from "./analysis";
 import { WorkflowBuilder } from "./builder";
 import { WorkflowTracker } from "./tracker";
 import type {
@@ -68,6 +69,28 @@ export class WorkflowManager {
   /** The serialized DAG (graph JSON) for a run, or `undefined` if unknown. */
   dag(runId: string): string | undefined {
     return this.native.getWorkflowDag(runId) ?? undefined;
+  }
+
+  /**
+   * Structural + status analysis of a run (ancestors, descendants, topological
+   * levels, critical path, stats). Returns `undefined` if the run is unknown or
+   * its DAG can't be parsed.
+   */
+  analyze(runId: string): WorkflowAnalysis | undefined {
+    const dagJson = this.dag(runId);
+    if (dagJson === undefined) {
+      return undefined;
+    }
+    let graph: WorkflowGraph;
+    try {
+      graph = JSON.parse(dagJson) as WorkflowGraph;
+    } catch {
+      return undefined;
+    }
+    if (!Array.isArray(graph?.nodes) || !Array.isArray(graph?.edges)) {
+      return undefined;
+    }
+    return new WorkflowAnalysis(graph, this.nodes(runId));
   }
 
   /** Sub-workflow runs spawned by a run (empty for Node-submitted runs). */

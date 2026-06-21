@@ -68,14 +68,18 @@ export type { Delivery, Webhook, WebhookInput } from "./webhooks";
 export { WebhookManager, WebhookValidationError } from "./webhooks";
 export { Worker } from "./worker";
 export type {
+  GraphEdge,
+  GraphNode,
   WorkflowAdvance,
+  WorkflowGraph,
   WorkflowHandle,
   WorkflowNode,
   WorkflowRun,
   WorkflowRunState,
   WorkflowSpec,
+  WorkflowStats,
   WorkflowStepOptions,
   WorkflowSubmitOptions,
   WorkflowWaitOptions,
 } from "./workflows";
-export { WorkflowBuilder, WorkflowManager } from "./workflows";
+export { WorkflowAnalysis, WorkflowBuilder, WorkflowManager } from "./workflows";
