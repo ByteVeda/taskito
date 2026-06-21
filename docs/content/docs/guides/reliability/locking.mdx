@@ -26,6 +26,16 @@ with queue.lock("cache-refresh"):
 The lock is automatically released when the `with` block exits, even if an
 exception is raised.
 
+<Seq
+  heads={["Worker", "Database"]}
+  rows={[
+    { left: "queue.lock('cache-refresh') — acquire" },
+    { right: "granted (ttl=30s, owner-scoped)", rev: true },
+    { self: "auto-extends while held (auto_extend=True)" },
+    { left: "with-block exits → release" },
+  ]}
+/>
+
 ### Parameters
 
 ```python

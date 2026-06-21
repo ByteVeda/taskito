@@ -6,6 +6,16 @@ description: "Deliver job events to HTTP endpoints — signed, retried, persiste
 Deliver job events to HTTP endpoints. Deliveries are HMAC-SHA256 signed, retried
 with backoff, and persisted across restarts.
 
+<Seq
+  heads={["Worker", "Endpoint"]}
+  rows={[
+    { self: "job event fires (e.g. job.dead)" },
+    { left: "POST + X-Taskito-Signature: sha256=…" },
+    { right: "2xx → delivered", rev: true },
+    { self: "non-2xx → retry with backoff (persisted)" },
+  ]}
+/>
+
 ```ts
 const hook = queue.webhooks.create({
   url: "https://hooks.example.com/jobs",

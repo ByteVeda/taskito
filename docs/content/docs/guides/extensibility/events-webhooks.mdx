@@ -17,6 +17,16 @@ taskito has two complementary primitives for reacting to job lifecycle:
 
 This guide covers both, starting with the events that drive them.
 
+<Seq
+  heads={["Worker", "Endpoint"]}
+  rows={[
+    { self: "lifecycle event fires (e.g. JOB_DEAD)" },
+    { left: "HMAC-signed HTTP POST" },
+    { right: "2xx → logged delivered", rev: true },
+    { self: "failure → retry; persistent log + one-click replay" },
+  ]}
+/>
+
 ## Event types
 
 The `EventType` enum defines all available lifecycle events:

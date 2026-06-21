@@ -7,6 +7,16 @@ The Node SDK is a typed shell; the scheduler, dispatcher, worker pool, and
 storage are all the same Rust engine the Python SDK uses. Four concepts cover
 the surface.
 
+<Seq
+  heads={["Producer", "Worker"]}
+  rows={[
+    { left: "enqueue('add', [2, 3]) → job id" },
+    { self: "stored: pending → claimed → running" },
+    { right: "result written to store", rev: true },
+    { left: "await result(id) → 5" },
+  ]}
+/>
+
 ## Queue
 
 A `Queue` is the handle to one store (SQLite file, Postgres schema, or Redis

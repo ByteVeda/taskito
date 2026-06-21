@@ -22,6 +22,16 @@ queue.requestCancel(jobId); // aborts the running task's signal
 aborts the signal so signal-aware work (fetch, streams) unwinds. A task that
 ignores the signal runs to completion.
 
+<Seq
+  heads={["Caller", "Worker"]}
+  rows={[
+    { left: "requestCancel(jobId)" },
+    { self: "worker flips cancel flag, aborts AbortSignal" },
+    { self: "signal-aware work (fetch / stream) unwinds" },
+    { right: "job → cancelled", rev: true },
+  ]}
+/>
+
 ## Cancel a pending job
 
 ```ts
