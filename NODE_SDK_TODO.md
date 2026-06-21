@@ -35,6 +35,7 @@ SDK, zero Python dependency, over the shared Rust core.
 | **Workflows: fan-out / fan-in** | (this branch) | TS `WorkflowTracker` brain (`src/workflows/tracker.ts`) driven by the outcome callback; `.fanOut()` / `.fanIn()` builder steps; napi primitives `expandFanOut`/`checkFanOutCompletion`/`createDeferredJob`/`finalizeRunIfTerminal`/`getWorkflowRunPlan`/`workflowNodeForJob`/`cascadeSkipPending`; deferred-node submit. Storage-reconstructable (no submit-time registration) |
 | **Dashboard DAG completeness** | (this branch) | `JsWorkflowNode` carries `fanOutCount` + `compensation_*`; `/dag` handler enriches the raw graph with per-node `deps[]` + live `status` + job-id `id` so the SPA visualizer renders edges/colours/links |
 | **Contrib integrations** | (this branch) | `src/contrib/{otel,prometheus,express,fastify,nest,sentry}.ts` — each an optional subpath export (`taskito/contrib/*`) with an optional peer dep. OTel + Prometheus + Sentry = `Middleware` over the events layer; Express/Fastify = REST router (shared `rest.ts` table) + dashboard mount (via extracted `createDashboardHandler`); Nest = `TaskitoModule.forRoot` + injectable `TaskitoService`. 17 new vitest tests |
+| **Prebuilt binaries + npm publish** | (this branch) | `publish-node.yml` — 7-target native-runner matrix (linux gnu+musl x64/arm64, macOS x64/arm64, win-x64), full features, unscoped `taskito-<triple>` packages, OIDC + provenance, optionalDeps injected at publish. CI refactored onto `setup-rust`/`setup-node`/`setup-python` composites + `node-test` job + napi/pyo3 binding-free tripwire |
 | **Workflows: conditions / gates / sub-workflows / saga** | (this branch) | `WorkflowTracker` drives all deferred kinds. Conditions (`on_success`/`on_failure`/`always`), approval gates (`.gate`, `resolveGate`/`approveGate`/`rejectGate`, timeouts), nested sub-workflows (`.subWorkflow`, parent linkage + storage-driven child→parent resolve), saga compensation (`.step({compensate})`, reverse-dependency storage-driven rollback). `StepMetadata` + napi (`skip`/gate/sub-workflow/saga) extended. 12 new tests |
 
 **Verify everything green:**
@@ -119,18 +120,22 @@ shape the SPA visualizer actually consumes — per-node `deps[]` (from edges), l
 links — so the DAG tab renders real edges, colours, and links. `/runs/:id/children`
 stays `[]` until sub-workflows exist (#3).
 
-### 5. Prebuilt platform matrix + npm publish — MEDIUM (infra)
+### 5. Prebuilt platform matrix + npm publish — DONE
 
-Today `build:native` is **host-only** (builds for the current platform). For npm:
+`.github/workflows/publish-node.yml` builds the addon on **native runners** (no
+cross-compile — mirrors the Python wheel matrix) across 7 targets — linux x64/arm64
+(gnu + musl, via the napi-rs debian/alpine images), macOS x64/arm64, win-x64-msvc —
+keeping the **full feature set** (`postgres,redis,mesh,workflows`). It assembles the
+unscoped `taskito-<triple>` packages (`napi create-npm-dir` + `artifacts`), injects
+`optionalDependencies` into the main package at publish time (they can't be committed
+— they break `--frozen-lockfile`), and publishes via **OIDC trusted publishing +
+provenance** (tag `node-v*` or `workflow_dispatch`, dry-run-gated). `package.json`
+carries `napi.triples` + `publishConfig`. **Unverified until a real CI run** (npmjs.com
+trusted-publisher must be configured first) — same caveat the Python publish.yml carried.
 
-- Build prebuilt `.node` binaries per platform/arch (linux x64/arm64, macOS
-  x64/arm64, win x64) via `@napi-rs/cli` + CI matrix (GitHub Actions).
-- napi-rs `optionalDependencies` per-platform package pattern, OR bundle prebuilds.
-- npm publish workflow (mirror the Python `publish.yml`; OIDC / token).
-- Decide package name + scope.
-
-**Where:** `.github/workflows/`, `sdks/node/package.json` (`napi` config, `files`,
-`optionalDependencies`). **Effort:** medium, mostly CI plumbing.
+The CI was also refactored to a modular polyglot shape: `setup-rust`/`setup-node`/
+`setup-python` composite actions + a `node-test` job + a binding-free (pyo3 **and** napi)
+tripwire. See the Done table.
 
 ### 6. Python⇄Node interop — OPTIONAL (deferred)
 
