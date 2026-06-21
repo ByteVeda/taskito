@@ -10,6 +10,6 @@ export default {
   ssr: false,
   basename,
   async prerender() {
-    return ["/", ...allDocPaths()];
+    return ["/", "/llms.txt", "/llms-full.txt", ...allDocPaths()];
   },
 } satisfies Config;
