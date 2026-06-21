@@ -1,4 +1,4 @@
-name: Publish Node SDK to npm
+name: Publish to npm
 
 # Builds the napi addon as prebuilt per-platform `.node` binaries on native
 # runners (no cross-compilation — the same approach the Python publish.yml uses
