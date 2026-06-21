@@ -14,11 +14,10 @@ import type { Route } from "./+types/home";
 
 export function meta(_: Route.MetaArgs) {
   return [
-    { title: "Taskito — one queue, Python and Node" },
+    { title: "Taskito — one queue, built for Python" },
     {
       name: "description",
-      content:
-        "Rust-powered task queue for Python and Node.js. No broker required.",
+      content: "Rust-powered task queue for Python. No broker required.",
     },
   ];
 }
