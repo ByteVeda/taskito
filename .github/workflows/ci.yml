@@ -127,9 +127,8 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Run Rust test suite
-        run: cargo test --workspace
-        env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+        # $pythonLocation is exported to the job env by setup-python at runtime.
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace
 
       - name: Check build with native-async features
         run: cargo check --workspace --features native-async
@@ -169,9 +168,8 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Run Rust test suite (PostgreSQL backend)
-        run: cargo test --workspace --features postgres,workflows
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features postgres,workflows
         env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
 
   rust-test-redis:
@@ -202,9 +200,8 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Run Rust test suite (Redis backend)
-        run: cargo test --workspace --features redis,workflows
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features redis,workflows
         env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
           TASKITO_REDIS_TEST_URL: redis://localhost:6379/15
 
   rust-test-mesh:
@@ -225,9 +222,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Run mesh crate tests
-        run: cargo test -p taskito-mesh
-        env:
-          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test -p taskito-mesh
 
   node-test:
     name: Node SDK Tests
