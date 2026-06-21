@@ -38,6 +38,7 @@ export {
   type ResourceStat,
   useResource,
 } from "./resources";
+export { type ScalerOptions, serveScaler } from "./scaler";
 export {
   EncryptedSerializer,
   JsonSerializer,
