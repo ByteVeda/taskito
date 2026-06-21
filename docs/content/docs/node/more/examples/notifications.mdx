@@ -1,0 +1,125 @@
+---
+title: Notification service
+description: "Delayed sends, idempotent enqueues, priority lanes, periodic digests, and batch fan-out for a notification system."
+---
+
+A notification service is a natural fit for a queue: every send is independent,
+some are scheduled for later, duplicates must be suppressed, and urgent alerts
+should jump the line. This example wires those requirements onto the Node SDK.
+
+## Project structure
+
+```
+notifications/
+  tasks.ts     # one task per channel + a periodic digest
+  service.ts   # the producer API the rest of the app calls
+  worker.ts    # the worker process
+```
+
+## tasks.ts
+
+Each channel is its own task so they retry, rate-limit, and scale independently.
+
+```ts
+import { Queue } from "taskito";
+
+export const queue = new Queue({ dbPath: "notifications.db" });
+
+queue.task("sendEmail", async (to: string, subject: string, body: string) => {
+  await emailProvider.send(to, subject, body);
+}, { maxRetries: 5, retryBackoff: { baseMs: 2_000, maxMs: 300_000 } });
+
+queue.task("sendSms", async (to: string, text: string) => {
+  await smsProvider.send(to, text);
+}, { maxRetries: 3, rateLimit: "100/m" });
+
+queue.task("sendDigest", async () => {
+  const due = await pendingDigests();
+  queue.enqueueMany("sendEmail", due.map((d) => ({
+    args: [d.email, "Your daily digest", d.html],
+  })));
+});
+```
+
+## service.ts
+
+The producer-facing helpers map application events onto enqueue options.
+
+```ts
+import { queue } from "./tasks";
+
+// 1. Delayed scheduling — remind 24h from now.
+export function scheduleReminder(email: string) {
+  return queue.enqueue("sendEmail", [email, "Reminder", "..."], {
+    delayMs: 24 * 60 * 60 * 1000,
+  });
+}
+
+// 2. Idempotency — a duplicate enqueue with the same key is a no-op while the
+//    first is still pending or running.
+export function sendWelcomeOnce(userId: string, email: string) {
+  return queue.enqueue("sendEmail", [email, "Welcome", "..."], {
+    uniqueKey: `welcome:${userId}`,
+  });
+}
+
+// 3. Priority — security alerts preempt routine mail.
+export function sendSecurityAlert(phone: string, text: string) {
+  return queue.enqueue("sendSms", [phone, text], { priority: 100 });
+}
+
+// 4. Cancellation — pull a not-yet-started send.
+export function cancelScheduled(jobId: string) {
+  return queue.cancelJob(jobId); // false if it already started
+}
+
+// 5. Inspection — what's still pending?
+export function pendingSends() {
+  return queue.listJobs({ status: "pending", task: "sendEmail", limit: 50 });
+}
+```
+
+## worker.ts
+
+The worker runs the channels and registers the periodic digest at `08:00` UTC.
+
+```ts
+import { queue } from "./tasks";
+
+queue.registerPeriodic("daily-digest", "sendDigest", "0 8 * * *", {
+  timezone: "America/New_York",
+});
+
+const worker = queue.runWorker({ queues: ["default"] });
+process.on("SIGINT", () => {
+  worker.stop();
+  process.exit(0);
+});
+```
+
+## Running it
+
+<Tabs items={["Terminal 1 — Worker", "Terminal 2 — Producer"]}>
+  <Tab value="Terminal 1 — Worker">
+    ```bash
+    node worker.ts
+    ```
+  </Tab>
+  <Tab value="Terminal 2 — Producer">
+    ```bash
+    node -e "import('./service.ts').then(s => s.sendSecurityAlert('+1...', 'Login from a new device'))"
+    ```
+  </Tab>
+</Tabs>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Delayed / scheduled send | `enqueue(..., { delayMs })` |
+| Idempotent send | `enqueue(..., { uniqueKey })` |
+| Priority lane | `enqueue(..., { priority })` |
+| Cancel a pending job | `queue.cancelJob` |
+| Recurring digest | `queue.registerPeriodic` (cron) |
+| Batch fan-out | `queue.enqueueMany` |
+| Pending-work inspection | `queue.listJobs` |

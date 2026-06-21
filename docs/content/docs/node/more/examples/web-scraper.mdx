@@ -1,0 +1,141 @@
+---
+title: Web scraper pipeline
+description: "A polite, rate-limited scraper: retries, named queues, middleware logging, and a fan-in workflow that aggregates results."
+---
+
+Scraping is bursty, failure-prone, and must respect the target's limits. This
+example fetches a set of pages under a strict rate limit, retries transient
+failures with backoff, isolates network work on its own queue, and joins the
+results with a workflow.
+
+## Project structure
+
+```
+scraper/
+  tasks.ts     # fetch / extract / store / aggregate, plus logging middleware
+  run.ts       # submit a chord: fetch-all → aggregate
+  worker.ts    # worker + periodic cleanup
+```
+
+## tasks.ts
+
+`fetchPage` is rate-limited to 30 requests/minute and retries with exponential
+backoff. Network tasks run on a dedicated `network` queue so a backlog there
+never starves CPU-bound extraction.
+
+```ts
+import { Queue } from "taskito";
+
+export const queue = new Queue({ dbPath: "scraper.db" });
+
+queue.task("fetchPage", async (url: string) => {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} for ${url}`);
+  }
+  return res.text();
+}, {
+  rateLimit: "30/m",
+  maxRetries: 4,
+  retryBackoff: { baseMs: 1_000, maxMs: 60_000 },
+});
+
+queue.task("extractLinks", (html: string) => {
+  return [...html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1]);
+});
+
+queue.task("aggregate", (pages: string[][]) => {
+  const all = pages.flat();
+  return { total: all.length, unique: new Set(all).size };
+});
+
+queue.task("cleanupCache", async (olderThanMs: number) => {
+  queue.purgeCompleted(olderThanMs);
+});
+
+// Middleware: one log line per execution and per failure.
+queue.use({
+  before(ctx) {
+    console.log(`→ ${ctx.taskName} ${ctx.jobId}`);
+  },
+  after(ctx) {
+    console.log(`✓ ${ctx.taskName} ${ctx.jobId}`);
+  },
+  onError(ctx, err) {
+    console.warn(`✗ ${ctx.taskName} ${ctx.jobId}: ${String(err)}`);
+  },
+});
+```
+
+## run.ts
+
+A `chord` runs every fetch in parallel, then runs `aggregate` once they all
+finish. The fetches land on the `network` queue; the join runs on the default.
+
+```ts
+import { queue } from "./tasks";
+
+const urls = ["https://a.example", "https://b.example", "https://c.example"];
+
+const run = queue.workflows
+  .define("scrape", 1)
+  .chord(
+    urls.map((url, i) => ({ name: `fetch_${i}`, task: "fetchPage", args: [url], queue: "network" })),
+    { name: "aggregate", task: "aggregate" },
+  )
+  .submit({ queueDefault: "default" });
+
+const final = await run.wait({ timeoutMs: 120_000 });
+console.log(run.runId, final.state);
+```
+
+<Callout type="info">
+  `chord` joins on *completion*, passing the callback its own `args`. To pass the
+  fetched pages into `aggregate` instead, model it as a
+  [fan-out / fan-in](/node/guides/workflows/fan-out) — the fan-in task receives
+  `[childResult, …]`.
+</Callout>
+
+## worker.ts
+
+The worker consumes both queues and sweeps completed jobs hourly.
+
+```ts
+import { queue } from "./tasks";
+
+queue.registerPeriodic("cache-sweep", "cleanupCache", "0 * * * *", {
+  args: [24 * 60 * 60 * 1000],
+});
+
+const worker = queue.runWorker({ queues: ["default", "network"] });
+process.on("SIGINT", () => {
+  worker.stop();
+  process.exit(0);
+});
+```
+
+## Running it
+
+<Tabs items={["Terminal 1 — Worker", "Terminal 2 — Run"]}>
+  <Tab value="Terminal 1 — Worker">
+    ```bash
+    node worker.ts
+    ```
+  </Tab>
+  <Tab value="Terminal 2 — Run">
+    ```bash
+    node run.ts
+    ```
+  </Tab>
+</Tabs>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Politeness via rate limit | `task(..., { rateLimit: "30/m" })` |
+| Transient-failure retries | `retryBackoff` |
+| Workload isolation | `network` queue + `runWorker({ queues })` |
+| Cross-cutting logging | `queue.use({ before, after, onError })` |
+| Parallel-then-join | workflow `chord` |
+| Scheduled maintenance | `registerPeriodic` + `purgeCompleted` |

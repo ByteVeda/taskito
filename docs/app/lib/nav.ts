@@ -98,6 +98,7 @@ export const NODE_SECTIONS = [
   "node/guides",
   "architecture",
   "node/api-reference",
+  "node/more/examples",
   "resources",
 ];
 

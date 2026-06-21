@@ -1,0 +1,103 @@
+---
+title: Bulk emails
+description: "Fan a large recipient list out with enqueueMany, then bound the send rate and concurrency with per-task limits."
+---
+
+Sending to a large list is an enqueue-throughput problem: stage every message as
+its own job in as few round-trips as possible, then let per-task limits pace the
+actual sends so you stay within your provider's quota.
+
+<Callout type="info">
+  The Node SDK has no implicit task-batching (the Python SDK's `batch=` collector
+  is Python-specific). The idiomatic Node approach is **batch enqueue**
+  (`enqueueMany`) plus per-task `maxConcurrent` / `rateLimit` — one job per
+  message, with the worker doing the pacing.
+</Callout>
+
+## tasks.ts
+
+One job per recipient keeps retries and failures isolated — a bad address never
+blocks the rest. The limits cap how fast and how many run at once.
+
+```ts
+import { Queue } from "taskito";
+
+export const queue = new Queue({ dbPath: "bulk-email.db" });
+
+queue.task("sendEmail", async (to: string, subject: string, body: string) => {
+  await provider.send(to, subject, body);
+}, {
+  rateLimit: "600/m",     // stay under the provider's quota
+  maxConcurrent: 20,      // at most 20 in flight at once
+  maxRetries: 5,
+  retryBackoff: { baseMs: 2_000, maxMs: 300_000 },
+});
+```
+
+## send.ts
+
+`enqueueMany` stages a whole chunk in a single storage round-trip. Chunk a very
+large list so each call stays a reasonable size.
+
+```ts
+import { queue } from "./tasks";
+
+function* chunks<T>(items: T[], size: number) {
+  for (let i = 0; i < items.length; i += size) {
+    yield items.slice(i, i + size);
+  }
+}
+
+export function sendCampaign(recipients: string[], subject: string, body: string) {
+  const ids: string[] = [];
+  for (const chunk of chunks(recipients, 1_000)) {
+    ids.push(...queue.enqueueMany("sendEmail", chunk.map((to) => ({
+      args: [to, subject, body],
+    }))));
+  }
+  return ids; // one job id per recipient
+}
+```
+
+<Callout type="warn">
+  `enqueueMany` does not apply `uniqueKey` dedup — the batch path trades
+  idempotency for throughput. If you must not double-send, dedup the recipient
+  list before enqueueing, or use single `enqueue` calls with a `uniqueKey`.
+</Callout>
+
+## Monitoring the send
+
+Watch the backlog drain and catch addresses that exhausted their retries.
+
+```ts
+console.log(queue.statsByQueue("default")); // { pending, running, complete, failed, dead, cancelled }
+
+for (const dead of queue.deadLetters(50)) {
+  console.warn(`gave up on ${dead.taskName}: ${dead.error}`);
+}
+```
+
+## Running it
+
+<Tabs items={["Terminal 1 — Worker", "Terminal 2 — Send"]}>
+  <Tab value="Terminal 1 — Worker">
+    ```bash
+    node worker.ts   # registers sendEmail, runWorker()
+    ```
+  </Tab>
+  <Tab value="Terminal 2 — Send">
+    ```bash
+    node -e "import('./send.ts').then(s => s.sendCampaign(list, 'Launch', '<html>'))"
+    ```
+  </Tab>
+</Tabs>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| One round-trip per chunk | `queue.enqueueMany` |
+| Provider quota | `task(..., { rateLimit })` |
+| Concurrency cap | `task(..., { maxConcurrent })` |
+| Isolated failures | one job per recipient |
+| Drain + failure visibility | `statsByQueue` + `deadLetters` |

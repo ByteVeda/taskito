@@ -1,0 +1,135 @@
+---
+title: ETL data pipeline
+description: "A diamond-shaped extract → transform → load DAG with progress reporting, error inspection, and skip-on-failure cascading."
+---
+
+A classic ETL job: pull rows from a source, run two independent transforms over
+the staged data, then load the merged result. Modeling it as a workflow gives you
+dependency ordering, per-step retries, and a queryable run you can monitor.
+
+<Mermaid
+  chart={`graph LR
+    extract:::source --> clean
+    extract --> enrich
+    clean --> load:::sink
+    enrich --> load
+    classDef source fill:#1f6feb,color:#fff
+    classDef sink fill:#238636,color:#fff`}
+/>
+
+## Project structure
+
+```
+pipeline/
+  pipeline.ts  # the four tasks + the DAG
+  monitor.ts   # analyze + inspect a run
+  worker.ts    # the worker process
+```
+
+## pipeline.ts
+
+Each step coordinates through a staging store (the DB, S3, a temp dir) rather than
+passing results down the graph — the standard ETL shape. `load` runs only after
+both transforms complete. The long transform reports progress as it goes.
+
+```ts
+import { Queue, currentJob } from "taskito";
+
+export const queue = new Queue({ dbPath: "pipeline.db" });
+
+queue.task("extract", async (runId: string) => {
+  const rows = await source.read();
+  await staging.write(runId, "raw", rows);
+}, { maxRetries: 3 });
+
+queue.task("clean", async (runId: string) => {
+  const rows = await staging.read(runId, "raw");
+  const job = currentJob();
+  const out = [];
+  for (let i = 0; i < rows.length; i++) {
+    out.push(normalize(rows[i]));
+    if (i % 1000 === 0) job?.setProgress(Math.round((i / rows.length) * 100));
+  }
+  await staging.write(runId, "clean", out);
+});
+
+queue.task("enrich", async (runId: string) => {
+  const rows = await staging.read(runId, "raw");
+  await staging.write(runId, "enrich", await enrichAll(rows));
+}, { rateLimit: "200/m" }); // enrichment calls a metered API
+
+queue.task("load", async (runId: string) => {
+  const merged = merge(
+    await staging.read(runId, "clean"),
+    await staging.read(runId, "enrich"),
+  );
+  await warehouse.load(merged);
+});
+
+export function runPipeline(runId: string) {
+  return queue.workflows
+    .define("etl", 1)
+    .step("extract", "extract", { args: [runId] })
+    .step("clean", "clean", { args: [runId], after: "extract" })
+    .step("enrich", "enrich", { args: [runId], after: "extract", queue: "io" })
+    .step("load", "load", { args: [runId], after: ["clean", "enrich"], priority: 10 })
+    .submit({ queueDefault: "default", params: { runId } });
+}
+```
+
+## monitor.ts
+
+`analyze` gives you a structural view of the run; `getJobErrors` surfaces the
+failure history of any step's underlying job.
+
+```ts
+import { queue } from "./pipeline";
+
+export function report(runId: string) {
+  const analysis = queue.workflows.analyze(runId);
+  if (!analysis) return;
+
+  console.log("critical path:", analysis.criticalPath().join(" → "));
+  console.log("stats:", analysis.stats());
+
+  // Inspect the failure history of a specific step.
+  const node = analysis.node("enrich");
+  if (node?.jobId) {
+    for (const err of queue.getJobErrors(node.jobId)) {
+      console.log(`enrich attempt ${err.attempt}: ${err.error}`);
+    }
+  }
+}
+```
+
+<Callout type="warn">
+  If a required step fails, its still-pending dependents are skipped and the run
+  ends `completed_with_failures` (or `failed`). Add a `condition: "on_failure"`
+  step after the at-risk node to run cleanup or alerting on that path.
+</Callout>
+
+## Running it
+
+<Tabs items={["Terminal 1 — Worker", "Terminal 2 — Run"]}>
+  <Tab value="Terminal 1 — Worker">
+    ```bash
+    node worker.ts   # runWorker({ queues: ["default", "io"] })
+    ```
+  </Tab>
+  <Tab value="Terminal 2 — Run">
+    ```bash
+    node -e "import('./pipeline.ts').then(p => p.runPipeline(crypto.randomUUID()))"
+    ```
+  </Tab>
+</Tabs>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Diamond dependency DAG | `.step(..., { after })` |
+| Per-step queue / priority | `step` options |
+| Progress reporting | `currentJob().setProgress` |
+| Structural analysis | `workflows.analyze().criticalPath()` |
+| Per-attempt error history | `queue.getJobErrors` |
+| Skip-on-failure cascade | required step failure ⇒ pending dependents skipped |

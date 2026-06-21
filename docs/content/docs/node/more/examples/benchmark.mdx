@@ -1,0 +1,87 @@
+---
+title: Benchmark
+description: "A self-contained throughput script: measure enqueue rate, processing rate, and end-to-end latency on your own hardware."
+---
+
+Numbers depend heavily on your machine, backend, and task body, so the only
+number that matters is the one you measure. This script stages a batch of no-op
+jobs, drains them with a worker, and reports the three rates that bound a queue.
+
+## benchmark.ts
+
+```ts
+import { Queue } from "taskito";
+
+const N = 50_000;
+const queue = new Queue({ dbPath: "bench.db" });
+
+queue.task("noop", (_n: number) => undefined);
+
+// 1. Enqueue throughput — stage N jobs in batches of 1,000.
+const t0 = Date.now();
+for (let i = 0; i < N; i += 1_000) {
+  queue.enqueueMany("noop", Array.from({ length: 1_000 }, (_, k) => ({ args: [i + k] })));
+}
+const enqueueMs = Date.now() - t0;
+
+// 2. Processing throughput — drain the backlog, polling stats until empty.
+const t1 = Date.now();
+const worker = queue.runWorker({ queues: ["default"], batchSize: 64, channelCapacity: 512 });
+while (queue.stats().complete < N) {
+  await new Promise((r) => setTimeout(r, 20));
+}
+const processMs = Date.now() - t1;
+worker.stop();
+
+// 3. End-to-end latency — created → completed across a sample of jobs.
+const sample = queue.listJobs({ status: "complete", limit: 1_000 });
+const latencies = sample
+  .filter((j) => j.completedAt)
+  .map((j) => (j.completedAt as number) - j.createdAt)
+  .sort((a, b) => a - b);
+const p50 = latencies[Math.floor(latencies.length * 0.5)];
+const p99 = latencies[Math.floor(latencies.length * 0.99)];
+
+console.log(`enqueue:  ${Math.round(N / (enqueueMs / 1000))} jobs/s`);
+console.log(`process:  ${Math.round(N / (processMs / 1000))} jobs/s`);
+console.log(`latency:  p50 ${p50}ms  p99 ${p99}ms`);
+```
+
+## Running it
+
+```bash
+node benchmark.ts
+```
+
+Sample output (illustrative — measure your own):
+
+```
+enqueue:  120000 jobs/s
+process:  35000 jobs/s
+latency:  p50 8ms  p99 42ms
+```
+
+## What drives the numbers
+
+| Lever | Effect |
+| --- | --- |
+| `enqueueMany` | one storage round-trip per batch instead of per job |
+| `batchSize` | jobs claimed per scheduler poll — fewer polls under load |
+| `channelCapacity` | in-flight buffer between the scheduler and the worker |
+| Backend | SQLite (WAL) for a single node; Postgres/Redis to scale out workers |
+| Task body | a real handler's I/O usually dominates — benchmark *your* task too |
+
+<Callout type="info">
+  The hot path is the Rust core — enqueue, dequeue, and result handling never
+  touch the JS event loop except to run your handler. Raise `batchSize` and
+  `channelCapacity` together to keep a busy worker saturated.
+</Callout>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Batched staging | `queue.enqueueMany` |
+| Drain to a target | poll `queue.stats().complete` |
+| Worker throughput knobs | `runWorker({ batchSize, channelCapacity })` |
+| Latency percentiles | `listJobs` + `completedAt - createdAt` |

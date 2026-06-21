@@ -1,0 +1,173 @@
+---
+title: Express image service
+description: "A REST API that enqueues image jobs, streams progress to the browser over SSE, and cancels work in flight."
+---
+
+A thin Express front end accepts upload requests, enqueues a Taskito job, and
+hands back a job id immediately. The browser then follows progress over
+server-sent events (SSE) fed by the task's published partial results, and can
+cancel a running job.
+
+## Project structure
+
+```
+image-service/
+  app.ts       # Express app + queue + the processImage task
+  worker.ts    # the worker process
+  client.html  # a browser page that streams progress
+```
+
+## app.ts
+
+The task reports progress with `currentJob()` — `setProgress` for the dashboard,
+`publish` for the live stream — and checks `signal.aborted` between stages so a
+cancel request stops it cleanly.
+
+```ts
+import express from "express";
+import { Queue, currentJob } from "taskito";
+
+const queue = new Queue({ dbPath: "image-service.db" });
+
+queue.task(
+  "processImage",
+  async (url: string, sizes: number[]) => {
+    const job = currentJob();
+    const variants: { size: number; key: string }[] = [];
+
+    for (let i = 0; i < sizes.length; i++) {
+      if (job?.signal.aborted) {
+        throw new Error("cancelled before completion");
+      }
+      const size = sizes[i];
+      await resize(url, size); // your real work here
+      const variant = { size, key: `${url}@${size}.webp` };
+      variants.push(variant);
+
+      job?.setProgress(Math.round(((i + 1) / sizes.length) * 100));
+      job?.publish({ done: i + 1, total: sizes.length, variant });
+    }
+    return variants;
+  },
+  { maxRetries: 2, timeoutMs: 120_000 },
+);
+
+const app = express();
+app.use(express.json());
+
+// Enqueue and return the job id immediately.
+app.post("/images", (req, res) => {
+  const { url, sizes } = req.body as { url: string; sizes: number[] };
+  const id = queue.enqueue("processImage", [url, sizes], { priority: 5 });
+  res.status(202).json({ jobId: id });
+});
+
+// Poll a job's terminal result.
+app.get("/images/:id", (req, res) => {
+  const job = queue.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: "unknown job" });
+    return;
+  }
+  res.json({ status: job.status, progress: job.progress, error: job.error });
+});
+
+// Stream progress to the browser as it is published.
+app.get("/images/:id/stream", async (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  for await (const partial of queue.stream(req.params.id, { timeoutMs: 120_000 })) {
+    res.write(`data: ${JSON.stringify(partial)}\n\n`);
+  }
+  res.write("event: done\ndata: {}\n\n");
+  res.end();
+});
+
+// Cooperatively cancel a running job.
+app.post("/images/:id/cancel", (req, res) => {
+  const requested = queue.requestCancel(req.params.id);
+  res.json({ requested });
+});
+
+app.listen(3000);
+```
+
+<Callout type="info">
+  `queue.stream` polls the job's published partials and stops when the job
+  terminates. The task must call `currentJob().publish(value)` for anything to
+  appear — `setProgress` alone drives the dashboard, not the stream.
+</Callout>
+
+## worker.ts
+
+The worker is a separate process that shares the same database. It registers the
+same task so it knows how to run `processImage`.
+
+```ts
+import { Queue, currentJob } from "taskito";
+
+const queue = new Queue({ dbPath: "image-service.db" });
+
+queue.task("processImage", async (url: string, sizes: number[]) => {
+  // ...identical handler body as app.ts (share it via a module in real code)
+});
+
+const worker = queue.runWorker({ queues: ["default"] });
+process.on("SIGINT", () => {
+  worker.stop();
+  process.exit(0);
+});
+```
+
+## client.html
+
+The browser opens an `EventSource` and renders each partial as it arrives.
+
+```html
+<script>
+  async function run(url) {
+    const res = await fetch("/images", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, sizes: [256, 512, 1024] }),
+    });
+    const { jobId } = await res.json();
+
+    const events = new EventSource(`/images/${jobId}/stream`);
+    events.onmessage = (e) => {
+      const { done, total } = JSON.parse(e.data);
+      console.log(`progress: ${done}/${total}`);
+    };
+    events.addEventListener("done", () => events.close());
+  }
+</script>
+```
+
+## Running it
+
+<Tabs items={["Terminal 1 — API", "Terminal 2 — Worker"]}>
+  <Tab value="Terminal 1 — API">
+    ```bash
+    node app.ts
+    # POST http://localhost:3000/images  { "url": "...", "sizes": [256,512,1024] }
+    ```
+  </Tab>
+  <Tab value="Terminal 2 — Worker">
+    ```bash
+    node worker.ts
+    ```
+  </Tab>
+</Tabs>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Enqueue and return a job id (`202 Accepted`) | `POST /images` |
+| Live progress over SSE | `queue.stream` + `currentJob().publish` |
+| Dashboard progress | `currentJob().setProgress` |
+| Cooperative cancellation | `queue.requestCancel` + `signal.aborted` |
+| Mounting a ready-made REST API | [`taskitoRouter`](/node/guides/integrations/express) |
