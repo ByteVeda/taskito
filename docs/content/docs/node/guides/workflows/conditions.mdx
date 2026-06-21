@@ -33,7 +33,7 @@ console.log(run.state); // "failed" — even if recover ran (see below)
 | Value | When the step runs |
 |---|---|
 | `"on_success"` | All predecessors completed successfully (default) |
-| `"on_failure"` | At least one predecessor dead-lettered |
+| `"on_failure"` | At least one predecessor failed |
 | `"always"` | Regardless of predecessor outcome |
 
 A step whose condition is not met transitions to `skipped`. Skipped steps
