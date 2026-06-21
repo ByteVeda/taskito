@@ -17,6 +17,10 @@
   border-bottom: 1px solid var(--line);
   background: color-mix(in oklch, var(--panel) 60%, #000);
   flex-wrap: wrap;
+  /* Pin controls while a tall demo's viz scrolls beneath them. */
+  position: sticky;
+  top: 0;
+  z-index: 3;
 }
 [data-theme="light"] .dm-stage .demo-bar {
   background: var(--panel2);
@@ -166,6 +170,10 @@
   background: var(--line);
   border-top: 1px solid var(--line);
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  /* Pin stats while a tall demo's viz scrolls above them. */
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
 }
 .dm-stage .stat {
   background: var(--panel);
