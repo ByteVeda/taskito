@@ -71,7 +71,7 @@
     addPath('M148 165 C '+mx+' 165, '+mx+' '+p.y+', '+EX+' '+p.y, 'var(--line2)', true);
     // pool lane chip
     var chip=document.createElementNS(SVGNS,'g');
-    chip.innerHTML='<rect x="300" y="'+(p.y-15)+'" width="120" height="30" rx="9" fill="var(--panel)" stroke="'+p.col.replace('var(--','var(--')+'" opacity="1"/>'+
+    chip.innerHTML='<rect x="300" y="'+(p.y-15)+'" width="120" height="30" rx="9" fill="var(--panel)" stroke="'+p.col+'" opacity="1"/>'+
       '<rect x="300" y="'+(p.y-15)+'" width="120" height="30" rx="9" fill="none" stroke="color-mix(in oklch,'+p.col+' 40%,transparent)"/>'+
       '<circle cx="316" cy="'+p.y+'" r="4" fill="'+p.col+'"/>'+
       '<text x="328" y="'+(p.y+4)+'" font-family="var(--mono)" font-size="11" fill="var(--txt2)">'+p.label+'</text>';
