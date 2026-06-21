@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
-import { highlightPython } from "@/lib/highlight-lite";
+import { highlightPython, highlightTs } from "@/lib/highlight-lite";
 import { HERO_PANES, SOON_PANES, type SoonLang } from "@/lib/landing-content";
 
-type Lang = "py" | "go" | "java";
+type Lang = "py" | "ts" | "go" | "java";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -37,7 +37,11 @@ function SoonBox({ pane }: { pane: SoonLang }) {
 export function Hero() {
   const [lang, setLang] = useState<Lang>("py");
   const pane = HERO_PANES.find((p) => p.id === lang);
-  const codeHtml = pane ? highlightPython(pane.code) : "";
+  const codeHtml = pane
+    ? lang === "ts"
+      ? highlightTs(pane.code)
+      : highlightPython(pane.code)
+    : "";
   const active = pane ?? HERO_PANES[0];
 
   return (
