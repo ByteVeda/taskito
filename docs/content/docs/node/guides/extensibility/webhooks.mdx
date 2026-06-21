@@ -1,0 +1,35 @@
+---
+title: Webhooks
+description: "Deliver job events to HTTP endpoints — signed, retried, persisted."
+---
+
+Deliver job events to HTTP endpoints. Deliveries are HMAC-SHA256 signed, retried
+with backoff, and persisted across restarts.
+
+```ts
+const hook = queue.webhooks.create({
+  url: "https://hooks.example.com/jobs",
+  events: ["job.dead", "job.completed"], // omit for all
+  secret: process.env.WEBHOOK_SECRET,     // signs X-Taskito-Signature: sha256=...
+  taskFilter: ["send_email"],             // optional
+});
+
+queue.webhooks.list();
+queue.webhooks.delete(hook.id);
+```
+
+| Field | Description |
+|---|---|
+| `url` | Endpoint to POST events to. |
+| `events` | Event names to deliver (omit for all). |
+| `secret` | Signs each delivery as `X-Taskito-Signature: sha256=...`. |
+| `taskFilter` | Only deliver for these task names. |
+
+Deliveries fire from the **worker process** (where events originate). Verify the
+signature on your endpoint by HMAC-ing the raw body with the shared secret.
+
+<Callout type="info">
+  The [dashboard](/node/guides/operations/dashboard) exposes `/api/webhooks` for
+  managing hooks. Failed deliveries retry with backoff and survive restarts
+  since they are persisted in storage.
+</Callout>

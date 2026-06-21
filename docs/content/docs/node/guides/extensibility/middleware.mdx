@@ -1,0 +1,39 @@
+---
+title: Middleware
+description: "Wrap task execution with before/after/error and outcome hooks."
+---
+
+Register middleware to wrap execution and react to outcomes. The
+`before`/`after`/`onError` hooks wrap each attempt and are awaited; the outcome
+hooks fire after the core decides the result.
+
+```ts
+queue.use({
+  before: (ctx) => log.info("start", ctx.taskName),
+  after: (ctx, result) => log.info("ok", ctx.taskName),
+  onError: (ctx, err) => log.error("threw", ctx.taskName, err),
+  onRetry: (e) => metrics.inc("retry", e.taskName),
+  onDeadLetter: (e) => alertOps(e),
+});
+```
+
+## Hooks
+
+| Hook | When | Awaited |
+|---|---|---|
+| `before(ctx)` | Before each execution attempt. | yes |
+| `after(ctx, result)` | After a successful attempt. | yes |
+| `onError(ctx, err)` | When an attempt throws (before retry/dead decision). | yes |
+| `onRetry(e)` | After the core schedules a retry. | no |
+| `onDeadLetter(e)` | After a job dead-letters. | no |
+| `onTimeout(e)` | After an attempt times out. | no |
+
+`ctx` carries `taskName`, `jobId`, `queue`, and `retryCount`. Multiple
+middlewares run in registration order; `before` outermost-first, `after`
+in reverse.
+
+<Callout type="info">
+  Middleware wraps execution and can do async work in the hot path — keep it
+  light. The contrib [observability](/node/guides/integrations) integrations are
+  built as middleware.
+</Callout>
