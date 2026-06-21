@@ -13,5 +13,6 @@ export { Mermaid } from "@/components/mermaid";
 export { ArchitectureStack, ResourcePipeline } from "./arch-stack";
 export { CrashRecoveryTimeline } from "./failure-timeline";
 export { JobStateMachine } from "./lifecycle-graph";
+export { MeshDemo } from "./mesh-demo";
 export { SchedulerPollLoop } from "./poll-cycle";
 export { WorkerDispatch } from "./worker-fork";
