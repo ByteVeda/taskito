@@ -18,7 +18,12 @@ export {
   type ResourceScope,
   useResource,
 } from "./resources";
-export { JsonSerializer, MsgpackSerializer, type Serializer } from "./serializers";
+export {
+  JsonSerializer,
+  MsgpackSerializer,
+  type Serializer,
+  SignedSerializer,
+} from "./serializers";
 export type {
   AnyHandler,
   CircuitBreakerOptions,
