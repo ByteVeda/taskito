@@ -3,11 +3,9 @@
    scoped under .dm-stage so the generic class names never collide with the docs
    site. Tokens (--cyan/--grn/--panel2/--mono/…) come from tokens.css. */
 
-/* React demo fills the modal stage (the iframe slot) and scrolls if taller. */
+/* React demo flows in the modal stage; the stage (.dm-stage) is the scroll
+   container and the dialog sizes to this content up to its max-height. */
 .dm-stage .dm-frame-react {
-  position: absolute;
-  inset: 0;
-  overflow: auto;
   background: var(--bg);
 }
 
@@ -19,6 +17,10 @@
   border-bottom: 1px solid var(--line);
   background: color-mix(in oklch, var(--panel) 60%, #000);
   flex-wrap: wrap;
+  /* Pin controls while a tall demo's viz scrolls beneath them. */
+  position: sticky;
+  top: 0;
+  z-index: 3;
 }
 [data-theme="light"] .dm-stage .demo-bar {
   background: var(--panel2);
@@ -168,6 +170,10 @@
   background: var(--line);
   border-top: 1px solid var(--line);
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  /* Pin stats while a tall demo's viz scrolls above them. */
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
 }
 .dm-stage .stat {
   background: var(--panel);

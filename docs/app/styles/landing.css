@@ -199,6 +199,9 @@ main {
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
@@ -1780,7 +1783,10 @@ main {
 .dm-dialog {
   position: relative;
   width: min(1060px, 95vw);
-  height: min(86vh, 880px);
+  /* Fit the demo's natural height, capped so tall demos scroll instead of
+     overflowing the viewport. Avoids the dead space a fixed height left under
+     short demos. */
+  max-height: min(86vh, 880px);
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -1878,7 +1884,8 @@ main {
   flex: 1;
   position: relative;
   background: var(--bg);
-  min-height: 0;
+  min-height: 120px;
+  overflow: auto;
 }
 .dm-loading {
   position: absolute;

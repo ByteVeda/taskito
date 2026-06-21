@@ -67,9 +67,9 @@ const SCENARIOS: Scenario[] = [
         <span class="def">crunch</span>(chunk)
         progress.<span class="def">update</span>((i+<span class="num">1</span>)/total)  <span class="cmt"># ← live %</span>`,
     demo: {
-      id: "scaling",
-      title: "Worker scaling playground",
-      label: "Watch workers drain a queue",
+      id: "progress",
+      title: "Progress streaming — hand off & report live %",
+      label: "Watch the progress stream",
     },
     guide: {
       to: "/python/guides/advanced-execution/streaming",

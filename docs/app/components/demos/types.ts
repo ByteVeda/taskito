@@ -3,6 +3,7 @@ export type DemoId =
   | "ratelimit"
   | "recovery"
   | "scaling"
+  | "progress"
   | "workflow"
   | "mesh"
   | "saga"
