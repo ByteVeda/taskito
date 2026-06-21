@@ -20,5 +20,8 @@ export const DEMO_COMPONENTS: Record<DemoId, LazyDemo> = {
 
 /** The React port for `id`, or `undefined` for an unknown demo id. */
 export function demoComponent(id: string): LazyDemo | undefined {
-  return DEMO_COMPONENTS[id as DemoId];
+  // Own-key check so prototype names (e.g. "__proto__") never resolve.
+  return Object.hasOwn(DEMO_COMPONENTS, id)
+    ? DEMO_COMPONENTS[id as DemoId]
+    : undefined;
 }
