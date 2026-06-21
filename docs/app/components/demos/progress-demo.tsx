@@ -91,7 +91,8 @@ export default function ProgressDemo(_props: DemoProps) {
   useRafLoop(tick, !paused && !reduced && !finished);
 
   const restart = () => {
-    tRef.current = 0;
+    // Under reduced motion the RAF loop never runs, so show the finished frame.
+    tRef.current = reduced ? total : 0;
     lastRef.current = 0;
     setPaused(false);
     repaint();
