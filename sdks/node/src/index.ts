@@ -6,6 +6,7 @@ export {
   LockLostError,
   LockNotAcquiredError,
   NotesValidationError,
+  PredicateRejectedError,
   QueueError,
   ResourceError,
   ResourceNotFoundError,
@@ -19,6 +20,13 @@ export {
 export type { EventHandler, EventName, OutcomeEvent } from "./events";
 export { Lock, type LockInfo, type LockOptions } from "./locks";
 export type { EnqueueContext, Middleware, TaskContext } from "./middleware";
+export {
+  allOf,
+  anyOf,
+  not,
+  type Predicate,
+  type PredicateContext,
+} from "./predicates";
 export { Queue, type QueueOptions } from "./queue";
 export {
   type MockResource,

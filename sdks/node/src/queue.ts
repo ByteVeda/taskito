@@ -3,6 +3,7 @@ import {
   JobFailedError,
   LockLostError,
   LockNotAcquiredError,
+  PredicateRejectedError,
   QueueError,
   ResultTimeoutError,
   TaskitoError,
@@ -17,6 +18,7 @@ import {
   type OpenOptions,
 } from "./native";
 import { encodeNotes } from "./notes";
+import type { Predicate } from "./predicates";
 import {
   type ResourceContext,
   type ResourceMetrics,
@@ -76,6 +78,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly tasks = new Map<string, RegisteredTask>();
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
+  private readonly gates = new Map<string, Predicate[]>();
   private readonly emitter = new Emitter();
   private readonly resources = new ResourceRuntime();
   private readonly webhookManager: WebhookManager;
@@ -211,6 +214,21 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     this.middleware.push(middleware);
   }
 
+  /**
+   * Gate enqueues of `name` with a predicate evaluated at enqueue time (after
+   * `onEnqueue`). If it returns `false`, the enqueue throws
+   * {@link PredicateRejectedError}. Multiple gates on a task all must pass.
+   */
+  gate<Name extends keyof TTasks & string>(
+    name: Name,
+    predicate: (ctx: { taskName: Name; args: Parameters<TTasks[Name]> }) => boolean,
+  ): this {
+    const list = this.gates.get(name) ?? [];
+    list.push(predicate as Predicate);
+    this.gates.set(name, list);
+    return this;
+  }
+
   /** Subscribe to a job lifecycle event. */
   on(event: EventName, handler: EventHandler): void {
     this.emitter.on(event, handler);
@@ -266,6 +284,12 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     const ctx: EnqueueContext = { taskName: name, args: [...(args ?? [])], options: merged };
     for (const mw of this.middleware) {
       mw.onEnqueue?.(ctx);
+    }
+    // Gate: predicates see the (possibly rewritten) args and may reject the enqueue.
+    for (const gate of this.gates.get(name) ?? []) {
+      if (!gate({ taskName: name, args: ctx.args })) {
+        throw new PredicateRejectedError(name);
+      }
     }
     return {
       payload: Buffer.from(this.serializer.serialize(ctx.args)),

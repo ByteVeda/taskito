@@ -125,3 +125,20 @@ export class WorkflowError extends TaskitoError {
     this.name = "WorkflowError";
   }
 }
+
+// ── Predicates ──────────────────────────────────────────────────────────────
+
+/** Thrown when an enqueue-time predicate gate rejects the submission. */
+export class PredicateRejectedError extends TaskitoError {
+  constructor(
+    readonly taskName: string,
+    readonly reason?: string,
+  ) {
+    super(
+      reason
+        ? `predicate rejected enqueue of "${taskName}": ${reason}`
+        : `predicate rejected enqueue of "${taskName}"`,
+    );
+    this.name = "PredicateRejectedError";
+  }
+}
