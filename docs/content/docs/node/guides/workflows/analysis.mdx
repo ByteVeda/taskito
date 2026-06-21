@@ -1,0 +1,48 @@
+---
+title: Analysis
+description: "Introspect a workflow run's DAG — dependencies, levels, critical path, and stats."
+---
+
+`queue.workflows.analyze(runId)` returns a `WorkflowAnalysis` — a read-only view
+over the run's graph (`dag()`) and per-node statuses (`nodes()`). Every method is
+pure graph computation over that snapshot, so it works whether the run is pending,
+in flight, or finished.
+
+```ts
+const a = queue.workflows.analyze(runId);
+if (!a) throw new Error("unknown run");
+```
+
+## Structure
+
+```ts
+a.roots(); // ["extract"]            — nodes with no dependencies
+a.leaves(); // ["load"]             — nodes nothing depends on
+a.ancestors("load"); // upstream    — transitive predecessors
+a.descendants("extract"); // downstream
+a.topologicalOrder(); // a valid execution order (throws on a cycle)
+```
+
+## Levels & critical path
+
+`topologicalLevels()` groups nodes by dependency depth — everything in one level
+can run in parallel. `criticalPath()` returns the longest dependency chain from a
+root to a leaf (the structural lower bound on how many sequential steps the run
+takes).
+
+```ts
+a.topologicalLevels(); // [["extract"], ["transform-a", "transform-b"], ["load"]]
+a.criticalPath(); // ["extract", "transform-a", "load"]
+```
+
+## Status stats
+
+```ts
+a.stats();
+// { total: 4, byStatus: { completed: 3, running: 1 }, completed: 3, failed: 0, running: 1, pending: 0 }
+```
+
+<Callout type="info">
+  Pair `analyze` with [`wait`](/node/api-reference/workflows) to inspect the shape
+  while a run progresses, or after it finishes to find the slowest chain.
+</Callout>

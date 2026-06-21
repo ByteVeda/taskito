@@ -46,6 +46,23 @@ queue.workflows.rejectGate(runId, "review", reason);
 queue.workflows.resolveGate(runId, "review", approved);
 ```
 
+## Analysis
+
+`analyze(runId)` returns a `WorkflowAnalysis` over the run's DAG + node statuses
+(or `undefined` if the run is unknown), for graph introspection:
+
+```ts
+const a = queue.workflows.analyze(runId);
+a?.roots(); // entry nodes
+a?.leaves(); // exit nodes
+a?.ancestors("load"); // transitive upstream deps
+a?.descendants("extract"); // transitive downstream
+a?.topologicalOrder(); // a valid run order (throws on a cycle)
+a?.topologicalLevels(); // nodes grouped by dependency depth
+a?.criticalPath(); // longest dependency chain (root → leaf)
+a?.stats(); // { total, byStatus, completed, failed, running, pending }
+```
+
 See the [Workflows guides](/node/guides/workflows) for fan-out, conditions,
 gates, sub-workflows, and saga compensation. Requires the addon built with the
 `workflows` cargo feature.
