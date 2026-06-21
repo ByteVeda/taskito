@@ -68,6 +68,7 @@ export function DemoModal({
   const [shown, setShown] = useState(false);
   const [loading, setLoading] = useState(true);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -86,11 +87,32 @@ export function DemoModal({
     return () => clearTimeout(timer);
   }, [demo]);
 
-  // While a demo is mounted: lock scroll and close on Escape.
+  // While a demo is mounted: lock scroll, close on Escape, and trap Tab focus
+  // inside the dialog so keyboard users can't reach background content.
   useEffect(() => {
     if (!current) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = dialog.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])',
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -130,6 +152,7 @@ export function DemoModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="dm-title"
+        ref={dialogRef}
       >
         <div className="dm-bar">
           <span className="dm-mark">{PLAY_ICON}</span>
