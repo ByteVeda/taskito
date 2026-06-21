@@ -79,7 +79,7 @@ impl JsQueue {
                 let opts = job.options.unwrap_or_default();
                 build_new_job(task_name.clone(), job.payload.to_vec(), opts, namespace)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let created = self.storage.enqueue_batch(new_jobs).map_err(to_napi_err)?;
         Ok(created.into_iter().map(|job| job.id).collect())
     }
