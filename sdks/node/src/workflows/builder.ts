@@ -1,3 +1,4 @@
+import { WorkflowError } from "../errors";
 import { successorsOf, transitiveDeferred } from "./plan";
 import type {
   FanInStepOptions,
@@ -138,7 +139,7 @@ export class WorkflowBuilder {
   build(): WorkflowSpec {
     for (const edge of this.edges) {
       if (!this.seen.has(edge.from)) {
-        throw new Error(`step '${edge.to}' depends on unknown step '${edge.from}'`);
+        throw new WorkflowError(`step '${edge.to}' depends on unknown step '${edge.from}'`);
       }
     }
     // A fan-in node is only ever enqueued by its fan-out's completion, so its
@@ -175,7 +176,7 @@ export class WorkflowBuilder {
   /** Register a node + its incoming edges, rejecting duplicate names. */
   private addNode(name: string, after: string | string[] | undefined): void {
     if (this.seen.has(name)) {
-      throw new Error(`duplicate workflow step '${name}'`);
+      throw new WorkflowError(`duplicate workflow step '${name}'`);
     }
     this.seen.add(name);
     this.nodes.push(name);

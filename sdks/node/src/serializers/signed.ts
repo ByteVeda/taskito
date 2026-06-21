@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { TaskitoError } from "../errors";
+import { SerializationError } from "../errors";
 import { JsonSerializer } from "./json";
 import type { Serializer } from "./serializer";
 
@@ -22,7 +22,7 @@ export class SignedSerializer implements Serializer {
 
   constructor(secret: string, inner: Serializer = new JsonSerializer()) {
     if (!secret) {
-      throw new TaskitoError("SignedSerializer requires a non-empty secret");
+      throw new SerializationError("SignedSerializer requires a non-empty secret");
     }
     this.secret = secret;
     this.inner = inner;
@@ -37,12 +37,14 @@ export class SignedSerializer implements Serializer {
   deserialize(bytes: Uint8Array): unknown {
     const buf = Buffer.from(bytes);
     if (buf.length < TAG_BYTES) {
-      throw new TaskitoError("SignedSerializer: payload too short to be signed");
+      throw new SerializationError("SignedSerializer: payload too short to be signed");
     }
     const tag = buf.subarray(0, TAG_BYTES);
     const body = buf.subarray(TAG_BYTES);
     if (!timingSafeEqual(tag, this.tagFor(body))) {
-      throw new TaskitoError("SignedSerializer: signature mismatch (tampered or wrong secret)");
+      throw new SerializationError(
+        "SignedSerializer: signature mismatch (tampered or wrong secret)",
+      );
     }
     return this.inner.deserialize(body);
   }

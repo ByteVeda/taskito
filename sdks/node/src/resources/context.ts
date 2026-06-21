@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TaskitoError } from "../errors";
+import { ResourceError } from "../errors";
 import type { ResourceResolver } from "./types";
 
 const store = new AsyncLocalStorage<ResourceResolver>();
@@ -12,7 +12,7 @@ const store = new AsyncLocalStorage<ResourceResolver>();
 export function useResource<T>(name: string): Promise<T> {
   const resolver = store.getStore();
   if (!resolver) {
-    throw new TaskitoError(
+    throw new ResourceError(
       `useResource("${name}") called outside a task — only available while a handler runs`,
     );
   }

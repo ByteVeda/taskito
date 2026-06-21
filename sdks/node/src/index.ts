@@ -5,8 +5,16 @@ export {
   JobFailedError,
   LockLostError,
   LockNotAcquiredError,
+  NotesValidationError,
+  QueueError,
+  ResourceError,
+  ResourceNotFoundError,
+  ResourceScopeError,
+  ResultTimeoutError,
+  SerializationError,
   TaskitoError,
   TaskNotRegisteredError,
+  WorkflowError,
 } from "./errors";
 export type { EventHandler, EventName, OutcomeEvent } from "./events";
 export { Lock, type LockInfo, type LockOptions } from "./locks";

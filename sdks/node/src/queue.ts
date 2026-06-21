@@ -3,6 +3,8 @@ import {
   JobFailedError,
   LockLostError,
   LockNotAcquiredError,
+  QueueError,
+  ResultTimeoutError,
   TaskitoError,
 } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
@@ -314,7 +316,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
-    throw new TaskitoError(`timed out waiting for job ${id}`);
+    throw new ResultTimeoutError(id, timeoutMs);
   }
 
   /** Job counts by status across all queues. */
@@ -419,7 +421,7 @@ function toNativeEnqueueOptions(options: EnqueueOptions): NativeEnqueueOptions {
 function toOpenOptions(options: QueueOptions): OpenOptions {
   const dsn = options.dsn ?? options.dbPath;
   if (!dsn) {
-    throw new TaskitoError("Queue requires `dbPath` (SQLite) or `dsn`");
+    throw new QueueError("Queue requires `dbPath` (SQLite) or `dsn`");
   }
   return {
     backend: options.backend ?? (options.dbPath ? "sqlite" : undefined),

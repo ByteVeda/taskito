@@ -1,4 +1,4 @@
-import { TaskitoError } from "./errors";
+import { NotesValidationError } from "./errors";
 
 /** Max top-level fields in a notes object (matches the storage contract). */
 const MAX_FIELDS = 15;
@@ -13,12 +13,12 @@ const MAX_BYTES = 4096;
 export function encodeNotes(notes: Record<string, unknown>): string {
   const fields = Object.keys(notes).length;
   if (fields > MAX_FIELDS) {
-    throw new TaskitoError(`notes: at most ${MAX_FIELDS} top-level fields (got ${fields})`);
+    throw new NotesValidationError(`notes: at most ${MAX_FIELDS} top-level fields (got ${fields})`);
   }
   const encoded = JSON.stringify(notes);
   const bytes = Buffer.byteLength(encoded, "utf8");
   if (bytes > MAX_BYTES) {
-    throw new TaskitoError(`notes: encoded size ${bytes} exceeds ${MAX_BYTES} bytes`);
+    throw new NotesValidationError(`notes: encoded size ${bytes} exceeds ${MAX_BYTES} bytes`);
   }
   return encoded;
 }

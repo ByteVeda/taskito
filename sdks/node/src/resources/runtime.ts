@@ -1,4 +1,4 @@
-import { TaskitoError } from "../errors";
+import { ResourceNotFoundError, ResourceScopeError } from "../errors";
 import type { ResourceContext, ResourceDefinition, ResourceResolver } from "./types";
 
 /** A disposal thunk plus the resource name, for error context. */
@@ -51,11 +51,7 @@ export class ResourceRuntime {
       return Promise.reject(unregistered(name));
     }
     if (def.scope !== "worker") {
-      return Promise.reject(
-        new TaskitoError(
-          `Resource "${name}" is task-scoped and cannot be resolved at worker scope`,
-        ),
-      );
+      return Promise.reject(new ResourceScopeError(name));
     }
     const ctx: ResourceContext = {
       scope: "worker",
@@ -129,8 +125,8 @@ function startFactory(def: ResourceDefinition, ctx: ResourceContext): Promise<un
   return new Promise((resolve) => resolve(def.factory(ctx)));
 }
 
-function unregistered(name: string): TaskitoError {
-  return new TaskitoError(`No resource registered with name "${name}"`);
+function unregistered(name: string): ResourceNotFoundError {
+  return new ResourceNotFoundError(name);
 }
 
 /** Run disposal thunks in reverse (LIFO) order; surface the first error after all run. */

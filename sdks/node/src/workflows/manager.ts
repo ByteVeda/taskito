@@ -1,3 +1,4 @@
+import { WorkflowError } from "../errors";
 import type { NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
 import { WorkflowBuilder } from "./builder";
@@ -40,7 +41,7 @@ export class WorkflowManager {
     private readonly serializer: Serializer,
   ) {
     if (typeof this.native.submitWorkflow !== "function") {
-      throw new Error("the native addon was built without the 'workflows' feature");
+      throw new WorkflowError("the native addon was built without the 'workflows' feature");
     }
   }
 
@@ -147,7 +148,7 @@ export class WorkflowManager {
     for (const name of spec.nodes) {
       const base = spec.stepMetadata[name];
       if (!base) {
-        throw new Error(`workflow step '${name}' is missing metadata`);
+        throw new WorkflowError(`workflow step '${name}' is missing metadata`);
       }
       const b64 = Buffer.from(this.serializer.serialize(spec.stepArgs[name] ?? [])).toString(
         "base64",
@@ -195,13 +196,13 @@ export class WorkflowManager {
     for (;;) {
       const run = this.native.getWorkflowRun(runId);
       if (!run) {
-        throw new Error(`workflow run '${runId}' not found`);
+        throw new WorkflowError(`workflow run '${runId}' not found`);
       }
       if (TERMINAL_STATES.has(run.state)) {
         return run;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`workflow run '${runId}' did not finish within ${timeoutMs}ms`);
+        throw new WorkflowError(`workflow run '${runId}' did not finish within ${timeoutMs}ms`);
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
