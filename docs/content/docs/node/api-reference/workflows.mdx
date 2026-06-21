@@ -14,7 +14,7 @@ queue.workflows
 
 | Method | Description |
 |---|---|
-| `step(name, task, opts?)` | A task node. `opts`: `after`, `args`, `queue`, `maxRetries`, `timeoutMs`, `priority`, `condition`, `compensate`. |
+| `step(name, task, opts?)` | A task node. `opts`: `after`, `args`, `queue`, `maxRetries`, `timeoutMs`, `priority`, `condition`, `compensate`, `cache`. |
 | `fanOut(name, { after, task, itemsFrom })` | Expand into one child per item. |
 | `fanIn(name, { after, task })` | Collect children's results into an array. |
 | `gate(name, { after, timeoutMs?, onTimeout? })` | Pause for [approval](/node/guides/workflows/gates). |
@@ -49,6 +49,7 @@ queue.workflows.children(runId); // spawned sub-workflow runs
 queue.workflows.approveGate(runId, "review");
 queue.workflows.rejectGate(runId, "review", reason);
 queue.workflows.resolveGate(runId, "review", approved);
+queue.workflows.clearCache(); // drop all cached step results
 ```
 
 ## Analysis

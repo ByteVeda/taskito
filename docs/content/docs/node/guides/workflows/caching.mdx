@@ -1,0 +1,50 @@
+---
+title: Caching
+description: "Reuse a workflow step's result across runs — incremental runs with a dirty set."
+---
+
+Mark a step `cache: true` and its result is reused whenever its task, args, and
+upstream results are unchanged. Re-running a workflow then skips the expensive
+work and reuses the prior result.
+
+```ts
+queue.workflows
+  .define("report")
+  .step("fetch", "fetchData")
+  .step("crunch", "crunchNumbers", { after: "fetch", cache: true })
+  .step("render", "renderReport", { after: "crunch" })
+  .submit();
+```
+
+On the second run, if `fetch` produces the same data, `crunch` is a **cache hit**
+and isn't recomputed; `render` still runs.
+
+## The cache key (dirty set)
+
+A cached step is keyed by a content hash of its **task name**, its **args**, and
+each **predecessor's result**. So a change anywhere upstream changes the key and
+re-runs the affected step — only the genuinely-dirty subtree recomputes, the rest
+is reused.
+
+Results are stored in the queue's shared settings store, so a cache survives
+across processes and restarts that share the same storage.
+
+## TTL
+
+Expire a cache entry with `{ ttlMs }`:
+
+```ts
+.step("crunch", "crunchNumbers", { after: "fetch", cache: { ttlMs: 3_600_000 } })
+```
+
+## Clearing
+
+```ts
+queue.workflows.clearCache(); // drop every cached step result → next run recomputes
+```
+
+<Callout type="info">
+  A cacheable step must have at least one predecessor — a cacheable *root* would
+  have nothing to trigger it. Cache hits complete the node with the stored result,
+  so downstream steps and fan-in see it exactly as a fresh run.
+</Callout>
