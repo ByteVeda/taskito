@@ -16,8 +16,10 @@ const queue = new Queue(options);
 | `dbPath` | `string` | SQLite file path (default backend). |
 | `backend` | `"sqlite" \| "postgres" \| "redis"` | Storage backend. |
 | `dsn` | `string` | Connection string for postgres/redis. |
+| `poolSize` | `number` | Connection pool size (sqlite/postgres). |
 | `schema` | `string` | Postgres schema (default `taskito`). |
 | `prefix` | `string` | Redis key prefix. |
+| `namespace` | `string` | Namespace applied to enqueued jobs + the worker scheduler. |
 | `serializer` | `Serializer` | Arg/result serializer (default `JsonSerializer`). |
 
 ## Tasks & enqueue

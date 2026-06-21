@@ -29,6 +29,7 @@ queue.workflows
 | Member | Description |
 |---|---|
 | `runId` | The run's id. |
+| `status()` | The current `WorkflowRun` snapshot, or `undefined`. |
 | `wait()` | Resolves with the `WorkflowRun` when terminal. |
 | `nodes()` | Per-step status (fan-out parents carry `fanOutCount`). |
 
@@ -36,9 +37,13 @@ queue.workflows
 
 ```ts
 queue.workflows.list({ state: "running" });
-queue.workflows.children(runId);             // spawned sub-workflow runs
+queue.workflows.run(runId); // a single run snapshot
+queue.workflows.nodes(runId); // per-step status
+queue.workflows.dag(runId); // the DAG graph (nodes + edges)
+queue.workflows.children(runId); // spawned sub-workflow runs
 queue.workflows.approveGate(runId, "review");
 queue.workflows.rejectGate(runId, "review", reason);
+queue.workflows.resolveGate(runId, "review", approved);
 ```
 
 See the [Workflows guides](/node/guides/workflows) for fan-out, conditions,
