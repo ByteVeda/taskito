@@ -14,6 +14,7 @@ export const DEMO_COMPONENTS: Partial<Record<DemoId, LazyDemo>> = {
   mesh: lazy(() => import("./mesh-demo")),
   ratelimit: lazy(() => import("./ratelimit-demo")),
   recovery: lazy(() => import("./recovery-demo")),
+  scaling: lazy(() => import("./scaling-demo")),
   saga: lazy(() => import("./saga-demo")),
   workflow: lazy(() => import("./workflow-demo")),
   worksteal: lazy(() => import("./worksteal-demo")),
