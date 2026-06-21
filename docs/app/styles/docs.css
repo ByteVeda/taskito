@@ -166,6 +166,46 @@ body {
   gap: 1px;
 }
 
+/* Collapsible nav: caret toggles on groups + subsections, auto-open on active. */
+.nav-caret {
+  flex: none;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.nav-caret:hover {
+  background: var(--panel2);
+  color: var(--txt);
+}
+.nav-caret svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 0.18s ease;
+}
+.nav-caret[data-open] svg {
+  transform: rotate(90deg);
+}
+.nav-sub-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nav-sub-head > .nav-item {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---------- article ---------- */
 .article {
   padding: 40px 56px 96px;
