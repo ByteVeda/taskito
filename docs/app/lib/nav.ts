@@ -92,6 +92,7 @@ export const PYTHON_SECTIONS = [
 export const NODE_SECTIONS = [
   "node/getting-started",
   "node/guides",
+  "architecture",
   "node/api-reference",
 ];
 
