@@ -1,0 +1,38 @@
+---
+title: Distributed locks
+description: "TTL-bounded, owner-scoped locks backed by the queue's storage."
+---
+
+Coordinate across processes without a separate lock server. Locks are
+TTL-bounded and owner-scoped, backed by the queue's storage. A held lock
+auto-extends at `ttlMs / 3`, so a slow critical section never loses it.
+
+## Scoped helper
+
+`withLock` acquires, runs, and releases — throwing if the lock is held
+elsewhere:
+
+```ts
+await queue.withLock("report:2026-06", async () => {
+  await rebuildReport();
+});
+```
+
+## Manual handle
+
+```ts
+using lock = queue.lock("resource", { ttlMs: 30_000 });
+if (lock.acquire()) {
+  // ... critical section
+} // released at block exit (via `using`)
+```
+
+`lock.extend(ms)`, `lock.info()`, and `lock.ownerId` round out the API. With
+`using`, the lock releases automatically when the block exits; otherwise call
+`lock.release()`.
+
+<Callout type="info">
+  Expired locks are reaped by the worker's maintenance loop, so a crashed owner
+  never holds a lock past its TTL. Choose a `ttlMs` comfortably longer than the
+  protected work's worst case.
+</Callout>

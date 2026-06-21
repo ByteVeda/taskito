@@ -1,0 +1,28 @@
+---
+title: Timeouts
+description: "Bound each execution attempt; timed-out jobs fail and may retry."
+---
+
+`timeoutMs` bounds a single execution attempt. The dispatcher races the task
+against the timeout (`tokio::time::timeout`); if it elapses, the attempt is
+marked failed and timed-out.
+
+```ts
+queue.task("scrape", scrape, { timeoutMs: 30_000 });
+
+queue.enqueue("scrape", [url], { timeoutMs: 10_000 }); // per-job override
+```
+
+A timeout counts as a failure: it consumes a retry and, if retries remain, the
+job is re-enqueued. When the budget is exhausted the job dead-letters with its
+`timedOut` flag set — surfaced to [middleware](/node/guides/extensibility/middleware)
+`onTimeout` and the Sentry/observability integrations.
+
+<Callout type="warning">
+  For `async` tasks, the timeout aborts the task's
+  [`AbortSignal`](/node/guides/core/cancellation); honor it (e.g. pass `signal`
+  to `fetch`) so the underlying work actually stops, not just the bookkeeping.
+</Callout>
+
+Always set a timeout on production tasks — without one, a wedged task can hold a
+worker slot indefinitely.

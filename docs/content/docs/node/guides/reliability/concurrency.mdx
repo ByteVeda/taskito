@@ -1,0 +1,27 @@
+---
+title: Concurrency
+description: "Cap simultaneously-running jobs per task or per queue."
+---
+
+`maxConcurrent` limits how many jobs of a task run at once across all workers —
+enforced by the scheduler against the live running count, so it holds even with
+many workers on shared storage.
+
+```ts
+queue.task("transcode", transcode, { maxConcurrent: 2 }); // never more than 2 at once
+```
+
+Over the limit, additional jobs stay `pending` and dispatch as running ones
+finish.
+
+Apply it to a whole queue:
+
+```ts
+queue.configureQueue("video", { maxConcurrent: 4 });
+```
+
+<Callout type="info">
+  Concurrency bounds *simultaneous* executions; [rate
+  limiting](/node/guides/reliability/rate-limiting) bounds *throughput over
+  time*. They compose — a task can be both `maxConcurrent: 2` and `100/min`.
+</Callout>
