@@ -35,11 +35,3 @@ while an earlier one is still pending or running. See
 
 `delayMs` schedules the first attempt in the future; the scheduler picks it up
 when due. For recurring schedules use [periodic tasks](/node/guides/core/scheduling).
-
-## Batch enqueue
-
-`enqueueMany` enqueues an array in one call:
-
-```ts
-queue.enqueueMany("resize", urls.map((url) => ({ args: [url] })));
-```
