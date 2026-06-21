@@ -14,6 +14,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Cargo's HTTP downloader intermittently aborts crate downloads on CI
+# ("Error in the HTTP2 framing layer" / "unexpected eof while reading") when
+# fetching uncached crates from crates.io. Force HTTP/1.1 and raise the retry
+# budget so a transient download error retries instead of failing the job.
+# Set at workflow level so it also covers the maturin build that `uv sync`
+# triggers inside the setup-python action, before setup-rust runs.
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   changes:
     name: Detect changed paths

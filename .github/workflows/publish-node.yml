@@ -25,6 +25,13 @@ on:
 permissions:
   contents: read
 
+# Force HTTP/1.1 + extra retries for cargo's crate downloader — the same flaky
+# "HTTP2 framing layer" / "unexpected eof" failures CI hits also break a release
+# build. See ci.yml for the full rationale.
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   preflight:
     name: Preflight checks
