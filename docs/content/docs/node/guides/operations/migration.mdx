@@ -36,7 +36,7 @@ new Worker("emails", async (job) => send(job.data.userId), { connection });
 // Taskito
 const queue = new Queue({ backend: "redis", dsn: "redis://localhost" });
 queue.task("welcome", (userId: number) => send(userId));
-queue.enqueue("welcome", [1]);
+queue.enqueue("welcome", [1], { queue: "emails" });
 queue.runWorker({ queues: ["emails"] });
 ```
 
