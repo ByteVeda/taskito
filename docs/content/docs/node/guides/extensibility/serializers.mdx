@@ -9,6 +9,8 @@ concern.
 
 - `JsonSerializer` — default; human-readable, debuggable.
 - `MsgpackSerializer` — compact binary, smaller payloads.
+- `SignedSerializer(secret, inner?)` — wraps another codec with an HMAC-SHA256
+  tag and rejects tampered payloads on read (authentication, not encryption).
 
 ```ts
 import { Queue, MsgpackSerializer } from "taskito";

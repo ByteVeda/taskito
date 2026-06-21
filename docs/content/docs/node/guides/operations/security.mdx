@@ -16,12 +16,16 @@ the database / Redis credentials as code-execution credentials:
 ## Payloads are not encrypted
 
 Task arguments and results are serialized with [JSON or
-msgpack](/node/guides/extensibility/serializers) and stored as plain bytes —
-**not signed or encrypted.** Anyone who can read the storage can read them.
+msgpack](/node/guides/extensibility/serializers) and stored as plain bytes — by
+default **not encrypted.** Anyone who can read the storage can read them.
 
 - Don't put secrets (tokens, PII) directly in task args. Pass an id and fetch the
   secret inside the handler — for example via a
   [resource](/node/guides/resources/dependency-injection).
+- To detect tampering, wrap your codec in
+  [`SignedSerializer`](/node/api-reference/serializers) — it HMAC-signs each
+  payload so a worker rejects anything altered or forged. This authenticates
+  integrity and origin; it does **not** add confidentiality.
 
 ## Webhooks
 

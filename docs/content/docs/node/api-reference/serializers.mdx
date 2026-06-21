@@ -14,9 +14,21 @@ import type { Serializer } from "taskito";
 |---|---|
 | `JsonSerializer` | Default. Human-readable JSON bytes. |
 | `MsgpackSerializer` | Compact binary (msgpack). |
+| `SignedSerializer` | Wraps another codec with an HMAC-SHA256 tag; rejects tampered payloads. |
 
 ```ts
 new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
+```
+
+`SignedSerializer(secret, inner?)` prefixes each payload with a 32-byte HMAC tag
+and verifies it (timing-safe) on read — authentication, not encryption. Producers
+and workers must share the secret.
+
+```ts
+new Queue({
+  dbPath: "taskito.db",
+  serializer: new SignedSerializer(process.env.TASKITO_SECRET!),
+});
 ```
 
 ## `Serializer` interface
