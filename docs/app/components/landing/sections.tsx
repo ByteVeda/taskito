@@ -35,7 +35,7 @@ function SectionHead({
   lead,
 }: {
   kicker: string;
-  title: string;
+  title: React.ReactNode;
   lead?: string;
 }) {
   return (
@@ -47,10 +47,68 @@ function SectionHead({
   );
 }
 
-const STATIONS = [
-  { label: "YOUR CODE", title: "enqueue", hint: ".delay()" },
-  { label: "QUEUE", title: "store", hint: "SQLite · PG" },
-  { label: "SCHEDULER", title: "dispatch", hint: "Rust · Tokio", accent: true },
+/** Inner SVG paths for each station's icon (matches the prototype's flow diagram). */
+function DiagramIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+type DiagramStation = {
+  label: string;
+  title: string;
+  hint: string;
+  accent?: boolean;
+  pool?: boolean;
+  icon?: React.ReactNode;
+};
+
+const STATIONS: DiagramStation[] = [
+  {
+    label: "YOUR CODE",
+    title: "enqueue",
+    hint: ".delay()",
+    icon: (
+      <>
+        <polyline points="16 18 22 12 16 6" />
+        <polyline points="8 6 2 12 8 18" />
+      </>
+    ),
+  },
+  {
+    label: "QUEUE",
+    title: "store",
+    hint: "SQLite · PG",
+    icon: (
+      <>
+        <ellipse cx="12" cy="5" rx="9" ry="3" />
+        <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+        <path d="M3 12a9 3 0 0 0 18 0" />
+      </>
+    ),
+  },
+  {
+    label: "SCHEDULER",
+    title: "dispatch",
+    hint: "Rust · Tokio",
+    accent: true,
+    icon: (
+      <>
+        <path d="M12 6v6l4 2" />
+        <circle cx="12" cy="12" r="9" />
+      </>
+    ),
+  },
   {
     label: "WORKERS",
     title: "execute",
@@ -66,8 +124,22 @@ export function HowItWorks() {
       <div className="wrap">
         <SectionHead
           kicker="How it works"
-          title="Enqueue here, execute there."
-          lead="Your Python or Node code enqueues a job. The Rust scheduler hands it to a worker. The result lands back in the shared store — no broker in the middle."
+          title={
+            <>
+              From{" "}
+              <span
+                style={{
+                  color: "var(--indigo-br)",
+                  fontFamily: "var(--mono)",
+                  fontSize: ".84em",
+                }}
+              >
+                .delay()
+              </span>{" "}
+              to result
+            </>
+          }
+          lead="Your Python or Node code enqueues a job. The Rust scheduler hands it to a worker. The result lands back in the shared store — same core, same queue, no broker in the middle."
         />
         <div className="diagram reveal">
           <div className="flowdiag">
@@ -111,7 +183,9 @@ function Station({
               ))}
             </div>
           ) : (
-            <div className="dicon" />
+            <div className="dicon">
+              <DiagramIcon>{station.icon}</DiagramIcon>
+            </div>
           )}
           <div className="smeta">
             <span className="slabel">{station.label}</span>
