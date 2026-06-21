@@ -1,0 +1,139 @@
+---
+title: DAG workflow examples
+description: "Fan-out/fan-in map-reduce, approval gates, error-handling conditions, sub-workflows, caching, and critical-path analysis."
+---
+
+These are focused recipes for the workflow builder. Each is independent — combine
+them as your orchestration needs grow. See the
+[workflows guide](/node/guides/workflows) for the underlying model.
+
+## Map-reduce with fan-out / fan-in
+
+`fanOut` reads the array result of its predecessor and expands one child per item;
+`fanIn` collects those children's results into a single array for a combiner.
+
+<Mermaid
+  chart={`graph LR
+    split --> map_0["map[0]"]
+    split --> map_1["map[1]"]
+    split --> map_2["map[2]"]
+    map_0 --> reduce
+    map_1 --> reduce
+    map_2 --> reduce`}
+/>
+
+```ts
+queue.task("split", (corpus: string) => corpus.split("\n\n"));   // → string[]
+queue.task("scoreChunk", (chunk: string) => model.score(chunk)); // per item
+queue.task("reduce", (scores: number[]) => avg(scores));         // [childResult, …]
+
+const run = queue.workflows
+  .define("score-corpus", 1)
+  .step("split", "split", { args: [corpus] })
+  .fanOut("map", { after: "split", task: "scoreChunk" }) // itemsFrom defaults to "split"
+  .fanIn("reduce", { after: "map", task: "reduce" })
+  .submit();
+
+const final = await run.wait({ timeoutMs: 300_000 });
+console.log(final.state);
+```
+
+## Approval gate
+
+A gate pauses the run until a human resolves it (or it times out). Resolve it from
+anywhere — an admin route, a Slack action — the plan is read from storage.
+
+```ts
+const run = queue.workflows
+  .define("publish", 1)
+  .step("build", "buildArtifact")
+  .gate("review", { after: "build", timeoutMs: 86_400_000, onTimeout: "reject",
+                    message: "Approve production deploy?" })
+  .step("deploy", "deployArtifact", { after: "review" })
+  .submit();
+
+// elsewhere, once a reviewer clicks "approve":
+queue.workflows.approveGate(run.runId, "review");
+// or: queue.workflows.rejectGate(run.runId, "review", "failed QA");
+```
+
+## Error-handling with conditions
+
+A step's `condition` decides when it runs relative to its predecessors' outcomes.
+`on_failure` builds an error path that fires only when an upstream step fails.
+
+```ts
+queue.workflows
+  .define("import", 1)
+  .step("load", "loadBatch")
+  .step("notifyOk", "notifySuccess", { after: "load", condition: "on_success" })
+  .step("quarantine", "quarantineBatch", { after: "load", condition: "on_failure" })
+  .submit();
+```
+
+## Sub-workflows
+
+Compose a child workflow as a single step. The tracker submits it as a child run
+and resolves the parent node when the child finalizes.
+
+```ts
+const validate = queue.workflows
+  .define("validate-region", 1)
+  .step("schema", "checkSchema")
+  .step("dupes", "checkDuplicates", { after: "schema" })
+  .build(); // build, don't submit
+
+queue.workflows
+  .define("regional-etl", 1)
+  .step("extract", "extract")
+  .subWorkflow("validate", { after: "extract", workflow: validate })
+  .step("load", "load", { after: "validate" })
+  .submit();
+```
+
+## Cacheable, incremental steps
+
+Mark an expensive step `cache: true` to reuse its result across runs when its
+task, args, and upstream results are unchanged — the basis for incremental
+re-runs. A cacheable step must have a predecessor.
+
+```ts
+queue.workflows
+  .define("nightly", 1)
+  .step("fetch", "fetchRaw", { args: [date] })
+  .step("featurize", "buildFeatures", { after: "fetch", cache: { ttlMs: 86_400_000 } })
+  .step("train", "trainModel", { after: "featurize" })
+  .submit();
+```
+
+## Pre- and post-run analysis
+
+`analyze` is pure graph computation over a run's DAG plus its node statuses — use
+it to preview structure before submitting or to inspect progress after.
+
+```ts
+const a = queue.workflows.analyze(run.runId);
+if (a) {
+  console.log("roots:", a.roots());
+  console.log("levels:", a.topologicalLevels());
+  console.log("critical path:", a.criticalPath());
+  console.log("stats:", a.stats()); // { total, completed, failed, running, pending }
+}
+```
+
+<Callout type="info">
+  `wait` resolves once the run reaches a terminal state — `completed`,
+  `completed_with_failures`, `failed`, `cancelled`, `compensated`, or
+  `compensation_failed`. Check `final.state` to branch on the outcome.
+</Callout>
+
+## Key patterns
+
+| Pattern | Builder |
+| --- | --- |
+| Map-reduce | `.fanOut(...).fanIn(...)` |
+| Human approval | `.gate(...)` + `approveGate` / `rejectGate` |
+| Error branch | `.step(..., { condition: "on_failure" })` |
+| Composition | `.subWorkflow(...)` |
+| Incremental re-runs | `.step(..., { cache })` |
+| Inspection | `workflows.analyze(runId)` |

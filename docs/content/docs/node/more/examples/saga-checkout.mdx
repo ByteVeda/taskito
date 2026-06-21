@@ -1,0 +1,103 @@
+---
+title: Saga — e-commerce checkout
+description: "A multi-step checkout with compensating transactions: when a later step fails, completed steps roll back in reverse order."
+---
+
+A checkout touches several systems — inventory, payments, shipping — with no
+distributed transaction across them. The saga pattern models each forward step
+with a compensator; if a later step fails, Taskito runs the compensators for the
+already-completed steps in reverse-dependency order.
+
+## tasks.ts
+
+Declare each forward task and its rollback. A compensator receives the forward
+step's result as its single argument, so it knows exactly what to undo.
+
+```ts
+import { Queue } from "taskito";
+
+export const queue = new Queue({ dbPath: "checkout.db" });
+
+queue.task("reserveInventory", (order: Order) => inventory.reserve(order));   // → { reservationId }
+queue.task("releaseInventory", (r: { reservationId: string }) => inventory.release(r.reservationId));
+
+queue.task("chargePayment", (order: Order) => payments.charge(order));        // → { chargeId }
+queue.task("refundPayment", (c: { chargeId: string }) => payments.refund(c.chargeId));
+
+queue.task("createShipment", (order: Order) => shipping.create(order));       // → { shipmentId }
+queue.task("cancelShipment", (s: { shipmentId: string }) => shipping.cancel(s.shipmentId));
+```
+
+## checkout.ts
+
+Each step names its `compensate` task. The steps run in dependency order; the
+compensators are wired automatically.
+
+```ts
+import { queue } from "./tasks";
+
+export function checkout(order: Order) {
+  return queue.workflows
+    .define("checkout", 1)
+    .step("reserve", "reserveInventory", { args: [order], compensate: "releaseInventory" })
+    .step("charge", "chargePayment", { args: [order], after: "reserve", compensate: "refundPayment" })
+    .step("ship", "createShipment", { args: [order], after: "charge", compensate: "cancelShipment" })
+    .submit();
+}
+```
+
+## Running it
+
+```ts
+const run = checkout(order);
+const final = await run.wait({ timeoutMs: 60_000 });
+
+switch (final.state) {
+  case "completed":
+    console.log("order placed");
+    break;
+  case "compensated":
+    console.log("rolled back cleanly — customer charged nothing");
+    break;
+  case "compensation_failed":
+    console.error("manual intervention needed");
+    break;
+}
+```
+
+## What happens on failure
+
+If `createShipment` throws, `reserve` and `charge` have already completed. Taskito
+runs their compensators in reverse order:
+
+```
+ship      ✗ failed
+charge    → refundPayment({ chargeId })   (compensate)
+reserve   → releaseInventory({ reservationId })  (compensate)
+```
+
+The run lands in `compensated` if every compensator succeeds, or
+`compensation_failed` if one of them throws.
+
+<Callout type="warn">
+  Compensators should be idempotent. A refund or release may be retried, and a
+  partially-applied rollback that re-runs must not double-refund or release twice.
+</Callout>
+
+## Run states
+
+| State | Meaning |
+| --- | --- |
+| `completed` | every forward step succeeded |
+| `compensating` | a step failed; compensators are running |
+| `compensated` | rollback finished cleanly |
+| `compensation_failed` | a compensator threw — needs manual repair |
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Forward + rollback pair | `.step(..., { compensate })` |
+| Reverse-order rollback | automatic on step failure |
+| Result-aware undo | compensator receives the forward result |
+| Outcome branching | `final.state` |

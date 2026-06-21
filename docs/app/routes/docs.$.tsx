@@ -104,9 +104,16 @@ export default function DocRoute({ params }: Route.ComponentProps) {
       <MDXProvider components={mdxComponents}>
         {/* Key by path: client-side navigation between two pages that share this
             splat route re-suspends the lazy page. Without a fresh boundary per
-            path, React retains the previous committed tree for the whole route
-            during the navigation transition and never swaps in the new page. */}
-        <Suspense key={path} fallback={null}>
+            path, React retains the previous committed tree for the whole route.
+
+            React.lazy has no SSR hydration: on the client the chunk re-loads, so
+            the prerendered body briefly drops to the fallback and re-expands.
+            Reserve vertical space so that swap doesn't shove the prev/next footer
+            up and down (layout shift). */}
+        <Suspense
+          key={path}
+          fallback={<div className="doc-loading" aria-hidden="true" />}
+        >
           <Page />
         </Suspense>
       </MDXProvider>

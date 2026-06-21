@@ -7,7 +7,14 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!node_modules", "!build", "!.react-router", "!content"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!build",
+      "!.react-router",
+      "!content",
+      "!public/demos"
+    ]
   },
   "formatter": {
     "enabled": true,

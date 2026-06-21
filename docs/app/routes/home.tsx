@@ -8,6 +8,7 @@ import {
   Hero,
   HowItWorks,
   Integrations,
+  ScenarioFinder,
   UseCases,
   useReveal,
 } from "@/components/landing";
@@ -53,6 +54,7 @@ export default function Home() {
       <SiteNav onSearch={() => setSearchOpen(true)} />
       <main>
         <Hero />
+        <ScenarioFinder />
         <HowItWorks />
         <Features />
         <UseCases />

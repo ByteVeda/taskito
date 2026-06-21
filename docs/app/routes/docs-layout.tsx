@@ -8,9 +8,17 @@ import { forcedSdkForPath } from "@/lib";
 /** Shell for every docs page: top nav + sidebar + article outlet + on-this-page TOC. */
 export default function DocsLayout() {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const { pathname } = useLocation();
   const { setSdk } = useSdk();
   const sdk = useActiveSdk();
+
+  // Close the mobile sidebar drawer whenever the route changes (i.e. a nav link
+  // was tapped) so it never lingers over the freshly-loaded page.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: close on navigation
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
 
   // Visiting an SDK-specific page (`/python/*`,`/node/*`) makes that SDK sticky,
   // so walking onto a shared page keeps the choice. No-op on shared pages.
@@ -34,9 +42,16 @@ export default function DocsLayout() {
   }, []);
   return (
     <>
-      <SiteNav onSearch={() => setSearchOpen(true)} />
+      <SiteNav
+        onSearch={() => setSearchOpen(true)}
+        onMenu={() => setNavOpen(true)}
+      />
       <div className="docs-shell">
-        <Sidebar onSearch={() => setSearchOpen(true)} />
+        <Sidebar
+          open={navOpen}
+          onClose={() => setNavOpen(false)}
+          onSearch={() => setSearchOpen(true)}
+        />
         <Outlet />
         <Toc />
       </div>

@@ -217,6 +217,11 @@ body {
   min-width: 0;
   max-width: 840px;
 }
+/* Reserve vertical space while a lazily-loaded page chunk re-resolves on
+   hydration, so the prev/next footer below it doesn't shift (CLS). */
+.doc-loading {
+  min-height: 70vh;
+}
 .crumb {
   display: flex;
   align-items: center;
@@ -1048,6 +1053,36 @@ body {
 /* mobile */
 .menu-btn {
   display: none;
+  width: 38px;
+  height: 38px;
+  margin-right: 2px;
+  place-items: center;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--txt);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+.menu-btn:hover {
+  border-color: var(--line3);
+}
+/* Backdrop behind the mobile drawer — only visible while the drawer is open. */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  border: 0;
+  padding: 0;
+  background: color-mix(in oklch, var(--bg) 55%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 @media (max-width: 1180px) {
   .docs-shell {
@@ -1061,17 +1096,55 @@ body {
   .docs-shell {
     grid-template-columns: 1fr;
   }
-  .sidebar {
-    display: none;
-  }
   .article {
     padding: 32px 22px 72px;
   }
   .menu-btn {
     display: grid;
   }
+  /* Drawer nav reads a touch tighter than the desktop sidebar. */
+  .nav-item {
+    font-size: 13px;
+  }
   .next-grid {
     grid-template-columns: 1fr;
+  }
+  /* Sidebar becomes an off-canvas drawer: hidden by default, slid in when open. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 70;
+    width: min(310px, 84vw);
+    height: 100dvh;
+    margin: 0;
+    padding-top: 24px;
+    background: var(--bg);
+    border-right: 1px solid var(--line2);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-100%);
+    /* Hide off-canvas so closed-drawer links leave the tab order; the
+       visibility flip is delayed until the slide-out finishes. */
+    visibility: hidden;
+    transition:
+      transform 0.24s cubic-bezier(0.2, 0.6, 0.2, 1),
+      visibility 0s linear 0.24s;
+  }
+  .sidebar.open {
+    transform: none;
+    visibility: visible;
+    transition:
+      transform 0.24s cubic-bezier(0.2, 0.6, 0.2, 1),
+      visibility 0s;
+  }
+  .sidebar-backdrop.open {
+    display: block;
+    opacity: 1;
+  }
+}
+@media (max-width: 860px) and (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
   }
 }
 
@@ -1117,6 +1190,19 @@ body {
 }
 .gt-toggle:hover {
   color: var(--txt);
+}
+/* Subsection label is a toggle button (collapses/expands its children on click,
+   like a top-level group) — reset the native button chrome to match .nav-item. */
+.nav-sub-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  /* family only — keep .nav-item's 13px (the `font` shorthand would reset size
+     to the larger inherited value, making toggles bigger than leaf links). */
+  font-family: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .nav-subsection {
   margin: 2px 0;

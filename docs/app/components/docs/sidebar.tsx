@@ -103,7 +103,9 @@ function NavLink({ node, current }: { node: NavNode; current: string }) {
   );
 }
 
-/** A subsection with children — collapsible, auto-opens around the active page. */
+/** A subsection with children — collapsible at any depth, auto-opens around the
+ *  active page. The label itself toggles (same behaviour as a top-level group),
+ *  so a subsection-of-a-subsection expands/collapses on click just like its parent. */
 function NavSection({ node, current }: { node: NavNode; current: string }) {
   const active = node.children?.some((c) => containsHref(c, current)) ?? false;
   const [open, setOpen] = useState(active);
@@ -112,15 +114,21 @@ function NavSection({ node, current }: { node: NavNode; current: string }) {
       setOpen(true);
     }
   }, [active]);
+  const toggle = () => setOpen((o) => !o);
   return (
     <div className="nav-subsection">
       <div className="nav-sub-head">
-        <NavLink node={node} current={current} />
-        <Caret
-          open={open}
-          onToggle={() => setOpen((o) => !o)}
-          title={node.title}
-        />
+        <button
+          type="button"
+          className={`nav-item nav-sub-toggle ${
+            node.href === current ? "active" : ""
+          }`.trim()}
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          {node.title}
+        </button>
+        <Caret open={open} onToggle={toggle} title={node.title} />
       </div>
       {open ? <NavTree nodes={node.children ?? []} current={current} /> : null}
     </div>
@@ -189,25 +197,44 @@ function NavGroup({ group, current }: { group: NavNode; current: string }) {
   );
 }
 
-export function Sidebar({ onSearch }: { onSearch?: () => void }) {
+export function Sidebar({
+  onSearch,
+  open = false,
+  onClose,
+}: {
+  onSearch?: () => void;
+  /** Drawer open state — only affects the mobile (≤860px) overlay layout. */
+  open?: boolean;
+  onClose?: () => void;
+}) {
   const { pathname } = useLocation();
   const current = pathname.replace(/\/$/, "") || "/";
   const sdk = useActiveSdk();
   return (
-    <aside className="sidebar">
-      <button type="button" className="side-search" onClick={onSearch}>
-        Search docs
-        <span className="sk">
-          <kbd>⌘</kbd>
-          <kbd>K</kbd>
-        </span>
-      </button>
-      <SdkSwitch sdk={sdk} current={current} />
-      <nav id="sidenav">
-        {navForSdk(sdk).map((group) => (
-          <NavGroup key={group.title} group={group} current={current} />
-        ))}
-      </nav>
-    </aside>
+    <>
+      {/* Backdrop sits under the drawer on mobile; tapping it closes the menu. */}
+      <button
+        type="button"
+        className={`sidebar-backdrop ${open ? "open" : ""}`.trim()}
+        aria-label="Close navigation menu"
+        tabIndex={open ? 0 : -1}
+        onClick={onClose}
+      />
+      <aside className={`sidebar ${open ? "open" : ""}`.trim()}>
+        <button type="button" className="side-search" onClick={onSearch}>
+          Search docs
+          <span className="sk">
+            <kbd>⌘</kbd>
+            <kbd>K</kbd>
+          </span>
+        </button>
+        <SdkSwitch sdk={sdk} current={current} />
+        <nav id="sidenav">
+          {navForSdk(sdk).map((group) => (
+            <NavGroup key={group.title} group={group} current={current} />
+          ))}
+        </nav>
+      </aside>
+    </>
   );
 }

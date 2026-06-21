@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { Link } from "react-router";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
@@ -25,10 +25,28 @@ const LINKS = [
   { label: "Changelog", href: "/resources/changelog" },
 ];
 
-/** Sticky top navigation, shared by the landing and docs shells. */
-export function SiteNav({ onSearch }: { onSearch?: () => void }) {
+/** Sticky top navigation, shared by the landing and docs shells. `onMenu` is
+ *  passed only by the docs shell — it renders the mobile button that opens the
+ *  sidebar drawer (the landing has no sidebar, so it omits it). */
+export function SiteNav({
+  onSearch,
+  onMenu,
+}: {
+  onSearch?: () => void;
+  onMenu?: () => void;
+}) {
   return (
     <nav className="nav">
+      {onMenu ? (
+        <button
+          type="button"
+          className="menu-btn"
+          onClick={onMenu}
+          aria-label="Open navigation menu"
+        >
+          <Menu size={18} />
+        </button>
+      ) : null}
       <Link to="/" className="brand">
         <span className="logo" aria-hidden="true" />
         <span>
