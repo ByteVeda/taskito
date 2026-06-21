@@ -9,7 +9,7 @@ const COLS = [
         href: "/python/getting-started/installation",
       },
       { label: "Guides", href: "/python/guides" },
-      { label: "Architecture", href: "/python/architecture" },
+      { label: "Architecture", href: "/architecture" },
       { label: "API Reference", href: "/python/api-reference" },
     ],
   },
@@ -17,9 +17,9 @@ const COLS = [
     title: "More",
     links: [
       { label: "Examples", href: "/python/more/examples" },
-      { label: "Celery comparison", href: "/python/more/comparison" },
-      { label: "FAQ", href: "/python/more/faq" },
-      { label: "Changelog", href: "/python/more/changelog" },
+      { label: "Celery comparison", href: "/resources/comparison" },
+      { label: "FAQ", href: "/resources/faq" },
+      { label: "Changelog", href: "/resources/changelog" },
     ],
   },
   {

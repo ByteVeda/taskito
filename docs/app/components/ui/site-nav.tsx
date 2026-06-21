@@ -20,9 +20,9 @@ function GithubMark() {
 const LINKS = [
   { label: "Getting Started", href: "/python/getting-started/installation" },
   { label: "Guides", href: "/python/guides" },
-  { label: "Architecture", href: "/python/architecture" },
+  { label: "Architecture", href: "/architecture" },
   { label: "API", href: "/python/api-reference" },
-  { label: "Changelog", href: "/python/more/changelog" },
+  { label: "Changelog", href: "/resources/changelog" },
 ];
 
 /** Sticky top navigation, shared by the landing and docs shells. */
