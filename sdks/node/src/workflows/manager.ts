@@ -3,6 +3,7 @@ import type { NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
 import { WorkflowAnalysis, type WorkflowGraph } from "./analysis";
 import { WorkflowBuilder } from "./builder";
+import { WorkflowCacheStore } from "./cache";
 import { WorkflowTracker } from "./tracker";
 import type {
   StepMetadataJson,
@@ -96,6 +97,11 @@ export class WorkflowManager {
   /** Sub-workflow runs spawned by a run (empty for Node-submitted runs). */
   children(runId: string): WorkflowRun[] {
     return this.native.getWorkflowChildren(runId);
+  }
+
+  /** Drop every cached cacheable-step result. Returns the number removed. */
+  clearCache(): number {
+    return new WorkflowCacheStore(this.native).clear();
   }
 
   /**

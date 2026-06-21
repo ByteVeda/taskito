@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import type { JsOutcome, NativeQueue } from "../native";
 import type { Serializer } from "../serializers";
 import { createLogger } from "../utils";
+import { CACHE_TASK, WorkflowCacheStore } from "./cache";
 import { predecessorsOf, successorsOf, transitiveDeferred } from "./plan";
 import type { SubWorkflowTransport } from "./types";
 
@@ -44,6 +46,8 @@ interface StepMeta {
   sub_workflow?: string;
   /** Rollback task name run if the workflow fails (saga compensation). */
   compensate?: string;
+  /** JSON `{ttlMs?}` marking a cacheable node (result reused across runs). */
+  cache?: string;
 }
 
 /** Parsed gate config from a node's `gate` metadata. */
@@ -84,11 +88,15 @@ export class WorkflowTracker {
   private readonly plans = new Map<string, RunPlan>();
   /** Pending gate-timeout timers, keyed `runId\0node` (unref'd). */
   private readonly gateTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Cross-run store for cacheable step results. */
+  private readonly cache: WorkflowCacheStore;
 
   constructor(
     private readonly native: NativeQueue,
     private readonly serializer: Serializer,
-  ) {}
+  ) {
+    this.cache = new WorkflowCacheStore(native);
+  }
 
   /** Handle one worker outcome. A no-op for non-workflow jobs. */
   onOutcome(outcome: JsOutcome): void {
@@ -134,6 +142,11 @@ export class WorkflowTracker {
 
     // Record the node's outcome. For plain DAGs the core also cascades + finalizes.
     const advance = this.native.markWorkflowNodeResult(jobId, succeeded, error, managed);
+    // Persist a successful cacheable node's result for future runs (idempotent on
+    // a hit, whose job already carries the cached bytes).
+    if (succeeded && plan.meta.get(nodeName)?.cache) {
+      this.storeCache(runId, nodeName, jobId, plan);
+    }
     if (!managed) {
       this.settle(runId, advance?.finalState ?? null);
       return;
@@ -455,6 +468,8 @@ export class WorkflowTracker {
         this.submitSubWorkflow(runId, succ, meta);
       } else if (meta?.fan_out) {
         this.expandFanOut(runId, succ, plan);
+      } else if (meta?.cache) {
+        this.cacheOrEnqueue(runId, succ, plan, meta);
       } else {
         this.createDeferredJob(runId, succ, plan);
       }
@@ -574,6 +589,62 @@ export class WorkflowTracker {
     );
   }
 
+  /**
+   * Run a cacheable node — or, on a cache hit, enqueue the built-in cache task
+   * carrying the stored result so the node completes through the normal path
+   * (no downstream special-casing). A miss runs the real task.
+   */
+  private cacheOrEnqueue(runId: string, node: string, plan: RunPlan, meta: StepMeta): void {
+    const ttlMs = meta.cache ? (JSON.parse(meta.cache).ttlMs as number | undefined) : undefined;
+    const cached = this.cache.get(this.cacheKey(runId, node, plan), ttlMs);
+    if (!cached) {
+      this.createDeferredJob(runId, node, plan); // miss → run the real task
+      return;
+    }
+    const value = this.serializer.deserialize(cached);
+    const payload = Buffer.from(this.serializer.serialize([value]));
+    this.native.createDeferredJob(
+      runId,
+      node,
+      payload,
+      CACHE_TASK,
+      meta.queue ?? DEFAULT_QUEUE,
+      0, // a cache return never retries
+      meta.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+      meta.priority ?? 0,
+    );
+  }
+
+  /** Store a node's job result under its content-addressed cache key. */
+  private storeCache(runId: string, node: string, jobId: string, plan: RunPlan): void {
+    const job = this.native.getJob(jobId);
+    if (job?.result) {
+      this.cache.set(this.cacheKey(runId, node, plan), Buffer.from(job.result));
+    }
+  }
+
+  /** Content-addressed key: task + args + each predecessor's result hash (the dirty set). */
+  private cacheKey(runId: string, node: string, plan: RunPlan): string {
+    const meta = plan.meta.get(node);
+    const hash = createHash("sha256");
+    hash.update(meta?.task_name ?? "");
+    hash.update("\0");
+    hash.update(meta?.args_template ?? "");
+    for (const pred of [...(plan.predecessors.get(node) ?? [])].sort()) {
+      hash.update("\0");
+      hash.update(pred);
+      hash.update(this.resultHashOf(runId, pred));
+    }
+    return hash.digest("hex");
+  }
+
+  /** SHA-256 of a node's job-result bytes, or `""` when it has no result. */
+  private resultHashOf(runId: string, node: string): string {
+    const ref = this.native.getWorkflowNodes(runId).find((n) => n.nodeName === node);
+    const job = ref?.jobId ? this.native.getJob(ref.jobId) : null;
+    return job?.result ? createHash("sha256").update(Buffer.from(job.result)).digest("hex") : "";
+  }
+
   private allPredecessorsTerminal(runId: string, node: string, plan: RunPlan): boolean {
     const preds = plan.predecessors.get(node) ?? [];
     if (preds.length === 0) {
@@ -635,7 +706,9 @@ export class WorkflowTracker {
     );
     const successors = successorsOf(edges);
     const seeds = [...meta]
-      .filter(([, m]) => m.fan_out || m.fan_in || m.condition || m.gate || m.sub_workflow)
+      .filter(
+        ([, m]) => m.fan_out || m.fan_in || m.condition || m.gate || m.sub_workflow || m.cache,
+      )
       .map(([name]) => name);
     const plan: RunPlan = {
       successors,

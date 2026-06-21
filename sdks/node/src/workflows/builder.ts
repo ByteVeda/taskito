@@ -54,11 +54,15 @@ export class WorkflowBuilder {
       priority: options.priority,
       condition: options.condition,
       compensate: options.compensate,
+      cache: options.cache
+        ? JSON.stringify(options.cache === true ? {} : options.cache)
+        : undefined,
     };
     this.stepArgs[name] = options.args ?? [];
-    // A conditioned step is enqueued by the tracker once its predecessors
-    // settle (so it can evaluate the condition), not statically at submit.
-    if (options.condition) {
+    // Conditioned and cacheable steps are enqueued by the tracker once their
+    // predecessors settle (to evaluate the condition / check the cache), not
+    // statically at submit.
+    if (options.condition || options.cache) {
       this.deferredSeeds.add(name);
     }
     return this;
@@ -179,22 +183,27 @@ export class WorkflowBuilder {
 
   /** Materialize the validated spec without submitting. */
   build(): WorkflowSpec {
+    const hasPredecessor = new Set(this.edges.map((edge) => edge.to));
     for (const edge of this.edges) {
       if (!this.seen.has(edge.from)) {
         throw new WorkflowError(`step '${edge.to}' depends on unknown step '${edge.from}'`);
       }
     }
-    // A fan-in node is only ever enqueued by its fan-out's completion, so its
-    // `after` must point at a fan-out step — otherwise the run would hang.
     for (const [name, meta] of Object.entries(this.stepMetadata)) {
-      if (!meta.fan_in) {
-        continue;
+      // A fan-in node is only ever enqueued by its fan-out's completion, so its
+      // `after` must point at a fan-out step — otherwise the run would hang.
+      if (meta.fan_in) {
+        const { from } = JSON.parse(meta.fan_in) as { from: string };
+        if (!this.stepMetadata[from]?.fan_out) {
+          throw new Error(
+            `fan-in step '${name}' must target a fan-out step, but '${from}' is not one`,
+          );
+        }
       }
-      const { from } = JSON.parse(meta.fan_in) as { from: string };
-      if (!this.stepMetadata[from]?.fan_out) {
-        throw new Error(
-          `fan-in step '${name}' must target a fan-out step, but '${from}' is not one`,
-        );
+      // A cacheable root has no job at submit and nothing to trigger it, so it
+      // would stall; require an upstream step.
+      if (meta.cache && !hasPredecessor.has(name)) {
+        throw new WorkflowError(`cacheable step '${name}' must have at least one predecessor`);
       }
     }
     const deferred = transitiveDeferred(this.deferredSeeds, successorsOf(this.edges));

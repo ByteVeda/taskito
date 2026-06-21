@@ -16,6 +16,7 @@ import type { Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
 import { WorkflowTracker } from "./workflows";
+import { CACHE_TASK } from "./workflows/cache";
 
 const log = createLogger("worker");
 
@@ -64,6 +65,11 @@ export class Worker {
         : null;
 
     const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
+      // Built-in workflow cache-return: echo the single (cached) arg as the result.
+      if (invocation.taskName === CACHE_TASK) {
+        const [value] = serializer.deserialize(invocation.payload) as unknown[];
+        return Buffer.from(serializer.serialize(value));
+      }
       const task = tasks.get(invocation.taskName);
       if (!task) {
         throw new TaskNotRegisteredError(invocation.taskName);
