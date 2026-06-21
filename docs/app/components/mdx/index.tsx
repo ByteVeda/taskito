@@ -5,6 +5,7 @@ import * as Diagrams from "@/components/diagrams";
 import { Callout } from "./callout";
 import { Card, Cards } from "./card";
 import { CodeBlock } from "./code-block";
+import { MdxTable } from "./table";
 import { Tab, Tabs } from "./tabs";
 
 // Internal links use the router for client navigation; external/anchor links
@@ -34,6 +35,7 @@ function Anchor({ href, children, ...rest }: ComponentProps<"a">) {
 export const mdxComponents: MDXComponents = {
   a: Anchor,
   pre: CodeBlock,
+  table: MdxTable,
   Callout,
   Tabs,
   Tab,
