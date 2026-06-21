@@ -1,4 +1,4 @@
-import type { ComponentType, LazyExoticComponent } from "react";
+import { type ComponentType, type LazyExoticComponent, lazy } from "react";
 import type { DemoId, DemoProps } from "./types";
 
 type LazyDemo = LazyExoticComponent<ComponentType<DemoProps>>;
@@ -11,7 +11,7 @@ type LazyDemo = LazyExoticComponent<ComponentType<DemoProps>>;
  * `public/demos/` are removed.
  */
 export const DEMO_COMPONENTS: Partial<Record<DemoId, LazyDemo>> = {
-  // Populated one entry per demo as each is ported to React.
+  saga: lazy(() => import("./saga-demo")),
 };
 
 /** The React port for `id`, or `undefined` if it still uses the iframe. */

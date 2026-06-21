@@ -1,0 +1,238 @@
+/* Shared chrome for the React-ported interactive demos rendered inside the
+   homepage demo modal. Ported from the vendored public/demos/interactive.css and
+   scoped under .dm-stage so the generic class names never collide with the docs
+   site. Tokens (--cyan/--grn/--panel2/--mono/…) come from tokens.css. */
+
+/* React demo fills the modal stage (the iframe slot) and scrolls if taller. */
+.dm-stage .dm-frame-react {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.dm-stage .demo-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklch, var(--panel) 60%, #000);
+  flex-wrap: wrap;
+}
+[data-theme="light"] .dm-stage .demo-bar {
+  background: var(--panel2);
+}
+.dm-stage .demo-bar .title {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--txt2);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.dm-stage .demo-bar .title .ld {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--grn);
+  box-shadow: 0 0 8px var(--grn);
+  animation: blip 1.5s infinite;
+}
+.dm-stage .demo-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* control atoms */
+.dm-stage .ctl {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border-radius: 9px;
+  cursor: pointer;
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--txt2);
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s,
+    transform 0.12s;
+}
+.dm-stage .ctl:hover {
+  border-color: var(--line3);
+  color: var(--txt);
+}
+.dm-stage .ctl:active {
+  transform: translateY(1px);
+}
+.dm-stage .ctl svg {
+  width: 14px;
+  height: 14px;
+}
+.dm-stage .ctl.pri {
+  background: linear-gradient(180deg, var(--indigo), var(--indigo-dk));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 8px 18px -12px var(--indigo);
+}
+.dm-stage .ctl.pri:hover {
+  color: #fff;
+  filter: brightness(1.05);
+}
+.dm-stage .ctl[disabled] {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* segmented toggle */
+.dm-stage .seg {
+  display: inline-flex;
+  border: 1px solid var(--line2);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.dm-stage .seg button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mut);
+  padding: 8px 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.dm-stage .seg button + button {
+  border-left: 1px solid var(--line2);
+}
+.dm-stage .seg button .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.dm-stage .seg button:hover {
+  color: var(--txt2);
+}
+.dm-stage .seg button[data-on="1"] {
+  color: var(--txt);
+  background: var(--panel3);
+}
+.dm-stage .seg button[data-on="1"].good .dot {
+  background: var(--grn);
+  box-shadow: 0 0 7px var(--grn);
+}
+.dm-stage .seg button[data-on="1"].bad .dot {
+  background: var(--red);
+  box-shadow: 0 0 7px var(--red);
+}
+
+/* viz stage */
+.dm-stage .stage {
+  position: relative;
+  padding: 18px 18px 6px;
+}
+.dm-stage .stage svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: hidden;
+}
+.dm-stage .stage canvas {
+  display: block;
+  width: 100%;
+}
+
+/* readout strip */
+.dm-stage .readout {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border-top: 1px solid var(--line);
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+.dm-stage .stat {
+  background: var(--panel);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dm-stage .stat .k {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.dm-stage .stat .v {
+  font-family: var(--code);
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--txt);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.dm-stage .stat .v .u {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mut);
+}
+.dm-stage .stat .v.warn {
+  color: var(--amber);
+}
+.dm-stage .stat .v.bad {
+  color: var(--red);
+}
+.dm-stage .stat .v.good {
+  color: var(--grn);
+}
+
+/* legend */
+.dm-stage .legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 18px;
+  padding: 0 18px 16px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--mut);
+}
+.dm-stage .legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.dm-stage .legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dm-stage .demo-bar .title .ld {
+    animation: none;
+  }
+}
