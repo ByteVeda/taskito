@@ -340,7 +340,7 @@ var TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
   function show(){ panel.hidden=false; } function hide(){ panel.hidden=true; }
   document.getElementById('twkClose').addEventListener('click',function(){ hide(); try{ window.parent.postMessage({type:'__edit_mode_dismissed'},'*'); }catch(e){} });
-  window.addEventListener('message',function(e){ var t=e&&e.data&&e.data.type; if(t==='__activate_edit_mode') show(); else if(t==='__deactivate_edit_mode') hide(); });
+  window.addEventListener('message',function(e){ if(e.origin!==window.location.origin||e.source!==window.parent) return; var t=e&&e.data&&e.data.type; if(t==='__activate_edit_mode') show(); else if(t==='__deactivate_edit_mode') hide(); });
   try{ window.parent.postMessage({type:'__edit_mode_available'},'*'); }catch(e){}
 
   paintAccent(); applyMotion(); applyDensity();
