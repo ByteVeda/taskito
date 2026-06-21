@@ -76,12 +76,17 @@ body {
   align-items: center;
   justify-content: center;
   gap: 7px;
+  width: 100%;
   padding: 8px 6px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
+  font-family: var(--sans);
   font-size: 13px;
   font-weight: 500;
   color: var(--mut);
   text-decoration: none;
+  cursor: pointer;
   transition:
     background 0.15s,
     color 0.15s,
@@ -1093,6 +1098,24 @@ body {
   transition: color 0.15s;
 }
 .gt.gt-link:hover {
+  color: var(--txt);
+}
+/* Group header with no index page: the label toggles the section (clickable). */
+.gt-toggle {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.gt-toggle:hover {
   color: var(--txt);
 }
 .nav-subsection {

@@ -1,11 +1,12 @@
 import { Link, useLocation } from "react-router";
-import { flatNav, sdkForPath } from "@/lib/nav";
+import { useActiveSdk } from "@/hooks";
+import { flatNav } from "@/lib";
 
 /** Previous/next page links derived from the flattened SDK nav order. */
 export function PrevNext() {
   const { pathname } = useLocation();
   const current = pathname.replace(/\/$/, "") || "/";
-  const pages = flatNav(sdkForPath(current));
+  const pages = flatNav(useActiveSdk());
   const i = pages.findIndex((p) => p.href === current);
   if (i === -1) {
     return null;

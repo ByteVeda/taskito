@@ -1,4 +1,5 @@
 import { docTitle, hasDoc } from "./manifest";
+import type { Sdk } from "./sdk-store";
 
 interface Meta {
   title?: string;
@@ -82,28 +83,54 @@ function buildTree(sections: string[]): NavNode[] {
   });
 }
 
+// `architecture` and `resources` are SDK-neutral (the engine is identical across
+// SDKs); both live at top-level shared URLs and appear in every SDK's nav.
 export const PYTHON_SECTIONS = [
   "python/getting-started",
   "python/guides",
-  "python/architecture",
+  "architecture",
   "python/api-reference",
-  "python/more",
+  "python/more/examples",
+  "resources",
 ];
 export const NODE_SECTIONS = [
   "node/getting-started",
   "node/guides",
-  // The engine is identical across SDKs — Node reuses the shared architecture pages.
-  "python/architecture",
+  "architecture",
   "node/api-reference",
+  "resources",
 ];
 
 export const PYTHON_NAV = buildTree(PYTHON_SECTIONS);
 export const NODE_NAV = buildTree(NODE_SECTIONS);
 
-export type Sdk = "python" | "node";
+export type { Sdk };
 
-export function sdkForPath(path: string): Sdk {
-  return path === "/node" || path.startsWith("/node/") ? "node" : "python";
+/** The SDK forced by an explicit `/python`|`/node` URL prefix, or null on a
+ *  shared page (where the active SDK comes from the global store instead). */
+export function forcedSdkForPath(path: string): Sdk | null {
+  if (path === "/node" || path.startsWith("/node/")) {
+    return "node";
+  }
+  if (path === "/python" || path.startsWith("/python/")) {
+    return "python";
+  }
+  return null;
+}
+
+/** Where the sidebar SDK switch should go: the same page under the target SDK's
+ *  prefix if it exists, else that SDK's install landing. Shared pages stay put
+ *  (the caller skips navigation when the current path isn't SDK-prefixed). */
+export function sdkSwitchTarget(path: string, target: Sdk): string {
+  const other: Sdk = target === "node" ? "python" : "node";
+  const prefix = `/${other}`;
+  if (path === prefix || path.startsWith(`${prefix}/`)) {
+    const swapped = `/${target}${path.slice(prefix.length)}`;
+    if (hasDoc(swapped)) {
+      return swapped;
+    }
+  }
+  return `/${target}/getting-started/installation`;
 }
 
 export function navForSdk(sdk: Sdk): NavNode[] {

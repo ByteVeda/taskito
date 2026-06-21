@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router";
-import { type NavNode, navForSdk, type Sdk, sdkForPath } from "@/lib/nav";
+import { Link, useLocation, useNavigate } from "react-router";
+import { useActiveSdk, useSdk } from "@/hooks";
+import {
+  forcedSdkForPath,
+  type NavNode,
+  navForSdk,
+  type Sdk,
+  sdkSwitchTarget,
+} from "@/lib";
 
 function containsHref(node: NavNode, current: string): boolean {
   return (
@@ -9,25 +16,42 @@ function containsHref(node: NavNode, current: string): boolean {
   );
 }
 
-function SdkSwitch({ sdk }: { sdk: Sdk }) {
+const SDK_LABELS: { id: Sdk; label: string }[] = [
+  { id: "python", label: "Python" },
+  { id: "node", label: "Node.js" },
+];
+
+/** Global SDK toggle. Sets the shared store (flips inline variants + this nav);
+ *  on an SDK-specific page it also navigates to the counterpart page, on a shared
+ *  page it stays put. A labelled control — it switches the whole page, not a panel. */
+function SdkSwitch({ sdk, current }: { sdk: Sdk; current: string }) {
+  const { setSdk } = useSdk();
+  const navigate = useNavigate();
+
+  function select(target: Sdk) {
+    if (target === sdk) {
+      return;
+    }
+    setSdk(target);
+    if (forcedSdkForPath(current)) {
+      navigate(sdkSwitchTarget(current, target));
+    }
+  }
+
   return (
-    <div className="sdk-switch" role="tablist">
-      <Link
-        to="/python/getting-started/installation"
-        className={`sdk-opt ${sdk === "python" ? "active" : ""}`.trim()}
-        role="tab"
-        aria-selected={sdk === "python"}
-      >
-        Python
-      </Link>
-      <Link
-        to="/node/getting-started/installation"
-        className={`sdk-opt ${sdk === "node" ? "active" : ""}`.trim()}
-        role="tab"
-        aria-selected={sdk === "node"}
-      >
-        Node.js
-      </Link>
+    <div className="sdk-switch">
+      {SDK_LABELS.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          className={`sdk-opt ${sdk === id ? "active" : ""}`.trim()}
+          aria-pressed={sdk === id}
+          aria-label={`${label} SDK`}
+          onClick={() => select(id)}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -134,7 +158,16 @@ function NavGroup({ group, current }: { group: NavNode; current: string }) {
   return (
     <div className="nav-group">
       <div className="gt">
-        {group.href ? (
+        {hasChildren ? (
+          <button
+            type="button"
+            className="gt-toggle"
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {group.title}
+          </button>
+        ) : group.href ? (
           <Link to={group.href} className="gt-link">
             {group.title}
           </Link>
@@ -159,7 +192,7 @@ function NavGroup({ group, current }: { group: NavNode; current: string }) {
 export function Sidebar({ onSearch }: { onSearch?: () => void }) {
   const { pathname } = useLocation();
   const current = pathname.replace(/\/$/, "") || "/";
-  const sdk = sdkForPath(current);
+  const sdk = useActiveSdk();
   return (
     <aside className="sidebar">
       <button type="button" className="side-search" onClick={onSearch}>
@@ -169,7 +202,7 @@ export function Sidebar({ onSearch }: { onSearch?: () => void }) {
           <kbd>K</kbd>
         </span>
       </button>
-      <SdkSwitch sdk={sdk} />
+      <SdkSwitch sdk={sdk} current={current} />
       <nav id="sidenav">
         {navForSdk(sdk).map((group) => (
           <NavGroup key={group.title} group={group} current={current} />

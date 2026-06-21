@@ -1,11 +1,24 @@
 import { useEffect, useState } from "react";
-import { Outlet } from "react-router";
+import { Outlet, useLocation } from "react-router";
 import { SearchModal, Sidebar, Toc } from "@/components/docs";
 import { SiteNav } from "@/components/ui";
+import { useSdk } from "@/hooks";
+import { forcedSdkForPath } from "@/lib";
 
 /** Shell for every docs page: top nav + sidebar + article outlet + on-this-page TOC. */
 export default function DocsLayout() {
   const [searchOpen, setSearchOpen] = useState(false);
+  const { pathname } = useLocation();
+  const { setSdk } = useSdk();
+
+  // Visiting an SDK-specific page (`/python/*`,`/node/*`) makes that SDK sticky,
+  // so walking onto a shared page keeps the choice. No-op on shared pages.
+  useEffect(() => {
+    const forced = forcedSdkForPath(pathname.replace(/\/$/, "") || "/");
+    if (forced) {
+      setSdk(forced);
+    }
+  }, [pathname, setSdk]);
 
   // ⌘K / Ctrl-K opens search anywhere in the docs.
   useEffect(() => {
