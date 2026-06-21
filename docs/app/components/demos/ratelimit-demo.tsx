@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useRafLoop, useReducedMotion } from "./lib";
+import type { DemoProps } from "./types";
 
 /*
  * API rate-limiting demo — requests flow producer → queue → worker pool →
@@ -91,7 +92,7 @@ function colorFor(t: Token): string {
 }
 const queuedList = (sim: Sim) => sim.tokens.filter((t) => t.phase === "queued");
 
-export default function RateLimitDemo() {
+export default function RateLimitDemo(_props: DemoProps) {
   const reduced = useReducedMotion();
   const simRef = useRef<Sim>(freshSim());
   const [apiOk, setApiOk] = useState(true);

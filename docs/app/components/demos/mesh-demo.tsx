@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { useRafLoop, useReducedMotion } from "./lib";
+import type { DemoProps } from "./types";
 
 /*
  * Mesh scheduling demo — jobs carry a routing key; the brokerless mesh sends
@@ -120,7 +121,7 @@ function freshSim(): Sim {
   };
 }
 
-export default function MeshDemo() {
+export default function MeshDemo(_props: DemoProps) {
   const reduced = useReducedMotion();
   const simRef = useRef<Sim>(freshSim());
   const [, repaint] = useReducer((n: number) => n + 1, 0);
@@ -141,7 +142,7 @@ export default function MeshDemo() {
     (n: number) => {
       const sim = simRef.current;
       for (let i = 0; i < n; i++) {
-        if (sim.tokens.length > MAX_TOKENS) break;
+        if (sim.tokens.length >= MAX_TOKENS) break;
         const p = poolByKey(pickKey());
         sim.tokens.push({
           id: sim.ids++,

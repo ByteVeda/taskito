@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useRafLoop, useReducedMotion } from "./lib";
+import type { DemoProps } from "./types";
 
 /*
  * Saga / compensation demo — a distributed transaction as a chain of steps,
@@ -123,7 +124,7 @@ function instantSim(failAt: number): Sim {
   return sim;
 }
 
-export default function SagaDemo() {
+export default function SagaDemo(_props: DemoProps) {
   const reduced = useReducedMotion();
   const simRef = useRef<Sim>(freshSim());
   const [failAt, setFailAt] = useState(1);

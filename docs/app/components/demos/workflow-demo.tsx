@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useRafLoop, useReducedMotion } from "./lib";
+import type { DemoProps } from "./types";
 
 /*
  * Workflow DAG demo — a real dependency graph (chain → parallel group → chord
@@ -200,7 +201,7 @@ function freshSim(): Sim {
   return { st, finishAt: {}, t0: 0, elapsed: 0, runMask: null, lit: new Set() };
 }
 
-export default function WorkflowDemo() {
+export default function WorkflowDemo(_props: DemoProps) {
   const reduced = useReducedMotion();
   const simRef = useRef<Sim>(freshSim());
   const lenRef = useRef<Map<string, number>>(new Map());
