@@ -1,0 +1,66 @@
+---
+title: Capabilities
+description: "Everything the Node SDK can do, with a link to each guide."
+---
+
+A map of the Node SDK's features. Everything here runs over the shared Rust core
+with zero Python — pick a backend, register tasks, run workers.
+
+## Core
+
+| Feature | Guide |
+|---|---|
+| Typed task registry, enqueue, await results | [Tasks](/node/guides/core/tasks) · [Result](/node/api-reference/result) |
+| SQLite / Postgres / Redis backends | [Backends](/node/guides/operations/backends) |
+| Named queues, priority, pause/resume | [Queues](/node/guides/core/queues) |
+| Cron-scheduled & delayed jobs | [Scheduling](/node/guides/core/scheduling) |
+| Cooperative cancellation (`AbortSignal`) | [Cancellation](/node/guides/core/cancellation) |
+| Execution model (async, concurrency) | [Execution model](/node/guides/core/execution-model) |
+
+## Reliability
+
+| Feature | Guide |
+|---|---|
+| Retries with backoff, dead-letter queue | [Retries](/node/guides/reliability/retries) · [Dead-letter](/node/guides/reliability/dead-letter) |
+| Per-attempt timeouts | [Timeouts](/node/guides/reliability/timeouts) |
+| Concurrency caps & rate limits | [Concurrency](/node/guides/reliability/concurrency) · [Rate limiting](/node/guides/reliability/rate-limiting) |
+| Circuit breakers | [Circuit breakers](/node/guides/reliability/circuit-breakers) |
+| Idempotent enqueue (`uniqueKey`) | [Idempotency](/node/guides/reliability/idempotency) |
+| Distributed locks | [Locks](/node/guides/reliability/locks) |
+| At-least-once delivery | [Guarantees](/node/guides/reliability/guarantees) |
+
+## Orchestration
+
+| Feature | Guide |
+|---|---|
+| DAG workflows: fan-out/in, conditions, gates, sub-workflows, saga | [Workflows](/node/guides/workflows) |
+| Decentralized work-stealing mesh | [Mesh](/node/guides/operations/mesh) |
+
+## Extensibility
+
+| Feature | Guide |
+|---|---|
+| Lifecycle events & middleware | [Events](/node/guides/extensibility/events) · [Middleware](/node/guides/extensibility/middleware) |
+| Signed webhook delivery | [Webhooks](/node/guides/extensibility/webhooks) |
+| Resource injection & enqueue interception | [Resources](/node/guides/resources) |
+| Pluggable serializers (JSON / msgpack) | [Serializers](/node/guides/extensibility/serializers) |
+
+## Observability & ops
+
+| Feature | Guide |
+|---|---|
+| Stats, metrics, progress, worker heartbeats | [Monitoring](/node/guides/observability/monitoring) |
+| Leveled logger | [Logging](/node/guides/observability/logging) |
+| OpenTelemetry / Prometheus / Sentry | [Integrations](/node/guides/integrations) |
+| React dashboard + REST API | [Dashboard](/node/guides/operations/dashboard) · [REST API](/node/guides/operations/dashboard-api) |
+| Standalone CLI | [CLI](/node/guides/operations/cli) |
+
+## Framework integrations
+
+[Express](/node/guides/integrations/express) · [Fastify](/node/guides/integrations/fastify) · [NestJS](/node/guides/integrations/nest)
+
+<Callout type="info">
+  Some features need the native addon built with optional cargo features —
+  workflows and mesh ship with `pnpm build:native`. See
+  [installation](/node/getting-started/installation).
+</Callout>
