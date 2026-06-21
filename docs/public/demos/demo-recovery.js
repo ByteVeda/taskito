@@ -46,8 +46,8 @@
     '<div class="demo-controls">'+
       '<button class="ctl" id="fr-play"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>Play</button>'+
       '<div class="seg" id="fr-out" role="group" aria-label="Outcome">'+
-        '<button data-v="recover" data-on="1" class="good"><span class="dot"></span>Recovers</button>'+
-        '<button data-v="dlq" data-on="0" class="bad"><span class="dot"></span>Dead-letter</button>'+
+        '<button data-v="recover" data-on="1" aria-pressed="true" class="good"><span class="dot"></span>Recovers</button>'+
+        '<button data-v="dlq" data-on="0" aria-pressed="false" class="bad"><span class="dot"></span>Dead-letter</button>'+
       '</div>'+
     '</div>'+
   '</div>'+
@@ -222,7 +222,7 @@
   document.querySelectorAll('#fr-out button').forEach(function(b){
     b.addEventListener('click',function(){
       scen=b.getAttribute('data-v'); events=SCEN[scen]; DUR=dur();
-      document.querySelectorAll('#fr-out button').forEach(function(x){ x.setAttribute('data-on', x===b?'1':'0'); });
+      document.querySelectorAll('#fr-out button').forEach(function(x){ var on=x===b; x.setAttribute('data-on', on?'1':'0'); x.setAttribute('aria-pressed', on?'true':'false'); });
       play=Math.min(play,DUR);
       buildRailSegments(); buildLog(); render();
     });

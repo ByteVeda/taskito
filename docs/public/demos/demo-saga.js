@@ -26,9 +26,9 @@
     '<span class="title"><span class="ld"></span>booking-saga · transaction</span>'+
     '<div class="demo-controls">'+
       '<div class="seg" id="saga-fail" role="group" aria-label="Where it fails">'+
-        '<button data-v="1" class="bad" data-on="1"><span class="dot"></span>charge fails</button>'+
-        '<button data-v="2" class="bad" data-on="0"><span class="dot"></span>hotel fails</button>'+
-        '<button data-v="-1" class="good" data-on="0"><span class="dot"></span>all succeed</button>'+
+        '<button data-v="1" class="bad" data-on="1" aria-pressed="true"><span class="dot"></span>charge fails</button>'+
+        '<button data-v="2" class="bad" data-on="0" aria-pressed="false"><span class="dot"></span>hotel fails</button>'+
+        '<button data-v="-1" class="good" data-on="0" aria-pressed="false"><span class="dot"></span>all succeed</button>'+
       '</div>'+
       '<button class="ctl pri" id="saga-run"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>Run saga</button>'+
       '<button class="ctl" id="saga-reset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>Reset</button>'+
@@ -213,7 +213,7 @@
   document.querySelectorAll('#saga-fail button').forEach(function(b){
     b.addEventListener('click',function(){
       failAt=parseInt(b.getAttribute('data-v'),10);
-      document.querySelectorAll('#saga-fail button').forEach(function(x){ x.setAttribute('data-on', x===b?'1':'0'); });
+      document.querySelectorAll('#saga-fail button').forEach(function(x){ var on=x===b; x.setAttribute('data-on', on?'1':'0'); x.setAttribute('aria-pressed', on?'true':'false'); });
       reset();
     });
   });

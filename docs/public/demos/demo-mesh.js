@@ -79,7 +79,7 @@
     p.nodes.forEach(function(node){
       addPath('M420 '+p.y+' H '+(node.x-NW/2), 'var(--line2)', false);
       var g=document.createElementNS(SVGNS,'g'); g.setAttribute('class','mesh-node'); g.style.cursor='pointer';
-      g.setAttribute('tabindex','0'); g.setAttribute('role','button'); g.setAttribute('aria-label',p.key+' worker — click to toggle offline');
+      g.setAttribute('tabindex','0'); g.setAttribute('role','button'); g.setAttribute('aria-pressed','false'); g.setAttribute('aria-label',p.key+' worker — click to toggle offline');
       var rect=document.createElementNS(SVGNS,'rect');
       rect.setAttribute('x',node.x-NW/2); rect.setAttribute('y',node.y-NH/2); rect.setAttribute('width',NW); rect.setAttribute('height',NH);
       rect.setAttribute('rx','11'); rect.setAttribute('fill','var(--panel2)'); rect.setAttribute('stroke','var(--line2)');
@@ -148,6 +148,9 @@
   }
 
   function paintNode(nd){
+    // Mirror online/offline into ARIA: pressed === taken offline.
+    nd.g.setAttribute('aria-pressed', nd.off?'true':'false');
+    nd.g.setAttribute('aria-label', nd.pool.key+' worker — '+(nd.off?'offline, click to bring online':'online, click to take offline'));
     if(nd.off){
       nd.rect.setAttribute('fill','var(--panel)'); nd.rect.setAttribute('stroke','var(--line2)');
       nd.rect.setAttribute('stroke-dasharray','3 5'); nd.pip.setAttribute('fill','var(--dim)'); nd.xg.setAttribute('opacity','.8');
