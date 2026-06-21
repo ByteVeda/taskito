@@ -256,7 +256,10 @@
   function stop(){ if(raf){ cancelAnimationFrame(raf); raf=null; } }
 
   function staticRender(){
-    // snapshot frame for reduced motion: snap positions, single step of layout
+    // snapshot frame for reduced motion: snap positions, single step of layout.
+    // Promote in-flight burst tokens (heading for the queue) so they show up in
+    // queue depth instead of stranding at the producer until motion resumes.
+    tokens.forEach(function(t){ if(t.phase==='toqueue'){ t.phase='queued'; t.blocked=false; } });
     var ql=queuedList();
     ql.forEach(function(t,i){ var col=i%3,rowi=Math.floor(i/3); t.x=300+col*34; t.y=120+rowi*30; });
     tokens.forEach(function(t){ if(t.el){ t.el.setAttribute('cx',t.x.toFixed(1)); t.el.setAttribute('cy',t.y.toFixed(1)); t.el.style.fill=colorFor(t);} });
