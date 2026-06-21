@@ -23,7 +23,7 @@ queue.task("add", (a: number, b: number) => a + b, {
   retryBackoff: { baseMs: 1000, maxMs: 60_000 },
   timeoutMs: 30_000,
   maxConcurrent: 4,
-  rateLimit: { limit: 100, windowMs: 60_000 },
+  rateLimit: "100/m",
   circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
 });
 ```
@@ -34,7 +34,7 @@ queue.task("add", (a: number, b: number) => a + b, {
 | `retryBackoff` | Exponential backoff bounds (`baseMs`, `maxMs`). |
 | `timeoutMs` | Per-attempt [timeout](/node/guides/reliability/timeouts). |
 | `maxConcurrent` | Max simultaneously-running jobs of this task ([concurrency](/node/guides/reliability/concurrency)). |
-| `rateLimit` | Token-bucket [rate limit](/node/guides/reliability/rate-limiting). |
+| `rateLimit` | [Rate limit](/node/guides/reliability/rate-limiting) string, `count/unit` (e.g. `"100/m"`). |
 | `circuitBreaker` | Trip after repeated failures ([circuit breakers](/node/guides/reliability/circuit-breakers)). |
 
 <Callout type="info">
@@ -47,5 +47,5 @@ queue.task("add", (a: number, b: number) => a + b, {
 Beyond per-task config, you can set defaults for an entire named queue:
 
 ```ts
-queue.configureQueue("emails", { rateLimit: { limit: 50, windowMs: 1000 } });
+queue.configureQueue("emails", { rateLimit: "50/s" });
 ```
