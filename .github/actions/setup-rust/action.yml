@@ -1,0 +1,37 @@
+name: Set up Rust
+description: >-
+  Installs the stable Rust toolchain and restores the Cargo build cache with the
+  repo's standard settings. Used by every Rust-touching job so toolchain setup
+  lives in one place.
+
+inputs:
+  components:
+    description: "Comma-separated rustup components (e.g. 'rustfmt, clippy')."
+    required: false
+    default: ""
+  save-if:
+    description: >-
+      Whether this job may save the Cargo cache (only one job should — usually
+      lint). Pass 'true' for the cache-writer, leave 'false' elsewhere.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+
+    - name: Restore Cargo cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Skip caching ~/.cargo/bin/ — rustup 1.28's multicall binary interacts
+        # badly with this action's cache-clean step and can restore a `cargo`
+        # that responds as `rustup-init`. Proxies are reinstalled each run by
+        # dtolnay/rust-toolchain. https://github.com/Swatinem/rust-cache/issues/16
+        save-if: ${{ inputs.save-if }}
+        cache-bin: false
+        # Bump to evict any v0-* caches that already contain the corrupted bin dir.
+        prefix-key: v1-rust-bin-fix

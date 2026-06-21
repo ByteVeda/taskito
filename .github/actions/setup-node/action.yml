@@ -1,0 +1,35 @@
+name: Set up Node + pnpm
+description: >-
+  Installs pnpm and Node.js (with pnpm store caching) and, by default, installs
+  the dependencies of `working-directory` with a frozen lockfile.
+
+inputs:
+  working-directory:
+    description: "Directory whose dependencies to install / cache."
+    required: false
+    default: sdks/node
+  install:
+    description: "Run `pnpm install --frozen-lockfile` in working-directory."
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm
+      uses: pnpm/action-setup@v6
+      with:
+        version: 10.33.0
+
+    - name: Set up Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22
+        cache: pnpm
+        cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm install --frozen-lockfile

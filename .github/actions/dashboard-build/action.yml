@@ -1,9 +1,17 @@
 name: Build dashboard
 description: >-
   Sets up Node and pnpm, installs dashboard dependencies, generates the
-  TanStack Router tree, and runs the Vite production build. Output is
-  written to `sdks/python/taskito/static/dashboard/` for packaging into the
-  Python wheel.
+  TanStack Router tree, and runs the Vite production build. Defaults to the
+  Python wheel path; pass `out-dir` to target the Node package instead.
+
+inputs:
+  out-dir:
+    description: >-
+      Vite `--outDir`, relative to `dashboard/`. Omit to use the default from
+      vite.config (the Python wheel path). For the Node package, pass
+      `../sdks/node/static/dashboard`.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -33,13 +41,23 @@ runs:
     - name: Vite production build
       shell: bash
       working-directory: dashboard
-      run: pnpm exec vite build
+      run: |
+        if [ -n "${{ inputs.out-dir }}" ]; then
+          pnpm exec vite build --outDir "${{ inputs.out-dir }}" --emptyOutDir
+        else
+          pnpm exec vite build
+        fi
 
     - name: Verify build output
       shell: bash
       run: |
         set -euo pipefail
-        if [ ! -f sdks/python/taskito/static/dashboard/index.html ]; then
-          echo "::error::Dashboard build did not produce sdks/python/taskito/static/dashboard/index.html"
+        if [ -n "${{ inputs.out-dir }}" ]; then
+          target="dashboard/${{ inputs.out-dir }}/index.html"
+        else
+          target="sdks/python/taskito/static/dashboard/index.html"
+        fi
+        if [ ! -f "$target" ]; then
+          echo "::error::Dashboard build did not produce $target"
           exit 1
         fi
