@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
+import { useSdk } from "@/hooks";
 import { highlightPython, highlightTs } from "@/lib/highlight-lite";
 import { HERO_PANES, SOON_PANES, type SoonLang } from "@/lib/landing-content";
 
@@ -35,7 +36,12 @@ function SoonBox({ pane }: { pane: SoonLang }) {
 }
 
 export function Hero() {
-  const [lang, setLang] = useState<Lang>("py");
+  const { sdk, setSdk } = useSdk();
+  // Roadmap langs (go/java) have no SDK — selected locally; py/ts mirror the
+  // global SDK so the hero tab and the docs sidebar switch stay in sync.
+  const [soon, setSoon] = useState<SoonLang["id"] | null>(null);
+  const lang: Lang = soon ?? (sdk === "node" ? "ts" : "py");
+  const isNode = sdk === "node";
   const pane = HERO_PANES.find((p) => p.id === lang);
   const codeHtml = pane
     ? lang === "ts"
@@ -48,18 +54,22 @@ export function Hero() {
     <section className="hero">
       <div className="left">
         <h1>
-          One queue.<span className="grad">Built for Python.</span>
+          One queue.
+          <span className="grad">
+            Built for {isNode ? "Node.js." : "Python."}
+          </span>
         </h1>
         <p className="sub">
-          A Rust-powered task queue with a first-class <b>Python</b> SDK over
-          one core and one store — no broker. Start on <code>SQLite</code>,
-          scale to <code>Postgres</code>.
+          A Rust-powered task queue with a first-class{" "}
+          <b>{isNode ? "Node.js" : "Python"}</b> SDK over one core and one store
+          — no broker. Start on <code>SQLite</code>, scale to{" "}
+          <code>Postgres</code>.
         </p>
         <div className="btns">
           <Link className="btn pri" to={active.docHref}>
             Quickstart →
           </Link>
-          <Link className="btn sec" to="/python/getting-started/installation">
+          <Link className="btn sec" to={`/${sdk}/getting-started/installation`}>
             Install
           </Link>
           <a className="btn gho" href="https://github.com/ByteVeda/taskito">
@@ -69,7 +79,7 @@ export function Hero() {
         <div className="metarow">
           <span>Brokerless</span>
           <span>Rust core</span>
-          <span>Python SDK</span>
+          <span>{isNode ? "Node.js SDK" : "Python SDK"}</span>
           <span>DAG workflows</span>
         </div>
       </div>
@@ -96,7 +106,10 @@ export function Hero() {
                 key={p.id}
                 type="button"
                 className={`langtab ${p.id === lang ? "active" : ""}`.trim()}
-                onClick={() => setLang(p.id)}
+                onClick={() => {
+                  setSoon(null);
+                  setSdk(p.id === "ts" ? "node" : "python");
+                }}
               >
                 {p.label}
               </button>
@@ -106,7 +119,7 @@ export function Hero() {
                 key={p.id}
                 type="button"
                 className={`langtab dis ${p.id === lang ? "active" : ""}`.trim()}
-                onClick={() => setLang(p.id)}
+                onClick={() => setSoon(p.id)}
               >
                 {p.label} <span className="tag soon">soon</span>
               </button>
