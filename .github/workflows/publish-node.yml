@@ -90,26 +90,22 @@ jobs:
     name: Build ${{ matrix.triple }}
     needs: preflight
     runs-on: ${{ matrix.runner }}
-    # Linux builds run inside the napi-rs images for a low glibc / musl baseline;
-    # macOS and Windows build natively on the runner. All builds are native
-    # (host == target), so postgres's bundled libpq compiles like any local build.
-    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - triple: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
           - triple: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
           - triple: x86_64-unknown-linux-musl
             runner: ubuntu-latest
-            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
           - triple: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
-            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
           - triple: x86_64-apple-darwin
             runner: macos-15-intel
           - triple: aarch64-apple-darwin
@@ -119,32 +115,47 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Linux: the napi-rs image already has Rust + Node; add pnpm and perl
-      # (needed by `openssl-sys` vendored + `pq-src` to build libpq from source).
-      - name: Set up Linux toolchain
-        if: matrix.container != ''
-        shell: bash
-        run: |
-          if command -v apk >/dev/null; then
-            apk add --no-cache perl build-base
-          else
-            apt-get update && apt-get install -y perl
-          fi
-          npm install -g pnpm@10.33.0
-          pnpm -C sdks/node install --frozen-lockfile
-
+      # macOS / Windows build natively on the runner.
       - name: Set up Rust
-        if: matrix.container == ''
+        if: matrix.docker == ''
         uses: ./.github/actions/setup-rust
 
       - name: Set up Node + pnpm
-        if: matrix.container == ''
+        if: matrix.docker == ''
         uses: ./.github/actions/setup-node
 
-      - name: Build native addon (full features, host target)
+      - name: Build native addon (host target)
+        if: matrix.docker == ''
         shell: bash
         working-directory: sdks/node
         run: pnpm run build:native
+
+      # Linux builds run inside the napi-rs image for a low glibc / musl baseline.
+      # Checkout and this `docker run` execute on the host runner — JavaScript
+      # actions (checkout) can't run inside an Alpine container on arm64 runners,
+      # so the job has no `container:` and shells into the image here instead.
+      # perl is needed by vendored openssl-sys + pq-src (libpq) to build from source;
+      # --force overwrites the pnpm the image preinstalls (otherwise EEXIST).
+      - name: Build native addon in docker
+        if: matrix.docker != ''
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/build" \
+            -w /build/sdks/node \
+            -e CARGO_HTTP_MULTIPLEXING \
+            -e CARGO_NET_RETRY \
+            "${{ matrix.docker }}" \
+            sh -c '
+              set -e
+              if command -v apk >/dev/null; then
+                apk add --no-cache perl build-base
+              else
+                apt-get update && apt-get install -y perl
+              fi
+              npm install -g pnpm@10.33.0 --force
+              pnpm install --frozen-lockfile
+              pnpm run build:native
+            '
 
       - name: Upload binding
         uses: actions/upload-artifact@v7
