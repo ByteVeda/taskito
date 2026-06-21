@@ -35,6 +35,8 @@ export class ResourceRuntime {
   private readonly workerCache = new Map<string, Promise<unknown>>();
   private readonly workerTeardown: Teardown[] = [];
   private readonly counters = new Map<string, { created: number; disposed: number }>();
+  /** Active worker leases sharing this runtime; teardown disposes only at zero. */
+  private workerLeases = 0;
 
   /** Register (or replace) a resource definition. */
   register<T>(name: string, definition: ResourceDefinition<T>): void {
@@ -84,11 +86,16 @@ export class ResourceRuntime {
     };
     const counter = this.counter(name);
     counter.created += 1;
-    const built = startFactory(def, ctx).catch((error) => {
-      counter.created -= 1; // a failed build is not a live resource
-      this.workerCache.delete(name); // failed build is retryable, not cached
-      throw error;
-    });
+    // Register the pending promise BEFORE the factory body runs (deferred a
+    // microtask) so a resource that resolves a dependency on itself reuses this
+    // promise instead of recursing into resolveWorker and overflowing the stack.
+    const built = Promise.resolve()
+      .then(() => startFactory(def, ctx))
+      .catch((error) => {
+        counter.created -= 1; // a failed build is not a live resource
+        this.workerCache.delete(name); // failed build is retryable, not cached
+        throw error;
+      });
     this.workerCache.set(name, built);
     this.trackResource(this.workerTeardown, name, def, built);
     return built;
@@ -117,11 +124,15 @@ export class ResourceRuntime {
       };
       const counter = this.counter(name);
       counter.created += 1;
-      const built = startFactory(def, ctx).catch((error) => {
-        counter.created -= 1; // a failed build is not a live resource
-        taskCache.delete(name); // failed build is retryable, not cached
-        throw error;
-      });
+      // Cache before the factory runs (see resolveWorker) so a self-referential
+      // task resource reuses this promise instead of recursing.
+      const built = Promise.resolve()
+        .then(() => startFactory(def, ctx))
+        .catch((error) => {
+          counter.created -= 1; // a failed build is not a live resource
+          taskCache.delete(name); // failed build is retryable, not cached
+          throw error;
+        });
       taskCache.set(name, built);
       this.trackResource(taskTeardown, name, def, built);
       return built;
@@ -130,8 +141,24 @@ export class ResourceRuntime {
     return { resolver: resolve, teardown: () => runTeardown(taskTeardown) };
   }
 
-  /** Dispose every worker-scoped resource (LIFO) and reset the caches. */
+  /** Register a worker that shares this runtime's worker-scoped resources. */
+  acquireWorker(): void {
+    this.workerLeases += 1;
+  }
+
+  /**
+   * Release one worker lease; dispose worker-scoped resources (LIFO) and reset
+   * the caches only once the last sharing worker has stopped. This keeps a
+   * second `runWorker()` on the same queue from tearing down resources the
+   * first worker is still using.
+   */
   async teardownWorker(): Promise<void> {
+    if (this.workerLeases > 0) {
+      this.workerLeases -= 1;
+    }
+    if (this.workerLeases > 0) {
+      return;
+    }
     const pending = this.workerTeardown.splice(0);
     this.workerCache.clear();
     await runTeardown(pending);

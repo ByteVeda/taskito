@@ -181,7 +181,12 @@ export class Worker {
       queueConfigs: buildQueueConfigs(queueLimits),
       mesh: run?.mesh,
     };
-    return new Worker(queue.runWorker(taskCallback, outcomeCallback, nativeOptions), resources);
+    const native = queue.runWorker(taskCallback, outcomeCallback, nativeOptions);
+    // Lease the shared resource runtime only once the native worker actually
+    // started, so its worker-scoped values survive until the last worker on this
+    // queue stops (see ResourceRuntime). A failed start leaks no lease.
+    resources.acquireWorker();
+    return new Worker(native, resources);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */

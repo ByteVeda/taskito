@@ -76,6 +76,27 @@ describe("ResourceRuntime", () => {
     expect(order).toEqual(["b", "a"]); // reverse of build order
   });
 
+  it("disposes worker resources only when the last sharing worker stops", async () => {
+    const rt = new ResourceRuntime();
+    let disposed = 0;
+    rt.register("conn", {
+      scope: "worker",
+      factory: () => "c",
+      dispose: () => {
+        disposed += 1;
+      },
+    });
+    rt.acquireWorker();
+    rt.acquireWorker();
+    await rt.createTaskScope().resolver("conn");
+
+    await rt.teardownWorker(); // one of two workers stopped
+    expect(disposed).toBe(0); // still in use by the sibling worker
+
+    await rt.teardownWorker(); // last worker stopped
+    expect(disposed).toBe(1);
+  });
+
   it("disposes task-scoped resources LIFO when the scope ends", async () => {
     const rt = new ResourceRuntime();
     const order: string[] = [];
