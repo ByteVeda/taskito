@@ -1,8 +1,69 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { searchDocs } from "@/lib/search";
+import { type SearchHit, searchDocs } from "@/lib/search";
 
-/** ⌘K command palette: client-side search over the build-time MDX index. */
+// Section glyphs mirror the prototype's command-palette icons.
+const SECTION_ICON: { match: string; path: string }[] = [
+  { match: "getting", path: "M13 2L3 14h7l-1 8 10-12h-7l1-8z" },
+  {
+    match: "guide",
+    path: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z",
+  },
+  {
+    match: "architecture",
+    path: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+  },
+  { match: "api", path: "M16 18l6-6-6-6M8 6l-6 6 6 6" },
+  { match: "node", path: "M12 2l8.5 5v10L12 22 3.5 17V7z" },
+  { match: "reference", path: "M16 18l6-6-6-6M8 6l-6 6 6 6" },
+];
+
+function sectionIconPath(section: string): string {
+  const key = section.toLowerCase();
+  return (
+    SECTION_ICON.find((s) => key.includes(s.match))?.path ??
+    "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"
+  );
+}
+
+function SectionIcon({ section }: { section: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={sectionIconPath(section)} />
+    </svg>
+  );
+}
+
+interface Group {
+  section: string;
+  items: SearchHit[];
+}
+
+/** Group ranked hits by section, preserving first-appearance order. */
+function groupBySection(hits: SearchHit[]): Group[] {
+  const groups: Group[] = [];
+  const byName = new Map<string, Group>();
+  for (const hit of hits) {
+    let group = byName.get(hit.section);
+    if (!group) {
+      group = { section: hit.section, items: [] };
+      byName.set(hit.section, group);
+      groups.push(group);
+    }
+    group.items.push(hit);
+  }
+  return groups;
+}
+
+/** ⌘K command palette: browse-by-section on open, ranked search as you type. */
 export function SearchModal({
   open,
   onClose,
@@ -13,7 +74,10 @@ export function SearchModal({
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const results = useMemo(() => searchDocs(query), [query]);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const groups = useMemo(() => groupBySection(searchDocs(query)), [query]);
+  const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset selection as results change
   useEffect(() => {
@@ -25,6 +89,13 @@ export function SearchModal({
       setQuery("");
     }
   }, [open]);
+
+  // Keep the active row in view during keyboard navigation.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-idx="${active}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [active]);
 
   if (!open) {
     return null;
@@ -40,15 +111,16 @@ export function SearchModal({
       onClose();
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((i) => Math.min(i + 1, results.length - 1));
+      setActive((i) => Math.min(i + 1, flat.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActive((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter" && results[active]) {
-      go(results[active].id);
+    } else if (e.key === "Enter" && flat[active]) {
+      go(flat[active].id);
     }
   };
 
+  let idx = -1;
   return (
     <div
       className="cmdk"
@@ -64,35 +136,80 @@ export function SearchModal({
       />
       {/* biome-ignore lint/a11y/noStaticElementInteractions: key handling for the palette */}
       <div className="cmdk-panel" onKeyDown={onKeyDown}>
-        <input
-          // biome-ignore lint/a11y/noAutofocus: expected focus for a command palette
-          autoFocus
-          className="cmdk-input"
-          type="search"
-          placeholder="Search the docs…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="cmdk-results">
-          {results.length === 0 && query ? (
+        <div className="cmdk-inputrow">
+          <svg
+            className="cmdk-ic"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <path d="M21 21l-4.3-4.3" />
+          </svg>
+          <input
+            // biome-ignore lint/a11y/noAutofocus: expected focus for a command palette
+            autoFocus
+            className="cmdk-input"
+            type="text"
+            placeholder="Search the docs…"
+            autoComplete="off"
+            spellCheck={false}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button type="button" className="cmdk-esc" onClick={onClose}>
+            esc
+          </button>
+        </div>
+        <div className="cmdk-results" role="listbox" ref={listRef}>
+          {flat.length === 0 ? (
             <div className="cmdk-empty">No results for “{query}”.</div>
           ) : (
-            results.map((hit, i) => (
-              <button
-                key={hit.id}
-                type="button"
-                className={`cmdk-item ${i === active ? "active" : ""}`.trim()}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => go(hit.id)}
-              >
-                <span className="cmdk-title">{hit.title}</span>
-                <span className="cmdk-section">{hit.section}</span>
-              </button>
+            groups.map((group) => (
+              <Fragment key={group.section}>
+                <div className="cmdk-group">{group.section}</div>
+                {group.items.map((hit) => {
+                  idx += 1;
+                  const i = idx;
+                  return (
+                    <button
+                      key={hit.id}
+                      type="button"
+                      data-idx={i}
+                      className={`cmdk-item ${i === active ? "active" : ""}`.trim()}
+                      onMouseEnter={() => setActive(i)}
+                      onClick={() => go(hit.id)}
+                    >
+                      <span className="cmdk-it-ic">
+                        <SectionIcon section={group.section} />
+                      </span>
+                      <span className="cmdk-it-body">
+                        <span className="cmdk-it-t">{hit.title}</span>
+                        <span className="cmdk-it-d">{hit.description}</span>
+                      </span>
+                      <span className="cmdk-it-go">↵</span>
+                    </button>
+                  );
+                })}
+              </Fragment>
             ))
           )}
         </div>
         <div className="cmdk-foot">
-          <kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close
+          <span>
+            <kbd>↑</kbd>
+            <kbd>↓</kbd> navigate
+          </span>
+          <span>
+            <kbd>↵</kbd> open
+          </span>
+          <span>
+            <kbd>esc</kbd> close
+          </span>
         </div>
       </div>
     </div>
