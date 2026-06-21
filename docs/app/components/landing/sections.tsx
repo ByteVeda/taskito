@@ -250,23 +250,34 @@ export function UseCases() {
           lead="Pick the workload — taskito ships the primitives."
         />
         <div className="uc-grid">
-          {USE_CASES.map((c) => (
-            <Link
-              key={c.title}
-              to={c.href ? `/${sdk}/${c.href}` : "#"}
-              className="uc reveal"
-            >
-              <div className="ic">
-                <Icon d={c.icon} rect={c.rect} />
+          {USE_CASES.map((c) => {
+            const inner = (
+              <>
+                <div className="ic">
+                  <Icon d={c.icon} rect={c.rect} />
+                </div>
+                <div>
+                  <h3>
+                    {c.title} <span className="arr">→</span>
+                  </h3>
+                  <RawHtml as="p" html={c.body} />
+                </div>
+              </>
+            );
+            return c.href ? (
+              <Link
+                key={c.title}
+                to={`/${sdk}/${c.href}`}
+                className="uc reveal"
+              >
+                {inner}
+              </Link>
+            ) : (
+              <div key={c.title} className="uc reveal">
+                {inner}
               </div>
-              <div>
-                <h3>
-                  {c.title} <span className="arr">→</span>
-                </h3>
-                <RawHtml as="p" html={c.body} />
-              </div>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>
