@@ -8,7 +8,13 @@ import {
 import { Emitter, type EventHandler, type EventName } from "./events";
 import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
-import { JsQueue, type NativeQueue, type OpenOptions } from "./native";
+import {
+  JsQueue,
+  type EnqueueOptions as NativeEnqueueOptions,
+  type NativeQueue,
+  type OpenOptions,
+} from "./native";
+import { encodeNotes } from "./notes";
 import { type ResourceContext, ResourceRuntime, type ResourceScope } from "./resources";
 import { JsonSerializer, type Serializer } from "./serializers";
 import type {
@@ -211,6 +217,33 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     args?: Parameters<TTasks[Name]>,
     options?: EnqueueOptions,
   ): string {
+    const { payload, options: nativeOpts } = this.prepareEnqueue(name, args, options);
+    return this.native.enqueue(name, payload, nativeOpts);
+  }
+
+  /**
+   * Enqueue many jobs of `name` in one storage round-trip. Each entry is its own
+   * typed `args` + `options`. Returns the new job ids in input order. Unlike
+   * {@link Queue.enqueue}, the batch path does not apply `uniqueKey` dedup.
+   */
+  enqueueMany<Name extends keyof TTasks & string>(
+    name: Name,
+    jobs: ReadonlyArray<{ args?: Parameters<TTasks[Name]>; options?: EnqueueOptions }>,
+  ): string[] {
+    const prepared = jobs.map((job) => this.prepareEnqueue(name, job.args, job.options));
+    return this.native.enqueueMany(name, prepared);
+  }
+
+  /**
+   * Merge per-task defaults, run the `onEnqueue` interception hooks, then
+   * serialize the args and encode the options — the shared path for
+   * {@link Queue.enqueue} and {@link Queue.enqueueMany}.
+   */
+  private prepareEnqueue<Name extends keyof TTasks & string>(
+    name: Name,
+    args: Parameters<TTasks[Name]> | undefined,
+    options: EnqueueOptions | undefined,
+  ): { payload: Buffer; options: NativeEnqueueOptions } {
     const defaults = this.tasks.get(name)?.options;
     const merged: EnqueueOptions = {
       ...options,
@@ -222,8 +255,10 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     for (const mw of this.middleware) {
       mw.onEnqueue?.(ctx);
     }
-    const payload = Buffer.from(this.serializer.serialize(ctx.args));
-    return this.native.enqueue(name, payload, ctx.options);
+    return {
+      payload: Buffer.from(this.serializer.serialize(ctx.args)),
+      options: toNativeEnqueueOptions(ctx.options),
+    };
   }
 
   /** Fetch a job by id, or `null` if unknown. */
@@ -369,6 +404,15 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       run: options,
     });
   }
+}
+
+/**
+ * Convert public enqueue options to the native shape: structured `notes` is
+ * validated and encoded to canonical JSON; all other fields pass through.
+ */
+function toNativeEnqueueOptions(options: EnqueueOptions): NativeEnqueueOptions {
+  const { notes, ...rest } = options;
+  return notes === undefined ? rest : { ...rest, notes: encodeNotes(notes) };
 }
 
 /** Resolve a {@link QueueOptions} into the native open options. */

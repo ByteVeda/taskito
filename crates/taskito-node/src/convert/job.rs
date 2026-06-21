@@ -45,7 +45,7 @@ pub fn build_new_job(
         timeout_ms,
         unique_key: opts.unique_key,
         metadata: opts.metadata,
-        notes: None,
+        notes: opts.notes,
         depends_on: Vec::new(),
         expires_at: None,
         result_ttl_ms: None,

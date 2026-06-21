@@ -1,5 +1,5 @@
 import type { OutcomeEvent } from "./events";
-import type { EnqueueOptions } from "./native";
+import type { EnqueueOptions } from "./types";
 
 /** Context for a task as it executes on a worker. */
 export interface TaskContext {

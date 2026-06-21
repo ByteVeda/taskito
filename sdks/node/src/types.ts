@@ -1,8 +1,11 @@
-import type { CircuitBreakerInput, MeshWorkerConfig } from "./native";
+import type {
+  CircuitBreakerInput,
+  MeshWorkerConfig,
+  EnqueueOptions as NativeEnqueueOptions,
+} from "./native";
 
 export type {
   CircuitBreakerInput as CircuitBreakerOptions,
-  EnqueueOptions,
   JobFilter,
   JsDeadJob as DeadJob,
   JsJob as Job,
@@ -12,6 +15,16 @@ export type {
   JsWorkerRow as WorkerInfo,
   MeshWorkerConfig,
 } from "./native";
+
+/**
+ * Per-job enqueue options. Mirrors the native options, but `notes` is a
+ * structured object here (validated and JSON-encoded before it reaches the
+ * core) rather than a pre-encoded string.
+ */
+export interface EnqueueOptions extends Omit<NativeEnqueueOptions, "notes"> {
+  /** Structured annotations stored on the job — at most 15 fields, 4 KiB encoded. */
+  notes?: Record<string, unknown>;
+}
 
 /** Options for {@link Queue.result}. */
 export interface ResultOptions {

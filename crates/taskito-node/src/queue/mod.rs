@@ -5,7 +5,7 @@ use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
 use napi_derive::napi;
 use taskito_core::{Storage, StorageBackend};
 
-use crate::config::{EnqueueOptions, OpenOptions, WorkerOptions};
+use crate::config::{EnqueueJob, EnqueueOptions, OpenOptions, WorkerOptions};
 use crate::convert::{build_new_job, job_to_js, JsJob, JsOutcome, JsTaskInvocation};
 use crate::error::to_napi_err;
 use crate::worker::{start_worker, JsWorker};
@@ -63,6 +63,24 @@ impl JsQueue {
         }
         .map_err(to_napi_err)?;
         Ok(job.id)
+    }
+
+    /// Enqueue a batch of jobs for one `task_name` in a single storage call.
+    /// Each entry carries its own payload and options. Returns the new job ids
+    /// in input order. Unlike `enqueue`, the batch path does not apply
+    /// `uniqueKey` dedup — it is a plain bulk insert for throughput.
+    #[napi]
+    pub fn enqueue_many(&self, task_name: String, jobs: Vec<EnqueueJob>) -> Result<Vec<String>> {
+        let namespace = self.namespace.as_deref();
+        let new_jobs = jobs
+            .into_iter()
+            .map(|job| {
+                let opts = job.options.unwrap_or_default();
+                build_new_job(task_name.clone(), job.payload.to_vec(), opts, namespace)
+            })
+            .collect();
+        let created = self.storage.enqueue_batch(new_jobs).map_err(to_napi_err)?;
+        Ok(created.into_iter().map(|job| job.id).collect())
     }
 
     /// Fetch a job by id, or `null` if no such job exists.
