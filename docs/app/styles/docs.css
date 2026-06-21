@@ -1123,10 +1123,19 @@ body {
     border-right: 1px solid var(--line2);
     box-shadow: var(--shadow-lg);
     transform: translateX(-100%);
-    transition: transform 0.24s cubic-bezier(0.2, 0.6, 0.2, 1);
+    /* Hide off-canvas so closed-drawer links leave the tab order; the
+       visibility flip is delayed until the slide-out finishes. */
+    visibility: hidden;
+    transition:
+      transform 0.24s cubic-bezier(0.2, 0.6, 0.2, 1),
+      visibility 0s linear 0.24s;
   }
   .sidebar.open {
     transform: none;
+    visibility: visible;
+    transition:
+      transform 0.24s cubic-bezier(0.2, 0.6, 0.2, 1),
+      visibility 0s;
   }
   .sidebar-backdrop.open {
     display: block;
