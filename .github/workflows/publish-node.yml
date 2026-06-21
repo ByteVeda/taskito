@@ -186,9 +186,9 @@ jobs:
       - name: Inject optionalDependencies into the main package
         working-directory: sdks/node
         run: |
-          node - "$VERSION" <<'NODE'
+          node <<'NODE'
           const fs = require("fs");
-          const version = process.argv[1];
+          const version = process.env.VERSION;
           const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
           pkg.optionalDependencies = {};
           for (const dir of fs.readdirSync("npm").sort()) {
