@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useRafLoop, useReducedMotion } from "./lib";
+import type { DemoProps } from "./types";
 
 /*
  * Failure-recovery demo — a scrubbable timeline of one job's lifecycle. Drag the
@@ -141,7 +142,7 @@ const durationOf = (events: Event[]) => events[events.length - 1].t + TAIL;
 
 type AttemptResult = "" | "pending" | "fail" | "ok" | "dead";
 
-export default function RecoveryDemo() {
+export default function RecoveryDemo(_props: DemoProps) {
   const reduced = useReducedMotion();
   const [scen, setScen] = useState<"recover" | "dlq">("recover");
   const [playing, setPlaying] = useState(false);
@@ -172,6 +173,15 @@ export default function RecoveryDemo() {
   );
 
   useRafLoop(tick, playing && !reduced);
+
+  // Reduced motion mid-playback: jump to the end and drop the stale "Pause" state.
+  useEffect(() => {
+    if (reduced && playing) {
+      playRef.current = DUR;
+      setPlaying(false);
+      repaint();
+    }
+  }, [reduced, playing, DUR]);
 
   const startPlay = useCallback(() => {
     if (reduced) {
