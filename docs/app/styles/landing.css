@@ -130,11 +130,17 @@ main {
   background: var(--indigo);
   opacity: 0.75;
 }
+.hero-doclinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+  align-self: flex-start;
+}
 .hero-doclink {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin-top: 14px;
   align-self: flex-start;
   font-family: var(--mono);
   font-size: 13px;

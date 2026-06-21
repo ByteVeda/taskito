@@ -141,9 +141,17 @@ export function Hero() {
           </div>
         ) : null}
 
-        <Link className="hero-doclink" to={active.docHref}>
-          {active.docLabel} →
-        </Link>
+        <div className="hero-doclinks">
+          <Link
+            className="hero-doclink"
+            to="/python/getting-started/quickstart"
+          >
+            Read the Python quickstart →
+          </Link>
+          <Link className="hero-doclink" to="/node/getting-started/quickstart">
+            Read the TypeScript quickstart →
+          </Link>
+        </div>
       </div>
     </section>
   );
