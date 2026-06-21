@@ -96,7 +96,7 @@ Setting `timeoutMs` without `onTimeout` defaults to `"reject"`.
 Rejecting a gate marks the gate node `failed` and skips its default
 (`on_success`) successors; the workflow run ends in state `"failed"`. Any
 `on_failure` / `always` successors still run — use those (see
-[conditions](/node/workflows/conditions)) if you need a rejection branch.
+[conditions](/node/guides/workflows/conditions)) if you need a rejection branch.
 
 <Callout type="warning">
   Calling `approveGate` or `rejectGate` on a gate that has already been

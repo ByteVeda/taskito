@@ -1,0 +1,52 @@
+---
+title: Fastify
+description: "Register the REST API and dashboard as Fastify plugins."
+---
+
+Peer dependency: `fastify`. Import from the `taskito/contrib/fastify` subpath.
+
+```ts
+import Fastify from "fastify";
+import {
+  taskitoFastify,
+  taskitoDashboardPlugin,
+} from "taskito/contrib/fastify";
+
+const app = Fastify();
+
+// REST API
+await app.register(taskitoFastify, { queue, prefix: "/tasks" });
+
+// Dashboard SPA
+await app.register(taskitoDashboardPlugin, { queue, prefix: "/admin" });
+
+await app.listen({ port: 3000 });
+```
+
+`taskitoFastify` is a `FastifyPluginAsync`. It exposes the same nine routes as
+the [Express router](/node/guides/integrations/express#rest-routes), mounted
+under `prefix`.
+
+## Options
+
+The same `includeRoutes`, `excludeRoutes`, and `resultTimeoutMs` options are
+accepted, passed in the register options object alongside `queue`:
+
+```ts
+await app.register(taskitoFastify, {
+  queue,
+  prefix: "/tasks",
+  excludeRoutes: ["enqueue"], // read-only API
+  resultTimeoutMs: 10_000,
+});
+```
+
+`taskitoDashboardPlugin` accepts `queue`, `prefix`, and an optional `staticDir`:
+
+```ts
+await app.register(taskitoDashboardPlugin, {
+  queue,
+  prefix: "/admin",
+  staticDir: "/app/dashboard-assets",
+});
+```

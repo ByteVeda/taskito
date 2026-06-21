@@ -1,0 +1,64 @@
+---
+title: Express
+description: "Mount a REST API and the dashboard into an Express app."
+---
+
+Peer dependency: `express`. Import from the `taskito/contrib/express` subpath.
+
+```ts
+import express from "express";
+import { taskitoRouter, taskitoDashboard } from "taskito/contrib/express";
+
+const app = express();
+
+// REST API — mounted at /tasks
+app.use("/tasks", taskitoRouter(queue));
+
+// Dashboard SPA — mounted at /admin
+app.use("/admin", taskitoDashboard(queue));
+
+app.listen(3000);
+```
+
+## REST routes
+
+JSON body parsing is mounted internally on the router.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/enqueue` | Enqueue a job. Body: `{ task, args?, options? }`. Returns `{ jobId }` with status 201. |
+| `GET` | `/stats` | Overall queue statistics. |
+| `GET` | `/stats/queues?queue=` | Per-queue statistics. |
+| `GET` | `/jobs/:id` | Fetch a job by ID. |
+| `GET` | `/jobs/:id/errors` | Error history for a job. |
+| `GET` | `/jobs/:id/result?timeoutMs=` | Wait for a result (long-poll). |
+| `POST` | `/jobs/:id/cancel` | Request cancellation. |
+| `GET` | `/dead-letters?limit=&offset=` | List dead-lettered jobs. |
+| `POST` | `/dead-letters/:id/retry` | Retry a dead-lettered job. |
+
+## `taskitoRouter` options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `includeRoutes` | `string[]` | all | Route names to expose (see below). |
+| `excludeRoutes` | `string[]` | none | Route names to suppress. |
+| `resultTimeoutMs` | `number` | `5000` | Max wait for `/jobs/:id/result`. |
+
+Route names: `enqueue`, `stats`, `queue-stats`, `job`, `job-errors`,
+`job-result`, `cancel`, `dead-letters`, `retry-dead`.
+
+## Dashboard
+
+`taskitoDashboard(queue, { staticDir? })` returns a request handler that serves
+the built dashboard SPA and proxies `/api/*` to the queue. Mount it under a path
+prefix:
+
+```ts
+app.use("/admin", taskitoDashboard(queue));
+```
+
+<Callout type="warning">
+  The SPA assets must be built first: `pnpm build:dashboard`. The built files
+  land in `node_modules/taskito/static/dashboard` by default; pass `staticDir`
+  to point elsewhere.
+</Callout>

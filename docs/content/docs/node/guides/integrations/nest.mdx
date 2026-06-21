@@ -1,0 +1,56 @@
+---
+title: NestJS
+description: "Inject a TaskitoService into your Nest providers."
+---
+
+Peer dependencies: `@nestjs/common` + `reflect-metadata`. Import from the
+`taskito/contrib/nest` subpath.
+
+```ts
+import { Module } from "@nestjs/common";
+import { TaskitoModule } from "taskito/contrib/nest";
+
+@Module({
+  imports: [TaskitoModule.forRoot(queue)],
+})
+export class AppModule {}
+```
+
+`TaskitoModule.forRoot(queue)` returns a `DynamicModule` that exports
+`TaskitoService` to any module that imports it.
+
+## Injecting `TaskitoService`
+
+```ts
+import { Injectable } from "@nestjs/common";
+import { TaskitoService } from "taskito/contrib/nest";
+
+@Injectable()
+export class ReportService {
+  constructor(private readonly tasks: TaskitoService) {}
+
+  scheduleReport(reportId: string): string {
+    return this.tasks.enqueue("generateReport", [reportId], {
+      maxRetries: 2,
+      timeoutMs: 60_000,
+    });
+  }
+}
+```
+
+## `TaskitoService` methods
+
+| Method | Description |
+|---|---|
+| `enqueue(task, args?, options?)` | Enqueue a job, returns the job ID. |
+| `result(id, options?)` | Wait for a result. |
+| `getJob(id)` | Fetch job details by ID. |
+| `stats()` | Overall queue statistics. |
+| `requestCancel(id)` | Request cancellation of a running job. |
+| `deadLetters(limit?, offset?)` | List dead-lettered jobs. |
+| `queue` | The raw `Queue` instance for the full API surface. |
+
+<Callout type="info">
+  `TaskitoService` wraps the most common operations. For anything not listed —
+  workflows, distributed locks, metrics — access `tasks.queue` directly.
+</Callout>

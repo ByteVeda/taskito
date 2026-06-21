@@ -89,7 +89,11 @@ export const PYTHON_SECTIONS = [
   "api-reference",
   "more",
 ];
-export const NODE_SECTIONS = ["node"];
+export const NODE_SECTIONS = [
+  "node/getting-started",
+  "node/guides",
+  "node/api-reference",
+];
 
 export const PYTHON_NAV = buildTree(PYTHON_SECTIONS);
 export const NODE_NAV = buildTree(NODE_SECTIONS);

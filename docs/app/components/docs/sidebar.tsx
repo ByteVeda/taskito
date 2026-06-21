@@ -21,7 +21,7 @@ function SdkSwitch({ sdk }: { sdk: Sdk }) {
         Python
       </Link>
       <Link
-        to="/node"
+        to="/node/getting-started/installation"
         className={`sdk-opt ${sdk === "node" ? "active" : ""}`.trim()}
         role="tab"
         aria-selected={sdk === "node"}
