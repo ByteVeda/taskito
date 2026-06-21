@@ -3,7 +3,7 @@ import { Link } from "react-router";
 
 /** Design-matched replacement for `fumadocs-ui/components/card` (aliased in vite). */
 export function Cards({ children }: { children: ReactNode }) {
-  return <div className="next-grid card-grid">{children}</div>;
+  return <div className="next-grid">{children}</div>;
 }
 
 export function Card({
@@ -21,10 +21,12 @@ export function Card({
 }) {
   const body = (
     <>
-      {icon ? <span className="card-ic">{icon}</span> : null}
-      <span className="ttl">{title}</span>
+      <span className="nt">
+        {icon}
+        {title}
+      </span>
       {(description ?? children) ? (
-        <span className="card-desc">{description ?? children}</span>
+        <span className="nd">{description ?? children}</span>
       ) : null}
     </>
   );

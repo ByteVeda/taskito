@@ -1,7 +1,12 @@
-import { index, type RouteConfig, route } from "@react-router/dev/routes";
+import {
+  index,
+  layout,
+  type RouteConfig,
+  route,
+} from "@react-router/dev/routes";
 
 export default [
   index("routes/home.tsx"),
-  // Catch-all renders the MDX doc page for the URL slug.
-  route("*", "routes/docs.$.tsx"),
+  // Every docs URL renders inside the shell (nav + sidebar + TOC).
+  layout("routes/docs-layout.tsx", [route("*", "routes/docs.$.tsx")]),
 ] satisfies RouteConfig;

@@ -2978,3 +2978,50 @@ body {
   color: var(--indigo-br);
   border-bottom: 1px solid var(--indigo-line);
 }
+
+/* ---------- React port additions (nested nav, link-group headers, prev/next blocks) ---------- */
+.gt.gt-link {
+  color: var(--dim);
+  transition: color 0.15s;
+}
+.gt.gt-link:hover {
+  color: var(--txt);
+}
+.nav-subsection {
+  margin: 2px 0;
+}
+.nav-subsection .nav-sub {
+  margin-left: 11px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+}
+.nav-item-label {
+  color: var(--dim);
+  font-weight: 600;
+  cursor: default;
+}
+.nav-item-label:hover {
+  background: transparent;
+  color: var(--dim);
+}
+.pagenav .dir,
+.pagenav .ttl {
+  display: block;
+}
+.next-card .nt svg {
+  width: 16px;
+  height: 16px;
+  color: var(--indigo-br);
+}
+/* search modal (Phase 6 swaps the body in) */
+.cmdk-panel {
+  width: min(620px, 92vw);
+  margin: 11vh auto 0;
+  padding: 22px 20px;
+  border: 1px solid var(--line2);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--mut);
+  font-family: var(--mono);
+  font-size: 13px;
+}

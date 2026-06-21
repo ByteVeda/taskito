@@ -1,4 +1,5 @@
 import { MDXProvider } from "@mdx-js/react";
+import { PrevNext } from "@/components/docs";
 import { mdxComponents } from "@/components/mdx";
 import { getDocPage } from "@/lib/content";
 import type { Route } from "./+types/docs.$";
@@ -36,6 +37,7 @@ export default function DocRoute({ params }: Route.ComponentProps) {
       <MDXProvider components={mdxComponents}>
         <Component />
       </MDXProvider>
+      <PrevNext />
     </article>
   );
 }

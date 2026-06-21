@@ -28,7 +28,7 @@ export function Callout({
         <Icon size={18} />
       </span>
       <div className="cc">
-        {title ? <strong className="callout-title">{title}</strong> : null}
+        {title ? <strong className="ctitle">{title}</strong> : null}
         {children}
       </div>
     </div>
