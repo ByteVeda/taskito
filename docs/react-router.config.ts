@@ -1,5 +1,6 @@
 import type { Config } from "@react-router/dev/config";
 import { allDocPaths } from "./app/lib/doc-paths";
+import { redirectPaths } from "./app/lib/redirects";
 
 // Static docs site for GitHub Pages: no server runtime, every route prerendered
 // to HTML. `DOCS_BASE_PATH=/taskito` in CI deploys under docs.byteveda.org/taskito;
@@ -20,6 +21,12 @@ export default {
     v8_trailingSlashAwareDataRequests: true,
   },
   async prerender() {
-    return ["/", "/llms.txt", "/llms-full.txt", ...allDocPaths()];
+    return [
+      "/",
+      "/llms.txt",
+      "/llms-full.txt",
+      ...allDocPaths(),
+      ...redirectPaths(),
+    ];
   },
 } satisfies Config;
