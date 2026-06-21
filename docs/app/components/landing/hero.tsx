@@ -55,7 +55,7 @@ export function Hero() {
           <Link className="btn pri" to={active.docHref}>
             Quickstart →
           </Link>
-          <Link className="btn sec" to="/getting-started/installation">
+          <Link className="btn sec" to="/python/getting-started/installation">
             Install
           </Link>
           <a className="btn gho" href="https://github.com/ByteVeda/taskito">

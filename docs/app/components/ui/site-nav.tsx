@@ -18,11 +18,11 @@ function GithubMark() {
 }
 
 const LINKS = [
-  { label: "Getting Started", href: "/getting-started/installation" },
-  { label: "Guides", href: "/guides" },
-  { label: "Architecture", href: "/architecture" },
-  { label: "API", href: "/api-reference" },
-  { label: "Changelog", href: "/more/changelog" },
+  { label: "Getting Started", href: "/python/getting-started/installation" },
+  { label: "Guides", href: "/python/guides" },
+  { label: "Architecture", href: "/python/architecture" },
+  { label: "API", href: "/python/api-reference" },
+  { label: "Changelog", href: "/python/more/changelog" },
 ];
 
 /** Sticky top navigation, shared by the landing and docs shells. */

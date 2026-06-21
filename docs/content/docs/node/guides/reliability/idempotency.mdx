@@ -36,5 +36,5 @@ queue.task("charge", async (order: Order) => {
 <Callout type="info">
   Use the provider's idempotency key (Stripe, etc.), an upsert, or a "already
   done?" check at the top of the task. See the
-  [failure model](/architecture/failure-model) for the exact re-run windows.
+  [failure model](/python/architecture/failure-model) for the exact re-run windows.
 </Callout>

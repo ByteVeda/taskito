@@ -13,7 +13,7 @@ function SdkSwitch({ sdk }: { sdk: Sdk }) {
   return (
     <div className="sdk-switch" role="tablist">
       <Link
-        to="/getting-started/installation"
+        to="/python/getting-started/installation"
         className={`sdk-opt ${sdk === "python" ? "active" : ""}`.trim()}
         role="tab"
         aria-selected={sdk === "python"}

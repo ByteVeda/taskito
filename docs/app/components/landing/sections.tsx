@@ -397,10 +397,10 @@ export function CTA() {
           <InstallPill cmd="pnpm add taskito" />
         </div>
         <div className="btns">
-          <Link className="btn pri" to="/getting-started/quickstart">
+          <Link className="btn pri" to="/python/getting-started/quickstart">
             Start the quickstart →
           </Link>
-          <Link className="btn sec" to="/more/comparison">
+          <Link className="btn sec" to="/python/more/comparison">
             See the full comparison
           </Link>
         </div>

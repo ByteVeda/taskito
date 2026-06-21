@@ -83,16 +83,17 @@ function buildTree(sections: string[]): NavNode[] {
 }
 
 export const PYTHON_SECTIONS = [
-  "getting-started",
-  "guides",
-  "architecture",
-  "api-reference",
-  "more",
+  "python/getting-started",
+  "python/guides",
+  "python/architecture",
+  "python/api-reference",
+  "python/more",
 ];
 export const NODE_SECTIONS = [
   "node/getting-started",
   "node/guides",
-  "architecture",
+  // The engine is identical across SDKs — Node reuses the shared architecture pages.
+  "python/architecture",
   "node/api-reference",
 ];
 

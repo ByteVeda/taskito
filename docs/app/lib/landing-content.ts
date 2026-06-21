@@ -51,7 +51,7 @@ print(job.result())   # → 5`,
         timing: "12 ms",
       },
     ],
-    docHref: "/getting-started/quickstart",
+    docHref: "/python/getting-started/quickstart",
     docLabel: "Read the Python quickstart",
   },
 ];

@@ -1,0 +1,55 @@
+---
+title: Scheduler
+description: "The Tokio-based poll loop that dequeues, dispatches, retries, and reaps."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+The scheduler runs in a dedicated Tokio single-threaded async runtime:
+
+```text
+loop {
+    sleep(50ms) or shutdown signal
+
+    // Try to dequeue and dispatch a job
+    try_dispatch()
+
+    // Every ~100 iterations (~5s): reap timed-out jobs
+    reap_stale()
+
+    // Every ~60 iterations (~3s): check periodic tasks
+    check_periodic()
+
+    // Every ~1200 iterations (~60s): auto-cleanup old jobs
+    auto_cleanup()
+}
+```
+
+> **Why those numbers?** 50 ms is fast enough that dequeue latency is imperceptible
+> but slow enough to leave the CPU 99% idle when the queue is empty. The periodic
+> intervals (~60, ~100, ~1200) are deliberately coprime so the four maintenance
+> tasks rarely fire on the same tick — keeping each individual iteration cheap.
+
+## Polling cycle
+
+The loop wakes every 50&nbsp;ms. `try_dispatch()` runs on every tick; the three
+maintenance tasks fire on coprime intervals so they rarely collide on the same wake.
+
+<SchedulerPollLoop />
+
+## Dispatch flow
+
+<ol className="flowsteps">
+  <li><code>dequeue_from()</code> — atomically <code>SELECT</code> + <code>UPDATE</code> (pending → running) within a transaction.</li>
+  <li>Check rate limit — if over limit, reschedule 1s in the future.</li>
+  <li>Send job to worker pool via <code>tokio::sync::mpsc</code> channel.</li>
+  <li>Worker executes task, sends result back.</li>
+  <li><code>handle_result()</code> — mark complete, schedule retry, or move to DLQ.</li>
+</ol>
+
+<Callout type="info">
+  With [mesh scheduling](/python/architecture/mesh) enabled, a mesh bridge sits
+  between the scheduler and the worker pool — buffering jobs in a local deque,
+  applying task affinity, and stealing from peers on idle ticks. The scheduler
+  itself is unchanged.
+</Callout>

@@ -1,0 +1,15 @@
+---
+title: Advanced execution
+description: "Patterns for scaling and optimizing task execution."
+---
+
+Patterns for scaling and optimizing task execution.
+
+| Guide | Description |
+|---|---|
+| [Prefork Pool](/python/guides/advanced-execution/prefork) | Process-based isolation for CPU-bound or memory-leaking tasks |
+| [Native Async Tasks](/python/guides/advanced-execution/async-tasks) | `async def` tasks with native event loop integration |
+| [Result Streaming](/python/guides/advanced-execution/streaming) | Stream partial results and progress updates in real time |
+| [Dependencies](/python/guides/advanced-execution/dependencies) | DAG-based job dependencies — run tasks in order |
+| [Batch Enqueue](/python/guides/advanced-execution/batch-enqueue) | Enqueue many jobs efficiently with `task.map()` and `enqueue_many()` |
+| [Unique Tasks](/python/guides/advanced-execution/unique-tasks) | Deduplicate active jobs with unique keys |
