@@ -10,7 +10,7 @@ export interface OutLine {
 }
 
 export interface LangPane {
-  id: "py" | "ts";
+  id: "py";
   label: string;
   filename: string;
   install: string;
@@ -53,38 +53,6 @@ print(job.result())   # → 5`,
     ],
     docHref: "/getting-started/quickstart",
     docLabel: "Read the Python quickstart",
-  },
-  {
-    id: "ts",
-    label: "Node.js",
-    filename: "tasks.ts",
-    install: "pnpm add taskito",
-    code: `// pnpm add taskito
-import { Queue } from "taskito";
-
-const queue = new Queue({ dbPath: "taskito.db" });
-
-queue.task("add", (a: number, b: number) => a + b, {
-  maxRetries: 3,
-});
-
-const id = queue.enqueue("add", [2, 3]);
-queue.runWorker();
-
-console.log(await queue.result(id)); // → 5`,
-    output: [
-      { glyph: "$", glyphKind: "p", text: "node tasks.js" },
-      { glyph: "→", glyphKind: "p", text: "runWorker() · Rust core attached" },
-      {
-        glyph: "✓",
-        glyphKind: "g",
-        text: "add(2, 3) =",
-        value: "5",
-        timing: "9 ms",
-      },
-    ],
-    docHref: "/node",
-    docLabel: "Read the Node.js quickstart",
   },
 ];
 

@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
-import { highlightPython, highlightTs } from "@/lib/highlight-lite";
+import { highlightPython } from "@/lib/highlight-lite";
 import { HERO_PANES, SOON_PANES, type SoonLang } from "@/lib/landing-content";
 
-type Lang = "py" | "ts" | "go" | "java";
+type Lang = "py" | "go" | "java";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -37,23 +37,19 @@ function SoonBox({ pane }: { pane: SoonLang }) {
 export function Hero() {
   const [lang, setLang] = useState<Lang>("py");
   const pane = HERO_PANES.find((p) => p.id === lang);
-  const codeHtml = pane
-    ? lang === "py"
-      ? highlightPython(pane.code)
-      : highlightTs(pane.code)
-    : "";
+  const codeHtml = pane ? highlightPython(pane.code) : "";
   const active = pane ?? HERO_PANES[0];
 
   return (
     <section className="hero">
       <div className="left">
         <h1>
-          One queue.<span className="grad">Python and Node.</span>
+          One queue.<span className="grad">Built for Python.</span>
         </h1>
         <p className="sub">
-          A Rust-powered task queue with first-class <b>Python</b> and{" "}
-          <b>Node.js</b> SDKs over one core and one store — no broker. Start on{" "}
-          <code>SQLite</code>, scale to <code>Postgres</code>.
+          A Rust-powered task queue with a first-class <b>Python</b> SDK over
+          one core and one store — no broker. Start on <code>SQLite</code>,
+          scale to <code>Postgres</code>.
         </p>
         <div className="btns">
           <Link className="btn pri" to={active.docHref}>
@@ -69,7 +65,7 @@ export function Hero() {
         <div className="metarow">
           <span>Brokerless</span>
           <span>Rust core</span>
-          <span>Python &amp; Node</span>
+          <span>Python SDK</span>
           <span>DAG workflows</span>
         </div>
       </div>
