@@ -7,56 +7,70 @@ interface Heading {
   level: number;
 }
 
+function readHeadings(article: Element): Heading[] {
+  return [...article.querySelectorAll<HTMLElement>("h2[id], h3[id]")].map(
+    (el) => ({
+      id: el.id,
+      text: el.textContent ?? "",
+      level: el.tagName === "H3" ? 3 : 2,
+    }),
+  );
+}
+
 /** On-this-page TOC, built from the rendered article headings with scroll-spy. */
 export function Toc() {
   const { pathname } = useLocation();
   const [headings, setHeadings] = useState<Heading[]>([]);
   const [active, setActive] = useState<string>("");
 
-  // Rebuild from the DOM after each page renders (headings carry ids from rehype-slug).
-  useEffect(() => {
-    const nodes = document.querySelectorAll<HTMLElement>(
-      ".article h2[id], .article h3[id]",
-    );
-    setHeadings(
-      [...nodes].map((el) => ({
-        id: el.id,
-        text: el.textContent ?? "",
-        level: el.tagName === "H3" ? 3 : 2,
-      })),
-    );
-  }, []);
-
+  // The article is a lazily-loaded MDX chunk, so its headings are NOT in the DOM
+  // when this effect first runs after a client-side navigation. Re-scan on every
+  // article mutation (via MutationObserver) so the TOC fills in once the page
+  // content actually mounts, and re-arm scroll-spy whenever the heading set changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-scan when the path changes
   useEffect(() => {
-    const nodes = document.querySelectorAll<HTMLElement>(
-      ".article h2[id], .article h3[id]",
-    );
-    if (!nodes.length) {
+    const article = document.querySelector(".article");
+    if (!article) {
       setHeadings([]);
       return;
     }
-    setHeadings(
-      [...nodes].map((el) => ({
-        id: el.id,
-        text: el.textContent ?? "",
-        level: el.tagName === "H3" ? 3 : 2,
-      })),
-    );
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setActive(entry.target.id);
+    let spy: IntersectionObserver | null = null;
+    let lastKey = "";
+
+    const scan = () => {
+      const next = readHeadings(article);
+      const key = next.map((h) => h.id).join("|");
+      if (key === lastKey) {
+        return;
+      }
+      lastKey = key;
+      setHeadings(next);
+      spy?.disconnect();
+      if (!next.length) {
+        return;
+      }
+      spy = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              setActive(entry.target.id);
+            }
           }
-        }
-      },
-      { rootMargin: "-80px 0px -70% 0px" },
-    );
-    for (const node of nodes) {
-      observer.observe(node);
-    }
-    return () => observer.disconnect();
+        },
+        { rootMargin: "-80px 0px -70% 0px" },
+      );
+      for (const el of article.querySelectorAll("h2[id], h3[id]")) {
+        spy.observe(el);
+      }
+    };
+
+    scan();
+    const content = new MutationObserver(scan);
+    content.observe(article, { childList: true, subtree: true });
+    return () => {
+      content.disconnect();
+      spy?.disconnect();
+    };
   }, [pathname]);
 
   if (headings.length === 0) {
