@@ -1,4 +1,13 @@
-// Landing-page copy + code, ported verbatim from the prototype (landing.js).
+// Landing-page copy + code, ported verbatim from the prototype (index.html / landing.js).
+
+/** A worker-output line: glyph + text, optionally a result value + timing. */
+export interface OutLine {
+  glyph: string;
+  glyphKind: "p" | "g";
+  text: string;
+  value?: string;
+  timing?: string;
+}
 
 export interface LangPane {
   id: "py" | "ts";
@@ -6,7 +15,7 @@ export interface LangPane {
   filename: string;
   install: string;
   code: string;
-  output: string[];
+  output: OutLine[];
   docHref: string;
   docLabel: string;
 }
@@ -21,19 +30,26 @@ export const HERO_PANES: LangPane[] = [
 
 queue = Queue(db_path="tasks.db")
 
-@queue.task(max_retries=3, rate_limit="100/m")
-def send_email(to, subject, body):
-    smtp.send(to, subject, body)
+@queue.task(max_retries=3)
+def add(a: int, b: int) -> int:
+    return a + b
 
-# Enqueue
-send_email.delay("alice@x.com", "Hi", "Body")
-
-# Run the worker
-# $ taskito worker --app tasks:queue`,
+job = add.delay(2, 3)
+print(job.result())   # → 5`,
     output: [
-      "$ taskito worker --app tasks:queue",
-      "→ scheduler online · 6 workers ready",
-      "✓ add(2, 3) = 5   12 ms",
+      { glyph: "$", glyphKind: "p", text: "taskito worker --app tasks:queue" },
+      {
+        glyph: "→",
+        glyphKind: "p",
+        text: "scheduler online · 6 workers ready",
+      },
+      {
+        glyph: "✓",
+        glyphKind: "g",
+        text: "add(2, 3) =",
+        value: "5",
+        timing: "12 ms",
+      },
     ],
     docHref: "/getting-started/quickstart",
     docLabel: "Read the Python quickstart",
@@ -57,17 +73,43 @@ queue.runWorker();
 
 console.log(await queue.result(id)); // → 5`,
     output: [
-      "$ node tasks.js",
-      "→ runWorker() · Rust core attached",
-      "✓ add(2, 3) = 5   9 ms",
+      { glyph: "$", glyphKind: "p", text: "node tasks.js" },
+      { glyph: "→", glyphKind: "p", text: "runWorker() · Rust core attached" },
+      {
+        glyph: "✓",
+        glyphKind: "g",
+        text: "add(2, 3) =",
+        value: "5",
+        timing: "9 ms",
+      },
     ],
     docHref: "/node",
     docLabel: "Read the Node.js quickstart",
   },
 ];
 
-/** Muted "soon" language tabs — no fabricated SDKs. */
-export const SOON_LANGS = ["Go", "Java"];
+/** Roadmap languages: disabled tab + "coming soon" panel (no fabricated SDK). */
+export interface SoonLang {
+  id: "go" | "java";
+  label: string;
+  heading: string;
+  body: string;
+}
+
+export const SOON_PANES: SoonLang[] = [
+  {
+    id: "go",
+    label: "Go",
+    heading: "Go client — coming soon",
+    body: "A native Go client for enqueuing and inspecting taskito jobs is on the roadmap.",
+  },
+  {
+    id: "java",
+    label: "Java",
+    heading: "Java client — coming soon",
+    body: "A JVM client for enqueuing taskito jobs from Java & Kotlin is planned.",
+  },
+];
 
 export interface IconCard {
   icon: string;
@@ -175,15 +217,23 @@ export const INTEGRATIONS: IntegrationGroup[] = [
   { group: "Observability", items: ["OpenTelemetry", "Sentry", "Prometheus"] },
 ];
 
-export const CODE_TASKITO = HERO_PANES[0].code;
+export const CODE_TASKITO = `from taskito import Queue
+
+queue = Queue(db_path="tasks.db")
+
+@queue.task(max_retries=3, rate_limit="100/m")
+def send_email(to, subject, body):
+    smtp.send(to, subject, body)
+
+# Enqueue + run
+send_email.delay("a@x.com", "Hi", "Body")
+# $ taskito worker --app tasks:queue`;
 
 export const CODE_CELERY = `from celery import Celery
 
-app = Celery(
-    "myapp",
+app = Celery("myapp",
     broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/1",
-)
+    backend="redis://localhost:6379/1")
 app.conf.task_default_rate_limit = "100/m"
 
 @app.task(bind=True, max_retries=3)
@@ -193,8 +243,4 @@ def send_email(self, to, subject, body):
     except SMTPError as exc:
         raise self.retry(exc=exc, countdown=60)
 
-# Enqueue
-send_email.delay("alice@x.com", "Hi", "Body")
-
-# Run the worker (separate terminal + Redis)
-# $ celery -A myapp worker --loglevel=info`;
+# $ celery -A myapp worker  (+ Redis)`;

@@ -1,3 +1,4 @@
+export { Footer } from "./footer";
 export { Hero } from "./hero";
 export { useReveal } from "./reveal";
 export {

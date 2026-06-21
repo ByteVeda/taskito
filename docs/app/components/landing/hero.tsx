@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
 import { highlightPython, highlightTs } from "@/lib/highlight-lite";
-import { HERO_PANES, SOON_LANGS } from "@/lib/landing-content";
+import { HERO_PANES, SOON_PANES, type SoonLang } from "@/lib/landing-content";
+
+type Lang = "py" | "ts" | "go" | "java";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -16,52 +18,79 @@ function CopyButton({ text }: { text: string }) {
         setTimeout(() => setCopied(false), 1300);
       }}
     >
-      {copied ? "Copied" : "Copy"}
+      <span className="lbl">{copied ? "Copied" : "Copy"}</span>
     </button>
   );
 }
 
+function SoonBox({ pane }: { pane: SoonLang }) {
+  return (
+    <div className="soonbox">
+      <div className="ring" />
+      <h4>{pane.heading}</h4>
+      <p>{pane.body}</p>
+      <span className="gh">github.com/ByteVeda/taskito</span>
+    </div>
+  );
+}
+
 export function Hero() {
-  const [lang, setLang] = useState<"py" | "ts">("py");
-  const pane = HERO_PANES.find((p) => p.id === lang) ?? HERO_PANES[0];
-  const codeHtml =
-    lang === "py" ? highlightPython(pane.code) : highlightTs(pane.code);
+  const [lang, setLang] = useState<Lang>("py");
+  const pane = HERO_PANES.find((p) => p.id === lang);
+  const codeHtml = pane
+    ? lang === "py"
+      ? highlightPython(pane.code)
+      : highlightTs(pane.code)
+    : "";
+  const active = pane ?? HERO_PANES[0];
 
   return (
     <section className="hero">
-      <div className="hero-left">
-        <span className="eyebrow">
-          <span className="dot" /> Rust-powered · Python &amp; Node.js
-        </span>
-        <h1>One queue. Python and Node.</h1>
+      <div className="left">
+        <h1>
+          One queue.<span className="grad">Python and Node.</span>
+        </h1>
         <p className="sub">
-          A brokerless, Rust-powered task queue with first-class Python and
-          Node.js SDKs over one core and store. No Redis, no RabbitMQ — just a
-          file and a worker.
+          A Rust-powered task queue with first-class <b>Python</b> and{" "}
+          <b>Node.js</b> SDKs over one core and one store — no broker. Start on{" "}
+          <code>SQLite</code>, scale to <code>Postgres</code>.
         </p>
         <div className="btns">
-          <Link className="btn pri" to={pane.docHref}>
-            Get started →
+          <Link className="btn pri" to={active.docHref}>
+            Quickstart →
           </Link>
-          <a
-            className="btn sec"
-            href="https://github.com/ByteVeda/taskito"
-            target="_blank"
-            rel="noreferrer"
-          >
-            GitHub
+          <Link className="btn sec" to="/getting-started/installation">
+            Install
+          </Link>
+          <a className="btn gho" href="https://github.com/ByteVeda/taskito">
+            GitHub ↗
           </a>
         </div>
         <div className="metarow">
-          <span>MIT licensed</span>
-          <span>SQLite · Postgres · Redis</span>
-          <span>v0.16</span>
+          <span>Brokerless</span>
+          <span>Rust core</span>
+          <span>Python &amp; Node</span>
+          <span>DAG workflows</span>
         </div>
       </div>
 
-      <div className="hero-right">
+      <div className="right">
         <div className="term">
-          <div className="langtabs" data-langtabs>
+          <div className="tbar">
+            <div className="dots">
+              <i />
+              <i />
+              <i />
+            </div>
+            <div className="tabname">
+              <b>{active.filename}</b>
+            </div>
+            <div className="runtag">
+              <span className="ld" />
+              worker · live
+            </div>
+          </div>
+          <div className="langtabs">
             {HERO_PANES.map((p) => (
               <button
                 key={p.id}
@@ -72,27 +101,48 @@ export function Hero() {
                 {p.label}
               </button>
             ))}
-            {SOON_LANGS.map((s) => (
-              <span key={s} className="langtab dis">
-                {s} <span className="tag soon">soon</span>
-              </span>
+            {SOON_PANES.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`langtab dis ${p.id === lang ? "active" : ""}`.trim()}
+                onClick={() => setLang(p.id)}
+              >
+                {p.label} <span className="tag soon">soon</span>
+              </button>
             ))}
-            <span className="tabname" id="hero-fn">
-              {pane.filename}
-            </span>
-            <CopyButton text={pane.code} />
+            {pane ? <CopyButton text={pane.code} /> : null}
           </div>
-          <RawHtml as="pre" className="code" html={codeHtml} />
-          <div className="outset" id="out">
-            {pane.output.map((line) => (
-              <div key={line} className="oline show">
-                {line}
-              </div>
-            ))}
+          <div id="hero-panes">
+            {pane ? (
+              <RawHtml as="pre" className="code" html={codeHtml} />
+            ) : (
+              <SoonBox
+                pane={SOON_PANES.find((p) => p.id === lang) ?? SOON_PANES[0]}
+              />
+            )}
           </div>
         </div>
-        <Link className="hero-doclink" to={pane.docHref}>
-          {pane.docLabel} →
+
+        {pane ? (
+          <div className="out">
+            <div className="outset">
+              {pane.output.map((line) => (
+                <div className="oline show" key={line.text}>
+                  <span className={line.glyphKind}>{line.glyph}</span>
+                  <span className="var">{line.text}</span>
+                  {line.value ? <span className="v">{line.value}</span> : null}
+                  {line.timing ? (
+                    <span className="t">{line.timing}</span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <Link className="hero-doclink" to={active.docHref}>
+          {active.docLabel} →
         </Link>
       </div>
     </section>

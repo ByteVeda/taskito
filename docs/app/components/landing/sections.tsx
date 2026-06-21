@@ -29,6 +29,24 @@ function Icon({ d, rect }: { d: string; rect?: boolean }) {
   );
 }
 
+function SectionHead({
+  kicker,
+  title,
+  lead,
+}: {
+  kicker: string;
+  title: string;
+  lead?: string;
+}) {
+  return (
+    <div className="section-head reveal">
+      <div className="kicker">{kicker}</div>
+      <h2>{title}</h2>
+      {lead ? <p>{lead}</p> : null}
+    </div>
+  );
+}
+
 const STATIONS = [
   { label: "YOUR CODE", title: "enqueue", hint: ".delay()" },
   { label: "QUEUE", title: "store", hint: "SQLite · PG" },
@@ -46,28 +64,26 @@ export function HowItWorks() {
   return (
     <section className="section how">
       <div className="wrap">
-        <div className="section-head">
-          <span className="kicker">How it works</span>
-          <h2>Enqueue here, execute there.</h2>
-          <p>
-            The Rust scheduler polls the store, dispatches to a worker pool, and
-            writes results back — the same loop whether you enqueue from Python
-            or Node.
-          </p>
-        </div>
-        <div className="flowdiag">
-          {STATIONS.map((s, i) => (
-            <Station
-              key={s.label}
-              station={s}
-              last={i === STATIONS.length - 1}
-              index={i}
-            />
-          ))}
-        </div>
-        <div className="returnlane">
-          <span className="rspark" />
-          <span className="rlabel">result written back to the store</span>
+        <SectionHead
+          kicker="How it works"
+          title="Enqueue here, execute there."
+          lead="Your Python or Node code enqueues a job. The Rust scheduler hands it to a worker. The result lands back in the shared store — no broker in the middle."
+        />
+        <div className="diagram reveal">
+          <div className="flowdiag">
+            {STATIONS.map((s, i) => (
+              <Station
+                key={s.label}
+                station={s}
+                last={i === STATIONS.length - 1}
+                index={i}
+              />
+            ))}
+          </div>
+          <div className="returnlane">
+            <span className="rspark" />
+            <span className="rlabel">result written back to the store</span>
+          </div>
         </div>
       </div>
     </section>
@@ -90,7 +106,7 @@ function Station({
           {station.pool ? (
             <div className="dpool">
               {Array.from({ length: 6 }).map((_, k) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: fixed-size decorative dot row
+                // biome-ignore lint/suspicious/noArrayIndexKey: fixed decorative dot row
                 <span key={k} style={{ "--k": k } as React.CSSProperties} />
               ))}
             </div>
@@ -116,38 +132,27 @@ function Station({
   );
 }
 
-function IconGrid({
-  items,
-  className,
-}: {
-  items: IconCard[];
-  className: string;
-}) {
-  return (
-    <div className={className}>
-      {items.map((c) => (
-        <div key={c.title} className="card reveal">
-          <div className="sheen" />
-          <div className="ic">
-            <Icon d={c.icon} rect={c.rect} />
-          </div>
-          <h3>{c.title}</h3>
-          <RawHtml as="p" html={c.body} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function Features() {
   return (
     <section className="section">
       <div className="wrap">
-        <div className="section-head">
-          <span className="kicker">Features</span>
-          <h2>Everything a queue needs, nothing it doesn't.</h2>
+        <SectionHead
+          kicker="What you get"
+          title="The convenience of Celery, the performance of Rust"
+          lead="Everything you need to run background jobs in production — and nothing you don't."
+        />
+        <div className="feat-grid">
+          {FEATURES.map((c: IconCard) => (
+            <div key={c.title} className="card reveal">
+              <div className="sheen" />
+              <div className="ic">
+                <Icon d={c.icon} rect={c.rect} />
+              </div>
+              <h3>{c.title}</h3>
+              <RawHtml as="p" html={c.body} />
+            </div>
+          ))}
         </div>
-        <IconGrid items={FEATURES} className="feat-grid" />
       </div>
     </section>
   );
@@ -155,65 +160,89 @@ export function Features() {
 
 export function UseCases() {
   return (
-    <section className="section">
+    <section
+      className="section"
+      style={{
+        background: "var(--bg-soft)",
+        borderBlock: "1px solid var(--line)",
+      }}
+    >
       <div className="wrap">
-        <div className="section-head">
-          <span className="kicker">Use cases</span>
-          <h2>Built for real workloads.</h2>
+        <SectionHead
+          kicker="Use cases"
+          title="Built for the jobs you actually have"
+          lead="Pick the workload — taskito ships the primitives."
+        />
+        <div className="uc-grid">
+          {USE_CASES.map((c) => (
+            <div key={c.title} className="uc reveal">
+              <div className="ic">
+                <Icon d={c.icon} rect={c.rect} />
+              </div>
+              <div>
+                <h3>
+                  {c.title} <span className="arr">→</span>
+                </h3>
+                <RawHtml as="p" html={c.body} />
+              </div>
+            </div>
+          ))}
         </div>
-        <IconGrid items={USE_CASES} className="uc-grid" />
       </div>
     </section>
   );
 }
 
 export function Comparison() {
-  const [tab, setTab] = useState<"taskito" | "celery">("taskito");
-  const code = tab === "taskito" ? CODE_TASKITO : CODE_CELERY;
   return (
-    <section className="section cmp">
+    <section className="section">
       <div className="wrap">
-        <div className="section-head">
-          <span className="kicker">vs Celery</span>
-          <h2>One dependency, not three.</h2>
-        </div>
-        <div className="term cmp-term">
-          <div className="langtabs">
-            <button
-              type="button"
-              className={`langtab ${tab === "taskito" ? "active" : ""}`.trim()}
-              onClick={() => setTab("taskito")}
-            >
-              taskito
-            </button>
-            <button
-              type="button"
-              className={`langtab ${tab === "celery" ? "active" : ""}`.trim()}
-              onClick={() => setTab("celery")}
-            >
-              Celery
-            </button>
+        <SectionHead
+          kicker="taskito vs Celery"
+          title="Less to operate"
+          lead="The same task, two stacks. Side by side, with the operational delta."
+        />
+        <div className="cmp-cols reveal">
+          <div className="cmp-card win">
+            <div className="cmp-head">
+              <span className="nm">
+                taskito <span className="badge-win">brokerless</span>
+              </span>
+              <span className="cap">single process</span>
+            </div>
+            <RawHtml
+              className="cmp-code"
+              html={highlightPython(CODE_TASKITO)}
+            />
           </div>
-          <RawHtml as="pre" className="code" html={highlightPython(code)} />
+          <div className="cmp-card">
+            <div className="cmp-head">
+              <span className="nm">Celery + Redis</span>
+              <span className="cap">3 processes</span>
+            </div>
+            <RawHtml className="cmp-code" html={highlightPython(CODE_CELERY)} />
+          </div>
         </div>
-        <table className="md-table matrix delta">
-          <thead>
-            <tr>
-              <th>&nbsp;</th>
-              <th>taskito</th>
-              <th>Celery</th>
-            </tr>
-          </thead>
-          <tbody>
-            {DELTA.map((d) => (
-              <tr key={d.label}>
-                <td>{d.label}</td>
-                <RawHtml as="td" className="tk" html={d.taskito} />
-                <RawHtml as="td" className="ce" html={d.celery} />
+        <div className="delta reveal">
+          <table>
+            <thead>
+              <tr>
+                <th>&nbsp;</th>
+                <th>taskito</th>
+                <th>Celery + Redis</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {DELTA.map((d) => (
+                <tr key={d.label}>
+                  <td>{d.label}</td>
+                  <RawHtml as="td" className="tk" html={d.taskito} />
+                  <RawHtml as="td" className="ce" html={d.celery} />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
@@ -221,13 +250,20 @@ export function Comparison() {
 
 export function Integrations() {
   return (
-    <section className="section">
+    <section
+      className="section"
+      style={{
+        background: "var(--bg-soft)",
+        borderBlock: "1px solid var(--line)",
+      }}
+    >
       <div className="wrap">
-        <div className="section-head">
-          <span className="kicker">Integrations</span>
-          <h2>Fits your stack.</h2>
-        </div>
-        <div className="int-grid">
+        <SectionHead
+          kicker="Integrations"
+          title="Slots into your stack"
+          lead="First-class support for the tools you already run."
+        />
+        <div className="int-grid reveal">
           {INTEGRATIONS.map((g) => (
             <div key={g.group} className="int-col">
               <h4>{g.group}</h4>
@@ -250,37 +286,48 @@ export function Integrations() {
 function InstallPill({ cmd }: { cmd: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      type="button"
-      className="install-pill"
-      onClick={() => {
-        navigator.clipboard?.writeText(cmd);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1400);
-      }}
-    >
-      <code>{cmd}</code>
-      <span className="copyInstall">{copied ? "✓" : "Copy"}</span>
-    </button>
+    <div className="install-pill">
+      <span className="pf">$</span>
+      {cmd}
+      <button
+        type="button"
+        className="copyInstall"
+        aria-label="Copy"
+        onClick={() => {
+          navigator.clipboard?.writeText(cmd);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1400);
+        }}
+      >
+        {copied ? "✓" : "Copy"}
+      </button>
+    </div>
   );
 }
 
 export function CTA() {
   return (
-    <section className="section cta">
-      <div className="cta-wrap">
-        <h2>Ship background work in minutes.</h2>
-        <p>One file, one worker. Pick your runtime:</p>
+    <section className="section">
+      <div className="cta-wrap reveal">
+        <div className="kicker" style={{ display: "block", marginBottom: 14 }}>
+          Get started
+        </div>
+        <h2>Five minutes from install to your first job.</h2>
+        <p>
+          The quickstart walks you through defining a task, enqueuing it, and
+          watching the worker run it — in Python or Node, no Redis, no broker,
+          no config.
+        </p>
         <div className="install-row">
           <InstallPill cmd="pip install taskito" />
           <InstallPill cmd="pnpm add taskito" />
         </div>
         <div className="btns">
-          <Link className="btn pri" to="/getting-started/installation">
-            Get started →
+          <Link className="btn pri" to="/getting-started/quickstart">
+            Start the quickstart →
           </Link>
-          <Link className="btn sec" to="/node">
-            Node.js SDK
+          <Link className="btn sec" to="/more/comparison">
+            See the full comparison
           </Link>
         </div>
       </div>
