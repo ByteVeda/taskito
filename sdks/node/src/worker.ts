@@ -83,6 +83,14 @@ export class Worker {
         jobId: invocation.id,
         signal: controller.signal,
         setProgress: (progress) => queue.updateProgress(invocation.id, progress),
+        publish: (value) =>
+          queue.writeTaskLog(
+            invocation.id,
+            invocation.taskName,
+            "result",
+            "",
+            JSON.stringify(value),
+          ),
       };
       const poller = setInterval(() => {
         try {

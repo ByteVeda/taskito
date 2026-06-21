@@ -39,6 +39,8 @@ import type {
   RegisteredTask,
   ResultOptions,
   Stats,
+  StreamOptions,
+  TaskLog,
   TaskMap,
   TaskOptions,
   WorkerInfo,
@@ -353,6 +355,46 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     throw new ResultTimeoutError(id, timeoutMs);
   }
 
+  /**
+   * Async-iterate the partial results a job publishes via `currentJob().publish()`,
+   * in order, until the job terminates (or the timeout elapses). Each value is the
+   * JSON-deserialized argument passed to `publish`.
+   */
+  async *stream(id: string, options?: StreamOptions): AsyncIterableIterator<unknown> {
+    const timeoutMs = options?.timeoutMs ?? 60_000;
+    const pollMs = options?.pollMs ?? 200;
+    const deadline = Date.now() + timeoutMs;
+    const seen = new Set<string>();
+    for (;;) {
+      yield* this.newPartials(id, seen);
+      const job = this.native.getJob(id);
+      if (job && TERMINAL_STATUSES.has(job.status)) {
+        yield* this.newPartials(id, seen); // final drain for values committed at completion
+        return;
+      }
+      if (Date.now() >= deadline) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+
+  /** Raw task-log entries for a job (oldest first), including published partials. */
+  taskLogs(id: string): TaskLog[] {
+    return this.native.getTaskLogs(id);
+  }
+
+  /** Yield not-yet-seen partial-result entries (dedup by id, robust to same-ms writes). */
+  private *newPartials(id: string, seen: Set<string>): Generator<unknown> {
+    for (const log of this.native.getTaskLogs(id)) {
+      if (log.level !== STREAM_LEVEL || seen.has(log.id)) {
+        continue;
+      }
+      seen.add(log.id);
+      yield decodePartial(log.extra);
+    }
+  }
+
   /** Job counts by status across all queues. */
   stats(): Stats {
     return this.native.stats();
@@ -439,6 +481,23 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       resources: this.resources,
       run: options,
     });
+  }
+}
+
+/** Log level used for published partial results (matches the cross-SDK contract). */
+const STREAM_LEVEL = "result";
+/** Job statuses at which a stream stops. */
+const TERMINAL_STATUSES = new Set(["complete", "failed", "dead", "cancelled"]);
+
+/** Decode a partial-result log's `extra` (JSON, falling back to the raw string). */
+function decodePartial(extra: string | null | undefined): unknown {
+  if (!extra) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(extra);
+  } catch {
+    return extra;
   }
 }
 

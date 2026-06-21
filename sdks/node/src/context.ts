@@ -11,6 +11,12 @@ export interface JobContext {
   readonly signal: AbortSignal;
   /** Report progress (0–100) for observability. */
   setProgress(progress: number): void;
+  /**
+   * Publish a partial result, consumable live via `queue.stream(jobId)`. The
+   * value must be JSON-serializable. Use to stream progress from a long-running
+   * task (ETL, ML steps, batch processing).
+   */
+  publish(value: unknown): void;
 }
 
 const store = new AsyncLocalStorage<JobContext>();

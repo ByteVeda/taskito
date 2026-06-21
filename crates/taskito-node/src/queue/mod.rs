@@ -13,6 +13,7 @@ use crate::worker::{start_worker, JsWorker};
 mod admin;
 mod inspect;
 mod locks;
+mod logs;
 mod periodic;
 #[cfg(feature = "workflows")]
 mod workflows;
