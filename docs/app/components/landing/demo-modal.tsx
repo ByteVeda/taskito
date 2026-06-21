@@ -46,14 +46,14 @@ const CLOSE_ICON = (
 );
 
 /**
- * Centered overlay that opens a finder scenario's live demo in an `<iframe>`,
- * pointed at the vendored `demos/interactive.html` embed mode (theme inherited
- * from the host). React port of `INTEGRATION-scenario-finder.md` §6: focus moves
- * to the close button on open and restores on close, Escape + backdrop close,
- * background scroll is locked, and the enter transition is motion-aware.
+ * Centered overlay that opens a finder scenario's live demo — a lazy-loaded
+ * React component resolved from the demo registry (theme inherited from the
+ * host). Focus moves to the close button on open and restores on close,
+ * Escape + backdrop close, background scroll is locked, Tab focus is trapped,
+ * and the enter transition is motion-aware.
  *
  * `demo === null` keeps the modal closed; a brief exit transition plays before
- * the iframe unmounts so the demo stops running.
+ * the demo unmounts so its animation loop stops.
  */
 export function DemoModal({
   demo,
@@ -67,7 +67,6 @@ export function DemoModal({
   const [current, setCurrent] = useState<DemoTarget | null>(demo);
   // Drives the `.open` class — toggled a frame after mount so the enter plays.
   const [shown, setShown] = useState(false);
-  const [loading, setLoading] = useState(true);
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
@@ -76,7 +75,6 @@ export function DemoModal({
     if (demo) {
       restoreRef.current = (document.activeElement as HTMLElement) ?? null;
       setCurrent(demo);
-      setLoading(true);
       const raf = requestAnimationFrame(() => setShown(true));
       return () => cancelAnimationFrame(raf);
     }
@@ -136,10 +134,7 @@ export function DemoModal({
 
   if (!current) return null;
 
-  // Prefer the React port; ids not yet ported render the vendored iframe.
   const Demo = demoComponent(current.id);
-  // `import.meta.env.BASE_URL` ends with "/" and respects DOCS_BASE_PATH.
-  const src = `${import.meta.env.BASE_URL}demos/interactive.html?embed=${current.id}&theme=${theme}&accent=brand#${current.id}`;
 
   return (
     <div className={`dm-overlay${shown ? " open" : ""}`} aria-hidden={!shown}>
@@ -178,31 +173,16 @@ export function DemoModal({
           </div>
         </div>
         <div className="dm-stage">
-          {Demo ? (
-            <Suspense
-              fallback={
-                <div className="dm-loading">
-                  <span className="dm-spin" />
-                  Loading demo…
-                </div>
-              }
-            >
-              <Demo theme={theme} />
-            </Suspense>
-          ) : (
-            <>
-              <div className={`dm-loading${loading ? "" : " hide"}`}>
+          <Suspense
+            fallback={
+              <div className="dm-loading">
                 <span className="dm-spin" />
                 Loading demo…
               </div>
-              <iframe
-                className="dm-frame"
-                title={`${current.title} — interactive demo`}
-                src={src}
-                onLoad={() => setLoading(false)}
-              />
-            </>
-          )}
+            }
+          >
+            {Demo ? <Demo theme={theme} /> : null}
+          </Suspense>
         </div>
       </div>
     </div>
