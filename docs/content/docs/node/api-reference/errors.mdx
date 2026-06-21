@@ -32,6 +32,7 @@ try {
 | `SerializationError` | `TaskitoError` | (De)serialization or payload-integrity failure (e.g. a bad `SignedSerializer` signature). |
 | `NotesValidationError` | `TaskitoError` | A `notes` object breaks the contract (>15 fields or >4 KiB). |
 | `WorkflowError` | `TaskitoError` | Workflow definition, submission, or query error. |
+| `PredicateRejectedError` | `TaskitoError` | An enqueue-time [gate](/node/guides/core/predicates) rejected the submission. |
 | `ResourceError` | `TaskitoError` | Base for resource dependency-injection errors. |
 | `ResourceNotFoundError` | `ResourceError` | Resolving a resource name that was never registered. |
 | `ResourceScopeError` | `ResourceError` | Resolving a task-scoped resource at worker scope. |
