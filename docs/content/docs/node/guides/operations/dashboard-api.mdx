@@ -37,9 +37,14 @@ directly too. All timestamps are Unix milliseconds.
 
 ## Auth
 
-The dashboard runs in **open mode**: `GET /api/auth/status` reports
+By default the dashboard runs in **open mode**: `GET /api/auth/status` reports
 `{ setup_required: false }` and `GET /api/auth/whoami` returns an admin identity.
-There is no login, RBAC, or SSO.
+
+Pass `auth: { token }` to [`serveDashboard`](/node/guides/operations/dashboard) to
+require a bearer token. Then every `/api/*` request except `GET /api/auth/status`
+must present the token via `Authorization: Bearer <token>`, an `X-Taskito-Token`
+header, a `?token=` query, or the `taskito_token` cookie; otherwise it returns
+`401`. This is a single shared token — there is no per-user login, RBAC, or SSO.
 
 <Callout type="warning">
   Open mode means anyone who can reach the port has full control. Don't expose it

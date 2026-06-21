@@ -47,9 +47,10 @@ come from users.
 
 ## Dashboard
 
-The [dashboard](/node/guides/operations/dashboard) runs in **open mode** — no
-login, RBAC, or SSO. Anyone who reaches the port has full control. Bind it to
-localhost, or mount it behind your own auth via the
+The [dashboard](/node/guides/operations/dashboard) runs in **open mode** by
+default — anyone who reaches the port has full control. Pass `auth: { token }` to
+gate the API with a shared bearer token, bind it to localhost, or mount it behind
+your own auth (login / RBAC / SSO) via the
 [Express](/node/guides/integrations/express#dashboard) /
 [Fastify](/node/guides/integrations/fastify) helpers.
 
