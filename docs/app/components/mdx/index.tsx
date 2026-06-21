@@ -1,9 +1,7 @@
 import type { MDXComponents } from "mdx/types";
 import type { ComponentProps } from "react";
 import { Link } from "react-router";
-import * as Animated from "@/components/animated";
-import { DiagramCarousel, DiagramSlide } from "@/components/diagram-carousel";
-import { Mermaid } from "@/components/mermaid";
+import * as Diagrams from "@/components/diagrams";
 import { Callout } from "./callout";
 import { Card, Cards } from "./card";
 import { CodeBlock } from "./code-block";
@@ -41,8 +39,5 @@ export const mdxComponents: MDXComponents = {
   Tab,
   Card,
   Cards,
-  Mermaid,
-  DiagramCarousel,
-  DiagramSlide,
-  ...Animated,
+  ...Diagrams,
 };
