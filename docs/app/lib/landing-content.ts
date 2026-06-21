@@ -92,6 +92,8 @@ export interface IconCard {
   rect?: boolean;
   title: string;
   body: string;
+  /** SDK-relative doc path (no leading slash, no `/python|/node` prefix). */
+  href?: string;
 }
 
 export const FEATURES: IconCard[] = [
@@ -133,22 +135,26 @@ export const USE_CASES: IconCard[] = [
     icon: "M12 2C6.48 2 2 4.02 2 6.5v11C2 19.98 6.48 22 12 22s10-2.02 10-4.5v-11C22 4.02 17.52 2 12 2zM2 6.5C2 8.43 6.48 10 12 10s10-1.57 10-3.5M2 12c0 1.93 4.48 3.5 10 3.5s10-1.57 10-3.5",
     title: "ETL pipelines",
     body: "Chain extract → transform → load as a DAG. Fan out across workers, fan in to aggregate, restart from any node on failure.",
+    href: "more/examples/data-pipeline",
   },
   {
     icon: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM22 6l-10 7L2 6",
     title: "Email & notifications",
     body: "Bursty SMTP, push, or webhook delivery. Per-task rate limits keep providers happy; retries with backoff handle transient failures.",
+    href: "more/examples/notifications",
   },
   {
     icon: "M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3",
     rect: true,
     title: "ML inference & batch",
     body: "Long-running model jobs with progress tracking, soft timeouts, and prefork pools for true CPU parallelism without GIL contention.",
+    href: "more/examples/benchmark",
   },
   {
     icon: "M12 6v6l4 2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z",
     title: "Scheduled jobs",
     body: "Six-field cron syntax down to the second. Periodic tasks live in the scheduler — no separate beat daemon to babysit.",
+    href: "guides/core/scheduling",
   },
 ];
 

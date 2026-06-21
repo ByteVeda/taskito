@@ -794,6 +794,8 @@ main {
   border: 1px solid var(--line2);
   border-radius: 16px;
   background: var(--panel);
+  color: inherit;
+  text-decoration: none;
   transition:
     border-color 0.2s,
     transform 0.2s;
