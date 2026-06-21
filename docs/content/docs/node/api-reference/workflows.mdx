@@ -1,0 +1,46 @@
+---
+title: Workflows
+description: "The workflow builder, run handle, and queries."
+---
+
+```ts
+queue.workflows
+  .define(name: string)
+  // ... steps ...
+  .submit(): WorkflowHandle;
+```
+
+## Builder steps
+
+| Method | Description |
+|---|---|
+| `step(name, task, opts?)` | A task node. `opts`: `after`, `args`, `queue`, `maxRetries`, `timeoutMs`, `priority`, `condition`, `compensate`. |
+| `fanOut(name, { after, task, itemsFrom })` | Expand into one child per item. |
+| `fanIn(name, { after, task })` | Collect children's results into an array. |
+| `gate(name, { after, timeoutMs?, onTimeout? })` | Pause for [approval](/node/guides/workflows/gates). |
+| `subWorkflow(name, { after, workflow })` | Run a child workflow as a node. |
+| `submit()` | Pre-enqueue the DAG → `WorkflowHandle`. |
+| `build()` | Build (don't submit) — for use as a sub-workflow. |
+
+`condition`: `"on_success"` (default) · `"on_failure"` · `"always"`.
+
+## `WorkflowHandle`
+
+| Member | Description |
+|---|---|
+| `runId` | The run's id. |
+| `wait()` | Resolves with the `WorkflowRun` when terminal. |
+| `nodes()` | Per-step status (fan-out parents carry `fanOutCount`). |
+
+## Queries
+
+```ts
+queue.workflows.list({ state: "running" });
+queue.workflows.children(runId);             // spawned sub-workflow runs
+queue.workflows.approveGate(runId, "review");
+queue.workflows.rejectGate(runId, "review", reason);
+```
+
+See the [Workflows guides](/node/guides/workflows) for fan-out, conditions,
+gates, sub-workflows, and saga compensation. Requires the addon built with the
+`workflows` cargo feature.

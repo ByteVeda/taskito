@@ -1,0 +1,34 @@
+---
+title: Task
+description: "queue.task registration and per-task configuration."
+---
+
+```ts
+queue.task(name: string, fn: (...args) => R | Promise<R>, config?: TaskConfig): void
+```
+
+Registers a task. `fn` may be sync or `async`; its return value becomes the job
+result. Re-registering a name replaces the function and config.
+
+## `TaskConfig`
+
+| Field | Type | Description |
+|---|---|---|
+| `maxRetries` | `number` | Attempts before dead-lettering. |
+| `retryBackoff` | `{ baseMs, maxMs }` | Exponential backoff bounds. |
+| `timeoutMs` | `number` | Per-attempt timeout. |
+| `maxConcurrent` | `number` | Max simultaneous running jobs of this task. |
+| `rateLimit` | `{ limit, windowMs }` | Token-bucket rate limit. |
+| `circuitBreaker` | `{ threshold, windowMs, cooldownMs }` | Trip after repeated failures. |
+
+```ts
+queue.task("add", (a: number, b: number) => a + b, {
+  maxRetries: 3,
+  retryBackoff: { baseMs: 1000, maxMs: 60_000 },
+  timeoutMs: 30_000,
+  maxConcurrent: 4,
+});
+```
+
+See the [Tasks guide](/node/guides/core/tasks) for usage, and
+[Reliability](/node/guides/reliability/retries) for the semantics of each field.
