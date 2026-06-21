@@ -9,6 +9,7 @@ export { WorkflowBuilder } from "./builder";
 export { WorkflowManager } from "./manager";
 export { WorkflowTracker } from "./tracker";
 export type {
+  CanvasStep,
   FanInStepOptions,
   FanOutStepOptions,
   GateStepOptions,

@@ -1,6 +1,7 @@
 import { WorkflowError } from "../errors";
 import { successorsOf, transitiveDeferred } from "./plan";
 import type {
+  CanvasStep,
   FanInStepOptions,
   FanOutStepOptions,
   GateStepOptions,
@@ -132,6 +133,47 @@ export class WorkflowBuilder {
     this.stepArgs[name] = [];
     this.subWorkflows[name] = options.workflow;
     this.deferredSeeds.add(name);
+    return this;
+  }
+
+  /**
+   * Canvas shorthand — add a sequential chain where each step runs after the
+   * previous one. The first runs after `options.after` (or as a root).
+   */
+  chain(steps: CanvasStep[], options: { after?: string | string[] } = {}): this {
+    let after = options.after;
+    for (const { name, task, ...stepOptions } of steps) {
+      this.step(name, task, { ...stepOptions, after });
+      after = name;
+    }
+    return this;
+  }
+
+  /**
+   * Canvas shorthand — add a parallel group where every step runs after
+   * `options.after` (or as roots).
+   */
+  group(steps: CanvasStep[], options: { after?: string | string[] } = {}): this {
+    for (const { name, task, ...stepOptions } of steps) {
+      this.step(name, task, { ...stepOptions, after: options.after });
+    }
+    return this;
+  }
+
+  /**
+   * Canvas shorthand — a parallel `steps` group joined by `callback`, which runs
+   * once every group member completes. The callback gets its own `args`; to
+   * aggregate the members' *results*, use {@link WorkflowBuilder.fanOut} /
+   * {@link WorkflowBuilder.fanIn} instead.
+   */
+  chord(
+    steps: CanvasStep[],
+    callback: CanvasStep,
+    options: { after?: string | string[] } = {},
+  ): this {
+    this.group(steps, options);
+    const { name, task, ...callbackOptions } = callback;
+    this.step(name, task, { ...callbackOptions, after: steps.map((step) => step.name) });
     return this;
   }
 

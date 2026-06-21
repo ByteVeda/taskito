@@ -48,6 +48,15 @@ export interface WorkflowStepOptions {
   compensate?: string;
 }
 
+/**
+ * A step in a canvas helper ({@link WorkflowBuilder.chain} / `group` / `chord`):
+ * a node name plus its task and step options. `after` is managed by the helper.
+ */
+export interface CanvasStep extends Omit<WorkflowStepOptions, "after"> {
+  name: string;
+  task: string;
+}
+
 /** Common per-step task config shared by every step kind. */
 interface StepTaskOptions {
   queue?: string;

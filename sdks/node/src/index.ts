@@ -80,6 +80,7 @@ export type { Delivery, Webhook, WebhookInput } from "./webhooks";
 export { WebhookManager, WebhookValidationError } from "./webhooks";
 export { Worker } from "./worker";
 export type {
+  CanvasStep,
   GraphEdge,
   GraphNode,
   WorkflowAdvance,
