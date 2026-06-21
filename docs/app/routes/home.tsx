@@ -1,3 +1,14 @@
+import {
+  Comparison,
+  CTA,
+  Features,
+  Hero,
+  HowItWorks,
+  Integrations,
+  UseCases,
+  useReveal,
+} from "@/components/landing";
+import { SiteNav } from "@/components/ui";
 import type { Route } from "./+types/home";
 
 export function meta(_: Route.MetaArgs) {
@@ -12,10 +23,19 @@ export function meta(_: Route.MetaArgs) {
 }
 
 export default function Home() {
+  useReveal();
   return (
-    <main className="landing-stub">
-      <h1>Taskito</h1>
-      <p>One queue. Python and Node.</p>
-    </main>
+    <>
+      <SiteNav />
+      <main>
+        <Hero />
+        <HowItWorks />
+        <Features />
+        <UseCases />
+        <Comparison />
+        <Integrations />
+        <CTA />
+      </main>
+    </>
   );
 }
