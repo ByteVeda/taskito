@@ -3,9 +3,9 @@ import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
 import { useSdk } from "@/hooks";
 import { highlightPython, highlightTs } from "@/lib/highlight-lite";
-import { HERO_PANES, SOON_PANES, type SoonLang } from "@/lib/landing-content";
+import { HERO_PANES } from "@/lib/landing-content";
 
-type Lang = "py" | "ts" | "go" | "java";
+type Lang = "py" | "ts";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -24,31 +24,14 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function SoonBox({ pane }: { pane: SoonLang }) {
-  return (
-    <div className="soonbox">
-      <div className="ring" />
-      <h4>{pane.heading}</h4>
-      <p>{pane.body}</p>
-      <span className="gh">github.com/ByteVeda/taskito</span>
-    </div>
-  );
-}
-
 export function Hero() {
   const { sdk, setSdk } = useSdk();
-  // Roadmap langs (go/java) have no SDK — selected locally; py/ts mirror the
-  // global SDK so the hero tab and the docs sidebar switch stay in sync.
-  const [soon, setSoon] = useState<SoonLang["id"] | null>(null);
-  const lang: Lang = soon ?? (sdk === "node" ? "ts" : "py");
+  // py/ts mirror the global SDK so the hero tab and the docs sidebar switch stay in sync.
   const isNode = sdk === "node";
-  const pane = HERO_PANES.find((p) => p.id === lang);
-  const codeHtml = pane
-    ? lang === "ts"
-      ? highlightTs(pane.code)
-      : highlightPython(pane.code)
-    : "";
-  const active = pane ?? HERO_PANES[0];
+  const lang: Lang = isNode ? "ts" : "py";
+  const active = HERO_PANES.find((p) => p.id === lang) ?? HERO_PANES[0];
+  const codeHtml =
+    lang === "ts" ? highlightTs(active.code) : highlightPython(active.code);
 
   return (
     <section className="hero">
@@ -106,53 +89,31 @@ export function Hero() {
                 key={p.id}
                 type="button"
                 className={`langtab ${p.id === lang ? "active" : ""}`.trim()}
-                onClick={() => {
-                  setSoon(null);
-                  setSdk(p.id === "ts" ? "node" : "python");
-                }}
+                onClick={() => setSdk(p.id === "ts" ? "node" : "python")}
               >
                 {p.label}
+                {p.id === "ts" ? <span className="tag beta">Beta</span> : null}
               </button>
             ))}
-            {SOON_PANES.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={`langtab dis ${p.id === lang ? "active" : ""}`.trim()}
-                onClick={() => setSoon(p.id)}
-              >
-                {p.label} <span className="tag soon">soon</span>
-              </button>
-            ))}
-            {pane ? <CopyButton text={pane.code} /> : null}
+            <CopyButton text={active.code} />
           </div>
           <div id="hero-panes">
-            {pane ? (
-              <RawHtml as="pre" className="code" html={codeHtml} />
-            ) : (
-              <SoonBox
-                pane={SOON_PANES.find((p) => p.id === lang) ?? SOON_PANES[0]}
-              />
-            )}
+            <RawHtml as="pre" className="code" html={codeHtml} />
           </div>
         </div>
 
-        {pane ? (
-          <div className="out">
-            <div className="outset">
-              {pane.output.map((line) => (
-                <div className="oline show" key={line.text}>
-                  <span className={line.glyphKind}>{line.glyph}</span>
-                  <span className="var">{line.text}</span>
-                  {line.value ? <span className="v">{line.value}</span> : null}
-                  {line.timing ? (
-                    <span className="t">{line.timing}</span>
-                  ) : null}
-                </div>
-              ))}
-            </div>
+        <div className="out">
+          <div className="outset">
+            {active.output.map((line) => (
+              <div className="oline show" key={line.text}>
+                <span className={line.glyphKind}>{line.glyph}</span>
+                <span className="var">{line.text}</span>
+                {line.value ? <span className="v">{line.value}</span> : null}
+                {line.timing ? <span className="t">{line.timing}</span> : null}
+              </div>
+            ))}
           </div>
-        ) : null}
+        </div>
 
         <div className="hero-doclinks">
           <Link
@@ -162,7 +123,7 @@ export function Hero() {
             Read the Python quickstart →
           </Link>
           <Link className="hero-doclink" to="/node/getting-started/quickstart">
-            Read the TypeScript quickstart →
+            Read the Node.js quickstart →
           </Link>
         </div>
       </div>

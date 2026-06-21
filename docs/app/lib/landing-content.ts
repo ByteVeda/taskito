@@ -56,7 +56,7 @@ print(job.result())   # → 5`,
   },
   {
     id: "ts",
-    label: "TypeScript",
+    label: "Node.js",
     filename: "tasks.ts",
     install: "pnpm add taskito",
     code: `import { Queue } from "taskito";
@@ -83,30 +83,7 @@ console.log(await queue.result(id)); // → 5`,
       },
     ],
     docHref: "/node/getting-started/quickstart",
-    docLabel: "Read the TypeScript quickstart",
-  },
-];
-
-/** Roadmap languages: disabled tab + "coming soon" panel (no fabricated SDK). */
-export interface SoonLang {
-  id: "go" | "java";
-  label: string;
-  heading: string;
-  body: string;
-}
-
-export const SOON_PANES: SoonLang[] = [
-  {
-    id: "go",
-    label: "Go",
-    heading: "Go client — coming soon",
-    body: "A native Go client for enqueuing and inspecting taskito jobs is on the roadmap.",
-  },
-  {
-    id: "java",
-    label: "Java",
-    heading: "Java client — coming soon",
-    body: "A JVM client for enqueuing taskito jobs from Java & Kotlin is planned.",
+    docLabel: "Read the Node.js quickstart",
   },
 ];
 
