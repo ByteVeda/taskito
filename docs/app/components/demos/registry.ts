@@ -10,6 +10,7 @@ type LazyDemo = LazyExoticComponent<ComponentType<DemoProps>>;
  */
 export const DEMO_COMPONENTS: Record<DemoId, LazyDemo> = {
   mesh: lazy(() => import("./mesh-demo")),
+  progress: lazy(() => import("./progress-demo")),
   ratelimit: lazy(() => import("./ratelimit-demo")),
   recovery: lazy(() => import("./recovery-demo")),
   scaling: lazy(() => import("./scaling-demo")),
