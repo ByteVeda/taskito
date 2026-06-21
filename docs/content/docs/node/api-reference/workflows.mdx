@@ -19,8 +19,13 @@ queue.workflows
 | `fanIn(name, { after, task })` | Collect children's results into an array. |
 | `gate(name, { after, timeoutMs?, onTimeout? })` | Pause for [approval](/node/guides/workflows/gates). |
 | `subWorkflow(name, { after, workflow })` | Run a child workflow as a node. |
+| `chain(steps[], { after? })` | Canvas: wire `steps` sequentially. |
+| `group(steps[], { after? })` | Canvas: run `steps` in parallel. |
+| `chord(steps[], callback, { after? })` | Canvas: a parallel group joined by `callback`. |
 | `submit()` | Pre-enqueue the DAG → `WorkflowHandle`. |
 | `build()` | Build (don't submit) — for use as a sub-workflow. |
+
+Canvas `steps` are `{ name, task, ...stepOptions }` (`after` is managed by the helper).
 
 `condition`: `"on_success"` (default) · `"on_failure"` · `"always"`.
 
