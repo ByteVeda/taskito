@@ -94,12 +94,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # glibc builds run natively on the host runner: the napi cross image's
+          # old-glibc sysroot (manylinux baseline) #defines strsep as a macro,
+          # which collides with pq-src's libpq-18 headers. 22.04 keeps a low glibc
+          # baseline (2.35). Only musl needs the Alpine container.
           - triple: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+            runner: ubuntu-22.04
           - triple: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+            runner: ubuntu-22.04-arm
           - triple: x86_64-unknown-linux-musl
             runner: ubuntu-latest
             docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
