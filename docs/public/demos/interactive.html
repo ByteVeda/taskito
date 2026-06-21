@@ -7,7 +7,7 @@
 <meta name="description" content="Seven runnable simulations — rate limiting, failure recovery, worker scaling, workflows, mesh routing, sagas, and a playground — built on SVG and Canvas 2D. No WebGL required.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&family=Shantell+Sans:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&family=Shantell+Sans:wght@500;600;700&display=optional" rel="stylesheet">
 <link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="interactive.css">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -206,6 +206,17 @@
     // reveal this demo's `.reveal` children directly — they default to opacity:0.
     [].forEach.call(sec.querySelectorAll('.reveal'), function(el){ el.classList.add('in'); });
   }
+})();
+
+// Standalone (non-embed) shell: landing.js is not loaded here, so wire the
+// header theme toggle directly instead of leaving an inert button.
+(function(){
+  if(new URLSearchParams(location.search).get('embed')) return;
+  var btn=document.getElementById('theme'); if(!btn) return;
+  btn.addEventListener('click',function(){
+    var root=document.documentElement;
+    root.setAttribute('data-theme', root.getAttribute('data-theme')==='light'?'dark':'light');
+  });
 })();
 </script>
 <script src="demo-ratelimit.js"></script>

@@ -30,8 +30,8 @@
   --amber:#ffb86b;
   --red:#ff6b6b;
 
-  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
-  --code:'JetBrains Mono','IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
+  --mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',monospace;
+  --code:'JetBrains Mono','IBM Plex Mono',ui-monospace,'SFMono-Regular',monospace;
   --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
   --hand:'Shantell Sans',cursive;
 
