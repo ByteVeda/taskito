@@ -38,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      tag_exists: ${{ steps.tag.outputs.exists }}
     steps:
       - uses: actions/checkout@v6
 
@@ -66,12 +67,22 @@ jobs:
             exit 1
           fi
 
-      - name: Check tag does not exist
+      # An existing tag at the current commit means a previous manual run got
+      # past the tag push but failed later — treat it as a rerun and let the
+      # publish job skip the push. A tag pointing elsewhere is a real conflict.
+      - name: Check remote tag state
+        id: tag
         if: github.event_name != 'push'
         run: |
           version="${{ steps.resolve.outputs.version }}"
-          if git ls-remote --tags origin | awk -v tag="refs/tags/node-v${version}" '$2 == tag { f=1 } END { exit !f }'; then
-            echo "::error::Tag node-v${version} already exists on remote"
+          remote_sha="$(git ls-remote --tags origin "refs/tags/node-v${version}" | awk '{print $1}')"
+          if [ -z "$remote_sha" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          elif [ "$remote_sha" = "$(git rev-parse HEAD)" ]; then
+            echo "::notice::Tag node-v${version} already at this commit — treating as rerun"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Tag node-v${version} exists on remote at ${remote_sha}, not HEAD"
             exit 1
           fi
 
@@ -152,6 +163,7 @@ jobs:
       id-token: write # OIDC trusted publishing + provenance
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
+      TAG_EXISTS: ${{ needs.preflight.outputs.tag_exists }}
     steps:
       # Don't persist the write token in .git/config — npm/build steps don't
       # need git auth, and the only push (the tag) gets the token explicitly.
@@ -243,7 +255,7 @@ jobs:
           exit 1
 
       - name: Create git tag
-        if: github.event_name != 'push' && !inputs.dry-run
+        if: github.event_name != 'push' && !inputs.dry-run && env.TAG_EXISTS != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
