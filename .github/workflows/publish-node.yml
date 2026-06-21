@@ -1,0 +1,239 @@
+name: Publish Node SDK to npm
+
+# Builds the napi addon as prebuilt per-platform `.node` binaries on native
+# runners (no cross-compilation — the same approach the Python publish.yml uses
+# for wheels), then publishes the per-platform `taskito-<triple>` packages plus
+# the main `taskito` package to npm via OIDC trusted publishing + provenance.
+
+on:
+  push:
+    tags:
+      # Node releases use a `node-v` tag namespace, distinct from Python's `v*`.
+      - "node-v[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.16.3)"
+        required: true
+        type: string
+      dry-run:
+        description: "Build and assemble only — skip npm publish and tagging"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve version
+        id: resolve
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#node-v}"
+          else
+            version="${VERSION_INPUT#v}"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: ${version}"
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify version matches package.json
+        run: |
+          version="${{ steps.resolve.outputs.version }}"
+          pkg_ver=$(node -p "require('./sdks/node/package.json').version")
+          if [ "$pkg_ver" != "$version" ]; then
+            echo "::error::Resolved version ${version} != sdks/node/package.json ${pkg_ver}"
+            exit 1
+          fi
+
+      - name: Check tag does not exist
+        if: github.event_name != 'push'
+        run: |
+          version="${{ steps.resolve.outputs.version }}"
+          if git ls-remote --tags origin | awk -v tag="refs/tags/node-v${version}" '$2 == tag { f=1 } END { exit !f }'; then
+            echo "::error::Tag node-v${version} already exists on remote"
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.triple }}
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    # Linux builds run inside the napi-rs images for a low glibc / musl baseline;
+    # macOS and Windows build natively on the runner. All builds are native
+    # (host == target), so postgres's bundled libpq compiles like any local build.
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+          - triple: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
+          - triple: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            container: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
+          - triple: x86_64-apple-darwin
+            runner: macos-15-intel
+          - triple: aarch64-apple-darwin
+            runner: macos-latest
+          - triple: x86_64-pc-windows-msvc
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Linux: the napi-rs image already has Rust + Node; add pnpm and perl
+      # (needed by `openssl-sys` vendored + `pq-src` to build libpq from source).
+      - name: Set up Linux toolchain
+        if: matrix.container != ''
+        shell: bash
+        run: |
+          if command -v apk >/dev/null; then
+            apk add --no-cache perl build-base
+          else
+            apt-get update && apt-get install -y perl
+          fi
+          npm install -g pnpm@10.33.0
+          pnpm -C sdks/node install --frozen-lockfile
+
+      - name: Set up Rust
+        if: matrix.container == ''
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up Node + pnpm
+        if: matrix.container == ''
+        uses: ./.github/actions/setup-node
+
+      - name: Build native addon (full features, host target)
+        shell: bash
+        working-directory: sdks/node
+        run: pnpm run build:native
+
+      - name: Upload binding
+        uses: actions/upload-artifact@v7
+        with:
+          name: bindings-${{ matrix.triple }}
+          path: sdks/node/native/*.node
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write # tag + release
+      id-token: write # OIDC trusted publishing + provenance
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node + pnpm
+        uses: ./.github/actions/setup-node
+
+      - name: Update npm (trusted publishing + provenance)
+        run: npm install -g npm@latest
+
+      - name: Build dashboard SPA
+        uses: ./.github/actions/dashboard-build
+        with:
+          out-dir: ../sdks/node/static/dashboard
+
+      - name: Build TypeScript
+        working-directory: sdks/node
+        run: pnpm run build:ts
+
+      - name: Download platform bindings
+        uses: actions/download-artifact@v8
+        with:
+          pattern: bindings-*
+          path: sdks/node/artifacts
+
+      - name: Assemble per-platform npm packages
+        working-directory: sdks/node
+        run: |
+          pnpm exec napi create-npm-dir -t .
+          pnpm exec napi artifacts -d artifacts
+          ls -R npm
+
+      - name: Inject optionalDependencies into the main package
+        working-directory: sdks/node
+        run: |
+          node - "$VERSION" <<'NODE'
+          const fs = require("fs");
+          const version = process.argv[1];
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          pkg.optionalDependencies = {};
+          for (const dir of fs.readdirSync("npm").sort()) {
+            const name = JSON.parse(fs.readFileSync(`npm/${dir}/package.json`, "utf8")).name;
+            pkg.optionalDependencies[name] = version;
+          }
+          fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
+          console.log("optionalDependencies:", pkg.optionalDependencies);
+          NODE
+
+      - name: Publish per-platform packages
+        if: ${{ !inputs.dry-run }}
+        working-directory: sdks/node
+        run: |
+          for dir in npm/*/; do
+            echo "Publishing ${dir}"
+            npm publish "$dir" --provenance --access public
+          done
+
+      - name: Publish main package
+        if: ${{ !inputs.dry-run }}
+        working-directory: sdks/node
+        run: npm publish --provenance --access public
+
+      - name: Verify version on npm
+        if: ${{ !inputs.dry-run }}
+        run: |
+          for _attempt in 1 2 3 4 5; do
+            if npm view "taskito@${VERSION}" version >/dev/null 2>&1; then
+              echo "taskito@${VERSION} live on npm"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::taskito@${VERSION} not found on npm"
+          exit 1
+
+      - name: Create git tag
+        if: github.event_name != 'push' && !inputs.dry-run
+        run: |
+          git tag "node-v${VERSION}"
+          git push origin "node-v${VERSION}"
+
+      - name: Create GitHub release
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "node-v${VERSION}" >/dev/null 2>&1; then
+            echo "::notice::Release node-v${VERSION} already exists — skipping"
+          else
+            gh release create "node-v${VERSION}" \
+              --title "taskito (Node) v${VERSION}" \
+              --generate-notes
+          fi
