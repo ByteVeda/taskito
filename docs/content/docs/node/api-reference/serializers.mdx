@@ -23,8 +23,8 @@ new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 
 ```ts
 interface Serializer {
-  dumps(value: unknown): Uint8Array | Buffer;
-  loads(bytes: Uint8Array): unknown;
+  serialize(value: unknown): Uint8Array;
+  deserialize(bytes: Uint8Array): unknown;
 }
 ```
 
