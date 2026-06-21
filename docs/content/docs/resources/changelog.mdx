@@ -183,7 +183,7 @@ Security-hardening release. No breaking changes.
 
 ## 0.15.0
 
-See the [Upgrading to 0.15](/python/guides/operations/upgrading-0.15) guide for
+See the <SdkLink to="guides/operations/upgrading-0.15">Upgrading to 0.15</SdkLink> guide for
 migration steps, rolling-upgrade notes, and the downgrade floor.
 
 ### Breaking
@@ -245,7 +245,7 @@ migration steps, rolling-upgrade notes, and the downgrade floor.
 
 ### Added
 
-- **Bare-metal autoscaler.** `taskito.autoscale` provides an in-process HPA-style control loop that spawns and drains `taskito worker` subprocesses based on queue depth and utilisation. Mirrors the Kubernetes HPA dual-signal formula (`depth_desired` + `util_desired`). Configurable stabilisation windows (default: scale-up immediate, scale-down 5 minutes), tolerance band (10%), overload override, and crash recovery. Use `serve_autoscaler(queue, AutoscaleConfig(...))` as the entry point. See the [Bare-Metal Autoscaler guide](/python/guides/operations/autoscaler).
+- **Bare-metal autoscaler.** `taskito.autoscale` provides an in-process HPA-style control loop that spawns and drains `taskito worker` subprocesses based on queue depth and utilisation. Mirrors the Kubernetes HPA dual-signal formula (`depth_desired` + `util_desired`). Configurable stabilisation windows (default: scale-up immediate, scale-down 5 minutes), tolerance band (10%), overload override, and crash recovery. Use `serve_autoscaler(queue, AutoscaleConfig(...))` as the entry point. See the <SdkLink to="guides/operations/autoscaler">Bare-Metal Autoscaler guide</SdkLink>.
 - **Dashboard `/api/workflows` backend.** Four new REST endpoints expose workflow run data: `GET /api/workflows/runs` (paginated list, filterable by definition name and state), `GET /api/workflows/runs/{id}` (run header + per-node detail with compensation fields), `GET /api/workflows/runs/{id}/dag` (DAG JSON), and `GET /api/workflows/runs/{id}/children` (sub-workflow runs). All timestamps are Unix milliseconds.
 - **Canvas saga compensation.** `chain`, `group`, and `chord` support `.with_compensation([...])`. On failure, compensators for completed steps are enqueued with a deterministic `canvas_compensation:{run_id}:{slot}` idempotency key. Dispatch order: chain → reverse-sequential, group → parallel, chord → callback compensator first then group members. `Signature.with_compensation(compensator)` lets individual signatures carry their own compensator.
 - **Per-item batch results.** `@queue.task(batch={"per_item_results": True})` enables per-item tracking for batched tasks. The task returns `list[BatchItemResult]`; each caller's `BatchedJobResult.result()` returns **only that caller's value**. `BatchItemResult.success(item_index, result)` and `BatchItemResult.failure(item_index, error)` are the constructors. `partial_failures()` returns failed items after a successful batch. `BatchPartialFailureError` and `BatchResultTypeError` are the new exception types. Cannot be combined with `idempotent=True`.

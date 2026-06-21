@@ -36,5 +36,5 @@ process.on("SIGTERM", () => worker.stop());
 <Callout type="info">
   Always set a [timeout](/node/guides/reliability/timeouts) on production tasks —
   a crashed worker's `running` jobs are reaped and retried once their timeout
-  elapses. See the [failure model](/python/architecture/failure-model).
+  elapses. See the [failure model](/architecture/failure-model).
 </Callout>

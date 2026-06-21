@@ -96,7 +96,7 @@ Use the **Postgres backend** (`pip install taskito[postgres]`) when you need:
 - **Existing Postgres infrastructure** — leverage your existing database and backups
 
 For single-machine workloads, SQLite is simpler and requires zero setup. See
-the [Postgres backend guide](/python/guides/operations).
+the <SdkLink to="guides/operations">Postgres backend guide</SdkLink>.
 
 ## Is taskito production-ready?
 
@@ -104,7 +104,7 @@ taskito is suitable for production workloads — background job processing,
 periodic tasks, data pipelines, and similar use cases.
 
 For single-machine deployments, use the default SQLite backend. For
-multi-server setups, use the [Postgres backend](/python/guides/operations).
+multi-server setups, use the <SdkLink to="guides/operations">Postgres backend</SdkLink>.
 
 ## What observability options does taskito support?
 
@@ -112,9 +112,9 @@ taskito offers three observability integrations, each suited to different needs:
 
 | Integration | Best for | Install |
 |-------------|----------|---------|
-| **[OpenTelemetry](/python/guides/integrations)** | Distributed tracing, correlating tasks with HTTP requests | `pip install taskito[otel]` |
-| **[Prometheus](/python/guides/integrations)** | Metrics dashboards, alerting on queue depth/error rates | `pip install taskito[prometheus]` |
-| **[Sentry](/python/guides/integrations)** | Error tracking with rich context and breadcrumbs | `pip install taskito[sentry]` |
+| **<SdkLink to="guides/integrations">OpenTelemetry</SdkLink>** | Distributed tracing, correlating tasks with HTTP requests | `pip install taskito[otel]` |
+| **<SdkLink to="guides/integrations">Prometheus</SdkLink>** | Metrics dashboards, alerting on queue depth/error rates | `pip install taskito[prometheus]` |
+| **<SdkLink to="guides/integrations">Sentry</SdkLink>** | Error tracking with rich context and breadcrumbs | `pip install taskito[sentry]` |
 
 All three are implemented as `TaskMiddleware` and can be combined together.
 
@@ -153,7 +153,7 @@ stats = await queue.astats()
 
 Sync and async tasks can coexist in the same queue. The worker automatically
 routes each job to the correct pool based on the task type. See the
-[Async Tasks guide](/python/guides/advanced-execution) for details including
+<SdkLink to="guides/advanced-execution">Async Tasks guide</SdkLink> for details including
 `async_concurrency` tuning and `current_job` context in async tasks.
 
 ## What serialization format does taskito use?

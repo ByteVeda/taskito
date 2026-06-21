@@ -48,7 +48,7 @@ maintenance tasks fire on coprime intervals so they rarely collide on the same w
 </ol>
 
 <Callout type="info">
-  With [mesh scheduling](/python/architecture/mesh) enabled, a mesh bridge sits
+  With [mesh scheduling](/architecture/mesh) enabled, a mesh bridge sits
   between the scheduler and the worker pool — buffering jobs in a local deque,
   applying task affinity, and stealing from peers on idle ticks. The scheduler
   itself is unchanged.

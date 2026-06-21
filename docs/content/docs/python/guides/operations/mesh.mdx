@@ -7,7 +7,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 import { Tab, Tabs } from "fumadocs-ui/components/tabs";
 
 Mesh scheduling adds a decentralized overlay network on top of the
-[standard scheduler](/python/architecture/scheduler). Workers discover each other via
+[standard scheduler](/architecture/scheduler). Workers discover each other via
 gossip, route tasks through a consistent-hashing ring, and steal work from
 busy peers — all without a central coordinator.
 
@@ -56,13 +56,13 @@ Mesh scheduling composes five primitives that work together:
 |---|---|
 | **SWIM gossip** | UDP protocol for worker discovery and failure detection (~1.5s vs 30s DB heartbeat) |
 | **Consistent hashing** | xxhash ring with virtual nodes maps tasks to preferred workers (soft affinity) |
-| **Local deque** | In-memory buffer between DB polls — workers drain the deque before hitting the [storage backend](/python/architecture/storage) |
+| **Local deque** | In-memory buffer between DB polls — workers drain the deque before hitting the [storage backend](/architecture/storage) |
 | **Work-stealing** | TCP protocol lets idle workers steal jobs from busy peers |
 | **Adaptive load balancing** | Prefetch size and poll timing auto-tune based on cluster state |
 
 The database remains the source of truth. Gossip is an optimization layer —
 if it fails, workers fall back to standard DB polling. See
-[Architecture: Mesh Scheduling](/python/architecture/mesh) for protocol-level details.
+[Architecture: Mesh Scheduling](/architecture/mesh) for protocol-level details.
 
 ## Configuration
 
@@ -333,7 +333,7 @@ See also:
 ## Mixing mesh and non-mesh workers
 
 Mesh workers coexist safely with [standard workers](/python/guides/core/workers).
-Both use the same [storage backend](/python/architecture/storage) for atomic job
+Both use the same [storage backend](/architecture/storage) for atomic job
 claims — mesh just reduces how often workers hit the DB.
 
 ```python
