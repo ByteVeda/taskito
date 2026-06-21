@@ -1,0 +1,29 @@
+---
+title: Circuit breakers
+description: "Trip a task after repeated failures to shed load on a failing dependency."
+---
+
+A circuit breaker stops dispatching a task after it fails too often in a window,
+giving a failing downstream dependency time to recover instead of hammering it.
+
+```ts
+queue.task("call_flaky_api", callApi, {
+  circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
+});
+```
+
+| Field | Description |
+|---|---|
+| `threshold` | Failures within `windowMs` that trip the breaker. |
+| `windowMs` | Rolling window for counting failures. |
+| `cooldownMs` | How long the breaker stays open before a trial dispatch. |
+
+While **open**, jobs of that task are held rather than dispatched. After
+`cooldownMs` the breaker half-opens and lets a job through; success closes it,
+failure re-opens it.
+
+<Callout type="info">
+  Pair with [retries](/node/guides/reliability/retries): retries handle
+  transient blips on a healthy dependency; the breaker handles a dependency
+  that is down, so you stop spending the retry budget on it.
+</Callout>

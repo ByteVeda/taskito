@@ -1,0 +1,33 @@
+---
+title: Context
+description: "currentJob() — the running task's job context."
+---
+
+```ts
+import { currentJob } from "taskito";
+
+const job = currentJob(); // JobContext | undefined
+```
+
+Returns the running task's context, or `undefined` outside a task. Backed by
+`AsyncLocalStorage`, so it survives `await` boundaries within the task.
+
+## `JobContext`
+
+| Member | Type | Description |
+|---|---|---|
+| `jobId` | `string` | The running job's id. |
+| `signal` | `AbortSignal` | Aborted on cancel or timeout — pass to `fetch`/streams. |
+| `setProgress(n)` | `(0–100) => void` | Report progress for inspection / dashboard. |
+
+```ts
+queue.task("download", async (url: string) => {
+  const job = currentJob();
+  const res = await fetch(url, { signal: job?.signal });
+  job?.setProgress(100);
+  return res.text();
+});
+```
+
+See [Cancellation](/node/guides/core/cancellation) for the cooperative
+cancellation flow.

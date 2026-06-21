@@ -1,0 +1,33 @@
+/* ============================================================
+   MDX code blocks (shiki dual-theme). defaultColor:false emits
+   --shiki-light/--shiki-dark vars; we pick by [data-theme] and
+   wrap in the design's code panel (not shiki's github background).
+   ============================================================ */
+/* shiki <pre> sits inside the .codeblock panel (CodeBlock component); keep it
+   flat — the panel gives border/radius/shadow, .codeblock pre the padding/font. */
+.codeblock pre.shiki {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.codeblock pre.shiki code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+  color: inherit;
+}
+/* light (default) → dark under [data-theme="dark"] */
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+}
+html[data-theme="dark"] .shiki,
+html[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark);
+}

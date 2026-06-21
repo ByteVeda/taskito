@@ -1,0 +1,234 @@
+/* ============================================================
+   ⌘K command palette (shared, all pages)
+   ============================================================ */
+.cmdk {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+}
+.cmdk.show {
+  display: flex;
+}
+.cmdk-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklch, var(--bg) 55%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.cmdk-panel {
+  position: relative;
+  margin-top: 11vh;
+  width: min(620px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line2);
+  border-radius: 16px;
+  box-shadow:
+    0 40px 100px -30px rgba(0, 0, 0, 0.6),
+    0 0 0 1px var(--line);
+  overflow: hidden;
+  opacity: 1;
+  animation: cmdkpop 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+@keyframes cmdkpop {
+  from {
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    transform: none;
+  }
+}
+.cmdk-inputrow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 15px 17px;
+  border-bottom: 1px solid var(--line);
+}
+.cmdk-ic {
+  width: 19px;
+  height: 19px;
+  color: var(--mut);
+  flex: none;
+}
+.cmdk-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--txt);
+  font-family: var(--sans);
+  font-size: 16.5px;
+}
+.cmdk-input::placeholder {
+  color: var(--dim);
+}
+.cmdk-esc {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mut);
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.cmdk-results {
+  max-height: min(420px, 56vh);
+  overflow-y: auto;
+  padding: 8px;
+}
+.cmdk-results::-webkit-scrollbar {
+  width: 8px;
+}
+.cmdk-results::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  border-radius: 8px;
+}
+.cmdk-group {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dim);
+  padding: 12px 12px 6px;
+  font-weight: 600;
+}
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.cmdk-item.active {
+  background: var(--indigo-soft);
+}
+.cmdk-it-ic {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--panel2);
+  border: 1px solid var(--line2);
+  color: var(--mut);
+}
+.cmdk-item.active .cmdk-it-ic {
+  background: var(--panel);
+  border-color: var(--indigo-line);
+  color: var(--indigo-br);
+}
+.cmdk-it-ic svg {
+  width: 17px;
+  height: 17px;
+}
+.cmdk-it-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.cmdk-it-t {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--txt);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cmdk-it-t em {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--indigo-br);
+  background: var(--indigo-soft);
+  border: 1px solid var(--indigo-line);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.cmdk-it-d {
+  font-size: 12.5px;
+  color: var(--mut);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmdk-it-go {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--dim);
+  opacity: 0;
+  flex: none;
+}
+.cmdk-item.active .cmdk-it-go {
+  opacity: 1;
+  color: var(--indigo-br);
+}
+.cmdk-empty {
+  padding: 34px 16px;
+  text-align: center;
+  color: var(--mut);
+  font-size: 14px;
+}
+.cmdk-foot {
+  display: flex;
+  gap: 18px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11.5px;
+  font-family: var(--mono);
+}
+.cmdk-foot kbd {
+  font-family: var(--mono);
+  border: 1px solid var(--line2);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 3px;
+  color: var(--mut);
+}
+.cmdk-foot span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.kbar,
+.side-search {
+  cursor: pointer;
+}
+
+/* ---------- search palette (React renders only when open) ---------- */
+.cmdk {
+  display: flex;
+}
+.cmdk-title {
+  font-size: 14px;
+  color: var(--txt);
+  font-weight: 500;
+}
+.cmdk-section {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}

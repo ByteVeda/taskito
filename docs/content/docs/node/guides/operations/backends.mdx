@@ -1,0 +1,30 @@
+---
+title: Backends
+description: "SQLite, PostgreSQL, or Redis — same API, different storage."
+---
+
+The queue stores everything — jobs, results, schedules, locks, rate-limit state
+— in one backend. The API is identical across all three; only the constructor
+differs.
+
+```ts
+new Queue({ dbPath: "taskito.db" });                                   // SQLite (default)
+new Queue({ backend: "postgres", dsn: process.env.PG_URL, schema: "taskito" });
+new Queue({ backend: "redis", dsn: "redis://localhost", prefix: "taskito" });
+```
+
+| Backend | Use when | Notes |
+|---|---|---|
+| **SQLite** | Single host, simplest deploy | One file, WAL mode, no server. Bundled. |
+| **PostgreSQL** | Multiple hosts, durability | `SELECT ... FOR UPDATE SKIP LOCKED` dispatch; isolated `schema`. |
+| **Redis** | High throughput, ephemeral OK | JSON values + sorted sets; atomic Lua claims. |
+
+Postgres and Redis require the addon built with their cargo features —
+`build:native` enables `--features postgres,redis`, and the published prebuilt
+binaries include them.
+
+<Callout type="info">
+  Producers and workers must point at the same backend. SQLite is per-host
+  (shared file); Postgres/Redis let producers and workers run on different
+  machines against one shared store.
+</Callout>

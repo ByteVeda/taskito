@@ -10,22 +10,27 @@ The mesh layer sits between the [scheduler](/architecture/scheduler) and the
 network that reduces DB contention and enables sub-millisecond load awareness.
 
 For usage and configuration, see the
-[Mesh Scheduling guide](/guides/operations/mesh).
+<SdkLink to="guides/operations/mesh">Mesh Scheduling guide</SdkLink>.
 
-<Mermaid
-  chart={`flowchart TB
-    subgraph dispatch["DISPATCH LAYER — enhanced poller"]
-      d1["Local deque"] ~~~ d2["Affinity routing"] ~~~ d3["Work-stealing"]
-    end
-    subgraph mesh["MESH LAYER — taskito-mesh crate"]
-      m1["SWIM gossip"] ~~~ m2["Membership"] ~~~ m3["Failure detection"]
-    end
-    subgraph durability["DURABILITY LAYER — unchanged"]
-      s1["SQLite"] ~~~ s2["Postgres"] ~~~ s3["Redis"]
-    end
-    dispatch --> mesh --> durability
-  `}
-/>
+<div className="archstack">
+  <div className="layer py"><span className="ltag t-py">Dispatch</span><div className="lbody"><div className="lt">Enhanced poller</div><div className="ld">Local deque · affinity routing · work-stealing.</div></div></div>
+  <div className="bound"><span className="bdir">↓</span>overlay</div>
+  <div className="layer" style={{ borderColor: "color-mix(in oklch,var(--cyan) 38%,transparent)", background: "linear-gradient(100deg,color-mix(in oklch,var(--cyan) 8%,transparent),var(--panel))" }}><span className="ltag t-store" style={{ background: "var(--cyan)", color: "#04201e" }}>Mesh</span><div className="lbody"><div className="lt">taskito-mesh crate</div><div className="ld">SWIM gossip · membership · failure detection.</div></div></div>
+  <div className="bound"><span className="bdir">↓</span>source of truth</div>
+  <div className="layer rust"><span className="ltag t-rust">Durability</span><div className="lbody"><div className="lt">Storage backend (unchanged)</div><div className="ld">SQLite · Postgres · Redis — atomic claims guarantee exactly-once dispatch.</div></div></div>
+</div>
+
+## Live demonstration
+
+Five workers run in different regions, linked into one mesh over HTTP. Jobs
+hash-route into the cluster — but enqueues are deliberately skewed toward
+`us-east-1`/`us-west-2`, so their queues build up. Watch idle regions steal
+batches from the busiest peer across the network (cyan, with real inter-region
+latency), SWIM gossip flicker along the mesh links, and the counters track
+throughput. Hover a region to see its links and latencies; hit **Add burst** to
+flood the queue.
+
+<MeshDemo />
 
 ## Crate structure
 
@@ -46,13 +51,12 @@ cluster size.
 
 Every 500ms (configurable via `protocol_period_ms` in `MeshConfig`), a node:
 
-1. Picks a random alive peer and sends a **Ping** (with sequence number)
-2. If no **Ack** within `protocol_period / 2` → sends **PingReq** to
-   `indirect_ping_count` (3) random intermediaries asking them to probe the
-   target on its behalf
-3. If still no response → marks the target as **Suspect**
-4. After `suspicion_multiplier × ln(N+1) × protocol_period` → declares
-   **Dead** and removes from the hash ring
+<ol className="flowsteps">
+  <li>Picks a random alive peer and sends a <b>Ping</b> (with sequence number).</li>
+  <li>If no <b>Ack</b> within <code>protocol_period / 2</code> → sends <b>PingReq</b> to <code>indirect_ping_count</code> (3) random intermediaries to probe the target on its behalf.</li>
+  <li>If still no response → marks the target as <b>Suspect</b>.</li>
+  <li>After <code>suspicion_multiplier × ln(N+1) × protocol_period</code> → declares <b>Dead</b> and removes from the hash ring.</li>
+</ol>
 
 ### Message types
 
@@ -104,7 +108,7 @@ failure detection from cascading across the cluster.
 Optional XOR symmetric encryption with a shared key (base64-encoded).
 Applied to every UDP datagram before send, reversed on receive. All
 cluster nodes must share the same key. See
-[Gossip encryption](/guides/operations/mesh#gossip-encryption) for setup.
+<SdkLink to="guides/operations/mesh#gossip-encryption">Gossip encryption</SdkLink> for setup.
 
 <Callout type="info">
   XOR encryption provides obfuscation, not cryptographic security. It
@@ -143,15 +147,12 @@ The ring recalculates on every membership change (join, leave, death). The
 Each worker maintains a `Mutex<VecDeque<Job>>` as a local job buffer with
 a configurable capacity (`local_buffer_capacity`, default 64):
 
-<Mermaid
-  chart={`flowchart LR
-    subgraph deque["VecDeque — front ← steal · pop → back"]
-      direction LR
-      j1["Non-owned"] --- j2["Non-owned"] --- j3["Mixed"] --- j4["Owned"] --- j5["Owned"]
-    end
-    steal["steal(n) FIFO"] -.-> j1
-    j5 -.-> pop["pop() LIFO"]
-  `}
+<Seq
+  heads={["steal(n) · FIFO →", "VecDeque", "← pop() · LIFO"]}
+  rows={[
+    { left: "front: non-owned", right: "back: owned" },
+    { self: "push_sorted() partitions each prefetched batch by affinity" },
+  ]}
 />
 
 - **Prefetch**: the
@@ -185,17 +186,14 @@ payload, metadata, and scheduling info.
 
 ### Sequence diagram
 
-<Mermaid
-  chart={`sequenceDiagram
-    participant T as Thief
-    participant V as Victim
-    T->>V: TCP connect (500ms timeout)
-    T->>V: StealRequest{id, max_count}
-    V->>V: rate-limit check
-    V->>V: deque.steal(max)
-    V->>T: StealResponse{jobs}
-    T->>V: close
-  `}
+<Seq
+  heads={["Thief", "Victim"]}
+  rows={[
+    { left: "TCP connect (500ms timeout)" },
+    { left: "StealRequest{id, max_count}" },
+    { self: "victim: rate-limit check, deque.steal(max)" },
+    { right: "StealResponse{jobs}", rev: true },
+  ]}
 />
 
 Timeouts: 500ms connect, 2s response read. On any failure, returns empty
@@ -255,22 +253,14 @@ Instead, `run_worker` (in `crates/taskito-python/src/py_queue/worker.rs`)
 spawns a **mesh bridge** — an intermediate `tokio::sync::mpsc` channel
 between the scheduler and dispatcher:
 
-<Mermaid
-  chart={`flowchart LR
-    S[Scheduler] -->|job_tx| MB[mesh_bridge]
-    MB -->|dispatch_tx| D[Dispatcher]
-    MB --- DQ[Local deque]
-    MB --- SC[Steal client<br/>TCP to peers]
-  `}
-/>
-
 The `run_mesh_bridge()` function:
 
-1. `recv` from `job_rx` (scheduler channel) — push into local deque
-2. `pop` from local deque — send to `dispatch_tx` (dispatcher channel)
-3. On idle (no jobs from scheduler, deque low) → `try_steal()` from
-   busiest peer
-4. Loop until shutdown
+<ol className="flowsteps">
+  <li><code>recv</code> from <code>job_rx</code> (scheduler channel) — push into the local deque.</li>
+  <li><code>pop</code> from the local deque — send to <code>dispatch_tx</code> (dispatcher channel).</li>
+  <li>On idle (no jobs from scheduler, deque low) → <code>try_steal()</code> from the busiest peer.</li>
+  <li>Loop until shutdown.</li>
+</ol>
 
 This keeps the scheduler and dispatcher completely unaware of mesh logic.
 Without the `mesh` feature flag, the scheduler sends directly to the
@@ -313,7 +303,7 @@ double-execution — those guarantees come from the
 
 ## See also
 
-- [Mesh Scheduling guide](/guides/operations/mesh) — configuration, cluster topology, Docker Compose example
+- <SdkLink to="guides/operations/mesh">Mesh Scheduling guide</SdkLink> — configuration, cluster topology, Docker Compose example
 - [Scheduler](/architecture/scheduler) — the poll loop that feeds jobs into the mesh bridge
 - [Worker Pool](/architecture/worker-pool) — the dispatcher that receives jobs from the mesh bridge
 - [Storage](/architecture/storage) — atomic claim mechanism that guarantees exactly-once dispatch

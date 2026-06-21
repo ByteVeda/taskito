@@ -1,0 +1,93 @@
+---
+title: Task batching
+description: Collect many small calls into one larger job
+---
+
+When a task does small per-call work — sending an email, writing a row, calling an API — running one job per call is wasteful. `@queue.task(batch=...)` collects calls in memory and dispatches them as a single job whose payload is the list of accumulated items.
+
+```python
+from taskito import Queue
+
+queue = Queue()
+
+@queue.task(batch={"max_size": 100, "max_wait_ms": 500})
+def send_emails(items: list[dict]) -> None:
+    for item in items:
+        smtp.send(item)
+
+# Each call adds ONE item to the batch.
+for recipient in many_recipients:
+    send_emails.delay(recipient)
+
+# When 100 items accumulate OR 500ms elapse since the first call,
+# the framework enqueues ONE job: send_emails([item1, item2, ..., itemN]).
+```
+
+## Configuration
+
+| Param          | Default | Meaning                                                             |
+|----------------|--------:|---------------------------------------------------------------------|
+| `max_size`     |     100 | Flush when the buffer reaches this many items                       |
+| `max_wait_ms`  |     500 | Flush after this many ms have passed since the first item arrived   |
+
+Either threshold triggers a flush — whichever fires first. `@queue.task(batch=True)` uses both defaults.
+
+## Function signature contract
+
+A batched task **must** accept a list as its first positional arg:
+
+```python
+@queue.task(batch=True)
+def fn(items: list[T]) -> None: ...
+```
+
+Each call must pass exactly one positional arg — that arg becomes one element of `items`. Keyword arguments are not accepted for batched tasks:
+
+```python
+send_emails.delay({"to": "a@x.com"})        # ✓
+send_emails.delay({"to": "a@x.com"}, foo=1) # ✗ ValueError
+send_emails.delay(item1, item2)             # ✗ ValueError
+```
+
+## Durability trade-off
+
+<Callout type="warn" title="Items in the buffer are not durable">
+Items that have been added to the in-memory accumulator but not yet flushed are **lost** if the process crashes. taskito does **not** persist them between the `.delay()` call and the flush.
+
+This matches Celery's `Batches` extension semantics — it's the price you pay for higher throughput. For tasks where every item must reach the queue (financial transactions, ordered side effects), do not enable batching. Use regular `.delay()`.
+
+`Queue.close()` and `atexit` both flush remaining items. Crashes between flushes lose whatever was in the buffer.
+</Callout>
+
+## Concurrency, rate limits, and retries
+
+- **A batch counts as one job.** A batched task with `max_concurrent=1` runs **one batch** at a time, not one item. A rate limit of `"10/m"` allows ten batches per minute.
+- **Retries are per-batch.** If the function raises while processing item 5 of 10, the entire batch is retried (with the same `items` list). For per-item resilience, wrap each item in your own try/except.
+- **No per-item idempotency.** `idempotent=True` is incompatible with `batch=...` and is rejected at decoration time — the auto-derived dedup key would change with each batch flush.
+
+## Return value
+
+`.delay()` on a batched task returns a `BatchedJobResult` sentinel rather than a real `JobResult`:
+
+```python
+result = send_emails.delay(item)
+# result.id    → None  (no real job until flush)
+# result.batched → True
+# result.result() → raises NotImplementedError
+```
+
+Calling `.result()` on a batched return value is intentionally an error — there is no per-item result. If you need a return value per item, batching is the wrong primitive.
+
+## When to use batching
+
+- Many small writes to the same downstream system (databases, APIs).
+- Notification fan-out (mail, push, SMS).
+- Aggregating analytics events.
+
+When not to use it:
+
+- Critical individual jobs (financial transactions, billing events).
+- Tasks where per-item retry matters.
+- Heterogeneous work that doesn't share the same downstream code path.
+
+See also the [`canvas.chunks()`](/python/guides/workflows/canvas) primitive — it's a producer-side equivalent that creates `N` separate jobs each holding a sub-list, with full per-chunk retry semantics.

@@ -32,17 +32,20 @@ loop {
 
 ## Polling cycle
 
+The loop wakes every 50&nbsp;ms. `try_dispatch()` runs on every tick; the three
+maintenance tasks fire on coprime intervals so they rarely collide on the same wake.
+
 <SchedulerPollLoop />
 
 ## Dispatch flow
 
-1. `dequeue_from()` — atomically `SELECT` + `UPDATE` (pending → running) within a transaction.
-2. Check rate limit — if over limit, reschedule 1s in the future.
-3. Send job to worker pool via `tokio::sync::mpsc` channel.
-4. Worker executes task, sends result back.
-5. `handle_result()` — mark complete, schedule retry, or move to DLQ.
-
-<DispatchSequence />
+<ol className="flowsteps">
+  <li><code>dequeue_from()</code> — atomically <code>SELECT</code> + <code>UPDATE</code> (pending → running) within a transaction.</li>
+  <li>Check rate limit — if over limit, reschedule 1s in the future.</li>
+  <li>Send job to worker pool via <code>tokio::sync::mpsc</code> channel.</li>
+  <li>Worker executes task, sends result back.</li>
+  <li><code>handle_result()</code> — mark complete, schedule retry, or move to DLQ.</li>
+</ol>
 
 <Callout type="info">
   With [mesh scheduling](/architecture/mesh) enabled, a mesh bridge sits

@@ -1,0 +1,26 @@
+---
+title: Result
+description: "Awaiting job results."
+---
+
+```ts
+const value = await queue.result(id: string, options?: { timeoutMs?: number }): Promise<R>;
+```
+
+Resolves with the task's return value once the job finishes. Rejects if the job
+dead-letters or the optional `timeoutMs` elapses before completion.
+
+```ts
+const id = queue.enqueue("add", [2, 3]);
+const sum = await queue.result(id);                 // 5
+const sum2 = await queue.result(id, { timeoutMs: 5000 }); // throws on timeout
+```
+
+The result is deserialized with the queue's
+[serializer](/node/api-reference/serializers). Any process sharing the storage
+can await a result by id — the waiter polls the store.
+
+<Callout type="info">
+  `result` is for awaiting one job. To scan many jobs or read outcomes in bulk,
+  use [`listJobs` / `getMetrics`](/node/guides/operations/inspection).
+</Callout>

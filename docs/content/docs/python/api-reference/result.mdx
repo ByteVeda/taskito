@@ -1,0 +1,224 @@
+---
+title: JobResult
+description: "Handle for an enqueued job — status polling, result retrieval, dependencies."
+---
+
+Handle to an enqueued job. Provides methods to check status and retrieve
+results, both synchronously and asynchronously.
+
+Returned by [`task.delay()`](/python/api-reference/task),
+[`task.apply_async()`](/python/api-reference/task),
+[`queue.enqueue()`](/python/api-reference/queue), and canvas operations.
+
+## Properties
+
+### `job.id`
+
+```python
+job.id -> str
+```
+
+The unique job ID (UUIDv7, time-ordered).
+
+### `job.status`
+
+```python
+job.status -> str
+```
+
+Current job status. **Fetches fresh from the database** on every access.
+
+Returns one of: `"pending"`, `"running"`, `"complete"`, `"failed"`, `"dead"`,
+`"cancelled"`.
+
+```python
+job = add.delay(2, 3)
+print(job.status)  # "pending"
+# ... after worker processes it ...
+print(job.status)  # "complete"
+```
+
+### `job.progress`
+
+```python
+job.progress -> int | None
+```
+
+Current progress (0–100) if reported by the task via
+[`current_job.update_progress()`](/python/api-reference/context). Returns `None`
+if no progress has been reported. Refreshes from the database.
+
+### `job.error`
+
+```python
+job.error -> str | None
+```
+
+Error message if the job failed. `None` if the job hasn't failed. Refreshes
+from the database.
+
+### `job.errors`
+
+```python
+job.errors -> list[dict]
+```
+
+Full error history for this job — one entry per failed attempt. Each dict
+contains:
+
+| Key | Type | Description |
+|---|---|---|
+| `id` | `str` | Error record ID |
+| `job_id` | `str` | Parent job ID |
+| `attempt` | `int` | Retry attempt number |
+| `error` | `str` | Error message/traceback |
+| `failed_at` | `str` | ISO timestamp of the failure |
+
+```python
+job = flaky_task.delay()
+# ... after retries ...
+for err in job.errors:
+    print(f"Attempt {err['attempt']}: {err['error']}")
+```
+
+### `job.dependencies`
+
+```python
+job.dependencies -> list[str]
+```
+
+List of job IDs this job depends on. Returns an empty list if the job has no
+dependencies. See [Dependencies](/python/guides/advanced-execution).
+
+### `job.dependents`
+
+```python
+job.dependents -> list[str]
+```
+
+List of job IDs that depend on this job. Returns an empty list if no other
+jobs depend on this one.
+
+## Methods
+
+### `job.to_dict()`
+
+```python
+job.to_dict() -> dict
+```
+
+Return all job fields as a plain dictionary. Useful for JSON serialization
+(e.g. in the [dashboard](/python/guides/observability) or
+[FastAPI integration](/python/guides/integrations)).
+
+### `job.result()`
+
+```python
+job.result(
+    timeout: float = 30.0,
+    poll_interval: float = 0.05,
+    max_poll_interval: float = 0.5,
+) -> Any
+```
+
+**Block** until the job completes and return the deserialized result. Uses
+exponential backoff for polling — starts at `poll_interval` and gradually
+increases to `max_poll_interval`.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `timeout` | `float` | `30.0` | Maximum seconds to wait |
+| `poll_interval` | `float` | `0.05` | Initial seconds between status checks |
+| `max_poll_interval` | `float` | `0.5` | Maximum seconds between status checks |
+
+**Raises:**
+
+- `TimeoutError` — if the job doesn't complete within `timeout`
+- `TaskFailedError` — if the job status is `"failed"`
+- `MaxRetriesExceededError` — if the job status is `"dead"` (all retries exhausted)
+- `TaskCancelledError` — if the job status is `"cancelled"`
+- `SerializationError` — if result deserialization fails
+
+```python
+from taskito import TaskFailedError, MaxRetriesExceededError, TaskCancelledError
+
+job = add.delay(2, 3)
+result = job.result(timeout=10)  # blocks, returns 5
+
+# Handle specific failure modes
+try:
+    result = job.result(timeout=10)
+except TaskCancelledError:
+    print("Job was cancelled")
+except MaxRetriesExceededError:
+    print("Job exhausted all retries")
+except TaskFailedError:
+    print("Job failed")
+```
+
+### `await job.aresult()`
+
+```python
+await job.aresult(
+    timeout: float = 30.0,
+    poll_interval: float = 0.05,
+    max_poll_interval: float = 0.5,
+) -> Any
+```
+
+Async version of `result()`. Uses `asyncio.sleep()` instead of `time.sleep()`,
+so it won't block the event loop.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `timeout` | `float` | `30.0` | Maximum seconds to wait |
+| `poll_interval` | `float` | `0.05` | Initial seconds between status checks |
+| `max_poll_interval` | `float` | `0.5` | Maximum seconds between status checks |
+
+**Raises:** same as `result()`.
+
+```python
+job = add.delay(2, 3)
+result = await job.aresult(timeout=10)
+```
+
+### `job.stream()`
+
+```python
+job.stream(
+    timeout: float = 60.0,
+    poll_interval: float = 0.5,
+) -> Iterator[Any]
+```
+
+Iterate over partial results published by the task via
+[`current_job.publish()`](/python/api-reference/context). Yields each result as
+it arrives, stops when the job reaches a terminal state.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `timeout` | `float` | `60.0` | Maximum seconds to wait |
+| `poll_interval` | `float` | `0.5` | Seconds between polls |
+
+```python
+job = batch_process.delay(items)
+for partial in job.stream(timeout=120):
+    print(f"Got: {partial}")
+```
+
+### `await job.astream()`
+
+```python
+async for partial in job.astream(
+    timeout: float = 60.0,
+    poll_interval: float = 0.5,
+) -> AsyncIterator[Any]
+```
+
+Async version of `stream()`. Uses `asyncio.sleep` so it won't block the event
+loop.
+
+```python
+async for partial in job.astream(timeout=120):
+    print(f"Got: {partial}")
+```

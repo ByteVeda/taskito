@@ -1,0 +1,48 @@
+---
+title: Inspection & management
+description: "Stats, job listing, metrics, and queue pause/resume."
+---
+
+Read and manage queue state directly from the `Queue` handle.
+
+## Stats
+
+```ts
+queue.stats();                  // { pending, running, completed, failed, dead, cancelled }
+queue.statsByQueue("default");
+queue.statsAllQueues();
+```
+
+## Jobs & metrics
+
+```ts
+queue.listJobs({ status: "failed", limit: 50 });
+queue.getJobErrors(id);                 // per-attempt error history
+queue.getMetrics(3600_000, "add");      // window (ms), optional task filter
+```
+
+`getMetrics(windowMs, task?)` returns per-task counts, success/failure split,
+and latency percentiles (p50/p95/p99) over the window.
+
+## Dead letters
+
+```ts
+queue.deadLetters();
+queue.retryDead(deadId);
+queue.deleteDead(deadId);
+queue.purgeDead(olderThanMs);
+queue.purgeCompleted(olderThanMs);
+```
+
+## Pause / resume
+
+```ts
+queue.pauseQueue("default");
+queue.resumeQueue("default");
+queue.listPausedQueues();
+```
+
+<Callout type="info">
+  The same data drives the [dashboard](/node/guides/operations/dashboard) and the
+  [CLI](/node/guides/operations/cli) read commands.
+</Callout>

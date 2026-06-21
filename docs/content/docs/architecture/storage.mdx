@@ -14,133 +14,15 @@ description: "SQLite pragmas, schema, indexes, connection pooling, and Postgres 
 
 ## Database schema
 
-Six tables in the SQLite backend. Use the arrows or click a dot to flip between tables; the last slide shows their relationships.
+Six tables back the SQLite store — jobs and their error history, the dead letter
+queue, rate limits, periodic tasks, and worker heartbeats.
 
-<DiagramCarousel title="SQLite schema">
-  <DiagramSlide title="jobs">
-    <EntitySchema
-      name="jobs"
-      fields={[
-        { name: "id", type: "TEXT", key: "PK" },
-        { name: "queue", type: "TEXT" },
-        { name: "task_name", type: "TEXT" },
-        { name: "payload", type: "BLOB" },
-        { name: "status", type: "INTEGER" },
-        { name: "priority", type: "INTEGER" },
-        { name: "created_at", type: "INTEGER" },
-        { name: "scheduled_at", type: "INTEGER" },
-        { name: "started_at", type: "INTEGER" },
-        { name: "completed_at", type: "INTEGER" },
-        { name: "retry_count", type: "INTEGER" },
-        { name: "max_retries", type: "INTEGER" },
-        { name: "result", type: "BLOB" },
-        { name: "error", type: "TEXT" },
-        { name: "timeout_ms", type: "INTEGER" },
-        { name: "unique_key", type: "TEXT" },
-        { name: "progress", type: "INTEGER" },
-        { name: "metadata", type: "TEXT" },
-        { name: "cancel_requested", type: "BOOLEAN" },
-        { name: "expires_at", type: "INTEGER" },
-        { name: "result_ttl_ms", type: "INTEGER" },
-      ]}
-    />
-  </DiagramSlide>
+<SchemaGrid />
 
-  <DiagramSlide title="dead_letter">
-    <EntitySchema
-      name="dead_letter"
-      fields={[
-        { name: "id", type: "TEXT", key: "PK" },
-        { name: "original_job_id", type: "TEXT" },
-        { name: "queue", type: "TEXT" },
-        { name: "task_name", type: "TEXT" },
-        { name: "payload", type: "BLOB" },
-        { name: "error", type: "TEXT" },
-        { name: "retry_count", type: "INTEGER" },
-        { name: "failed_at", type: "INTEGER" },
-        { name: "metadata", type: "TEXT" },
-        { name: "priority", type: "INTEGER" },
-        { name: "max_retries", type: "INTEGER" },
-        { name: "timeout_ms", type: "INTEGER" },
-        { name: "result_ttl_ms", type: "INTEGER" },
-      ]}
-    />
-  </DiagramSlide>
-
-  <DiagramSlide title="job_errors">
-    <EntitySchema
-      name="job_errors"
-      fields={[
-        { name: "id", type: "TEXT", key: "PK" },
-        { name: "job_id", type: "TEXT", key: "FK" },
-        { name: "attempt", type: "INTEGER" },
-        { name: "error", type: "TEXT" },
-        { name: "failed_at", type: "INTEGER" },
-      ]}
-    />
-  </DiagramSlide>
-
-  <DiagramSlide title="rate_limits">
-    <EntitySchema
-      name="rate_limits"
-      fields={[
-        { name: "key", type: "TEXT", key: "PK" },
-        { name: "tokens", type: "REAL" },
-        { name: "max_tokens", type: "REAL" },
-        { name: "refill_rate", type: "REAL" },
-        { name: "last_refill", type: "INTEGER" },
-      ]}
-    />
-  </DiagramSlide>
-
-  <DiagramSlide title="periodic_tasks">
-    <EntitySchema
-      name="periodic_tasks"
-      fields={[
-        { name: "name", type: "TEXT", key: "PK" },
-        { name: "task_name", type: "TEXT" },
-        { name: "cron_expr", type: "TEXT" },
-        { name: "args", type: "BLOB" },
-        { name: "kwargs", type: "BLOB" },
-        { name: "queue", type: "TEXT" },
-        { name: "enabled", type: "BOOLEAN" },
-        { name: "last_run", type: "INTEGER" },
-        { name: "next_run", type: "INTEGER" },
-      ]}
-    />
-  </DiagramSlide>
-
-  <DiagramSlide title="workers">
-    <EntitySchema
-      name="workers"
-      fields={[
-        { name: "worker_id", type: "TEXT", key: "PK" },
-        { name: "last_heartbeat", type: "INTEGER" },
-        { name: "queues", type: "TEXT" },
-        { name: "status", type: "TEXT" },
-      ]}
-    />
-  </DiagramSlide>
-
-  <DiagramSlide title="relationships">
-    <EntityRelations
-      relations={[
-        {
-          from: "jobs",
-          to: "job_errors",
-          cardinality: "1 ─── *",
-          label: "error history",
-        },
-        {
-          from: "jobs",
-          to: "dead_letter",
-          cardinality: "1 ─── 0..1",
-          label: "DLQ on exhaustion",
-        },
-      ]}
-    />
-  </DiagramSlide>
-</DiagramCarousel>
+<Callout>
+  **Relationships:** `jobs` → `job_errors` (1 ─ \*, error history) and `jobs` →
+  `dead_letter` (1 ─ 0..1, DLQ on retry exhaustion).
+</Callout>
 
 ## Key indexes
 
@@ -158,7 +40,7 @@ per-connection).
 ## Postgres differences
 
 taskito also supports PostgreSQL as an alternative storage backend. See the
-[Postgres backend guide](/guides/operations) for full details.
+<SdkLink to="guides/operations">Postgres backend guide</SdkLink> for full details.
 
 - **Connection pooling**: `r2d2` pool with a default of 10 connections (vs. 8 for SQLite)
 - **Schema isolation**: all tables are created inside a configurable PostgreSQL schema

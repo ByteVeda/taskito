@@ -1,0 +1,45 @@
+---
+title: Enqueue options
+description: "Priority, delay, idempotency, metadata, and namespace at enqueue time."
+---
+
+The third argument to `enqueue` sets per-job options:
+
+```ts
+queue.enqueue("send_email", [user], {
+  priority: 5,
+  delayMs: 30_000,
+  uniqueKey: `welcome:${user.id}`,
+  metadata: { source: "signup" },
+  namespace: "emails",
+});
+```
+
+| Option | Description |
+|---|---|
+| `priority` | Higher dequeues first within a queue. |
+| `maxRetries` | Override the task's retry budget for this job. |
+| `timeoutMs` | Override the per-attempt timeout for this job. |
+| `delayMs` | Delay first execution by this many ms (scheduled run). |
+| `uniqueKey` | Idempotency key — a duplicate enqueue is a no-op while the first job is pending/running. |
+| `metadata` | Arbitrary JSON attached to the job (surfaces on the dashboard / inspection). |
+| `namespace` | The queue name to route to. |
+
+## Idempotency
+
+`uniqueKey` dedupes concurrent producers — only one job runs for a given key
+while an earlier one is still pending or running. See
+[idempotency](/node/guides/reliability/idempotency).
+
+## Delayed jobs
+
+`delayMs` schedules the first attempt in the future; the scheduler picks it up
+when due. For recurring schedules use [periodic tasks](/node/guides/core/scheduling).
+
+## Batch enqueue
+
+`enqueueMany` enqueues an array in one call:
+
+```ts
+queue.enqueueMany("resize", urls.map((url) => ({ args: [url] })));
+```

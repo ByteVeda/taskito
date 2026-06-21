@@ -1,0 +1,51 @@
+---
+title: OpenTelemetry
+description: "Distributed tracing for Node.js task execution — one span per attempt."
+---
+
+Peer dependency: `@opentelemetry/api`. Import from the `taskito/contrib/otel`
+subpath — it is not exported from the main barrel.
+
+```ts
+import { otelMiddleware } from "taskito/contrib/otel";
+
+queue.use(otelMiddleware());
+```
+
+One span is created per execution attempt, named `taskito.execute.<taskName>`.
+The span ends with status `OK` on success and `ERROR` (with the exception
+recorded) on throw. A retry is a new attempt, so it produces a new span.
+
+## Span attributes
+
+| Attribute | Value |
+|---|---|
+| `taskito.job_id` | The job's UUID |
+| `taskito.task_name` | Registered task name |
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `tracerName` | `string` | `"taskito"` | Name passed to `trace.getTracer()` |
+| `attributePrefix` | `string` | `"taskito"` | Prefix applied to span attribute keys |
+| `spanName` | `(ctx) => string` | — | Override the span name per execution |
+| `extraAttributes` | `(ctx) => Attributes` | — | Attach additional attributes to every span |
+| `taskFilter` | `(taskName) => boolean` | — | Return `false` to skip tracing for a task |
+
+```ts
+queue.use(
+  otelMiddleware({
+    tracerName: "my-service",
+    attributePrefix: "app",
+    spanName: (ctx) => `job.${ctx.taskName}`,
+    extraAttributes: (ctx) => ({ "app.env": process.env.NODE_ENV ?? "dev" }),
+    taskFilter: (name) => !name.startsWith("internal."),
+  }),
+);
+```
+
+<Callout type="info">
+  `otelMiddleware` does not configure an exporter or a tracer provider. Set
+  those up with the OpenTelemetry SDK before calling `queue.runWorker()`.
+</Callout>

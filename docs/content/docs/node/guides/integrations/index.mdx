@@ -1,0 +1,36 @@
+---
+title: Integrations
+description: "Optional observability and web-framework helpers for the Node.js SDK."
+---
+
+Integrations are optional helpers that ship alongside the core SDK but are **not
+exported from the main `taskito` barrel**. Each lives behind its own
+`taskito/contrib/*` subpath and requires you to install its peer dependency.
+
+```bash
+# Only install what you use.
+pnpm add @opentelemetry/api               # taskito/contrib/otel
+pnpm add prom-client                      # taskito/contrib/prometheus
+pnpm add @sentry/node                     # taskito/contrib/sentry
+pnpm add express                          # taskito/contrib/express
+pnpm add fastify                          # taskito/contrib/fastify
+pnpm add @nestjs/common reflect-metadata  # taskito/contrib/nest
+```
+
+<Callout type="info">
+  Integrations never auto-initialize. Nothing runs until you call the export and
+  register it with your queue or framework. If a peer dependency is missing,
+  importing its subpath fails with a standard module-not-found error.
+</Callout>
+
+## Observability
+
+- [OpenTelemetry](/node/guides/integrations/otel) — one span per execution attempt.
+- [Prometheus](/node/guides/integrations/prometheus) — execution metrics + polled depth gauges.
+- [Sentry](/node/guides/integrations/sentry) — capture the original exception on dead-letter.
+
+## Web frameworks
+
+- [Express](/node/guides/integrations/express) — REST router + dashboard mount.
+- [Fastify](/node/guides/integrations/fastify) — REST + dashboard plugins.
+- [NestJS](/node/guides/integrations/nest) — injectable `TaskitoService`.

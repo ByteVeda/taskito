@@ -1,0 +1,166 @@
+import { type CSSProperties, Fragment, type ReactNode } from "react";
+
+// Layered architecture stack — exact port of the prototype's `.archstack` HTML
+// (semantic layers + PyO3/store boundaries as direct children).
+
+type Kind = "py" | "rust" | "store" | "";
+
+interface Layer {
+  tag: string;
+  /** Pill colour: `.ltag t-*`. */
+  tagKind?: Kind;
+  /** `.layer` modifier; defaults to `tagKind`. The prototype sometimes pairs a
+   *  `rust` layer surface with a `py` pill (e.g. the resource-proxy layer). */
+  layerKind?: Kind;
+  style?: CSSProperties;
+  title: string;
+  body: ReactNode;
+  role?: string;
+}
+
+function ArchStack({
+  layers,
+  bounds,
+  legend,
+}: {
+  layers: Layer[];
+  bounds: ReactNode[]; // one fewer than layers
+  legend?: ReactNode;
+}) {
+  return (
+    <div className="archstack">
+      {legend ? <div className="arch-legend">{legend}</div> : null}
+      {layers.map((l, i) => (
+        <Fragment key={l.title}>
+          <div
+            className={`layer ${l.layerKind ?? l.tagKind ?? ""}`.trim()}
+            style={l.style}
+          >
+            <span className={`ltag t-${l.tagKind ?? "store"}`}>{l.tag}</span>
+            <div className="lbody">
+              <div className="lt">{l.title}</div>
+              <div className="ld">{l.body}</div>
+            </div>
+            {l.role ? <span className="lrole">{l.role}</span> : null}
+          </div>
+          {i < bounds.length ? <div className="bound">{bounds[i]}</div> : null}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+/** `architecture/overview.mdx` — the Python / Rust / Store stack. */
+export function ArchitectureStack() {
+  return (
+    <ArchStack
+      legend={
+        <>
+          <span className="al-item">
+            <span className="al-arrow down">↓</span> you call down — enqueue
+            jobs
+          </span>
+          <span className="al-item">
+            <span className="al-arrow up">↑</span> results &amp; state flow back
+            up
+          </span>
+        </>
+      }
+      layers={[
+        {
+          tag: "Python",
+          tagKind: "py",
+          title: "User-facing API",
+          body: (
+            <>
+              <code>Queue</code>, <code>@task</code>, <code>.delay()</code>,
+              results, workflows, resources — the surface you write against.
+            </>
+          ),
+          role: "what you write",
+        },
+        {
+          tag: "Rust",
+          tagKind: "rust",
+          title: "Engine",
+          body: "Scheduler, dispatcher, worker pool, rate limiter — Tokio runtime, OS-thread pool, near-zero Python overhead.",
+          role: "where the work runs",
+        },
+        {
+          tag: "Store",
+          tagKind: "store",
+          title: "Storage layer",
+          body: "SQLite (bundled) or Postgres — jobs, results, schedules, rate-limit state, all in one place.",
+          role: "where state lives",
+        },
+      ]}
+      bounds={[
+        <>
+          <span className="bdir">↓</span>
+          <span className="pyo3">PyO3 boundary</span>
+          <span className="bdir">↑</span>
+        </>,
+        <>
+          <span className="bdir">↓</span>reads &amp; writes
+          <span className="bdir">↑</span>
+        </>,
+      ]}
+    />
+  );
+}
+
+/** `architecture/resources.mdx` — the 3-layer resource pipeline. */
+export function ResourcePipeline() {
+  return (
+    <ArchStack
+      layers={[
+        {
+          tag: "Layer 1",
+          tagKind: "py",
+          title: "Argument interception",
+          body: (
+            <>
+              The <code>ArgumentInterceptor</code> walks every argument before
+              serialization. CONVERT types become JSON-safe markers, REDIRECT
+              types become DI placeholders, PROXY types are deconstructed,
+              REJECT types raise in strict mode.
+            </>
+          ),
+        },
+        {
+          tag: "Layer 2",
+          tagKind: "py",
+          title: "Worker resource runtime",
+          body: (
+            <>
+              <code>ResourceRuntime</code> initializes resources at worker
+              startup in topological order, then injects requested ones (via{" "}
+              <code>inject=</code> or <code>Inject["name"]</code>) as kwargs.
+              Task-scoped resources come from a semaphore pool.
+            </>
+          ),
+        },
+        {
+          tag: "Layer 3",
+          tagKind: "py",
+          layerKind: "rust",
+          style: {
+            borderColor: "var(--indigo-line)",
+            background:
+              "linear-gradient(100deg,var(--indigo-soft),var(--panel))",
+          },
+          title: "Resource proxies",
+          body: (
+            <>
+              <code>ProxyHandler</code>s deconstruct live objects (file handles,
+              HTTP sessions, cloud clients) into a JSON recipe and reconstruct
+              them on the worker. Recipes are optionally HMAC-signed for tamper
+              detection.
+            </>
+          ),
+        },
+      ]}
+      bounds={["enqueue → worker", "before task()"]}
+    />
+  );
+}

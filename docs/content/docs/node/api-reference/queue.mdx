@@ -1,0 +1,63 @@
+---
+title: Queue
+description: "Construct a queue and the full producer/admin API."
+---
+
+```ts
+import { Queue } from "taskito";
+
+const queue = new Queue(options);
+```
+
+## Constructor options
+
+| Option | Type | Description |
+|---|---|---|
+| `dbPath` | `string` | SQLite file path (default backend). |
+| `backend` | `"sqlite" \| "postgres" \| "redis"` | Storage backend. |
+| `dsn` | `string` | Connection string for postgres/redis. |
+| `schema` | `string` | Postgres schema (default `taskito`). |
+| `prefix` | `string` | Redis key prefix. |
+| `serializer` | `Serializer` | Arg/result serializer (default `JsonSerializer`). |
+
+## Tasks & enqueue
+
+| Method | Description |
+|---|---|
+| `task(name, fn, config?)` | Register a task. See [Task](/node/api-reference/task). |
+| `configureQueue(name, config)` | Set per-queue rate limit / concurrency. |
+| `enqueue(task, args?, options?)` | Enqueue a job → job id. |
+| `enqueueMany(task, jobs[])` | Enqueue a batch. |
+
+## Results & cancellation
+
+| Method | Description |
+|---|---|
+| `result(id, { timeoutMs? })` | Await a job's result. |
+| `requestCancel(id)` | Abort a running job's signal. |
+| `cancelJob(id)` | Cancel a pending job. |
+
+## Inspection & management
+
+| Method | Description |
+|---|---|
+| `stats()` / `statsByQueue(q)` / `statsAllQueues()` | Counts by status. |
+| `listJobs(filter)` | List jobs. |
+| `getJobErrors(id)` | Per-attempt error history. |
+| `getMetrics(windowMs, task?)` | Aggregated metrics. |
+| `deadLetters()` / `retryDead(id)` / `deleteDead(id)` / `purgeDead(ms)` | DLQ ops. |
+| `purgeCompleted(ms)` | Drop old completed jobs. |
+| `pauseQueue(q)` / `resumeQueue(q)` / `listPausedQueues()` | Queue control. |
+| `listWorkers()` | Registered workers. |
+
+## Subsystems
+
+| Member | Description |
+|---|---|
+| `runWorker(options?)` | Start a [worker](/node/api-reference/worker). |
+| `on(event, handler)` | [Events](/node/guides/extensibility/events). |
+| `use(middleware)` | [Middleware](/node/guides/extensibility/middleware). |
+| `webhooks` | [Webhooks](/node/guides/extensibility/webhooks) manager. |
+| `workflows` | [Workflow](/node/api-reference/workflows) builder + queries. |
+| `lock(name, opts)` / `withLock(name, fn)` | [Distributed locks](/node/guides/reliability/locks). |
+| `registerPeriodic(name, task, cron, opts?)` | [Periodic tasks](/node/guides/core/scheduling). |

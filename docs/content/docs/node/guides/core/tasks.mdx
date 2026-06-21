@@ -1,0 +1,51 @@
+---
+title: Tasks
+description: "Register task functions and attach per-task execution config."
+---
+
+A task is a named function registered on the queue. The name is the contract:
+producers enqueue by name, workers execute the registered function.
+
+```ts
+queue.task("add", (a: number, b: number) => a + b);
+```
+
+Tasks may be sync or `async`. The return value is serialized and stored as the
+job result.
+
+## Per-task config
+
+The optional third argument configures execution for every job of that task:
+
+```ts
+queue.task("add", (a: number, b: number) => a + b, {
+  maxRetries: 3,
+  retryBackoff: { baseMs: 1000, maxMs: 60_000 },
+  timeoutMs: 30_000,
+  maxConcurrent: 4,
+  rateLimit: { limit: 100, windowMs: 60_000 },
+  circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
+});
+```
+
+| Option | Description |
+|---|---|
+| `maxRetries` | Attempts before dead-lettering. See [retries](/node/guides/reliability/retries). |
+| `retryBackoff` | Exponential backoff bounds (`baseMs`, `maxMs`). |
+| `timeoutMs` | Per-attempt [timeout](/node/guides/reliability/timeouts). |
+| `maxConcurrent` | Max simultaneously-running jobs of this task ([concurrency](/node/guides/reliability/concurrency)). |
+| `rateLimit` | Token-bucket [rate limit](/node/guides/reliability/rate-limiting). |
+| `circuitBreaker` | Trip after repeated failures ([circuit breakers](/node/guides/reliability/circuit-breakers)). |
+
+<Callout type="info">
+  Register a task before enqueuing or running a worker for it. Per-task config
+  is applied to the scheduler at registration time — re-registering replaces it.
+</Callout>
+
+## Configure the queue or a queue name
+
+Beyond per-task config, you can set defaults for an entire named queue:
+
+```ts
+queue.configureQueue("emails", { rateLimit: { limit: 50, windowMs: 1000 } });
+```

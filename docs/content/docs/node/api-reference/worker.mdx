@@ -1,0 +1,38 @@
+---
+title: Worker
+description: "runWorker options and the worker handle."
+---
+
+```ts
+const worker = queue.runWorker(options?: WorkerOptions): Worker;
+```
+
+Starts a background worker over the Rust core and returns a handle.
+
+## `WorkerOptions`
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `queues` | `string[]` | `["default"]` | Queue names to serve. |
+| `advanceWorkflows` | `boolean` | `true` | Drive workflow bookkeeping. |
+| `mesh` | `MeshOptions` | — | Join a [mesh](/node/guides/operations/mesh). |
+
+## `MeshOptions`
+
+`port`, `seeds`, `steal`, `encryptionKey`, `bindAddr`, `advertiseAddr`,
+`affinityWeight`, `localBuffer`, `stealBatch`, `stealThreshold`, `virtualNodes`,
+`stealRateLimit`.
+
+## `Worker`
+
+| Method | Description |
+|---|---|
+| `stop()` | Drain and shut down the scheduler + heartbeat. |
+
+```ts
+const worker = queue.runWorker({ queues: ["default", "emails"] });
+process.on("SIGTERM", () => worker.stop());
+```
+
+The worker registers + heartbeats (5 s) so it appears on the dashboard Workers
+panel; `stop()` unregisters it.

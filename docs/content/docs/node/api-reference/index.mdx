@@ -1,0 +1,18 @@
+---
+title: API Reference
+description: "The Node.js SDK public surface — classes, methods, and the CLI."
+---
+
+The public API exported from the `taskito` barrel. Contrib helpers live under
+`taskito/contrib/*` (see [Integrations](/node/guides/integrations)).
+
+| Page | Covers |
+|---|---|
+| [Queue](/node/api-reference/queue) | Construct, enqueue, inspect, manage, locks, periodic, webhooks. |
+| [Task](/node/api-reference/task) | `queue.task` registration and per-task config. |
+| [Worker](/node/api-reference/worker) | `runWorker` options and the worker handle. |
+| [Result](/node/api-reference/result) | Awaiting results and the result waiter. |
+| [Context](/node/api-reference/context) | `currentJob()` — signal, progress, ids. |
+| [Serializers](/node/api-reference/serializers) | `JsonSerializer`, `MsgpackSerializer`, the `Serializer` interface. |
+| [Workflows](/node/api-reference/workflows) | The workflow builder + run handle. |
+| [CLI](/node/api-reference/cli) | The `taskito` command. |

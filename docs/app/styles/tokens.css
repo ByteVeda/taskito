@@ -1,0 +1,120 @@
+/* ============================================================
+   Taskito · Midnight theme
+   Dark-first, electric indigo, IBM Plex. Light mode via [data-theme].
+   ============================================================ */
+
+:root {
+  /* dark (default) */
+  --bg: #08080c;
+  --bg-soft: #0c0c13;
+  --panel: #0f0f17;
+  --panel2: #13131d;
+  --panel3: #181824;
+  --line: rgba(255, 255, 255, 0.08);
+  --line2: rgba(255, 255, 255, 0.13);
+  --line3: rgba(255, 255, 255, 0.2);
+  --txt: #ececf4;
+  --txt2: #c3c2d4;
+  --mut: #8c8ca3;
+  --dim: #5c5c70;
+  --faint: #3a3a48;
+
+  /* Taskito brand green (matches the product/dashboard). Var names kept for compatibility. */
+  --indigo: #1f9d54;
+  --indigo-br: #3bbf72;
+  --indigo-dk: #15803d;
+  --indigo-soft: rgba(31, 157, 84, 0.12);
+  --indigo-line: rgba(31, 157, 84, 0.26);
+  --cyan: #29b8a8;
+  --grn: #4ec985;
+  --amber: #ffb86b;
+  --red: #ff6b6b;
+
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --code:
+    "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --hand: "Shantell Sans", cursive;
+
+  --shadow-lg: 0 40px 90px -40px rgba(0, 0, 0, 0.7);
+  --shadow-md: 0 20px 50px -30px rgba(0, 0, 0, 0.6);
+  --radius: 14px;
+
+  --maxw: 1200px;
+}
+
+[data-theme="light"] {
+  /* warm paper light mode — matches the Taskito console */
+  --bg: #f6f4ee;
+  --bg-soft: #fbf9f3;
+  --panel: #ffffff;
+  --panel2: #f2efe7;
+  --panel3: #eae5da;
+  --line: rgba(45, 38, 18, 0.1);
+  --line2: rgba(45, 38, 18, 0.15);
+  --line3: rgba(45, 38, 18, 0.22);
+  --txt: #1b1a15;
+  --txt2: #35332c;
+  --mut: #615d52;
+  --dim: #8b877a;
+  --faint: #bdb9ab;
+
+  --indigo: #10a152;
+  --indigo-br: #13a44e;
+  --indigo-dk: #0a7c3d;
+  --indigo-soft: rgba(16, 161, 82, 0.1);
+  --indigo-line: rgba(16, 161, 82, 0.26);
+  --cyan: #0d9488;
+  --grn: #15a34a;
+  --amber: #c2410c;
+  --red: #dc2626;
+
+  --shadow-lg: 0 40px 90px -45px rgba(60, 50, 20, 0.2);
+  --shadow-md: 0 24px 50px -34px rgba(60, 50, 20, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--txt);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+body.no-anim * {
+  animation: none !important;
+  transition: none !important;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+::selection {
+  background: var(--indigo);
+  color: #fff;
+}
+
+/* color theme transition */
+body,
+.nav,
+.panel,
+.card,
+.btn,
+.term,
+.foot,
+input,
+.chip {
+  transition:
+    background-color 0.4s ease,
+    border-color 0.4s ease,
+    color 0.4s ease;
+}

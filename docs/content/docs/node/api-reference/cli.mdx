@@ -1,0 +1,34 @@
+---
+title: CLI
+description: "The standalone taskito command."
+---
+
+```bash
+taskito [--db <path> | --backend <b> --dsn <dsn>] <command> [args] [--json]
+```
+
+Connect with `--db` (SQLite) or `--backend`/`--dsn` (Postgres/Redis). `--json`
+on read commands prints machine-readable output.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `enqueue <task> '<jsonArgs>'` | Enqueue a job. |
+| `stats` | Overall queue stats. |
+| `jobs [--status <s>] [--limit <n>]` | List jobs. |
+| `queues` | Per-queue stats. |
+| `cancel <jobId>` | Request cancellation. |
+| `pause <queue>` / `resume <queue>` | Queue control. |
+| `dlq list` / `dlq retry <id>` / `dlq delete <id>` | Dead-letter ops. |
+| `run <module> [--queues a,b]` | Load a module exporting a `Queue` and run its worker. |
+| `dashboard [--port <n>]` | Serve the [dashboard](/node/guides/operations/dashboard). |
+
+```bash
+taskito --db taskito.db enqueue add '[2,3]'
+taskito --db taskito.db jobs --status failed --json
+taskito run ./app.js --queues default,emails
+```
+
+The CLI ships in the package `bin`; see the [CLI guide](/node/guides/operations/cli)
+for the worker and dashboard entrypoints.

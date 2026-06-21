@@ -1,0 +1,35 @@
+---
+title: Serializers
+description: "JsonSerializer, MsgpackSerializer, and the Serializer interface."
+---
+
+```ts
+import { Queue, JsonSerializer, MsgpackSerializer } from "taskito";
+import type { Serializer } from "taskito";
+```
+
+## Built-ins
+
+| Class | Description |
+|---|---|
+| `JsonSerializer` | Default. Human-readable JSON bytes. |
+| `MsgpackSerializer` | Compact binary (msgpack). |
+
+```ts
+new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
+```
+
+## `Serializer` interface
+
+```ts
+interface Serializer {
+  dumps(value: unknown): Uint8Array | Buffer;
+  loads(bytes: Uint8Array): unknown;
+}
+```
+
+The Rust core treats payloads as opaque bytes; serialization is entirely
+Node-side. Producers and workers must use a compatible serializer.
+
+See the [Serializers guide](/node/guides/extensibility/serializers) for a custom
+implementation.

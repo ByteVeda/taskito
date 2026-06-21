@@ -1,0 +1,38 @@
+---
+title: Serializers
+description: "Pluggable arg/result serialization — JSON or msgpack."
+---
+
+Arguments and results are serialized with a pluggable `Serializer`. The Rust
+core treats payloads as opaque bytes, so the serializer is purely a Node
+concern.
+
+- `JsonSerializer` — default; human-readable, debuggable.
+- `MsgpackSerializer` — compact binary, smaller payloads.
+
+```ts
+import { Queue, MsgpackSerializer } from "taskito";
+
+new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
+```
+
+## Custom serializer
+
+Implement the `Serializer` interface — `dumps` to bytes, `loads` back:
+
+```ts
+import type { Serializer } from "taskito";
+
+const mySerializer: Serializer = {
+  dumps: (value) => Buffer.from(JSON.stringify(value)),
+  loads: (bytes) => JSON.parse(Buffer.from(bytes).toString()),
+};
+
+new Queue({ dbPath: "taskito.db", serializer: mySerializer });
+```
+
+<Callout type="warning">
+  Producers and workers must agree on the serializer — they exchange bytes
+  through storage. A job enqueued with msgpack can only be decoded by a worker
+  using a compatible serializer.
+</Callout>

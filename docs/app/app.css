@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+/* Design system, split by concern. tokens first — every module uses var(--*). */
+@import "./styles/tokens.css";
+@import "./styles/atoms.css";
+@import "./styles/cmdk.css";
+@import "./styles/docs.css";
+@import "./styles/changelog.css";
+@import "./styles/diagrams.css";
+@import "./styles/landing.css";
+@import "./styles/shiki.css";
+@import "./styles/sdk.css";

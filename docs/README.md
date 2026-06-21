@@ -1,47 +1,49 @@
-# docs
+# Taskito docs
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+The Taskito documentation site — a polyglot (Python + Node.js) docs site built with
+[React Router v7](https://reactrouter.com) in framework mode, statically prerendered
+to HTML for GitHub Pages.
 
-It is a Next.js app with [Static Export](https://nextjs.org/docs/app/guides/static-exports) configured.
+## Stack
 
-Run development server:
+- **React Router v7** (framework mode, `ssr: false` + `prerender`) — static export to
+  `build/client/`.
+- **MDX** via `@mdx-js/rollup` — the content under `content/docs/**/*.mdx` is the source,
+  compiled at build and rendered through the component map in `app/components/mdx/`.
+- **Shiki** for build-time code highlighting; **Mermaid** (client-side) for diagrams.
+- **Tailwind v4** + a ported design system in `app/app.css` (dark + warm-light themes).
+- **MiniSearch** for the client-side ⌘K search index.
+
+## Develop
 
 ```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
+pnpm install
+pnpm dev          # local dev server
+pnpm typecheck    # react-router typegen + tsc
+pnpm lint         # biome
+pnpm build        # static prerender → build/client/
+pnpm start        # serve the built output
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+Set `DOCS_BASE_PATH=/taskito` to build under the GitHub Pages base path (CI does this).
 
-## Explore
+## Layout
 
-In the project, you can see:
+```
+content/docs/**/*.mdx     the documentation source (+ meta.json nav)
+app/
+  root.tsx                document shell, fonts, no-flash theme
+  routes.ts               route config (landing, llms.txt, docs catch-all)
+  routes/                 home, docs-layout, docs.$ (MDX page), llms[.txt]
+  components/
+    landing/              polyglot landing sections
+    docs/                 sidebar, SDK switch, TOC, prev/next, search modal
+    mdx/                  Callout/Tabs/Card shims + MDX component map
+    ui/                   nav, theme toggle, RawHtml
+    animated/             diagram components (reused in MDX)
+  lib/                    content glob, nav tree, search index, theme, highlighters
+```
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
-
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
-
-### Fumadocs MDX
-
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
-
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
-
-## Learn More
-
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+Adding a page: drop an `.mdx` file under `content/docs/`, add it to the directory's
+`meta.json`. It is picked up, prerendered, indexed for search, and slotted into the
+sidebar automatically.

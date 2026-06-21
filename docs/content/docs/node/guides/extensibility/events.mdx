@@ -1,0 +1,31 @@
+---
+title: Events
+description: "Subscribe to job lifecycle events emitted from the worker."
+---
+
+Subscribe to job lifecycle events with `queue.on`. Events fire from the worker
+process after the core decides a job's outcome.
+
+```ts
+queue.on("job.completed", (e) => console.log("done", e.jobId));
+queue.on("job.dead", (e) => alertOps(e));
+```
+
+## Events
+
+| Event | When |
+|---|---|
+| `job.completed` | A job finished successfully. |
+| `job.retrying` | A failed job is being retried. |
+| `job.dead` | A job exhausted its retries and dead-lettered. |
+| `job.cancelled` | A job was cancelled. |
+
+Each event payload carries the `jobId`, `taskName`, `queue`, and outcome
+details (error, retry count, `timedOut`).
+
+<Callout type="info">
+  Events are fire-and-forget notifications. To *wrap* execution (timing,
+  context, error transformation) use [middleware](/node/guides/extensibility/middleware);
+  to deliver events to external HTTP endpoints use
+  [webhooks](/node/guides/extensibility/webhooks).
+</Callout>

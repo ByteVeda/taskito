@@ -1,0 +1,34 @@
+---
+title: Dead-letter queue
+description: "Inspect, retry, and purge jobs that exhausted their retries."
+---
+
+When a job exhausts its retries it moves to the **dead-letter queue** (DLQ) and
+the `job.dead` [event](/node/guides/extensibility/events) fires. The DLQ keeps
+the payload and error history so you can investigate and replay.
+
+```ts
+const dead = queue.deadLetters();   // dead-letter entries
+queue.retryDead(deadId);            // re-enqueue (preserves notes/metadata)
+queue.deleteDead(deadId);           // drop one entry
+queue.purgeDead(olderThanMs);       // bulk-drop entries older than a cutoff
+```
+
+Inspect why a job failed:
+
+```ts
+queue.getJobErrors(jobId); // per-attempt error history
+```
+
+From the CLI:
+
+```bash
+taskito --db taskito.db dlq list
+taskito --db taskito.db dlq retry <deadId>
+```
+
+<Callout type="info">
+  A retried dead job re-enters as `pending` with a fresh retry budget. Notes and
+  metadata survive the DLQ round-trip, so context attached at enqueue is
+  preserved through replay.
+</Callout>

@@ -1,0 +1,42 @@
+---
+title: Sentry
+description: "Capture the original exception when a Node.js job dead-letters."
+---
+
+Peer dependency: `@sentry/node`. Call `Sentry.init(...)` in your app before
+registering the middleware. Import from the `taskito/contrib/sentry` subpath.
+
+```ts
+import * as Sentry from "@sentry/node";
+import { sentryMiddleware } from "taskito/contrib/sentry";
+
+Sentry.init({ dsn: process.env.SENTRY_DSN });
+
+queue.use(sentryMiddleware());
+```
+
+The real exception (with its stack trace) is captured in `onError` and held per
+job, then reported to Sentry when the job **dead-letters** — so each dead job
+produces a single event carrying the original stack plus task/job/queue tags.
+Successful jobs and jobs that recover on retry are never reported.
+
+## Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `tagPrefix` | `string` | `"taskito"` | Prefix for Sentry tag keys |
+| `captureRetries` | `boolean` | `false` | Also report each retried failure as a `"warning"` event |
+| `level` | `SeverityLevel` | `"error"` | Severity for the terminal dead-letter event |
+| `extraTags` | `(event) => Record<string, string>` | — | Extra tags merged onto the event |
+| `taskFilter` | `(taskName) => boolean` | — | Return `false` to skip a task |
+
+Tags set on every event: `taskito.task_name`, `taskito.job_id`,
+`taskito.queue`, `taskito.retry_count`, and `taskito.timed_out` (when the job
+timed out).
+
+<Callout type="info">
+  `sentryMiddleware` never calls `Sentry.init` — configure the DSN, environment,
+  and sampling with the Sentry SDK yourself. If a task dead-letters from a
+  timeout without throwing, a synthetic error is captured so the failure is
+  still recorded.
+</Callout>
