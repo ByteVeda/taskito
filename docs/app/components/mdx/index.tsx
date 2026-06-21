@@ -5,6 +5,7 @@ import * as Diagrams from "@/components/diagrams";
 import { Callout } from "./callout";
 import { Card, Cards } from "./card";
 import { CodeBlock } from "./code-block";
+import { CodeTabs, SdkLink, SdkOnly } from "./sdk";
 import { MdxTable } from "./table";
 import { Tab, Tabs } from "./tabs";
 
@@ -39,6 +40,9 @@ export const mdxComponents: MDXComponents = {
   Callout,
   Tabs,
   Tab,
+  CodeTabs,
+  SdkOnly,
+  SdkLink,
   Card,
   Cards,
   ...Diagrams,

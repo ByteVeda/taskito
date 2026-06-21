@@ -6,8 +6,15 @@ import {
   useState,
 } from "react";
 
-/** Design-matched replacement for `fumadocs-ui/components/tabs` (aliased in vite). */
-export function Tab({ children }: { value: string; children?: ReactNode }) {
+/** Tab panel for both `<Tabs items>` (keyed by `value`) and `<CodeTabs>` (keyed
+ *  by `sdk`); a pass-through whose parent reads the relevant prop. */
+export function Tab({
+  children,
+}: {
+  value?: string;
+  sdk?: string;
+  children?: ReactNode;
+}) {
   return <>{children}</>;
 }
 
