@@ -349,7 +349,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, rust-test, rust-test-postgres, rust-test-redis, rust-test-mesh, node-test, test]
+    needs: [changes, lint, rust-test, rust-test-postgres, rust-test-redis, rust-test-mesh, node-test, test]
     runs-on: ubuntu-latest
     steps:
       - name: Check that no required job failed
