@@ -1,1 +1,1 @@
-{ "title": "API Reference", "root": true, "pages": ["index", "queue", "task", "worker", "result", "context", "serializers", "workflows", "cli"] }
+{ "title": "API Reference", "root": true, "pages": ["index", "queue", "task", "worker", "result", "context", "serializers", "workflows", "errors", "cli"] }

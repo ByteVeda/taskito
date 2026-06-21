@@ -1,0 +1,44 @@
+---
+title: Errors
+description: "The Taskito error hierarchy — catch by specific type or by the TaskitoError base."
+---
+
+Every error the SDK throws extends `TaskitoError`, so a single `catch` can scope
+all of them; the specific subclasses let you branch on what went wrong.
+
+```ts
+import { TaskitoError, ResourceNotFoundError } from "taskito";
+
+try {
+  await runJob();
+} catch (err) {
+  if (err instanceof ResourceNotFoundError) reRegister(err.resourceName);
+  else if (err instanceof TaskitoError) report(err);
+  else throw err;
+}
+```
+
+## Hierarchy
+
+| Class | Extends | Thrown when |
+|---|---|---|
+| `TaskitoError` | `Error` | Base — never thrown directly. |
+| `TaskNotRegisteredError` | `TaskitoError` | A worker dequeues a job whose task name isn't registered. |
+| `JobFailedError` | `TaskitoError` | `result()` awaits a job that failed or dead-lettered. |
+| `JobCancelledError` | `TaskitoError` | `result()` awaits a cancelled job. |
+| `ResultTimeoutError` | `TaskitoError` | `result()` times out before the job settles. |
+| `QueueError` | `TaskitoError` | Queue construction / operational error (e.g. no `dbPath`/`dsn`). |
+| `LockNotAcquiredError` | `TaskitoError` | `withLock` can't acquire a held lock. |
+| `SerializationError` | `TaskitoError` | (De)serialization or payload-integrity failure (e.g. a bad `SignedSerializer` signature). |
+| `NotesValidationError` | `TaskitoError` | A `notes` object breaks the contract (>15 fields or >4 KiB). |
+| `WorkflowError` | `TaskitoError` | Workflow definition, submission, or query error. |
+| `ResourceError` | `TaskitoError` | Base for resource dependency-injection errors. |
+| `ResourceNotFoundError` | `ResourceError` | Resolving a resource name that was never registered. |
+| `ResourceScopeError` | `ResourceError` | Resolving a task-scoped resource at worker scope. |
+
+Selected errors carry context: `TaskNotRegisteredError.taskName`,
+`JobFailedError.jobId`, `ResultTimeoutError.timeoutMs`,
+`LockNotAcquiredError.lockName`, `ResourceNotFoundError.resourceName`.
+
+See [error handling](/node/guides/reliability/error-handling) for retry / timeout
+/ dead-letter behavior around a failing task.
