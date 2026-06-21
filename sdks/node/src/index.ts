@@ -27,6 +27,7 @@ export {
   useResource,
 } from "./resources";
 export {
+  EncryptedSerializer,
   JsonSerializer,
   MsgpackSerializer,
   type Serializer,
