@@ -15,7 +15,19 @@ export function encodeNotes(notes: Record<string, unknown>): string {
   if (fields > MAX_FIELDS) {
     throw new NotesValidationError(`notes: at most ${MAX_FIELDS} top-level fields (got ${fields})`);
   }
-  const encoded = JSON.stringify(notes);
+  // JSON.stringify throws on circular refs / BigInt and returns undefined for
+  // unsupported roots — normalize both into the typed validation error.
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(notes);
+  } catch (error) {
+    throw new NotesValidationError(
+      `notes: not serializable (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  if (encoded === undefined) {
+    throw new NotesValidationError("notes: not serializable");
+  }
   const bytes = Buffer.byteLength(encoded, "utf8");
   if (bytes > MAX_BYTES) {
     throw new NotesValidationError(`notes: encoded size ${bytes} exceeds ${MAX_BYTES} bytes`);
