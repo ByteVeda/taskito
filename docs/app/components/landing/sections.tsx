@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
+import { useActiveSdk } from "@/hooks";
 import { highlightPython } from "@/lib/highlight-lite";
 import {
   CODE_CELERY,
@@ -233,6 +234,7 @@ export function Features() {
 }
 
 export function UseCases() {
+  const sdk = useActiveSdk();
   return (
     <section
       className="section"
@@ -248,19 +250,34 @@ export function UseCases() {
           lead="Pick the workload — taskito ships the primitives."
         />
         <div className="uc-grid">
-          {USE_CASES.map((c) => (
-            <div key={c.title} className="uc reveal">
-              <div className="ic">
-                <Icon d={c.icon} rect={c.rect} />
+          {USE_CASES.map((c) => {
+            const inner = (
+              <>
+                <div className="ic">
+                  <Icon d={c.icon} rect={c.rect} />
+                </div>
+                <div>
+                  <h3>
+                    {c.title} <span className="arr">→</span>
+                  </h3>
+                  <RawHtml as="p" html={c.body} />
+                </div>
+              </>
+            );
+            return c.href ? (
+              <Link
+                key={c.title}
+                to={`/${sdk}/${c.href}`}
+                className="uc reveal"
+              >
+                {inner}
+              </Link>
+            ) : (
+              <div key={c.title} className="uc reveal">
+                {inner}
               </div>
-              <div>
-                <h3>
-                  {c.title} <span className="arr">→</span>
-                </h3>
-                <RawHtml as="p" html={c.body} />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>

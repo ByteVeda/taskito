@@ -1,7 +1,21 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
+import { type Sdk, useActiveSdk } from "@/hooks";
 import { DemoModal, type DemoTarget } from "./demo-modal";
+
+// Scenario guides are authored as Python paths; most map to Node by swapping the
+// SDK segment, but a few pages live under a different slug in the Node tree.
+const NODE_GUIDE_OVERRIDES: Record<string, string> = {
+  "/python/guides/advanced-execution/streaming": "/node/guides/core/streaming",
+  "/python/guides/workflows/sagas": "/node/guides/workflows/saga",
+};
+
+/** Resolve a scenario's Python guide path to the active SDK's docs. */
+function guideHref(pyPath: string, sdk: Sdk): string {
+  if (sdk !== "node") return pyPath;
+  return NODE_GUIDE_OVERRIDES[pyPath] ?? pyPath.replace("/python/", "/node/");
+}
 
 interface Bullet {
   /** Short mono label in the left rail. */
@@ -407,6 +421,7 @@ function motionDisabled(): boolean {
  * in {@link DemoModal}, the secondary links the guide that goes deeper.
  */
 export function ScenarioFinder() {
+  const sdk = useActiveSdk();
   const [selected, setSelected] = useState(0);
   // Drives the card's enter animation; re-triggered on every selection change.
   const [entered, setEntered] = useState(true);
@@ -570,7 +585,7 @@ export function ScenarioFinder() {
                   {active.demo.label}
                   {CTA_ARROW}
                 </button>
-                <Link className="btn sec" to={active.guide.to}>
+                <Link className="btn sec" to={guideHref(active.guide.to, sdk)}>
                   {active.guide.label}
                 </Link>
               </div>

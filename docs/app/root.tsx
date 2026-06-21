@@ -6,6 +6,7 @@ import {
   Scripts,
   ScrollRestoration,
 } from "react-router";
+import { usePrefetchDocs } from "@/hooks";
 import type { Route } from "./+types/root";
 import "./app.css";
 
@@ -57,6 +58,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  usePrefetchDocs();
   return <Outlet />;
 }
 
