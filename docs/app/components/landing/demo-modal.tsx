@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { demoComponent } from "@/components/demos";
 import { useThemeMode } from "@/lib/theme";
 
-/** A live demo the finder can open: the embed id + a human title for the bar. */
+/** A live demo the finder can open: the demo id + a human title for the bar. */
 export interface DemoTarget {
-  /** Demo id understood by `demos/interactive.html?embed=` (e.g. "ratelimit"). */
+  /** Demo id — a React port (see demos/registry) or an iframe fallback id. */
   id: string;
   /** Title shown in the modal bar. */
   title: string;
@@ -135,6 +136,8 @@ export function DemoModal({
 
   if (!current) return null;
 
+  // Prefer the React port; ids not yet ported render the vendored iframe.
+  const Demo = demoComponent(current.id);
   // `import.meta.env.BASE_URL` ends with "/" and respects DOCS_BASE_PATH.
   const src = `${import.meta.env.BASE_URL}demos/interactive.html?embed=${current.id}&theme=${theme}&accent=brand#${current.id}`;
 
@@ -175,16 +178,31 @@ export function DemoModal({
           </div>
         </div>
         <div className="dm-stage">
-          <div className={`dm-loading${loading ? "" : " hide"}`}>
-            <span className="dm-spin" />
-            Loading demo…
-          </div>
-          <iframe
-            className="dm-frame"
-            title={`${current.title} — interactive demo`}
-            src={src}
-            onLoad={() => setLoading(false)}
-          />
+          {Demo ? (
+            <Suspense
+              fallback={
+                <div className="dm-loading">
+                  <span className="dm-spin" />
+                  Loading demo…
+                </div>
+              }
+            >
+              <Demo theme={theme} />
+            </Suspense>
+          ) : (
+            <>
+              <div className={`dm-loading${loading ? "" : " hide"}`}>
+                <span className="dm-spin" />
+                Loading demo…
+              </div>
+              <iframe
+                className="dm-frame"
+                title={`${current.title} — interactive demo`}
+                src={src}
+                onLoad={() => setLoading(false)}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

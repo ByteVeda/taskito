@@ -1,0 +1,20 @@
+import type { ComponentType, LazyExoticComponent } from "react";
+import type { DemoId, DemoProps } from "./types";
+
+type LazyDemo = LazyExoticComponent<ComponentType<DemoProps>>;
+
+/**
+ * React ports of the interactive demos, keyed by demo id and lazy-loaded so the
+ * homepage bundle stays small. Ids absent here fall back to the vendored
+ * `interactive.html` iframe in {@link DemoModal} until ported — see
+ * `tasks/react-demos-plan.md`. Once every id is present, the iframe path and
+ * `public/demos/` are removed.
+ */
+export const DEMO_COMPONENTS: Partial<Record<DemoId, LazyDemo>> = {
+  // Populated one entry per demo as each is ported to React.
+};
+
+/** The React port for `id`, or `undefined` if it still uses the iframe. */
+export function demoComponent(id: string): LazyDemo | undefined {
+  return DEMO_COMPONENTS[id as DemoId];
+}
