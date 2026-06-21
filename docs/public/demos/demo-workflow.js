@@ -120,6 +120,8 @@
   // ---- state ----
   var state={}, started={}, finishAt={}, selected=null, runMask=null, t0=0, raf=null, running=false;
   function reset(full){
+    // Clear any pending frame so `raf` never lingers as a stale "running" signal.
+    if(raf){ cancelAnimationFrame(raf); raf=null; }
     NODES.forEach(function(n){ state[n.id]='idle'; started[n.id]=0; finishAt[n.id]=0; });
     runMask=null; running=false; t0=0;
     Object.keys(edgeEls).forEach(function(k){ edgeEls[k].lit.style.strokeDashoffset=edgeEls[k].len; edgeEls[k].base.setAttribute('marker-end','url(#wf-ar)'); });
@@ -182,7 +184,7 @@
     var pending=NODES.some(function(n){ return eligible(n.id); });
     var anyRunning=NODES.some(function(n){ return state[n.id]==='running'; });
     if(anyRunning||pending){ raf=requestAnimationFrame(tick); }
-    else { running=false; setRunBtn(false); repaintAll(); renderSide(); }
+    else { raf=null; running=false; setRunBtn(false); repaintAll(); renderSide(); }
   }
   function litOut(n){
     n.kids.forEach(function(k){
