@@ -1,0 +1,57 @@
+---
+title: Security
+description: "Trust model, payload exposure, webhook signing, and dashboard access."
+---
+
+## Trust model: storage is code execution
+
+A worker runs whatever task name a job names, with whatever payload it carries.
+So **anyone who can write to the storage can run code on your workers.** Treat
+the database / Redis credentials as code-execution credentials:
+
+- Don't expose the storage to untrusted clients — enqueue through your own
+  authenticated service, not directly from a browser.
+- Use least-privilege storage credentials and a private network.
+
+## Payloads are not encrypted
+
+Task arguments and results are serialized with [JSON or
+msgpack](/node/guides/extensibility/serializers) and stored as plain bytes —
+**not signed or encrypted.** Anyone who can read the storage can read them.
+
+- Don't put secrets (tokens, PII) directly in task args. Pass an id and fetch the
+  secret inside the handler — for example via a
+  [resource](/node/guides/resources/dependency-injection).
+
+## Webhooks
+
+Webhook deliveries are **HMAC-SHA256 signed** when the subscription has a secret;
+the signature rides in `x-taskito-signature: sha256=…`. Verify it on the
+receiver before trusting the body.
+
+```ts
+const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
+// timing-safe compare against the x-taskito-signature header
+```
+
+The deliverer fetches the configured URL directly — there is **no SSRF allowlist**.
+Only register webhook URLs you control, and validate them before storing if they
+come from users.
+
+## Dashboard
+
+The [dashboard](/node/guides/operations/dashboard) runs in **open mode** — no
+login, RBAC, or SSO. Anyone who reaches the port has full control. Bind it to
+localhost, or mount it behind your own auth via the
+[Express](/node/guides/integrations/express#dashboard) /
+[Fastify](/node/guides/integrations/fastify) helpers.
+
+## Hardening checklist
+
+- [ ] Storage reachable only from trusted services, on a private network.
+- [ ] Enqueue behind your own authn/authz — never expose storage to clients.
+- [ ] No secrets in task args; fetch them inside the handler.
+- [ ] Webhook receivers verify the HMAC signature; webhook URLs are trusted.
+- [ ] Dashboard bound to localhost or behind auth.
+- [ ] Logs don't echo sensitive payloads (use `onEnqueue` to
+      [redact](/node/guides/resources/interception)).
