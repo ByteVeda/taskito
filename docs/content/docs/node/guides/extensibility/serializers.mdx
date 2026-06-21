@@ -11,6 +11,8 @@ concern.
 - `MsgpackSerializer` — compact binary, smaller payloads.
 - `SignedSerializer(secret, inner?)` — wraps another codec with an HMAC-SHA256
   tag and rejects tampered payloads on read (authentication, not encryption).
+- `EncryptedSerializer(secret, inner?)` — wraps another codec with AES-256-GCM
+  for confidentiality **and** integrity.
 
 ```ts
 import { Queue, MsgpackSerializer } from "taskito";

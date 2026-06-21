@@ -24,8 +24,11 @@ default **not encrypted.** Anyone who can read the storage can read them.
   [resource](/node/guides/resources/dependency-injection).
 - To detect tampering, wrap your codec in
   [`SignedSerializer`](/node/api-reference/serializers) — it HMAC-signs each
-  payload so a worker rejects anything altered or forged. This authenticates
-  integrity and origin; it does **not** add confidentiality.
+  payload so a worker rejects anything altered or forged (integrity, not
+  confidentiality).
+- To hide payloads at rest, use
+  [`EncryptedSerializer`](/node/api-reference/serializers) — AES-256-GCM gives
+  both confidentiality and integrity. Share the secret across producers/workers.
 
 ## Webhooks
 
