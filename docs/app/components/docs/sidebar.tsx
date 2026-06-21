@@ -59,12 +59,19 @@ function NavTree({ nodes, current }: { nodes: NavNode[]; current: string }) {
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ onSearch }: { onSearch?: () => void }) {
   const { pathname } = useLocation();
   const current = pathname.replace(/\/$/, "") || "/";
   const sdk = sdkForPath(current);
   return (
     <aside className="sidebar">
+      <button type="button" className="side-search" onClick={onSearch}>
+        Search docs
+        <span className="sk">
+          <kbd>⌘</kbd>
+          <kbd>K</kbd>
+        </span>
+      </button>
       <SdkSwitch sdk={sdk} />
       <nav id="sidenav">
         {navForSdk(sdk).map((group) => (

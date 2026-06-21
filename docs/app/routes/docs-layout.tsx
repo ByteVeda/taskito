@@ -22,7 +22,7 @@ export default function DocsLayout() {
     <>
       <SiteNav onSearch={() => setSearchOpen(true)} />
       <div className="docs-shell">
-        <Sidebar />
+        <Sidebar onSearch={() => setSearchOpen(true)} />
         <Outlet />
         <Toc />
       </div>
