@@ -1,1 +1,1 @@
-{ "title": "Operations", "pages": ["backends", "inspection", "dashboard", "mesh", "cli", "deployment"] }
+{ "title": "Operations", "pages": ["backends", "inspection", "dashboard", "dashboard-api", "mesh", "cli", "testing", "deployment"] }

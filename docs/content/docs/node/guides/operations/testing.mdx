@@ -1,0 +1,75 @@
+---
+title: Testing
+description: "Test tasks and workers against a real queue with vitest."
+---
+
+Tasks are plain functions — unit-test them directly. For integration coverage,
+run a real worker against a throwaway SQLite database; the whole enqueue →
+execute → result path runs in-process, no mocks of the core needed.
+
+```ts
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { Queue, type Worker } from "taskito";
+
+let worker: Worker | undefined;
+afterEach(() => {
+  worker?.stop(); // always stop — a leaked worker keeps polling across tests
+  worker = undefined;
+});
+
+function newQueue(): Queue {
+  // a fresh temp DB per test keeps them independent
+  return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "test-")), "q.db") });
+}
+
+it("runs a task end to end", async () => {
+  const queue = newQueue();
+  queue.task("add", (a: number, b: number) => a + b);
+
+  const id = queue.enqueue("add", [2, 3]);
+  worker = queue.runWorker();
+
+  expect(await queue.result(id)).toBe(5);
+});
+```
+
+## Polling for side effects
+
+When you assert on a side effect rather than a return value, poll until it
+settles instead of sleeping a fixed time:
+
+```ts
+async function waitFor(predicate: () => boolean, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+```
+
+## Faking dependencies
+
+Register a [resource](/node/guides/resources/dependency-injection) with a stub in
+the test — the worker injects whatever is registered, so no real connection is
+opened:
+
+```ts
+import { useResource } from "taskito";
+
+queue.resource("db", () => fakeDb);
+queue.task("sync", async () => {
+  const db = await useResource("db");
+  // ...
+});
+```
+
+<Callout type="info">
+  Awaiting `queue.result(id)` is the simplest synchronization point — it resolves
+  when the job reaches a terminal state and rejects on failure, so a test rarely
+  needs an explicit sleep.
+</Callout>
