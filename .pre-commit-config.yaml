@@ -70,3 +70,17 @@ repos:
         language: system
         files: ^dashboard/src/
         pass_filenames: false
+
+      - id: docs-lint
+        name: docs lint (biome)
+        entry: bash -c 'cd docs && pnpm exec biome ci app/'
+        language: system
+        files: ^docs/(app/|biome\.json)
+        pass_filenames: false
+
+      - id: docs-typecheck
+        name: docs typecheck (react-router typegen + tsc)
+        entry: bash -c 'cd docs && pnpm run typecheck'
+        language: system
+        files: ^docs/(app/|tsconfig\.json|package\.json)
+        pass_filenames: false
