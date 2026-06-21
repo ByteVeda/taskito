@@ -168,6 +168,9 @@ export class WorkflowAnalysis {
     let completed = 0;
     let failed = 0;
     let running = 0;
+    // `skipped` is terminal (a pruned branch never runs), so it must not fall
+    // into `pending` via the remainder below.
+    let skipped = 0;
     for (const name of this.nodeNames) {
       const status = this.nodeByName.get(name)?.status ?? "pending";
       byStatus[status] = (byStatus[status] ?? 0) + 1;
@@ -177,6 +180,8 @@ export class WorkflowAnalysis {
         failed += 1;
       } else if (status === "running") {
         running += 1;
+      } else if (status === "skipped") {
+        skipped += 1;
       }
     }
     const total = this.nodeNames.length;
@@ -186,7 +191,7 @@ export class WorkflowAnalysis {
       completed,
       failed,
       running,
-      pending: total - completed - failed - running,
+      pending: total - completed - failed - running - skipped,
     };
   }
 
