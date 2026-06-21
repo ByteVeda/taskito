@@ -595,7 +595,17 @@ export class WorkflowTracker {
    * (no downstream special-casing). A miss runs the real task.
    */
   private cacheOrEnqueue(runId: string, node: string, plan: RunPlan, meta: StepMeta): void {
-    const ttlMs = meta.cache ? (JSON.parse(meta.cache).ttlMs as number | undefined) : undefined;
+    let ttlMs: number | undefined;
+    if (meta.cache) {
+      try {
+        ttlMs = (JSON.parse(meta.cache) as { ttlMs?: number }).ttlMs;
+      } catch {
+        // Corrupt cache metadata must not stall the run: skip the cache and
+        // run the real task so deferred successors still get enqueued.
+        this.createDeferredJob(runId, node, plan);
+        return;
+      }
+    }
     const cached = this.cache.get(this.cacheKey(runId, node, plan), ttlMs);
     if (!cached) {
       this.createDeferredJob(runId, node, plan); // miss → run the real task

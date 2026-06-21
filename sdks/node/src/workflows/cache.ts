@@ -36,11 +36,24 @@ export class WorkflowCacheStore {
 
   /** Cached result bytes for `key`, or `undefined` on miss / expiry. */
   get(key: string, ttlMs?: number): Buffer | undefined {
-    const raw = this.kv.getSetting(KEY_PREFIX + key);
+    const storageKey = KEY_PREFIX + key;
+    const raw = this.kv.getSetting(storageKey);
     if (!raw) {
       return undefined;
     }
-    const entry = JSON.parse(raw) as CacheEntry;
+    // A corrupt entry must never stall workflow advancement: drop it and treat
+    // the read as a miss so the step simply re-runs.
+    let entry: CacheEntry;
+    try {
+      entry = JSON.parse(raw) as CacheEntry;
+    } catch {
+      this.kv.deleteSetting(storageKey);
+      return undefined;
+    }
+    if (typeof entry?.r !== "string" || typeof entry?.t !== "number") {
+      this.kv.deleteSetting(storageKey);
+      return undefined;
+    }
     if (ttlMs !== undefined && this.now() - entry.t > ttlMs) {
       return undefined;
     }
