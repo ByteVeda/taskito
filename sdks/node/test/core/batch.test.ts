@@ -25,14 +25,22 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<bool
   return false;
 }
 
-it("enqueueMany inserts a batch and returns ids in order", () => {
+it("enqueueMany inserts a batch and returns ids in input order", () => {
   const queue = newQueue();
   queue.task("double", (n: number) => n * 2);
 
-  const ids = queue.enqueueMany("double", [{ args: [1] }, { args: [2] }, { args: [3] }]);
+  // Tag each row with a distinct queue so we can prove ids[i] maps to input[i].
+  const ids = queue.enqueueMany("double", [
+    { args: [1], options: { queue: "q0" } },
+    { args: [2], options: { queue: "q1" } },
+    { args: [3], options: { queue: "q2" } },
+  ]);
   expect(ids).toHaveLength(3);
   expect(new Set(ids).size).toBe(3); // distinct ids
   expect(queue.stats().pending).toBe(3);
+
+  // Returned ids must line up with the input rows, not just be present.
+  expect(ids.map((id) => queue.getJob(id)?.queue)).toEqual(["q0", "q1", "q2"]);
 });
 
 it("runs every job in the batch", async () => {
