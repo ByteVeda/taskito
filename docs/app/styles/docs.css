@@ -217,6 +217,11 @@ body {
   min-width: 0;
   max-width: 840px;
 }
+/* Reserve vertical space while a lazily-loaded page chunk re-resolves on
+   hydration, so the prev/next footer below it doesn't shift (CLS). */
+.doc-loading {
+  min-height: 70vh;
+}
 .crumb {
   display: flex;
   align-items: center;
