@@ -1,0 +1,43 @@
+---
+title: CLI
+description: "Operate the queue from the terminal with the standalone taskito command."
+---
+
+A standalone `taskito` command (no Python) operates the queue from the terminal.
+Connect with `--db <path>`, or `--backend`/`--dsn` for Postgres/Redis.
+
+```bash
+taskito --db taskito.db enqueue add '[2,3]'
+taskito --db taskito.db stats
+taskito --db taskito.db jobs --status failed
+taskito --db taskito.db dlq list
+taskito --db taskito.db dlq retry <deadId>
+taskito --db taskito.db queues
+taskito --db taskito.db pause default
+taskito --db taskito.db cancel <jobId>
+```
+
+Add `--json` to any read command for machine-readable output.
+
+## Running a worker
+
+`run` loads a module that exports a configured `Queue` and runs its worker:
+
+```bash
+taskito run ./app.js --queues default,emails
+```
+
+The module registers its tasks on the exported queue; `run` starts a worker
+over them. Use it as your container entrypoint for worker processes.
+
+## Serving the dashboard
+
+```bash
+taskito --db taskito.db dashboard --port 8787
+```
+
+<Callout type="info">
+  The CLI ships in the package `bin`. Commands operate over `--db`/`--backend`/
+  `--dsn`, except `run` and `dashboard`, which load your app module and serve
+  the [dashboard](/node/guides/operations/dashboard) respectively.
+</Callout>

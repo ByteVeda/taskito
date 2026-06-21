@@ -1,0 +1,38 @@
+---
+title: Dashboard
+description: "Serve the React dashboard over a Node queue — no Python."
+---
+
+The Node SDK serves the **same React dashboard** the Python SDK serves, over the
+queue — no Python required. Build the SPA assets once, then serve.
+
+```bash
+pnpm build:dashboard          # builds the SPA into static/dashboard (one-time)
+taskito --db taskito.db dashboard --port 8787
+```
+
+Or programmatically:
+
+```ts
+import { Queue, serveDashboard } from "taskito";
+
+const queue = new Queue({ dbPath: "taskito.db" });
+const server = serveDashboard(queue, { port: 8787 });
+// ... server.close() to stop
+```
+
+It serves the SPA plus the `/api/*` REST contract over the queue:
+
+- stats, per-queue stats, paused queues
+- jobs + job detail, dead-letters (retry / delete)
+- metrics and time-series, workers
+- webhooks, workflow runs
+
+Auth runs **open** (localhost). To mount the dashboard inside an existing app
+instead, use the [Express](/node/guides/integrations/express#dashboard) or
+[Fastify](/node/guides/integrations/fastify) helpers.
+
+<Callout type="warning">
+  `serveDashboard` needs the built SPA in `static/dashboard`
+  (`pnpm build:dashboard`). Pass `staticDir` to point at assets elsewhere.
+</Callout>
