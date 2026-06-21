@@ -3585,3 +3585,38 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   MDX code blocks (shiki dual-theme). defaultColor:false emits
+   --shiki-light/--shiki-dark vars; we pick by [data-theme] and
+   wrap in the design's code panel (not shiki's github background).
+   ============================================================ */
+.article pre.shiki {
+  background: var(--bg-soft);
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 20px 0;
+  font-family: var(--code);
+  font-size: 13.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.article pre.shiki code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+  color: inherit;
+}
+/* light (default) → dark under [data-theme="dark"] */
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+}
+html[data-theme="dark"] .shiki,
+html[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark);
+}

@@ -45,7 +45,12 @@ export default defineConfig({
           rehypeSlug,
           [
             rehypeShiki,
-            { themes: { light: "github-light", dark: "github-dark" } },
+            {
+              themes: { light: "github-light", dark: "github-dark" },
+              // Emit only --shiki-light/--shiki-dark CSS vars (no inline color/bg),
+              // so app.css can switch them on our [data-theme] selector.
+              defaultColor: false,
+            },
           ],
           [rehypeAutolinkHeadings, { behavior: "wrap" }],
         ],
