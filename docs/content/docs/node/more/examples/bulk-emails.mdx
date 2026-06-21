@@ -87,7 +87,7 @@ for (const dead of queue.deadLetters(50)) {
   </Tab>
   <Tab value="Terminal 2 — Send">
     ```bash
-    node -e "import('./send.ts').then(s => s.sendCampaign(list, 'Launch', '<html>'))"
+    node -e "const list=['a@example.com','b@example.com']; import('./send.ts').then(s => s.sendCampaign(list, 'Launch', '<html>'))"
     ```
   </Tab>
 </Tabs>
