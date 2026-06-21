@@ -177,7 +177,15 @@ export class WorkflowBuilder {
   ): this {
     this.group(steps, options);
     const { name, task, ...callbackOptions } = callback;
-    this.step(name, task, { ...callbackOptions, after: steps.map((step) => step.name) });
+    // Depend on every group member; fall back to the caller's `after` so an
+    // empty group still chains after its declared prerequisites.
+    const extra = options.after
+      ? Array.isArray(options.after)
+        ? options.after
+        : [options.after]
+      : [];
+    const after = [...steps.map((step) => step.name), ...extra];
+    this.step(name, task, { ...callbackOptions, after });
     return this;
   }
 
@@ -195,7 +203,7 @@ export class WorkflowBuilder {
       if (meta.fan_in) {
         const { from } = JSON.parse(meta.fan_in) as { from: string };
         if (!this.stepMetadata[from]?.fan_out) {
-          throw new Error(
+          throw new WorkflowError(
             `fan-in step '${name}' must target a fan-out step, but '${from}' is not one`,
           );
         }
