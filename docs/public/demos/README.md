@@ -5,7 +5,7 @@ These files power the **live demos** the homepage scenario finder opens in a mod
 HTML/CSS/JS micro-app, served verbatim as static assets and loaded into an
 `<iframe>` in **embed mode**:
 
-```
+```text
 /demos/interactive.html?embed=<demoId>&theme=<light|dark>&accent=brand#<demoId>
 ```
 
