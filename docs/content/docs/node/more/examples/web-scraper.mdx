@@ -44,9 +44,15 @@ queue.task("extractLinks", (html: string) => {
   return [...html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1]);
 });
 
-queue.task("aggregate", (pages: string[][]) => {
-  const all = pages.flat();
-  return { total: all.length, unique: new Set(all).size };
+// Source step: supplies the URL list the fan-out expands over.
+queue.task("listUrls", (urls: string[]) => urls);
+
+// Fan-in combiner: receives one entry per fetched page (each child's result).
+queue.task("aggregate", (pages: string[]) => {
+  const links = pages.flatMap((html) =>
+    [...html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1]),
+  );
+  return { pages: pages.length, links: links.length, unique: new Set(links).size };
 });
 
 queue.task("cleanupCache", async (olderThanMs: number) => {
@@ -69,8 +75,9 @@ queue.use({
 
 ## run.ts
 
-A `chord` runs every fetch in parallel, then runs `aggregate` once they all
-finish. The fetches land on the `network` queue; the join runs on the default.
+A [fan-out / fan-in](/node/guides/workflows/fan-out) expands the URL list into
+one `fetchPage` child per URL, then `aggregate` receives every fetched page as
+`[html, …]`. The fetches land on the `network` queue; the join runs on the default.
 
 ```ts
 import { queue } from "./tasks";
@@ -79,10 +86,9 @@ const urls = ["https://a.example", "https://b.example", "https://c.example"];
 
 const run = queue.workflows
   .define("scrape", 1)
-  .chord(
-    urls.map((url, i) => ({ name: `fetch_${i}`, task: "fetchPage", args: [url], queue: "network" })),
-    { name: "aggregate", task: "aggregate" },
-  )
+  .step("list", "listUrls", { args: [urls] })
+  .fanOut("fetch", { after: "list", task: "fetchPage", itemsFrom: "list", queue: "network" })
+  .fanIn("aggregate", { after: "fetch", task: "aggregate" })
   .submit({ queueDefault: "default" });
 
 const final = await run.wait({ timeoutMs: 120_000 });
@@ -90,10 +96,10 @@ console.log(run.runId, final.state);
 ```
 
 <Callout type="info">
-  `chord` joins on *completion*, passing the callback its own `args`. To pass the
-  fetched pages into `aggregate` instead, model it as a
-  [fan-out / fan-in](/node/guides/workflows/fan-out) — the fan-in task receives
-  `[childResult, …]`.
+  Fan-in passes the children's results to its task as `[childResult, …]`, so
+  `aggregate` sees every fetched page. A `chord` would instead join on
+  *completion* and call the callback with its own `args` — use it when the join
+  doesn't need the children's results.
 </Callout>
 
 ## worker.ts
