@@ -16,6 +16,7 @@ export const DEMO_COMPONENTS: Partial<Record<DemoId, LazyDemo>> = {
   recovery: lazy(() => import("./recovery-demo")),
   saga: lazy(() => import("./saga-demo")),
   workflow: lazy(() => import("./workflow-demo")),
+  worksteal: lazy(() => import("./worksteal-demo")),
 };
 
 /** The React port for `id`, or `undefined` if it still uses the iframe. */
