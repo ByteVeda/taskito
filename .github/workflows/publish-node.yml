@@ -115,6 +115,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The postgres feature pulls openssl-sys (vendored), whose Configure runs
+      # perl. Under bash the MSYS perl shadows the runner's Strawberry Perl and
+      # lacks modules OpenSSL needs, so pin openssl-src to Strawberry Perl.
+      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
       # macOS / Windows build natively on the runner.
       - name: Set up Rust
         if: matrix.docker == ''
@@ -152,6 +160,8 @@ jobs:
               else
                 apt-get update && apt-get install -y perl
               fi
+              # The image ships an old Rust (1.82); some deps need edition2024.
+              rustup update stable && rustup default stable
               npm install -g pnpm@10.33.0 --force
               pnpm install --frozen-lockfile
               pnpm run build:native
