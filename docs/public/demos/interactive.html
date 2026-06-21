@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive — taskito docs</title>
+<meta name="description" content="Three runnable simulations — rate limiting, failure recovery, and worker scaling — built on SVG and Canvas 2D. No WebGL required.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&family=Shantell+Sans:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="interactive.css">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+</head>
+<body data-page="interactive">
+<div class="bgfx"><div class="grid"></div></div>
+
+<!-- NAV -->
+<nav class="nav">
+  <a class="brand" href="index.html">
+    <span class="logo-mark"><svg viewBox="0 0 96 96" fill="none" aria-hidden="true"><rect x="2" y="2" width="92" height="92" rx="24" fill="#16a34a"/><g stroke="#fff" stroke-width="6.5" stroke-linecap="round"><path d="M24 34 H58"/><path d="M24 48 H50"/><path d="M24 62 H58"/></g><path d="M60 49 l7 8 l14 -17" stroke="#fff" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>taskito
+  </a>
+  <div class="navlinks">
+    <a href="docs.html">Getting Started</a>
+    <a href="docs.html">Guides</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="changelog.html">Changelog</a>
+  </div>
+  <div class="navright">
+    <div class="kbar">Search <kbd>⌘</kbd><kbd>K</kbd></div>
+    <button class="icon-btn theme-toggle" id="theme" aria-label="Toggle theme">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <a class="icon-btn" href="https://github.com/ByteVeda/taskito" aria-label="GitHub">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    </a>
+    <a class="btn pri" href="docs.html" style="padding:9px 16px;font-size:13.5px">Quickstart</a>
+  </div>
+</nav>
+
+<main>
+  <!-- INTRO -->
+  <section class="ihero">
+    <h1>See the queue <span class="grad">actually run.</span></h1>
+    <p class="sub">Four runnable simulations of what taskito does under load — rate limiting, failure recovery, worker scaling, and workflow execution. Drive them yourself: trigger a <code>429</code>, scrub a job through retries, push a worker pool until it backs up, or fire a DAG and watch it propagate.</p>
+    <div class="capnote">
+      <span class="lead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 12 2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Renders on</span>
+      <span class="tier on" id="cap-svg"><span class="pip"></span><b>SVG</b><span class="st">+ Canvas 2D</span></span>
+      <span class="tier off" id="cap-webgl"><span class="pip"></span><b>WebGL</b><span class="st" id="cap-webgl-st">optional</span></span>
+    </div>
+  </section>
+
+  <!-- DEMO 1 · RATE LIMITING -->
+  <section class="demo-sec" id="ratelimit">
+    <div class="demo-wrap">
+      <div class="demo-head reveal">
+        <div class="num">Rate limiting</div>
+        <h2>What happens when your provider says <span style="color:var(--red)">429</span>?</h2>
+        <p>Requests flow <b>your code → queue → workers → external API</b>. Flip the API to <b>Too Many Requests</b> and watch taskito hold the line: failed calls turn red, retry counters climb, an exponential <code>backoff</code> timer kicks in, and workers keep draining everything else. Nothing is dropped.</p>
+      </div>
+      <div class="demo-card reveal" id="rl-root"></div>
+    </div>
+  </section>
+
+  <!-- DEMO 2 · FAILURE RECOVERY -->
+  <section class="demo-sec" id="recovery" style="background:var(--bg-soft);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+    <div class="demo-wrap">
+      <div class="demo-head reveal">
+        <div class="num">Failure recovery</div>
+        <h2>Scrub one job through its whole lifecycle.</h2>
+        <p>Drag the playhead across a single job's timeline — <b>queued → running → failed → retrying → running</b> — and watch the live state, attempt counter, and event log update at every step. Then switch the ending: does it <b>recover</b> on the last retry, or exhaust them and land in the <b>dead-letter queue</b>?</p>
+      </div>
+      <div class="demo-card reveal" id="fr-root"></div>
+    </div>
+  </section>
+
+  <!-- DEMO 3 · WORKER SCALING -->
+  <section class="demo-sec" id="scaling">
+    <div class="demo-wrap">
+      <div class="demo-head reveal">
+        <div class="num">Worker scaling</div>
+        <h2>Tune the pool. Watch throughput, depth, and latency react.</h2>
+        <p>A live discrete-event simulation. Move the sliders for <b>workers</b>, <b>concurrency</b>, <b>arrival rate</b>, and a per-second <b>rate limit</b> — the throughput, queue-depth, and latency charts respond in real time. Find the point where capacity meets demand, and the moment the queue runs away from you.</p>
+      </div>
+      <div class="demo-card reveal" id="wp-root"></div>
+    </div>
+  </section>
+
+  <!-- DEMO 4 · WORKFLOW DAG -->
+  <section class="demo-sec" id="workflow" style="background:var(--bg-soft);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+    <div class="demo-wrap">
+      <div class="demo-head reveal">
+        <div class="num">Workflow execution</div>
+        <h2>Fire a DAG and watch execution propagate.</h2>
+        <p>A real dependency graph — <b>chains</b> run in sequence, <b>groups</b> fan out in parallel, a <b>chord</b> joins them back. Hit <b>Run</b> and each task lights up the moment its inputs are ready, or click any node to trace its downstream path and run just that branch.</p>
+      </div>
+      <div class="demo-card reveal" id="wf-root"></div>
+    </div>
+  </section>
+
+  <!-- DEMO 5 · MESH SCHEDULING -->
+  <section class="demo-sec" id="mesh">
+    <div class="demo-wrap">
+      <div class="demo-head reveal">
+        <div class="num">Mesh scheduling</div>
+        <h2>Route every job to the node built to run it.</h2>
+        <p>Because the queue lives in a shared store, any number of worker nodes pull from it — no broker. Each job's <b>routing key</b> sends it to the right pool (<code>gpu</code>, <code>default</code>, <code>email</code>). <b>Click any machine to drop it</b> and watch its work reroute across the rest of the mesh.</p>
+      </div>
+      <div class="demo-card reveal" id="mesh-root"></div>
+    </div>
+  </section>
+
+  <!-- DEMO 6 · SAGA / COMPENSATION -->
+  <section class="demo-sec" id="saga" style="background:var(--bg-soft);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+    <div class="demo-wrap">
+      <div class="demo-head reveal">
+        <div class="num">Saga · compensation</div>
+        <h2>When a step fails, unwind the ones that already ran.</h2>
+        <p>A booking modeled as a saga — each step carries a compensating action. Pick where it <b>fails</b> and run it: forward steps commit one by one, then taskito fires the compensations in <b>reverse order</b> so nothing is left half-done. Either it all commits, or it all rolls back.</p>
+      </div>
+      <div class="demo-card reveal" id="saga-root"></div>
+    </div>
+  </section>
+
+  <!-- DEMO 7 · WORK-STEALING MESH -->
+  <section class="demo-sec" id="worksteal">
+    <div class="demo-wrap">
+      <div class="demo-head reveal">
+        <div class="num">Work-stealing</div>
+        <h2>Idle regions steal work from the busy ones.</h2>
+        <p>Run taskito in several regions and they gossip queue depth to each other. When one region's backlog spikes, an <b>idle peer pulls a batch over HTTP</b> and runs it — so no region drowns while another sits idle, and there's still no central broker. Hit <b>Burst</b> to overload a region and watch the mesh rebalance.</p>
+      </div>
+      <div class="demo-card reveal" id="worksteal-root"></div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="demo-sec">
+    <div class="icta reveal">
+      <h2>These aren't mockups — it's how taskito behaves.</h2>
+      <p>The same retry backoff, dead-letter routing, and rate limiting you just played with are one decorator argument away in your own code.</p>
+      <div class="btns">
+        <a class="btn pri" href="docs.html">Read the quickstart <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <a class="btn sec" href="architecture.html">Architecture deep-dive</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- FOOTER -->
+<footer class="foot">
+  <div class="foot-grid">
+    <div class="foot-brand">
+      <a class="brand"><span class="logo-mark"><svg viewBox="0 0 96 96" fill="none" aria-hidden="true"><rect x="2" y="2" width="92" height="92" rx="24" fill="#16a34a"/><g stroke="#fff" stroke-width="6.5" stroke-linecap="round"><path d="M24 34 H58"/><path d="M24 48 H50"/><path d="M24 62 H58"/></g><path d="M60 49 l7 8 l14 -17" stroke="#fff" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="brand-word">taski<span class="bto">to</span></span></a>
+      <p>Rust-powered, brokerless task queue for Python and Node. Replace Celery without Redis or RabbitMQ.</p>
+    </div>
+    <div class="foot-col"><h4>Docs</h4><a href="docs.html">Getting Started</a><a href="docs.html">Guides</a><a href="architecture.html">Architecture</a><a href="interactive.html">Interactive</a></div>
+    <div class="foot-col"><h4>More</h4><a href="docs.html">Examples</a><a href="docs.html">Celery comparison</a><a href="docs.html">FAQ</a><a href="changelog.html">Changelog</a></div>
+    <div class="foot-col"><h4>Project</h4><a href="https://github.com/ByteVeda/taskito">GitHub</a><a href="https://github.com/ByteVeda/taskito">Releases</a><a href="https://github.com/ByteVeda/taskito">Issues</a><a href="https://pypi.org/project/taskito/">PyPI</a></div>
+  </div>
+  <div class="foot-bottom"><span>© 2026 ByteVeda · taskito</span><span>MIT License · v0.16</span></div>
+</footer>
+
+<script>
+/* capability probe — purely informational. Nothing here relies on WebGL. */
+(function(){
+  var st=document.getElementById('cap-webgl'), lbl=document.getElementById('cap-webgl-st');
+  var ok=false;
+  try{ var c=document.createElement('canvas'); ok=!!(window.WebGLRenderingContext && (c.getContext('webgl')||c.getContext('experimental-webgl'))); }catch(e){ ok=false; }
+  if(st){ st.className='tier '+(ok?'on':'off'); }
+  if(lbl){ lbl.textContent = ok ? 'available · unused' : 'unsupported · fine'; }
+})();
+</script>
+<!-- chrome-only scripts (landing.js nav/theme-toggle, search.js ⌘K palette)
+     removed: the homepage loads this page only in embed mode, which hides all
+     chrome. The demos below are self-contained. -->
+<script>
+/* embed mode: when loaded inside the homepage modal as
+   interactive.html?embed=<demo>&theme=<t>&accent=<hex>, strip the page
+   chrome down to a single demo and inherit the parent's theme + accent.
+   Runs before the demo scripts so only the requested demo mounts. */
+(function(){
+  var sp=new URLSearchParams(location.search);
+  var embed=sp.get('embed');
+  if(!embed) return;
+  var rootEl=document.documentElement;
+  var theme=sp.get('theme'); if(theme==='light'||theme==='dark') rootEl.setAttribute('data-theme',theme);
+  var accent=sp.get('accent');
+  if(accent && accent!=='brand'){
+    var dark=rootEl.getAttribute('data-theme')!=='light';
+    rootEl.style.setProperty('--indigo',accent);
+    rootEl.style.setProperty('--indigo-br','color-mix(in oklch,'+accent+' '+(dark?'82%':'72%')+', white)');
+    rootEl.style.setProperty('--indigo-dk','color-mix(in oklch,'+accent+' 78%, black)');
+    rootEl.style.setProperty('--indigo-soft', dark?'color-mix(in oklch,'+accent+' 15%, transparent)':'color-mix(in oklch,'+accent+' 11%, white)');
+    rootEl.style.setProperty('--indigo-line','color-mix(in oklch,'+accent+' '+(dark?'28%':'26%')+', transparent)');
+  }
+  document.body.setAttribute('data-embed',embed);
+  // keep only the requested demo: remove the other demo roots so their scripts bail
+  var MAP={ratelimit:'rl-root',recovery:'fr-root',scaling:'wp-root',workflow:'wf-root',mesh:'mesh-root',saga:'saga-root',worksteal:'worksteal-root'};
+  Object.keys(MAP).forEach(function(k){ if(k!==embed){ var r=document.getElementById(MAP[k]); if(r) r.remove(); } });
+  var sec=document.getElementById(embed);
+  if(sec){
+    sec.classList.add('embed-show');
+    // landing.js (the scroll-reveal observer) is stripped in embed mode, so
+    // reveal this demo's `.reveal` children directly — they default to opacity:0.
+    [].forEach.call(sec.querySelectorAll('.reveal'), function(el){ el.classList.add('in'); });
+  }
+})();
+</script>
+<script src="demo-ratelimit.js"></script>
+<script src="demo-recovery.js"></script>
+<script src="demo-playground.js"></script>
+<script src="demo-workflow.js"></script>
+<script src="demo-mesh.js"></script>
+<script src="demo-saga.js"></script>
+<script src="demo-worksteal.js"></script>
+
+<!-- ===== Tweaks ===== -->
+<style>
+.twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:252px;
+  display:flex;flex-direction:column;
+  background:color-mix(in oklch,var(--panel) 82%,transparent);color:var(--txt);
+  -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%);
+  border:1px solid var(--line2);border-radius:14px;
+  box-shadow:var(--shadow-lg),0 0 0 1px var(--line);
+  font-family:var(--sans);overflow:hidden}
+.twk-panel[hidden]{display:none}
+.twk-hd{display:flex;align-items:center;justify-content:space-between;padding:11px 9px 11px 15px;user-select:none}
+.twk-hd b{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.twk-x{appearance:none;border:0;background:transparent;color:var(--mut);width:24px;height:24px;
+  border-radius:7px;cursor:pointer;font-size:13px;line-height:1}
+.twk-x:hover{background:var(--panel3);color:var(--txt)}
+.twk-body{padding:2px 15px 16px;display:flex;flex-direction:column;gap:11px}
+.twk-sect{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--dim);padding-top:4px}
+.twk-chips{display:flex;gap:7px}
+.twk-chip{position:relative;appearance:none;flex:1;min-width:0;height:38px;padding:0;border:0;
+  border-radius:9px;cursor:pointer;background:var(--c);
+  box-shadow:0 0 0 1px var(--line2),0 1px 2px rgba(0,0,0,.12);transition:transform .12s,box-shadow .12s}
+.twk-chip:hover{transform:translateY(-1px)}
+.twk-chip[data-on="1"]{box-shadow:0 0 0 2px var(--txt),0 2px 7px rgba(0,0,0,.2)}
+.twk-chip svg{position:absolute;top:50%;left:50%;width:16px;height:16px;transform:translate(-50%,-50%);filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+.twk-seg2{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.twk-seg2.three{grid-template-columns:1fr 1fr 1fr}
+.twk-seg2 button{appearance:none;border:1px solid var(--line2);background:var(--panel);color:var(--txt2);
+  border-radius:9px;padding:9px 8px;cursor:pointer;font-family:var(--sans);font-size:12.5px;font-weight:600;
+  transition:border-color .12s,background .12s,color .12s}
+.twk-seg2 button:hover{border-color:var(--line3)}
+.twk-seg2 button[data-on="1"]{border-color:var(--indigo);background:var(--indigo-soft);color:var(--indigo-br)}
+.twk-hint{font-size:11px;color:var(--dim);line-height:1.45}
+</style>
+<div id="twkPanel" class="twk-panel" data-omelette-chrome hidden>
+  <div class="twk-hd"><b>Tweaks</b><button class="twk-x" id="twkClose" aria-label="Close tweaks">✕</button></div>
+  <div class="twk-body">
+    <div class="twk-sect">Accent</div>
+    <div class="twk-chips" id="twkAccent"></div>
+    <div class="twk-hint">Recolors buttons, links, charts, and flow accents across every demo.</div>
+    <div class="twk-sect">Motion</div>
+    <div class="twk-seg2" id="twkMotion"></div>
+    <div class="twk-hint">“Off” freezes auto-animation — demos still respond to your input and stats stay live.</div>
+    <div class="twk-sect">Density</div>
+    <div class="twk-seg2" id="twkDensity"></div>
+  </div>
+</div>
+<script>
+var TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "brand",
+  "motion": "on",
+  "density": "spacious"
+}/*EDITMODE-END*/;
+(function(){
+  var root=document.documentElement;
+  var panel=document.getElementById('twkPanel');
+  var PRESETS=[
+    {id:'brand', color:'#1f9d54'},
+    {id:'#0fb5ae', color:'#0fb5ae'},
+    {id:'#3b82f6', color:'#3b82f6'},
+    {id:'#8b5cf6', color:'#8b5cf6'},
+    {id:'#f59e0b', color:'#f59e0b'}
+  ];
+  var ACCENT_VARS=['--indigo','--indigo-br','--indigo-dk','--indigo-soft','--indigo-line'];
+  var CHECK='<svg viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.4 5.8 10 11 4.3"/></svg>';
+  var state={
+    accent:(new URLSearchParams(location.search).get('accent'))||(TWEAK_DEFAULTS&&TWEAK_DEFAULTS.accent)||'brand',
+    motion:(TWEAK_DEFAULTS&&TWEAK_DEFAULTS.motion)||'on',
+    density:(TWEAK_DEFAULTS&&TWEAK_DEFAULTS.density)||'comfortable'
+  };
+  function clearAccent(){ ACCENT_VARS.forEach(function(p){ root.style.removeProperty(p); }); }
+  function applyAccent(hex){
+    var dark=root.getAttribute('data-theme')!=='light';
+    root.style.setProperty('--indigo',hex);
+    root.style.setProperty('--indigo-br','color-mix(in oklch,'+hex+' '+(dark?'82%':'72%')+', white)');
+    root.style.setProperty('--indigo-dk','color-mix(in oklch,'+hex+' 78%, black)');
+    root.style.setProperty('--indigo-soft', dark?'color-mix(in oklch,'+hex+' 15%, transparent)':'color-mix(in oklch,'+hex+' 11%, white)');
+    root.style.setProperty('--indigo-line','color-mix(in oklch,'+hex+' '+(dark?'28%':'26%')+', transparent)');
+  }
+  var chipsEl=document.getElementById('twkAccent');
+  function paintAccent(){
+    if(state.accent==='brand') clearAccent(); else applyAccent(state.accent);
+    [].forEach.call(chipsEl.children,function(b){ b.setAttribute('data-on', b.dataset.id===state.accent?'1':'0'); b.innerHTML=b.dataset.id===state.accent?CHECK:''; });
+    if(window.__taskitoDemos&&window.__taskitoDemos.recolor) window.__taskitoDemos.recolor();
+  }
+  PRESETS.forEach(function(p){
+    var b=document.createElement('button');
+    b.type='button'; b.className='twk-chip'; b.dataset.id=p.id;
+    b.style.setProperty('--c',p.color); b.setAttribute('aria-label',p.id==='brand'?'Brand green':p.id);
+    b.addEventListener('click',function(){ state.accent=p.id; paintAccent(); persist('accent',p.id); });
+    chipsEl.appendChild(b);
+  });
+  // motion
+  var motionEl=document.getElementById('twkMotion');
+  [['on','Animated'],['off','Static']].forEach(function(o){
+    var b=document.createElement('button'); b.type='button'; b.dataset.id=o[0]; b.textContent=o[1];
+    b.addEventListener('click',function(){ state.motion=o[0]; applyMotion(); persist('motion',o[0]); });
+    motionEl.appendChild(b);
+  });
+  function applyMotion(){
+    root.setAttribute('data-motion', state.motion);
+    window.__motionOff = (state.motion==='off');
+    [].forEach.call(motionEl.children,function(b){ b.setAttribute('data-on', b.dataset.id===state.motion?'1':'0'); });
+    if(window.__taskitoDemos&&window.__taskitoDemos.motion) window.__taskitoDemos.motion(state.motion==='off');
+  }
+  // density
+  var densEl=document.getElementById('twkDensity');
+  densEl.classList.add('three');
+  [['compact','Compact'],['comfortable','Cozy'],['spacious','Roomy']].forEach(function(o){
+    var b=document.createElement('button'); b.type='button'; b.dataset.id=o[0]; b.textContent=o[1];
+    b.addEventListener('click',function(){ state.density=o[0]; applyDensity(); persist('density',o[0]); });
+    densEl.appendChild(b);
+  });
+  function applyDensity(){
+    root.setAttribute('data-density', state.density);
+    [].forEach.call(densEl.children,function(b){ b.setAttribute('data-on', b.dataset.id===state.density?'1':'0'); });
+  }
+  function persist(key,val){ try{ window.parent.postMessage({type:'__edit_mode_set_keys',edits:(function(){var o={};o[key]=val;return o;})()},'*'); }catch(e){} }
+
+  new MutationObserver(function(){ if(state.accent!=='brand') applyAccent(state.accent); })
+    .observe(root,{attributes:true,attributeFilter:['data-theme']});
+
+  function show(){ panel.hidden=false; } function hide(){ panel.hidden=true; }
+  document.getElementById('twkClose').addEventListener('click',function(){ hide(); try{ window.parent.postMessage({type:'__edit_mode_dismissed'},'*'); }catch(e){} });
+  window.addEventListener('message',function(e){ var t=e&&e.data&&e.data.type; if(t==='__activate_edit_mode') show(); else if(t==='__deactivate_edit_mode') hide(); });
+  try{ window.parent.postMessage({type:'__edit_mode_available'},'*'); }catch(e){}
+
+  paintAccent(); applyMotion(); applyDensity();
+})();
+</script>
+</body>
+</html>
