@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useRafLoop, useReducedMotion } from "./lib";
+import type { DemoProps } from "./types";
 
 /*
  * Multi-region work-stealing demo — taskito runs in several regions that gossip
@@ -265,6 +266,9 @@ interface Sim {
   tokens: StealToken[];
   linkSolid: number[];
   stealAcc: number;
+  /** Virtual sim time (ms) — advances only while running, so pause freezes it. */
+  clock: number;
+  /** Last wall-clock RAF timestamp, for computing real dt. */
   last: number;
   ids: number;
 }
@@ -279,6 +283,7 @@ function freshSim(): Sim {
     tokens: [],
     linkSolid: LINKS.map(() => 0),
     stealAcc: 0,
+    clock: 0,
     last: 0,
     ids: 0,
   };
@@ -296,7 +301,7 @@ function poisson(m: number): number {
   return k - 1;
 }
 
-export default function WorkStealDemo() {
+export default function WorkStealDemo(_props: DemoProps) {
   const reduced = useReducedMotion();
   const simRef = useRef<Sim>(freshSim());
   const [paused, setPaused] = useState(false);
@@ -378,14 +383,17 @@ export default function WorkStealDemo() {
   }, []);
 
   const loop = useCallback(
-    (now: number) => {
+    (wall: number) => {
       const sim = simRef.current;
-      if (!sim.last) sim.last = now;
-      const dt = Math.min((now - sim.last) / 1000, 0.05);
-      sim.last = now;
-      stepSim(sim, now, dt);
-      trySteal(sim, now, dt);
-      moveTokens(sim, now);
+      if (!sim.last) sim.last = wall;
+      const dt = Math.min((wall - sim.last) / 1000, 0.05);
+      sim.last = wall;
+      // Advance a virtual clock by real dt only while running, so a pause truly
+      // freezes time — deadlines never expire en masse on resume.
+      sim.clock += dt * 1000;
+      stepSim(sim, sim.clock, dt);
+      trySteal(sim, sim.clock, dt);
+      moveTokens(sim, sim.clock);
       repaint();
     },
     [stepSim, trySteal, moveTokens],
@@ -394,8 +402,7 @@ export default function WorkStealDemo() {
   useEffect(() => {
     const sim = freshSim();
     if (reduced) {
-      const now = performance.now();
-      for (const r of REG) sim.reg[r.id].busy = [now + 1, 0];
+      for (const r of REG) sim.reg[r.id].busy = [1, 0];
     }
     simRef.current = sim;
     repaint();
@@ -404,7 +411,7 @@ export default function WorkStealDemo() {
   useRafLoop(loop, !paused && !reduced);
 
   const sim = simRef.current;
-  const now = performance.now();
+  const now = sim.clock;
   let hotQ = 0;
   for (const r of REG) {
     if (sim.reg[r.id].q > hotQ) hotQ = sim.reg[r.id].q;
@@ -418,8 +425,7 @@ export default function WorkStealDemo() {
   const reset = () => {
     const fresh = freshSim();
     if (reduced) {
-      const t = performance.now();
-      for (const r of REG) fresh.reg[r.id].busy = [t + 1, 0];
+      for (const r of REG) fresh.reg[r.id].busy = [1, 0];
     }
     simRef.current = fresh;
     repaint();
@@ -465,6 +471,7 @@ export default function WorkStealDemo() {
           <button
             type="button"
             className="ctl"
+            aria-pressed={paused}
             onClick={() => setPaused((p) => !p)}
           >
             {paused ? (
