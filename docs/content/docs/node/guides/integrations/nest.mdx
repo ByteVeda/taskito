@@ -8,7 +8,7 @@ Peer dependencies: `@nestjs/common` + `reflect-metadata`. Import from the
 
 ```ts
 import { Module } from "@nestjs/common";
-import { TaskitoModule } from "taskito/contrib/nest";
+import { TaskitoModule } from "@byteveda/taskito/contrib/nest";
 
 @Module({
   imports: [TaskitoModule.forRoot(queue)],
@@ -23,7 +23,7 @@ export class AppModule {}
 
 ```ts
 import { Injectable } from "@nestjs/common";
-import { TaskitoService } from "taskito/contrib/nest";
+import { TaskitoService } from "@byteveda/taskito/contrib/nest";
 
 @Injectable()
 export class ReportService {

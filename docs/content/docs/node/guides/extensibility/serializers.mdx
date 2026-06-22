@@ -15,7 +15,7 @@ concern.
   for confidentiality **and** integrity.
 
 ```ts
-import { Queue, MsgpackSerializer } from "taskito";
+import { Queue, MsgpackSerializer } from "@byteveda/taskito";
 
 new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 ```
@@ -25,7 +25,7 @@ new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 Implement the `Serializer` interface — `serialize` to bytes, `deserialize` back:
 
 ```ts
-import type { Serializer } from "taskito";
+import type { Serializer } from "@byteveda/taskito";
 
 const mySerializer: Serializer = {
   serialize: (value) => Buffer.from(JSON.stringify(value)),

@@ -14,7 +14,7 @@ taskito --db taskito.db dashboard --port 8787
 Or programmatically:
 
 ```ts
-import { Queue, serveDashboard } from "taskito";
+import { Queue, serveDashboard } from "@byteveda/taskito";
 
 const queue = new Queue({ dbPath: "taskito.db" });
 const server = serveDashboard(queue, { port: 8787 });

@@ -8,7 +8,7 @@ registering the middleware. Import from the `taskito/contrib/sentry` subpath.
 
 ```ts
 import * as Sentry from "@sentry/node";
-import { sentryMiddleware } from "taskito/contrib/sentry";
+import { sentryMiddleware } from "@byteveda/taskito/contrib/sentry";
 
 Sentry.init({ dsn: process.env.SENTRY_DSN });
 

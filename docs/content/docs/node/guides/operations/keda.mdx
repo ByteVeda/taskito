@@ -9,7 +9,7 @@ depth. The SDK ships a scaler server that KEDA's `metrics-api` scaler polls.
 ## Scaler server
 
 ```ts
-import { Queue, serveScaler } from "taskito";
+import { Queue, serveScaler } from "@byteveda/taskito";
 
 const queue = new Queue({ backend: "postgres", dsn: process.env.DATABASE_URL });
 serveScaler(queue, { port: 9091, targetQueueDepth: 10 });
