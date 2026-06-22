@@ -40,7 +40,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag_exists: ${{ steps.tag.outputs.exists }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve version
         id: resolve
@@ -115,7 +115,7 @@ jobs:
           - triple: x86_64-pc-windows-msvc
             runner: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The postgres feature pulls openssl-sys (vendored), whose Configure runs
       # perl. Under bash the MSYS perl shadows the runner's Strawberry Perl and
@@ -203,7 +203,7 @@ jobs:
     steps:
       # Don't persist the write token in .git/config — npm/build steps don't
       # need git auth, and the only push (the tag) gets the token explicitly.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
