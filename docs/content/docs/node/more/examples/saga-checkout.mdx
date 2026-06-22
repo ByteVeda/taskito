@@ -14,7 +14,7 @@ Declare each forward task and its rollback. A compensator receives the forward
 step's result as its single argument, so it knows exactly what to undo.
 
 ```ts
-import { Queue } from "taskito";
+import { Queue } from "@byteveda/taskito";
 
 export const queue = new Queue({ dbPath: "checkout.db" });
 

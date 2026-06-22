@@ -34,7 +34,7 @@ queue.gate("charge", ({ args }) => args[0] <= 10_000);
 Combine predicates with `allOf`, `anyOf`, and `not`:
 
 ```ts
-import { allOf, anyOf, not } from "taskito";
+import { allOf, anyOf, not } from "@byteveda/taskito";
 
 const businessHours = () => {
   const h = new Date().getHours();

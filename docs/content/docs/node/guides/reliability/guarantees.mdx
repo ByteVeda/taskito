@@ -25,7 +25,7 @@ Because a job may run more than once, make side effects idempotent:
   [`uniqueKey`](/node/guides/reliability/idempotency).
 
 ```ts
-import { currentJob } from "taskito";
+import { currentJob } from "@byteveda/taskito";
 
 queue.task("charge", async (orderId: string) => {
   const job = currentJob();

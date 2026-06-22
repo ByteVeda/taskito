@@ -7,7 +7,7 @@ Every error the SDK throws extends `TaskitoError`, so a single `catch` can scope
 all of them; the specific subclasses let you branch on what went wrong.
 
 ```ts
-import { TaskitoError, ResourceNotFoundError } from "taskito";
+import { TaskitoError, ResourceNotFoundError } from "@byteveda/taskito";
 
 try {
   await runJob();

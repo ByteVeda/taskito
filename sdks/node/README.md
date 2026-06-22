@@ -8,19 +8,19 @@ share storage (SQLite, PostgreSQL, or Redis).
 ## Install
 
 ```bash
-pnpm add taskito
+pnpm add @byteveda/taskito
 ```
 
 Requires Node.js >= 18. Ships as dual ESM + CommonJS. A prebuilt native binary is
 installed automatically for your platform via an optional per-platform package
-(`taskito-<os>-<arch>`) — linux x64/arm64 (gnu + musl), macOS x64/arm64, and
+(`@byteveda/taskito-<os>-<arch>`) — linux x64/arm64 (gnu + musl), macOS x64/arm64, and
 Windows x64. On a platform without a prebuilt, build from source with the Rust
 toolchain + napi-rs CLI (`pnpm build:native`).
 
 ## Quickstart
 
 ```ts
-import { Queue } from "taskito";
+import { Queue } from "@byteveda/taskito";
 
 const queue = new Queue({ dbPath: "taskito.db" });
 
@@ -63,7 +63,7 @@ pending/running), `metadata`, `namespace`.
 Cancellation is cooperative. A running task reads its context via `currentJob()`:
 
 ```ts
-import { currentJob } from "taskito";
+import { currentJob } from "@byteveda/taskito";
 
 queue.task("download", async (url: string) => {
   const { signal } = currentJob() ?? {};
@@ -105,7 +105,7 @@ Args and results are serialized with a pluggable `Serializer` (default
 payloads as opaque bytes.
 
 ```ts
-import { Queue, MsgpackSerializer } from "taskito";
+import { Queue, MsgpackSerializer } from "@byteveda/taskito";
 new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 ```
 
@@ -358,7 +358,7 @@ taskito --db taskito.db dashboard --port 8787
 Or programmatically:
 
 ```ts
-import { Queue, serveDashboard } from "taskito";
+import { Queue, serveDashboard } from "@byteveda/taskito";
 
 const queue = new Queue({ dbPath: "taskito.db" });
 const server = serveDashboard(queue, { port: 8787 });
@@ -402,8 +402,8 @@ package or exported from the `taskito` barrel.
 ### Observability
 
 ```ts
-import { otelMiddleware } from "taskito/contrib/otel"; // peer: @opentelemetry/api
-import { prometheusMiddleware, PrometheusStatsCollector } from "taskito/contrib/prometheus"; // peer: prom-client
+import { otelMiddleware } from "@byteveda/taskito/contrib/otel"; // peer: @opentelemetry/api
+import { prometheusMiddleware, PrometheusStatsCollector } from "@byteveda/taskito/contrib/prometheus"; // peer: prom-client
 
 queue.use(otelMiddleware());        // one span per execution: taskito.execute.<task>
 queue.use(prometheusMiddleware());  // taskito_jobs_total, _job_duration_seconds, _active_workers, _retries_total
@@ -418,7 +418,7 @@ OTel options: `tracerName`, `attributePrefix`, `spanName(ctx)`, `extraAttributes
 (metrics for one namespace are built once per registry, so multiple middlewares are safe).
 
 ```ts
-import { sentryMiddleware } from "taskito/contrib/sentry"; // peer: @sentry/node
+import { sentryMiddleware } from "@byteveda/taskito/contrib/sentry"; // peer: @sentry/node
 queue.use(sentryMiddleware()); // call Sentry.init(...) yourself first
 ```
 
@@ -433,11 +433,11 @@ to also report each intermediate failure as a warning. Other options: `tagPrefix
 helper mounts the dashboard (SPA + `/api/*`) into your app.
 
 ```ts
-import { taskitoRouter, taskitoDashboard } from "taskito/contrib/express"; // peer: express
+import { taskitoRouter, taskitoDashboard } from "@byteveda/taskito/contrib/express"; // peer: express
 app.use("/tasks", taskitoRouter(queue));   // POST /enqueue, GET /stats, /jobs/:id, ...
 app.use("/admin", taskitoDashboard(queue)); // dashboard SPA + /api/*
 
-import { taskitoFastify, taskitoDashboardPlugin } from "taskito/contrib/fastify"; // peer: fastify
+import { taskitoFastify, taskitoDashboardPlugin } from "@byteveda/taskito/contrib/fastify"; // peer: fastify
 app.register(taskitoFastify, { queue, prefix: "/tasks" });
 app.register(taskitoDashboardPlugin, { queue, prefix: "/admin" });
 ```
@@ -449,7 +449,7 @@ and `resultTimeoutMs`.
 NestJS exposes an injectable service:
 
 ```ts
-import { TaskitoModule, TaskitoService } from "taskito/contrib/nest"; // peers: @nestjs/common, reflect-metadata
+import { TaskitoModule, TaskitoService } from "@byteveda/taskito/contrib/nest"; // peers: @nestjs/common, reflect-metadata
 
 @Module({ imports: [TaskitoModule.forRoot(queue)] })
 export class AppModule {}

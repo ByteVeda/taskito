@@ -25,7 +25,7 @@ cancel request stops it cleanly.
 
 ```ts
 import express from "express";
-import { Queue, currentJob } from "taskito";
+import { Queue, currentJob } from "@byteveda/taskito";
 
 const queue = new Queue({ dbPath: "image-service.db" });
 
@@ -107,7 +107,7 @@ The worker is a separate process that shares the same database. It registers the
 same task so it knows how to run `processImage`.
 
 ```ts
-import { Queue, currentJob } from "taskito";
+import { Queue, currentJob } from "@byteveda/taskito";
 
 const queue = new Queue({ dbPath: "image-service.db" });
 

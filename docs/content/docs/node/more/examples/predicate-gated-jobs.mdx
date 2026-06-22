@@ -19,7 +19,7 @@ A predicate receives `{ taskName, args }` — the positional args after any
 `onEnqueue` rewrites. Compose them with `allOf` / `anyOf` / `not`.
 
 ```ts
-import type { Predicate } from "taskito";
+import type { Predicate } from "@byteveda/taskito";
 
 export const duringBusinessHours: Predicate = () => {
   const hour = new Date().getUTCHours();
@@ -39,7 +39,7 @@ export const underQuota: Predicate = ({ args }) => {
 `queue.gate` attaches one or more predicates to a task; every gate must pass.
 
 ```ts
-import { Queue, allOf, not } from "taskito";
+import { Queue, allOf, not } from "@byteveda/taskito";
 import { duringBusinessHours, featureEnabled, underQuota } from "./predicates";
 
 export const queue = new Queue({ dbPath: "gated.db" });
@@ -58,7 +58,7 @@ queue.gate("exportData", allOf(underQuota, not(duringBusinessHours))); // off-pe
 A rejected enqueue throws synchronously — handle it where you submit.
 
 ```ts
-import { PredicateRejectedError } from "taskito";
+import { PredicateRejectedError } from "@byteveda/taskito";
 
 try {
   queue.enqueue("sendPromo", ["newsletter-subscribers"]);

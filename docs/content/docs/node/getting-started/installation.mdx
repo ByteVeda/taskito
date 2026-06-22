@@ -7,7 +7,7 @@ The Node.js SDK is a thin [napi-rs](https://napi.rs) shell over the Taskito Rust
 core — peer to the Python SDK, with **no Python dependency**.
 
 ```bash
-pnpm add taskito
+pnpm add @byteveda/taskito
 ```
 
 Requires Node.js >= 18. Ships as dual **ESM + CommonJS** with bundled type
@@ -35,7 +35,7 @@ the `postgres,redis,workflows,mesh` cargo features enabled.
 ## Pick a backend
 
 ```ts
-import { Queue } from "taskito";
+import { Queue } from "@byteveda/taskito";
 
 new Queue({ dbPath: "taskito.db" });                                   // SQLite (default)
 new Queue({ backend: "postgres", dsn: process.env.PG_URL, schema: "taskito" });

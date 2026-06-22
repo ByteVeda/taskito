@@ -411,7 +411,7 @@ export function CTA() {
         </p>
         <div className="install-row">
           <InstallPill cmd="pip install taskito" />
-          <InstallPill cmd="pnpm add taskito" />
+          <InstallPill cmd="pnpm add @byteveda/taskito" />
         </div>
         <div className="btns">
           <Link className="btn pri" to="/python/getting-started/quickstart">
