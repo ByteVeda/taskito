@@ -34,7 +34,7 @@ A running task reports progress through its job context; inspection and the
 dashboard surface it live:
 
 ```ts
-import { currentJob } from "taskito";
+import { currentJob } from "@byteveda/taskito";
 
 queue.task("import", async (rows: Row[]) => {
   const job = currentJob();
