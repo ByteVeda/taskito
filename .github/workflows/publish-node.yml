@@ -352,7 +352,11 @@ jobs:
       # maintainer to chase without having blocked the otherwise-usable release.
       - name: Fail if any platform package was skipped
         if: ${{ always() && !inputs.dry-run && steps.platforms.outputs.failed != '' }}
+        # Pass the list via env, not inline ${{ }} expansion, so a package name
+        # can't break out of the shell script (template-injection defense).
+        env:
+          FAILED_PLATFORMS: ${{ steps.platforms.outputs.failed }}
         run: |
-          echo "::error::Platform packages that did not publish: ${{ steps.platforms.outputs.failed }}"
+          echo "::error::Platform packages that did not publish: ${FAILED_PLATFORMS}"
           echo "::error::Install on those platforms will fail until they are republished."
           exit 1
