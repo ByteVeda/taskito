@@ -2,8 +2,10 @@ name: Publish to npm
 
 # Builds the napi addon as prebuilt per-platform `.node` binaries on native
 # runners (no cross-compilation — the same approach the Python publish.yml uses
-# for wheels), then publishes the per-platform `taskito-<triple>` packages plus
-# the main `taskito` package to npm via OIDC trusted publishing + provenance.
+# for wheels), then publishes the per-platform `@byteveda/taskito-<triple>`
+# packages plus the main `@byteveda/taskito` package to npm via OIDC trusted
+# publishing + provenance. The npm scope sidesteps the spam-detection 403 that
+# unscoped per-platform names trip on first publish.
 
 on:
   push:
@@ -272,27 +274,35 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish per-platform packages
+        id: platforms
         if: ${{ !inputs.dry-run }}
         working-directory: sdks/node
         # Skip any package already live at this version so a rerun after a
-        # partial publish can finish the rest instead of aborting on the first.
+        # partial publish can finish the rest. A single platform failing (e.g.
+        # npm spam-detection 403) must NOT abort the run before the main package
+        # publishes — the SDK still installs on every platform that did land.
+        # Record failures and surface them at the end of the job instead.
         run: |
+          failed=""
           for dir in npm/*/; do
             pkg=$(node -p "require('./${dir}package.json').name")
             if npm view "${pkg}@${VERSION}" version >/dev/null 2>&1; then
               echo "::notice::${pkg}@${VERSION} already published — skipping"
+            elif npm publish "$dir" --provenance --access public; then
+              echo "Published ${pkg}@${VERSION}"
             else
-              echo "Publishing ${pkg}@${VERSION}"
-              npm publish "$dir" --provenance --access public
+              echo "::warning::Failed to publish ${pkg}@${VERSION}"
+              failed="${failed} ${pkg}"
             fi
           done
+          echo "failed=${failed# }" >> "$GITHUB_OUTPUT"
 
       - name: Publish main package
         if: ${{ !inputs.dry-run }}
         working-directory: sdks/node
         run: |
-          if npm view "taskito@${VERSION}" version >/dev/null 2>&1; then
-            echo "::notice::taskito@${VERSION} already published — skipping"
+          if npm view "@byteveda/taskito@${VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::@byteveda/taskito@${VERSION} already published — skipping"
           else
             npm publish --provenance --access public
           fi
@@ -306,13 +316,13 @@ jobs:
         if: ${{ !inputs.dry-run }}
         run: |
           for _attempt in 1 2 3 4 5; do
-            if npm view "taskito@${VERSION}" version >/dev/null 2>&1; then
-              echo "taskito@${VERSION} live on npm"
+            if npm view "@byteveda/taskito@${VERSION}" version >/dev/null 2>&1; then
+              echo "@byteveda/taskito@${VERSION} live on npm"
               exit 0
             fi
             sleep 15
           done
-          echo "::error::taskito@${VERSION} not found on npm"
+          echo "::error::@byteveda/taskito@${VERSION} not found on npm"
           exit 1
 
       - name: Create git tag
@@ -336,3 +346,13 @@ jobs:
               --title "taskito (Node) v${VERSION}" \
               --generate-notes
           fi
+
+      # The main package + tag + release are done; only now flag any platform
+      # binary that didn't publish, so a missing target turns the job red for a
+      # maintainer to chase without having blocked the otherwise-usable release.
+      - name: Fail if any platform package was skipped
+        if: ${{ always() && !inputs.dry-run && steps.platforms.outputs.failed != '' }}
+        run: |
+          echo "::error::Platform packages that did not publish: ${{ steps.platforms.outputs.failed }}"
+          echo "::error::Install on those platforms will fail until they are republished."
+          exit 1
