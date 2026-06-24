@@ -48,8 +48,8 @@ it("specific errors extend the right bases and carry a name", () => {
   expect(new ResultTimeoutError("j", 50).timeoutMs).toBe(50);
 });
 
-it("Queue construction without storage throws QueueError", () => {
-  expect(() => new Queue({})).toThrow(QueueError);
+it("Queue construction for a non-sqlite backend without a dsn throws QueueError", () => {
+  expect(() => new Queue({ backend: "postgres" })).toThrow(QueueError);
 });
 
 it("invalid notes throw NotesValidationError", () => {
