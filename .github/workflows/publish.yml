@@ -105,7 +105,7 @@ jobs:
         uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13 3.14
           manylinux: 2_28
           maturin-version: v1.13.3
           working-directory: sdks/python
@@ -139,7 +139,7 @@ jobs:
         uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13 3.14
           manylinux: musllinux_1_2
           maturin-version: v1.13.3
           working-directory: sdks/python
@@ -187,11 +187,16 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13 3.14
           maturin-version: v1.13.3
           working-directory: sdks/python
 
@@ -235,11 +240,16 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13
+          args: --release --out dist --features extension-module,postgres,redis,native-async,workflows --interpreter 3.10 3.11 3.12 3.13 3.14
           maturin-version: v1.13.3
           working-directory: sdks/python
 
