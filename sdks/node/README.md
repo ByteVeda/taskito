@@ -1,9 +1,15 @@
 # taskito (Node.js)
 
+[![npm version](https://img.shields.io/npm/v/@byteveda/taskito.svg)](https://www.npmjs.com/package/@byteveda/taskito)
+[![License](https://img.shields.io/npm/l/@byteveda/taskito.svg)](https://github.com/ByteVeda/taskito/blob/master/LICENSE)
+
 Rust-powered task queue for Node.js — no broker required. A thin
 [napi-rs](https://napi.rs) shell over the Taskito Rust core, peer to the Python
 SDK. Enqueue work and run workers in the same process or across processes that
 share storage (SQLite, PostgreSQL, or Redis).
+
+Part of the [taskito](https://github.com/ByteVeda/taskito) project (Rust core + native
+SDKs for Python and Node). Full guides at the [Node docs](https://docs.byteveda.org/taskito/node).
 
 ## Install
 
