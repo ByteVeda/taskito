@@ -19,53 +19,65 @@ It is deliberately *not* a tutorial on running Taskito (see the
 
 ## System at a glance
 
-Taskito is a hybrid system: a Python API on top, a Rust engine underneath, with
-[PyO3](https://pyo3.rs) as the only seam between them. Python owns ergonomics and
-extensibility; Rust owns storage, scheduling, dispatch, rate limiting, and worker
-management. The two layers communicate exclusively through the compiled
-`taskito._taskito` extension module — **Python never reaches into Rust internals,
-and Rust never imports Python types except at the PyO3 binding edge.**
+Taskito is a polyglot system: **one Rust engine underneath, a thin language SDK shell
+on top per host language** — Python via [PyO3](https://pyo3.rs), Node via
+[napi-rs](https://napi.rs). Each shell owns ergonomics and extensibility for its
+language; Rust owns storage, scheduling, dispatch, rate limiting, and worker
+management. A shell talks to the core only through its compiled binding crate
+(`taskito._taskito` for Python, the `.node` addon for Node) — **a shell never reaches
+into core internals, and the core never imports a host-language type except at the
+binding edge.** The `WorkerDispatcher` trait in `taskito-core` is binding-free, so a
+new shell implements one trait against
+[`BINDING_CONTRACT.md`](crates/taskito-core/BINDING_CONTRACT.md).
 
 ```text
-┌────────────────────────────────────────────────────────────────────────────┐
-│ PYTHON API SURFACE             sdks/python/taskito/                        │
-│   Queue (app.py) = 15 mixins · async_support/ · CLI · serializers          │
-│                                                                            │
-│ FEATURE SUBSYSTEMS             (pure-Python, composed onto Queue)          │
-│   interception/ resources/ proxies/ workflows/ contrib/                    │
-│   batching/ autoscale/ prefork/ predicates/ dashboard/                     │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      │  PyO3 (taskito._taskito)
-┌─────────────────────────────────────┴──────────────────────────────────────┐
-│ PYO3 BINDINGS                  crates/taskito-python/                      │
-│   py_queue/ (PyQueue + workflow_ops) · async_worker · prefork bridge       │
-├────────────────────────────────────────────────────────────────────────────┤
-│ RUST CORE                      crates/taskito-core/                        │
-│   scheduler/ (poll · dispatch · retry · reap · wake)                       │
-│   worker.rs (WorkerDispatcher trait) · resilience/ · periodic.rs           │
-├────────────────────────────────────────────────────────────────────────────┤
-│ STORAGE                        crates/taskito-core/src/storage/            │
-│   Storage trait (traits.rs) ──delegate!──▶ StorageBackend enum             │
-│     ├─ sqlite/        ┐ shared logic in diesel_common/ macros              │
-│     ├─ postgres/      ┘                                                    │
-│     └─ redis_backend/   (own impl — no Diesel)                             │
-└────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────┐   ┌─────────────────────────────────┐
+│ PYTHON SDK   sdks/python/taskito/│   │ NODE SDK           sdks/node/   │
+│  Queue (app.py) = 15 mixins ·    │   │  Queue/Worker · CLI · dashboard │
+│  async_support · serializers     │   │  events/middleware · webhooks · │
+│ FEATURE SUBSYSTEMS (pure-Python):│   │  resources · serializers        │
+│  interception resources proxies  │   │  (Node-native equivalents, not  │
+│  workflows contrib batching …    │   │   1:1 ports of Python idioms)   │
+└────────────────┬─────────────────┘   └────────────────┬────────────────┘
+                 │ PyO3 (taskito._taskito)               │ napi-rs (.node addon)
+┌────────────────┴─────────────────┐   ┌────────────────┴────────────────┐
+│ crates/taskito-python/  (PyO3)   │   │ crates/taskito-node/ (napi-rs)  │
+│  py_queue/ · async_worker ·      │   │  JsQueue/JsWorker · dispatcher ·│
+│  prefork bridge                  │   │  convert/                       │
+└────────────────┬─────────────────┘   └────────────────┬────────────────┘
+                 └─────────────┬──── both impl WorkerDispatcher ────┘
+┌───────────────────────────────┴────────────────────────────────────────────┐
+│ RUST CORE                      crates/taskito-core/   (no host language)     │
+│   scheduler/ (poll · dispatch · retry · reap · wake)                         │
+│   worker.rs (WorkerDispatcher trait) · resilience/ · periodic.rs             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ STORAGE                        crates/taskito-core/src/storage/              │
+│   Storage trait (traits.rs) ──delegate!──▶ StorageBackend enum               │
+│     ├─ sqlite/        ┐ shared logic in diesel_common/ macros                │
+│     ├─ postgres/      ┘                                                      │
+│     └─ redis_backend/   (own impl — no Diesel)                               │
+└──────────────────────────────────────────────────────────────────────────────┘
 
   WORKFLOWS    crates/taskito-workflows/ — separate crate, own schema & stores
-               (SQLite · Postgres · Redis), surfaced via py_queue/workflow_ops/
-
+               (SQLite · Postgres · Redis), surfaced per shell (Python:
+               py_queue/workflow_ops/ · Node: bound in taskito-node)
+  MESH         crates/taskito-mesh/ — optional decentralized work-stealing
+               overlay (SWIM gossip · hash ring · TCP steal); `mesh` feature
   NATIVE ASYNC taskito-python/src/native_async/ — optional native-async pool
                (Python-coupled; behind the `native-async` feature)
 ```
 
 The dependency arrows point **downward only**. `taskito-core` knows nothing about
-Python or PyO3; `taskito-python` depends on `taskito-core`; the Python package
-depends on the compiled extension. This acyclic shape is the property that keeps
-the codebase changeable — guard it.
+Python, Node, PyO3, or napi; each binding crate (`taskito-python`, `taskito-node`)
+depends on `taskito-core`; each SDK package depends on its compiled addon. This
+acyclic shape is the property that keeps the codebase changeable — guard it.
 
 ---
 
 ## Layers & responsibilities
+
+> Sections 1–2 describe the **Python SDK** (the original, most complete shell).
+> Sections 6–9 cover the shared crates and the **Node SDK**, the second shell.
 
 ### 1. Python API surface — `sdks/python/taskito/`
 
@@ -118,12 +130,13 @@ layer depends on, not the reverse:
 
 ### 3. PyO3 bindings — `crates/taskito-python/`
 
-The translation layer. `py_queue/` holds `PyQueue` plus partial `#[pymethods]`
-blocks split by concern (enabled by PyO3's `multiple-pymethods` feature):
-`mod.rs`, `inspection.rs`, `worker.rs`, and `workflow_ops/` (lifecycle, nodes,
-fan_out, gates, queries, saga). `async_worker.rs` drives the `AsyncWorkerPool`
-with `spawn_blocking` + GIL management. This layer converts Python values to Rust
-and back; it holds **no business logic**.
+The Python translation layer. `py_queue/` holds `PyQueue` plus partial
+`#[pymethods]` blocks split by concern (enabled by PyO3's `multiple-pymethods`
+feature): `mod.rs`, `inspection.rs`, `worker.rs`, and `workflow_ops/` (lifecycle,
+nodes, fan_out, gates, queries, saga). `async_worker.rs` drives the
+`AsyncWorkerPool` with `spawn_blocking` + GIL management. This layer converts
+Python values to Rust and back; it holds **no business logic**. It implements the
+core's `WorkerDispatcher` trait — the same contract the Node binding implements.
 
 ### 4. Rust core — `crates/taskito-core/`
 
@@ -169,6 +182,26 @@ Optional (`native-async` feature). Python-specific binding code (was the separat
 tasks via `spawn_blocking`. `PyResultSender` bridges the Python executor back to
 the Rust scheduler.
 
+### 8. Node SDK — `sdks/node/` + `crates/taskito-node/`
+
+The second language shell, peer to Python. `crates/taskito-node/` is a
+[napi-rs](https://napi.rs) binding crate (`JsQueue`/`JsWorker`, `dispatcher.rs`,
+`convert/`) that implements the same core `WorkerDispatcher` trait — the Rust↔JS
+seam, holding no business logic. `sdks/node/` is the TypeScript package (dual
+ESM/CJS via tsup): `Queue`/`Worker`, serializers, a standalone `taskito` CLI, a
+dashboard server reusing the existing React SPA, and Node-native events/middleware,
+webhooks, and resource DI. Python-idiom features (proxies, interception) get Node
+**equivalents**, not 1:1 ports. The DB stays the source of truth, so a Python and a
+Node worker can share one queue.
+
+### 9. Mesh — `crates/taskito-mesh/`
+
+Optional (`mesh` feature). A decentralized work-stealing overlay — SWIM gossip
+(UDP), a consistent-hash ring, a local deque, and TCP work-stealing — composed
+behind `MeshNode`. It is an **optimization only**: the DB remains the source of
+truth, and a mesh bridge keeps the scheduler and dispatcher unaware of mesh logic.
+Gossip failure degrades cleanly to DB-only dispatch.
+
 ---
 
 ## Annotated folder structure
@@ -187,8 +220,12 @@ sdks/python/taskito/
 ├── serializers.py task.py middleware.py events.py result.py   # core primitives
 └── _taskito.pyi           # type stubs for the native module (keep in sync!)
 
-crates/
-├── taskito-core/          # engine — NO Python
+sdks/node/                 # Node SDK (TypeScript, dual ESM/CJS via tsup)
+├── src/                   # Queue/Worker · serializers · CLI · dashboard · webhooks
+└── package.json           # @byteveda/taskito (per-platform addons inherit version)
+
+crates/                    # Cargo workspace (5 crates)
+├── taskito-core/          # engine — NO host language
 │   └── src/
 │       ├── scheduler/     # poller · result_handler · maintenance · wake
 │       ├── storage/
@@ -197,13 +234,16 @@ crates/
 │       │   ├── diesel_common/      # shared SQLite/Postgres macros (DRY)
 │       │   ├── sqlite/ postgres/   # backend-specific deltas only
 │       │   └── redis_backend/      # standalone, no Diesel
-│       ├── worker.rs      # WorkerDispatcher trait
+│       ├── worker.rs      # WorkerDispatcher trait + BINDING_CONTRACT.md
 │       └── resilience/ periodic.rs job.rs error.rs
-├── taskito-python/        # PyO3 bindings — the only Python↔Rust seam
+├── taskito-python/        # PyO3 bindings — the Python↔Rust seam
 │   └── src/
 │       ├── py_queue/      # PyQueue + workflow_ops/
 │       └── native_async/  # optional native-async pool (native-async feature)
-└── taskito-workflows/     # separate crate, own schema + 3 backend stores
+├── taskito-node/          # napi-rs bindings — the Node↔Rust seam
+│   └── src/               # JsQueue/JsWorker · dispatcher · convert/
+├── taskito-workflows/     # separate crate, own schema + 3 backend stores
+└── taskito-mesh/          # optional work-stealing overlay (mesh feature)
 ```
 
 ---
@@ -213,11 +253,13 @@ crates/
 These invariants are what make the codebase easy to change. Treat a PR that
 violates one as a design regression, not a style nit.
 
-1. **Dependencies point downward only.** Python → PyO3 → core → storage.
-   `taskito-core` must not depend on `taskito-python` or any Python type.
-2. **The PyO3 module is the only seam.** Python touches Rust solely via the public
-   surface of `taskito._taskito`. No reaching into struct internals; update
-   `_taskito.pyi` whenever the native surface changes.
+1. **Dependencies point downward only.** SDK → its binding crate → core → storage.
+   `taskito-core` must not depend on any binding crate (`taskito-python`,
+   `taskito-node`) or host-language type.
+2. **Each binding crate is its language's only seam.** A shell touches Rust solely
+   via its compiled addon's public surface — no reaching into struct internals. Keep
+   the surface contract in sync: `_taskito.pyi` for Python, the generated `.d.ts` for
+   Node. A new language implements `WorkerDispatcher` against `BINDING_CONTRACT.md`.
 3. **Asyncio is confined to `async_support/`** (plus the narrow, documented
    exceptions: `app.py` uses only `iscoroutinefunction`; `contrib/fastapi.py`).
    No inline `import asyncio` to dodge a boundary — split the module instead.
@@ -243,10 +285,11 @@ detailed versions.
 3. Add any backend-specific delta in `sqlite/` and `postgres/`.
 4. Implement it for Redis in `redis_backend/`.
 5. Wire it through the `delegate!` macro in `storage/mod.rs`.
-6. Expose it via PyO3 in `crates/taskito-python/src/py_queue/`.
-7. Add the signature to `sdks/python/taskito/_taskito.pyi`.
-8. Test: a Rust test in `storage/sqlite/tests.rs` + the contract suite (runs
-   against all three backends in CI).
+6. Expose it on each shell that needs it: PyO3 in `crates/taskito-python/src/py_queue/`
+   (then add the signature to `sdks/python/taskito/_taskito.pyi`) and/or napi in
+   `crates/taskito-node/src/queue/`.
+7. Test: a Rust test in `storage/sqlite/tests.rs` + the contract suite (runs against
+   all three backends in CI).
 
 ### Add a Python feature / Queue method
 - Find the mixin that owns the concern (`mixins/`) and add the method there — do
@@ -269,9 +312,9 @@ detailed versions.
 
 ## Scaling guardrails & the rebuild decision
 
-**Why the current design holds.** The codebase is large (≈24.5k LOC Python,
-≈24.3k LOC Rust across ~300 files) but not heavy: no god-objects, an acyclic
-dependency graph, a single well-defined Python↔Rust seam, and duplication erased
+**Why the current design holds.** The codebase is large (≈25k LOC Python, ≈29k LOC
+Rust across 5 crates, ≈7k LOC Node/TS) but not heavy: no god-objects, an acyclic
+dependency graph, one well-defined binding seam per language, and duplication erased
 by macros rather than discipline. The biggest hand-written files are either a
 single deduplicating macro (`diesel_common/jobs.rs`) or inherently complex state
 machines (the saga orchestrator, the scheduler loop) — large because the *problem*
@@ -286,7 +329,8 @@ count.
 
 **On rebuilding.** This document was produced after assessing whether Taskito
 needed a "clean-architecture rebuild." It does not. A speculative rewrite of
-working, layered code covered by 1,007 Python tests plus the Rust contract suite
-would import regressions for no product gain — the opposite of preparing to scale.
+working, layered code covered by 1,077 Python tests, the Node vitest suite, and the
+Rust contract suite would import regressions for no product gain — the opposite of
+preparing to scale.
 The leverage is in *navigability*: making the existing structure legible so the
 next hundred changes land in the right place. That is what this file is for.
