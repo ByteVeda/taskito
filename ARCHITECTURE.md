@@ -204,50 +204,6 @@ Gossip failure degrades cleanly to DB-only dispatch.
 
 ---
 
-## Annotated folder structure
-
-```text
-sdks/python/taskito/
-├── app.py                 # Queue: constructor + core enqueue path
-├── mixins/                # 15 Queue mixins (one responsibility each)
-├── async_support/         # ALL asyncio lives here (sync layer stays asyncio-free)
-├── interception/          # argument interception pipeline
-├── proxies/               # non-serializable object proxying
-├── resources/             # worker-side DI (4 scopes, hot reload)
-├── workflows/             # workflow DSL, tracker, sagas, fan-out
-├── contrib/               # otel · sentry · prometheus · flask · fastapi · django
-├── batching/ autoscale/ prefork/ predicates/ dashboard/
-├── serializers.py task.py middleware.py events.py result.py   # core primitives
-└── _taskito.pyi           # type stubs for the native module (keep in sync!)
-
-sdks/node/                 # Node SDK (TypeScript, dual ESM/CJS via tsup)
-├── src/                   # Queue/Worker · serializers · CLI · dashboard · webhooks
-└── package.json           # @byteveda/taskito (per-platform addons inherit version)
-
-crates/                    # Cargo workspace (5 crates)
-├── taskito-core/          # engine — NO host language
-│   └── src/
-│       ├── scheduler/     # poller · result_handler · maintenance · wake
-│       ├── storage/
-│       │   ├── traits.rs           # the Storage trait
-│       │   ├── mod.rs              # StorageBackend enum + delegate macro
-│       │   ├── diesel_common/      # shared SQLite/Postgres macros (DRY)
-│       │   ├── sqlite/ postgres/   # backend-specific deltas only
-│       │   └── redis_backend/      # standalone, no Diesel
-│       ├── worker.rs      # WorkerDispatcher trait + BINDING_CONTRACT.md
-│       └── resilience/ periodic.rs job.rs error.rs
-├── taskito-python/        # PyO3 bindings — the Python↔Rust seam
-│   └── src/
-│       ├── py_queue/      # PyQueue + workflow_ops/
-│       └── native_async/  # optional native-async pool (native-async feature)
-├── taskito-node/          # napi-rs bindings — the Node↔Rust seam
-│   └── src/               # JsQueue/JsWorker · dispatcher · convert/
-├── taskito-workflows/     # separate crate, own schema + 3 backend stores
-└── taskito-mesh/          # optional work-stealing overlay (mesh feature)
-```
-
----
-
 ## Dependency & boundary rules
 
 These invariants are what make the codebase easy to change. Treat a PR that
@@ -310,27 +266,12 @@ detailed versions.
 
 ---
 
-## Scaling guardrails & the rebuild decision
+## Why this scales
 
-**Why the current design holds.** The codebase is large (≈25k LOC Python, ≈29k LOC
-Rust across 5 crates, ≈7k LOC Node/TS) but not heavy: no god-objects, an acyclic
-dependency graph, one well-defined binding seam per language, and duplication erased
-by macros rather than discipline. The biggest hand-written files are either a
-single deduplicating macro (`diesel_common/jobs.rs`) or inherently complex state
-machines (the saga orchestrator, the scheduler loop) — large because the *problem*
-is, not because concerns are tangled.
-
-**The guardrails that keep it that way** are the six boundary rules above. Most
-architectural drift in a system like this comes from eroding exactly those: a
-Python module that imports a Rust internal, an `asyncio` call that leaks into the
-sync path, a storage method copy-pasted across backends, a new responsibility
-bolted onto `app.py`. Hold the rules and the design scales with the contributor
-count.
-
-**On rebuilding.** This document was produced after assessing whether Taskito
-needed a "clean-architecture rebuild." It does not. A speculative rewrite of
-working, layered code covered by 1,077 Python tests, the Node vitest suite, and the
-Rust contract suite would import regressions for no product gain — the opposite of
-preparing to scale.
-The leverage is in *navigability*: making the existing structure legible so the
-next hundred changes land in the right place. That is what this file is for.
+The codebase is large (≈25k LOC Python, ≈29k LOC Rust across 5 crates, ≈7k LOC
+Node/TS) but not heavy: no god-objects, an acyclic dependency graph, one binding seam
+per language, and duplication erased by macros. The biggest files are deduplicating
+macros (`diesel_common/jobs.rs`) or inherently complex state machines (saga, scheduler)
+— large because the *problem* is, not because concerns are tangled. Drift comes from
+eroding the six boundary rules above; hold them and the design scales with the
+contributor count.
