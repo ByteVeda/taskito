@@ -12,7 +12,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Queue, type Worker } from "taskito";
+import { Queue, type Worker } from "@byteveda/taskito";
 
 let worker: Worker | undefined;
 afterEach(() => {
@@ -59,7 +59,7 @@ the test — the worker injects whatever is registered, so no real connection is
 opened:
 
 ```ts
-import { useResource } from "taskito";
+import { useResource } from "@byteveda/taskito";
 
 queue.resource("db", () => fakeDb);
 queue.task("sync", async () => {
