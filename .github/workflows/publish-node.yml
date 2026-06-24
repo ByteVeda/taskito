@@ -113,7 +113,7 @@ jobs:
           - triple: x86_64-apple-darwin
             runner: macos-15-intel
           - triple: aarch64-apple-darwin
-            runner: macos-latest
+            runner: macos-15
           - triple: x86_64-pc-windows-msvc
             runner: windows-latest
     steps:
