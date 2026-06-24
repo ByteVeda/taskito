@@ -155,7 +155,7 @@ jobs:
 
   build-wheels-macos:
     needs: build-dashboard
-    runs-on: macos-latest
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
