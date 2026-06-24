@@ -65,8 +65,8 @@ Coming from Celery? See the **[Migration Guide](https://docs.byteveda.org/taskit
 
 ## Contributing
 
-Build and test commands live in [`CLAUDE.md`](CLAUDE.md) and each SDK's README. The repo is a
-Cargo workspace (`crates/`) plus per-language SDK packages (`sdks/`); all PRs target `master`.
+The repo is a Cargo workspace (`crates/`) plus per-language SDK packages (`sdks/`). Build and
+test commands live in each SDK's README. All PRs target `master`.
 
 ## License
 
