@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "react-router build",
-    "dev": "react-router dev",
+    "sync:changelog": "node ../scripts/sync-changelog.mjs",
+    "build": "pnpm sync:changelog && react-router build",
+    "dev": "pnpm sync:changelog && react-router dev",
     "start": "serve build/client",
     "typecheck": "react-router typegen && tsc --noEmit",
     "lint": "biome check",
