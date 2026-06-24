@@ -1,9 +1,4 @@
----
-title: Changelog
-description: "Release history for taskito — every notable change, fix, and feature."
----
-
-{/* AUTO-GENERATED from /CHANGELOG.md by scripts/sync-changelog.mjs — do not edit directly. */}
+# Changelog
 
 All notable changes to taskito are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
@@ -788,4 +783,3 @@ Re-release of 0.2.0 — PyPI does not allow re-uploads of deleted versions.
 - cloudpickle serialization for arguments and results
 
 </details>
-
