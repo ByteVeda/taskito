@@ -80,7 +80,7 @@ impl PyQueue {
 
     /// List dead letter queue entries.
     #[pyo3(signature = (limit=10, offset=0))]
-    pub fn dead_letters(&self, limit: i64, offset: i64) -> PyResult<Vec<PyObject>> {
+    pub fn dead_letters(&self, limit: i64, offset: i64) -> PyResult<Vec<Py<PyAny>>> {
         if limit < 0 || offset < 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "limit and offset must be non-negative",
@@ -91,10 +91,10 @@ impl PyQueue {
             .list_dead(limit, offset)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(dead.len());
             for d in dead {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("id", d.id)?;
                 dict.set_item("original_job_id", d.original_job_id)?;
                 dict.set_item("queue", d.queue)?;
@@ -133,16 +133,16 @@ impl PyQueue {
     }
 
     /// Get error history for a job.
-    pub fn get_job_errors(&self, job_id: &str) -> PyResult<Vec<PyObject>> {
+    pub fn get_job_errors(&self, job_id: &str) -> PyResult<Vec<Py<PyAny>>> {
         let errors = self
             .storage
             .get_job_errors(job_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(errors.len());
             for err in errors {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("id", err.id)?;
                 dict.set_item("job_id", err.job_id)?;
                 dict.set_item("attempt", err.attempt)?;
@@ -162,17 +162,17 @@ impl PyQueue {
         &self,
         task_name: Option<&str>,
         since_seconds: i64,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<Vec<Py<PyAny>>> {
         let since_ms = now_millis().saturating_sub(since_seconds.saturating_mul(1000));
         let rows = self
             .storage
             .get_metrics(task_name, since_ms)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(rows.len());
             for r in rows {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("id", r.id)?;
                 dict.set_item("task_name", r.task_name)?;
                 dict.set_item("job_id", r.job_id)?;
@@ -233,16 +233,16 @@ impl PyQueue {
     }
 
     /// Get replay history for a job.
-    pub fn get_replay_history(&self, job_id: &str) -> PyResult<Vec<PyObject>> {
+    pub fn get_replay_history(&self, job_id: &str) -> PyResult<Vec<Py<PyAny>>> {
         let rows = self
             .storage
             .get_replay_history(job_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(rows.len());
             for r in rows {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("id", r.id)?;
                 dict.set_item("original_job_id", r.original_job_id)?;
                 dict.set_item("replay_job_id", r.replay_job_id)?;
@@ -273,16 +273,16 @@ impl PyQueue {
     }
 
     /// Get logs for a specific job.
-    pub fn get_task_logs(&self, job_id: &str) -> PyResult<Vec<PyObject>> {
+    pub fn get_task_logs(&self, job_id: &str) -> PyResult<Vec<Py<PyAny>>> {
         let rows = self
             .storage
             .get_task_logs(job_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(rows.len());
             for r in rows {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("id", r.id)?;
                 dict.set_item("job_id", r.job_id)?;
                 dict.set_item("task_name", r.task_name)?;
@@ -304,7 +304,7 @@ impl PyQueue {
         level: Option<&str>,
         since_seconds: i64,
         limit: i64,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<Vec<Py<PyAny>>> {
         if limit < 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "limit must be non-negative",
@@ -316,10 +316,10 @@ impl PyQueue {
             .query_task_logs(task_name, level, since_ms, limit)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(rows.len());
             for r in rows {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("id", r.id)?;
                 dict.set_item("job_id", r.job_id)?;
                 dict.set_item("task_name", r.task_name)?;
@@ -336,16 +336,16 @@ impl PyQueue {
     // ── Circuit Breaker API ──────────────────────────────────────
 
     /// List all circuit breaker states.
-    pub fn list_circuit_breakers(&self) -> PyResult<Vec<PyObject>> {
+    pub fn list_circuit_breakers(&self) -> PyResult<Vec<Py<PyAny>>> {
         let rows = self
             .storage
             .list_circuit_breakers()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(rows.len());
             for r in rows {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 let state_str = match r.state {
                     1 => "open",
                     2 => "half_open",
@@ -368,16 +368,16 @@ impl PyQueue {
     // ── Worker API ───────────────────────────────────────────────
 
     /// List all registered workers.
-    pub fn list_workers(&self) -> PyResult<Vec<PyObject>> {
+    pub fn list_workers(&self) -> PyResult<Vec<Py<PyAny>>> {
         let rows = self
             .storage
             .list_workers()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut result = Vec::with_capacity(rows.len());
             for r in rows {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("worker_id", r.worker_id)?;
                 dict.set_item("last_heartbeat", r.last_heartbeat)?;
                 dict.set_item("queues", r.queues)?;
@@ -432,15 +432,15 @@ impl PyQueue {
     }
 
     /// Get info about a lock. Returns dict or None.
-    pub fn get_lock_info(&self, lock_name: &str) -> PyResult<Option<PyObject>> {
+    pub fn get_lock_info(&self, lock_name: &str) -> PyResult<Option<Py<PyAny>>> {
         let info = self
             .storage
             .get_lock_info(lock_name)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         match info {
-            Some(lock) => Python::with_gil(|py| {
-                let dict = PyDict::new_bound(py);
+            Some(lock) => Python::attach(|py| {
+                let dict = PyDict::new(py);
                 dict.set_item("lock_name", lock.lock_name)?;
                 dict.set_item("owner_id", lock.owner_id)?;
                 dict.set_item("acquired_at", lock.acquired_at)?;

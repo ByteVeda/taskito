@@ -248,7 +248,7 @@ impl PyQueue {
         let wf_storage = workflow_storage(self)?;
         let root = run_id.to_string();
 
-        let result: CoreResult<()> = py.allow_threads(|| {
+        let result: CoreResult<()> = py.detach(|| {
             let mut visited: HashSet<String> = HashSet::new();
             let mut stack: Vec<String> = vec![root];
             let now = now_millis();
@@ -302,10 +302,8 @@ impl PyQueue {
     ) -> PyResult<()> {
         let wf = workflow_storage(self)?;
         let rid = run_id.to_string();
-        py.allow_threads(|| {
-            wf.update_workflow_run_state(&rid, WorkflowState::CompletedWithFailures, None)
-        })
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        py.detach(|| wf.update_workflow_run_state(&rid, WorkflowState::CompletedWithFailures, None))
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Check whether all workflow nodes are terminal and finalize the run.
@@ -322,7 +320,7 @@ impl PyQueue {
         let wf_storage = workflow_storage(self)?;
         let run_id_owned = run_id.to_string();
 
-        let result: CoreResult<Option<String>> = py.allow_threads(|| {
+        let result: CoreResult<Option<String>> = py.detach(|| {
             let nodes = wf_storage.get_workflow_nodes(&run_id_owned)?;
             if !nodes.iter().all(|n| n.status.is_terminal()) {
                 return Ok(None);
@@ -363,8 +361,8 @@ mod tests {
     /// `depends_on` chain.
     #[test]
     fn submit_workflow_links_linear_dag_via_depends_on() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|_py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|_py| {
             let queue = make_test_pyqueue();
             let dag = make_dag_bytes(&["a", "b"], &[("a", "b")]);
             let metadata = make_step_metadata_json(&[("a", "task_a"), ("b", "task_b")]);
@@ -398,8 +396,8 @@ mod tests {
     /// downstream successors omit the deferred predecessor from `depends_on`.
     #[test]
     fn submit_workflow_skips_job_creation_for_deferred_nodes() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|_py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|_py| {
             let queue = make_test_pyqueue();
             let dag = make_dag_bytes(&["a", "b"], &[("a", "b")]);
             let metadata = make_step_metadata_json(&[("a", "task_a"), ("b", "task_b")]);
@@ -444,8 +442,8 @@ mod tests {
     /// need a real job id) as cache hits, so the test mirrors that invariant.
     #[test]
     fn submit_workflow_marks_cache_hit_nodes_terminal_without_job() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|_py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|_py| {
             let queue = make_test_pyqueue();
             let dag = make_dag_bytes(&["a"], &[]);
             let metadata = make_step_metadata_json(&[("a", "task_a")]);
@@ -484,8 +482,8 @@ mod tests {
     /// inserting a duplicate row.
     #[test]
     fn submit_workflow_reuses_existing_definition_by_name_and_version() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|_py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|_py| {
             let queue = make_test_pyqueue();
             let dag = make_dag_bytes(&["a"], &[]);
             let metadata = make_step_metadata_json(&[("a", "task_a")]);
@@ -530,8 +528,8 @@ mod tests {
     /// `PyValueError` — callers must supply per-step task config.
     #[test]
     fn submit_workflow_rejects_missing_step_metadata() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|_py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|_py| {
             let queue = make_test_pyqueue();
             let dag = make_dag_bytes(&["a", "b"], &[("a", "b")]);
             // step_metadata only describes 'a' — 'b' is intentionally missing.
@@ -553,8 +551,8 @@ mod tests {
     /// and cancels their underlying jobs.
     #[test]
     fn cancel_workflow_run_cancels_pending_jobs_and_marks_terminal() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -585,8 +583,8 @@ mod tests {
     /// non-terminal and does not transition the run.
     #[test]
     fn finalize_run_if_terminal_is_noop_when_nodes_pending() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -604,8 +602,8 @@ mod tests {
     /// All-success terminal nodes promote the run to `Completed`.
     #[test]
     fn finalize_run_if_terminal_promotes_run_to_completed_on_all_success() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -624,8 +622,8 @@ mod tests {
     /// Any failed terminal node demotes the run to `Failed`.
     #[test]
     fn finalize_run_if_terminal_promotes_run_to_failed_on_any_failure() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -644,8 +642,8 @@ mod tests {
     /// to `CompletedWithFailures` for `on_failure="continue"` semantics.
     #[test]
     fn set_workflow_run_completed_with_failures_overrides_failed_state() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);

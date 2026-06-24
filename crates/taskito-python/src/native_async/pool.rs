@@ -17,18 +17,18 @@ use super::task_executor::execute_sync_task;
 /// sync tasks use `spawn_blocking` (bounded by a semaphore).
 pub struct NativeAsyncPool {
     num_workers: usize,
-    task_registry: Arc<PyObject>,
-    retry_filters: Arc<PyObject>,
-    async_executor: Arc<PyObject>,
+    task_registry: Arc<Py<PyAny>>,
+    retry_filters: Arc<Py<PyAny>>,
+    async_executor: Arc<Py<PyAny>>,
     shutdown: AtomicBool,
 }
 
 impl NativeAsyncPool {
     pub fn new(
         num_workers: usize,
-        task_registry: Arc<PyObject>,
-        retry_filters: Arc<PyObject>,
-        async_executor: Arc<PyObject>,
+        task_registry: Arc<Py<PyAny>>,
+        retry_filters: Arc<Py<PyAny>>,
+        async_executor: Arc<Py<PyAny>>,
     ) -> Self {
         Self {
             num_workers,
@@ -54,9 +54,9 @@ impl WorkerDispatcher for NativeAsyncPool {
                 break;
             }
 
-            let is_async = Python::with_gil(|py| {
+            let is_async = Python::attach(|py| {
                 let registry = self.task_registry.bind(py);
-                if let Ok(dict) = registry.downcast::<pyo3::types::PyDict>() {
+                if let Ok(dict) = registry.cast::<pyo3::types::PyDict>() {
                     if let Ok(Some(wrapper)) = dict.get_item(&job.task_name) {
                         return wrapper
                             .getattr("_taskito_is_async")
@@ -70,9 +70,9 @@ impl WorkerDispatcher for NativeAsyncPool {
             if is_async {
                 // Submit to the Python async executor — brief GIL hold, non-blocking
                 let executor = self.async_executor.clone();
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     let exec = executor.bind(py);
-                    let payload = PyBytes::new_bound(py, &job.payload);
+                    let payload = PyBytes::new(py, &job.payload);
                     if let Err(e) = exec.call_method1(
                         "submit_job",
                         (

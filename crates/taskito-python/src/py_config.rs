@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 
 /// Task configuration exposed to Python.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTaskConfig {
     #[pyo3(get, set)]

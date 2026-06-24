@@ -19,16 +19,16 @@ use crate::py_worker::{
 /// All GIL acquisition happens inside spawn_blocking — never in async context.
 pub struct AsyncWorkerPool {
     num_workers: usize,
-    task_registry: Arc<PyObject>,
-    retry_filters: Arc<PyObject>,
+    task_registry: Arc<Py<PyAny>>,
+    retry_filters: Arc<Py<PyAny>>,
     shutdown: AtomicBool,
 }
 
 impl AsyncWorkerPool {
     pub fn new(
         num_workers: usize,
-        task_registry: Arc<PyObject>,
-        retry_filters: Arc<PyObject>,
+        task_registry: Arc<Py<PyAny>>,
+        retry_filters: Arc<Py<PyAny>>,
     ) -> Self {
         Self {
             num_workers,
@@ -73,7 +73,7 @@ impl WorkerDispatcher for AsyncWorkerPool {
                 let start = std::time::Instant::now();
                 log::info!("[taskito] Task {task_name}[{job_id}] received");
 
-                let result = Python::with_gil(|py| -> PyResult<Option<Vec<u8>>> {
+                let result = Python::attach(|py| -> PyResult<Option<Vec<u8>>> {
                     execute_task(py, &registry, &job)
                 });
 
@@ -93,7 +93,7 @@ impl WorkerDispatcher for AsyncWorkerPool {
                     Err(e) => {
                         // Single GIL acquisition: extract the error info and the
                         // retry decision together instead of taking the GIL twice.
-                        let (error_msg, is_cancelled, should_retry) = Python::with_gil(|py| {
+                        let (error_msg, is_cancelled, should_retry) = Python::attach(|py| {
                             let msg = format_python_error(py, &e);
                             let cancelled = is_cancelled_error(py, &e);
                             let retry = if cancelled {

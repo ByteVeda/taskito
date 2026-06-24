@@ -2,7 +2,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyTuple};
+use pyo3::BoundObject;
 
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
@@ -80,7 +81,7 @@ async fn run_mesh_bridge(
 /// Called with the GIL held after `handle_result()` returns.
 fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
     let result = (|| -> PyResult<()> {
-        let context_mod = py.import_bound("taskito.context")?;
+        let context_mod = py.import("taskito.context")?;
         let queue_ref = context_mod.getattr("_queue_ref")?;
         if queue_ref.is_none() {
             return Ok(());
@@ -96,9 +97,9 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 timed_out,
             } => {
                 // Emit JOB_RETRYING event
-                let events_mod = py.import_bound("taskito.events")?;
+                let events_mod = py.import("taskito.events")?;
                 let event_type = events_mod.getattr("EventType")?.getattr("JOB_RETRYING")?;
-                let payload = PyDict::new_bound(py);
+                let payload = PyDict::new(py);
                 payload.set_item("job_id", job_id)?;
                 payload.set_item("task_name", task_name)?;
                 payload.set_item("error", error)?;
@@ -113,8 +114,9 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
 
                 // Call on_retry middleware
                 let ctx = build_lightweight_ctx(py, job_id, task_name, queue)?;
-                let error_obj =
-                    pyo3::exceptions::PyRuntimeError::new_err(error.clone()).into_py(py);
+                let error_obj: Py<PyAny> = pyo3::exceptions::PyRuntimeError::new_err(error.clone())
+                    .into_value(py)
+                    .into_any();
                 call_middleware_hook(
                     py,
                     &queue_ref,
@@ -131,9 +133,9 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 timed_out,
             } => {
                 // Emit JOB_DEAD event
-                let events_mod = py.import_bound("taskito.events")?;
+                let events_mod = py.import("taskito.events")?;
                 let event_type = events_mod.getattr("EventType")?.getattr("JOB_DEAD")?;
-                let payload = PyDict::new_bound(py);
+                let payload = PyDict::new(py);
                 payload.set_item("job_id", job_id)?;
                 payload.set_item("task_name", task_name)?;
                 payload.set_item("error", error)?;
@@ -147,8 +149,9 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
 
                 // Call on_dead_letter middleware
                 let ctx = build_lightweight_ctx(py, job_id, task_name, queue)?;
-                let error_obj =
-                    pyo3::exceptions::PyRuntimeError::new_err(error.clone()).into_py(py);
+                let error_obj: Py<PyAny> = pyo3::exceptions::PyRuntimeError::new_err(error.clone())
+                    .into_value(py)
+                    .into_any();
                 call_middleware_hook(
                     py,
                     &queue_ref,
@@ -163,9 +166,9 @@ fn dispatch_outcome(py: Python<'_>, outcome: &ResultOutcome) {
                 queue,
             } => {
                 // Emit JOB_CANCELLED event
-                let events_mod = py.import_bound("taskito.events")?;
+                let events_mod = py.import("taskito.events")?;
                 let event_type = events_mod.getattr("EventType")?.getattr("JOB_CANCELLED")?;
-                let payload = PyDict::new_bound(py);
+                let payload = PyDict::new(py);
                 payload.set_item("job_id", job_id)?;
                 payload.set_item("task_name", task_name)?;
                 queue_ref.call_method1("_emit_event", (event_type, payload))?;
@@ -194,7 +197,7 @@ fn build_lightweight_ctx<'py>(
     task_name: &str,
     queue_name: &str,
 ) -> PyResult<Bound<'py, pyo3::PyAny>> {
-    let types_mod = py.import_bound("types")?;
+    let types_mod = py.import("types")?;
     let ns = types_mod.call_method1("SimpleNamespace", ())?;
     ns.setattr("id", job_id)?;
     ns.setattr("task_name", task_name)?;
@@ -204,20 +207,23 @@ fn build_lightweight_ctx<'py>(
 }
 
 /// Call a middleware hook on all middleware in the chain for a given task.
-fn call_middleware_hook(
-    py: Python<'_>,
-    queue_ref: &Bound<'_, pyo3::PyAny>,
+fn call_middleware_hook<'py, A>(
+    py: Python<'py>,
+    queue_ref: &Bound<'py, pyo3::PyAny>,
     task_name: &str,
     hook_name: &str,
-    args: impl pyo3::IntoPy<pyo3::Py<pyo3::types::PyTuple>>,
-) -> PyResult<()> {
+    args: A,
+) -> PyResult<()>
+where
+    A: IntoPyObject<'py, Target = PyTuple>,
+    A::Error: Into<PyErr>,
+{
     let chain = queue_ref.call_method1("_get_middleware_chain", (task_name,))?;
-    let args_tuple = args.into_py(py);
-    let args_bound = args_tuple.bind(py);
-    for mw in chain.iter()? {
+    let args_tuple = args.into_pyobject(py).map_err(Into::into)?.into_bound();
+    for mw in chain.try_iter()? {
         let mw = mw?;
-        if let Err(e) = mw.call_method(hook_name, args_bound, None) {
-            let logging = py.import_bound("logging")?;
+        if let Err(e) = mw.call_method(hook_name, args_tuple.clone(), None) {
+            let logging = py.import("logging")?;
             let logger = logging.call_method1("getLogger", ("taskito",))?;
             logger.call_method1("warning", (format!("middleware {hook_name}() error: {e}"),))?;
         }
@@ -251,7 +257,7 @@ impl PyQueue {
     pub fn run_worker(
         &self,
         py: Python<'_>,
-        task_registry: PyObject,
+        task_registry: Py<PyAny>,
         task_configs: Vec<PyTaskConfig>,
         queues: Option<Vec<String>>,
         drain_timeout_secs: Option<u64>,
@@ -289,16 +295,16 @@ impl PyQueue {
         );
 
         // Build retry filters dict from the Queue's _task_retry_filters
-        let retry_filters = py.eval_bound("{}", None, None)?;
+        let retry_filters = PyDict::new(py).into_any();
         // Get the Queue's retry filters from the app module
         let app_queue_ref = {
-            let context_mod = py.import_bound("taskito.context")?;
+            let context_mod = py.import("taskito.context")?;
             context_mod.getattr("_queue_ref")?
         };
         if !app_queue_ref.is_none() {
             if let Ok(filters) = app_queue_ref.getattr("_task_retry_filters") {
-                let filters_dict: &Bound<'_, PyDict> = filters.downcast()?;
-                let out_dict: &Bound<'_, PyDict> = retry_filters.downcast()?;
+                let filters_dict: &Bound<'_, PyDict> = filters.cast()?;
+                let out_dict: &Bound<'_, PyDict> = retry_filters.cast()?;
                 for (key, val) in filters_dict.iter() {
                     out_dict.set_item(key, val)?;
                 }
@@ -414,7 +420,7 @@ impl PyQueue {
         let (result_tx, result_rx) = crossbeam_channel::bounded(self.num_workers * 2);
 
         let registry_arc = Arc::new(task_registry);
-        let filters_arc: Arc<PyObject> = Arc::new(retry_filters.into());
+        let filters_arc: Arc<Py<PyAny>> = Arc::new(retry_filters.into());
 
         let scheduler_arc = Arc::new(scheduler);
         let scheduler_for_dispatch = scheduler_arc.clone();
@@ -439,11 +445,11 @@ impl PyQueue {
         #[cfg(feature = "native-async")]
         let async_executor = {
             let sender = crate::native_async::PyResultSender::new(result_tx.clone());
-            Python::with_gil(|py| -> PyResult<Arc<PyObject>> {
+            Python::attach(|py| -> PyResult<Arc<Py<PyAny>>> {
                 let sender_obj = pyo3::Py::new(py, sender)?;
-                let mod_ = py.import_bound("taskito.async_support.executor")?;
+                let mod_ = py.import("taskito.async_support.executor")?;
                 let cls = mod_.getattr("AsyncTaskExecutor")?;
-                let context_mod = py.import_bound("taskito.context")?;
+                let context_mod = py.import("taskito.context")?;
                 let queue_ref = context_mod.getattr("_queue_ref")?;
                 let executor = cls.call1((
                     sender_obj,
@@ -452,7 +458,7 @@ impl PyQueue {
                     async_concurrency,
                 ))?;
                 executor.call_method0("start")?;
-                Ok(Arc::new(executor.into_py(py)))
+                Ok(Arc::new(executor.unbind()))
             })?
         };
 
@@ -463,7 +469,7 @@ impl PyQueue {
         // For in-process pools (native-async, classic async) `notify_cancel` is
         // a no-op — running tasks observe cancellation via the storage flag —
         // so we deliberately do NOT install the dispatcher on `self`.
-        // Installing it would keep an `Arc<PyObject>` reference (the async
+        // Installing it would keep an `Arc<Py<PyAny>>` reference (the async
         // executor / PyResultSender chain) alive on the parent thread until
         // `set_dispatcher(None)` runs after `runtime_handle.join()`, deadlocking
         // shutdown: the drain loop waits for the result channel to disconnect,
@@ -620,7 +626,7 @@ impl PyQueue {
 
         loop {
             // Release GIL for one iteration of result polling
-            let action = py.allow_threads(|| {
+            let action = py.detach(|| {
                 if flag.load(Ordering::SeqCst) {
                     return PollAction::Shutdown;
                 }
@@ -637,12 +643,12 @@ impl PyQueue {
             match action {
                 PollAction::Shutdown => {
                     // Stop the scheduler from dispatching new jobs
-                    py.allow_threads(|| shutdown.notify_one());
+                    py.detach(|| shutdown.notify_one());
 
                     // Drain remaining results with a timeout
                     let drain_start = std::time::Instant::now();
                     while drain_start.elapsed() < drain_timeout {
-                        let drain_action = py.allow_threads(|| {
+                        let drain_action = py.detach(|| {
                             match result_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                                 Ok(result) => PollAction::Result(result),
                                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
@@ -659,8 +665,8 @@ impl PyQueue {
 
                         match drain_action {
                             PollAction::Result(result) => {
-                                let outcome = py
-                                    .allow_threads(|| scheduler_for_results.handle_result(result));
+                                let outcome =
+                                    py.detach(|| scheduler_for_results.handle_result(result));
                                 match outcome {
                                     Ok(ref o) => dispatch_outcome(py, o),
                                     Err(e) => {
@@ -676,7 +682,7 @@ impl PyQueue {
                     break;
                 }
                 PollAction::Result(result) => {
-                    let outcome = py.allow_threads(|| scheduler_for_results.handle_result(result));
+                    let outcome = py.detach(|| scheduler_for_results.handle_result(result));
                     match outcome {
                         Ok(ref o) => dispatch_outcome(py, o),
                         Err(e) => log::error!("[taskito] result handling error: {e}"),
