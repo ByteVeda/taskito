@@ -26,7 +26,7 @@ impl PyQueue {
     pub fn set_workflow_run_compensating(&self, py: Python<'_>, run_id: &str) -> PyResult<()> {
         let wf = workflow_storage(self)?;
         let rid = run_id.to_string();
-        py.allow_threads(|| wf.update_workflow_run_state(&rid, WorkflowState::Compensating, None))
+        py.detach(|| wf.update_workflow_run_state(&rid, WorkflowState::Compensating, None))
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
@@ -39,7 +39,7 @@ impl PyQueue {
     ) -> PyResult<()> {
         let wf = workflow_storage(self)?;
         let rid = run_id.to_string();
-        py.allow_threads(|| {
+        py.detach(|| {
             wf.update_workflow_run_state(&rid, WorkflowState::Compensated, None)?;
             wf.set_workflow_run_completed(&rid, completed_at)?;
             Ok::<_, taskito_core::error::QueueError>(())
@@ -59,7 +59,7 @@ impl PyQueue {
     ) -> PyResult<()> {
         let wf = workflow_storage(self)?;
         let rid = run_id.to_string();
-        py.allow_threads(|| {
+        py.detach(|| {
             wf.update_workflow_run_state(
                 &rid,
                 WorkflowState::CompensationFailed,
@@ -85,7 +85,7 @@ impl PyQueue {
         let rid = run_id.to_string();
         let nn = node_name.to_string();
         let cjid = compensation_job_id.to_string();
-        py.allow_threads(|| wf.set_workflow_node_compensation_job(&rid, &nn, &cjid, started_at))
+        py.detach(|| wf.set_workflow_node_compensation_job(&rid, &nn, &cjid, started_at))
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
@@ -100,7 +100,7 @@ impl PyQueue {
         let wf = workflow_storage(self)?;
         let rid = run_id.to_string();
         let nn = node_name.to_string();
-        py.allow_threads(|| wf.set_workflow_node_compensated(&rid, &nn, completed_at))
+        py.detach(|| wf.set_workflow_node_compensated(&rid, &nn, completed_at))
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
@@ -118,7 +118,7 @@ impl PyQueue {
         let rid = run_id.to_string();
         let nn = node_name.to_string();
         let err = error.to_string();
-        py.allow_threads(|| wf.set_workflow_node_compensation_failed(&rid, &nn, &err, completed_at))
+        py.detach(|| wf.set_workflow_node_compensation_failed(&rid, &nn, &err, completed_at))
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 }

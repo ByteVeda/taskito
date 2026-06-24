@@ -50,7 +50,7 @@ impl PyQueue {
             },
         }
 
-        let outcome: CoreResult<Outcome> = py.allow_threads(|| {
+        let outcome: CoreResult<Outcome> = py.detach(|| {
             let job = match self.storage.get_job(&job_id_owned)? {
                 Some(j) => j,
                 None => return Ok(Outcome::NotFound),
@@ -155,7 +155,7 @@ impl PyQueue {
         let run_id_owned = run_id.to_string();
         let node_name_owned = node_name.to_string();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             wf_storage.update_workflow_node_status(
                 &run_id_owned,
                 &node_name_owned,
@@ -181,7 +181,7 @@ impl PyQueue {
         let run_id_owned = run_id.to_string();
         let node_name_owned = node_name.to_string();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             wf_storage.set_workflow_node_running(&run_id_owned, &node_name_owned, now_millis())
         })
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -199,7 +199,7 @@ impl PyQueue {
         let run_id_owned = run_id.to_string();
         let node_name_owned = node_name.to_string();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             wf_storage.set_workflow_node_fan_out_count(&run_id_owned, &node_name_owned, count)
         })
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -222,7 +222,7 @@ impl PyQueue {
         let node_name_owned = node_name.to_string();
         let error_owned = error.to_string();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             wf_storage.set_workflow_node_error(&run_id_owned, &node_name_owned, &error_owned)
         })
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -243,7 +243,7 @@ impl PyQueue {
         let run_id_owned = run_id.to_string();
         let node_name_owned = node_name.to_string();
 
-        let result: CoreResult<()> = py.allow_threads(|| {
+        let result: CoreResult<()> = py.detach(|| {
             let node = wf_storage.get_workflow_node(&run_id_owned, &node_name_owned)?;
             if let Some(node) = node {
                 if let Some(job_id) = &node.job_id {
@@ -280,8 +280,8 @@ mod tests {
     /// leaves the run unchanged.
     #[test]
     fn mark_workflow_node_result_returns_none_for_non_workflow_job() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let job_id = enqueue_test_job(&queue.storage, "standalone_task");
 
@@ -295,8 +295,8 @@ mod tests {
     /// Missing job id surfaces as a `PyValueError` rather than a silent no-op.
     #[test]
     fn mark_workflow_node_result_errors_on_unknown_job_id() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let result =
                 queue.mark_workflow_node_result(py, "no-such-job", true, None, false, None);
@@ -312,8 +312,8 @@ mod tests {
     /// `Completed` and reports the final state back to the caller.
     #[test]
     fn mark_workflow_node_result_finalizes_run_on_last_success() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -343,8 +343,8 @@ mod tests {
     /// status are skipped and the run finalizes as `Failed`.
     #[test]
     fn mark_workflow_node_result_cascades_failure_to_pending_siblings() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -391,8 +391,8 @@ mod tests {
     /// alone — the tracker handles the cascade for conditional/continue runs.
     #[test]
     fn mark_workflow_node_result_skips_cascade_when_requested() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -431,8 +431,8 @@ mod tests {
     /// incremental layer can resolve future cache hits.
     #[test]
     fn mark_workflow_node_result_persists_result_hash_on_success() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -466,8 +466,8 @@ mod tests {
     /// until externally resolved.
     #[test]
     fn set_workflow_node_waiting_approval_transitions_node() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -488,8 +488,8 @@ mod tests {
     /// non-null `started_at`.
     #[test]
     fn set_workflow_node_running_stamps_started_at() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -509,8 +509,8 @@ mod tests {
     /// the parent to `Running`, gating downstream finalization on the count.
     #[test]
     fn set_workflow_node_fan_out_count_records_count_and_promotes() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -530,8 +530,8 @@ mod tests {
     /// the status to `Failed` without touching siblings.
     #[test]
     fn fail_workflow_node_marks_failed_with_error() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -556,8 +556,8 @@ mod tests {
     /// node `Skipped`.
     #[test]
     fn skip_workflow_node_cancels_job_and_marks_skipped() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -585,8 +585,8 @@ mod tests {
     /// tracker may race the storage and we accept that.
     #[test]
     fn skip_workflow_node_is_noop_for_unknown_node() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
