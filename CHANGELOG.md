@@ -473,6 +473,9 @@ migration steps, rolling-upgrade notes, and the downgrade floor.
 
 ---
 
+<details>
+<summary>Older releases (0.1.0 – 0.10.0)</summary>
+
 ## 0.10.0
 
 ### Features
@@ -585,8 +588,6 @@ migration steps, rolling-upgrade notes, and the downgrade floor.
 
 ---
 
-<details>
-<summary>Older releases (0.1.0 – 0.5.0)</summary>
 
 ## 0.5.0
 
