@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import {
   JobCancelledError,
   JobFailedError,
@@ -52,7 +54,8 @@ import { WorkflowManager } from "./workflows";
 
 /** Construction options for a {@link Queue}. */
 export interface QueueOptions {
-  /** SQLite file path — shorthand for `{ backend: "sqlite", dsn: path }`. */
+  /** SQLite file path — shorthand for `{ backend: "sqlite", dsn: path }`.
+   *  Defaults to `.taskito/taskito.db`; missing parent directories are created. */
   dbPath?: string;
   /** `"sqlite"` (default), `"postgres"`, or `"redis"`. */
   backend?: "sqlite" | "postgres" | "redis";
@@ -87,7 +90,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Built lazily — its constructor throws on addons lacking the `workflows` feature. */
   private workflowManager?: WorkflowManager;
 
-  constructor(options: QueueOptions) {
+  constructor(options: QueueOptions = {}) {
     this.native = JsQueue.open(toOpenOptions(options));
     this.serializer = options.serializer ?? new JsonSerializer();
     this.webhookManager = new WebhookManager(this.native, this.emitter);
@@ -510,18 +513,46 @@ function toNativeEnqueueOptions(options: EnqueueOptions): NativeEnqueueOptions {
   return notes === undefined ? rest : { ...rest, notes: encodeNotes(notes) };
 }
 
+/** Default on-disk SQLite location — mirrors the Python SDK's `.taskito/taskito.db`. */
+const DEFAULT_SQLITE_DB = ".taskito/taskito.db";
+
 /** Resolve a {@link QueueOptions} into the native open options. */
 function toOpenOptions(options: QueueOptions): OpenOptions {
-  const dsn = options.dsn ?? options.dbPath;
+  const backend = options.backend ?? "sqlite";
+  if (backend === "sqlite") {
+    // Zero-config default, like Python: an on-disk DB under `.taskito/`.
+    const dsn = options.dsn ?? options.dbPath ?? DEFAULT_SQLITE_DB;
+    ensureSqliteParentDir(dsn);
+    return { backend, dsn, poolSize: options.poolSize, namespace: options.namespace };
+  }
+  // Postgres/Redis have no sensible default endpoint — require an explicit dsn.
+  // The Postgres `schema` (default `"taskito"`, resolved in the addon) and the
+  // Redis `prefix` give each backend its own isolated namespace.
+  const dsn = options.dsn;
   if (!dsn) {
-    throw new QueueError("Queue requires `dbPath` (SQLite) or `dsn`");
+    throw new QueueError(`Queue backend "${backend}" requires a \`dsn\` connection string`);
   }
   return {
-    backend: options.backend ?? (options.dbPath ? "sqlite" : undefined),
+    backend,
     dsn,
     poolSize: options.poolSize,
     schema: options.schema,
     prefix: options.prefix,
     namespace: options.namespace,
   };
+}
+
+/**
+ * Create the parent directory of a SQLite file path, as the Python SDK does —
+ * SQLite won't create missing directories itself. In-memory databases have no
+ * parent and are skipped.
+ */
+function ensureSqliteParentDir(dsn: string): void {
+  if (dsn === ":memory:" || dsn.startsWith("file::memory:")) {
+    return;
+  }
+  const dir = dirname(dsn);
+  if (dir && dir !== ".") {
+    mkdirSync(dir, { recursive: true });
+  }
 }
