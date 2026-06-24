@@ -26,25 +26,10 @@ Each SDK is self-contained — see its README for install, quickstart, and the f
 
 ## Architecture
 
-One Rust core, one thin shell per language:
-
-```
-crates/              Rust core (storage, scheduler, worker traits) — no language bindings
-  taskito-core/      Storage trait + backends, scheduler, WorkerDispatcher trait
-  taskito-workflows/ DAG workflow engine (chain/group/chord, gates, saga)
-  taskito-mesh/      Decentralized work-stealing overlay
-  taskito-python/    PyO3 binding shell
-  taskito-node/      napi-rs binding shell
-sdks/                Language SDKs (thin shells over the core)
-  python/            pip install taskito          → PyPI
-  node/              npm install @byteveda/taskito → npm
-dashboard/           React monitoring UI (served by every SDK)
-docs/                Documentation site
-```
-
-The DB is the source of truth; the GIL/event loop is held only during task execution.
-`WorkerDispatcher` in `crates/taskito-core` is binding-free, so new language shells implement
-one trait against [`BINDING_CONTRACT.md`](crates/taskito-core/BINDING_CONTRACT.md).
+One Rust core (`crates/`), one thin SDK shell per language (`sdks/`). The DB is the source of
+truth; the GIL/event loop is held only during task execution. `WorkerDispatcher` in
+`taskito-core` is binding-free, so new language shells implement one trait against
+[`BINDING_CONTRACT.md`](crates/taskito-core/BINDING_CONTRACT.md).
 
 ## Features
 
