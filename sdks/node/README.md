@@ -47,10 +47,16 @@ worker.stop();
 ## Backends
 
 ```ts
-new Queue({ dbPath: "taskito.db" });                      // SQLite (default)
+new Queue();                                              // SQLite at .taskito/taskito.db (default)
+new Queue({ dbPath: "data/taskito.db" });                 // SQLite at a custom path (dirs created)
 new Queue({ backend: "postgres", dsn: process.env.PG_URL, schema: "taskito" });
 new Queue({ backend: "redis", dsn: "redis://localhost", prefix: "taskito" });
 ```
+
+SQLite defaults to `.taskito/taskito.db` and creates the parent directory
+automatically. Postgres isolates its tables in the `schema` (default
+`"taskito"`); Redis isolates its keys under `prefix`. Override either to share
+or separate state.
 
 ## Enqueue options
 
