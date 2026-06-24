@@ -31,32 +31,32 @@ new shell implements one trait against
 [`BINDING_CONTRACT.md`](crates/taskito-core/BINDING_CONTRACT.md).
 
 ```text
-┌─────────────────────────────────┐   ┌─────────────────────────────────┐
-│ PYTHON SDK   sdks/python/taskito/│   │ NODE SDK           sdks/node/   │
-│  Queue (app.py) = 15 mixins ·    │   │  Queue/Worker · CLI · dashboard │
-│  async_support · serializers     │   │  events/middleware · webhooks · │
-│ FEATURE SUBSYSTEMS (pure-Python):│   │  resources · serializers        │
-│  interception resources proxies  │   │  (Node-native equivalents, not  │
-│  workflows contrib batching …    │   │   1:1 ports of Python idioms)   │
-└────────────────┬─────────────────┘   └────────────────┬────────────────┘
-                 │ PyO3 (taskito._taskito)               │ napi-rs (.node addon)
-┌────────────────┴─────────────────┐   ┌────────────────┴────────────────┐
-│ crates/taskito-python/  (PyO3)   │   │ crates/taskito-node/ (napi-rs)  │
-│  py_queue/ · async_worker ·      │   │  JsQueue/JsWorker · dispatcher ·│
-│  prefork bridge                  │   │  convert/                       │
-└────────────────┬─────────────────┘   └────────────────┬────────────────┘
-                 └─────────────┬──── both impl WorkerDispatcher ────┘
-┌───────────────────────────────┴────────────────────────────────────────────┐
-│ RUST CORE                      crates/taskito-core/   (no host language)     │
-│   scheduler/ (poll · dispatch · retry · reap · wake)                         │
-│   worker.rs (WorkerDispatcher trait) · resilience/ · periodic.rs             │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ STORAGE                        crates/taskito-core/src/storage/              │
-│   Storage trait (traits.rs) ──delegate!──▶ StorageBackend enum               │
-│     ├─ sqlite/        ┐ shared logic in diesel_common/ macros                │
-│     ├─ postgres/      ┘                                                      │
-│     └─ redis_backend/   (own impl — no Diesel)                               │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────┐   ┌───────────────────────────────────┐
+│ PYTHON SDK    sdks/python/taskito/│   │ NODE SDK             sdks/node/   │
+│ Queue (app.py) = 15 mixins ·      │   │ Queue/Worker · CLI · dashboard    │
+│ async_support · serializers       │   │ events/middleware · webhooks      │
+│ FEATURE SUBSYSTEMS (pure-Python): │   │ resources · serializers           │
+│ interception resources proxies    │   │ (Node-native equivalents, not     │
+│ workflows contrib batching …      │   │  1:1 ports of Python idioms)      │
+└─────────────────┬─────────────────┘   └─────────────────┬─────────────────┘
+                  │ PyO3 (taskito._taskito)               │ napi-rs (.node addon)
+┌───────────────────────────────────┐   ┌───────────────────────────────────┐
+│ crates/taskito-python/   (PyO3)   │   │ crates/taskito-node/   (napi-rs)  │
+│ py_queue/ · async_worker ·        │   │ JsQueue/JsWorker · dispatcher ·   │
+│ prefork bridge                    │   │ convert/                          │
+└─────────────────┬─────────────────┘   └─────────────────┬─────────────────┘
+                  └───both implement ─┬─ WorkerDispatcher─┘
+┌─────────────────────────────────────┴─────────────────────────────────────┐
+│ RUST CORE        crates/taskito-core/   (no host language)                │
+│ scheduler/ (poll · dispatch · retry · reap · wake)                        │
+│ worker.rs (WorkerDispatcher trait) · resilience/ · periodic.rs            │
+├───────────────────────────────────────────────────────────────────────────┤
+│ STORAGE          crates/taskito-core/src/storage/                         │
+│ Storage trait (traits.rs) ──delegate!──▶ StorageBackend enum              │
+│   ├─ sqlite/      ┐ shared logic in diesel_common/ macros                 │
+│   ├─ postgres/    ┘                                                       │
+│   └─ redis_backend/   (own impl — no Diesel)                              │
+└───────────────────────────────────────────────────────────────────────────┘
 
   WORKFLOWS    crates/taskito-workflows/ — separate crate, own schema & stores
                (SQLite · Postgres · Redis), surfaced per shell (Python:
