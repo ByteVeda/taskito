@@ -22,8 +22,8 @@ impl WorkerPool {
         num_workers: usize,
         job_rx: Receiver<Job>,
         result_tx: Sender<JobResult>,
-        task_registry: Arc<PyObject>,
-        retry_filters: Arc<PyObject>,
+        task_registry: Arc<Py<PyAny>>,
+        retry_filters: Arc<Py<PyAny>>,
     ) -> Self {
         let mut handles = Vec::with_capacity(num_workers);
 
@@ -55,8 +55,8 @@ fn worker_loop(
     _worker_id: usize,
     job_rx: Receiver<Job>,
     result_tx: Sender<JobResult>,
-    task_registry: Arc<PyObject>,
-    retry_filters: Arc<PyObject>,
+    task_registry: Arc<Py<PyAny>>,
+    retry_filters: Arc<Py<PyAny>>,
 ) {
     while let Ok(job) = job_rx.recv() {
         let job_id = job.id.clone();
@@ -67,7 +67,7 @@ fn worker_loop(
         let start = std::time::Instant::now();
         log::info!("[taskito] Task {task_name}[{job_id}] received");
 
-        let result = Python::with_gil(|py| -> PyResult<Option<Vec<u8>>> {
+        let result = Python::attach(|py| -> PyResult<Option<Vec<u8>>> {
             execute_task(py, &task_registry, &job)
         });
 
@@ -87,7 +87,7 @@ fn worker_loop(
             Err(e) => {
                 // Single GIL acquisition: extract the error info and the retry
                 // decision together instead of taking the GIL twice.
-                let (error_msg, is_cancelled, should_retry) = Python::with_gil(|py| {
+                let (error_msg, is_cancelled, should_retry) = Python::attach(|py| {
                     let msg = format_python_error(py, &e);
                     let cancelled = is_cancelled_error(py, &e);
                     let retry = if cancelled {
@@ -129,14 +129,14 @@ fn worker_loop(
 
 pub fn execute_task(
     py: Python<'_>,
-    task_registry: &PyObject,
+    task_registry: &Py<PyAny>,
     job: &Job,
 ) -> PyResult<Option<Vec<u8>>> {
-    let cloudpickle = py.import_bound("cloudpickle")?;
+    let cloudpickle = py.import("cloudpickle")?;
     let registry = task_registry.bind(py);
 
     // Look up the task function
-    let registry_dict: &Bound<'_, PyDict> = registry.downcast()?;
+    let registry_dict: &Bound<'_, PyDict> = registry.cast()?;
     let task_fn = registry_dict
         .get_item(&job.task_name)?
         .or_else(|| {
@@ -163,7 +163,7 @@ pub fn execute_task(
         })?;
 
     // Set job context before execution
-    let context_mod = py.import_bound("taskito.context")?;
+    let context_mod = py.import("taskito.context")?;
     context_mod.call_method1(
         "_set_context",
         (&job.id, &job.task_name, job.retry_count, &job.queue),
@@ -172,14 +172,14 @@ pub fn execute_task(
     // Wrap deserialization + call so _clear_context is always called
     let result = (|| -> PyResult<Bound<'_, pyo3::PyAny>> {
         // Deserialize arguments using per-task or queue-level serializer
-        let payload_bytes = PyBytes::new_bound(py, &job.payload);
+        let payload_bytes = PyBytes::new(py, &job.payload);
         let queue_ref = context_mod.getattr("_queue_ref")?;
         let unpickled = if !queue_ref.is_none() {
             queue_ref.call_method1("_deserialize_payload", (&job.task_name, &payload_bytes))?
         } else {
             cloudpickle.call_method1("loads", (&payload_bytes,))?
         };
-        let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
+        let args_tuple: Bound<'_, PyTuple> = unpickled.cast_into()?;
 
         if args_tuple.len() != 2 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -193,11 +193,11 @@ pub fn execute_task(
 
         // Call the task function
         if kwargs.is_none() {
-            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            let args_tuple_inner: Bound<'_, PyTuple> = args.cast_into()?;
             task_fn.call(args_tuple_inner, None)
         } else {
-            let kwargs_dict: Bound<'_, PyDict> = kwargs.downcast_into()?;
-            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            let kwargs_dict: Bound<'_, PyDict> = kwargs.cast_into()?;
+            let args_tuple_inner: Bound<'_, PyTuple> = args.cast_into()?;
             task_fn.call(args_tuple_inner, Some(&kwargs_dict))
         }
     })();
@@ -219,14 +219,10 @@ pub fn execute_task(
 
 pub fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
     // Try to get a full traceback
-    if let Ok(tb_mod) = py.import_bound("traceback") {
+    if let Ok(tb_mod) = py.import("traceback") {
         if let Ok(formatted) = tb_mod.call_method1(
             "format_exception",
-            (
-                e.get_type_bound(py),
-                e.value_bound(py),
-                e.traceback_bound(py),
-            ),
+            (e.get_type(py), e.value(py), e.traceback(py)),
         ) {
             if let Ok(lines) = formatted.extract::<Vec<String>>() {
                 return lines.join("");
@@ -238,12 +234,9 @@ pub fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
 
 /// Check if the Python exception is a TaskCancelledError.
 pub fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
-    if let Ok(exceptions_mod) = py.import_bound("taskito.exceptions") {
+    if let Ok(exceptions_mod) = py.import("taskito.exceptions") {
         if let Ok(cancelled_cls) = exceptions_mod.getattr("TaskCancelledError") {
-            return e
-                .get_type_bound(py)
-                .is_subclass(&cancelled_cls)
-                .unwrap_or(false);
+            return e.get_type(py).is_subclass(&cancelled_cls).unwrap_or(false);
         }
     }
     false
@@ -251,7 +244,7 @@ pub fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
 
 /// Get the fully-qualified class name of a Python exception.
 pub fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
-    let type_obj = e.get_type_bound(py);
+    let type_obj = e.get_type(py);
     let module = type_obj
         .getattr("__module__")
         .and_then(|m| m.extract::<String>())
@@ -272,13 +265,13 @@ pub fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
 /// Returns true by default (retry everything unless filtered).
 pub fn check_should_retry(
     py: Python<'_>,
-    retry_filters: &PyObject,
+    retry_filters: &Py<PyAny>,
     task_name: &str,
     _exc_class_name: &str,
     exc: &PyErr,
 ) -> bool {
     let filters = retry_filters.bind(py);
-    let filters_dict: &Bound<'_, PyDict> = match filters.downcast() {
+    let filters_dict: &Bound<'_, PyDict> = match filters.cast() {
         Ok(d) => d,
         Err(_) => return true,
     };
@@ -288,16 +281,16 @@ pub fn check_should_retry(
         _ => return true, // No filters for this task
     };
 
-    let task_dict: &Bound<'_, PyDict> = match task_filters.downcast() {
+    let task_dict: &Bound<'_, PyDict> = match task_filters.cast() {
         Ok(d) => d,
         Err(_) => return true,
     };
 
     // Check dont_retry_on first
     if let Ok(Some(dont_retry)) = task_dict.get_item("dont_retry_on") {
-        if let Ok(list) = dont_retry.downcast::<PyList>() {
+        if let Ok(list) = dont_retry.cast::<PyList>() {
             for cls in list.iter() {
-                if exc.get_type_bound(py).is_subclass(&cls).unwrap_or(false) {
+                if exc.get_type(py).is_subclass(&cls).unwrap_or(false) {
                     return false;
                 }
             }
@@ -306,10 +299,10 @@ pub fn check_should_retry(
 
     // Check retry_on (if set, only retry for these exceptions)
     if let Ok(Some(retry_on)) = task_dict.get_item("retry_on") {
-        if let Ok(list) = retry_on.downcast::<PyList>() {
+        if let Ok(list) = retry_on.cast::<PyList>() {
             if !list.is_empty() {
                 for cls in list.iter() {
-                    if exc.get_type_bound(py).is_subclass(&cls).unwrap_or(false) {
+                    if exc.get_type(py).is_subclass(&cls).unwrap_or(false) {
                         return true;
                     }
                 }

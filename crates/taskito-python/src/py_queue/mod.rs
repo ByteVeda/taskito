@@ -116,7 +116,7 @@ impl PyQueue {
         // `log::*` records from worker threads. With the pyo3-log bridge
         // active, those records need the GIL to deliver to Python — so we
         // must release it here to avoid a deadlock.
-        let storage = py.allow_threads(|| -> PyResult<StorageBackend> {
+        let storage = py.detach(|| -> PyResult<StorageBackend> {
             match backend {
                 "sqlite" => {
                     let s = SqliteStorage::new(db_path)
@@ -479,14 +479,14 @@ impl PyQueue {
     }
 
     /// Get queue statistics.
-    pub fn stats(&self) -> PyResult<PyObject> {
+    pub fn stats(&self) -> PyResult<Py<PyAny>> {
         let stats = self
             .storage
             .stats()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
             dict.set_item("pending", stats.pending)?;
             dict.set_item("running", stats.running)?;
             dict.set_item("completed", stats.completed)?;
@@ -498,14 +498,14 @@ impl PyQueue {
     }
 
     /// Get queue statistics for a specific queue.
-    pub fn stats_by_queue(&self, queue_name: &str) -> PyResult<PyObject> {
+    pub fn stats_by_queue(&self, queue_name: &str) -> PyResult<Py<PyAny>> {
         let stats = self
             .storage
             .stats_by_queue(queue_name)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
             dict.set_item("pending", stats.pending)?;
             dict.set_item("running", stats.running)?;
             dict.set_item("completed", stats.completed)?;
@@ -517,16 +517,16 @@ impl PyQueue {
     }
 
     /// Get queue statistics broken down by queue name.
-    pub fn stats_all_queues(&self) -> PyResult<PyObject> {
+    pub fn stats_all_queues(&self) -> PyResult<Py<PyAny>> {
         let all = self
             .storage
             .stats_all_queues()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        Python::with_gil(|py| {
-            let outer = PyDict::new_bound(py);
+        Python::attach(|py| {
+            let outer = PyDict::new(py);
             for (queue, stats) in all {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 dict.set_item("pending", stats.pending)?;
                 dict.set_item("running", stats.running)?;
                 dict.set_item("completed", stats.completed)?;

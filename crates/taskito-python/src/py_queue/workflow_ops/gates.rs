@@ -28,7 +28,7 @@ impl PyQueue {
         let run_id_owned = run_id.to_string();
         let node_name_owned = node_name.to_string();
 
-        let result: CoreResult<()> = py.allow_threads(|| {
+        let result: CoreResult<()> = py.detach(|| {
             let now = now_millis();
             if approved {
                 wf_storage.set_workflow_node_completed(

@@ -60,7 +60,7 @@ impl PyQueue {
         let task_name_owned = task_name.to_string();
         let queue_owned = queue.to_string();
 
-        let result: CoreResult<Vec<String>> = py.allow_threads(|| {
+        let result: CoreResult<Vec<String>> = py.detach(|| {
             let now = now_millis();
             let count = child_names.len() as i32;
 
@@ -153,7 +153,7 @@ impl PyQueue {
         let task_name_owned = task_name.to_string();
         let queue_owned = queue.to_string();
 
-        let result: CoreResult<String> = py.allow_threads(|| {
+        let result: CoreResult<String> = py.detach(|| {
             let now = now_millis();
             let new_job = NewJob {
                 queue: queue_owned,
@@ -196,7 +196,7 @@ impl PyQueue {
         let run_id_owned = run_id.to_string();
         let parent_name_owned = parent_node_name.to_string();
 
-        let result: CoreResult<Option<(bool, Vec<String>)>> = py.allow_threads(|| {
+        let result: CoreResult<Option<(bool, Vec<String>)>> = py.detach(|| {
             let prefix = format!("{parent_name_owned}[");
             let children = wf_storage.get_workflow_nodes_by_prefix(&run_id_owned, &prefix)?;
 
@@ -241,8 +241,8 @@ mod tests {
     /// silent partial expansion.
     #[test]
     fn expand_fan_out_rejects_mismatched_lengths() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -272,8 +272,8 @@ mod tests {
     /// nothing to wait on. No child jobs are enqueued.
     #[test]
     fn expand_fan_out_completes_parent_immediately_on_empty_children() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -306,8 +306,8 @@ mod tests {
     /// parent's `fan_out_count`, and returns the child job ids in order.
     #[test]
     fn expand_fan_out_creates_children_and_records_count() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -353,8 +353,8 @@ mod tests {
     /// `create_deferred_job` enqueues a job and binds it to the named node.
     #[test]
     fn create_deferred_job_enqueues_and_attaches_to_node() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -391,8 +391,8 @@ mod tests {
     /// non-terminal.
     #[test]
     fn check_fan_out_completion_returns_none_while_children_running() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -417,8 +417,8 @@ mod tests {
     /// and return `(true, child_job_ids)`.
     #[test]
     fn check_fan_out_completion_finalizes_parent_on_all_success() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -464,8 +464,8 @@ mod tests {
     /// `(false, child_job_ids)`.
     #[test]
     fn check_fan_out_completion_finalizes_parent_as_failed_on_any_failure() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);
@@ -501,8 +501,8 @@ mod tests {
     /// parent on a zero-child set.
     #[test]
     fn check_fan_out_completion_is_noop_when_no_children_exist() {
-        pyo3::prepare_freethreaded_python();
-        pyo3::Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
             let queue = make_test_pyqueue();
             let wf = wf_storage(&queue);
             let run_id = seed_run(wf);

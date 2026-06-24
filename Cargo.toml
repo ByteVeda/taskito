@@ -19,6 +19,6 @@ chrono-tz = "0.10"
 log = "0.4"
 redis = { version = "1.2", features = ["script"] }
 openssl-sys = { version = "0.9", features = ["vendored"] }
-pyo3 = { version = "0.22", features = ["multiple-pymethods"] }
+pyo3 = { version = "0.29", features = ["multiple-pymethods"] }
 async-trait = "0.1"
 dagron-core = { git = "https://github.com/ByteVeda/dagron.git", rev = "d1b61aaf2ed2d516b9a239f089a55b143cb05f65" }

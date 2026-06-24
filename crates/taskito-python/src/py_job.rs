@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use taskito_core::job::{Job, JobStatus};
 
 /// Python-visible handle to a queued job.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyJob {
     #[pyo3(get)]

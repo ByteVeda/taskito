@@ -128,7 +128,7 @@ impl PyWorkflowBuilder {
 }
 
 /// Opaque handle returned from `PyQueue::submit_workflow`.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyWorkflowHandle {
     #[pyo3(get)]
@@ -150,7 +150,7 @@ impl PyWorkflowHandle {
 }
 
 /// Snapshot of a workflow run's state and per-node status.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyWorkflowRunStatus {
     #[pyo3(get)]
@@ -172,9 +172,9 @@ impl PyWorkflowRunStatus {
     ///
     /// Each value is a dict with keys `status`, `job_id`, and `error`.
     fn node_statuses<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let out = PyDict::new_bound(py);
+        let out = PyDict::new(py);
         for (name, status, job_id, error) in &self.nodes {
-            let entry = PyDict::new_bound(py);
+            let entry = PyDict::new(py);
             entry.set_item("status", status)?;
             entry.set_item("job_id", job_id.clone())?;
             entry.set_item("error", error.clone())?;
@@ -198,7 +198,7 @@ impl PyWorkflowRunStatus {
 /// Mirrors the core ``WorkflowRun`` struct but uses ``String`` for the
 /// state (so the wire shape stays stable when the enum gets new variants)
 /// and exposes only the fields the dashboard actually renders.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyWorkflowRun {
     #[pyo3(get)]
@@ -251,7 +251,7 @@ impl PyWorkflowRun {
 ///
 /// Includes compensation columns (added in 0.13.0) so the dashboard can show
 /// "this node was compensated at ts, comp job xxx" without an extra query.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyWorkflowRunNode {
     #[pyo3(get)]

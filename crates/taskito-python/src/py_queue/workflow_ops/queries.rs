@@ -21,7 +21,7 @@ impl PyQueue {
         let wf_storage = workflow_storage(self)?;
         let run_id_owned = run_id.to_string();
 
-        let result: CoreResult<Option<PyWorkflowRunStatus>> = py.allow_threads(|| {
+        let result: CoreResult<Option<PyWorkflowRunStatus>> = py.detach(|| {
             let run = match wf_storage.get_workflow_run(&run_id_owned)? {
                 Some(r) => r,
                 None => return Ok(None),
@@ -64,7 +64,7 @@ impl PyQueue {
         let wf_storage = workflow_storage(self)?;
         let base_run_id_owned = base_run_id.to_string();
 
-        let result: CoreResult<Vec<(String, String, Option<String>)>> = py.allow_threads(|| {
+        let result: CoreResult<Vec<(String, String, Option<String>)>> = py.detach(|| {
             let nodes = wf_storage.get_workflow_nodes(&base_run_id_owned)?;
             Ok(nodes
                 .into_iter()
@@ -101,7 +101,7 @@ impl PyQueue {
             None => None,
         };
 
-        let result: CoreResult<Vec<PyWorkflowRun>> = py.allow_threads(|| {
+        let result: CoreResult<Vec<PyWorkflowRun>> = py.detach(|| {
             let runs = wf_storage.list_workflow_runs(
                 definition_owned.as_deref(),
                 state_parsed,
@@ -127,16 +127,15 @@ impl PyQueue {
         let wf_storage = workflow_storage(self)?;
         let run_id_owned = run_id.to_string();
 
-        let result: CoreResult<Option<(PyWorkflowRun, Vec<PyWorkflowRunNode>)>> =
-            py.allow_threads(|| {
-                let run = match wf_storage.get_workflow_run(&run_id_owned)? {
-                    Some(r) => r,
-                    None => return Ok(None),
-                };
-                let nodes = wf_storage.get_workflow_nodes(&run_id_owned)?;
-                let node_rows = nodes.into_iter().map(PyWorkflowRunNode::from).collect();
-                Ok(Some((PyWorkflowRun::from(run), node_rows)))
-            });
+        let result: CoreResult<Option<(PyWorkflowRun, Vec<PyWorkflowRunNode>)>> = py.detach(|| {
+            let run = match wf_storage.get_workflow_run(&run_id_owned)? {
+                Some(r) => r,
+                None => return Ok(None),
+            };
+            let nodes = wf_storage.get_workflow_nodes(&run_id_owned)?;
+            let node_rows = nodes.into_iter().map(PyWorkflowRunNode::from).collect();
+            Ok(Some((PyWorkflowRun::from(run), node_rows)))
+        });
 
         result
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
@@ -152,7 +151,7 @@ impl PyQueue {
         let wf_storage = workflow_storage(self)?;
         let parent_owned = parent_run_id.to_string();
 
-        let result: CoreResult<Vec<PyWorkflowRun>> = py.allow_threads(|| {
+        let result: CoreResult<Vec<PyWorkflowRun>> = py.detach(|| {
             let runs = wf_storage.get_child_workflow_runs(&parent_owned)?;
             Ok(runs.into_iter().map(PyWorkflowRun::from).collect())
         });
@@ -173,7 +172,7 @@ impl PyQueue {
             Found(Vec<u8>),
         }
 
-        let outcome: CoreResult<Outcome> = py.allow_threads(|| {
+        let outcome: CoreResult<Outcome> = py.detach(|| {
             let run = match wf_storage.get_workflow_run(&run_id_owned)? {
                 Some(r) => r,
                 None => return Ok(Outcome::RunMissing),

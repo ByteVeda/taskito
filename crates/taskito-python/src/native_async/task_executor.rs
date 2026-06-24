@@ -11,8 +11,8 @@ use taskito_core::scheduler::JobResult;
 /// wrapper from the registry, serializes the result, and sends a `JobResult`
 /// to the scheduler via `result_tx`.
 pub fn execute_sync_task(
-    task_registry: &PyObject,
-    retry_filters: &PyObject,
+    task_registry: &Py<PyAny>,
+    retry_filters: &Py<PyAny>,
     job: &Job,
     result_tx: &Sender<JobResult>,
 ) {
@@ -25,7 +25,7 @@ pub fn execute_sync_task(
     log::info!("[taskito] Task {task_name}[{job_id}] received");
 
     let result =
-        Python::with_gil(|py| -> PyResult<Option<Vec<u8>>> { run_task(py, task_registry, job) });
+        Python::attach(|py| -> PyResult<Option<Vec<u8>>> { run_task(py, task_registry, job) });
 
     let wall_time_ns: i64 = start.elapsed().as_nanos().try_into().unwrap_or(i64::MAX);
 
@@ -41,7 +41,7 @@ pub fn execute_sync_task(
             }
         }
         Err(e) => {
-            let (error_msg, is_cancelled, exc_class_name) = Python::with_gil(|py| {
+            let (error_msg, is_cancelled, exc_class_name) = Python::attach(|py| {
                 let msg = format_python_error(py, &e);
                 let cancelled = is_cancelled_error(py, &e);
                 let class_name = get_exception_class_name(py, &e);
@@ -55,7 +55,7 @@ pub fn execute_sync_task(
                     wall_time_ns,
                 }
             } else {
-                let should_retry = Python::with_gil(|py| {
+                let should_retry = Python::attach(|py| {
                     check_should_retry(py, retry_filters, &task_name, &exc_class_name, &e)
                 });
 
@@ -79,11 +79,11 @@ pub fn execute_sync_task(
 
 /// Inner task execution: deserialize payload, look up and call the task function,
 /// serialize the return value.
-fn run_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Option<Vec<u8>>> {
-    let cloudpickle = py.import_bound("cloudpickle")?;
+fn run_task(py: Python<'_>, task_registry: &Py<PyAny>, job: &Job) -> PyResult<Option<Vec<u8>>> {
+    let cloudpickle = py.import("cloudpickle")?;
     let registry = task_registry.bind(py);
 
-    let registry_dict: &Bound<'_, PyDict> = registry.downcast()?;
+    let registry_dict: &Bound<'_, PyDict> = registry.cast()?;
     let task_fn = registry_dict
         .get_item(&job.task_name)?
         .or_else(|| {
@@ -109,7 +109,7 @@ fn run_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Opt
         })?;
 
     // Set job context before execution
-    let context_mod = py.import_bound("taskito.context")?;
+    let context_mod = py.import("taskito.context")?;
     context_mod.call_method1(
         "_set_context",
         (&job.id, &job.task_name, job.retry_count, &job.queue),
@@ -117,14 +117,14 @@ fn run_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Opt
 
     let result = (|| -> PyResult<Bound<'_, pyo3::PyAny>> {
         // Deserialize arguments using per-task or queue-level serializer
-        let payload_bytes = PyBytes::new_bound(py, &job.payload);
+        let payload_bytes = PyBytes::new(py, &job.payload);
         let queue_ref = context_mod.getattr("_queue_ref")?;
         let unpickled = if !queue_ref.is_none() {
             queue_ref.call_method1("_deserialize_payload", (&job.task_name, &payload_bytes))?
         } else {
             cloudpickle.call_method1("loads", (&payload_bytes,))?
         };
-        let args_tuple: Bound<'_, PyTuple> = unpickled.downcast_into()?;
+        let args_tuple: Bound<'_, PyTuple> = unpickled.cast_into()?;
 
         if args_tuple.len() != 2 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -137,11 +137,11 @@ fn run_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Opt
         let kwargs = args_tuple.get_item(1)?;
 
         if kwargs.is_none() {
-            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            let args_tuple_inner: Bound<'_, PyTuple> = args.cast_into()?;
             task_fn.call(args_tuple_inner, None)
         } else {
-            let kwargs_dict: Bound<'_, PyDict> = kwargs.downcast_into()?;
-            let args_tuple_inner: Bound<'_, PyTuple> = args.downcast_into()?;
+            let kwargs_dict: Bound<'_, PyDict> = kwargs.cast_into()?;
+            let args_tuple_inner: Bound<'_, PyTuple> = args.cast_into()?;
             task_fn.call(args_tuple_inner, Some(&kwargs_dict))
         }
     })();
@@ -159,14 +159,10 @@ fn run_task(py: Python<'_>, task_registry: &PyObject, job: &Job) -> PyResult<Opt
 }
 
 fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
-    if let Ok(tb_mod) = py.import_bound("traceback") {
+    if let Ok(tb_mod) = py.import("traceback") {
         if let Ok(formatted) = tb_mod.call_method1(
             "format_exception",
-            (
-                e.get_type_bound(py),
-                e.value_bound(py),
-                e.traceback_bound(py),
-            ),
+            (e.get_type(py), e.value(py), e.traceback(py)),
         ) {
             if let Ok(lines) = formatted.extract::<Vec<String>>() {
                 return lines.join("");
@@ -177,19 +173,16 @@ fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
 }
 
 fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
-    if let Ok(exceptions_mod) = py.import_bound("taskito.exceptions") {
+    if let Ok(exceptions_mod) = py.import("taskito.exceptions") {
         if let Ok(cancelled_cls) = exceptions_mod.getattr("TaskCancelledError") {
-            return e
-                .get_type_bound(py)
-                .is_subclass(&cancelled_cls)
-                .unwrap_or(false);
+            return e.get_type(py).is_subclass(&cancelled_cls).unwrap_or(false);
         }
     }
     false
 }
 
 fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
-    let type_obj = e.get_type_bound(py);
+    let type_obj = e.get_type(py);
     let module = type_obj
         .getattr("__module__")
         .and_then(|m| m.extract::<String>())
@@ -208,13 +201,13 @@ fn get_exception_class_name(py: Python<'_>, e: &PyErr) -> String {
 
 fn check_should_retry(
     py: Python<'_>,
-    retry_filters: &PyObject,
+    retry_filters: &Py<PyAny>,
     task_name: &str,
     _exc_class_name: &str,
     exc: &PyErr,
 ) -> bool {
     let filters = retry_filters.bind(py);
-    let filters_dict: &Bound<'_, PyDict> = match filters.downcast() {
+    let filters_dict: &Bound<'_, PyDict> = match filters.cast() {
         Ok(d) => d,
         Err(_) => return true,
     };
@@ -224,15 +217,15 @@ fn check_should_retry(
         _ => return true,
     };
 
-    let task_dict: &Bound<'_, PyDict> = match task_filters.downcast() {
+    let task_dict: &Bound<'_, PyDict> = match task_filters.cast() {
         Ok(d) => d,
         Err(_) => return true,
     };
 
     if let Ok(Some(dont_retry)) = task_dict.get_item("dont_retry_on") {
-        if let Ok(list) = dont_retry.downcast::<PyList>() {
+        if let Ok(list) = dont_retry.cast::<PyList>() {
             for cls in list.iter() {
-                if exc.get_type_bound(py).is_subclass(&cls).unwrap_or(false) {
+                if exc.get_type(py).is_subclass(&cls).unwrap_or(false) {
                     return false;
                 }
             }
@@ -240,10 +233,10 @@ fn check_should_retry(
     }
 
     if let Ok(Some(retry_on)) = task_dict.get_item("retry_on") {
-        if let Ok(list) = retry_on.downcast::<PyList>() {
+        if let Ok(list) = retry_on.cast::<PyList>() {
             if !list.is_empty() {
                 for cls in list.iter() {
-                    if exc.get_type_bound(py).is_subclass(&cls).unwrap_or(false) {
+                    if exc.get_type(py).is_subclass(&cls).unwrap_or(false) {
                         return true;
                     }
                 }

@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn parse_step_metadata_rejects_invalid_json() {
         // PyValueError construction needs a live Python interpreter.
-        pyo3::prepare_freethreaded_python();
+        pyo3::Python::initialize();
         let err = parse_step_metadata("not-json").unwrap_err();
         assert!(err.to_string().contains("invalid step_metadata JSON"));
     }
