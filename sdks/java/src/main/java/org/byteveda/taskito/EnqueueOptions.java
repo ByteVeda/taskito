@@ -55,16 +55,25 @@ public final class EnqueueOptions {
         }
 
         public Builder maxRetries(int maxRetries) {
+            if (maxRetries < 0) {
+                throw new IllegalArgumentException("maxRetries must be >= 0");
+            }
             this.maxRetries = maxRetries;
             return this;
         }
 
         public Builder timeoutMs(long timeoutMs) {
+            if (timeoutMs < 0) {
+                throw new IllegalArgumentException("timeoutMs must be >= 0");
+            }
             this.timeoutMs = timeoutMs;
             return this;
         }
 
         public Builder delayMs(long delayMs) {
+            if (delayMs < 0) {
+                throw new IllegalArgumentException("delayMs must be >= 0");
+            }
             this.delayMs = delayMs;
             return this;
         }
