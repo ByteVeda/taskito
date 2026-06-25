@@ -1,0 +1,148 @@
+//! Read-only inspection entry points for `NativeQueue`.
+
+use std::collections::HashMap;
+
+use jni::objects::{JClass, JString};
+use jni::sys::{jlong, jstring};
+use jni::JNIEnv;
+use taskito_core::Storage;
+
+use super::borrow_queue;
+use crate::convert::{
+    status_code, to_json, JobErrorView, JobFilter, JobView, MetricView, StatsView, WorkerView,
+};
+use crate::error::BindingError;
+use crate::ffi::{guard, new_string, read_optional_string, read_string};
+
+const DEFAULT_LIMIT: i64 = 50;
+
+/// `String stats(long handle)` — job counts by status across all queues.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_stats<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        new_string(env, to_json(&StatsView::from(queue.storage.stats()?))?)
+    })
+}
+
+/// `String statsByQueue(long handle, String queue)`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_statsByQueue<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    queue_name: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let name = read_string(env, &queue_name)?;
+        let stats = queue.storage.stats_by_queue(&name)?;
+        new_string(env, to_json(&StatsView::from(stats))?)
+    })
+}
+
+/// `String statsAllQueues(long handle)` — a JSON map of queue name to counts.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_statsAllQueues<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let all = queue.storage.stats_all_queues()?;
+        let mapped: HashMap<String, StatsView> = all
+            .into_iter()
+            .map(|(k, v)| (k, StatsView::from(v)))
+            .collect();
+        new_string(env, to_json(&mapped)?)
+    })
+}
+
+/// `String listJobs(long handle, String filterJson)` — a JSON array of jobs.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listJobs<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    filter_json: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let raw = read_string(env, &filter_json)?;
+        let filter: JobFilter = crate::convert::parse_json(&raw, "job filter")?;
+        // Reject an unknown status so a typo fails loudly instead of matching all.
+        let status = match filter.status.as_deref() {
+            Some(s) => Some(
+                status_code(s).ok_or_else(|| BindingError::new(format!("unknown status '{s}'")))?,
+            ),
+            None => None,
+        };
+        let limit = filter.limit.unwrap_or(DEFAULT_LIMIT).max(0);
+        let offset = filter.offset.unwrap_or(0).max(0);
+        let jobs = queue.storage.list_jobs(
+            status,
+            filter.queue.as_deref(),
+            filter.task.as_deref(),
+            limit,
+            offset,
+            queue.namespace.as_deref(),
+        )?;
+        let views: Vec<JobView> = jobs.iter().map(JobView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String jobErrors(long handle, String jobId)` — one entry per failed attempt.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_jobErrors<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    job_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let id = read_string(env, &job_id)?;
+        let errors = queue.storage.get_job_errors(&id)?;
+        let views: Vec<JobErrorView> = errors.iter().map(JobErrorView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String metrics(long handle, String taskNameOrNull, long sinceMs)`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_metrics<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    task_name: JString<'local>,
+    since_ms: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let task = read_optional_string(env, &task_name)?;
+        let metrics = queue.storage.get_metrics(task.as_deref(), since_ms)?;
+        let views: Vec<MetricView> = metrics.iter().map(MetricView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String listWorkers(long handle)` — registered workers.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listWorkers<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let workers = queue.storage.list_workers()?;
+        let views: Vec<WorkerView> = workers.iter().map(WorkerView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}

@@ -2,7 +2,8 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use jni::objects::{JByteArray, JString};
+use jni::objects::{JByteArray, JObject, JObjectArray, JString};
+use jni::sys::{jbyteArray, jobjectArray, jstring};
 use jni::JNIEnv;
 
 use crate::error::BindingError;
@@ -38,15 +39,70 @@ pub fn read_string(env: &mut JNIEnv, value: &JString) -> Result<String, BindingE
     Ok(java_str.into())
 }
 
+/// Read an optional Java `String` argument; `null` becomes `None`.
+pub fn read_optional_string(
+    env: &mut JNIEnv,
+    value: &JString,
+) -> Result<Option<String>, BindingError> {
+    if value.is_null() {
+        Ok(None)
+    } else {
+        read_string(env, value).map(Some)
+    }
+}
+
 /// Read a Java `byte[]` argument into an owned `Vec<u8>`.
 pub fn read_bytes(env: &mut JNIEnv, value: &JByteArray) -> Result<Vec<u8>, BindingError> {
     env.convert_byte_array(value)
         .map_err(|e| BindingError::new(format!("invalid byte[] argument: {e}")))
 }
 
+/// Read a Java `byte[][]` argument into owned bytes per element.
+pub fn read_bytes_array(
+    env: &mut JNIEnv,
+    value: &JObjectArray,
+) -> Result<Vec<Vec<u8>>, BindingError> {
+    let len = env
+        .get_array_length(value)
+        .map_err(|e| BindingError::new(format!("invalid byte[][] argument: {e}")))?;
+    let mut out = Vec::with_capacity(len as usize);
+    for index in 0..len {
+        let element = env
+            .get_object_array_element(value, index)
+            .map_err(|e| BindingError::new(format!("invalid byte[][] element: {e}")))?;
+        out.push(read_bytes(env, &JByteArray::from(element))?);
+    }
+    Ok(out)
+}
+
 /// Build a Java `String` return value from an owned Rust `String`.
-pub fn new_string(env: &mut JNIEnv, value: String) -> Result<jni::sys::jstring, BindingError> {
+pub fn new_string(env: &mut JNIEnv, value: String) -> Result<jstring, BindingError> {
     env.new_string(value)
         .map(|s| s.into_raw())
         .map_err(|e| BindingError::new(format!("failed to allocate Java string: {e}")))
+}
+
+/// Build a Java `byte[]` return value from a slice.
+pub fn new_bytes(env: &mut JNIEnv, value: &[u8]) -> Result<jbyteArray, BindingError> {
+    env.byte_array_from_slice(value)
+        .map(|a| a.into_raw())
+        .map_err(|e| BindingError::new(format!("failed to allocate byte[]: {e}")))
+}
+
+/// Build a Java `String[]` return value from owned strings.
+pub fn new_string_array(env: &mut JNIEnv, values: &[String]) -> Result<jobjectArray, BindingError> {
+    let class = env
+        .find_class("java/lang/String")
+        .map_err(|e| BindingError::new(format!("String class lookup failed: {e}")))?;
+    let array = env
+        .new_object_array(values.len() as i32, &class, JObject::null())
+        .map_err(|e| BindingError::new(format!("failed to allocate String[]: {e}")))?;
+    for (index, value) in values.iter().enumerate() {
+        let element = env
+            .new_string(value)
+            .map_err(|e| BindingError::new(format!("failed to allocate Java string: {e}")))?;
+        env.set_object_array_element(&array, index as i32, &element)
+            .map_err(|e| BindingError::new(format!("failed to set String[] element: {e}")))?;
+    }
+    Ok(array.into_raw())
 }
