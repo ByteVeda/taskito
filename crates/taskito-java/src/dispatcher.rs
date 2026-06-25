@@ -161,7 +161,10 @@ fn submit_to_java(callbacks: &GlobalRef, token: u64, job: &Job) -> Result<(), St
     let payload = env
         .byte_array_from_slice(&job.payload)
         .map_err(|e| e.to_string())?;
-    env.call_method(
+    // An `Err(JavaException)` leaves the exception pending on the attached
+    // thread; clear it before returning so the thread isn't poisoned for the
+    // next call.
+    if let Err(e) = env.call_method(
         callbacks,
         "onJob",
         "(JLjava/lang/String;Ljava/lang/String;[B)V",
@@ -171,8 +174,10 @@ fn submit_to_java(callbacks: &GlobalRef, token: u64, job: &Job) -> Result<(), St
             JValue::Object(&task_name),
             JValue::Object(&payload),
         ],
-    )
-    .map_err(|e| e.to_string())?;
+    ) {
+        let _ = env.exception_clear();
+        return Err(e.to_string());
+    }
     if env.exception_check().unwrap_or(false) {
         let _ = env.exception_clear();
         return Err("WorkerBridge.onJob threw".to_string());
