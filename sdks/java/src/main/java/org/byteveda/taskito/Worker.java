@@ -16,6 +16,7 @@ import java.util.function.Consumer;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerControl;
@@ -38,8 +39,8 @@ public final class Worker implements AutoCloseable {
         this.executor = executor;
     }
 
-    public static Builder builder(QueueBackend backend, Serializer serializer) {
-        return new Builder(backend, serializer);
+    public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
+        return new Builder(backend, serializer, middleware);
     }
 
     /** Stop dispatching; in-flight jobs continue to drain. */
@@ -85,6 +86,7 @@ public final class Worker implements AutoCloseable {
 
         private final QueueBackend backend;
         private final Serializer serializer;
+        private final List<Middleware> middleware;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners =
                 new EnumMap<>(EventName.class);
@@ -93,9 +95,10 @@ public final class Worker implements AutoCloseable {
         private Integer channelCapacity;
         private Integer batchSize;
 
-        Builder(QueueBackend backend, Serializer serializer) {
+        Builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
             this.backend = backend;
             this.serializer = serializer;
+            this.middleware = middleware;
         }
 
         public <T, R> Builder handle(String taskName, Class<T> payloadType, TaskFunction<T, R> handler) {
@@ -140,7 +143,7 @@ public final class Worker implements AutoCloseable {
             Emitter emitter = new Emitter();
             listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
             WorkerDispatchBridge bridge =
-                    new WorkerDispatchBridge(handlers, serializer, executor, emitter);
+                    new WorkerDispatchBridge(handlers, serializer, executor, emitter, middleware);
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
             bridge.bind(control);
             return new Worker(control, executor);

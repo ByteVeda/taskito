@@ -3,9 +3,10 @@
 A typed Java 11+ client over the Taskito Rust core, via a hand-written JNI shell
 (`crates/taskito-java`).
 
-> Status: **build-out** (Phases 0–2). Producer + inspection + admin + logs, and
-> worker task execution, are implemented and verified end-to-end against the
-> native library. Dashboard, webhooks, and the CLI follow in later phases.
+> Status: **build-out** (Phases 0–3 core). Producer + inspection + admin + logs,
+> worker task execution, middleware, signed/encrypted serializers, and the
+> dashboard server are implemented and verified end-to-end. Webhooks and the CLI
+> follow next.
 
 ## Usage
 
@@ -48,6 +49,35 @@ Runtime.getRuntime().addShutdownHook(new Thread(() -> {
     queue.close();
 }));
 worker.awaitShutdown();
+```
+
+### Middleware
+
+```java
+queue.use(new Middleware() {
+    @Override public void onEnqueue(EnqueueContext ctx) { /* validate / rewrite */ }
+    @Override public void before(TaskContext ctx) { /* trace */ }
+    @Override public void onDeadLetter(OutcomeEvent e) { /* alert */ }
+});
+```
+
+### Dashboard
+
+```java
+try (DashboardServer dashboard = DashboardServer.start(queue, 8080, token, staticDir)) {
+    // GET /api/stats, /api/jobs, /api/workers, ... ; POST /api/jobs/{id}/cancel, ...
+    dashboard.port();
+}
+```
+
+### Serializers
+
+```java
+byte[] key = ...; // 16/24/32 bytes for AES
+Queue secure = Taskito.builder()
+        .backend("sqlite").url("taskito.db")
+        .serializer(new EncryptedSerializer(new JsonSerializer(), key))
+        .open();
 ```
 
 ## Structure
