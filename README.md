@@ -61,7 +61,7 @@ truth; the GIL/event loop is held only during task execution. `WorkerDispatcher`
 ## Documentation
 
 **[Read the docs →](https://docs.byteveda.org/taskito)** — guides, API reference, and architecture.
-Coming from Celery? See the **[Migration Guide](https://docs.byteveda.org/taskito/guides/operations/migration)**.
+Coming from Celery? See the **[Migration Guide](https://docs.byteveda.org/taskito/python/guides/operations/migration)**.
 
 ## Contributing
 
