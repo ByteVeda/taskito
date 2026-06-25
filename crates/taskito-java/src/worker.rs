@@ -75,7 +75,11 @@ fn start_worker(
     let heartbeat_stop = Arc::new(Notify::new());
 
     let (job_tx, job_rx) = tokio::sync::mpsc::channel(capacity);
-    let (result_tx, result_rx) = crossbeam_channel::bounded(capacity);
+    // Unbounded so the dispatcher's `result_tx.send` (which runs inside a Tokio
+    // task) never blocks a runtime worker when the drain loop is momentarily
+    // slow. In-flight jobs are already bounded by the job channel + scheduler,
+    // so the result queue can't grow without bound.
+    let (result_tx, result_rx) = crossbeam_channel::unbounded();
 
     // Scheduler loop: poll storage and dispatch ready jobs.
     let scheduler_run = scheduler.clone();
@@ -90,8 +94,8 @@ fn start_worker(
     });
 
     // Result-drain loop: apply outcomes and surface them to Java. crossbeam
-    // `recv` is blocking, so it runs on a blocking thread; it exits when every
-    // result sender has dropped (dispatcher + all in-flight jobs done).
+    // `recv` is blocking, so it runs on a blocking thread; it exits when the
+    // result sender has dropped (dispatcher done).
     let drain_scheduler = scheduler;
     let drain_callbacks = callbacks;
     runtime.spawn_blocking(move || drain_results(result_rx, drain_scheduler, drain_callbacks));
@@ -129,13 +133,24 @@ fn drain_results(
         }
     };
     while let Ok(result) = result_rx.recv() {
-        match scheduler.handle_result(result) {
-            Ok(outcome) => {
-                if let Err(e) = call_on_outcome(&mut env, &callbacks, &outcome) {
-                    log::error!("[taskito-java] onOutcome failed: {e}");
-                }
+        let outcome = match scheduler.handle_result(result) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                log::error!("[taskito-java] result handling error: {e}");
+                continue;
             }
-            Err(e) => log::error!("[taskito-java] result handling error: {e}"),
+        };
+        // Each outcome allocates several JNI locals on this long-lived attached
+        // env; scope them in a frame so a busy worker can't exhaust the
+        // local-reference table over the loop's lifetime.
+        let framed = env.with_local_frame(16, |env| {
+            if let Err(e) = call_on_outcome(env, &callbacks, &outcome) {
+                log::error!("[taskito-java] onOutcome failed: {e}");
+            }
+            Ok::<(), jni::errors::Error>(())
+        });
+        if let Err(e) = framed {
+            log::error!("[taskito-java] drain local frame failed: {e}");
         }
     }
 }
@@ -154,7 +169,9 @@ fn call_on_outcome(
         Some(e) => env.new_string(e).map_err(|x| x.to_string())?.into(),
         None => JObject::null(),
     };
-    env.call_method(
+    // Clear a pending exception on the `Err(JavaException)` path before
+    // returning, so a thrown listener can't poison the reused env.
+    if let Err(e) = env.call_method(
         callbacks,
         "onOutcome",
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IZ)V",
@@ -166,8 +183,10 @@ fn call_on_outcome(
             JValue::Int(retry_count),
             JValue::Bool(u8::from(timed_out)),
         ],
-    )
-    .map_err(|e| e.to_string())?;
+    ) {
+        let _ = env.exception_clear();
+        return Err(e.to_string());
+    }
     if env.exception_check().unwrap_or(false) {
         let _ = env.exception_clear();
         return Err("WorkerBridge.onOutcome threw".to_string());
@@ -357,13 +376,20 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_stop(
 }
 
 /// `void close(long workerHandle)` — stop the runtime and reclaim the handle.
+/// The Java side drains its handler executor before calling this, so no
+/// `completeJob`/`failJob` can still borrow the handle being freed.
 #[no_mangle]
-pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_close(
-    _env: JNIEnv,
-    _class: JClass,
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_close<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
     handle: jlong,
 ) {
-    if handle != 0 {
-        unsafe { drop_handle::<WorkerHandle>(handle) };
-    }
+    // Dropping the handle stops the runtime (joining tasks); route through
+    // `guard` so a panic in that teardown can't unwind across the FFI boundary.
+    guard(&mut env, (), |_env| {
+        if handle != 0 {
+            unsafe { drop_handle::<WorkerHandle>(handle) };
+        }
+        Ok(())
+    })
 }
