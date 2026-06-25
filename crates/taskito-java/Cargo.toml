@@ -1,0 +1,22 @@
+[package]
+name = "taskito-java"
+version = "0.16.4"
+edition = "2021"
+description = "Java (JNI) bindings for the Taskito task-queue core"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+postgres = ["taskito-core/postgres"]
+redis = ["taskito-core/redis"]
+
+[dependencies]
+taskito-core = { path = "../taskito-core" }
+jni = "0.21"
+serde = { workspace = true }
+serde_json = { workspace = true }
+once_cell = "1"
