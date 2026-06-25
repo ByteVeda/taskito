@@ -46,14 +46,19 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_open<'loca
 
 /// `void close(long handle)` — reclaim a handle. A zero handle is a no-op.
 #[no_mangle]
-pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_close(
-    _env: JNIEnv,
-    _class: JClass,
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_close<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
     handle: jlong,
 ) {
-    if handle != 0 {
-        unsafe { drop_handle::<QueueHandle>(handle) };
-    }
+    // Routed through `guard` like every other entry point: a panic in a
+    // destructor must not unwind across the FFI boundary.
+    guard(&mut env, (), |_env| {
+        if handle != 0 {
+            unsafe { drop_handle::<QueueHandle>(handle) };
+        }
+        Ok(())
+    })
 }
 
 /// `String enqueue(long handle, String taskName, byte[] payload, String optionsJson)`

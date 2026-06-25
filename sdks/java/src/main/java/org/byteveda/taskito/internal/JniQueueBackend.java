@@ -6,6 +6,7 @@ import org.byteveda.taskito.spi.QueueBackend;
 /** JNI-backed {@link QueueBackend} over a native queue handle. */
 public final class JniQueueBackend implements QueueBackend {
     private final long handle;
+    private volatile boolean closed;
 
     private JniQueueBackend(long handle) {
         this.handle = handle;
@@ -161,8 +162,13 @@ public final class JniQueueBackend implements QueueBackend {
         return NativeQueue.getTaskLogs(handle, jobId);
     }
 
+    /** Idempotent: the native handle is freed exactly once, so a second {@code close()}
+     * (e.g. an explicit call plus try-with-resources) can't double-free. */
     @Override
-    public void close() {
-        NativeQueue.close(handle);
+    public synchronized void close() {
+        if (!closed) {
+            closed = true;
+            NativeQueue.close(handle);
+        }
     }
 }
