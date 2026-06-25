@@ -1,5 +1,7 @@
 package org.byteveda.taskito;
 
+import java.util.Objects;
+
 /** Typed task descriptor: a name, its payload type, and default enqueue options. */
 public final class Task<T> {
     private final String name;
@@ -7,9 +9,12 @@ public final class Task<T> {
     private final EnqueueOptions options;
 
     private Task(String name, Class<T> payloadType, EnqueueOptions options) {
-        this.name = name;
-        this.payloadType = payloadType;
-        this.options = options;
+        this.name = Objects.requireNonNull(name, "task name must not be null");
+        if (name.trim().isEmpty()) {
+            throw new IllegalArgumentException("task name must not be blank");
+        }
+        this.payloadType = Objects.requireNonNull(payloadType, "payloadType must not be null");
+        this.options = Objects.requireNonNull(options, "options must not be null");
     }
 
     public static <T> Task<T> of(String name, Class<T> payloadType) {
