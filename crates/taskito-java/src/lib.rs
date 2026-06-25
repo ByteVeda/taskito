@@ -1,0 +1,30 @@
+//! Java (JNI) bindings for the Taskito task-queue core.
+//!
+//! A thin binding shell — peer to the Python (`taskito-python`) and Node
+//! (`taskito-node`) shells. All scheduling and storage logic lives in
+//! `taskito-core`; this crate only marshals between the JVM and the core.
+//!
+//! Each JNI entry point lives in [`queue`] and is named
+//! `Java_org_byteveda_taskito_internal_NativeQueue_<method>` so the JVM links it
+//! to the matching `native` method on the `NativeQueue` Java class.
+
+mod backend;
+mod convert;
+mod error;
+mod ffi;
+mod handle;
+mod jvm;
+mod queue;
+
+use std::ffi::c_void;
+
+use jni::sys::{jint, JNI_VERSION_1_8};
+use jni::JavaVM;
+
+/// Cache the `JavaVM` so worker threads can later attach to invoke Java
+/// callbacks. The JVM calls this before any native method here.
+#[no_mangle]
+pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
+    jvm::init(vm);
+    JNI_VERSION_1_8
+}
