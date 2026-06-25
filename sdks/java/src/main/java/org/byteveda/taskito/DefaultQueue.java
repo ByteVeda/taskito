@@ -7,6 +7,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import org.byteveda.taskito.middleware.EnqueueContext;
+import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 
@@ -20,10 +23,17 @@ final class DefaultQueue implements Queue {
 
     private final QueueBackend backend;
     private final Serializer serializer;
+    private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
 
     DefaultQueue(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
         this.serializer = serializer;
+    }
+
+    @Override
+    public Queue use(Middleware middleware) {
+        this.middleware.add(middleware);
+        return this;
     }
 
     // ── Producer ────────────────────────────────────────────────────
@@ -35,12 +45,21 @@ final class DefaultQueue implements Queue {
 
     @Override
     public <T> String enqueue(Task<T> task, T payload, EnqueueOptions options) {
-        return backend.enqueue(task.name(), serializer.serialize(payload), encode(options));
+        return dispatchEnqueue(task.name(), payload, options);
     }
 
     @Override
     public String enqueue(String taskName, Object payload) {
-        return backend.enqueue(taskName, serializer.serialize(payload), encode(EnqueueOptions.none()));
+        return dispatchEnqueue(taskName, payload, EnqueueOptions.none());
+    }
+
+    /** Run onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
+    private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options) {
+        EnqueueContext context = new EnqueueContext(taskName, payload, options);
+        for (Middleware m : middleware) {
+            m.onEnqueue(context);
+        }
+        return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(context.options()));
     }
 
     @Override
@@ -212,7 +231,7 @@ final class DefaultQueue implements Queue {
 
     @Override
     public Worker.Builder worker() {
-        return Worker.builder(backend, serializer);
+        return Worker.builder(backend, serializer, middleware);
     }
 
     @Override

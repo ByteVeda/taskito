@@ -3,9 +3,13 @@ package org.byteveda.taskito;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.byteveda.taskito.middleware.Middleware;
 
 /** A Taskito queue. Obtain one from {@link Taskito#builder()}. */
 public interface Queue extends AutoCloseable {
+    /** Register cross-cutting middleware (enqueue + worker hooks); returns {@code this}. */
+    Queue use(Middleware middleware);
+
     // ── Producer ────────────────────────────────────────────────────
 
     /** Enqueue a typed payload using the task's default options; returns the job id. */
