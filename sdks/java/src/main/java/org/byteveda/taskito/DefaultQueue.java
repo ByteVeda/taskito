@@ -127,8 +127,8 @@ final class DefaultQueue implements Queue {
     }
 
     @Override
-    public List<Worker> listWorkers() {
-        return decodeList(backend.listWorkersJson(), Worker.class);
+    public List<WorkerInfo> listWorkers() {
+        return decodeList(backend.listWorkersJson(), WorkerInfo.class);
     }
 
     // ── Admin ───────────────────────────────────────────────────────
@@ -208,6 +208,11 @@ final class DefaultQueue implements Queue {
     @Override
     public List<TaskLog> getTaskLogs(String jobId) {
         return decodeList(backend.getTaskLogsJson(jobId), TaskLog.class);
+    }
+
+    @Override
+    public Worker.Builder worker() {
+        return Worker.builder(backend, serializer);
     }
 
     @Override

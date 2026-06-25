@@ -82,6 +82,10 @@ public interface QueueBackend extends AutoCloseable {
 
     String getTaskLogsJson(String jobId);
 
+    // ── Worker ──────────────────────────────────────────────────────
+    /** Start a worker that dispatches jobs to {@code bridge}; returns its control. */
+    WorkerControl startWorker(WorkerBridge bridge, String optionsJson);
+
     @Override
     void close();
 }

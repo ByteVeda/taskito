@@ -1,44 +1,149 @@
 package org.byteveda.taskito;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
+import org.byteveda.taskito.events.Emitter;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.serialization.Serializer;
+import org.byteveda.taskito.spi.QueueBackend;
+import org.byteveda.taskito.spi.WorkerControl;
 
-/** A registered worker (heartbeat + identity). Timestamps are Unix milliseconds. */
-@JsonIgnoreProperties(ignoreUnknown = true)
-public final class Worker {
-    public final String workerId;
-    public final String queues;
-    public final String status;
-    public final long lastHeartbeat;
-    public final Long startedAt;
-    public final String hostname;
-    public final Integer pid;
-    public final String poolType;
-    public final int threads;
-    public final String tags;
+/**
+ * A running worker. Build one with {@link Queue#worker()}, register handlers,
+ * then {@link Builder#start()}. {@link #close()} stops it and drains in-flight
+ * jobs.
+ */
+public final class Worker implements AutoCloseable {
+    private final WorkerControl control;
+    private final ExecutorService executor;
+    private final CountDownLatch shutdown = new CountDownLatch(1);
 
-    @JsonCreator
-    public Worker(
-            @JsonProperty("workerId") String workerId,
-            @JsonProperty("queues") String queues,
-            @JsonProperty("status") String status,
-            @JsonProperty("lastHeartbeat") long lastHeartbeat,
-            @JsonProperty("startedAt") Long startedAt,
-            @JsonProperty("hostname") String hostname,
-            @JsonProperty("pid") Integer pid,
-            @JsonProperty("poolType") String poolType,
-            @JsonProperty("threads") int threads,
-            @JsonProperty("tags") String tags) {
-        this.workerId = workerId;
-        this.queues = queues;
-        this.status = status;
-        this.lastHeartbeat = lastHeartbeat;
-        this.startedAt = startedAt;
-        this.hostname = hostname;
-        this.pid = pid;
-        this.poolType = poolType;
-        this.threads = threads;
-        this.tags = tags;
+    private Worker(WorkerControl control, ExecutorService executor) {
+        this.control = control;
+        this.executor = executor;
+    }
+
+    public static Builder builder(QueueBackend backend, Serializer serializer) {
+        return new Builder(backend, serializer);
+    }
+
+    /** Stop dispatching; in-flight jobs continue to drain. */
+    public void stop() {
+        control.stop();
+    }
+
+    /** Block until {@link #close()} is called. */
+    public void awaitShutdown() throws InterruptedException {
+        shutdown.await();
+    }
+
+    @Override
+    public void close() {
+        control.stop();
+        control.close();
+        executor.shutdown();
+        shutdown.countDown();
+    }
+
+    /** Registers handlers and worker options, then starts the worker. */
+    public static final class Builder {
+        private static final ObjectMapper JSON = new ObjectMapper();
+
+        private final QueueBackend backend;
+        private final Serializer serializer;
+        private final Map<String, RegisteredTask> handlers = new HashMap<>();
+        private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners =
+                new EnumMap<>(EventName.class);
+        private List<String> queues;
+        private int concurrency;
+        private Integer channelCapacity;
+        private Integer batchSize;
+
+        Builder(QueueBackend backend, Serializer serializer) {
+            this.backend = backend;
+            this.serializer = serializer;
+        }
+
+        public <T, R> Builder handle(String taskName, Class<T> payloadType, TaskFunction<T, R> handler) {
+            handlers.put(taskName, new RegisteredTask(payloadType, cast(handler)));
+            return this;
+        }
+
+        public <T, R> Builder handle(Task<T> task, TaskFunction<T, R> handler) {
+            return handle(task.name(), task.payloadType(), handler);
+        }
+
+        public Builder queues(String... queues) {
+            this.queues = Arrays.asList(queues);
+            return this;
+        }
+
+        /** Fixed handler-thread count; 0 (default) uses a cached pool. */
+        public Builder concurrency(int concurrency) {
+            this.concurrency = concurrency;
+            return this;
+        }
+
+        public Builder channelCapacity(int channelCapacity) {
+            this.channelCapacity = channelCapacity;
+            return this;
+        }
+
+        public Builder batchSize(int batchSize) {
+            this.batchSize = batchSize;
+            return this;
+        }
+
+        public Builder on(EventName name, Consumer<OutcomeEvent> listener) {
+            listeners.computeIfAbsent(name, key -> new ArrayList<>()).add(listener);
+            return this;
+        }
+
+        public Worker start() {
+            ExecutorService executor = concurrency > 0
+                    ? Executors.newFixedThreadPool(concurrency)
+                    : Executors.newCachedThreadPool();
+            Emitter emitter = new Emitter();
+            listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
+            WorkerDispatchBridge bridge =
+                    new WorkerDispatchBridge(handlers, serializer, executor, emitter);
+            WorkerControl control = backend.startWorker(bridge, encodeOptions());
+            bridge.bind(control);
+            return new Worker(control, executor);
+        }
+
+        private String encodeOptions() {
+            Map<String, Object> options = new LinkedHashMap<>();
+            if (queues != null) {
+                options.put("queues", queues);
+            }
+            if (channelCapacity != null) {
+                options.put("channelCapacity", channelCapacity);
+            }
+            if (batchSize != null) {
+                options.put("batchSize", batchSize);
+            }
+            try {
+                return JSON.writeValueAsString(options);
+            } catch (Exception e) {
+                throw new TaskitoException("failed to encode worker options", e);
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private static <T, R> TaskFunction<Object, Object> cast(TaskFunction<T, R> handler) {
+            return (TaskFunction<Object, Object>) handler;
+        }
     }
 }

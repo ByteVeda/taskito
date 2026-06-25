@@ -84,4 +84,8 @@ public final class NativeQueue {
             long handle, String jobId, String taskName, String level, String message, String extraOrNull);
 
     public static native String getTaskLogs(long handle, String jobId);
+
+    // ── Worker ──────────────────────────────────────────────────────
+    /** Start a worker; returns its handle. {@code bridge} is a {@code WorkerBridge}. */
+    public static native long runWorker(long handle, Object bridge, String optionsJson);
 }

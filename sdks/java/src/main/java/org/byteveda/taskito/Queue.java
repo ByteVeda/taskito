@@ -52,7 +52,7 @@ public interface Queue extends AutoCloseable {
     /** Per-execution metrics within the last {@code sinceMs}; null task = all. */
     List<TaskMetric> metrics(String taskName, long sinceMs);
 
-    List<Worker> listWorkers();
+    List<WorkerInfo> listWorkers();
 
     // ── Admin ───────────────────────────────────────────────────────
 
@@ -88,6 +88,11 @@ public interface Queue extends AutoCloseable {
     void writeTaskLog(String jobId, String taskName, String level, String message, String extra);
 
     List<TaskLog> getTaskLogs(String jobId);
+
+    // ── Worker ──────────────────────────────────────────────────────
+
+    /** Begin building a worker over this queue. */
+    Worker.Builder worker();
 
     @Override
     void close();
