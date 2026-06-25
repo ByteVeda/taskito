@@ -14,8 +14,15 @@ import java.util.Optional;
  */
 public interface QueueBackend extends AutoCloseable {
     // ── Producer ────────────────────────────────────────────────────
+
+    /** Enqueue one job; {@code optionsJson} is a single {@code EnqueueOptions} object. */
     String enqueue(String taskName, byte[] payload, String optionsJson);
 
+    /**
+     * Enqueue a batch. Unlike {@link #enqueue}, {@code optionsJson} is a JSON
+     * <em>array</em> of per-job {@code EnqueueOptions}, the same length as
+     * {@code payloads}. Returns the job ids in input order.
+     */
     String[] enqueueMany(String taskName, byte[][] payloads, String optionsJson);
 
     Optional<String> getJobJson(String jobId);

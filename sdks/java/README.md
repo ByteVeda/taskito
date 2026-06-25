@@ -26,7 +26,7 @@ try (Queue queue = Taskito.builder().backend("sqlite").url("taskito.db").open())
 
 ## Structure
 
-```
+```text
 org.byteveda.taskito
 ├── Taskito            entry point — Taskito.builder()...open()
 ├── Queue              public interface
