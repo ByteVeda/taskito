@@ -20,6 +20,13 @@ public enum JobStatus {
 
     @JsonCreator
     public static JobStatus fromWire(String wire) {
-        return valueOf(wire.toUpperCase(Locale.ROOT));
+        if (wire == null) {
+            throw new TaskitoException("job status is null");
+        }
+        try {
+            return valueOf(wire.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new TaskitoException("unknown job status: " + wire, e);
+        }
     }
 }
