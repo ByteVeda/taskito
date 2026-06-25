@@ -1507,11 +1507,17 @@ dependencies = [
 name = "taskito-java"
 version = "0.16.4"
 dependencies = [
+ "async-trait",
+ "crossbeam-channel",
+ "gethostname",
  "jni",
+ "log",
  "once_cell",
  "serde",
  "serde_json",
  "taskito-core",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

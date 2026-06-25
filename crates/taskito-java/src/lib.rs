@@ -10,11 +10,13 @@
 
 mod backend;
 mod convert;
+mod dispatcher;
 mod error;
 mod ffi;
 mod handle;
 mod jvm;
 mod queue;
+mod worker;
 
 use std::ffi::c_void;
 

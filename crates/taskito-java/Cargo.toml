@@ -20,3 +20,9 @@ jni = "0.21"
 serde = { workspace = true }
 serde_json = { workspace = true }
 once_cell = "1"
+tokio = { workspace = true }
+async-trait = { workspace = true }
+crossbeam-channel = { workspace = true }
+uuid = { workspace = true }
+log = { workspace = true }
+gethostname = "1"

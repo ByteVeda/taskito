@@ -150,6 +150,15 @@ impl<'a> From<&'a Job> for JobView<'a> {
     }
 }
 
+/// Options accepted by `NativeQueue.runWorker`.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WorkerOptions {
+    pub queues: Option<Vec<String>>,
+    pub channel_capacity: Option<u32>,
+    pub batch_size: Option<u32>,
+}
+
 /// Filter accepted by `NativeQueue.listJobs`.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
