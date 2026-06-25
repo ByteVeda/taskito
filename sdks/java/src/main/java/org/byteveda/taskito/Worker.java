@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
@@ -25,9 +26,12 @@ import org.byteveda.taskito.spi.WorkerControl;
  * jobs.
  */
 public final class Worker implements AutoCloseable {
+    private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
+
     private final WorkerControl control;
     private final ExecutorService executor;
     private final CountDownLatch shutdown = new CountDownLatch(1);
+    private boolean closed;
 
     private Worker(WorkerControl control, ExecutorService executor) {
         this.control = control;
@@ -48,11 +52,30 @@ public final class Worker implements AutoCloseable {
         shutdown.await();
     }
 
+    /**
+     * Stop dispatching, drain in-flight handler tasks, then free the native
+     * worker. Draining BEFORE {@code control.close()} is essential: a running
+     * handler may still call back into the native worker
+     * ({@code completeJob}/{@code failJob}), so the handle must outlive every
+     * handler task. Idempotent.
+     */
     @Override
-    public void close() {
-        control.stop();
-        control.close();
-        executor.shutdown();
+    public synchronized void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        control.stop(); // stop scheduling new work
+        executor.shutdown(); // stop accepting; let running handlers finish
+        try {
+            if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            executor.shutdownNow();
+        }
+        control.close(); // now safe to free the native handle — no handler can touch it
         shutdown.countDown();
     }
 

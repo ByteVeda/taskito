@@ -5,6 +5,7 @@ import org.byteveda.taskito.spi.WorkerControl;
 /** JNI-backed {@link WorkerControl} over a native worker handle. */
 public final class JniWorkerControl implements WorkerControl {
     private final long handle;
+    private volatile boolean closed;
 
     JniWorkerControl(long handle) {
         this.handle = handle;
@@ -30,8 +31,12 @@ public final class JniWorkerControl implements WorkerControl {
         NativeWorker.stop(handle);
     }
 
+    /** Idempotent: frees the native worker handle exactly once. */
     @Override
-    public void close() {
-        NativeWorker.close(handle);
+    public synchronized void close() {
+        if (!closed) {
+            closed = true;
+            NativeWorker.close(handle);
+        }
     }
 }
