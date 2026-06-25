@@ -62,7 +62,8 @@ pub fn build_new_job(
         task_name,
         payload,
         priority: options.priority.unwrap_or(0),
-        scheduled_at: now_millis() + delay,
+        // Saturate rather than wrap/panic on an absurd delay.
+        scheduled_at: now_millis().saturating_add(delay),
         max_retries: options.max_retries.unwrap_or(0),
         timeout_ms: options.timeout_ms.unwrap_or(0),
         unique_key: options.unique_key,
