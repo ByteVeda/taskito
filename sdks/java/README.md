@@ -3,11 +3,13 @@
 A typed Java 11+ client over the Taskito Rust core, via a hand-written JNI shell
 (`crates/taskito-java`).
 
-> Status: **early build-out** (Phase 0). Producer surface (enqueue / get / cancel
-> / stats) is implemented and verified end-to-end against the native library.
-> Worker execution, dashboard, webhooks, and the CLI follow in later phases.
+> Status: **build-out** (Phases 0–2). Producer + inspection + admin + logs, and
+> worker task execution, are implemented and verified end-to-end against the
+> native library. Dashboard, webhooks, and the CLI follow in later phases.
 
 ## Usage
+
+### Enqueue
 
 ```java
 import org.byteveda.taskito.*;
@@ -22,6 +24,30 @@ try (Queue queue = Taskito.builder().backend("sqlite").url("taskito.db").open())
     QueueStats stats = queue.stats();
     queue.cancel(id);
 }
+```
+
+### Run a worker
+
+```java
+import org.byteveda.taskito.events.EventName;
+
+Task<Map> add = Task.of("add", Map.class);
+
+Queue queue = Taskito.builder().backend("sqlite").url("taskito.db").open();
+Worker worker = queue.worker()
+        .handle(add, p -> ((Number) p.get("a")).intValue() + ((Number) p.get("b")).intValue())
+        .concurrency(4)
+        .on(EventName.SUCCESS, e -> System.out.println("done: " + e.jobId))
+        .start();
+
+// Close on SIGTERM/Ctrl-C; awaitShutdown() then unblocks. (Don't put the worker
+// in try-with-resources AND call awaitShutdown() inside it — the block can't
+// exit to trigger close(), so it would deadlock.)
+Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+    worker.close();
+    queue.close();
+}));
+worker.awaitShutdown();
 ```
 
 ## Structure

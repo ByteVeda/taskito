@@ -2,6 +2,8 @@ package org.byteveda.taskito.internal;
 
 import java.util.Optional;
 import org.byteveda.taskito.spi.QueueBackend;
+import org.byteveda.taskito.spi.WorkerBridge;
+import org.byteveda.taskito.spi.WorkerControl;
 
 /** JNI-backed {@link QueueBackend} over a native queue handle. */
 public final class JniQueueBackend implements QueueBackend {
@@ -160,6 +162,11 @@ public final class JniQueueBackend implements QueueBackend {
     @Override
     public String getTaskLogsJson(String jobId) {
         return NativeQueue.getTaskLogs(handle, jobId);
+    }
+
+    @Override
+    public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
+        return new JniWorkerControl(NativeQueue.runWorker(handle, bridge, optionsJson));
     }
 
     /** Idempotent: the native handle is freed exactly once, so a second {@code close()}

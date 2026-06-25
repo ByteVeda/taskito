@@ -12,7 +12,6 @@ pub fn init(vm: JavaVM) {
 
 /// The cached VM (present after `JNI_OnLoad`). Used by the worker bridge to
 /// attach worker threads that invoke Java callbacks.
-#[allow(dead_code)]
 pub fn vm() -> &'static JavaVM {
     JAVA_VM.get().expect("JNI_OnLoad has not run")
 }
