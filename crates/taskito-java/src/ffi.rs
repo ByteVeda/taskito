@@ -70,7 +70,10 @@ pub fn read_bytes_array(
         let element = env
             .get_object_array_element(value, index)
             .map_err(|e| BindingError::new(format!("invalid byte[][] element: {e}")))?;
-        out.push(read_bytes(env, &JByteArray::from(element))?);
+        // Auto-release the per-element local ref each iteration so a large array
+        // can't exhaust the JNI local-reference table before we return.
+        let element = env.auto_local(JByteArray::from(element));
+        out.push(read_bytes(env, &element)?);
     }
     Ok(out)
 }
@@ -98,9 +101,12 @@ pub fn new_string_array(env: &mut JNIEnv, values: &[String]) -> Result<jobjectAr
         .new_object_array(values.len() as i32, &class, JObject::null())
         .map_err(|e| BindingError::new(format!("failed to allocate String[]: {e}")))?;
     for (index, value) in values.iter().enumerate() {
-        let element = env
-            .new_string(value)
-            .map_err(|e| BindingError::new(format!("failed to allocate Java string: {e}")))?;
+        // Auto-release each element's local ref after storing it in the array, so
+        // a large String[] can't exhaust the JNI local-reference table.
+        let element = env.auto_local(
+            env.new_string(value)
+                .map_err(|e| BindingError::new(format!("failed to allocate Java string: {e}")))?,
+        );
         env.set_object_array_element(&array, index as i32, &element)
             .map_err(|e| BindingError::new(format!("failed to set String[] element: {e}")))?;
     }
