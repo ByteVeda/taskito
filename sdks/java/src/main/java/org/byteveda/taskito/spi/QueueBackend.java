@@ -125,6 +125,37 @@ public interface QueueBackend extends AutoCloseable {
 
     void cancelWorkflowRun(String runId);
 
+    Optional<String> getWorkflowPlanJson(String runId);
+
+    Optional<String> workflowNodeForJobJson(String jobId);
+
+    String[] expandFanOut(
+            String runId,
+            String parentNode,
+            String[] childNames,
+            byte[][] childPayloads,
+            String taskName,
+            String queue,
+            int maxRetries,
+            long timeoutMs,
+            int priority);
+
+    Optional<String> checkFanOutCompletionJson(String runId, String parentNode);
+
+    String createDeferredJob(
+            String runId,
+            String nodeName,
+            byte[] payload,
+            String taskName,
+            String queue,
+            int maxRetries,
+            long timeoutMs,
+            int priority);
+
+    void cascadeSkipPending(String runId);
+
+    Optional<String> finalizeRunIfTerminal(String runId);
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker that dispatches jobs to {@code bridge}; returns its control. */
     WorkerControl startWorker(WorkerBridge bridge, String optionsJson);
