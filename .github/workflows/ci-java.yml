@@ -1,0 +1,36 @@
+name: CI Java
+
+# Reusable workflow: build the JNI cdylib (via Gradle's cargoBuild) and run the
+# Java SDK's full `gradle build` — compile, Spotless + Checkstyle, and the JUnit
+# suite across the runtime, processor, and test-support subprojects. Called by
+# ci.yml when Java-relevant paths change.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  java-test:
+    name: Java SDK Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up Java + Gradle
+        uses: ./.github/actions/setup-java
+
+      # `gradle build` runs cargoBuild (the JNI cdylib), staging the native
+      # library into the jar, then compile + Spotless + Checkstyle + tests for
+      # every subproject. --no-daemon keeps the runner clean.
+      - name: Build and test the Java SDK
+        working-directory: sdks/java
+        run: ./gradlew build --no-daemon
