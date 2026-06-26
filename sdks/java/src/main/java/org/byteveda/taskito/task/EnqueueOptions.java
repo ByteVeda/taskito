@@ -2,6 +2,7 @@ package org.byteveda.taskito.task;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.time.Duration;
 
 /** Immutable per-enqueue options. Unset fields take core defaults. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -104,6 +105,24 @@ public final class EnqueueOptions {
                 throw new IllegalArgumentException("delayMs must be >= 0");
             }
             this.delayMs = delayMs;
+            return this;
+        }
+
+        /** Schedule the job after {@code delay} (Duration form of {@link #delayMs}). */
+        public Builder delay(Duration delay) {
+            this.delayMs = delay.toMillis();
+            return this;
+        }
+
+        /** Per-job timeout (Duration form of {@link #timeoutMs}). */
+        public Builder timeout(Duration timeout) {
+            this.timeoutMs = timeout.toMillis();
+            return this;
+        }
+
+        /** Idempotency key — alias of {@link #uniqueKey} in the guide's vocabulary. */
+        public Builder jobId(String jobId) {
+            this.uniqueKey = jobId;
             return this;
         }
 

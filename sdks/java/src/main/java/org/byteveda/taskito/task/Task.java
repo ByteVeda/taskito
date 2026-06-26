@@ -2,6 +2,7 @@ package org.byteveda.taskito.task;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import java.lang.reflect.Type;
+import java.time.Duration;
 import java.util.Objects;
 
 /**
@@ -52,12 +53,25 @@ public final class Task<T> {
         return withOptions(options.toBuilder().maxRetries(maxRetries).build());
     }
 
+    /** Alias of {@link #maxRetries} in the guide's vocabulary. */
+    public Task<T> retries(int retries) {
+        return maxRetries(retries);
+    }
+
     public Task<T> timeoutMs(long timeoutMs) {
         return withOptions(options.toBuilder().timeoutMs(timeoutMs).build());
     }
 
+    public Task<T> timeout(Duration timeout) {
+        return timeoutMs(timeout.toMillis());
+    }
+
     public Task<T> delayMs(long delayMs) {
         return withOptions(options.toBuilder().delayMs(delayMs).build());
+    }
+
+    public Task<T> delay(Duration delay) {
+        return delayMs(delay.toMillis());
     }
 
     public String name() {
