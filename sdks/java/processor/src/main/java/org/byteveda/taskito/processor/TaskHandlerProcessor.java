@@ -83,6 +83,8 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         }
         out.append("import com.fasterxml.jackson.core.type.TypeReference;\n")
                 .append("import org.byteveda.taskito.task.Task;\n")
+                .append("import org.byteveda.taskito.worker.Handler;\n")
+                .append("import org.byteveda.taskito.worker.HandlerRegistry;\n")
                 .append("import org.byteveda.taskito.worker.Worker;\n\n")
                 .append("/** Generated task descriptors + worker binding for {@link ")
                 .append(ownerSimple)
@@ -131,7 +133,27 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
                         .append(");\n");
             }
         }
-        out.append("        return builder;\n    }\n}\n");
+        out.append("        return builder;\n    }\n\n");
+
+        // handlers() — returns a HandlerRegistry for Worker.Builder.register(...).
+        out.append("    public static HandlerRegistry handlers(")
+                .append(ownerSimple)
+                .append(" impl) {\n        return HandlerRegistry.of(\n");
+        for (int i = 0; i < methods.size(); i++) {
+            ExecutableElement method = methods.get(i);
+            String constant = upperSnake(method.getSimpleName().toString());
+            String methodName = method.getSimpleName().toString();
+            out.append("                Handler.of(").append(constant).append(", ");
+            if (isVoid(method)) {
+                out.append("payload -> {\n                    impl.")
+                        .append(methodName)
+                        .append("(payload);\n                    return null;\n                })");
+            } else {
+                out.append("impl::").append(methodName).append(")");
+            }
+            out.append(i + 1 < methods.size() ? ",\n" : ");\n");
+        }
+        out.append("    }\n}\n");
 
         write(owner, qualified, out.toString());
     }
