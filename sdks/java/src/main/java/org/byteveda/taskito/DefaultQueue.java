@@ -230,6 +230,34 @@ final class DefaultQueue implements Queue {
     }
 
     @Override
+    public Lock lock(String name, long ttlMs) {
+        return new Lock(backend, name, ttlMs);
+    }
+
+    @Override
+    public boolean withLock(String name, long ttlMs, Runnable body) {
+        try (Lock lock = new Lock(backend, name, ttlMs)) {
+            if (!lock.acquire()) {
+                return false;
+            }
+            body.run();
+            return true;
+        }
+    }
+
+    @Override
+    public Optional<LockInfo> lockInfo(String name) {
+        return backend.lockInfoJson(name).map(json -> decode(json, LockInfo.class));
+    }
+
+    @Override
+    public long registerPeriodic(PeriodicTask task) {
+        byte[] payload = task.payload == null ? null : serializer.serialize(task.payload);
+        return backend.registerPeriodic(
+                task.name, task.taskName, task.cron, payload, task.queue, task.timezone, task.enabled);
+    }
+
+    @Override
     public Worker.Builder worker() {
         return Worker.builder(backend, serializer, middleware);
     }

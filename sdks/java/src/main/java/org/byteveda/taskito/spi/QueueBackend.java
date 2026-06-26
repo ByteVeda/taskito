@@ -82,6 +82,19 @@ public interface QueueBackend extends AutoCloseable {
 
     String getTaskLogsJson(String jobId);
 
+    // ── Locks ───────────────────────────────────────────────────────
+    boolean acquireLock(String name, String ownerId, long ttlMs);
+
+    boolean releaseLock(String name, String ownerId);
+
+    boolean extendLock(String name, String ownerId, long ttlMs);
+
+    Optional<String> lockInfoJson(String name);
+
+    // ── Periodic ────────────────────────────────────────────────────
+    long registerPeriodic(
+            String name, String taskName, String cron, byte[] args, String queue, String timezone, boolean enabled);
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker that dispatches jobs to {@code bridge}; returns its control. */
     WorkerControl startWorker(WorkerBridge bridge, String optionsJson);
