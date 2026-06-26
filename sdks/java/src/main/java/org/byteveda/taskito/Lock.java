@@ -27,9 +27,11 @@ public final class Lock implements AutoCloseable {
         return held;
     }
 
-    /** Extend the TTL if still held; false otherwise. */
+    /** Extend the TTL if still held; false otherwise. A failed extend means the
+     * lock was lost (expired or stolen), so {@link #isHeld()} flips to false. */
     public boolean extend(long ttlMs) {
-        return backend.extendLock(name, ownerId, ttlMs);
+        held = backend.extendLock(name, ownerId, ttlMs);
+        return held;
     }
 
     public boolean isHeld() {
