@@ -98,10 +98,20 @@ public final class Step {
             return this;
         }
 
+        /** Run this step once per predecessor item using a {@link FanMode}. */
+        public Builder fanOut(FanMode mode) {
+            return fanOut(mode.wire());
+        }
+
         /** Collect a fan-out predecessor's child results into one list (strategy {@code "all"}). */
         public Builder fanIn(String strategy) {
             this.fanIn = strategy;
             return this;
+        }
+
+        /** Collect a fan-out predecessor's results using a {@link FanMode}. */
+        public Builder fanIn(FanMode mode) {
+            return fanIn(mode.wire());
         }
 
         public Step build() {

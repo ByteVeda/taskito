@@ -1,6 +1,8 @@
 package org.byteveda.taskito.locks;
 
+import java.time.Duration;
 import java.util.UUID;
+import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.spi.QueueBackend;
 
 /**
@@ -25,6 +27,23 @@ public final class Lock implements AutoCloseable {
     public boolean acquire() {
         held = backend.acquireLock(name, ownerId, ttlMs);
         return held;
+    }
+
+    /** Acquire, retrying every 50ms until obtained or {@code timeout} elapses. */
+    public boolean tryAcquire(Duration timeout) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (!acquire()) {
+            if (System.nanoTime() >= deadline) {
+                return false;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new TaskitoException("interrupted while acquiring lock '" + name + "'", e);
+            }
+        }
+        return true;
     }
 
     /** Extend the TTL if still held; false otherwise. A failed extend means the

@@ -50,6 +50,11 @@ public final class Workflow {
         return step(Step.of(name, task).fanOut(strategy).after(after).build());
     }
 
+    /** Fan-out with a {@link FanMode} (typically {@link FanMode#EACH}). */
+    public <T> Workflow fanOut(String name, Task<T> task, FanMode mode, String... after) {
+        return fanOut(name, task, mode.wire(), after);
+    }
+
     /**
      * Add a fan-in step that collects its fan-out predecessor's child results
      * into one list and passes it to {@code task}.
@@ -57,6 +62,11 @@ public final class Workflow {
     public <T> Workflow fanIn(String name, Task<T> task, String strategy, String... after) {
         requireSinglePredecessor("fan-in", name, after);
         return step(Step.of(name, task).fanIn(strategy).after(after).build());
+    }
+
+    /** Fan-in with a {@link FanMode} (typically {@link FanMode#ALL}). */
+    public <T> Workflow fanIn(String name, Task<T> task, FanMode mode, String... after) {
+        return fanIn(name, task, mode.wire(), after);
     }
 
     // A fan-out/fan-in node has exactly one runtime trigger — its single producer.

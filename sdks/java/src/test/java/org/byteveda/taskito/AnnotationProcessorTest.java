@@ -1,0 +1,39 @@
+package org.byteveda.taskito;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.worker.Worker;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+
+class AnnotationProcessorTest {
+
+    @Test
+    @Timeout(30)
+    void generatedCompanionEnqueuesAndHandles(@TempDir Path dir) throws Exception {
+        try (Queue queue =
+                Taskito.builder().sqlite(dir.resolve("ap.db").toString()).open()) {
+            // GreeterTasks is generated from @TaskHandler on Greeter; GREET/TOTAL
+            // are typed Task constants (TOTAL carries the generic List<Integer>).
+            String greetId = queue.enqueue(GreeterTasks.GREET, "ada");
+            String totalId = queue.enqueue(GreeterTasks.TOTAL, List.of(1, 2, 3, 4));
+
+            CountDownLatch done = new CountDownLatch(2);
+            try (Worker worker = queue.worker()
+                    .apply(builder -> GreeterTasks.bind(builder, new Greeter()))
+                    .on(EventName.SUCCESS, event -> done.countDown())
+                    .start()) {
+                assertTrue(done.await(20, TimeUnit.SECONDS), "both tasks should complete");
+                assertEquals("hello ada", queue.getResult(greetId, String.class).orElseThrow());
+                assertEquals(10, queue.getResult(totalId, Integer.class).orElseThrow());
+            }
+        }
+    }
+}

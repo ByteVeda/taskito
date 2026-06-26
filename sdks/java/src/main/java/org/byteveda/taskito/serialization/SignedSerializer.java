@@ -1,5 +1,6 @@
 package org.byteveda.taskito.serialization;
 
+import java.lang.reflect.Type;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import javax.crypto.Mac;
@@ -34,6 +35,16 @@ public final class SignedSerializer implements Serializer {
 
     @Override
     public <T> T deserialize(byte[] bytes, Class<T> type) {
+        return delegate.deserialize(verify(bytes), type);
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes, Type type) {
+        return delegate.deserialize(verify(bytes), type);
+    }
+
+    /** Verify the HMAC tag (constant-time) and return the signed body. */
+    private byte[] verify(byte[] bytes) {
         if (bytes.length < MAC_LENGTH) {
             throw new TaskitoException("signed payload is too short");
         }
@@ -42,7 +53,7 @@ public final class SignedSerializer implements Serializer {
         if (!MessageDigest.isEqual(mac, mac(body))) {
             throw new TaskitoException("signature mismatch");
         }
-        return delegate.deserialize(body, type);
+        return body;
     }
 
     private byte[] mac(byte[] body) {

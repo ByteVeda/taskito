@@ -1,5 +1,6 @@
 package org.byteveda.taskito.serialization;
 
+import java.lang.reflect.Type;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import javax.crypto.Cipher;
@@ -45,6 +46,16 @@ public final class EncryptedSerializer implements Serializer {
 
     @Override
     public <T> T deserialize(byte[] bytes, Class<T> type) {
+        return delegate.deserialize(decrypt(bytes), type);
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes, Type type) {
+        return delegate.deserialize(decrypt(bytes), type);
+    }
+
+    /** Strip the IV, decrypt + authenticate (GCM), and return the plaintext. */
+    private byte[] decrypt(byte[] bytes) {
         if (bytes.length < IV_LENGTH) {
             throw new TaskitoException("encrypted payload is too short");
         }
@@ -53,7 +64,7 @@ public final class EncryptedSerializer implements Serializer {
             byte[] ciphertext = Arrays.copyOfRange(bytes, IV_LENGTH, bytes.length);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
-            return delegate.deserialize(cipher.doFinal(ciphertext), type);
+            return cipher.doFinal(ciphertext);
         } catch (Exception e) {
             throw new TaskitoException("decryption failed", e);
         }

@@ -2,6 +2,7 @@ package org.byteveda.taskito;
 
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -11,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.byteveda.taskito.core.CoreFacade;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
@@ -42,12 +44,16 @@ import org.byteveda.taskito.workflows.WorkflowStatus;
 final class DefaultQueue implements Queue {
     private static final ObjectMapper VIEWS = new ObjectMapper();
 
+    private static final long DEFAULT_LOCK_TTL_MS = 30_000;
+
     private final QueueBackend backend;
+    private final CoreFacade facade;
     private final Serializer serializer;
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
 
     DefaultQueue(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
+        this.facade = new CoreFacade(backend);
         this.serializer = serializer;
     }
 
@@ -100,8 +106,18 @@ final class DefaultQueue implements Queue {
     }
 
     @Override
+    public <T> List<String> enqueueAll(Task<T> task, List<T> payloads) {
+        return enqueueMany(task, payloads);
+    }
+
+    @Override
     public Optional<Job> getJob(String jobId) {
         return backend.getJobJson(jobId).map(json -> decode(json, Job.class));
+    }
+
+    @Override
+    public Optional<Job> awaitJob(String jobId, Duration timeout) {
+        return facade.awaitJobJson(jobId, timeout, Duration.ofMillis(100)).map(json -> decode(json, Job.class));
     }
 
     @Override
@@ -184,6 +200,11 @@ final class DefaultQueue implements Queue {
     }
 
     @Override
+    public String retry(String deadId) {
+        return backend.retryDead(deadId);
+    }
+
+    @Override
     public boolean deleteDead(String deadId) {
         return backend.deleteDead(deadId);
     }
@@ -256,6 +277,11 @@ final class DefaultQueue implements Queue {
     }
 
     @Override
+    public Lock lock(String name) {
+        return new Lock(backend, name, DEFAULT_LOCK_TTL_MS);
+    }
+
+    @Override
     public boolean withLock(String name, long ttlMs, Runnable body) {
         try (Lock lock = new Lock(backend, name, ttlMs)) {
             if (!lock.acquire()) {
@@ -269,6 +295,11 @@ final class DefaultQueue implements Queue {
     @Override
     public Optional<LockInfo> lockInfo(String name) {
         return backend.lockInfoJson(name).map(json -> decode(json, LockInfo.class));
+    }
+
+    @Override
+    public Optional<LockInfo> getLockInfo(String name) {
+        return lockInfo(name);
     }
 
     @Override

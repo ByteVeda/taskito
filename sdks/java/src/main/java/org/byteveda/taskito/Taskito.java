@@ -34,6 +34,21 @@ public final class Taskito {
             return this;
         }
 
+        /** Shortcut for {@code backend("sqlite").url(path)}. */
+        public Builder sqlite(String path) {
+            return backend("sqlite").url(path);
+        }
+
+        /** Shortcut for {@code backend("postgres").url(url)}. */
+        public Builder postgres(String url) {
+            return backend("postgres").url(url);
+        }
+
+        /** Shortcut for {@code backend("redis").url(url)}. */
+        public Builder redis(String url) {
+            return backend("redis").url(url);
+        }
+
         public Builder poolSize(int poolSize) {
             options.put("poolSize", poolSize);
             return this;

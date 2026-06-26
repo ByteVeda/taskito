@@ -1,6 +1,7 @@
 package org.byteveda.taskito.serialization;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.lang.reflect.Type;
 import org.byteveda.taskito.TaskitoException;
 
 /** Default {@link Serializer}: JSON via Jackson. */
@@ -28,6 +29,15 @@ public final class JsonSerializer implements Serializer {
     public <T> T deserialize(byte[] bytes, Class<T> type) {
         try {
             return mapper.readValue(bytes, type);
+        } catch (Exception e) {
+            throw new TaskitoException("failed to deserialize payload", e);
+        }
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes, Type type) {
+        try {
+            return mapper.readValue(bytes, mapper.getTypeFactory().constructType(type));
         } catch (Exception e) {
             throw new TaskitoException("failed to deserialize payload", e);
         }
