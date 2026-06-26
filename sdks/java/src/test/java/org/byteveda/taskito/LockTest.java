@@ -37,9 +37,12 @@ class LockTest {
     @Test
     void registerPeriodicValidatesCron(@TempDir Path dir) {
         try (Queue queue = open(dir)) {
+            long before = System.currentTimeMillis();
             long next = queue.registerPeriodic(
                     PeriodicTask.builder("p", "tick", "0 0 12 * * *").build());
-            assertTrue(next > System.currentTimeMillis());
+            // Next firing must be strictly after the pre-registration instant.
+            // Comparing to a later wall-clock read could flake at the cron boundary.
+            assertTrue(next > before);
 
             assertThrows(
                     TaskitoException.class,
