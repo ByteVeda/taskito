@@ -82,6 +82,31 @@ public interface QueueBackend extends AutoCloseable {
 
     String getTaskLogsJson(String jobId);
 
+    // ── Locks ───────────────────────────────────────────────────────
+    // Optional capability: default to throwing so existing custom backends keep
+    // compiling and fail explicitly only when locks are actually used.
+    default boolean acquireLock(String name, String ownerId, long ttlMs) {
+        throw new UnsupportedOperationException("locks not supported by this backend");
+    }
+
+    default boolean releaseLock(String name, String ownerId) {
+        throw new UnsupportedOperationException("locks not supported by this backend");
+    }
+
+    default boolean extendLock(String name, String ownerId, long ttlMs) {
+        throw new UnsupportedOperationException("locks not supported by this backend");
+    }
+
+    default Optional<String> lockInfoJson(String name) {
+        throw new UnsupportedOperationException("locks not supported by this backend");
+    }
+
+    // ── Periodic ────────────────────────────────────────────────────
+    default long registerPeriodic(
+            String name, String taskName, String cron, byte[] args, String queue, String timezone, boolean enabled) {
+        throw new UnsupportedOperationException("periodic tasks not supported by this backend");
+    }
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker that dispatches jobs to {@code bridge}; returns its control. */
     WorkerControl startWorker(WorkerBridge bridge, String optionsJson);

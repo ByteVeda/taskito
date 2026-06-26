@@ -165,6 +165,32 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public boolean acquireLock(String name, String ownerId, long ttlMs) {
+        return NativeQueue.acquireLock(handle, name, ownerId, ttlMs);
+    }
+
+    @Override
+    public boolean releaseLock(String name, String ownerId) {
+        return NativeQueue.releaseLock(handle, name, ownerId);
+    }
+
+    @Override
+    public boolean extendLock(String name, String ownerId, long ttlMs) {
+        return NativeQueue.extendLock(handle, name, ownerId, ttlMs);
+    }
+
+    @Override
+    public Optional<String> lockInfoJson(String name) {
+        return Optional.ofNullable(NativeQueue.getLockInfo(handle, name));
+    }
+
+    @Override
+    public long registerPeriodic(
+            String name, String taskName, String cron, byte[] args, String queue, String timezone, boolean enabled) {
+        return NativeQueue.registerPeriodic(handle, name, taskName, cron, args, queue, timezone, enabled);
+    }
+
+    @Override
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
         return new JniWorkerControl(NativeQueue.runWorker(handle, bridge, optionsJson));
     }

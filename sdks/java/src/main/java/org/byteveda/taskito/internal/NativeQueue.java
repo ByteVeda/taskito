@@ -85,6 +85,28 @@ public final class NativeQueue {
 
     public static native String getTaskLogs(long handle, String jobId);
 
+    // ── Locks ───────────────────────────────────────────────────────
+    public static native boolean acquireLock(long handle, String name, String ownerId, long ttlMs);
+
+    public static native boolean releaseLock(long handle, String name, String ownerId);
+
+    public static native boolean extendLock(long handle, String name, String ownerId, long ttlMs);
+
+    /** Returns JSON holder info, or {@code null} if free. */
+    public static native String getLockInfo(long handle, String name);
+
+    // ── Periodic ────────────────────────────────────────────────────
+    /** Register (or replace) a cron task; returns the next fire time (Unix ms). */
+    public static native long registerPeriodic(
+            long handle,
+            String name,
+            String taskName,
+            String cron,
+            byte[] args,
+            String queue,
+            String timezone,
+            boolean enabled);
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker; returns its handle. {@code bridge} is a {@code WorkerBridge}. */
     public static native long runWorker(long handle, Object bridge, String optionsJson);

@@ -31,13 +31,12 @@ final class Deliverer {
     }
 
     private void sendWithRetry(HttpRequest request, int attemptsLeft) {
-        client.sendAsync(request, HttpResponse.BodyHandlers.discarding())
-                .whenComplete((response, error) -> {
-                    boolean failed = error != null || response.statusCode() >= 500;
-                    if (failed && attemptsLeft > 0) {
-                        sendWithRetry(request, attemptsLeft - 1);
-                    }
-                });
+        client.sendAsync(request, HttpResponse.BodyHandlers.discarding()).whenComplete((response, error) -> {
+            boolean failed = error != null || response.statusCode() >= 500;
+            if (failed && attemptsLeft > 0) {
+                sendWithRetry(request, attemptsLeft - 1);
+            }
+        });
     }
 
     static String sign(String secret, byte[] body) {

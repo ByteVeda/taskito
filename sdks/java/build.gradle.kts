@@ -1,22 +1,59 @@
+import com.vanniktech.maven.publish.SonatypeHost
+
 plugins {
     `java-library`
     checkstyle
     id("com.diffplug.spotless") version "6.25.0"
+    id("com.vanniktech.maven.publish") version "0.30.0"
 }
 
 group = "org.byteveda"
 version = "0.16.4"
 
 java {
-    toolchain {
-        languageVersion.set(JavaLanguageVersion.of(11))
-    }
-    withSourcesJar()
-    withJavadocJar()
+    // Sources + javadoc jars are added by the maven-publish plugin below.
+    // Compile to Java 11 bytecode with whatever JDK (>= 11) runs Gradle, rather
+    // than pinning a toolchain — `--release 11` also rejects post-11 stdlib APIs.
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(11)
 }
 
 repositories {
     mavenCentral()
+}
+
+// --- Publishing: Maven Central via the Central Publisher Portal ------------
+
+mavenPublishing {
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    signAllPublications()
+    coordinates(group.toString(), "taskito", version.toString())
+    pom {
+        name.set("Taskito")
+        description.set("Rust-powered task queue for the JVM, via a JNI binding over the Taskito core.")
+        url.set("https://github.com/ByteVeda/taskito")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                id.set("byteveda")
+                name.set("ByteVeda")
+            }
+        }
+        scm {
+            url.set("https://github.com/ByteVeda/taskito")
+            connection.set("scm:git:https://github.com/ByteVeda/taskito.git")
+            developerConnection.set("scm:git:ssh://git@github.com/ByteVeda/taskito.git")
+        }
+    }
 }
 
 // --- Code integrity: formatting + static analysis -------------------------
@@ -73,6 +110,10 @@ val copyNative by tasks.registering(Copy::class) {
 
 sourceSets["main"].resources.srcDir(nativeStaging)
 tasks.named("processResources") { dependsOn(copyNative) }
+// The sources jar (added by the publish plugin) also packages the main
+// resource srcDirs, so any Jar task reads the staged native dir. Wire the
+// dependency lazily — sourcesJar is registered after this script evaluates.
+tasks.withType<Jar>().configureEach { dependsOn(copyNative) }
 
 tasks.test {
     useJUnitPlatform()

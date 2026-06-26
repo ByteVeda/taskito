@@ -23,7 +23,10 @@ class QueueTest {
     }
 
     private Queue open(Path dir) {
-        return Taskito.builder().backend("sqlite").url(dir.resolve("t.db").toString()).open();
+        return Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open();
     }
 
     @Test
@@ -60,7 +63,8 @@ class QueueTest {
     void enqueueManyAndFilteredList(@TempDir Path dir) {
         try (Queue queue = open(dir)) {
             List<String> ids = queue.enqueueMany(
-                    SEND_EMAIL.withOptions(EnqueueOptions.builder().queue("emails").build()),
+                    SEND_EMAIL.withOptions(
+                            EnqueueOptions.builder().queue("emails").build()),
                     Arrays.asList(
                             Collections.singletonMap("to", "a"),
                             Collections.singletonMap("to", "b"),
@@ -68,8 +72,10 @@ class QueueTest {
             assertEquals(3, ids.size());
             assertEquals(3, queue.statsByQueue("emails").pending);
 
-            List<Job> jobs = queue.listJobs(
-                    JobFilter.builder().queue("emails").status(JobStatus.PENDING).build());
+            List<Job> jobs = queue.listJobs(JobFilter.builder()
+                    .queue("emails")
+                    .status(JobStatus.PENDING)
+                    .build());
             assertEquals(3, jobs.size());
         }
     }

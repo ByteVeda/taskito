@@ -9,8 +9,7 @@ public final class OutcomeEvent {
     public final int retryCount;
     public final boolean timedOut;
 
-    public OutcomeEvent(
-            EventName name, String jobId, String taskName, String error, int retryCount, boolean timedOut) {
+    public OutcomeEvent(EventName name, String jobId, String taskName, String error, int retryCount, boolean timedOut) {
         this.name = name;
         this.jobId = jobId;
         this.taskName = taskName;

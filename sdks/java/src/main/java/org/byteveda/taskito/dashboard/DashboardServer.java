@@ -63,8 +63,7 @@ public final class DashboardServer implements AutoCloseable {
     }
 
     /** Start on {@code port} (0 = ephemeral). {@code token}/{@code staticDir} may be null. */
-    public static DashboardServer start(Queue queue, int port, String token, String staticDir)
-            throws IOException {
+    public static DashboardServer start(Queue queue, int port, String token, String staticDir) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         Path dir = staticDir == null ? null : Paths.get(staticDir).normalize();
         DashboardServer dashboard = new DashboardServer(server, queue, token, dir);
@@ -119,8 +118,7 @@ public final class DashboardServer implements AutoCloseable {
         respond(exchange, 404, error("not found"));
     }
 
-    private boolean handleGet(HttpExchange exchange, String path, Map<String, String> query)
-            throws IOException {
+    private boolean handleGet(HttpExchange exchange, String path, Map<String, String> query) throws IOException {
         switch (path) {
             case "/api/stats":
                 respond(exchange, 200, Contract.stats(queue.stats()));

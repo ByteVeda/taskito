@@ -6,11 +6,20 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /** Immutable filter for {@link Queue#listJobs(JobFilter)}. Unset fields are ignored. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class JobFilter {
-    @JsonProperty("status") private final String status;
-    @JsonProperty("queue") private final String queue;
-    @JsonProperty("task") private final String task;
-    @JsonProperty("limit") private final Integer limit;
-    @JsonProperty("offset") private final Integer offset;
+    @JsonProperty("status")
+    private final String status;
+
+    @JsonProperty("queue")
+    private final String queue;
+
+    @JsonProperty("task")
+    private final String task;
+
+    @JsonProperty("limit")
+    private final Integer limit;
+
+    @JsonProperty("offset")
+    private final Integer offset;
 
     private JobFilter(Builder b) {
         this.status = b.status;

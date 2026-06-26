@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
-use taskito_core::storage::models::{JobErrorRow, TaskLogRow, TaskMetricRow, WorkerRow};
+use taskito_core::storage::models::{
+    JobErrorRow, LockInfoRow, TaskLogRow, TaskMetricRow, WorkerRow,
+};
 use taskito_core::storage::{DeadJob, QueueStats};
 
 use crate::error::BindingError;
@@ -318,6 +320,27 @@ impl<'a> From<&'a TaskLogRow> for LogView<'a> {
             message: &l.message,
             extra: l.extra.as_deref(),
             logged_at: l.logged_at,
+        }
+    }
+}
+
+/// Current holder of a distributed lock.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockInfoView<'a> {
+    pub lock_name: &'a str,
+    pub owner_id: &'a str,
+    pub acquired_at: i64,
+    pub expires_at: i64,
+}
+
+impl<'a> From<&'a LockInfoRow> for LockInfoView<'a> {
+    fn from(l: &'a LockInfoRow) -> Self {
+        Self {
+            lock_name: &l.lock_name,
+            owner_id: &l.owner_id,
+            acquired_at: l.acquired_at,
+            expires_at: l.expires_at,
         }
     }
 }

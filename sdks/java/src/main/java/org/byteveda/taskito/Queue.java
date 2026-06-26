@@ -93,6 +93,21 @@ public interface Queue extends AutoCloseable {
 
     List<TaskLog> getTaskLogs(String jobId);
 
+    // ── Locks ───────────────────────────────────────────────────────
+
+    /** A distributed lock {@code name} with the given TTL; call {@link Lock#acquire()}. */
+    Lock lock(String name, long ttlMs);
+
+    /** Acquire {@code name}, run {@code body} if obtained, then release; returns whether it ran. */
+    boolean withLock(String name, long ttlMs, Runnable body);
+
+    Optional<LockInfo> lockInfo(String name);
+
+    // ── Periodic ────────────────────────────────────────────────────
+
+    /** Register (or replace) a cron task; returns the next fire time (Unix ms). */
+    long registerPeriodic(PeriodicTask task);
+
     // ── Worker ──────────────────────────────────────────────────────
 
     /** Begin building a worker over this queue. */

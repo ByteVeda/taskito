@@ -23,18 +23,25 @@ class DashboardTest {
     }
 
     private static HttpResponse<String> get(int port, String path) throws Exception {
-        return HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
+        return HttpClient.newHttpClient()
+                .send(
+                        HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                                .GET()
+                                .build(),
+                        HttpResponse.BodyHandlers.ofString());
     }
 
     @Test
     @Timeout(30)
     void servesSnakeCaseContract(@TempDir Path dir) throws Exception {
         Task<Map<String, Object>> add = Task.of("add", mapType());
-        try (Queue queue =
-                Taskito.builder().backend("sqlite").url(dir.resolve("t.db").toString()).open()) {
-            queue.enqueue(add, Collections.singletonMap("a", 1),
+        try (Queue queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
+            queue.enqueue(
+                    add,
+                    Collections.singletonMap("a", 1),
                     EnqueueOptions.builder().queue("emails").build());
             try (DashboardServer server = DashboardServer.start(queue, 0)) {
                 int port = server.port();
@@ -53,8 +60,10 @@ class DashboardTest {
     @Test
     @Timeout(30)
     void enforcesToken(@TempDir Path dir) throws Exception {
-        try (Queue queue =
-                Taskito.builder().backend("sqlite").url(dir.resolve("t.db").toString()).open()) {
+        try (Queue queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
             try (DashboardServer server = DashboardServer.start(queue, 0, "sekret", null)) {
                 int port = server.port();
                 assertEquals(401, get(port, "/api/stats").statusCode());
