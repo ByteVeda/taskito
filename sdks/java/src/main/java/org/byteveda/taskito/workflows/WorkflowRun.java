@@ -7,7 +7,7 @@ import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.spi.QueueBackend;
 
 /** A submitted workflow run. Query {@link #status()}, block on {@link #await}, or {@link #cancel()}. */
-public final class WorkflowRun {
+public final class WorkflowRun implements AutoCloseable {
     private final QueueBackend backend;
     private final ObjectMapper json;
     private final String id;
@@ -21,6 +21,11 @@ public final class WorkflowRun {
     }
 
     public String id() {
+        return id;
+    }
+
+    /** Alias of {@link #id()} in the guide's vocabulary. */
+    public String runId() {
         return id;
     }
 
@@ -61,6 +66,12 @@ public final class WorkflowRun {
     /** Cancel the run: skip its pending nodes and mark it cancelled. */
     public void cancel() {
         backend.cancelWorkflowRun(id);
+    }
+
+    /** No native resources are held; provided so a run can be used in try-with-resources. */
+    @Override
+    public void close() {
+        // Intentionally empty — keeps the API consistent and future-proof.
     }
 
     private WorkflowStatus decode(String raw) {

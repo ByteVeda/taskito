@@ -42,4 +42,12 @@ public final class WorkflowStatus {
     public Optional<NodeSnapshot> node(String nodeName) {
         return nodes.stream().filter(n -> n.nodeName.equals(nodeName)).findFirst();
     }
+
+    /** The name of the first failed node, if any (helps explain a {@code FAILED} run). */
+    public Optional<String> failedStep() {
+        return nodes.stream()
+                .filter(n -> n.status == NodeStatus.FAILED)
+                .map(n -> n.nodeName)
+                .findFirst();
+    }
 }
