@@ -105,6 +105,9 @@ public final class Step {
         }
 
         public Step build() {
+            if (fanOut != null && fanIn != null) {
+                throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
+            }
             return new Step(this);
         }
     }
