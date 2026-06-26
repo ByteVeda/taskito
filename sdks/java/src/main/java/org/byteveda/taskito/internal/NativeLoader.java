@@ -5,12 +5,13 @@ import java.io.InputStream;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.Locale;
-import java.util.UUID;
 
 /**
  * Loads the native Taskito library.
@@ -41,12 +42,19 @@ public final class NativeLoader {
 
     private static String extractBundled() {
         byte[] bytes = readResource();
+        String expected = sha256Hex(bytes);
         try {
-            Path dir = workdir();
-            Files.createDirectories(dir);
-            Path target = dir.resolve(platformDir() + "-" + hash(bytes) + "-" + System.mapLibraryName(LIB));
-            if (!Files.isRegularFile(target) || Files.size(target) != bytes.length) {
+            Path dir = secureWorkdir();
+            Path target =
+                    dir.resolve(platformDir() + "-" + expected.substring(0, 16) + "-" + System.mapLibraryName(LIB));
+            if (!isTrusted(target, bytes.length, expected)) {
                 materialize(dir, target, bytes);
+                // Fail closed: never System.load a file we haven't verified
+                // byte-for-byte. A racing writer could have left an untrusted file
+                // at the target after we dropped ours.
+                if (!isTrusted(target, bytes.length, expected)) {
+                    throw new IOException("native library failed integrity check at " + target);
+                }
             }
             return target.toAbsolutePath().toString();
         } catch (IOException e) {
@@ -54,16 +62,41 @@ public final class NativeLoader {
         }
     }
 
+    /**
+     * A pre-existing file is reused only if it is a real (non-symlink) regular
+     * file of the expected length whose bytes hash to {@code expected}. This
+     * rejects a swapped or symlinked file planted in a shared workdir.
+     */
+    private static boolean isTrusted(Path target, long expectedLength, String expected) throws IOException {
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || Files.size(target) != expectedLength) {
+            return false;
+        }
+        return sha256Hex(Files.readAllBytes(target)).equals(expected);
+    }
+
     /** Write to a unique temp file, then atomically move it into place. */
     private static void materialize(Path dir, Path target, byte[] bytes) throws IOException {
-        Path temp = dir.resolve(".tmp-" + UUID.randomUUID());
-        Files.write(temp, bytes);
+        Path temp = Files.createTempFile(dir, ".tmp-", null);
+        boolean moved = false;
         try {
-            Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
-        } catch (FileAlreadyExistsException raced) {
-            Files.deleteIfExists(temp); // another process won the race — its file is identical
-        } catch (AtomicMoveNotSupportedException unsupported) {
-            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            Files.write(temp, bytes);
+            // We only reach here after verification failed, so drop any untrusted
+            // or symlinked file squatting the target. NOFOLLOW deletes the link
+            // itself, not whatever it points at.
+            Files.deleteIfExists(target);
+            try {
+                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
+                moved = true;
+            } catch (FileAlreadyExistsException raced) {
+                moved = false; // another process won; the caller re-verifies the target
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                moved = true;
+            }
+        } finally {
+            if (!moved) {
+                Files.deleteIfExists(temp); // don't leave .tmp-* behind on failure or loss
+            }
         }
     }
 
@@ -80,19 +113,30 @@ public final class NativeLoader {
         }
     }
 
-    private static Path workdir() {
+    /**
+     * Per-user extraction directory with owner-only permissions, so other users
+     * on a shared {@code /tmp} can't pre-create or swap the file we load.
+     */
+    private static Path secureWorkdir() throws IOException {
         String configured = System.getProperty(WORKDIR_PROPERTY);
         String base = configured != null ? configured : System.getProperty("java.io.tmpdir");
-        return Paths.get(base).resolve("taskito-native");
+        Path dir = Paths.get(base).resolve("taskito-native-" + System.getProperty("user.name", "anon"));
+        Files.createDirectories(dir);
+        try {
+            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException nonPosix) {
+            // Windows etc.: per-user profile dirs are already ACL-restricted.
+        }
+        return dir;
     }
 
-    private static String hash(byte[] bytes) {
+    private static String sha256Hex(byte[] bytes) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
-            StringBuilder hex = new StringBuilder(16);
-            for (int i = 0; i < 8; i++) {
-                hex.append(Character.forDigit((digest[i] >> 4) & 0xf, 16));
-                hex.append(Character.forDigit(digest[i] & 0xf, 16));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                hex.append(Character.forDigit((b >> 4) & 0xf, 16));
+                hex.append(Character.forDigit(b & 0xf, 16));
             }
             return hex.toString();
         } catch (Exception e) {
