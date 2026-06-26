@@ -552,6 +552,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
         view.put("error", job.error);
         view.put("uniqueKey", job.uniqueKey);
         view.put("namespace", job.namespace);
+        view.put("metadata", job.metadata);
         return view;
     }
 
