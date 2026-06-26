@@ -59,7 +59,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
         return ids;
     }
 
-    private String enqueueOne(String taskName, byte[] payload, JsonNode opts) {
+    // synchronized so the unique-key scan + insert is atomic against claimNext
+    // and concurrent enqueues.
+    private synchronized String enqueueOne(String taskName, byte[] payload, JsonNode opts) {
         String uniqueKey = text(opts, "uniqueKey");
         if (uniqueKey != null) {
             for (JobRec existing : jobs.values()) {
@@ -99,8 +101,10 @@ public final class InMemoryQueueBackend implements QueueBackend {
         return job == null ? Optional.empty() : Optional.ofNullable(job.result);
     }
 
+    // synchronized so a pending→cancelled transition can't race claimNext's
+    // pending→running (which is also on the backend monitor).
     @Override
-    public boolean cancel(String jobId) {
+    public synchronized boolean cancel(String jobId) {
         JobRec job = jobs.get(jobId);
         if (job != null && "pending".equals(job.status)) {
             job.status = "cancelled";
@@ -204,7 +208,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
     }
 
     @Override
-    public String retryDead(String deadId) {
+    public synchronized String retryDead(String deadId) {
         for (Map<String, Object> entry : dead) {
             if (deadId.equals(entry.get("id"))) {
                 JobRec source = jobs.get((String) entry.get("originalJobId"));
@@ -215,6 +219,15 @@ public final class InMemoryQueueBackend implements QueueBackend {
                 job.queue = (String) entry.get("queue");
                 job.payload = source == null ? new byte[0] : source.payload;
                 job.maxRetries = source == null ? 0 : source.maxRetries;
+                // Preserve the rest of the original job's options so a retry
+                // behaves like the original, not a stripped-down job.
+                if (source != null) {
+                    job.priority = source.priority;
+                    job.timeoutMs = source.timeoutMs;
+                    job.uniqueKey = source.uniqueKey;
+                    job.metadata = source.metadata;
+                    job.namespace = source.namespace;
+                }
                 job.createdAt = now();
                 job.scheduledAt = job.createdAt;
                 jobs.put(job.id, job);
@@ -362,10 +375,24 @@ public final class InMemoryQueueBackend implements QueueBackend {
 
     @Override
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
-        InMemoryWorker worker = new InMemoryWorker(bridge);
+        InMemoryWorker worker = new InMemoryWorker(bridge, parseQueues(optionsJson));
         workers.add(worker);
         worker.start();
         return worker;
+    }
+
+    /** The worker's queue filter from its options JSON; empty = consume every queue. */
+    private java.util.Set<String> parseQueues(String optionsJson) {
+        java.util.Set<String> queues = new java.util.HashSet<>();
+        try {
+            JsonNode node = JSON.readTree(optionsJson).get("queues");
+            if (node != null && node.isArray()) {
+                node.forEach(q -> queues.add(q.asText()));
+            }
+        } catch (Exception ignored) {
+            // Missing or malformed options — fall back to consuming every queue.
+        }
+        return queues;
     }
 
     @Override
@@ -464,11 +491,15 @@ public final class InMemoryQueueBackend implements QueueBackend {
     // ── Internals ───────────────────────────────────────────────────
 
     /** Claim a dispatchable pending job (status → running); null if none right now. */
-    private synchronized JobRec claimNext() {
+    private synchronized JobRec claimNext(java.util.Set<String> queues) {
         long now = now();
         JobRec best = null;
         for (JobRec job : jobs.values()) {
             if (!"pending".equals(job.status) || job.scheduledAt > now || paused.contains(job.queue)) {
+                continue;
+            }
+            // Honor the worker's queue filter; empty filter = every queue.
+            if (!queues.isEmpty() && !queues.contains(job.queue)) {
                 continue;
             }
             if (best == null || job.priority > best.priority) {
@@ -636,12 +667,14 @@ public final class InMemoryQueueBackend implements QueueBackend {
     /** Polls for dispatchable jobs and drives outcomes back through the bridge. */
     private final class InMemoryWorker implements WorkerControl {
         private final WorkerBridge bridge;
+        private final java.util.Set<String> queues;
         private final Map<Long, String> inFlight = new ConcurrentHashMap<>();
         private volatile boolean running = true;
         private Thread loop;
 
-        InMemoryWorker(WorkerBridge bridge) {
+        InMemoryWorker(WorkerBridge bridge, java.util.Set<String> queues) {
             this.bridge = bridge;
+            this.queues = queues;
         }
 
         void start() {
@@ -653,7 +686,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
         private void run() {
             while (running) {
                 JobRec job;
-                while (running && (job = claimNext()) != null) {
+                while (running && (job = claimNext(queues)) != null) {
                     long token = seq.incrementAndGet();
                     inFlight.put(token, job.id);
                     bridge.onJob(token, job.id, job.taskName, job.payload);
