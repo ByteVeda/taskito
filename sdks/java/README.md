@@ -130,6 +130,21 @@ try (Worker worker = queue.worker()
 A failed step (after its retries) fails the run and skips downstream nodes;
 `run.cancel()` skips pending nodes.
 
+Payloads can also be supplied **at submit** instead of baked into each step —
+declare structural steps with `stepAfter(name, task, deps...)` and pass a map:
+
+```java
+Workflow etl = Workflow.named("etl")
+        .stepAfter("extract", extract)
+        .stepAfter("transform", transform, "extract")
+        .stepAfter("load", load, "transform");
+
+queue.submitWorkflow(etl, Map.of("extract", 5, "transform", 6, "load", 7));
+```
+
+A step's effective payload is `map.get(name)` when present, else the one baked
+into the step.
+
 **Fan-out / fan-in** map a step over a producer's result list and gather the
 results:
 
