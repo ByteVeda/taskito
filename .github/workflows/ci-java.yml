@@ -1,9 +1,9 @@
 name: CI Java
 
-# Reusable workflow: build the JNI cdylib (via Gradle's cargoBuild) and run the
-# Java SDK's full `gradle build` — compile, Spotless + Checkstyle, and the JUnit
-# suite across the runtime, processor, and test-support subprojects. Called by
-# ci.yml when Java-relevant paths change.
+# Reusable workflow for the Java SDK. The JNI cdylib is built once (it's
+# identical for every consumer JDK), then the full `gradle build` — compile
+# (`--release 11`), Spotless + Checkstyle, and the JUnit suite — runs against
+# each supported JDK runtime. Called by ci.yml when Java-relevant paths change.
 on:
   workflow_call:
 
@@ -15,8 +15,11 @@ env:
   CARGO_NET_RETRY: "10"
 
 jobs:
-  java-test:
-    name: Java SDK Tests
+  # Compile the native library once and hand it to every test leg as an
+  # artifact. The .so does not depend on the JDK, so rebuilding it per matrix
+  # entry would only burn runner minutes.
+  native:
+    name: Build native library
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -25,12 +28,49 @@ jobs:
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
 
+      - name: Build the JNI cdylib
+        run: cargo build --release --features postgres,redis,workflows -p taskito-java
+
+      - name: Upload the cdylib
+        uses: actions/upload-artifact@v7
+        with:
+          name: taskito-java-native
+          path: target/release/libtaskito_java.so
+          if-no-files-found: error
+          retention-days: 1
+
+  # Run compile + lint + the JUnit suite on every supported JDK runtime. The
+  # SDK targets Java 11 but is consumed on 11/17/21 and loads a native .so, so
+  # JVM behaviour is runtime-sensitive — green on one JDK is not green on all.
+  # fail-fast is off so one JDK's failures don't mask another's.
+  test:
+    name: Java SDK Tests (JDK ${{ matrix.java }})
+    needs: native
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["11", "17", "21"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
       - name: Set up Java + Gradle
         uses: ./.github/actions/setup-java
+        with:
+          java-version: ${{ matrix.java }}
 
-      # `gradle build` runs cargoBuild (the JNI cdylib), staging the native
-      # library into the jar, then compile + Spotless + Checkstyle + tests for
-      # every subproject. --no-daemon keeps the runner clean.
+      # Stage the prebuilt library where Gradle's copyNative expects it
+      # (../../target/release from sdks/java), so the build needs no Rust.
+      - name: Download the cdylib
+        uses: actions/download-artifact@v8
+        with:
+          name: taskito-java-native
+          path: target/release
+
+      # `-x cargoBuild` skips the Rust compile; copyNative still stages the
+      # downloaded .so into the jar before compile + Spotless + Checkstyle +
+      # tests run. --no-daemon keeps the runner clean.
       - name: Build and test the Java SDK
         working-directory: sdks/java
-        run: ./gradlew build --no-daemon
+        run: ./gradlew build -x cargoBuild --no-daemon
