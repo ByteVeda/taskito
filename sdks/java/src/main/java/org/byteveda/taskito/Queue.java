@@ -1,5 +1,6 @@
 package org.byteveda.taskito;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,7 +43,13 @@ public interface Queue extends AutoCloseable {
 
     <T> List<String> enqueueMany(Task<T> task, List<T> payloads, EnqueueOptions options);
 
+    /** Alias of {@link #enqueueMany(Task, List)} in the guide's vocabulary. */
+    <T> List<String> enqueueAll(Task<T> task, List<T> payloads);
+
     Optional<Job> getJob(String jobId);
+
+    /** Block until the job reaches a terminal state (tests only); throws on timeout. */
+    Optional<Job> awaitJob(String jobId, Duration timeout);
 
     /** The job's raw serialized result, if complete. */
     Optional<byte[]> getResult(String jobId);
@@ -82,6 +89,9 @@ public interface Queue extends AutoCloseable {
     /** Re-enqueue a dead-letter entry; returns the new job id. */
     String retryDead(String deadId);
 
+    /** Alias of {@link #retryDead(String)} in the guide's vocabulary. */
+    String retry(String deadId);
+
     boolean deleteDead(String deadId);
 
     long purgeDead(long olderThanMs);
@@ -115,10 +125,16 @@ public interface Queue extends AutoCloseable {
     /** A distributed lock {@code name} with the given TTL; call {@link Lock#acquire()}. */
     Lock lock(String name, long ttlMs);
 
+    /** A distributed lock {@code name} with a default 30s TTL. */
+    Lock lock(String name);
+
     /** Acquire {@code name}, run {@code body} if obtained, then release; returns whether it ran. */
     boolean withLock(String name, long ttlMs, Runnable body);
 
     Optional<LockInfo> lockInfo(String name);
+
+    /** Alias of {@link #lockInfo(String)} in the guide's vocabulary. */
+    Optional<LockInfo> getLockInfo(String name);
 
     // ── Periodic ────────────────────────────────────────────────────
 
