@@ -95,7 +95,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Build cdylib
-        run: cargo build -p taskito-java --release --features postgres,redis
+        run: cargo build -p taskito-java --release --features postgres,redis,workflows
 
       - name: Stage native binary under its classifier
         shell: bash
