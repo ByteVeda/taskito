@@ -16,6 +16,48 @@ const DEFAULT_POSTGRES_SCHEMA: &str = "taskito";
 pub struct QueueHandle {
     pub storage: StorageBackend,
     pub namespace: Option<String>,
+    /// Workflow storage, built lazily on first workflow call (its constructor
+    /// runs the workflow-table migrations). Shares this queue's connection pool.
+    #[cfg(feature = "workflows")]
+    pub workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowStorageBackend>,
+}
+
+#[cfg(feature = "workflows")]
+impl QueueHandle {
+    /// Return the workflow storage, initializing it (and its migrations) once.
+    pub fn workflow_store(
+        &self,
+    ) -> Result<taskito_workflows::WorkflowStorageBackend, BindingError> {
+        if let Some(wf) = self.workflow_storage.get() {
+            return Ok(wf.clone());
+        }
+        let wf = build_workflow_storage(&self.storage)?;
+        // A racing thread's handle wraps the same pool, so either is fine.
+        let _ = self.workflow_storage.set(wf.clone());
+        Ok(wf)
+    }
+}
+
+/// Construct workflow storage matching this queue's core backend.
+#[cfg(feature = "workflows")]
+fn build_workflow_storage(
+    storage: &StorageBackend,
+) -> Result<taskito_workflows::WorkflowStorageBackend, BindingError> {
+    use taskito_workflows::{WorkflowSqliteStorage, WorkflowStorageBackend};
+    let wf = match storage {
+        StorageBackend::Sqlite(s) => {
+            WorkflowStorageBackend::Sqlite(WorkflowSqliteStorage::new(s.clone())?)
+        }
+        #[cfg(feature = "postgres")]
+        StorageBackend::Postgres(s) => WorkflowStorageBackend::Postgres(
+            taskito_workflows::WorkflowPostgresStorage::new(s.clone())?,
+        ),
+        #[cfg(feature = "redis")]
+        StorageBackend::Redis(s) => {
+            WorkflowStorageBackend::Redis(taskito_workflows::WorkflowRedisStorage::new(s.clone())?)
+        }
+    };
+    Ok(wf)
 }
 
 /// Error for a backend that is unknown or whose cargo feature is not compiled in.
@@ -66,5 +108,7 @@ pub fn open(options: OpenOptions) -> Result<QueueHandle, BindingError> {
     Ok(QueueHandle {
         storage,
         namespace: options.namespace,
+        #[cfg(feature = "workflows")]
+        workflow_storage: std::sync::OnceLock::new(),
     })
 }

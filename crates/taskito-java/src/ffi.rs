@@ -78,6 +78,28 @@ pub fn read_bytes_array(
     Ok(out)
 }
 
+/// Read a Java `String[]` argument into owned strings; a null array is empty.
+#[cfg_attr(not(feature = "workflows"), allow(dead_code))]
+pub fn read_string_array(
+    env: &mut JNIEnv,
+    value: &JObjectArray,
+) -> Result<Vec<String>, BindingError> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let len = env
+        .get_array_length(value)
+        .map_err(|e| BindingError::new(format!("invalid String[] argument: {e}")))?;
+    let mut out = Vec::with_capacity(len as usize);
+    for index in 0..len {
+        let element = env
+            .get_object_array_element(value, index)
+            .map_err(|e| BindingError::new(format!("invalid String[] element: {e}")))?;
+        out.push(read_string(env, &JString::from(element))?);
+    }
+    Ok(out)
+}
+
 /// Build a Java `String` return value from an owned Rust `String`.
 pub fn new_string(env: &mut JNIEnv, value: String) -> Result<jstring, BindingError> {
     env.new_string(value)
