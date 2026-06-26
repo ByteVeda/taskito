@@ -120,6 +120,19 @@ public final class Worker implements AutoCloseable {
             return this;
         }
 
+        /** Register a single {@link Handler} (a task + its function). */
+        public Builder register(Handler<?, ?> handler) {
+            handlers.put(
+                    handler.task().name(), new RegisteredTask(handler.task().payloadType(), cast(handler.function())));
+            return this;
+        }
+
+        /** Register every handler in a {@link HandlerRegistry} (e.g. a generated {@code XxxTasks.handlers}). */
+        public Builder register(HandlerRegistry registry) {
+            registry.handlers().forEach(this::register);
+            return this;
+        }
+
         public Builder queues(String... queues) {
             this.queues = Arrays.asList(queues);
             return this;
@@ -159,7 +172,8 @@ public final class Worker implements AutoCloseable {
                     concurrency > 0 ? Executors.newFixedThreadPool(concurrency) : Executors.newCachedThreadPool();
             Emitter emitter = new Emitter();
             listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
-            WorkerDispatchBridge bridge = new WorkerDispatchBridge(handlers, serializer, executor, emitter, middleware);
+            WorkerDispatchBridge bridge =
+                    new WorkerDispatchBridge(backend, handlers, serializer, executor, emitter, middleware);
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
             bridge.bind(control);
             return new Worker(control, executor);

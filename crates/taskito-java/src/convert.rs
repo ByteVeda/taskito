@@ -127,6 +127,8 @@ pub struct JobView<'a> {
     pub error: Option<&'a str>,
     pub unique_key: Option<&'a str>,
     pub namespace: Option<&'a str>,
+    /// Opaque metadata blob (JSON the SDK sets, e.g. middleware-injected trace ids).
+    pub metadata: Option<&'a str>,
 }
 
 impl<'a> From<&'a Job> for JobView<'a> {
@@ -148,6 +150,7 @@ impl<'a> From<&'a Job> for JobView<'a> {
             error: j.error.as_deref(),
             unique_key: j.unique_key.as_deref(),
             namespace: j.namespace.as_deref(),
+            metadata: j.metadata.as_deref(),
         }
     }
 }

@@ -36,4 +36,21 @@ class AnnotationProcessorTest {
             }
         }
     }
+
+    @Test
+    @Timeout(30)
+    void registerViaGeneratedHandlerRegistry(@TempDir Path dir) throws Exception {
+        try (Queue queue =
+                Taskito.builder().sqlite(dir.resolve("hr.db").toString()).open()) {
+            String id = queue.enqueue(GreeterTasks.GREET, "grace");
+            CountDownLatch done = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .register(GreeterTasks.handlers(new Greeter())) // generated HandlerRegistry
+                    .on(EventName.SUCCESS, event -> done.countDown())
+                    .start()) {
+                assertTrue(done.await(20, TimeUnit.SECONDS), "task should complete");
+                assertEquals("hello grace", queue.getResult(id, String.class).orElseThrow());
+            }
+        }
+    }
 }

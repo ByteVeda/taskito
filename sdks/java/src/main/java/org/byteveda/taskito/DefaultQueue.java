@@ -86,7 +86,13 @@ final class DefaultQueue implements Queue {
         for (Middleware m : middleware) {
             m.onEnqueue(context);
         }
-        return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(context.options()));
+        EnqueueOptions finalOptions = context.options();
+        if (!context.metadata().isEmpty()) {
+            finalOptions = finalOptions.toBuilder()
+                    .metadata(encode(context.metadata()))
+                    .build();
+        }
+        return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(finalOptions));
     }
 
     @Override
@@ -313,18 +319,31 @@ final class DefaultQueue implements Queue {
 
     @Override
     public WorkflowRun submitWorkflow(Workflow workflow) {
+        return submitWorkflow(workflow, java.util.Collections.emptyMap());
+    }
+
+    @Override
+    public WorkflowRun submitWorkflow(Workflow workflow, Map<String, Object> suppliedPayloads) {
         List<Step> steps = workflow.steps();
         Set<String> deferred = deferredNodes(steps);
         List<Map<String, Object>> specs = new ArrayList<>(steps.size());
         // Deferred nodes (fan-out/fan-in + their downstream) have no job — and so
-        // no payload — at submit; the tracker enqueues them at runtime.
+        // no payload — at submit; the tracker enqueues them at runtime. A static
+        // node's payload is the one supplied at submit, else the one baked in.
         List<String> payloadNames = new ArrayList<>();
         List<byte[]> payloads = new ArrayList<>();
         for (Step step : steps) {
             specs.add(stepSpec(step));
             if (!deferred.contains(step.name)) {
+                Object payload = suppliedPayloads.getOrDefault(step.name, step.payload);
+                // A payloadless structural step (stepAfter) must get its payload at
+                // submit; fail fast rather than enqueue a null-payload job.
+                if (payload == null && !suppliedPayloads.containsKey(step.name)) {
+                    throw new TaskitoException("workflow step '" + step.name
+                            + "' has no payload; supply one via submitWorkflow(wf, payloads)");
+                }
                 payloadNames.add(step.name);
-                payloads.add(serializer.serialize(step.payload));
+                payloads.add(serializer.serialize(payload));
             }
         }
         String runId = backend.submitWorkflow(

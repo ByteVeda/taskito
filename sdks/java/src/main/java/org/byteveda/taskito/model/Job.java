@@ -23,6 +23,7 @@ public final class Job {
     public final String error;
     public final String uniqueKey;
     public final String namespace;
+    public final String metadata;
 
     @JsonCreator
     public Job(
@@ -41,7 +42,8 @@ public final class Job {
             @JsonProperty("progress") Integer progress,
             @JsonProperty("error") String error,
             @JsonProperty("uniqueKey") String uniqueKey,
-            @JsonProperty("namespace") String namespace) {
+            @JsonProperty("namespace") String namespace,
+            @JsonProperty("metadata") String metadata) {
         this.id = id;
         this.queue = queue;
         this.taskName = taskName;
@@ -58,5 +60,6 @@ public final class Job {
         this.error = error;
         this.uniqueKey = uniqueKey;
         this.namespace = namespace;
+        this.metadata = metadata;
     }
 }
