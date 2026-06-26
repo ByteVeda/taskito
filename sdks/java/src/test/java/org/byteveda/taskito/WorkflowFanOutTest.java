@@ -2,6 +2,7 @@ package org.byteveda.taskito;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -24,7 +25,7 @@ class WorkflowFanOutTest {
     void fansOutPerItemAndFansInResults(@TempDir Path dir) throws Exception {
         Task<Integer> seed = Task.of("fo.seed", Integer.class);
         Task<Integer> square = Task.of("fo.square", Integer.class);
-        Task<List> sum = Task.of("fo.sum", List.class);
+        Task<List<Integer>> sum = Task.of("fo.sum", new TypeReference<List<Integer>>() {});
         try (Queue queue =
                 Taskito.builder().url(dir.resolve("fo.db").toString()).open()) {
             // seed(4) -> [1,2,3,4]; square each -> [1,4,9,16]; sum all -> 30
@@ -43,10 +44,10 @@ class WorkflowFanOutTest {
                         return out;
                     })
                     .handle(square, x -> x * x)
-                    .handle(sum, (List xs) -> {
+                    .handle(sum, xs -> {
                         int total = 0;
-                        for (Object x : xs) {
-                            total += ((Number) x).intValue();
+                        for (Integer x : xs) {
+                            total += x;
                         }
                         return total;
                     })
