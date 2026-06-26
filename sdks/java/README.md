@@ -107,8 +107,10 @@ Workflow wf = Workflow.named("pipeline")
         .fanIn("sum", sum, "all", "square");            // sum receives [1,4,9,16]
 ```
 
-`trackWorkflows()` must be attached for fan-out expansion and aggregation.
-Conditions, gates, and sagas are not yet exposed.
+`trackWorkflows()` advances run state from worker outcomes, so **every worker
+that processes workflow jobs must enable it** — in a multi-worker deployment, a
+run stalls on any node finished by a worker that did not opt in. Conditions,
+gates, and sagas are not yet exposed.
 
 ### Middleware
 
