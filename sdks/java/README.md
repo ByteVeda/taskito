@@ -51,6 +51,39 @@ Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 worker.awaitShutdown();
 ```
 
+### Workflows
+
+Define a DAG of tasks; steps run in topological order once every predecessor
+finishes. Attach `trackWorkflows()` to the worker so node and run state advance
+as jobs complete.
+
+```java
+Task<Integer> extract = Task.of("extract", Integer.class);
+Task<Integer> transform = Task.of("transform", Integer.class);
+Task<Integer> load = Task.of("load", Integer.class);
+
+Workflow wf = Workflow.named("etl")
+        .step("extract", extract, 1)
+        .step("transform", transform, 2, "extract")
+        .step("load", load, 3, "transform");
+
+WorkflowRun run = queue.submitWorkflow(wf);
+
+try (Worker worker = queue.worker()
+        .handle(extract, p -> p * 10)
+        .handle(transform, p -> p + 1)
+        .handle(load, p -> p)
+        .trackWorkflows()
+        .start()) {
+    WorkflowStatus status = run.await(Duration.ofSeconds(30));
+    // status.state == WorkflowState.COMPLETED; status.node("load").get().status
+}
+```
+
+A failed step (after its retries) fails the run and skips downstream nodes;
+`run.cancel()` skips pending nodes. Fan-out, conditions, gates, and sagas are
+not yet exposed.
+
 ### Middleware
 
 ```java
