@@ -3,14 +3,16 @@
 //! Compiled only with the `workflows` feature. Static DAG steps are pre-enqueued
 //! with a `depends_on` chain so the core scheduler runs them in topological
 //! order; the worker-side `WorkflowTracker` records each node's terminal outcome
-//! (and cascades a fail-fast skip) via [`mark_node_result`]. Deferred steps
-//! (fan-out, gates, sub-workflows) are not produced by the Java builder yet, but
-//! the submit path tracks them so the surface stays forward-compatible.
+//! and drives the run forward. Deferred steps (fan-out / fan-in, and anything
+//! downstream of them) carry a node row but no job at submit; the tracker
+//! expands a fan-out into per-item child jobs and collects them into a fan-in
+//! job at runtime via [`expand_fan_out`] / [`create_deferred_job`]. Gates and
+//! sub-workflows are not produced by the Java builder yet.
 
 use std::collections::{HashMap, HashSet};
 
-use jni::objects::{JClass, JObjectArray, JString};
-use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE};
+use jni::objects::{JByteArray, JClass, JObjectArray, JString};
+use jni::sys::{jboolean, jint, jlong, jobjectArray, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, NewJob};
@@ -26,12 +28,16 @@ use crate::backend::QueueHandle;
 use crate::convert::{parse_json, to_json};
 use crate::error::BindingError;
 use crate::ffi::{
-    guard, new_string, read_bytes_array, read_optional_string, read_string, read_string_array,
+    guard, new_string, new_string_array, read_bytes, read_bytes_array, read_optional_string,
+    read_string, read_string_array,
 };
 
 const DEFAULT_QUEUE: &str = "default";
 const DEFAULT_MAX_RETRIES: i32 = 3;
 const DEFAULT_TIMEOUT_MS: i64 = 300_000;
+/// Largest number of children one fan-out may expand into — guards against a
+/// producer returning an enormous list and flooding storage in one batch.
+const MAX_FAN_OUT: usize = 10_000;
 
 /// One step as described by the Java builder. Edges come from `after`.
 #[derive(Deserialize)]
@@ -45,6 +51,10 @@ struct StepSpec {
     max_retries: Option<i32>,
     timeout_ms: Option<i64>,
     priority: Option<i32>,
+    /// Fan-out strategy (e.g. "each") — this node expands per predecessor result item.
+    fan_out: Option<String>,
+    /// Fan-in strategy (e.g. "all") — this node collects its fan-out children's results.
+    fan_in: Option<String>,
 }
 
 /// Combined run + node snapshot returned by `getWorkflowStatus`. Timestamps are
@@ -194,6 +204,8 @@ fn submit(
                     max_retries: s.max_retries,
                     timeout_ms: s.timeout_ms,
                     priority: s.priority,
+                    fan_out: s.fan_out.clone(),
+                    fan_in: s.fan_in.clone(),
                     ..Default::default()
                 },
             )
@@ -462,6 +474,395 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_cancel
         wf.update_workflow_run_state(&run_id, WorkflowState::Cancelled, None)?;
         wf.set_workflow_run_completed(&run_id, now_millis())?;
         Ok(())
+    })
+}
+
+/// One node of a run's plan: its predecessors plus the step metadata the tracker
+/// needs to enqueue deferred (fan-out / fan-in) work.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanNodeView<'a> {
+    name: &'a str,
+    predecessors: &'a [String],
+    task_name: Option<&'a str>,
+    queue: Option<&'a str>,
+    max_retries: Option<i32>,
+    timeout_ms: Option<i64>,
+    priority: Option<i32>,
+    fan_out: Option<&'a str>,
+    fan_in: Option<&'a str>,
+}
+
+/// The run + node a job belongs to.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeRefView<'a> {
+    run_id: &'a str,
+    node_name: &'a str,
+}
+
+/// Outcome of a settled fan-out parent.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FanOutCompletionView {
+    succeeded: bool,
+    child_job_ids: Vec<String>,
+}
+
+/// `String getWorkflowPlan(long, String runId)` — the run's nodes with their
+/// predecessors and step metadata (JSON array), or `null` if the run is absent.
+/// The tracker inverts predecessors into successors to route deferred work.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_getWorkflowPlan<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        let run = match wf.get_workflow_run(&run_id)? {
+            Some(r) => r,
+            None => return Ok(std::ptr::null_mut()),
+        };
+        let def = match wf.get_workflow_definition_by_id(&run.definition_id)? {
+            Some(d) => d,
+            None => return Ok(std::ptr::null_mut()),
+        };
+        let ordered = topological_order(&def.dag_data)?;
+        let views: Vec<PlanNodeView> = ordered
+            .iter()
+            .map(|node| {
+                let meta = def.step_metadata.get(&node.name);
+                PlanNodeView {
+                    name: &node.name,
+                    predecessors: &node.predecessors,
+                    task_name: meta.map(|m| m.task_name.as_str()),
+                    queue: meta.and_then(|m| m.queue.as_deref()),
+                    max_retries: meta.and_then(|m| m.max_retries),
+                    timeout_ms: meta.and_then(|m| m.timeout_ms),
+                    priority: meta.and_then(|m| m.priority),
+                    fan_out: meta.and_then(|m| m.fan_out.as_deref()),
+                    fan_in: meta.and_then(|m| m.fan_in.as_deref()),
+                }
+            })
+            .collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String workflowNodeForJob(long, String jobId)` — the run + node a job
+/// belongs to (JSON), or `null` for a non-workflow job. Lets the tracker classify
+/// any worker outcome without an in-memory job→run map.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_workflowNodeForJob<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    job_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let job_id = read_string(env, &job_id)?;
+        let job = match queue.storage.get_job(&job_id)? {
+            Some(j) => j,
+            None => return Ok(std::ptr::null_mut()),
+        };
+        match parse_workflow_metadata(job.metadata.as_deref()) {
+            Some((run_id, node_name)) => new_string(
+                env,
+                to_json(&NodeRefView {
+                    run_id: &run_id,
+                    node_name: &node_name,
+                })?,
+            ),
+            None => Ok(std::ptr::null_mut()),
+        }
+    })
+}
+
+/// `String[] expandFanOut(long, String runId, String parentNode, String[]
+/// childNames, byte[][] childPayloads, String taskName, String queue,
+/// int maxRetries, long timeoutMs, int priority)` — expand a fan-out parent into
+/// one child node + job per item. Returns the child job ids.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_expandFanOut<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    parent_node: JString<'local>,
+    child_names: JObjectArray<'local>,
+    child_payloads: JObjectArray<'local>,
+    task_name: JString<'local>,
+    queue: JString<'local>,
+    max_retries: jint,
+    timeout_ms: jlong,
+    priority: jint,
+) -> jobjectArray {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let q = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let parent = read_string(env, &parent_node)?;
+        let names = read_string_array(env, &child_names)?;
+        let payloads = read_bytes_array(env, &child_payloads)?;
+        let task = read_string(env, &task_name)?;
+        let queue_name = read_string(env, &queue)?;
+        let ids = expand_fan_out(
+            q,
+            &run_id,
+            &parent,
+            names,
+            payloads,
+            &task,
+            &queue_name,
+            max_retries,
+            timeout_ms,
+            priority,
+        )?;
+        new_string_array(env, &ids)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_fan_out(
+    queue: &QueueHandle,
+    run_id: &str,
+    parent: &str,
+    child_names: Vec<String>,
+    child_payloads: Vec<Vec<u8>>,
+    task_name: &str,
+    queue_name: &str,
+    max_retries: i32,
+    timeout_ms: i64,
+    priority: i32,
+) -> Result<Vec<String>, BindingError> {
+    if child_names.len() != child_payloads.len() {
+        return Err(BindingError::new(
+            "childNames and childPayloads must have equal length",
+        ));
+    }
+    if child_names.len() > MAX_FAN_OUT {
+        return Err(BindingError::new(format!(
+            "fan-out of {} children exceeds the limit of {MAX_FAN_OUT}",
+            child_names.len()
+        )));
+    }
+    let wf = queue.workflow_store()?;
+    let now = now_millis();
+    let count = child_names.len() as i32;
+    if count == 0 {
+        wf.set_workflow_node_fan_out_count(run_id, parent, 0)?;
+        wf.set_workflow_node_completed(run_id, parent, now, None)?;
+        return Ok(Vec::new());
+    }
+
+    // Enqueue every child job first, then batch-insert their nodes in one
+    // transaction so a crash partway never leaves half-tracked children.
+    let mut child_job_ids = Vec::with_capacity(child_names.len());
+    let mut nodes = Vec::with_capacity(child_names.len());
+    for (child_name, payload) in child_names.iter().zip(child_payloads) {
+        let job = queue.storage.enqueue(NewJob {
+            queue: queue_name.to_string(),
+            task_name: task_name.to_string(),
+            payload,
+            priority,
+            scheduled_at: now,
+            max_retries,
+            timeout_ms,
+            unique_key: None,
+            metadata: Some(workflow_metadata_json(run_id, child_name)),
+            notes: None,
+            depends_on: vec![],
+            expires_at: None,
+            result_ttl_ms: None,
+            namespace: queue.namespace.clone(),
+        })?;
+        child_job_ids.push(job.id.clone());
+        nodes.push(new_node(run_id, child_name, Some(job.id)));
+    }
+    // Children are enqueued; if node creation fails, cancel them so they don't
+    // run untracked outside the workflow.
+    if let Err(err) = wf.create_workflow_nodes_batch(&nodes) {
+        for id in &child_job_ids {
+            let _ = queue.storage.cancel_job(id);
+        }
+        return Err(err.into());
+    }
+    wf.set_workflow_node_fan_out_count(run_id, parent, count)?;
+    Ok(child_job_ids)
+}
+
+/// `String checkFanOutCompletion(long, String runId, String parentNode)` — when
+/// every fan-out child is terminal, atomically finalize the parent (once) and
+/// return `{succeeded, childJobIds}` (JSON); otherwise `null`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_checkFanOutCompletion<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    parent_node: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let parent = read_string(env, &parent_node)?;
+        let wf = queue.workflow_store()?;
+        let prefix = format!("{parent}[");
+        let children = wf.get_workflow_nodes_by_prefix(&run_id, &prefix)?;
+        if children.is_empty() || !children.iter().all(|n| n.status.is_terminal()) {
+            return Ok(std::ptr::null_mut());
+        }
+        let any_failed = children
+            .iter()
+            .any(|n| n.status == WorkflowNodeStatus::Failed);
+        let child_job_ids: Vec<String> = children.iter().filter_map(|n| n.job_id.clone()).collect();
+        let transitioned = wf.finalize_fan_out_parent(
+            &run_id,
+            &parent,
+            !any_failed,
+            if any_failed {
+                Some("fan-out child failed")
+            } else {
+                None
+            },
+            now_millis(),
+        )?;
+        if !transitioned {
+            return Ok(std::ptr::null_mut());
+        }
+        new_string(
+            env,
+            to_json(&FanOutCompletionView {
+                succeeded: !any_failed,
+                child_job_ids,
+            })?,
+        )
+    })
+}
+
+/// `String createDeferredJob(long, String runId, String nodeName, byte[] payload,
+/// String taskName, String queue, int maxRetries, long timeoutMs, int priority)`
+/// — enqueue a job for a deferred node (e.g. the fan-in collector) and bind it to
+/// that node. Returns the new job id.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_createDeferredJob<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+    payload: JByteArray<'local>,
+    task_name: JString<'local>,
+    queue: JString<'local>,
+    max_retries: jint,
+    timeout_ms: jlong,
+    priority: jint,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let q = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        let bytes = read_bytes(env, &payload)?;
+        let task = read_string(env, &task_name)?;
+        let queue_name = read_string(env, &queue)?;
+        let wf = q.workflow_store()?;
+        let job = q.storage.enqueue(NewJob {
+            queue: queue_name,
+            task_name: task,
+            payload: bytes,
+            priority,
+            scheduled_at: now_millis(),
+            max_retries,
+            timeout_ms,
+            unique_key: None,
+            metadata: Some(workflow_metadata_json(&run_id, &node_name)),
+            notes: None,
+            depends_on: vec![],
+            expires_at: None,
+            result_ttl_ms: None,
+            namespace: q.namespace.clone(),
+        })?;
+        // Cancel the job if binding fails, so it can't run untracked.
+        if let Err(err) = wf.set_workflow_node_job(&run_id, &node_name, &job.id) {
+            let _ = q.storage.cancel_job(&job.id);
+            return Err(err.into());
+        }
+        new_string(env, job.id)
+    })
+}
+
+/// `void cascadeSkipPending(long, String runId)` — fail-fast: skip every
+/// still-pending node of a run and cancel its job.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_cascadeSkipPending<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        let nodes = wf.get_workflow_nodes(&run_id)?;
+        cascade_skip_pending(queue, &wf, &run_id, &nodes);
+        Ok(())
+    })
+}
+
+/// `String finalizeRunIfTerminal(long, String runId)` — if every node is
+/// terminal, set the run `completed` (or `failed`) and return that state; else
+/// `null`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_finalizeRunIfTerminal<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        let nodes = wf.get_workflow_nodes(&run_id)?;
+        if nodes.is_empty() || !nodes.iter().all(|n| n.status.is_terminal()) {
+            return Ok(std::ptr::null_mut());
+        }
+        let any_failed = nodes.iter().any(|n| n.status == WorkflowNodeStatus::Failed);
+        let final_state = if any_failed {
+            WorkflowState::Failed
+        } else {
+            WorkflowState::Completed
+        };
+        wf.update_workflow_run_state(
+            &run_id,
+            final_state,
+            if any_failed {
+                Some("a workflow node failed")
+            } else {
+                None
+            },
+        )?;
+        wf.set_workflow_run_completed(&run_id, now_millis())?;
+        new_string(env, final_state.as_str().to_string())
     })
 }
 
