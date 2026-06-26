@@ -41,6 +41,22 @@ public final class Workflow {
         return this;
     }
 
+    /**
+     * Add a fan-out step: {@code task} runs once per item of its predecessor's
+     * result (a list). The predecessor named in {@code after} is the producer.
+     */
+    public <T> Workflow fanOut(String name, Task<T> task, String strategy, String... after) {
+        return step(Step.of(name, task).fanOut(strategy).after(after).build());
+    }
+
+    /**
+     * Add a fan-in step that collects its fan-out predecessor's child results
+     * into one list and passes it to {@code task}.
+     */
+    public <T> Workflow fanIn(String name, Task<T> task, String strategy, String... after) {
+        return step(Step.of(name, task).fanIn(strategy).after(after).build());
+    }
+
     public String name() {
         return name;
     }
