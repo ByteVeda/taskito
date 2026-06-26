@@ -1,5 +1,9 @@
 package org.byteveda.taskito.worker;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -7,9 +11,11 @@ import java.util.concurrent.ExecutorService;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.middleware.JobInfo;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.middleware.TaskContext;
 import org.byteveda.taskito.serialization.Serializer;
+import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerBridge;
 import org.byteveda.taskito.spi.WorkerControl;
 
@@ -20,6 +26,10 @@ import org.byteveda.taskito.spi.WorkerControl;
  * and event listeners.
  */
 final class WorkerDispatchBridge implements WorkerBridge {
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final TypeReference<Map<String, Object>> MAP = new TypeReference<Map<String, Object>>() {};
+
+    private final QueueBackend backend;
     private final Map<String, RegisteredTask> handlers;
     private final Serializer serializer;
     private final ExecutorService executor;
@@ -29,11 +39,13 @@ final class WorkerDispatchBridge implements WorkerBridge {
     private final CompletableFuture<WorkerControl> control = new CompletableFuture<>();
 
     WorkerDispatchBridge(
+            QueueBackend backend,
             Map<String, RegisteredTask> handlers,
             Serializer serializer,
             ExecutorService executor,
             Emitter emitter,
             List<Middleware> middleware) {
+        this.backend = backend;
         this.handlers = handlers;
         this.serializer = serializer;
         this.executor = executor;
@@ -57,7 +69,8 @@ final class WorkerDispatchBridge implements WorkerBridge {
             bound.failJob(token, "no handler registered for task '" + taskName + "'");
             return;
         }
-        TaskContext context = new TaskContext(jobId, taskName);
+        JobInfo job = new JobInfo(jobId, taskName, () -> loadMetadata(jobId));
+        TaskContext context = new TaskContext(jobId, taskName, job);
         try {
             for (Middleware m : middleware) {
                 m.before(context);
@@ -102,6 +115,31 @@ final class WorkerDispatchBridge implements WorkerBridge {
                 break;
             default:
                 break;
+        }
+    }
+
+    /** Lazily load a job's metadata blob into a map (empty on absence/parse failure). */
+    private Map<String, Object> loadMetadata(String jobId) {
+        try {
+            JsonNode view = backend.getJobJson(jobId)
+                    .map(WorkerDispatchBridge::readTree)
+                    .orElse(null);
+            JsonNode blob = view == null ? null : view.get("metadata");
+            if (blob == null || blob.isNull()) {
+                return Collections.emptyMap();
+            }
+            String json = blob.asText();
+            return json.isEmpty() ? Collections.emptyMap() : JSON.readValue(json, MAP);
+        } catch (Exception e) {
+            return Collections.emptyMap();
+        }
+    }
+
+    private static JsonNode readTree(String json) {
+        try {
+            return JSON.readTree(json);
+        } catch (Exception e) {
+            return null;
         }
     }
 

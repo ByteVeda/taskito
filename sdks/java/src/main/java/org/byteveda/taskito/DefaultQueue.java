@@ -86,7 +86,13 @@ final class DefaultQueue implements Queue {
         for (Middleware m : middleware) {
             m.onEnqueue(context);
         }
-        return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(context.options()));
+        EnqueueOptions finalOptions = context.options();
+        if (!context.metadata().isEmpty()) {
+            finalOptions = finalOptions.toBuilder()
+                    .metadata(encode(context.metadata()))
+                    .build();
+        }
+        return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(finalOptions));
     }
 
     @Override

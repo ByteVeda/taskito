@@ -172,7 +172,8 @@ public final class Worker implements AutoCloseable {
                     concurrency > 0 ? Executors.newFixedThreadPool(concurrency) : Executors.newCachedThreadPool();
             Emitter emitter = new Emitter();
             listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
-            WorkerDispatchBridge bridge = new WorkerDispatchBridge(handlers, serializer, executor, emitter, middleware);
+            WorkerDispatchBridge bridge =
+                    new WorkerDispatchBridge(backend, handlers, serializer, executor, emitter, middleware);
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
             bridge.bind(control);
             return new Worker(control, executor);
