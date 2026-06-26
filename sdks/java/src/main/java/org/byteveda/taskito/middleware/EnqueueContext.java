@@ -1,6 +1,6 @@
 package org.byteveda.taskito.middleware;
 
-import org.byteveda.taskito.EnqueueOptions;
+import org.byteveda.taskito.task.EnqueueOptions;
 
 /**
  * A job being enqueued, passed to {@link Middleware#onEnqueue} before

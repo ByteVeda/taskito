@@ -17,6 +17,8 @@ mod handle;
 mod jvm;
 mod queue;
 mod worker;
+#[cfg(feature = "workflows")]
+mod workflows;
 
 use std::ffi::c_void;
 

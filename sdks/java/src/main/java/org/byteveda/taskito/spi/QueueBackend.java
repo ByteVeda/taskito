@@ -107,6 +107,24 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException("periodic tasks not supported by this backend");
     }
 
+    // ── Workflows ───────────────────────────────────────────────────
+    String submitWorkflow(
+            String name,
+            int version,
+            String stepsJson,
+            String[] payloadNames,
+            byte[][] payloads,
+            String queueDefault,
+            String paramsJson,
+            String[] deferredNames);
+
+    /** Record a node's terminal outcome; returns the run's final state, or {@code null}. */
+    String markWorkflowNodeResult(String jobId, boolean succeeded, String error, boolean skipCascade);
+
+    Optional<String> getWorkflowStatusJson(String runId);
+
+    void cancelWorkflowRun(String runId);
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker that dispatches jobs to {@code bridge}; returns its control. */
     WorkerControl startWorker(WorkerBridge bridge, String optionsJson);

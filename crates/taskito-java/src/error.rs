@@ -34,3 +34,11 @@ impl From<QueueError> for BindingError {
         Self::new(err.to_string())
     }
 }
+
+/// Workflow errors (e.g. DAG validation) reach the boundary as `TaskitoException`.
+#[cfg(feature = "workflows")]
+impl From<taskito_workflows::WorkflowError> for BindingError {
+    fn from(err: taskito_workflows::WorkflowError) -> Self {
+        Self::new(err.to_string())
+    }
+}

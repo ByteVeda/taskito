@@ -1,4 +1,6 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.worker;
+
+import org.byteveda.taskito.task.TaskFunction;
 
 /** A worker-registered handler: payload type plus the function to run. */
 final class RegisteredTask {

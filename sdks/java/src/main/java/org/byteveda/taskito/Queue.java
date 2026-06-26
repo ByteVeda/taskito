@@ -3,7 +3,24 @@ package org.byteveda.taskito;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.byteveda.taskito.locks.Lock;
+import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobError;
+import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.model.TaskLog;
+import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.scheduling.PeriodicTask;
+import org.byteveda.taskito.task.EnqueueOptions;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+import org.byteveda.taskito.workflows.Workflow;
+import org.byteveda.taskito.workflows.WorkflowRun;
+import org.byteveda.taskito.workflows.WorkflowStatus;
 
 /** A Taskito queue. Obtain one from {@link Taskito#builder()}. */
 public interface Queue extends AutoCloseable {
@@ -107,6 +124,17 @@ public interface Queue extends AutoCloseable {
 
     /** Register (or replace) a cron task; returns the next fire time (Unix ms). */
     long registerPeriodic(PeriodicTask task);
+
+    // ── Workflows ───────────────────────────────────────────────────
+
+    /** Submit a workflow DAG; returns a handle to the run. */
+    WorkflowRun submitWorkflow(Workflow workflow);
+
+    /** Current status of a workflow run, or empty if it no longer exists. */
+    Optional<WorkflowStatus> workflowStatus(String runId);
+
+    /** Cancel a workflow run: skip its pending nodes and mark it cancelled. */
+    void cancelWorkflow(String runId);
 
     // ── Worker ──────────────────────────────────────────────────────
 

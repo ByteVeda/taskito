@@ -1,4 +1,4 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.locks;
 
 import java.util.UUID;
 import org.byteveda.taskito.spi.QueueBackend;
@@ -15,7 +15,7 @@ public final class Lock implements AutoCloseable {
     private final long ttlMs;
     private boolean held;
 
-    Lock(QueueBackend backend, String name, long ttlMs) {
+    public Lock(QueueBackend backend, String name, long ttlMs) {
         this.backend = backend;
         this.name = name;
         this.ttlMs = ttlMs;

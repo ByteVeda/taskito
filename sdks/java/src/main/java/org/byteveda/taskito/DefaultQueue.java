@@ -4,14 +4,33 @@ import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.byteveda.taskito.locks.Lock;
+import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
 import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobError;
+import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.model.TaskLog;
+import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.scheduling.PeriodicTask;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
+import org.byteveda.taskito.task.EnqueueOptions;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+import org.byteveda.taskito.workflows.Step;
+import org.byteveda.taskito.workflows.Workflow;
+import org.byteveda.taskito.workflows.WorkflowRun;
+import org.byteveda.taskito.workflows.WorkflowStatus;
 
 /**
  * Default {@link Queue}: maps the typed public API onto a {@link QueueBackend},
@@ -255,6 +274,56 @@ final class DefaultQueue implements Queue {
         byte[] payload = task.payload == null ? null : serializer.serialize(task.payload);
         return backend.registerPeriodic(
                 task.name, task.taskName, task.cron, payload, task.queue, task.timezone, task.enabled);
+    }
+
+    // ── Workflows ───────────────────────────────────────────────────
+
+    @Override
+    public WorkflowRun submitWorkflow(Workflow workflow) {
+        List<Step> steps = workflow.steps();
+        List<Map<String, Object>> specs = new ArrayList<>(steps.size());
+        String[] names = new String[steps.size()];
+        byte[][] payloads = new byte[steps.size()][];
+        for (int i = 0; i < steps.size(); i++) {
+            Step step = steps.get(i);
+            specs.add(stepSpec(step));
+            names[i] = step.name;
+            payloads[i] = serializer.serialize(step.payload);
+        }
+        String runId = backend.submitWorkflow(
+                workflow.name(), workflow.version(), encode(specs), names, payloads, null, null, new String[0]);
+        return new WorkflowRun(backend, VIEWS, runId, workflow.name());
+    }
+
+    @Override
+    public Optional<WorkflowStatus> workflowStatus(String runId) {
+        return backend.getWorkflowStatusJson(runId).map(json -> decode(json, WorkflowStatus.class));
+    }
+
+    @Override
+    public void cancelWorkflow(String runId) {
+        backend.cancelWorkflowRun(runId);
+    }
+
+    /** Encode a step's structure + per-step overrides for the native submit call. */
+    private static Map<String, Object> stepSpec(Step step) {
+        Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("name", step.name);
+        spec.put("taskName", step.taskName);
+        spec.put("after", step.after);
+        if (step.queue != null) {
+            spec.put("queue", step.queue);
+        }
+        if (step.maxRetries != null) {
+            spec.put("maxRetries", step.maxRetries);
+        }
+        if (step.timeoutMs != null) {
+            spec.put("timeoutMs", step.timeoutMs);
+        }
+        if (step.priority != null) {
+            spec.put("priority", step.priority);
+        }
+        return spec;
     }
 
     @Override

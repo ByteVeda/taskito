@@ -1,4 +1,4 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.task;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;

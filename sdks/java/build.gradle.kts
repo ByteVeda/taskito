@@ -96,7 +96,7 @@ val nativeStaging = layout.buildDirectory.dir("native")
 // Build the native library for the local platform.
 val cargoBuild by tasks.registering(Exec::class) {
     workingDir = crateDir.asFile
-    commandLine("cargo", "build", "--release", "--features", "postgres,redis")
+    commandLine("cargo", "build", "--release", "--features", "postgres,redis,workflows")
 }
 
 // Stage the built library under its platform-classifier resource path.

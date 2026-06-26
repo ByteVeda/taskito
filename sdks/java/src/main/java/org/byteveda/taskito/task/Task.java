@@ -1,4 +1,4 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.task;
 
 import java.util.Objects;
 

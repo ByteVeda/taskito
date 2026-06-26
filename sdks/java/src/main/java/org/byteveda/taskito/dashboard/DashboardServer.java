@@ -21,11 +21,11 @@ import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import org.byteveda.taskito.Job;
-import org.byteveda.taskito.JobFilter;
-import org.byteveda.taskito.JobStatus;
 import org.byteveda.taskito.Queue;
 import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.JobStatus;
 
 /**
  * A read/action dashboard API + static-SPA server backed by a {@link Queue},

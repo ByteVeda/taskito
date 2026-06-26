@@ -1,4 +1,4 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.worker;
 
 import java.util.List;
 import java.util.Map;

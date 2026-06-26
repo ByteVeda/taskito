@@ -191,6 +191,35 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String submitWorkflow(
+            String name,
+            int version,
+            String stepsJson,
+            String[] payloadNames,
+            byte[][] payloads,
+            String queueDefault,
+            String paramsJson,
+            String[] deferredNames) {
+        return NativeWorkflows.submitWorkflow(
+                handle, name, version, stepsJson, payloadNames, payloads, queueDefault, paramsJson, deferredNames);
+    }
+
+    @Override
+    public String markWorkflowNodeResult(String jobId, boolean succeeded, String error, boolean skipCascade) {
+        return NativeWorkflows.markWorkflowNodeResult(handle, jobId, succeeded, error, skipCascade);
+    }
+
+    @Override
+    public Optional<String> getWorkflowStatusJson(String runId) {
+        return Optional.ofNullable(NativeWorkflows.getWorkflowStatus(handle, runId));
+    }
+
+    @Override
+    public void cancelWorkflowRun(String runId) {
+        NativeWorkflows.cancelWorkflowRun(handle, runId);
+    }
+
+    @Override
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
         return new JniWorkerControl(NativeQueue.runWorker(handle, bridge, optionsJson));
     }

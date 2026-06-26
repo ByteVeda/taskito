@@ -1,8 +1,9 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Locale;
+import org.byteveda.taskito.TaskitoException;
 
 /** Lifecycle state of a job. Wire form is the lowercase name, shared across SDKs. */
 public enum JobStatus {
