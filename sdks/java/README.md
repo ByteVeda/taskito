@@ -13,25 +13,31 @@ A typed Java 11+ client over the Taskito Rust core, via a hand-written JNI shell
 ### Enqueue
 
 ```java
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.byteveda.taskito.Queue;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
 import org.byteveda.taskito.model.QueueStats;
-import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import java.util.Map;
 
-Task<Map> sendEmail = Task.of("send_email", Map.class)
-        .withOptions(EnqueueOptions.builder().queue("emails").priority(5).build());
+// TypeReference preserves generics that a Class token can't; fluent options
+// replace the EnqueueOptions builder for the common cases.
+Task<Map<String, Object>> sendEmail =
+        Task.of("send_email", new TypeReference<Map<String, Object>>() {})
+                .queue("emails")
+                .priority(5);
 
-try (Queue queue = Taskito.builder().backend("sqlite").url("taskito.db").open()) {
+try (Queue queue = Taskito.builder().sqlite("taskito.db").open()) {
     String id = queue.enqueue(sendEmail, Map.of("to", "a@b.c"));
     Job job = queue.getJob(id).orElseThrow();   // job.status == JobStatus.PENDING
     QueueStats stats = queue.stats();
     queue.cancel(id);
 }
 ```
+
+`Taskito.builder()` also has `.postgres(url)` / `.redis(url)` shortcuts.
 
 ### Run a worker
 
@@ -58,6 +64,33 @@ Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 }));
 worker.awaitShutdown();
 ```
+
+### Typed tasks from `@TaskHandler` (compile-time, no reflection)
+
+Annotate handler methods; a compile-time processor generates a `<Class>Tasks`
+companion with a typed `Task` constant per method (full generics, name declared
+once) plus a `bind(...)`. Add the processor with
+`annotationProcessor("org.byteveda:taskito-processor")`.
+
+```java
+class EmailTasks {
+    @TaskHandler("send_email")          // explicit name
+    String send(EmailPayload p) { ... }
+
+    @TaskHandler                        // name defaults to "report"
+    Report report(List<Metric> metrics) { ... }
+}
+
+// generated EmailTasksTasks:
+String id = queue.enqueue(EmailTasksTasks.SEND, payload);
+
+queue.worker()
+        .apply(b -> EmailTasksTasks.bind(b, new EmailTasks()))
+        .start();
+```
+
+The annotation is source-retention and the processor emits plain code — zero
+runtime reflection, GraalVM-native-image friendly.
 
 ### Workflows
 
@@ -159,12 +192,17 @@ org.byteveda.taskito
 ├── scheduling/        PeriodicTask
 ├── workflows/         Workflow DAG builder, run, status, tracker
 ├── serialization/     Serializer SPI + JsonSerializer (Jackson) default
+├── annotation/        @TaskHandler (source-retention; see :processor)
 ├── middleware/        Middleware hooks
 ├── events/            worker outcome events
 ├── dashboard/ webhooks/ cli/
 ├── spi/               QueueBackend — seam between API and the native layer
 └── internal/          JNI bindings (NativeQueue, NativeWorkflows, NativeLoader, ...)
 ```
+
+The `:processor` subproject is a standalone compile-time annotation processor
+(`TaskHandlerProcessor`) — it depends on nothing, reading `@TaskHandler`
+structurally and emitting plain task companions.
 
 The `spi.QueueBackend` seam keeps the public API independent of JNI: it can be
 backed by the native library (default) or an in-memory fake in tests, and leaves
