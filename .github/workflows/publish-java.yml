@@ -1,0 +1,185 @@
+name: Publish to Maven Central
+
+# Builds the JNI cdylib as prebuilt per-platform binaries on native runners (no
+# cross-compilation — same approach as the Python wheels and Node addons), bundles
+# them all into one fat JAR, and publishes to Maven Central via the Central
+# Publisher Portal (OSSRH shut down 2025-06-30). Signing + upload are handled by
+# the vanniktech maven-publish plugin.
+
+on:
+  push:
+    tags:
+      # Java releases use a `java-v` tag namespace, distinct from Python (`v*`)
+      # and Node (`node-v*`).
+      - "java-v[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.16.4)"
+        required: true
+        type: string
+      dry-run:
+        description: "Build and assemble only — skip publish and tagging"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  preflight:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve and verify version
+        id: resolve
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#java-v}"
+          else
+            version="${VERSION_INPUT#v}"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: ${version}"
+            exit 1
+          fi
+          gradle_ver=$(grep -oP '^version = "\K[^"]+' sdks/java/build.gradle.kts)
+          if [ "$gradle_ver" != "$version" ]; then
+            echo "::error::Resolved ${version} != sdks/java/build.gradle.kts ${gradle_ver}"
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.classifier }}
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - classifier: linux-x86_64
+            runner: ubuntu-22.04
+            libname: libtaskito_java.so
+          - classifier: linux-aarch64
+            runner: ubuntu-22.04-arm
+            libname: libtaskito_java.so
+          - classifier: osx-x86_64
+            runner: macos-15-intel
+            libname: libtaskito_java.dylib
+          - classifier: osx-aarch64
+            runner: macos-15
+            libname: libtaskito_java.dylib
+          - classifier: windows-x86_64
+            runner: windows-latest
+            libname: taskito_java.dll
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Build cdylib
+        run: cargo build -p taskito-java --release --features postgres,redis
+
+      - name: Stage native binary under its classifier
+        shell: bash
+        run: |
+          dest="native/org/byteveda/taskito/native/${{ matrix.classifier }}"
+          mkdir -p "$dest"
+          cp "target/release/${{ matrix.libname }}" "$dest/"
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.classifier }}
+          path: native/**
+          if-no-files-found: error
+
+  publish:
+    name: Publish to Maven Central
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      contents: write # tag + release
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build dashboard SPA
+        uses: ./.github/actions/dashboard-build
+        with:
+          out-dir: ../sdks/java/src/main/resources/org/byteveda/taskito/dashboard
+
+      - name: Download all native binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: native-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Place natives in resources
+        run: cp -r artifacts/org sdks/java/src/main/resources/
+
+      # The cargo/copyNative tasks build only the host platform; skip them since
+      # every platform's binary is already staged in resources from the matrix.
+      - name: Publish (or assemble on dry-run)
+        working-directory: sdks/java
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ "${{ inputs.dry-run }}" = "true" ]; then
+            ./gradlew jar -x cargoBuild -x copyNative --no-daemon
+          else
+            ./gradlew publishToMavenCentral -x cargoBuild -x copyNative --no-daemon
+          fi
+
+      - name: Create git tag
+        if: github.event_name != 'push' && !inputs.dry-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag "java-v${VERSION}"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" \
+            push origin "java-v${VERSION}"
+
+      - name: Create GitHub release
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "java-v${VERSION}" >/dev/null 2>&1; then
+            echo "::notice::Release java-v${VERSION} already exists — skipping"
+          else
+            gh release create "java-v${VERSION}" \
+              --title "taskito (Java) v${VERSION}" \
+              --generate-notes
+          fi
