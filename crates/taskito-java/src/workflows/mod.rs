@@ -719,10 +719,13 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_checkF
         let parent = read_string(env, &parent_node)?;
         let wf = queue.workflow_store()?;
         let prefix = format!("{parent}[");
-        let children = wf.get_workflow_nodes_by_prefix(&run_id, &prefix)?;
+        let mut children = wf.get_workflow_nodes_by_prefix(&run_id, &prefix)?;
         if children.is_empty() || !children.iter().all(|n| n.status.is_terminal()) {
             return Ok(std::ptr::null_mut());
         }
+        // Order children by their item index (`parent[i]`) so the fan-in list
+        // matches the producer's list order, not storage-return order.
+        children.sort_by_key(|n| fan_out_child_index(&n.node_name));
         let any_failed = children
             .iter()
             .any(|n| n.status == WorkflowNodeStatus::Failed);
@@ -894,6 +897,15 @@ fn workflow_metadata_json(run_id: &str, node_name: &str) -> String {
         "workflow_node_name": node_name,
     })
     .to_string()
+}
+
+/// Item index `i` parsed from a fan-out child name `parent[i]`. Unparseable names
+/// sort last so they never silently reorder valid children.
+fn fan_out_child_index(name: &str) -> u64 {
+    name.rsplit_once('[')
+        .and_then(|(_, rest)| rest.strip_suffix(']'))
+        .and_then(|idx| idx.parse().ok())
+        .unwrap_or(u64::MAX)
 }
 
 /// Parse `{workflow_run_id, workflow_node_name}` from a job's metadata. Returns
