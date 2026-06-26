@@ -141,7 +141,7 @@ public final class Worker implements AutoCloseable {
 
         /** Drive workflow node and run state from this worker's job outcomes. */
         public Builder trackWorkflows() {
-            WorkflowTracker tracker = new WorkflowTracker(backend);
+            WorkflowTracker tracker = new WorkflowTracker(backend, serializer);
             on(EventName.SUCCESS, tracker::onSuccess);
             on(EventName.DEAD, tracker::onDead);
             return this;
