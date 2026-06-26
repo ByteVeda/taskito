@@ -1,22 +1,54 @@
+import com.vanniktech.maven.publish.SonatypeHost
+
 plugins {
     `java-library`
     checkstyle
     id("com.diffplug.spotless") version "6.25.0"
+    id("com.vanniktech.maven.publish") version "0.30.0"
 }
 
 group = "org.byteveda"
 version = "0.16.4"
 
 java {
+    // Sources + javadoc jars are added by the maven-publish plugin below.
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(11))
     }
-    withSourcesJar()
-    withJavadocJar()
 }
 
 repositories {
     mavenCentral()
+}
+
+// --- Publishing: Maven Central via the Central Publisher Portal ------------
+
+mavenPublishing {
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    signAllPublications()
+    coordinates(group.toString(), "taskito", version.toString())
+    pom {
+        name.set("Taskito")
+        description.set("Rust-powered task queue for the JVM, via a JNI binding over the Taskito core.")
+        url.set("https://github.com/ByteVeda/taskito")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                id.set("byteveda")
+                name.set("ByteVeda")
+            }
+        }
+        scm {
+            url.set("https://github.com/ByteVeda/taskito")
+            connection.set("scm:git:https://github.com/ByteVeda/taskito.git")
+            developerConnection.set("scm:git:ssh://git@github.com/ByteVeda/taskito.git")
+        }
+    }
 }
 
 // --- Code integrity: formatting + static analysis -------------------------
