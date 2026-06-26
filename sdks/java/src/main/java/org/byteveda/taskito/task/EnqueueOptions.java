@@ -49,6 +49,20 @@ public final class EnqueueOptions {
         return new Builder();
     }
 
+    /** A builder seeded with this instance's values, for deriving a modified copy. */
+    public Builder toBuilder() {
+        Builder b = new Builder();
+        b.queue = queue;
+        b.priority = priority;
+        b.maxRetries = maxRetries;
+        b.timeoutMs = timeoutMs;
+        b.delayMs = delayMs;
+        b.uniqueKey = uniqueKey;
+        b.metadata = metadata;
+        b.namespace = namespace;
+        return b;
+    }
+
     public static final class Builder {
         private String queue;
         private Integer priority;

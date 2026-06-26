@@ -110,7 +110,14 @@ public final class Worker implements AutoCloseable {
         }
 
         public <T, R> Builder handle(Task<T> task, TaskFunction<T, R> handler) {
-            return handle(task.name(), task.payloadType(), handler);
+            handlers.put(task.name(), new RegisteredTask(task.payloadType(), cast(handler)));
+            return this;
+        }
+
+        /** Apply a customizer to this builder (e.g. a generated {@code XxxTasks.bind}). */
+        public Builder apply(Consumer<Builder> customizer) {
+            customizer.accept(this);
+            return this;
         }
 
         public Builder queues(String... queues) {
