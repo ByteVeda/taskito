@@ -3,7 +3,7 @@ package org.byteveda.taskito.workflows;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import org.byteveda.taskito.Task;
+import org.byteveda.taskito.task.Task;
 
 /**
  * A workflow definition: a named, versioned DAG of {@link Step}s. Build one, then

@@ -3,17 +3,23 @@
 A typed Java 11+ client over the Taskito Rust core, via a hand-written JNI shell
 (`crates/taskito-java`).
 
-> Status: **build-out** (Phases 0–3 core). Producer + inspection + admin + logs,
-> worker task execution, middleware, signed/encrypted serializers, and the
-> dashboard server are implemented and verified end-to-end. Webhooks and the CLI
-> follow next.
+> Status: **build-out**. Producer + inspection + admin + logs, worker task
+> execution, middleware, signed/encrypted serializers, dashboard, webhooks, CLI,
+> distributed locks, periodic/cron, and static-DAG workflows are implemented and
+> verified end-to-end.
 
 ## Usage
 
 ### Enqueue
 
 ```java
-import org.byteveda.taskito.*;
+import org.byteveda.taskito.Queue;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobStatus;
+import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.task.EnqueueOptions;
+import org.byteveda.taskito.task.Task;
 import java.util.Map;
 
 Task<Map> sendEmail = Task.of("send_email", Map.class)
@@ -31,6 +37,8 @@ try (Queue queue = Taskito.builder().backend("sqlite").url("taskito.db").open())
 
 ```java
 import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
 
 Task<Map> add = Task.of("add", Map.class);
 
@@ -58,6 +66,12 @@ finishes. Attach `trackWorkflows()` to the worker so node and run state advance
 as jobs complete.
 
 ```java
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+import org.byteveda.taskito.workflows.Workflow;
+import org.byteveda.taskito.workflows.WorkflowRun;
+import org.byteveda.taskito.workflows.WorkflowStatus;
+
 Task<Integer> extract = Task.of("extract", Integer.class);
 Task<Integer> transform = Task.of("transform", Integer.class);
 Task<Integer> load = Task.of("load", Integer.class);
@@ -115,16 +129,27 @@ Queue secure = Taskito.builder()
 
 ## Structure
 
+Packages are organized by feature; the root holds only the front door.
+
 ```text
 org.byteveda.taskito
 ├── Taskito            entry point — Taskito.builder()...open()
 ├── Queue              public interface
 ├── DefaultQueue       package-private impl (not exported)
-├── Task / Job / JobStatus / QueueStats / EnqueueOptions   typed model
 ├── TaskitoException   unchecked error type
+├── task/              Task, TaskFunction, EnqueueOptions
+├── model/             Job, JobStatus, QueueStats, DeadJob, JobError,
+│                      TaskMetric, WorkerInfo, TaskLog, JobFilter  (read-only views)
+├── worker/            Worker runtime
+├── locks/             Lock, LockInfo
+├── scheduling/        PeriodicTask
+├── workflows/         Workflow DAG builder, run, status, tracker
 ├── serialization/     Serializer SPI + JsonSerializer (Jackson) default
+├── middleware/        Middleware hooks
+├── events/            worker outcome events
+├── dashboard/ webhooks/ cli/
 ├── spi/               QueueBackend — seam between API and the native layer
-└── internal/          JNI bindings (NativeQueue, NativeLoader, JniQueueBackend)
+└── internal/          JNI bindings (NativeQueue, NativeWorkflows, NativeLoader, ...)
 ```
 
 The `spi.QueueBackend` seam keeps the public API independent of JNI: it can be

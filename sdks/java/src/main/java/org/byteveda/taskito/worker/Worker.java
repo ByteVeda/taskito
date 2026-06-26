@@ -1,4 +1,4 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.worker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
@@ -20,6 +21,8 @@ import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerControl;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.task.TaskFunction;
 import org.byteveda.taskito.workflows.WorkflowTracker;
 
 /**

@@ -2,11 +2,11 @@ package org.byteveda.taskito.dashboard;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.byteveda.taskito.DeadJob;
-import org.byteveda.taskito.Job;
-import org.byteveda.taskito.QueueStats;
-import org.byteveda.taskito.TaskMetric;
-import org.byteveda.taskito.WorkerInfo;
+import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.WorkerInfo;
 
 /**
  * Maps the SDK's camelCase types to the snake_case JSON contract the React SPA

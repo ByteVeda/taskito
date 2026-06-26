@@ -1,4 +1,4 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.locks;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;

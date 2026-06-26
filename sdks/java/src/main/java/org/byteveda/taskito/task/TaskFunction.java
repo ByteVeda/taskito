@@ -1,4 +1,4 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.task;
 
 /** A task handler: receives a deserialized payload, returns a result (or null). */
 @FunctionalInterface

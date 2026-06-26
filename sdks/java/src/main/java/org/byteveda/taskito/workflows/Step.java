@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import org.byteveda.taskito.Task;
+import org.byteveda.taskito.task.Task;
 
 /** One step in a {@link Workflow}: a task plus its payload, predecessors, and per-step overrides. */
 public final class Step {

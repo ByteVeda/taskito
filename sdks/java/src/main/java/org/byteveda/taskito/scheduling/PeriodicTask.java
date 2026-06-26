@@ -1,14 +1,14 @@
-package org.byteveda.taskito;
+package org.byteveda.taskito.scheduling;
 
 /** A cron-scheduled task registration. The worker enqueues it when due. */
 public final class PeriodicTask {
-    final String name;
-    final String taskName;
-    final String cron;
-    final Object payload;
-    final String queue;
-    final String timezone;
-    final boolean enabled;
+    public final String name;
+    public final String taskName;
+    public final String cron;
+    public final Object payload;
+    public final String queue;
+    public final String timezone;
+    public final boolean enabled;
 
     private PeriodicTask(Builder b) {
         this.name = b.name;

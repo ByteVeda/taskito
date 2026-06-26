@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
 import org.byteveda.taskito.workflows.NodeStatus;
 import org.byteveda.taskito.workflows.Step;
 import org.byteveda.taskito.workflows.Workflow;
