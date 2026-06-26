@@ -148,19 +148,21 @@ jobs:
 
       # The cargo/copyNative tasks build only the host platform; skip them since
       # every platform's binary is already staged in resources from the matrix.
-      - name: Publish (or assemble on dry-run)
+      # Dry-run only assembles the JAR — keep publishing secrets out of it.
+      - name: Assemble JAR (dry-run)
+        if: inputs.dry-run
+        working-directory: sdks/java
+        run: ./gradlew jar -x cargoBuild -x copyNative --no-daemon
+
+      - name: Publish to Maven Central
+        if: ${{ !inputs.dry-run }}
         working-directory: sdks/java
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: |
-          if [ "${{ inputs.dry-run }}" = "true" ]; then
-            ./gradlew jar -x cargoBuild -x copyNative --no-daemon
-          else
-            ./gradlew publishToMavenCentral -x cargoBuild -x copyNative --no-daemon
-          fi
+        run: ./gradlew publishToMavenCentral -x cargoBuild -x copyNative --no-daemon
 
       - name: Create git tag
         if: github.event_name != 'push' && !inputs.dry-run
