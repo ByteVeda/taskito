@@ -1,5 +1,6 @@
 package org.byteveda.taskito.worker;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -17,7 +18,8 @@ public final class HandlerRegistry {
     }
 
     public static HandlerRegistry of(Handler<?, ?>... handlers) {
-        return new HandlerRegistry(Collections.unmodifiableList(Arrays.asList(handlers)));
+        // Copy the varargs array so later caller mutations can't leak in.
+        return new HandlerRegistry(Collections.unmodifiableList(new ArrayList<>(Arrays.asList(handlers))));
     }
 
     public List<Handler<?, ?>> handlers() {
