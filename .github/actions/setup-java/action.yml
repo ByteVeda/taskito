@@ -1,0 +1,22 @@
+name: Set up Java
+description: >-
+  Installs a Temurin JDK and enables Gradle build caching. Used by every
+  Java-touching job so toolchain setup lives in one place. The SDK targets Java
+  11 bytecode via `--release 11`, so any JDK >= 11 works; we use 21 to match the
+  publish workflow.
+
+inputs:
+  java-version:
+    description: "Temurin JDK major version to install."
+    required: false
+    default: "21"
+
+runs:
+  using: composite
+  steps:
+    - name: Install JDK + Gradle cache
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+        cache: gradle

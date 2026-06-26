@@ -21,26 +21,17 @@ permissions:
   contents: read
   pull-requests: read
 
-# Cargo's HTTP downloader intermittently aborts crate downloads on CI
-# ("Error in the HTTP2 framing layer" / "unexpected eof while reading") when
-# fetching uncached crates from crates.io. Force HTTP/1.1 and raise the retry
-# budget so a transient download error retries instead of failing the job.
-# Set at workflow level so it also covers the maturin build that `uv sync`
-# triggers inside the setup-python action, before setup-rust runs.
-env:
-  CARGO_HTTP_MULTIPLEXING: "false"
-  CARGO_NET_RETRY: "10"
-
 jobs:
   changes:
     name: Detect changed paths
     runs-on: ubuntu-latest
     outputs:
       # Run policy folded in: true on push/dispatch (run everything) or when a
-      # suite's paths changed on a PR. Jobs gate on these directly.
+      # suite's paths changed on a PR. The per-suite jobs gate on these.
       rust: ${{ steps.decide.outputs.rust }}
       python: ${{ steps.decide.outputs.python }}
       node: ${{ steps.decide.outputs.node }}
+      java: ${{ steps.decide.outputs.java }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -49,29 +40,32 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v4
         with:
+          # Each suite reruns when its own sources, the shared Rust core, the
+          # composite actions, or its workflow (orchestrator + reusable) change.
           filters: |
+            shared: &shared
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yml'
             rust:
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+              - *shared
               - 'rust-toolchain.toml'
-              - '.github/actions/**'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/ci-rust.yml'
             python:
+              - *shared
               - 'sdks/python/**'
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.github/actions/**'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/ci-python.yml'
             node:
+              - *shared
               - 'sdks/node/**'
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
               - 'dashboard/**'
-              - '.github/actions/**'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/ci-node.yml'
+            java:
+              - *shared
+              - 'sdks/java/**'
+              - '.github/workflows/ci-java.yml'
 
       - name: Decide which suites run
         id: decide
@@ -82,6 +76,7 @@ jobs:
           RUST: ${{ steps.filter.outputs.rust }}
           PYTHON: ${{ steps.filter.outputs.python }}
           NODE: ${{ steps.filter.outputs.node }}
+          JAVA: ${{ steps.filter.outputs.java }}
         run: |
           decide() {
             if [ "$FORCE" = "true" ] || [ "$2" = "true" ]; then
@@ -93,245 +88,36 @@ jobs:
           decide rust "$RUST"
           decide python "$PYTHON"
           decide node "$NODE"
+          decide java "$JAVA"
 
-  lint:
-    name: Lint & Static Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python + uv
-        uses: ./.github/actions/setup-python
-
-      - name: Set up Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          components: rustfmt, clippy
-          save-if: "true" # the lint job is the sole Cargo cache writer
-
-      - name: Check Rust formatting
-        run: cargo fmt --all --check
-
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Generic crates stay binding-free
-        # The engine crates (core/workflows/mesh) must remain binding-agnostic so
-        # the Python, Node, and Java shells can all reuse them. A pyo3, napi, OR
-        # jni dep would let binding-specific code creep back in. cargo tree is
-        # authoritative — you cannot `use pyo3`/`use napi`/`use jni` without
-        # depending on it. See crates/taskito-core/BINDING_CONTRACT.md.
-        run: |
-          set -euo pipefail
-          for crate in taskito-core taskito-workflows taskito-mesh; do
-            # Capture first so a `cargo tree` failure aborts (set -e) instead of
-            # being swallowed by the pipe and silently passing the check.
-            tree_output="$(cargo tree -p "$crate" -e normal --all-features)"
-            for binding in pyo3 napi jni; do
-              if grep -qi "$binding" <<<"$tree_output"; then
-                echo "::error::$binding is in the dependency tree of $crate — generic crates must stay binding-agnostic"
-                exit 1
-              fi
-            done
-          done
-          echo "Generic crates are free of pyo3, napi, and jni."
-
-      - name: Lint Python with Ruff
-        working-directory: sdks/python
-        run: uv run ruff check taskito/ tests/
-
-      - name: Check Python formatting with Ruff
-        working-directory: sdks/python
-        run: uv run ruff format --check taskito/ tests/
-
-      - name: Type-check Python with mypy
-        working-directory: sdks/python
-        run: uv run mypy taskito/ tests/ --no-incremental
-
-  rust-test:
-    name: Rust Tests (SQLite)
+  rust:
+    name: Rust
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-prelude
+    uses: ./.github/workflows/ci-rust.yml
 
-      # $pythonLocation is exported to the job env by setup-python at runtime.
-      - name: Run Rust test suite
-        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace
-
-      - name: Run mesh crate tests
-        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test -p taskito-mesh
-
-      - name: Check build with native-async features
-        run: cargo check --workspace --features native-async
-
-      - name: Check build with mesh feature
-        run: cargo check --workspace --features mesh
-
-  rust-test-postgres:
-    name: Rust Tests (PostgreSQL)
+  python:
+    name: Python
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: taskito_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-prelude
+    if: needs.changes.outputs.python == 'true'
+    uses: ./.github/workflows/ci-python.yml
 
-      - name: Run Rust test suite (PostgreSQL backend)
-        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features postgres,workflows
-        env:
-          TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
-
-  rust-test-redis:
-    name: Rust Tests (Redis)
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-prelude
-
-      - name: Run Rust test suite (Redis backend)
-        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features redis,workflows
-        env:
-          TASKITO_REDIS_TEST_URL: redis://localhost:6379/15
-
-  node-test:
-    name: Node SDK Tests
+  node:
+    name: Node
     needs: changes
     if: needs.changes.outputs.node == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+    uses: ./.github/workflows/ci-node.yml
 
-      - name: Set up Rust
-        uses: ./.github/actions/setup-rust
-
-      - name: Set up Node + pnpm
-        uses: ./.github/actions/setup-node
-
-      - name: Install dashboard dependencies
-        working-directory: dashboard
-        run: pnpm install --frozen-lockfile
-
-      - name: Build addon, TypeScript, and dashboard SPA
-        working-directory: sdks/node
-        run: |
-          pnpm run build:native
-          pnpm run build:ts
-          pnpm -C ../../dashboard exec tsr generate   # route tree is gitignored
-          pnpm run build:dashboard
-
-      - name: Typecheck
-        working-directory: sdks/node
-        run: pnpm typecheck
-
-      - name: Lint
-        working-directory: sdks/node
-        run: pnpm lint
-
-      - name: Run Node test suite
-        working-directory: sdks/node
-        run: pnpm test
-
-  test:
-    name: Python Tests (${{ matrix.os }} / Python ${{ matrix.python-version }})
-    needs: [lint, changes]
-    if: needs.changes.outputs.python == 'true'
-    runs-on: ${{ matrix.os }}
-    env:
-      # setup-python on macOS upgrades certifi via pip; pip's HTTP cache
-      # occasionally fails to deserialize across runner image versions and
-      # surfaces as a noisy "Cache entry deserialization failed" annotation.
-      # Disabling pip's cache eliminates the warning at zero cost (we use uv
-      # for actual package installs).
-      PIP_NO_CACHE_DIR: "1"
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        include:
-          - os: macos-15
-            python-version: "3.14"
-          - os: macos-15
-            python-version: "3.10"
-          - os: windows-2025
-            python-version: "3.14"
-          - os: windows-2025
-            python-version: "3.10"
-    steps:
-      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        # The postgres feature pulls openssl-sys (vendored), whose Configure
-        # runs perl. Under `shell: bash` the incomplete MSYS perl shadows the
-        # runner's Strawberry Perl and lacks modules OpenSSL needs
-        # (Locale::Maketext::Simple), so pin openssl-src to Strawberry Perl.
-        # Must precede the maturin build that `uv sync` triggers below.
-        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
-
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python + uv
-        uses: ./.github/actions/setup-python
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          # Only the non-Linux runners save the cache here; the Linux Cargo
-          # cache is written by the lint job.
-          save-if: ${{ matrix.os != 'ubuntu-latest' }}
-
-      - name: Build native extension with maturin
-        uses: PyO3/maturin-action@v1.51.0
-        with:
-          command: develop
-          args: --release --features extension-module,postgres,redis,native-async,workflows,mesh
-          maturin-version: v1.13.3
-          working-directory: sdks/python
-
-      - name: Run Python test suite
-        working-directory: sdks/python
-        # The pytest_unconfigure hook in tests/conftest.py calls
-        # ``os._exit(0)`` on a clean run to bypass CPython finalization and
-        # avoid the PyO3 daemon-thread SIGABRT we used to paper over here.
-        run: uv run python -m pytest tests/ -v --junitxml=test-results.xml
+  java:
+    name: Java
+    needs: changes
+    if: needs.changes.outputs.java == 'true'
+    uses: ./.github/workflows/ci-java.yml
 
   ci-status:
     name: CI status
     if: always()
-    needs: [changes, lint, rust-test, rust-test-postgres, rust-test-redis, node-test, test]
+    needs: [changes, rust, python, node, java]
     runs-on: ubuntu-latest
     steps:
       - name: Check that no required job failed

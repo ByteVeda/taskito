@@ -1,0 +1,101 @@
+name: CI Python
+
+# Reusable workflow: Python lint (Ruff + mypy) and the cross-platform pytest
+# matrix. Called by ci.yml when Python-relevant paths change.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  lint:
+    name: Lint (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python
+
+      - name: Lint Python with Ruff
+        working-directory: sdks/python
+        run: uv run ruff check taskito/ tests/
+
+      - name: Check Python formatting with Ruff
+        working-directory: sdks/python
+        run: uv run ruff format --check taskito/ tests/
+
+      - name: Type-check Python with mypy
+        working-directory: sdks/python
+        run: uv run mypy taskito/ tests/ --no-incremental
+
+  test:
+    name: Python Tests (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    env:
+      # setup-python on macOS upgrades certifi via pip; pip's HTTP cache
+      # occasionally fails to deserialize across runner image versions and
+      # surfaces as a noisy "Cache entry deserialization failed" annotation.
+      # Disabling pip's cache eliminates the warning at zero cost (we use uv
+      # for actual package installs).
+      PIP_NO_CACHE_DIR: "1"
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: macos-15
+            python-version: "3.14"
+          - os: macos-15
+            python-version: "3.10"
+          - os: windows-2025
+            python-version: "3.14"
+          - os: windows-2025
+            python-version: "3.10"
+    steps:
+      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        # The postgres feature pulls openssl-sys (vendored), whose Configure
+        # runs perl. Under `shell: bash` the incomplete MSYS perl shadows the
+        # runner's Strawberry Perl and lacks modules OpenSSL needs
+        # (Locale::Maketext::Simple), so pin openssl-src to Strawberry Perl.
+        # Must precede the maturin build that `uv sync` triggers below.
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          # Only the non-Linux runners save the cache here; the Linux Cargo
+          # cache is written by the Rust lint job.
+          save-if: ${{ matrix.os != 'ubuntu-latest' }}
+
+      - name: Build native extension with maturin
+        uses: PyO3/maturin-action@v1.51.0
+        with:
+          command: develop
+          args: --release --features extension-module,postgres,redis,native-async,workflows,mesh
+          maturin-version: v1.13.3
+          working-directory: sdks/python
+
+      - name: Run Python test suite
+        working-directory: sdks/python
+        # The pytest_unconfigure hook in tests/conftest.py calls
+        # ``os._exit(0)`` on a clean run to bypass CPython finalization and
+        # avoid the PyO3 daemon-thread SIGABRT we used to paper over here.
+        run: uv run python -m pytest tests/ -v --junitxml=test-results.xml

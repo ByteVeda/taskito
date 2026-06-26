@@ -1,0 +1,52 @@
+name: CI Node
+
+# Reusable workflow: build the napi addon + TypeScript + dashboard SPA, then
+# typecheck, lint, and test the Node SDK. Called by ci.yml when Node-relevant
+# paths change.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  node-test:
+    name: Node SDK Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up Node + pnpm
+        uses: ./.github/actions/setup-node
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: pnpm install --frozen-lockfile
+
+      - name: Build addon, TypeScript, and dashboard SPA
+        working-directory: sdks/node
+        run: |
+          pnpm run build:native
+          pnpm run build:ts
+          pnpm -C ../../dashboard exec tsr generate   # route tree is gitignored
+          pnpm run build:dashboard
+
+      - name: Typecheck
+        working-directory: sdks/node
+        run: pnpm typecheck
+
+      - name: Lint
+        working-directory: sdks/node
+        run: pnpm lint
+
+      - name: Run Node test suite
+        working-directory: sdks/node
+        run: pnpm test
