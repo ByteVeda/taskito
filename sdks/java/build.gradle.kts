@@ -110,6 +110,10 @@ val copyNative by tasks.registering(Copy::class) {
 
 sourceSets["main"].resources.srcDir(nativeStaging)
 tasks.named("processResources") { dependsOn(copyNative) }
+// The sources jar (added by the publish plugin) also packages the main
+// resource srcDirs, so any Jar task reads the staged native dir. Wire the
+// dependency lazily — sourcesJar is registered after this script evaluates.
+tasks.withType<Jar>().configureEach { dependsOn(copyNative) }
 
 tasks.test {
     useJUnitPlatform()
