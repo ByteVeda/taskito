@@ -336,6 +336,12 @@ final class DefaultQueue implements Queue {
             specs.add(stepSpec(step));
             if (!deferred.contains(step.name)) {
                 Object payload = suppliedPayloads.getOrDefault(step.name, step.payload);
+                // A payloadless structural step (stepAfter) must get its payload at
+                // submit; fail fast rather than enqueue a null-payload job.
+                if (payload == null && !suppliedPayloads.containsKey(step.name)) {
+                    throw new TaskitoException("workflow step '" + step.name
+                            + "' has no payload; supply one via submitWorkflow(wf, payloads)");
+                }
                 payloadNames.add(step.name);
                 payloads.add(serializer.serialize(payload));
             }
