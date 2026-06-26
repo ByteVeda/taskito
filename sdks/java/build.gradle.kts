@@ -12,9 +12,14 @@ version = "0.16.4"
 
 java {
     // Sources + javadoc jars are added by the maven-publish plugin below.
-    toolchain {
-        languageVersion.set(JavaLanguageVersion.of(11))
-    }
+    // Compile to Java 11 bytecode with whatever JDK (>= 11) runs Gradle, rather
+    // than pinning a toolchain — `--release 11` also rejects post-11 stdlib APIs.
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(11)
 }
 
 repositories {
