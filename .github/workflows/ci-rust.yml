@@ -1,0 +1,127 @@
+name: CI Rust
+
+# Reusable workflow: Rust lint + the SQLite/PostgreSQL/Redis test matrices.
+# Called by ci.yml when Rust-relevant paths change. See ci.yml for the env
+# rationale (Cargo HTTP/1.1 + retry budget) — reusable workflows do not inherit
+# the caller's env, so it is repeated here.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  lint:
+    name: Lint (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
+          save-if: "true" # the Rust lint job is the sole Cargo cache writer
+
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Generic crates stay binding-free
+        # The engine crates (core/workflows/mesh) must remain binding-agnostic so
+        # the Python, Node, and Java shells can all reuse them. A pyo3, napi, OR
+        # jni dep would let binding-specific code creep back in. cargo tree is
+        # authoritative — you cannot `use pyo3`/`use napi`/`use jni` without
+        # depending on it. See crates/taskito-core/BINDING_CONTRACT.md.
+        run: |
+          set -euo pipefail
+          for crate in taskito-core taskito-workflows taskito-mesh; do
+            # Capture first so a `cargo tree` failure aborts (set -e) instead of
+            # being swallowed by the pipe and silently passing the check.
+            tree_output="$(cargo tree -p "$crate" -e normal --all-features)"
+            for binding in pyo3 napi jni; do
+              if grep -qi "$binding" <<<"$tree_output"; then
+                echo "::error::$binding is in the dependency tree of $crate — generic crates must stay binding-agnostic"
+                exit 1
+              fi
+            done
+          done
+          echo "Generic crates are free of pyo3, napi, and jni."
+
+  rust-test:
+    name: Rust Tests (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-prelude
+
+      # $pythonLocation is exported to the job env by setup-python at runtime.
+      - name: Run Rust test suite
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace
+
+      - name: Run mesh crate tests
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test -p taskito-mesh
+
+      - name: Check build with native-async features
+        run: cargo check --workspace --features native-async
+
+      - name: Check build with mesh feature
+        run: cargo check --workspace --features mesh
+
+  rust-test-postgres:
+    name: Rust Tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: taskito_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-prelude
+
+      - name: Run Rust test suite (PostgreSQL backend)
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features postgres,workflows
+        env:
+          TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
+
+  rust-test-redis:
+    name: Rust Tests (Redis)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-prelude
+
+      - name: Run Rust test suite (Redis backend)
+        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features redis,workflows
+        env:
+          TASKITO_REDIS_TEST_URL: redis://localhost:6379/15
