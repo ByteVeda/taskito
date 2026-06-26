@@ -8,7 +8,9 @@
 
 mod admin;
 mod inspect;
+mod locks;
 mod logs;
+mod periodic;
 
 use jni::objects::{JByteArray, JClass, JObjectArray, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jobjectArray, jstring, JNI_FALSE, JNI_TRUE};
