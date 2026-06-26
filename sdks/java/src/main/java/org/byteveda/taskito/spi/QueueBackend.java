@@ -108,7 +108,11 @@ public interface QueueBackend extends AutoCloseable {
     }
 
     // ── Workflows ───────────────────────────────────────────────────
-    String submitWorkflow(
+    // Optional capability: default to throwing so existing custom backends keep
+    // compiling and fail explicitly only when workflows are actually used.
+    String WORKFLOWS_UNSUPPORTED = "workflows not supported by this backend";
+
+    default String submitWorkflow(
             String name,
             int version,
             String stepsJson,
@@ -116,14 +120,67 @@ public interface QueueBackend extends AutoCloseable {
             byte[][] payloads,
             String queueDefault,
             String paramsJson,
-            String[] deferredNames);
+            String[] deferredNames) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
 
     /** Record a node's terminal outcome; returns the run's final state, or {@code null}. */
-    String markWorkflowNodeResult(String jobId, boolean succeeded, String error, boolean skipCascade);
+    default String markWorkflowNodeResult(String jobId, boolean succeeded, String error, boolean skipCascade) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
 
-    Optional<String> getWorkflowStatusJson(String runId);
+    default Optional<String> getWorkflowStatusJson(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
 
-    void cancelWorkflowRun(String runId);
+    default void cancelWorkflowRun(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default Optional<String> getWorkflowPlanJson(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default Optional<String> workflowNodeForJobJson(String jobId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default String[] expandFanOut(
+            String runId,
+            String parentNode,
+            String[] childNames,
+            byte[][] childPayloads,
+            String taskName,
+            String queue,
+            int maxRetries,
+            long timeoutMs,
+            int priority) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default Optional<String> checkFanOutCompletionJson(String runId, String parentNode) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default String createDeferredJob(
+            String runId,
+            String nodeName,
+            byte[] payload,
+            String taskName,
+            String queue,
+            int maxRetries,
+            long timeoutMs,
+            int priority) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default void cascadeSkipPending(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default Optional<String> finalizeRunIfTerminal(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
 
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker that dispatches jobs to {@code bridge}; returns its control. */

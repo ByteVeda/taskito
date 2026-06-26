@@ -41,6 +41,33 @@ public final class Workflow {
         return this;
     }
 
+    /**
+     * Add a fan-out step: {@code task} runs once per item of its predecessor's
+     * result (a list). The predecessor named in {@code after} is the producer.
+     */
+    public <T> Workflow fanOut(String name, Task<T> task, String strategy, String... after) {
+        requireSinglePredecessor("fan-out", name, after);
+        return step(Step.of(name, task).fanOut(strategy).after(after).build());
+    }
+
+    /**
+     * Add a fan-in step that collects its fan-out predecessor's child results
+     * into one list and passes it to {@code task}.
+     */
+    public <T> Workflow fanIn(String name, Task<T> task, String strategy, String... after) {
+        requireSinglePredecessor("fan-in", name, after);
+        return step(Step.of(name, task).fanIn(strategy).after(after).build());
+    }
+
+    // A fan-out/fan-in node has exactly one runtime trigger — its single producer.
+    // Zero predecessors would never enqueue; multiple could fire from the wrong one.
+    private static void requireSinglePredecessor(String kind, String name, String[] after) {
+        if (after.length != 1) {
+            throw new IllegalArgumentException(
+                    kind + " step '" + name + "' needs exactly one predecessor, got " + after.length);
+        }
+    }
+
     public String name() {
         return name;
     }

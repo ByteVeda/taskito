@@ -220,6 +220,60 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public Optional<String> getWorkflowPlanJson(String runId) {
+        return Optional.ofNullable(NativeWorkflows.getWorkflowPlan(handle, runId));
+    }
+
+    @Override
+    public Optional<String> workflowNodeForJobJson(String jobId) {
+        return Optional.ofNullable(NativeWorkflows.workflowNodeForJob(handle, jobId));
+    }
+
+    @Override
+    public String[] expandFanOut(
+            String runId,
+            String parentNode,
+            String[] childNames,
+            byte[][] childPayloads,
+            String taskName,
+            String queue,
+            int maxRetries,
+            long timeoutMs,
+            int priority) {
+        return NativeWorkflows.expandFanOut(
+                handle, runId, parentNode, childNames, childPayloads, taskName, queue, maxRetries, timeoutMs, priority);
+    }
+
+    @Override
+    public Optional<String> checkFanOutCompletionJson(String runId, String parentNode) {
+        return Optional.ofNullable(NativeWorkflows.checkFanOutCompletion(handle, runId, parentNode));
+    }
+
+    @Override
+    public String createDeferredJob(
+            String runId,
+            String nodeName,
+            byte[] payload,
+            String taskName,
+            String queue,
+            int maxRetries,
+            long timeoutMs,
+            int priority) {
+        return NativeWorkflows.createDeferredJob(
+                handle, runId, nodeName, payload, taskName, queue, maxRetries, timeoutMs, priority);
+    }
+
+    @Override
+    public void cascadeSkipPending(String runId) {
+        NativeWorkflows.cascadeSkipPending(handle, runId);
+    }
+
+    @Override
+    public Optional<String> finalizeRunIfTerminal(String runId) {
+        return Optional.ofNullable(NativeWorkflows.finalizeRunIfTerminal(handle, runId));
+    }
+
+    @Override
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
         return new JniWorkerControl(NativeQueue.runWorker(handle, bridge, optionsJson));
     }

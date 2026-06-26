@@ -95,8 +95,22 @@ try (Worker worker = queue.worker()
 ```
 
 A failed step (after its retries) fails the run and skips downstream nodes;
-`run.cancel()` skips pending nodes. Fan-out, conditions, gates, and sagas are
-not yet exposed.
+`run.cancel()` skips pending nodes.
+
+**Fan-out / fan-in** map a step over a producer's result list and gather the
+results:
+
+```java
+Workflow wf = Workflow.named("pipeline")
+        .step("seed", seed, 4)                          // returns List.of(1,2,3,4)
+        .fanOut("square", square, "each", "seed")       // runs square(x) per item
+        .fanIn("sum", sum, "all", "square");            // sum receives [1,4,9,16]
+```
+
+`trackWorkflows()` advances run state from worker outcomes, so **every worker
+that processes workflow jobs must enable it** — in a multi-worker deployment, a
+run stalls on any node finished by a worker that did not opt in. Conditions,
+gates, and sagas are not yet exposed.
 
 ### Middleware
 

@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
@@ -281,18 +283,50 @@ final class DefaultQueue implements Queue {
     @Override
     public WorkflowRun submitWorkflow(Workflow workflow) {
         List<Step> steps = workflow.steps();
+        Set<String> deferred = deferredNodes(steps);
         List<Map<String, Object>> specs = new ArrayList<>(steps.size());
-        String[] names = new String[steps.size()];
-        byte[][] payloads = new byte[steps.size()][];
-        for (int i = 0; i < steps.size(); i++) {
-            Step step = steps.get(i);
+        // Deferred nodes (fan-out/fan-in + their downstream) have no job — and so
+        // no payload — at submit; the tracker enqueues them at runtime.
+        List<String> payloadNames = new ArrayList<>();
+        List<byte[]> payloads = new ArrayList<>();
+        for (Step step : steps) {
             specs.add(stepSpec(step));
-            names[i] = step.name;
-            payloads[i] = serializer.serialize(step.payload);
+            if (!deferred.contains(step.name)) {
+                payloadNames.add(step.name);
+                payloads.add(serializer.serialize(step.payload));
+            }
         }
         String runId = backend.submitWorkflow(
-                workflow.name(), workflow.version(), encode(specs), names, payloads, null, null, new String[0]);
+                workflow.name(),
+                workflow.version(),
+                encode(specs),
+                payloadNames.toArray(new String[0]),
+                payloads.toArray(new byte[0][]),
+                null,
+                null,
+                deferred.toArray(new String[0]));
         return new WorkflowRun(backend, VIEWS, runId, workflow.name());
+    }
+
+    /** Fan-out/fan-in nodes, plus everything transitively downstream of them, are deferred. */
+    private static Set<String> deferredNodes(List<Step> steps) {
+        Set<String> deferred = new HashSet<>();
+        for (Step step : steps) {
+            if (step.fanOut != null || step.fanIn != null) {
+                deferred.add(step.name);
+            }
+        }
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Step step : steps) {
+                if (!deferred.contains(step.name) && step.after.stream().anyMatch(deferred::contains)) {
+                    deferred.add(step.name);
+                    changed = true;
+                }
+            }
+        }
+        return deferred;
     }
 
     @Override
@@ -322,6 +356,12 @@ final class DefaultQueue implements Queue {
         }
         if (step.priority != null) {
             spec.put("priority", step.priority);
+        }
+        if (step.fanOut != null) {
+            spec.put("fanOut", step.fanOut);
+        }
+        if (step.fanIn != null) {
+            spec.put("fanIn", step.fanIn);
         }
         return spec;
     }

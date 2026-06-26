@@ -16,6 +16,8 @@ public final class Step {
     public final Integer maxRetries;
     public final Long timeoutMs;
     public final Integer priority;
+    public final String fanOut;
+    public final String fanIn;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -26,6 +28,8 @@ public final class Step {
         this.maxRetries = builder.maxRetries;
         this.timeoutMs = builder.timeoutMs;
         this.priority = builder.priority;
+        this.fanOut = builder.fanOut;
+        this.fanIn = builder.fanIn;
     }
 
     /** Begin a step bound to a typed task. */
@@ -38,6 +42,11 @@ public final class Step {
         return new Builder(name, taskName, payload);
     }
 
+    /** Begin a payload-less step (its payload is derived at runtime — fan-out/fan-in). */
+    public static Builder of(String name, Task<?> task) {
+        return new Builder(name, task.name(), null);
+    }
+
     /** Fluent builder for a {@link Step}. */
     public static final class Builder {
         private final String name;
@@ -48,6 +57,8 @@ public final class Step {
         private Integer maxRetries;
         private Long timeoutMs;
         private Integer priority;
+        private String fanOut;
+        private String fanIn;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -81,7 +92,22 @@ public final class Step {
             return this;
         }
 
+        /** Run this step once per item of its predecessor's result (strategy {@code "each"}). */
+        public Builder fanOut(String strategy) {
+            this.fanOut = strategy;
+            return this;
+        }
+
+        /** Collect a fan-out predecessor's child results into one list (strategy {@code "all"}). */
+        public Builder fanIn(String strategy) {
+            this.fanIn = strategy;
+            return this;
+        }
+
         public Step build() {
+            if (fanOut != null && fanIn != null) {
+                throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
+            }
             return new Step(this);
         }
     }
