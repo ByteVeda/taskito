@@ -10,14 +10,15 @@ jobs:
     permissions:
       actions: write
     steps:
-      - uses: actions/checkout@v7
-
+      # Delete every cache scoped to the PR's merge ref in one call. --all avoids
+      # `gh cache list`'s 30-entry cap; --succeed-on-no-caches exits 0 when the
+      # PR left none, without masking real failures the way `|| true` would.
       - name: Delete PR branch caches
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: refs/pull/${{ github.event.pull_request.number }}/merge
-        run: |
-          echo "Deleting caches for branch: $BRANCH"
-          gh cache list --ref "$BRANCH" --json id --jq '.[].id' |
-            xargs -I {} gh cache delete {} --repo "${{ github.repository }}" || true
-          echo "Done"
+        run: >-
+          gh cache delete --all
+          --ref "$BRANCH"
+          --repo "${{ github.repository }}"
+          --succeed-on-no-caches

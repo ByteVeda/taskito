@@ -1,9 +1,8 @@
 name: CI Java
 
-# Reusable workflow: build the JNI cdylib (via Gradle's cargoBuild) and run the
-# Java SDK's full `gradle build` — compile, Spotless + Checkstyle, and the JUnit
-# suite across the runtime, processor, and test-support subprojects. Called by
-# ci.yml when Java-relevant paths change.
+# Reusable Java SDK workflow: Linux runs the full `gradle build` across every
+# JDK (sharing one prebuilt cdylib); a smoke build covers the other published
+# platforms. Called by ci.yml when Java-relevant paths change.
 on:
   workflow_call:
 
@@ -15,8 +14,9 @@ env:
   CARGO_NET_RETRY: "10"
 
 jobs:
-  java-test:
-    name: Java SDK Tests
+  # Build the JDK-independent cdylib once; test legs reuse it as an artifact.
+  native:
+    name: Build native library
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -25,12 +25,79 @@ jobs:
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
 
+      - name: Build the JNI cdylib
+        run: cargo build --release --features postgres,redis,workflows -p taskito-java
+
+      - name: Upload the cdylib
+        uses: actions/upload-artifact@v7
+        with:
+          name: taskito-java-native
+          path: target/release/libtaskito_java.so
+          if-no-files-found: error
+          retention-days: 1
+
+  # Build + test on every supported JDK; the SDK targets 11 but runs on 11/17/21
+  # over a native .so, so JVM behaviour is runtime-sensitive.
+  test:
+    name: Java SDK Tests (JDK ${{ matrix.java }})
+    needs: native
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["11", "17", "21"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java + Gradle
+        uses: ./.github/actions/setup-java
+        with:
+          java-version: ${{ matrix.java }}
+
+      # Stage the prebuilt .so where copyNative expects it, so no Rust is needed.
+      - name: Download the cdylib
+        uses: actions/download-artifact@v8
+        with:
+          name: taskito-java-native
+          path: target/release
+
+      # -x cargoBuild skips the Rust compile; copyNative still stages the .so.
+      - name: Build and test the Java SDK
+        working-directory: sdks/java
+        run: ./gradlew build -x cargoBuild --no-daemon
+
+  # Smoke the other published platforms on one JDK: their native binary differs,
+  # so they rebuild it (cargoBuild) instead of reusing the Linux artifact.
+  smoke:
+    name: Java SDK Smoke (${{ matrix.classifier }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - classifier: osx-aarch64
+            runner: macos-15
+          - classifier: windows-x86_64
+            runner: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Vendored OpenSSL needs Perl; point openssl-sys at Strawberry Perl.
+      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
       - name: Set up Java + Gradle
         uses: ./.github/actions/setup-java
 
-      # `gradle build` runs cargoBuild (the JNI cdylib), staging the native
-      # library into the jar, then compile + Spotless + Checkstyle + tests for
-      # every subproject. --no-daemon keeps the runner clean.
+      # bash so `./gradlew` runs uniformly on the Windows runner too.
       - name: Build and test the Java SDK
         working-directory: sdks/java
+        shell: bash
         run: ./gradlew build --no-daemon
