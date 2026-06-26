@@ -69,36 +69,39 @@ public final class WorkflowTracker {
         finalizeIfTerminal(ref.runId);
     }
 
-    /** If the just-completed node feeds a fan-out, split its result list into child jobs. */
+    /** If the just-completed node feeds fan-outs, split its result list into child jobs. */
     private void expandFanOutIfAny(String runId, String node, String jobId, RunPlan plan) {
-        PlanNode fanOut = plan.successorMatching(node, candidate -> candidate.fanOut != null);
-        if (fanOut == null) {
+        List<PlanNode> fanOuts = plan.successorsMatching(node, candidate -> candidate.fanOut != null);
+        if (fanOuts.isEmpty()) {
             return;
         }
-        byte[] result = fetchResult(jobId);
-        if (result == null) {
-            return;
+        List<?> items = serializer.deserialize(fetchResult(jobId), List.class);
+        for (PlanNode fanOut : fanOuts) {
+            String[] names = new String[items.size()];
+            byte[][] payloads = new byte[items.size()][];
+            for (int i = 0; i < items.size(); i++) {
+                names[i] = fanOut.name + "[" + i + "]";
+                payloads[i] = serializer.serialize(items.get(i));
+            }
+            backend.expandFanOut(
+                    runId,
+                    fanOut.name,
+                    names,
+                    payloads,
+                    fanOut.taskName,
+                    fanOut.queueOrDefault(),
+                    fanOut.retries(),
+                    fanOut.timeout(),
+                    fanOut.priorityOrDefault());
+            // An empty producer list yields no child jobs, so no child outcome will
+            // ever drive the fan-in — collect it now with an empty result list.
+            if (items.isEmpty()) {
+                collectFanIns(runId, fanOut.name, List.of(), plan);
+            }
         }
-        List<?> items = serializer.deserialize(result, List.class);
-        String[] names = new String[items.size()];
-        byte[][] payloads = new byte[items.size()][];
-        for (int i = 0; i < items.size(); i++) {
-            names[i] = fanOut.name + "[" + i + "]";
-            payloads[i] = serializer.serialize(items.get(i));
-        }
-        backend.expandFanOut(
-                runId,
-                fanOut.name,
-                names,
-                payloads,
-                fanOut.taskName,
-                fanOut.queueOrDefault(),
-                fanOut.retries(),
-                fanOut.timeout(),
-                fanOut.priorityOrDefault());
     }
 
-    /** When every fan-out child has settled, collect their results into one fan-in job. */
+    /** When every fan-out child has settled, collect their results into the fan-in job(s). */
     private void handleFanOutChild(String runId, String childName, RunPlan plan) {
         String parent = childName.substring(0, childName.indexOf('['));
         FanOutCompletion done = backend.checkFanOutCompletionJson(runId, parent)
@@ -112,25 +115,33 @@ public final class WorkflowTracker {
             finalizeIfTerminal(runId);
             return;
         }
-        PlanNode fanIn = plan == null ? null : plan.successorMatching(parent, candidate -> candidate.fanIn != null);
-        if (fanIn == null) {
+        List<Object> results = new ArrayList<>(done.childJobIds.size());
+        for (String childJobId : done.childJobIds) {
+            results.add(serializer.deserialize(fetchResult(childJobId), Object.class));
+        }
+        collectFanIns(runId, parent, results, plan);
+    }
+
+    /** Create a fan-in job for every fan-in successor of {@code parent}; finalize if none. */
+    private void collectFanIns(String runId, String parent, List<Object> results, RunPlan plan) {
+        List<PlanNode> fanIns =
+                plan == null ? List.of() : plan.successorsMatching(parent, candidate -> candidate.fanIn != null);
+        if (fanIns.isEmpty()) {
             finalizeIfTerminal(runId);
             return;
         }
-        List<Object> results = new ArrayList<>(done.childJobIds.size());
-        for (String childJobId : done.childJobIds) {
-            byte[] bytes = fetchResult(childJobId);
-            results.add(bytes == null ? null : serializer.deserialize(bytes, Object.class));
+        byte[] payload = serializer.serialize(results);
+        for (PlanNode fanIn : fanIns) {
+            backend.createDeferredJob(
+                    runId,
+                    fanIn.name,
+                    payload,
+                    fanIn.taskName,
+                    fanIn.queueOrDefault(),
+                    fanIn.retries(),
+                    fanIn.timeout(),
+                    fanIn.priorityOrDefault());
         }
-        backend.createDeferredJob(
-                runId,
-                fanIn.name,
-                serializer.serialize(results),
-                fanIn.taskName,
-                fanIn.queueOrDefault(),
-                fanIn.retries(),
-                fanIn.timeout(),
-                fanIn.priorityOrDefault());
     }
 
     private void finalizeIfTerminal(String runId) {
@@ -139,7 +150,12 @@ public final class WorkflowTracker {
         }
     }
 
-    /** Read a job's serialized result, briefly polling in case the event outran the DB write. */
+    /**
+     * Read a job's serialized result, briefly polling in case the outcome event
+     * outran the DB write. A missing result after the window is fatal to the
+     * step: returning null here would silently drop a fan-out expansion or fan in
+     * a {@code null} element, so we fail loudly instead.
+     */
     private byte[] fetchResult(String jobId) {
         for (int attempt = 0; attempt < 50; attempt++) {
             Optional<byte[]> result = backend.getResult(jobId);
@@ -150,10 +166,10 @@ public final class WorkflowTracker {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return null;
+                throw new TaskitoException("interrupted awaiting result for workflow job " + jobId, e);
             }
         }
-        return null;
+        throw new TaskitoException("no result for workflow job " + jobId + " after 5s");
     }
 
     private RunPlan loadPlan(String runId) {

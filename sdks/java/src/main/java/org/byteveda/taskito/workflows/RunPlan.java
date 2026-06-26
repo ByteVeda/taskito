@@ -33,14 +33,15 @@ final class RunPlan {
         return new RunPlan(byName, successors);
     }
 
-    /** The first successor of {@code node} whose plan entry matches {@code match}, or null. */
-    PlanNode successorMatching(String node, Predicate<PlanNode> match) {
+    /** Every successor of {@code node} whose plan entry matches {@code match}. */
+    List<PlanNode> successorsMatching(String node, Predicate<PlanNode> match) {
+        List<PlanNode> matches = new ArrayList<>();
         for (String successor : successors.getOrDefault(node, List.of())) {
             PlanNode candidate = byName.get(successor);
             if (candidate != null && match.test(candidate)) {
-                return candidate;
+                matches.add(candidate);
             }
         }
-        return null;
+        return matches;
     }
 }
