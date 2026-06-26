@@ -146,6 +146,14 @@ public interface Queue extends AutoCloseable {
     /** Submit a workflow DAG; returns a handle to the run. */
     WorkflowRun submitWorkflow(Workflow workflow);
 
+    /**
+     * Submit a workflow, supplying per-step payloads keyed by step name. A step's
+     * effective payload is {@code payloads.get(name)} when present, else the
+     * payload baked into the step. Pairs with the structural
+     * {@code step(name, task, priority, deps...)} form.
+     */
+    WorkflowRun submitWorkflow(Workflow workflow, Map<String, Object> payloads);
+
     /** Current status of a workflow run, or empty if it no longer exists. */
     Optional<WorkflowStatus> workflowStatus(String runId);
 

@@ -35,6 +35,16 @@ public final class Workflow {
         return step(Step.of(name, task, payload).after(after).build());
     }
 
+    /**
+     * Add a structural step (payload supplied at submit via
+     * {@code submitWorkflow(wf, payloads)}) that runs after {@code deps}. For a
+     * job priority, use the {@link Step} builder: {@code step(Step.of(name,
+     * task).priority(p).after(deps).build())}.
+     */
+    public Workflow stepAfter(String name, Task<?> task, String... deps) {
+        return step(Step.of(name, task).after(deps).build());
+    }
+
     /** Add a fully-configured step. */
     public Workflow step(Step step) {
         steps.add(step);
