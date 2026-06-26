@@ -150,7 +150,7 @@ public interface Queue extends AutoCloseable {
      * Submit a workflow, supplying per-step payloads keyed by step name. A step's
      * effective payload is {@code payloads.get(name)} when present, else the
      * payload baked into the step. Pairs with the structural
-     * {@code step(name, task, priority, deps...)} form.
+     * {@code Workflow.stepAfter(name, task, deps...)} form.
      */
     WorkflowRun submitWorkflow(Workflow workflow, Map<String, Object> payloads);
 
