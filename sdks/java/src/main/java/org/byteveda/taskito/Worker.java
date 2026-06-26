@@ -20,6 +20,7 @@ import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerControl;
+import org.byteveda.taskito.workflows.WorkflowTracker;
 
 /**
  * A running worker. Build one with {@link Queue#worker()}, register handlers,
@@ -132,6 +133,14 @@ public final class Worker implements AutoCloseable {
 
         public Builder on(EventName name, Consumer<OutcomeEvent> listener) {
             listeners.computeIfAbsent(name, key -> new ArrayList<>()).add(listener);
+            return this;
+        }
+
+        /** Drive workflow node and run state from this worker's job outcomes. */
+        public Builder trackWorkflows() {
+            WorkflowTracker tracker = new WorkflowTracker(backend);
+            on(EventName.SUCCESS, tracker::onSuccess);
+            on(EventName.DEAD, tracker::onDead);
             return this;
         }
 
