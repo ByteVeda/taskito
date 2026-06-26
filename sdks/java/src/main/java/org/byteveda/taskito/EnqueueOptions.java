@@ -6,14 +6,29 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /** Immutable per-enqueue options. Unset fields take core defaults. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class EnqueueOptions {
-    @JsonProperty("queue") private final String queue;
-    @JsonProperty("priority") private final Integer priority;
-    @JsonProperty("maxRetries") private final Integer maxRetries;
-    @JsonProperty("timeoutMs") private final Long timeoutMs;
-    @JsonProperty("delayMs") private final Long delayMs;
-    @JsonProperty("uniqueKey") private final String uniqueKey;
-    @JsonProperty("metadata") private final String metadata;
-    @JsonProperty("namespace") private final String namespace;
+    @JsonProperty("queue")
+    private final String queue;
+
+    @JsonProperty("priority")
+    private final Integer priority;
+
+    @JsonProperty("maxRetries")
+    private final Integer maxRetries;
+
+    @JsonProperty("timeoutMs")
+    private final Long timeoutMs;
+
+    @JsonProperty("delayMs")
+    private final Long delayMs;
+
+    @JsonProperty("uniqueKey")
+    private final String uniqueKey;
+
+    @JsonProperty("metadata")
+    private final String metadata;
+
+    @JsonProperty("namespace")
+    private final String namespace;
 
     private EnqueueOptions(Builder b) {
         this.queue = b.queue;

@@ -88,8 +88,7 @@ public final class Worker implements AutoCloseable {
         private final Serializer serializer;
         private final List<Middleware> middleware;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
-        private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners =
-                new EnumMap<>(EventName.class);
+        private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
         private List<String> queues;
         private int concurrency;
         private Integer channelCapacity;
@@ -137,13 +136,11 @@ public final class Worker implements AutoCloseable {
         }
 
         public Worker start() {
-            ExecutorService executor = concurrency > 0
-                    ? Executors.newFixedThreadPool(concurrency)
-                    : Executors.newCachedThreadPool();
+            ExecutorService executor =
+                    concurrency > 0 ? Executors.newFixedThreadPool(concurrency) : Executors.newCachedThreadPool();
             Emitter emitter = new Emitter();
             listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
-            WorkerDispatchBridge bridge =
-                    new WorkerDispatchBridge(handlers, serializer, executor, emitter, middleware);
+            WorkerDispatchBridge bridge = new WorkerDispatchBridge(handlers, serializer, executor, emitter, middleware);
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
             bridge.bind(control);
             return new Worker(control, executor);

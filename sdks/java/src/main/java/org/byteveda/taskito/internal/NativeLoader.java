@@ -71,8 +71,8 @@ public final class NativeLoader {
         String resource = "/org/byteveda/taskito/native/" + platformDir() + "/" + System.mapLibraryName(LIB);
         try (InputStream in = NativeLoader.class.getResourceAsStream(resource)) {
             if (in == null) {
-                throw new UnsatisfiedLinkError("no bundled native library for platform '" + platformDir()
-                        + "' (" + resource + "); set -Dtaskito.native.lib=/path/to/library");
+                throw new UnsatisfiedLinkError("no bundled native library for platform '" + platformDir() + "' ("
+                        + resource + "); set -Dtaskito.native.lib=/path/to/library");
             }
             return in.readAllBytes();
         } catch (IOException e) {
@@ -104,12 +104,10 @@ public final class NativeLoader {
     static String platformDir() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        String osDir = os.contains("win") ? "windows"
-                : (os.contains("mac") || os.contains("darwin")) ? "osx"
-                : "linux";
-        String archDir = (arch.equals("amd64") || arch.equals("x86_64")) ? "x86_64"
-                : (arch.equals("aarch64") || arch.equals("arm64")) ? "aarch64"
-                : arch;
+        String osDir = os.contains("win") ? "windows" : (os.contains("mac") || os.contains("darwin")) ? "osx" : "linux";
+        String archDir = (arch.equals("amd64") || arch.equals("x86_64"))
+                ? "x86_64"
+                : (arch.equals("aarch64") || arch.equals("arm64")) ? "aarch64" : arch;
         return osDir + "-" + archDir;
     }
 }

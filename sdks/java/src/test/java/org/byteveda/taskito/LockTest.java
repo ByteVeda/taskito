@@ -11,7 +11,10 @@ import org.junit.jupiter.api.io.TempDir;
 class LockTest {
 
     private Queue open(Path dir) {
-        return Taskito.builder().backend("sqlite").url(dir.resolve("t.db").toString()).open();
+        return Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open();
     }
 
     @Test
@@ -34,12 +37,14 @@ class LockTest {
     @Test
     void registerPeriodicValidatesCron(@TempDir Path dir) {
         try (Queue queue = open(dir)) {
-            long next = queue.registerPeriodic(PeriodicTask.builder("p", "tick", "0 0 12 * * *").build());
+            long next = queue.registerPeriodic(
+                    PeriodicTask.builder("p", "tick", "0 0 12 * * *").build());
             assertTrue(next > System.currentTimeMillis());
 
             assertThrows(
                     TaskitoException.class,
-                    () -> queue.registerPeriodic(PeriodicTask.builder("p", "tick", "not a cron").build()));
+                    () -> queue.registerPeriodic(
+                            PeriodicTask.builder("p", "tick", "not a cron").build()));
         }
     }
 }

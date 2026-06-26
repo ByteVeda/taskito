@@ -16,8 +16,10 @@ class WebhookTest {
 
     @Test
     void crudRoundTrip(@TempDir Path dir) {
-        try (Queue queue =
-                Taskito.builder().backend("sqlite").url(dir.resolve("t.db").toString()).open()) {
+        try (Queue queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
             WebhookManager webhooks = WebhookManager.attach(queue);
 
             Webhook created = webhooks.create(Webhook.builder("http://example/hook")

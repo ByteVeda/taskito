@@ -17,6 +17,7 @@ public final class Webhook {
     public final String url;
     /** Outcome wire names this hook fires on: success/retry/dead/cancelled. */
     public final List<String> events;
+
     public final String taskFilter;
     public final Map<String, String> headers;
     public final String secret;

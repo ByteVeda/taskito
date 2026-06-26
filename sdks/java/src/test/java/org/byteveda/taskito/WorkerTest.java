@@ -26,8 +26,10 @@ class WorkerTest {
     @Timeout(30)
     void runsTaskToCompletion(@TempDir Path dir) throws Exception {
         Task<Map<String, Object>> add = Task.of("add", mapType());
-        try (Queue queue =
-                Taskito.builder().backend("sqlite").url(dir.resolve("t.db").toString()).open()) {
+        try (Queue queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
             Map<String, Object> payload = new HashMap<>();
             payload.put("a", 2);
             payload.put("b", 3);
@@ -35,8 +37,10 @@ class WorkerTest {
 
             CountDownLatch done = new CountDownLatch(1);
             try (Worker worker = queue.worker()
-                    .handle(add, (Map<String, Object> p) ->
-                            ((Number) p.get("a")).intValue() + ((Number) p.get("b")).intValue())
+                    .handle(
+                            add,
+                            (Map<String, Object> p) ->
+                                    ((Number) p.get("a")).intValue() + ((Number) p.get("b")).intValue())
                     .on(EventName.SUCCESS, event -> done.countDown())
                     .start()) {
                 assertTrue(done.await(20, TimeUnit.SECONDS), "task should complete");
