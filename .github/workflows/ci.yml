@@ -118,24 +118,24 @@ jobs:
 
       - name: Generic crates stay binding-free
         # The engine crates (core/workflows/mesh) must remain binding-agnostic so
-        # the Python and Node shells can both reuse them. A pyo3 OR napi dep would
-        # let binding-specific code creep back in. cargo tree is authoritative —
-        # you cannot `use pyo3`/`use napi` without depending on it.
-        # See crates/taskito-core/BINDING_CONTRACT.md.
+        # the Python, Node, and Java shells can all reuse them. A pyo3, napi, OR
+        # jni dep would let binding-specific code creep back in. cargo tree is
+        # authoritative — you cannot `use pyo3`/`use napi`/`use jni` without
+        # depending on it. See crates/taskito-core/BINDING_CONTRACT.md.
         run: |
           set -euo pipefail
           for crate in taskito-core taskito-workflows taskito-mesh; do
             # Capture first so a `cargo tree` failure aborts (set -e) instead of
             # being swallowed by the pipe and silently passing the check.
             tree_output="$(cargo tree -p "$crate" -e normal --all-features)"
-            for binding in pyo3 napi; do
+            for binding in pyo3 napi jni; do
               if grep -qi "$binding" <<<"$tree_output"; then
                 echo "::error::$binding is in the dependency tree of $crate — generic crates must stay binding-agnostic"
                 exit 1
               fi
             done
           done
-          echo "Generic crates are free of pyo3 and napi."
+          echo "Generic crates are free of pyo3, napi, and jni."
 
       - name: Lint Python with Ruff
         working-directory: sdks/python
