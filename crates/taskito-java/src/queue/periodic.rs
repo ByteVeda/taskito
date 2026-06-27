@@ -1,16 +1,18 @@
-//! Periodic (cron) task registration. The worker maintenance loop enqueues due
-//! tasks; this binds only registration. Re-registering a name replaces it.
+//! Periodic (cron) task registration + management. The worker maintenance loop
+//! enqueues due tasks; this binds registration plus list / delete / pause /
+//! resume. Re-registering a name replaces it.
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jlong};
+use jni::sys::{jboolean, jlong, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::job::now_millis;
 use taskito_core::periodic::{next_cron_time, next_cron_time_tz};
 use taskito_core::storage::models::NewPeriodicTaskRow;
 use taskito_core::Storage;
 
-use super::borrow_queue;
-use crate::ffi::{guard, read_bytes, read_optional_string, read_string};
+use super::{borrow_queue, to_jboolean};
+use crate::convert::{to_json, PeriodicTaskView};
+use crate::ffi::{guard, new_string, read_bytes, read_optional_string, read_string};
 
 const DEFAULT_QUEUE: &str = "default";
 
@@ -62,5 +64,55 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerPe
         };
         queue.storage.register_periodic(&row)?;
         Ok(next_run)
+    })
+}
+
+/// `String listPeriodic(long handle)` — a JSON array of registered periodic
+/// tasks (enabled and paused).
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listPeriodic<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let tasks = queue.storage.list_periodic()?;
+        let views: Vec<PeriodicTaskView> = tasks.iter().map(PeriodicTaskView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `boolean deletePeriodic(long handle, String name)` — false if none had that name.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_deletePeriodic<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    name: JString<'local>,
+) -> jboolean {
+    guard(&mut env, JNI_FALSE, |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let name = read_string(env, &name)?;
+        Ok(to_jboolean(queue.storage.delete_periodic(&name)?))
+    })
+}
+
+/// `boolean setPeriodicEnabled(long handle, String name, boolean enabled)` —
+/// pause (false) or resume (true); false if none had that name.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_setPeriodicEnabled<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    name: JString<'local>,
+    enabled: jboolean,
+) -> jboolean {
+    guard(&mut env, JNI_FALSE, |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let name = read_string(env, &name)?;
+        Ok(to_jboolean(
+            queue.storage.set_periodic_enabled(&name, enabled != 0)?,
+        ))
     })
 }

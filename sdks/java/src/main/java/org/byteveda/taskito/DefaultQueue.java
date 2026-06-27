@@ -21,6 +21,7 @@ import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobError;
 import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
@@ -313,6 +314,26 @@ final class DefaultQueue implements Queue {
         byte[] payload = task.payload == null ? null : serializer.serialize(task.payload);
         return backend.registerPeriodic(
                 task.name, task.taskName, task.cron, payload, task.queue, task.timezone, task.enabled);
+    }
+
+    @Override
+    public List<PeriodicInfo> listPeriodic() {
+        return decodeList(backend.listPeriodicJson(), PeriodicInfo.class);
+    }
+
+    @Override
+    public boolean deletePeriodic(String name) {
+        return backend.deletePeriodic(name);
+    }
+
+    @Override
+    public boolean pausePeriodic(String name) {
+        return backend.setPeriodicEnabled(name, false);
+    }
+
+    @Override
+    public boolean resumePeriodic(String name) {
+        return backend.setPeriodicEnabled(name, true);
     }
 
     // ── Workflows ───────────────────────────────────────────────────
