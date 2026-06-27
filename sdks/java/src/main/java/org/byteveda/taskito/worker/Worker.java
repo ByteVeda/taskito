@@ -21,6 +21,7 @@ import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerControl;
+import org.byteveda.taskito.task.RetryPolicy;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.task.TaskFunction;
 import org.byteveda.taskito.workflows.WorkflowTracker;
@@ -92,6 +93,7 @@ public final class Worker implements AutoCloseable {
         private final Serializer serializer;
         private final List<Middleware> middleware;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
+        private final Map<String, RetryPolicy> taskPolicies = new HashMap<>();
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
         private List<String> queues;
         private int concurrency;
@@ -111,6 +113,7 @@ public final class Worker implements AutoCloseable {
 
         public <T, R> Builder handle(Task<T> task, TaskFunction<T, R> handler) {
             handlers.put(task.name(), new RegisteredTask(task.payloadType(), cast(handler)));
+            capturePolicy(task);
             return this;
         }
 
@@ -124,7 +127,16 @@ public final class Worker implements AutoCloseable {
         public Builder register(Handler<?, ?> handler) {
             handlers.put(
                     handler.task().name(), new RegisteredTask(handler.task().payloadType(), cast(handler.function())));
+            capturePolicy(handler.task());
             return this;
+        }
+
+        /** Remember a task's retry-backoff curve so {@code start()} registers it. */
+        private void capturePolicy(Task<?> task) {
+            RetryPolicy policy = task.retryPolicy();
+            if (policy != null) {
+                taskPolicies.put(task.name(), policy);
+            }
         }
 
         /** Register every handler in a {@link HandlerRegistry} (e.g. a generated {@code XxxTasks.handlers}). */
@@ -190,11 +202,36 @@ public final class Worker implements AutoCloseable {
             if (batchSize != null) {
                 options.put("batchSize", batchSize);
             }
+            if (!taskPolicies.isEmpty()) {
+                options.put("taskConfigs", encodeTaskConfigs());
+            }
             try {
                 return JSON.writeValueAsString(options);
             } catch (Exception e) {
                 throw new TaskitoException("failed to encode worker options", e);
             }
+        }
+
+        /** Serialize each captured retry policy into the wire shape the binding reads. */
+        private List<Map<String, Object>> encodeTaskConfigs() {
+            List<Map<String, Object>> configs = new ArrayList<>(taskPolicies.size());
+            taskPolicies.forEach((name, policy) -> {
+                Map<String, Object> config = new LinkedHashMap<>();
+                config.put("name", name);
+                if (policy.baseDelay() != null) {
+                    config.put("baseDelayMs", policy.baseDelay().toMillis());
+                }
+                if (policy.maxDelay() != null) {
+                    config.put("maxDelayMs", policy.maxDelay().toMillis());
+                }
+                if (!policy.customDelays().isEmpty()) {
+                    List<Long> delaysMs = new ArrayList<>(policy.customDelays().size());
+                    policy.customDelays().forEach(delay -> delaysMs.add(delay.toMillis()));
+                    config.put("customDelaysMs", delaysMs);
+                }
+                configs.add(config);
+            });
+            return configs;
         }
 
         @SuppressWarnings("unchecked")

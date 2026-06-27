@@ -162,6 +162,21 @@ pub struct WorkerOptions {
     pub queues: Option<Vec<String>>,
     pub channel_capacity: Option<u32>,
     pub batch_size: Option<u32>,
+    /// Per-task retry-backoff policies, registered with the scheduler at start.
+    /// The core owns the retry engine; this only feeds it the backoff curve.
+    pub task_configs: Option<Vec<TaskRetryConfig>>,
+}
+
+/// A task's retry-backoff curve. Fields left unset fall back to the core's
+/// `RetryPolicy` defaults; the per-job retry budget travels via `maxRetries` on
+/// enqueue, so it is deliberately absent here.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRetryConfig {
+    pub name: String,
+    pub base_delay_ms: Option<i64>,
+    pub max_delay_ms: Option<i64>,
+    pub custom_delays_ms: Option<Vec<i64>>,
 }
 
 /// Filter accepted by `NativeQueue.listJobs`.
