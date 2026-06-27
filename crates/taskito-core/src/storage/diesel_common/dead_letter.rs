@@ -100,6 +100,14 @@ macro_rules! impl_diesel_dead_letter_ops {
                 limit: i64,
                 offset: i64,
             ) -> Result<Vec<DeadJob>> {
+                // Normalize pagination so every backend agrees: a non-positive
+                // limit yields no page (matches Redis), and offset never goes
+                // negative.
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
+                let offset = offset.max(0);
+
                 let mut conn = self.conn()?;
 
                 let rows: Vec<DeadLetterRow> = dead_letter::table

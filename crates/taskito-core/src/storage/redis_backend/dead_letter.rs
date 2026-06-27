@@ -188,7 +188,8 @@ impl RedisStorage {
                 if entry.task_name == task_name {
                     matches.push(DeadJob::from(entry));
                     // Stop once we have enough matches to satisfy this page.
-                    if matches.len() >= offset + limit {
+                    // saturating: offset/limit are public i64 inputs.
+                    if matches.len() >= offset.saturating_add(limit) {
                         break;
                     }
                 }
@@ -211,10 +212,12 @@ impl RedisStorage {
             let dlq_key = self.key(&["dlq", &id]);
             let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
             if let Some(d) = data {
-                if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
-                    if entry.task_name == task_name {
-                        to_delete.push(id);
-                    }
+                // Propagate (don't skip) on a corrupt entry: silently ignoring it
+                // would leave a task-owned row behind and under-report the count.
+                let entry: DeadJobEntry =
+                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                if entry.task_name == task_name {
+                    to_delete.push(id);
                 }
             }
         }
