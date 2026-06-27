@@ -107,6 +107,15 @@ public final class NativeQueue {
             String timezone,
             boolean enabled);
 
+    /** A JSON array of every registered periodic task (enabled and paused). */
+    public static native String listPeriodic(long handle);
+
+    /** Remove a periodic task; false if none had that name. */
+    public static native boolean deletePeriodic(long handle, String name);
+
+    /** Pause (false) or resume (true) a periodic task; false if none had that name. */
+    public static native boolean setPeriodicEnabled(long handle, String name, boolean enabled);
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker; returns its handle. {@code bridge} is a {@code WorkerBridge}. */
     public static native long runWorker(long handle, Object bridge, String optionsJson);

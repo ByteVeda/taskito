@@ -95,6 +95,20 @@ export interface PeriodicOptions {
   enabled?: boolean;
 }
 
+/** A registered periodic task, as returned by {@link Queue.listPeriodic}. Timestamps are Unix ms. */
+export interface PeriodicTask {
+  name: string;
+  taskName: string;
+  cronExpr: string;
+  queue: string;
+  enabled: boolean;
+  /** Last fire time, or absent if it has not run yet. */
+  lastRun?: number;
+  nextRun: number;
+  /** IANA timezone the cron is evaluated in, or absent for UTC. */
+  timezone?: string;
+}
+
 /** Per-queue resilience config. */
 export interface QueueLimits {
   maxConcurrent?: number;

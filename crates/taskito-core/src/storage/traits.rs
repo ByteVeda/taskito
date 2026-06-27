@@ -102,6 +102,13 @@ pub trait Storage: Send + Sync + Clone {
     fn register_periodic(&self, task: &NewPeriodicTaskRow) -> Result<()>;
     fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTaskRow>>;
     fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()>;
+    /// All registered periodic tasks, enabled or paused.
+    fn list_periodic(&self) -> Result<Vec<PeriodicTaskRow>>;
+    /// Remove a periodic task. Returns false if no task had that name.
+    fn delete_periodic(&self, name: &str) -> Result<bool>;
+    /// Pause (false) or resume (true) a periodic task by toggling `enabled`.
+    /// Returns false if no task had that name.
+    fn set_periodic_enabled(&self, name: &str, enabled: bool) -> Result<bool>;
 
     // ── Metrics operations ──────────────────────────────────────────
 

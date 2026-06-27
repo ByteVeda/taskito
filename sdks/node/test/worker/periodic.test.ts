@@ -37,6 +37,37 @@ it("rejects an invalid cron expression", () => {
   expect(() => queue.registerPeriodic("bad", "beat", "not a cron")).toThrow();
 });
 
+it("lists, pauses, resumes, and deletes periodic tasks", () => {
+  const queue = freshQueue();
+  queue.task("beat", () => null);
+  queue.registerPeriodic("nightly", "beat", "0 0 0 * * *");
+  queue.registerPeriodic("hourly", "beat", "0 0 * * * *");
+
+  expect(
+    queue
+      .listPeriodic()
+      .map((p) => p.name)
+      .sort(),
+  ).toEqual(["hourly", "nightly"]);
+  expect(queue.listPeriodic().find((p) => p.name === "nightly")?.enabled).toBe(true);
+
+  // Pause toggles `enabled` but keeps the task in the catalog.
+  expect(queue.pausePeriodic("nightly")).toBe(true);
+  expect(queue.listPeriodic().find((p) => p.name === "nightly")?.enabled).toBe(false);
+  expect(queue.listPeriodic()).toHaveLength(2);
+
+  expect(queue.resumePeriodic("nightly")).toBe(true);
+  expect(queue.listPeriodic().find((p) => p.name === "nightly")?.enabled).toBe(true);
+
+  // Unknown name → not found.
+  expect(queue.pausePeriodic("ghost")).toBe(false);
+
+  // Delete removes it; a second delete reports not-found.
+  expect(queue.deletePeriodic("nightly")).toBe(true);
+  expect(queue.listPeriodic()).toHaveLength(1);
+  expect(queue.deletePeriodic("nightly")).toBe(false);
+});
+
 it("accepts a circuit-breaker config and still runs the task", async () => {
   const queue = freshQueue();
   queue.task("guarded", (x: number) => x * 2, {

@@ -626,6 +626,57 @@ fn test_archived_job_payload_resolves(s: &impl Storage) {
     assert_eq!(row.result, Some(vec![0x11, 0x22]));
 }
 
+fn due_periodic_names(s: &impl Storage) -> Vec<String> {
+    s.get_due_periodic(now_millis())
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect()
+}
+
+fn test_periodic_crud(s: &impl Storage) {
+    use taskito_core::storage::models::NewPeriodicTaskRow;
+    let past = now_millis() - 1_000;
+    let row = |name: &'static str| NewPeriodicTaskRow {
+        name,
+        task_name: "periodic-task",
+        cron_expr: "* * * * *",
+        args: None,
+        kwargs: None,
+        queue: "default",
+        enabled: true,
+        next_run: past,
+        timezone: None,
+    };
+    s.register_periodic(&row("pc-a")).unwrap();
+    s.register_periodic(&row("pc-b")).unwrap();
+
+    // list_periodic returns every registered task.
+    let listed: Vec<String> = s
+        .list_periodic()
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert!(listed.contains(&"pc-a".to_string()) && listed.contains(&"pc-b".to_string()));
+
+    // Pausing drops it from the due set but keeps it in the catalog.
+    assert!(s.set_periodic_enabled("pc-a", false).unwrap());
+    assert!(!due_periodic_names(s).contains(&"pc-a".to_string()));
+    assert!(s.list_periodic().unwrap().iter().any(|p| p.name == "pc-a"));
+
+    // Resuming makes it due again.
+    assert!(s.set_periodic_enabled("pc-a", true).unwrap());
+    assert!(due_periodic_names(s).contains(&"pc-a".to_string()));
+
+    // Toggling or deleting an unknown task reports "not found".
+    assert!(!s.set_periodic_enabled("pc-missing", true).unwrap());
+
+    assert!(s.delete_periodic("pc-a").unwrap());
+    assert!(!s.list_periodic().unwrap().iter().any(|p| p.name == "pc-a"));
+    assert!(!s.delete_periodic("pc-a").unwrap());
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -647,6 +698,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_record_and_get_errors(s);
     test_workers(s);
     test_pause_resume_queue(s);
+    test_periodic_crud(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_dashboard_settings(s);

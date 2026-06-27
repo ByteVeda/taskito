@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
 use taskito_core::storage::models::{
-    JobErrorRow, LockInfoRow, TaskLogRow, TaskMetricRow, WorkerRow,
+    JobErrorRow, LockInfoRow, PeriodicTaskRow, TaskLogRow, TaskMetricRow, WorkerRow,
 };
 use taskito_core::storage::{DeadJob, QueueStats};
 
@@ -200,6 +200,35 @@ pub fn status_code(status: &str) -> Option<i32> {
         "dead" => Some(4),
         "cancelled" => Some(5),
         _ => None,
+    }
+}
+
+/// Periodic-task view (omits the opaque args/kwargs payloads).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodicTaskView<'a> {
+    pub name: &'a str,
+    pub task_name: &'a str,
+    pub cron_expr: &'a str,
+    pub queue: &'a str,
+    pub enabled: bool,
+    pub last_run: Option<i64>,
+    pub next_run: i64,
+    pub timezone: Option<&'a str>,
+}
+
+impl<'a> From<&'a PeriodicTaskRow> for PeriodicTaskView<'a> {
+    fn from(p: &'a PeriodicTaskRow) -> Self {
+        Self {
+            name: &p.name,
+            task_name: &p.task_name,
+            cron_expr: &p.cron_expr,
+            queue: &p.queue,
+            enabled: p.enabled,
+            last_run: p.last_run,
+            next_run: p.next_run,
+            timezone: p.timezone.as_deref(),
+        }
     }
 }
 

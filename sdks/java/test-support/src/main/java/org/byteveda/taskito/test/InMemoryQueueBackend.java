@@ -30,6 +30,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
 
     private final Map<String, JobRec> jobs = new ConcurrentHashMap<>();
     private final Map<String, String> settings = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Object>> periodics = new ConcurrentHashMap<>();
     private final Map<String, LockRec> locks = new ConcurrentHashMap<>();
     private final List<Map<String, Object>> dead = new CopyOnWriteArrayList<>();
     private final Map<String, List<Map<String, Object>>> logs = new ConcurrentHashMap<>();
@@ -363,12 +364,43 @@ public final class InMemoryQueueBackend implements QueueBackend {
     }
 
     // ── Periodic ────────────────────────────────────────────────────
+    // Catalog only — the in-memory backend records periodic tasks but never
+    // fires them. list/delete/pause exercise the same management surface as JNI.
 
     @Override
     public long registerPeriodic(
             String name, String taskName, String cron, byte[] args, String queue, String timezone, boolean enabled) {
-        settings.put("periodic:" + name, taskName + "|" + cron); // recorded, never fires
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("name", name);
+        rec.put("taskName", taskName);
+        rec.put("cronExpr", cron);
+        rec.put("queue", queue);
+        rec.put("enabled", enabled);
+        rec.put("lastRun", null);
+        rec.put("nextRun", now());
+        rec.put("timezone", timezone);
+        periodics.put(name, rec);
         return now();
+    }
+
+    @Override
+    public String listPeriodicJson() {
+        return toJson(new ArrayList<>(periodics.values()));
+    }
+
+    @Override
+    public boolean deletePeriodic(String name) {
+        return periodics.remove(name) != null;
+    }
+
+    @Override
+    public boolean setPeriodicEnabled(String name, boolean enabled) {
+        Map<String, Object> rec = periodics.get(name);
+        if (rec == null) {
+            return false;
+        }
+        rec.put("enabled", enabled);
+        return true;
     }
 
     // ── Worker ──────────────────────────────────────────────────────

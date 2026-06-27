@@ -1241,3 +1241,68 @@ fn test_dlq_retry_count_round_trip() {
     let dead2 = storage.list_dead(10, 0).unwrap();
     assert_eq!(dead2[0].dlq_retry_count, 1);
 }
+
+fn make_periodic(name: &str, next_run: i64) -> crate::storage::models::NewPeriodicTaskRow<'_> {
+    crate::storage::models::NewPeriodicTaskRow {
+        name,
+        task_name: "periodic_task",
+        cron_expr: "* * * * *",
+        args: None,
+        kwargs: None,
+        queue: "default",
+        enabled: true,
+        next_run,
+        timezone: None,
+    }
+}
+
+#[test]
+fn test_periodic_pause_resume_and_delete() {
+    let storage = test_storage();
+    let now = now_millis();
+    let past = now - 1000;
+
+    storage
+        .register_periodic(&make_periodic("alpha", past))
+        .unwrap();
+    storage
+        .register_periodic(&make_periodic("beta", past))
+        .unwrap();
+
+    // Both registered tasks are listed.
+    let listed = storage.list_periodic().unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().all(|row| row.enabled));
+
+    // Both are due and fire.
+    assert_eq!(storage.get_due_periodic(now).unwrap().len(), 2);
+
+    // Pausing "alpha" toggles enabled off and stops it firing.
+    assert!(storage.set_periodic_enabled("alpha", false).unwrap());
+    let due_names: Vec<String> = storage
+        .get_due_periodic(now)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.name)
+        .collect();
+    assert_eq!(due_names, vec!["beta".to_string()]);
+
+    // But it is still listed (paused, not removed).
+    assert_eq!(storage.list_periodic().unwrap().len(), 2);
+
+    // Resuming brings it back into the due set.
+    assert!(storage.set_periodic_enabled("alpha", true).unwrap());
+    assert_eq!(storage.get_due_periodic(now).unwrap().len(), 2);
+
+    // Deleting removes it from the listing.
+    assert!(storage.delete_periodic("alpha").unwrap());
+    let remaining = storage.list_periodic().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].name, "beta");
+
+    // A second delete reports nothing removed.
+    assert!(!storage.delete_periodic("alpha").unwrap());
+
+    // Toggling an unknown task reports nothing changed.
+    assert!(!storage.set_periodic_enabled("ghost", false).unwrap());
+}

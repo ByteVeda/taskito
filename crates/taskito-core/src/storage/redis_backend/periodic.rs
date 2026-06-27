@@ -115,4 +115,92 @@ impl RedisStorage {
 
         Ok(())
     }
+
+    /// List all registered periodic tasks, enabled or paused. Scans the
+    /// `periodic:*` keyspace (like `list_dead`/`list_workers`) so there is no
+    /// secondary index to keep consistent — tasks registered by any version are
+    /// listed.
+    pub fn list_periodic(&self) -> Result<Vec<PeriodicTaskRow>> {
+        let mut conn = self.conn()?;
+        let pattern = self.key(&["periodic", "*"]);
+        // The due sorted-set shares the `periodic:` namespace but is not a task
+        // JSON blob, so skip it (a `GET` on it would be a WRONGTYPE error).
+        let due_key = self.key(&["periodic", "due"]);
+
+        let mut rows = Vec::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query(&mut conn)
+                .map_err(map_err)?;
+
+            for key in keys {
+                if key == due_key {
+                    continue;
+                }
+                let data: Option<String> = conn.get(&key).map_err(map_err)?;
+                if let Some(d) = data {
+                    let entry: PeriodicEntry =
+                        serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                    rows.push(PeriodicTaskRow::from(entry));
+                }
+            }
+
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        Ok(rows)
+    }
+
+    /// Remove a periodic task. Returns false if no task had that name.
+    pub fn delete_periodic(&self, name: &str) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let pkey = self.key(&["periodic", name]);
+        let due_key = self.key(&["periodic", "due"]);
+
+        let pipe = &mut redis::pipe();
+        pipe.del(&pkey);
+        pipe.zrem(&due_key, name);
+        let (deleted, _zrem): (i64, i64) = pipe.query(&mut conn).map_err(map_err)?;
+
+        Ok(deleted > 0)
+    }
+
+    /// Pause (false) or resume (true) a periodic task by toggling `enabled`.
+    /// Returns false if no task had that name.
+    pub fn set_periodic_enabled(&self, name: &str, enabled: bool) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let pkey = self.key(&["periodic", name]);
+
+        let data: Option<String> = conn.get(&pkey).map_err(map_err)?;
+        let Some(d) = data else {
+            return Ok(false);
+        };
+
+        let mut entry: PeriodicEntry =
+            serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+        entry.enabled = enabled;
+
+        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let due_key = self.key(&["periodic", "due"]);
+
+        let pipe = &mut redis::pipe();
+        pipe.set(&pkey, &json);
+        if enabled {
+            pipe.zadd(&due_key, name, entry.next_run as f64);
+        } else {
+            pipe.zrem(&due_key, name);
+        }
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
+
+        Ok(true)
+    }
 }

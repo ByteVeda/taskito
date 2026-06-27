@@ -43,4 +43,36 @@ impl SqliteStorage {
 
         Ok(())
     }
+
+    /// List all registered periodic tasks, enabled or paused.
+    pub fn list_periodic(&self) -> Result<Vec<PeriodicTaskRow>> {
+        let mut conn = self.conn()?;
+
+        let rows = periodic_tasks::table
+            .select(PeriodicTaskRow::as_select())
+            .load(&mut conn)?;
+
+        Ok(rows)
+    }
+
+    /// Remove a periodic task. Returns false if no task had that name.
+    pub fn delete_periodic(&self, name: &str) -> Result<bool> {
+        let mut conn = self.conn()?;
+
+        let affected = diesel::delete(periodic_tasks::table.find(name)).execute(&mut conn)?;
+
+        Ok(affected > 0)
+    }
+
+    /// Pause (false) or resume (true) a periodic task by toggling `enabled`.
+    /// Returns false if no task had that name.
+    pub fn set_periodic_enabled(&self, name: &str, enabled: bool) -> Result<bool> {
+        let mut conn = self.conn()?;
+
+        let affected = diesel::update(periodic_tasks::table.find(name))
+            .set(periodic_tasks::enabled.eq(enabled))
+            .execute(&mut conn)?;
+
+        Ok(affected > 0)
+    }
 }

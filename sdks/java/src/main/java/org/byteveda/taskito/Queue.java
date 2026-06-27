@@ -11,6 +11,7 @@ import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobError;
 import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
@@ -140,6 +141,18 @@ public interface Queue extends AutoCloseable {
 
     /** Register (or replace) a cron task; returns the next fire time (Unix ms). */
     long registerPeriodic(PeriodicTask task);
+
+    /** Every registered periodic task, enabled or paused. */
+    List<PeriodicInfo> listPeriodic();
+
+    /** Unschedule a periodic task; false if none had that name. */
+    boolean deletePeriodic(String name);
+
+    /** Stop a periodic task from firing without removing it; false if none had that name. */
+    boolean pausePeriodic(String name);
+
+    /** Resume a paused periodic task; false if none had that name. */
+    boolean resumePeriodic(String name);
 
     // ── Workflows ───────────────────────────────────────────────────
 

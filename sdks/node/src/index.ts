@@ -57,6 +57,7 @@ export type {
   MeshWorkerConfig,
   Metric,
   PeriodicOptions,
+  PeriodicTask,
   QueueLimits,
   RateLimit,
   ResultOptions,

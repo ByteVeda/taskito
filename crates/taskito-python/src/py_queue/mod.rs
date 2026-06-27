@@ -664,6 +664,39 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// List all registered periodic tasks as `(name, task_name, cron_expr, enabled)` tuples.
+    pub fn list_periodic(&self) -> PyResult<Vec<(String, String, String, bool)>> {
+        let rows = self
+            .storage
+            .list_periodic()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.name, row.task_name, row.cron_expr, row.enabled))
+            .collect())
+    }
+
+    /// Remove a periodic task. Returns false if no task had that name.
+    pub fn delete_periodic(&self, name: &str) -> PyResult<bool> {
+        self.storage
+            .delete_periodic(name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Pause a periodic task so it stops firing. Returns false if no task had that name.
+    pub fn pause_periodic(&self, name: &str) -> PyResult<bool> {
+        self.storage
+            .set_periodic_enabled(name, false)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Resume a paused periodic task. Returns false if no task had that name.
+    pub fn resume_periodic(&self, name: &str) -> PyResult<bool> {
+        self.storage
+            .set_periodic_enabled(name, true)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     pub fn __repr__(&self) -> String {
         format!(
             "PyQueue(db_path='{}', workers={})",

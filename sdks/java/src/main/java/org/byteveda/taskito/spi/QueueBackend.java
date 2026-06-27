@@ -107,6 +107,21 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException("periodic tasks not supported by this backend");
     }
 
+    /** A JSON array of every registered periodic task. */
+    default String listPeriodicJson() {
+        throw new UnsupportedOperationException("periodic tasks not supported by this backend");
+    }
+
+    /** Remove a periodic task; false if none had that name. */
+    default boolean deletePeriodic(String name) {
+        throw new UnsupportedOperationException("periodic tasks not supported by this backend");
+    }
+
+    /** Pause (false) or resume (true) a periodic task; false if none had that name. */
+    default boolean setPeriodicEnabled(String name, boolean enabled) {
+        throw new UnsupportedOperationException("periodic tasks not supported by this backend");
+    }
+
     // ── Workflows ───────────────────────────────────────────────────
     // Optional capability: default to throwing so existing custom backends keep
     // compiling and fail explicitly only when workflows are actually used.

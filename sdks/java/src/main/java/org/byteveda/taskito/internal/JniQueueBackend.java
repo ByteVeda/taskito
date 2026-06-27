@@ -191,6 +191,21 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String listPeriodicJson() {
+        return NativeQueue.listPeriodic(handle);
+    }
+
+    @Override
+    public boolean deletePeriodic(String name) {
+        return NativeQueue.deletePeriodic(handle, name);
+    }
+
+    @Override
+    public boolean setPeriodicEnabled(String name, boolean enabled) {
+        return NativeQueue.setPeriodicEnabled(handle, name, enabled);
+    }
+
+    @Override
     public String submitWorkflow(
             String name,
             int version,
