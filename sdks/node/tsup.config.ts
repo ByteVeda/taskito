@@ -16,6 +16,6 @@ export default defineConfig({
   shims: true,
   clean: true,
   sourcemap: true,
-  target: "node18",
+  target: "node20",
   outDir: "dist",
 });
