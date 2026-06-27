@@ -454,6 +454,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.deadLetters(limit, offset);
   }
 
+  /** List dead-letter entries for a single task (paginated, newest first). */
+  deadLettersByTask(taskName: string, limit?: number, offset?: number): DeadJob[] {
+    return this.native.deadLettersByTask(taskName, limit, offset);
+  }
+
+  /** Delete every dead-letter entry for a task. Returns the count removed. */
+  purgeDeadByTask(taskName: string): number {
+    return this.native.purgeDeadByTask(taskName);
+  }
+
   /** Re-enqueue a dead-letter entry. Returns the new job id. */
   retryDead(deadId: string): string {
     return this.native.retryDead(deadId);

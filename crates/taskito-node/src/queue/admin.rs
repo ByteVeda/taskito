@@ -23,6 +23,32 @@ impl JsQueue {
         Ok(dead.into_iter().map(dead_job_to_js).collect())
     }
 
+    /// List dead-letter entries for a single task (paginated, newest first).
+    #[napi]
+    pub fn dead_letters_by_task(
+        &self,
+        task_name: String,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<JsDeadJob>> {
+        let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let offset = non_negative(offset.unwrap_or(0), "offset")?;
+        let dead = self
+            .storage
+            .list_dead_by_task(&task_name, limit, offset)
+            .map_err(to_napi_err)?;
+        Ok(dead.into_iter().map(dead_job_to_js).collect())
+    }
+
+    /// Delete every dead-letter entry for a task. Returns the count removed.
+    #[napi]
+    pub fn purge_dead_by_task(&self, task_name: String) -> Result<i64> {
+        self.storage
+            .purge_dead_by_task(&task_name)
+            .map(|n| n as i64)
+            .map_err(to_napi_err)
+    }
+
     /// Re-enqueue a dead-letter entry. Returns the new job id.
     #[napi]
     pub fn retry_dead(&self, dead_id: String) -> Result<String> {
