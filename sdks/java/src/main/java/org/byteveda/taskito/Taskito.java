@@ -1,6 +1,10 @@
 package org.byteveda.taskito;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.byteveda.taskito.internal.JniQueueBackend;
@@ -19,6 +23,8 @@ public final class Taskito {
     /** Configures and opens a {@link Queue}. */
     public static final class Builder {
         private static final ObjectMapper JSON = new ObjectMapper();
+        // Mirrors the Python/Node SDKs: a brokerless SQLite store under .taskito/.
+        private static final String DEFAULT_SQLITE_DB = ".taskito/taskito.db";
 
         private final Map<String, Object> options = new LinkedHashMap<>();
         private Serializer serializer = new JsonSerializer();
@@ -32,6 +38,11 @@ public final class Taskito {
         public Builder url(String dsn) {
             options.put("dsn", dsn);
             return this;
+        }
+
+        /** Shortcut for {@code backend("sqlite")} using the default {@code .taskito/taskito.db}. */
+        public Builder sqlite() {
+            return backend("sqlite");
         }
 
         /** Shortcut for {@code backend("sqlite").url(path)}. */
@@ -81,10 +92,30 @@ public final class Taskito {
 
         /** Open the native backend described by the configured options. */
         public Queue open() {
-            if (!options.containsKey("dsn")) {
+            String backend = (String) options.getOrDefault("backend", "sqlite");
+            if ("sqlite".equals(backend)) {
+                String dsn = (String) options.computeIfAbsent("dsn", key -> DEFAULT_SQLITE_DB);
+                ensureSqliteParentDir(dsn);
+            } else if (!options.containsKey("dsn")) {
                 throw new TaskitoException("url (dsn) is required");
             }
             return new DefaultQueue(JniQueueBackend.open(encodeOptions()), serializer);
+        }
+
+        /** Create the SQLite file's parent directory (skip in-memory databases). */
+        private static void ensureSqliteParentDir(String dsn) {
+            if (dsn.equals(":memory:") || dsn.startsWith("file::memory:")) {
+                return;
+            }
+            Path parent = Paths.get(dsn).getParent();
+            if (parent == null) {
+                return;
+            }
+            try {
+                Files.createDirectories(parent);
+            } catch (IOException e) {
+                throw new TaskitoException("failed to create sqlite directory " + parent, e);
+            }
         }
 
         private String encodeOptions() {

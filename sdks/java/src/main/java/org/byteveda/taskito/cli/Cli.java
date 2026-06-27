@@ -37,11 +37,15 @@ public final class Cli {
     @Option(names = "--backend", description = "Storage backend (default sqlite).", defaultValue = "sqlite")
     String backend;
 
-    @Option(names = "--url", required = true, description = "Connection string (SQLite path or URL).")
+    @Option(names = "--url", description = "Connection string (SQLite path or URL); defaults to .taskito/taskito.db.")
     String url;
 
     Queue open() {
-        return Taskito.builder().backend(backend).url(url).open();
+        Taskito.Builder builder = Taskito.builder().backend(backend);
+        if (url != null) {
+            builder.url(url);
+        }
+        return builder.open();
     }
 
     static String json(Object value) {
