@@ -265,9 +265,16 @@ public final class InMemoryQueueBackend implements QueueBackend {
 
     @Override
     public long purgeDeadByTask(String taskName) {
-        int before = dead.size();
-        dead.removeIf(entry -> taskName.equals(entry.get("taskName")));
-        return before - dead.size();
+        // Count the entries actually removed (not a before/after size diff, which
+        // a concurrent onFail append could skew).
+        List<Map<String, Object>> matches = new ArrayList<>();
+        for (Map<String, Object> entry : dead) {
+            if (taskName.equals(entry.get("taskName"))) {
+                matches.add(entry);
+            }
+        }
+        dead.removeAll(matches);
+        return matches.size();
     }
 
     @Override
