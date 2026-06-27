@@ -51,5 +51,10 @@ node_modules/
 # bundled into wheels by CI. Not tracked so every rebuild doesn't churn git.
 sdks/python/taskito/static/
 
+# Java SDK: native libs + dashboard SPA staged into resources by CI at publish
+# time (see publish-java.yml). Generated, not tracked.
+sdks/java/src/main/resources/org/byteveda/taskito/native/
+sdks/java/src/main/resources/org/byteveda/taskito/dashboard/
+
 # Docs
 site/
