@@ -58,14 +58,24 @@ public final class DashboardServer implements AutoCloseable {
         this.staticDir = staticDir;
     }
 
+    /** Start on {@code port} (0 = ephemeral), serving the SPA bundled in the jar. */
     public static DashboardServer start(Queue queue, int port) throws IOException {
         return start(queue, port, null, null);
     }
 
-    /** Start on {@code port} (0 = ephemeral). {@code token}/{@code staticDir} may be null. */
+    /** As {@link #start(Queue, int)} but requiring {@code token} for {@code /api/*}. */
+    public static DashboardServer start(Queue queue, int port, String token) throws IOException {
+        return start(queue, port, token, null);
+    }
+
+    /**
+     * Start on {@code port} (0 = ephemeral). {@code token} may be null. A null
+     * {@code staticDir} auto-discovers the SPA bundled in the jar; pass one only
+     * to override it with an unpacked build.
+     */
     public static DashboardServer start(Queue queue, int port, String token, String staticDir) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        Path dir = staticDir == null ? null : Paths.get(staticDir).normalize();
+        Path dir = staticDir != null ? Paths.get(staticDir).normalize() : DashboardAssets.resolveOrNull();
         DashboardServer dashboard = new DashboardServer(server, queue, token, dir);
         server.createContext("/", dashboard::dispatch);
         server.setExecutor(Executors.newCachedThreadPool());

@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Map;
@@ -56,6 +57,28 @@ class DashboardTest {
                 assertTrue(jobs.body().contains("\"task_name\":\"add\""));
                 assertTrue(jobs.body().contains("\"status\":\"pending\""));
             }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void servesSpaWithoutAStaticPath(@TempDir Path dir) throws Exception {
+        // No path passed to start(); the server auto-discovers the SPA. Point the
+        // discovery override at a stand-in tree to exercise that wiring offline.
+        Path spa = Files.createDirectories(dir.resolve("spa"));
+        Files.writeString(spa.resolve("index.html"), "<h1>taskito</h1>");
+        System.setProperty("taskito.dashboard.dir", spa.toString());
+        try (Queue queue =
+                        Taskito.builder().sqlite(dir.resolve("t.db").toString()).open();
+                DashboardServer server = DashboardServer.start(queue, 0)) {
+            int port = server.port();
+            HttpResponse<String> root = get(port, "/");
+            assertEquals(200, root.statusCode());
+            assertTrue(root.body().contains("taskito"));
+            // SPA fallback: an unknown client route still resolves to index.html.
+            assertEquals(200, get(port, "/jobs").statusCode());
+        } finally {
+            System.clearProperty("taskito.dashboard.dir");
         }
     }
 
