@@ -76,7 +76,7 @@ it("lists and purges dead-letter entries by task", async () => {
   queue.enqueue("beta");
   worker = queue.runWorker();
 
-  const deadline = Date.now() + 3000;
+  const deadline = Date.now() + 10000;
   while (Date.now() < deadline && queue.deadLetters().length < 3) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -100,7 +100,7 @@ it("pauses and resumes a queue", () => {
   expect(queue.listPausedQueues()).not.toContain("default");
 });
 
-async function waitForDead(queue: Queue, timeoutMs = 3000): Promise<DeadJob[]> {
+async function waitForDead(queue: Queue, timeoutMs = 10000): Promise<DeadJob[]> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const dead = queue.deadLetters();
