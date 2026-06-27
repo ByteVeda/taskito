@@ -12,13 +12,14 @@ use std::time::Duration;
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::jlong;
 use jni::JNIEnv;
-use taskito_core::scheduler::ResultOutcome;
+use taskito_core::resilience::retry::RetryPolicy;
+use taskito_core::scheduler::{ResultOutcome, TaskConfig};
 use taskito_core::worker::WorkerDispatcher;
 use taskito_core::{Scheduler, SchedulerConfig, Storage, StorageBackend};
 use tokio::sync::Notify;
 
 use crate::backend::QueueHandle;
-use crate::convert::{parse_json, WorkerOptions};
+use crate::convert::{parse_json, TaskRetryConfig, WorkerOptions};
 use crate::dispatcher::{JavaDispatcher, Registry, TaskOutcome};
 use crate::ffi::{guard, read_bytes, read_string};
 use crate::handle::{self, drop_handle, into_handle};
@@ -70,7 +71,9 @@ fn start_worker(
     let queues_csv = queues.join(",");
     let worker_id = format!("java-{}", uuid::Uuid::now_v7());
 
-    let scheduler = Arc::new(Scheduler::new(storage, queues, config, namespace));
+    let mut scheduler = Scheduler::new(storage, queues, config, namespace);
+    register_task_policies(&mut scheduler, options.task_configs);
+    let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
     let heartbeat_stop = Arc::new(Notify::new());
 
@@ -116,6 +119,41 @@ fn start_worker(
         shutdown,
         heartbeat_stop,
     })
+}
+
+/// Register each task's retry-backoff curve with the scheduler. Only the curve
+/// is set here — the core resolves the retry budget from the job's `max_retries`
+/// — so unset fields keep the core [`RetryPolicy`] defaults.
+fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRetryConfig>>) {
+    let Some(configs) = configs else { return };
+    for config in configs {
+        let mut retry_policy = RetryPolicy::default();
+        if let Some(custom) = config.custom_delays_ms {
+            // Explicit per-attempt delays are honored exactly. The core derives
+            // its jitter and post-exhaustion fallback from base_delay_ms, so
+            // zeroing it leaves the listed delays jitter-free; once the list is
+            // spent, further retries fire immediately (callers list enough).
+            retry_policy.base_delay_ms = 0;
+            retry_policy.max_delay_ms = 0;
+            retry_policy.custom_delays_ms = Some(custom);
+        } else {
+            if let Some(base) = config.base_delay_ms {
+                retry_policy.base_delay_ms = base;
+            }
+            if let Some(max) = config.max_delay_ms {
+                retry_policy.max_delay_ms = max;
+            }
+        }
+        scheduler.register_task(
+            config.name,
+            TaskConfig {
+                retry_policy,
+                rate_limit: None,
+                circuit_breaker: None,
+                max_concurrent: None,
+            },
+        );
+    }
 }
 
 /// Drain results: apply each to storage and invoke `WorkerBridge.onOutcome`.

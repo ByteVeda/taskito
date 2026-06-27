@@ -16,29 +16,40 @@ public final class Task<T> {
     private final String name;
     private final Type payloadType;
     private final EnqueueOptions options;
+    private final RetryPolicy retryPolicy;
 
-    private Task(String name, Type payloadType, EnqueueOptions options) {
+    private Task(String name, Type payloadType, EnqueueOptions options, RetryPolicy retryPolicy) {
         this.name = Objects.requireNonNull(name, "task name must not be null");
         if (name.trim().isEmpty()) {
             throw new IllegalArgumentException("task name must not be blank");
         }
         this.payloadType = Objects.requireNonNull(payloadType, "payloadType must not be null");
         this.options = Objects.requireNonNull(options, "options must not be null");
+        this.retryPolicy = retryPolicy;
     }
 
     /** A task whose payload deserializes to {@code payloadType}. */
     public static <T> Task<T> of(String name, Class<T> payloadType) {
-        return new Task<>(name, payloadType, EnqueueOptions.none());
+        return new Task<>(name, payloadType, EnqueueOptions.none(), null);
     }
 
     /** A task whose payload deserializes to a generic type, e.g. {@code new TypeReference<List<Foo>>(){}}. */
     public static <T> Task<T> of(String name, TypeReference<T> payloadType) {
-        return new Task<>(name, payloadType.getType(), EnqueueOptions.none());
+        return new Task<>(name, payloadType.getType(), EnqueueOptions.none(), null);
     }
 
     /** A copy of this task with the given default options. */
     public Task<T> withOptions(EnqueueOptions options) {
-        return new Task<>(name, payloadType, options);
+        return new Task<>(name, payloadType, options, retryPolicy);
+    }
+
+    /**
+     * A copy of this task whose retries use {@code retryPolicy}'s backoff curve.
+     * Registered with the worker on {@code start()}; the retry budget still comes
+     * from {@link #maxRetries}.
+     */
+    public Task<T> retryPolicy(RetryPolicy retryPolicy) {
+        return new Task<>(name, payloadType, options, retryPolicy);
     }
 
     public Task<T> queue(String queue) {
@@ -85,5 +96,10 @@ public final class Task<T> {
 
     public EnqueueOptions options() {
         return options;
+    }
+
+    /** The retry-backoff curve for this task, or {@code null} for the core defaults. */
+    public RetryPolicy retryPolicy() {
+        return retryPolicy;
     }
 }
