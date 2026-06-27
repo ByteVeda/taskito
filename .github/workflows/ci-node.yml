@@ -1,7 +1,8 @@
 name: CI Node
 
-# Reusable workflow: build the napi addon + TypeScript + dashboard SPA, then
-# typecheck, lint, and test the Node SDK. Called by ci.yml when Node-relevant
+# Reusable Node SDK workflow. Node-API is ABI-stable, so the napi addon is built
+# once on Linux and reused across every supported Node major; a per-OS smoke
+# build covers the other published platforms. Called by ci.yml when Node-relevant
 # paths change.
 on:
   workflow_call:
@@ -14,8 +15,10 @@ env:
   CARGO_NET_RETRY: "10"
 
 jobs:
-  node-test:
-    name: Node SDK Tests
+  # Build the addon + dashboard once, run the static checks, and publish the
+  # prebuilt artifact for the Node version matrix to reuse.
+  build:
+    name: Build + Lint (linux-x64)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -27,17 +30,14 @@ jobs:
       - name: Set up Node + pnpm
         uses: ./.github/actions/setup-node
 
-      - name: Install dashboard dependencies
-        working-directory: dashboard
-        run: pnpm install --frozen-lockfile
-
       - name: Build addon, TypeScript, and dashboard SPA
-        working-directory: sdks/node
+        shell: bash
         run: |
-          pnpm run build:native
-          pnpm run build:ts
-          pnpm -C ../../dashboard exec tsr generate   # route tree is gitignored
-          pnpm run build:dashboard
+          pnpm -C dashboard install --frozen-lockfile
+          pnpm -C dashboard exec tsr generate   # route tree is gitignored
+          pnpm -C sdks/node run build:native
+          pnpm -C sdks/node run build:ts
+          pnpm -C sdks/node run build:dashboard
 
       - name: Typecheck
         working-directory: sdks/node
@@ -47,6 +47,82 @@ jobs:
         working-directory: sdks/node
         run: pnpm lint
 
+      # The .node binary, its loader stubs, and the dashboard SPA are all
+      # platform-/version-independent on Linux, so the test legs reuse them.
+      - name: Upload prebuilt addon + dashboard
+        uses: actions/upload-artifact@v7
+        with:
+          name: taskito-node-linux-x64
+          path: |
+            sdks/node/native
+            sdks/node/static
+          if-no-files-found: error
+          retention-days: 1
+
+  # Run the test suite on every supported Node major against the one Linux addon.
+  test:
+    name: Node SDK Tests (Node ${{ matrix.node }} / linux-x64)
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node + pnpm
+        uses: ./.github/actions/setup-node
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Download prebuilt addon + dashboard
+        uses: actions/download-artifact@v8
+        with:
+          name: taskito-node-linux-x64
+          path: sdks/node
+
       - name: Run Node test suite
         working-directory: sdks/node
+        run: pnpm test
+
+  # Smoke the other published platforms on one Node major. Their .node binary
+  # differs, so these legs rebuild it instead of reusing the Linux artifact.
+  smoke:
+    name: Node SDK Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    steps:
+      # Vendored OpenSSL (via the postgres feature) needs Perl; point openssl-sys
+      # at Strawberry Perl so the MSYS perl on PATH doesn't shadow it.
+      - name: Point vendored OpenSSL at Strawberry Perl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up Node + pnpm
+        uses: ./.github/actions/setup-node
+
+      - name: Build addon, TypeScript, and dashboard SPA
+        shell: bash
+        run: |
+          pnpm -C dashboard install --frozen-lockfile
+          pnpm -C dashboard exec tsr generate
+          pnpm -C sdks/node run build:native
+          pnpm -C sdks/node run build:ts
+          pnpm -C sdks/node run build:dashboard
+
+      - name: Run Node test suite
+        working-directory: sdks/node
+        shell: bash
         run: pnpm test
