@@ -74,8 +74,9 @@ public final class DashboardServer implements AutoCloseable {
      * to override it with an unpacked build.
      */
     public static DashboardServer start(Taskito queue, int port, String token, String staticDir) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+        // Resolve assets before binding so a discovery failure can't leak a bound port.
         Path dir = staticDir != null ? Paths.get(staticDir).normalize() : DashboardAssets.resolveOrNull();
+        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         DashboardServer dashboard = new DashboardServer(server, queue, token, dir);
         server.createContext("/", dashboard::dispatch);
         server.setExecutor(Executors.newCachedThreadPool());
