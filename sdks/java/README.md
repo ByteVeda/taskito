@@ -8,6 +8,19 @@ A typed Java 11+ client over the Taskito Rust core, via a hand-written JNI shell
 > distributed locks, periodic/cron, and static-DAG workflows are implemented and
 > verified end-to-end.
 
+## Migration
+
+**0.18 — source-breaking (pre-1.0):** the client interface was renamed and the
+name `Queue` now denotes a single named queue.
+
+- The client you open is now `Taskito`, not `Queue`:
+  `Taskito client = Taskito.builder()…open();` (was `Queue queue = …`).
+  `Taskito.builder()` is unchanged.
+- `Queue` is a per-queue handle from `Taskito.queue(name)`, exposing
+  `pause()` / `resume()` / `isPaused()`.
+- `client.pauseQueue("emails")` → `client.queue("emails").pause()` (likewise
+  `resume`). `listPausedQueues()` stays on the client as the global view.
+
 ## Usage
 
 ### Enqueue
