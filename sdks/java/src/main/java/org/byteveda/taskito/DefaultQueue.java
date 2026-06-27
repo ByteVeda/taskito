@@ -202,6 +202,16 @@ final class DefaultQueue implements Queue {
     }
 
     @Override
+    public List<DeadJob> listDeadByTask(String taskName, long limit, long offset) {
+        return decodeList(backend.listDeadByTaskJson(taskName, limit, offset), DeadJob.class);
+    }
+
+    @Override
+    public long purgeDeadByTask(String taskName) {
+        return backend.purgeDeadByTask(taskName);
+    }
+
+    @Override
     public String retryDead(String deadId) {
         return backend.retryDead(deadId);
     }

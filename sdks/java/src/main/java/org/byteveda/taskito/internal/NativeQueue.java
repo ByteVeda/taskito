@@ -62,6 +62,12 @@ public final class NativeQueue {
 
     public static native long purgeDead(long handle, long olderThanMs);
 
+    /** Dead-letter entries for one task, as a JSON array. */
+    public static native String listDeadByTask(long handle, String taskName, long limit, long offset);
+
+    /** Delete every dead-letter entry for a task; returns the number removed. */
+    public static native long purgeDeadByTask(long handle, String taskName);
+
     public static native long purgeCompleted(long handle, long olderThanMs);
 
     public static native void pauseQueue(long handle, String queue);

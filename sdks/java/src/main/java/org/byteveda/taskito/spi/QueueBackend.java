@@ -61,6 +61,16 @@ public interface QueueBackend extends AutoCloseable {
 
     long purgeDead(long olderThanMs);
 
+    /** A JSON array of dead-letter entries for one task. */
+    default String listDeadByTaskJson(String taskName, long limit, long offset) {
+        throw new UnsupportedOperationException("per-task dead-letter queries not supported by this backend");
+    }
+
+    /** Delete every dead-letter entry for a task; returns the number removed. */
+    default long purgeDeadByTask(String taskName) {
+        throw new UnsupportedOperationException("per-task dead-letter queries not supported by this backend");
+    }
+
     long purgeCompleted(long olderThanMs);
 
     void pauseQueue(String queue);

@@ -115,6 +115,16 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String listDeadByTaskJson(String taskName, long limit, long offset) {
+        return NativeQueue.listDeadByTask(handle, taskName, limit, offset);
+    }
+
+    @Override
+    public long purgeDeadByTask(String taskName) {
+        return NativeQueue.purgeDeadByTask(handle, taskName);
+    }
+
+    @Override
     public long purgeCompleted(long olderThanMs) {
         return NativeQueue.purgeCompleted(handle, olderThanMs);
     }

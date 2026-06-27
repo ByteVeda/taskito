@@ -87,6 +87,12 @@ public interface Queue extends AutoCloseable {
 
     List<DeadJob> listDead(long limit, long offset);
 
+    /** Dead-letter entries for a single task, newest first. */
+    List<DeadJob> listDeadByTask(String taskName, long limit, long offset);
+
+    /** Delete every dead-letter entry for a task; returns the number removed. */
+    long purgeDeadByTask(String taskName);
+
     /** Re-enqueue a dead-letter entry; returns the new job id. */
     String retryDead(String deadId);
 
