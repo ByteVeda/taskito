@@ -37,6 +37,7 @@ import type {
   JobFilter,
   Metric,
   PeriodicOptions,
+  PeriodicTask,
   QueueLimits,
   RegisteredTask,
   ResultOptions,
@@ -159,6 +160,26 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       options?.timezone,
       options?.enabled,
     );
+  }
+
+  /** Every registered periodic task, enabled or paused. */
+  listPeriodic(): PeriodicTask[] {
+    return this.native.listPeriodic();
+  }
+
+  /** Unschedule a periodic task. Returns false if none had that name. */
+  deletePeriodic(name: string): boolean {
+    return this.native.deletePeriodic(name);
+  }
+
+  /** Stop a periodic task from firing without removing it; false if none had that name. */
+  pausePeriodic(name: string): boolean {
+    return this.native.setPeriodicEnabled(name, false);
+  }
+
+  /** Resume a paused periodic task; false if none had that name. */
+  resumePeriodic(name: string): boolean {
+    return this.native.setPeriodicEnabled(name, true);
   }
 
   /**

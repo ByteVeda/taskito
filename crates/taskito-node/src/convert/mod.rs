@@ -5,6 +5,7 @@ mod job;
 mod lock;
 mod log;
 mod outcome;
+mod periodic;
 mod stats;
 mod task_config;
 #[cfg(feature = "workflows")]
@@ -14,6 +15,7 @@ pub use job::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
 pub use lock::{lock_info_to_js, JsLockInfo};
 pub use log::{log_to_js, JsTaskLog};
 pub use outcome::{outcome_to_js, JsOutcome};
+pub use periodic::{periodic_to_js, JsPeriodicTask};
 pub use stats::{
     dead_job_to_js, job_error_to_js, metric_to_js, stats_to_js, status_code, worker_to_js,
     JsDeadJob, JsJobError, JsMetric, JsStats, JsWorkerRow,
