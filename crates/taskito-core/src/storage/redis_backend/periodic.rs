@@ -57,11 +57,9 @@ impl RedisStorage {
 
         let pkey = self.key(&["periodic", task.name]);
         let due_key = self.key(&["periodic", "due"]);
-        let all_key = self.key(&["periodic", "all"]);
 
         let pipe = &mut redis::pipe();
         pipe.set(&pkey, &json);
-        pipe.sadd(&all_key, task.name);
         if entry.enabled {
             pipe.zadd(&due_key, task.name, task.next_run as f64);
         }
@@ -118,27 +116,44 @@ impl RedisStorage {
         Ok(())
     }
 
-    /// List all registered periodic tasks, enabled or paused.
+    /// List all registered periodic tasks, enabled or paused. Scans the
+    /// `periodic:*` keyspace (like `list_dead`/`list_workers`) so there is no
+    /// secondary index to keep consistent — tasks registered by any version are
+    /// listed.
     pub fn list_periodic(&self) -> Result<Vec<PeriodicTaskRow>> {
         let mut conn = self.conn()?;
-        let all_key = self.key(&["periodic", "all"]);
-
-        let names: Vec<String> = conn.smembers(&all_key).map_err(map_err)?;
+        let pattern = self.key(&["periodic", "*"]);
+        // The due sorted-set shares the `periodic:` namespace but is not a task
+        // JSON blob, so skip it (a `GET` on it would be a WRONGTYPE error).
+        let due_key = self.key(&["periodic", "due"]);
 
         let mut rows = Vec::new();
-        for name in names {
-            let pkey = self.key(&["periodic", &name]);
-            let data: Option<String> = conn.get(&pkey).map_err(map_err)?;
-            match data {
-                Some(d) => {
+        let mut cursor: u64 = 0;
+        loop {
+            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query(&mut conn)
+                .map_err(map_err)?;
+
+            for key in keys {
+                if key == due_key {
+                    continue;
+                }
+                let data: Option<String> = conn.get(&key).map_err(map_err)?;
+                if let Some(d) = data {
                     let entry: PeriodicEntry =
                         serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
                     rows.push(PeriodicTaskRow::from(entry));
                 }
-                // Stale index entry: the task key is gone, so self-heal.
-                None => {
-                    let _removed: i64 = conn.srem(&all_key, &name).map_err(map_err)?;
-                }
+            }
+
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
             }
         }
 
@@ -150,13 +165,11 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let pkey = self.key(&["periodic", name]);
         let due_key = self.key(&["periodic", "due"]);
-        let all_key = self.key(&["periodic", "all"]);
 
         let pipe = &mut redis::pipe();
         pipe.del(&pkey);
         pipe.zrem(&due_key, name);
-        pipe.srem(&all_key, name);
-        let (deleted, _zrem, _srem): (i64, i64, i64) = pipe.query(&mut conn).map_err(map_err)?;
+        let (deleted, _zrem): (i64, i64) = pipe.query(&mut conn).map_err(map_err)?;
 
         Ok(deleted > 0)
     }
