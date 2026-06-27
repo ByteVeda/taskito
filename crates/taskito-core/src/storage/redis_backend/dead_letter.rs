@@ -157,6 +157,84 @@ impl RedisStorage {
         Ok(results)
     }
 
+    pub fn list_dead_by_task(
+        &self,
+        task_name: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeadJob>> {
+        // Mirror `list_dead`'s non-positive-limit convention (Redis LIMIT with a
+        // count of 0 returns nothing): no page to build.
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = self.conn()?;
+        let dlq_all = self.key(&["dlq", "all"]);
+        let offset = offset.max(0) as usize;
+        let limit = limit as usize;
+
+        // No per-task index by design: scan the global DLQ set newest-first and
+        // filter on `task_name`, paginating after the filter.
+        let ids: Vec<String> = conn.zrevrange(&dlq_all, 0, -1).map_err(map_err)?;
+
+        let mut matches = Vec::new();
+        for id in ids {
+            let dlq_key = self.key(&["dlq", &id]);
+            let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+            if let Some(d) = data {
+                let entry: DeadJobEntry =
+                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                if entry.task_name == task_name {
+                    matches.push(DeadJob::from(entry));
+                    // Stop once we have enough matches to satisfy this page.
+                    // saturating: offset/limit are public i64 inputs.
+                    if matches.len() >= offset.saturating_add(limit) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(matches.into_iter().skip(offset).take(limit).collect())
+    }
+
+    pub fn purge_dead_by_task(&self, task_name: &str) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let dlq_all = self.key(&["dlq", "all"]);
+
+        // No per-task index by design: scan the global DLQ set and collect the
+        // ids whose entry matches `task_name`.
+        let ids: Vec<String> = conn.zrevrange(&dlq_all, 0, -1).map_err(map_err)?;
+
+        let mut to_delete = Vec::new();
+        for id in ids {
+            let dlq_key = self.key(&["dlq", &id]);
+            let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+            if let Some(d) = data {
+                // Propagate (don't skip) on a corrupt entry: silently ignoring it
+                // would leave a task-owned row behind and under-report the count.
+                let entry: DeadJobEntry =
+                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                if entry.task_name == task_name {
+                    to_delete.push(id);
+                }
+            }
+        }
+
+        if to_delete.is_empty() {
+            return Ok(0);
+        }
+
+        let pipe = &mut redis::pipe();
+        for id in &to_delete {
+            pipe.del(self.key(&["dlq", id]));
+            pipe.zrem(&dlq_all, id.as_str());
+        }
+        pipe.query::<()>(&mut conn).map_err(map_err)?;
+        Ok(to_delete.len() as u64)
+    }
+
     pub fn retry_dead(&self, dead_id: &str) -> Result<String> {
         let mut conn = self.conn()?;
         let dlq_key = self.key(&["dlq", dead_id]);

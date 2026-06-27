@@ -78,6 +78,10 @@ pub trait Storage: Send + Sync + Clone {
 
     fn move_to_dlq(&self, job: &Job, error: &str, metadata: Option<&str>) -> Result<()>;
     fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
+    /// Dead-letter entries for one task, newest first, paginated.
+    fn list_dead_by_task(&self, task_name: &str, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
+    /// Delete every dead-letter entry for a task. Returns the number removed.
+    fn purge_dead_by_task(&self, task_name: &str) -> Result<u64>;
     fn retry_dead(&self, dead_id: &str) -> Result<String>;
     fn purge_dead(&self, older_than_ms: i64) -> Result<u64>;
     fn delete_dead(&self, dead_id: &str) -> Result<bool>;

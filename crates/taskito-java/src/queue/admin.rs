@@ -70,6 +70,43 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_purgeDead<
     })
 }
 
+/// `String listDeadByTask(long handle, String taskName, long limit, long offset)`
+/// — dead-letter entries for one task, as a JSON array.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listDeadByTask<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    task_name: JString<'local>,
+    limit: jlong,
+    offset: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let task = read_string(env, &task_name)?;
+        let dead = queue
+            .storage
+            .list_dead_by_task(&task, limit.max(0), offset.max(0))?;
+        let views: Vec<DeadJobView> = dead.iter().map(DeadJobView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `long purgeDeadByTask(long handle, String taskName)` — returns rows removed.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_purgeDeadByTask<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    task_name: JString<'local>,
+) -> jlong {
+    guard(&mut env, 0, |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let task = read_string(env, &task_name)?;
+        Ok(queue.storage.purge_dead_by_task(&task)? as jlong)
+    })
+}
+
 /// `long purgeCompleted(long handle, long olderThanMs)` — returns rows removed.
 #[no_mangle]
 pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_purgeCompleted<'local>(

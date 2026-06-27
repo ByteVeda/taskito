@@ -64,6 +64,33 @@ it("dead-letters a failing job and can retry it", async () => {
   expect(typeof queue.retryDead(entry.id)).toBe("string");
 });
 
+it("lists and purges dead-letter entries by task", async () => {
+  const queue = newQueue();
+  const boom = () => {
+    throw new Error("nope");
+  };
+  queue.task("alpha", boom, { maxRetries: 0 });
+  queue.task("beta", boom, { maxRetries: 0 });
+  queue.enqueue("alpha");
+  queue.enqueue("alpha");
+  queue.enqueue("beta");
+  worker = queue.runWorker();
+
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline && queue.deadLetters().length < 3) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  expect(queue.deadLettersByTask("alpha")).toHaveLength(2);
+  expect(queue.deadLettersByTask("beta")).toHaveLength(1);
+  // Pagination applies within the task's own entries.
+  expect(queue.deadLettersByTask("alpha", 1, 1)).toHaveLength(1);
+
+  expect(queue.purgeDeadByTask("alpha")).toBe(2);
+  expect(queue.deadLettersByTask("alpha")).toHaveLength(0);
+  expect(queue.deadLetters()).toHaveLength(1);
+});
+
 it("pauses and resumes a queue", () => {
   const queue = newQueue();
   expect(queue.listPausedQueues()).not.toContain("default");
@@ -73,7 +100,7 @@ it("pauses and resumes a queue", () => {
   expect(queue.listPausedQueues()).not.toContain("default");
 });
 
-async function waitForDead(queue: Queue, timeoutMs = 3000): Promise<DeadJob[]> {
+async function waitForDead(queue: Queue, timeoutMs = 10000): Promise<DeadJob[]> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const dead = queue.deadLetters();

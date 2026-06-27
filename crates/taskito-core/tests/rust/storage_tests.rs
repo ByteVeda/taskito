@@ -251,6 +251,38 @@ fn test_dead_letter_queue(s: &impl Storage) {
     assert!(!dead.is_empty());
 }
 
+fn test_dead_letter_by_task(s: &impl Storage) {
+    let q = "q-dlq-by-task";
+
+    // Move 2x "task_a" and 1x "task_b" to the DLQ.
+    let move_to_dlq = |task_name: &str| {
+        let job = s.enqueue(make_job(q, task_name)).unwrap();
+        s.dequeue(q, now_millis() + 1000, None).unwrap();
+        let running = s.get_job(&job.id).unwrap().unwrap();
+        s.move_to_dlq(&running, "boom", None).unwrap();
+    };
+    move_to_dlq("task_a");
+    move_to_dlq("task_a");
+    move_to_dlq("task_b");
+
+    let task_a = s.list_dead_by_task("task_a", 10, 0).unwrap();
+    assert_eq!(task_a.len(), 2);
+    assert!(task_a.iter().all(|d| d.task_name == "task_a"));
+
+    // Pagination: one entry per page.
+    let page = s.list_dead_by_task("task_a", 1, 1).unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].task_name, "task_a");
+
+    // Purge removes only the matching task's entries.
+    assert_eq!(s.purge_dead_by_task("task_a").unwrap(), 2);
+    assert!(s.list_dead_by_task("task_a", 10, 0).unwrap().is_empty());
+
+    let task_b = s.list_dead_by_task("task_b", 10, 0).unwrap();
+    assert_eq!(task_b.len(), 1);
+    assert_eq!(task_b[0].task_name, "task_b");
+}
+
 fn test_delete_dead(s: &impl Storage) {
     let q = "q-del-dead";
     let job = s.enqueue(make_job(q, "del_dead_task")).unwrap();
@@ -692,6 +724,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_enqueue_unique_validates_deps(s);
     test_enqueue_batch(s);
     test_dead_letter_queue(s);
+    test_dead_letter_by_task(s);
     test_delete_dead(s);
     test_list_dead_for_retry(s);
     test_progress_tracking(s);

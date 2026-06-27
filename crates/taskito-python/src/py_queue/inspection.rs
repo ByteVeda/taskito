@@ -110,6 +110,50 @@ impl PyQueue {
         })
     }
 
+    /// List dead letter queue entries for a single task, newest first.
+    #[pyo3(signature = (task_name, limit=10, offset=0))]
+    pub fn dead_letters_by_task(
+        &self,
+        task_name: &str,
+        limit: i64,
+        offset: i64,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        if limit < 0 || offset < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit and offset must be non-negative",
+            ));
+        }
+        let dead = self
+            .storage
+            .list_dead_by_task(task_name, limit, offset)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Python::attach(|py| {
+            let mut result = Vec::with_capacity(dead.len());
+            for d in dead {
+                let dict = PyDict::new(py);
+                dict.set_item("id", d.id)?;
+                dict.set_item("original_job_id", d.original_job_id)?;
+                dict.set_item("queue", d.queue)?;
+                dict.set_item("task_name", d.task_name)?;
+                dict.set_item("error", d.error)?;
+                dict.set_item("retry_count", d.retry_count)?;
+                dict.set_item("failed_at", d.failed_at)?;
+                dict.set_item("metadata", d.metadata)?;
+                dict.set_item("dlq_retry_count", d.dlq_retry_count)?;
+                result.push(dict.into());
+            }
+            Ok(result)
+        })
+    }
+
+    /// Purge every dead letter entry for a task. Returns the count removed.
+    pub fn purge_dead_by_task(&self, task_name: &str) -> PyResult<u64> {
+        self.storage
+            .purge_dead_by_task(task_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Re-enqueue a dead letter job. Returns new job ID.
     pub fn retry_dead(&self, dead_id: &str) -> PyResult<String> {
         self.storage

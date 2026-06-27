@@ -93,6 +93,45 @@ macro_rules! impl_diesel_dead_letter_ops {
                 Ok(rows.into_iter().map(DeadJob::from).collect())
             }
 
+            /// List dead letter entries for a single task, newest first.
+            pub fn list_dead_by_task(
+                &self,
+                task_name: &str,
+                limit: i64,
+                offset: i64,
+            ) -> Result<Vec<DeadJob>> {
+                // Normalize pagination so every backend agrees: a non-positive
+                // limit yields no page (matches Redis), and offset never goes
+                // negative.
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
+                let offset = offset.max(0);
+
+                let mut conn = self.conn()?;
+
+                let rows: Vec<DeadLetterRow> = dead_letter::table
+                    .filter(dead_letter::task_name.eq(task_name))
+                    .order(dead_letter::failed_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                    .select(DeadLetterRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows.into_iter().map(DeadJob::from).collect())
+            }
+
+            /// Delete every dead letter entry for a task. Returns the count removed.
+            pub fn purge_dead_by_task(&self, task_name: &str) -> Result<u64> {
+                let mut conn = self.conn()?;
+
+                let affected =
+                    diesel::delete(dead_letter::table.filter(dead_letter::task_name.eq(task_name)))
+                        .execute(&mut conn)?;
+
+                Ok(affected as u64)
+            }
+
             /// Re-enqueue a dead letter job. Returns the new job ID.
             ///
             /// Returns `JobNotFound` only when the dead-letter row is absent or

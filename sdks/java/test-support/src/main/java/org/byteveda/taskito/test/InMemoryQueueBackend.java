@@ -251,6 +251,33 @@ public final class InMemoryQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String listDeadByTaskJson(String taskName, long limit, long offset) {
+        List<Map<String, Object>> matches = new ArrayList<>();
+        for (Map<String, Object> entry : dead) {
+            if (taskName.equals(entry.get("taskName"))) {
+                matches.add(entry);
+            }
+        }
+        int from = (int) Math.min(offset, matches.size());
+        int to = (int) Math.min(from + limit, matches.size());
+        return toJson(new ArrayList<>(matches.subList(from, to)));
+    }
+
+    @Override
+    public long purgeDeadByTask(String taskName) {
+        // Count the entries actually removed (not a before/after size diff, which
+        // a concurrent onFail append could skew).
+        List<Map<String, Object>> matches = new ArrayList<>();
+        for (Map<String, Object> entry : dead) {
+            if (taskName.equals(entry.get("taskName"))) {
+                matches.add(entry);
+            }
+        }
+        dead.removeAll(matches);
+        return matches.size();
+    }
+
+    @Override
     public long purgeCompleted(long olderThanMs) {
         List<String> remove = new ArrayList<>();
         for (JobRec job : jobs.values()) {

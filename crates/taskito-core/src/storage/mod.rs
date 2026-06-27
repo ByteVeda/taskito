@@ -244,6 +244,17 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::storage::DeadJob>> {
                 self.list_dead(limit, offset)
             }
+            fn list_dead_by_task(
+                &self,
+                task_name: &str,
+                limit: i64,
+                offset: i64,
+            ) -> $crate::error::Result<Vec<$crate::storage::DeadJob>> {
+                self.list_dead_by_task(task_name, limit, offset)
+            }
+            fn purge_dead_by_task(&self, task_name: &str) -> $crate::error::Result<u64> {
+                self.purge_dead_by_task(task_name)
+            }
             fn retry_dead(&self, dead_id: &str) -> $crate::error::Result<String> {
                 self.retry_dead(dead_id)
             }
@@ -766,6 +777,12 @@ impl Storage for StorageBackend {
     }
     fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
         delegate!(self, list_dead, limit, offset)
+    }
+    fn list_dead_by_task(&self, task_name: &str, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
+        delegate!(self, list_dead_by_task, task_name, limit, offset)
+    }
+    fn purge_dead_by_task(&self, task_name: &str) -> Result<u64> {
+        delegate!(self, purge_dead_by_task, task_name)
     }
     fn retry_dead(&self, dead_id: &str) -> Result<String> {
         delegate!(self, retry_dead, dead_id)
