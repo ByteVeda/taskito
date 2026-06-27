@@ -128,14 +128,21 @@ fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRet
     let Some(configs) = configs else { return };
     for config in configs {
         let mut retry_policy = RetryPolicy::default();
-        if let Some(base) = config.base_delay_ms {
-            retry_policy.base_delay_ms = base;
-        }
-        if let Some(max) = config.max_delay_ms {
-            retry_policy.max_delay_ms = max;
-        }
-        if config.custom_delays_ms.is_some() {
-            retry_policy.custom_delays_ms = config.custom_delays_ms;
+        if let Some(custom) = config.custom_delays_ms {
+            // Explicit per-attempt delays are honored exactly. The core derives
+            // its jitter and post-exhaustion fallback from base_delay_ms, so
+            // zeroing it leaves the listed delays jitter-free; once the list is
+            // spent, further retries fire immediately (callers list enough).
+            retry_policy.base_delay_ms = 0;
+            retry_policy.max_delay_ms = 0;
+            retry_policy.custom_delays_ms = Some(custom);
+        } else {
+            if let Some(base) = config.base_delay_ms {
+                retry_policy.base_delay_ms = base;
+            }
+            if let Some(max) = config.max_delay_ms {
+                retry_policy.max_delay_ms = max;
+            }
         }
         scheduler.register_task(
             config.name,

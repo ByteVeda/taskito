@@ -14,8 +14,7 @@ import java.util.Objects;
  * stay durable, survive worker crashes, and behave identically to the other
  * Taskito SDKs — this type only supplies the timing the scheduler applies.
  *
- * <p>Instances are immutable. Unset fields fall back to the core defaults
- * (1s base, 5min cap, exponential).
+ * <p>Instances are immutable.
  */
 public final class RetryPolicy {
     private final Duration baseDelay;
@@ -28,20 +27,20 @@ public final class RetryPolicy {
         this.customDelays = customDelays;
     }
 
-    /** Exponential backoff starting at {@code base}, doubling, capped at {@code max}. */
+    /**
+     * Exponential backoff: retry N waits about {@code base · 2^N}, capped at
+     * {@code max}, plus a random jitter of up to {@code base} (spreads retries so
+     * a batch of failures doesn't retry in lockstep).
+     */
     public static RetryPolicy exponential(Duration base, Duration max) {
         return new RetryPolicy(nonNegative(base, "base"), nonNegative(max, "max"), Collections.emptyList());
     }
 
-    /** A constant delay before every retry. */
-    public static RetryPolicy fixed(Duration delay) {
-        nonNegative(delay, "delay");
-        return new RetryPolicy(delay, delay, Collections.emptyList());
-    }
-
     /**
-     * Explicit per-attempt delays: retry N waits {@code delays[N]}, with the last
-     * value repeating once the list is exhausted. Overrides exponential backoff.
+     * Explicit per-attempt delays, applied exactly (no jitter): retry N waits
+     * {@code delays[N]}. The list is authoritative for the retries it covers, so
+     * supply at least as many delays as the task's {@code maxRetries} — once the
+     * list is exhausted any further retries fire immediately.
      */
     public static RetryPolicy delays(Duration... delays) {
         if (delays.length == 0) {
