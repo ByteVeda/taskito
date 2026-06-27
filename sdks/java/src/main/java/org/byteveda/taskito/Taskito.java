@@ -8,6 +8,7 @@ import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.byteveda.taskito.internal.JniQueueBackend;
@@ -218,7 +219,9 @@ public interface Taskito extends AutoCloseable {
         private Serializer serializer = new JsonSerializer();
 
         public Builder backend(String backend) {
-            options.put("backend", backend);
+            // Normalize at the boundary so callers may pass "SQLite"/"REDIS"; the
+            // default-DSN branch and the native layer then see a canonical name.
+            options.put("backend", backend == null ? null : backend.toLowerCase(Locale.ROOT));
             return this;
         }
 

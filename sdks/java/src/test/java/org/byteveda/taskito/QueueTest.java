@@ -1,5 +1,6 @@
 package org.byteveda.taskito;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,6 +34,15 @@ class QueueTest {
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
                 .open();
+    }
+
+    @Test
+    void backendNameIsCaseInsensitive() {
+        // A mixed-case backend must still be recognized by the native layer.
+        try (Taskito client =
+                Taskito.builder().backend("SQLite").url(":memory:").open()) {
+            assertDoesNotThrow(client::stats);
+        }
     }
 
     @Test
