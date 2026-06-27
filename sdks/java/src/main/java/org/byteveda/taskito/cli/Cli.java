@@ -33,6 +33,9 @@ import picocli.CommandLine.ParentCommand;
 public final class Cli {
     static final ObjectMapper JSON = new ObjectMapper();
 
+    @CommandLine.Spec
+    CommandLine.Model.CommandSpec spec;
+
     @Option(names = "--backend", description = "Storage backend (default sqlite).", defaultValue = "sqlite")
     String backend;
 
@@ -40,6 +43,11 @@ public final class Cli {
     String url;
 
     Taskito open() {
+        // Only SQLite has a sensible default store; every other backend needs a URL.
+        if (url == null && !"sqlite".equalsIgnoreCase(backend)) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(), "--url is required for the '" + backend + "' backend");
+        }
         Taskito.Builder builder = Taskito.builder().backend(backend);
         if (url != null) {
             builder.url(url);
