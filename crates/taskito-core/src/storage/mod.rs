@@ -306,6 +306,21 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<()> {
                 self.update_periodic_schedule(name, last_run, next_run)
             }
+            fn list_periodic(
+                &self,
+            ) -> $crate::error::Result<Vec<$crate::storage::models::PeriodicTaskRow>> {
+                self.list_periodic()
+            }
+            fn delete_periodic(&self, name: &str) -> $crate::error::Result<bool> {
+                self.delete_periodic(name)
+            }
+            fn set_periodic_enabled(
+                &self,
+                name: &str,
+                enabled: bool,
+            ) -> $crate::error::Result<bool> {
+                self.set_periodic_enabled(name, enabled)
+            }
             fn record_metric(
                 &self,
                 task_name: &str,
@@ -799,6 +814,15 @@ impl Storage for StorageBackend {
     }
     fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()> {
         delegate!(self, update_periodic_schedule, name, last_run, next_run)
+    }
+    fn list_periodic(&self) -> Result<Vec<models::PeriodicTaskRow>> {
+        delegate!(self, list_periodic)
+    }
+    fn delete_periodic(&self, name: &str) -> Result<bool> {
+        delegate!(self, delete_periodic, name)
+    }
+    fn set_periodic_enabled(&self, name: &str, enabled: bool) -> Result<bool> {
+        delegate!(self, set_periodic_enabled, name, enabled)
     }
     fn record_metric(
         &self,
