@@ -1,6 +1,6 @@
 {
   "name": "@byteveda/taskito",
-  "version": "0.16.4",
+  "version": "0.17.0",
   "description": "Rust-powered task queue for Node.js — no broker required.",
   "license": "MIT",
   "type": "module",

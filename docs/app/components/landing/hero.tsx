@@ -92,9 +92,12 @@ export function Hero() {
                 onClick={() => setSdk(p.id === "ts" ? "node" : "python")}
               >
                 {p.label}
-                {p.id === "ts" ? <span className="tag beta">Beta</span> : null}
               </button>
             ))}
+            <button type="button" className="langtab" disabled>
+              Java
+              <span className="tag soon">Soon</span>
+            </button>
             <CopyButton text={active.code} />
           </div>
           <div id="hero-panes">
