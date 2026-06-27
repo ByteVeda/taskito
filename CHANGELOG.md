@@ -2,8 +2,35 @@
 
 All notable changes to taskito are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node) and the
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node, Java) and the
 underlying Rust crates are released together, in lock-step.
+
+## 0.17.0
+
+Feature release across the SDKs: periodic-task management, task-scoped dead-letter queries, and
+the first **Java SDK** release.
+
+### Added
+
+- **Java SDK.** First release, published to Maven Central as `org.byteveda:taskito`. A JNI binding
+  over the Taskito core with the full producer / worker / inspection / admin surface, workflows,
+  distributed locks, periodic tasks, an in-memory `taskito-test` backend, and a `@TaskHandler`
+  annotation processor. Verified under GraalVM `native-image`.
+- **Periodic task management.** List, unschedule, pause, and resume registered cron tasks —
+  `listPeriodic` / `deletePeriodic` / `pausePeriodic` / `resumePeriodic` (Java, Node) and the
+  equivalent native bindings (Python). Pause toggles the task's `enabled` flag without removing it
+  (#313).
+- **Per-task dead-letter queries.** List and purge dead-letter entries scoped to a single task —
+  `listDeadByTask` / `purgeDeadByTask` (Java), `deadLettersByTask` / `purgeDeadByTask` (Node), and
+  native bindings (Python). Filtering happens server-side so pagination stays correct (#314).
+- **Per-task retry backoff (Java).** `Task.retryPolicy(...)` surfaces the core retry engine's
+  backoff curve — exponential with jitter, or exact explicit delays — with the retry budget still
+  set per enqueue (#311).
+
+### Changed
+
+- **Node now requires Node.js 20+.** Node 18 reached end-of-life; the test toolchain (vitest 4)
+  requires Node 20.12+. The `engines` floor and tsup target were raised accordingly (#312).
 
 ## 0.16.4
 
