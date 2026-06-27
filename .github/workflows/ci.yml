@@ -41,29 +41,36 @@ jobs:
         uses: dorny/paths-filter@v4
         with:
           # Each suite reruns when its own sources, the shared Rust core, the
-          # composite actions, or its workflow (orchestrator + reusable) change.
+          # composite actions it actually uses, or its workflow change. Only
+          # setup-rust is shared by every suite; the other actions map to a
+          # single suite, so they no longer rerun all four.
           filters: |
             shared: &shared
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - '.github/actions/**'
+              - '.github/actions/setup-rust/**'
               - '.github/workflows/ci.yml'
             rust:
               - *shared
+              - '.github/actions/rust-prelude/**'
+              - '.github/actions/setup-python/**'
               - 'rust-toolchain.toml'
               - '.github/workflows/ci-rust.yml'
             python:
               - *shared
+              - '.github/actions/setup-python/**'
               - 'sdks/python/**'
               - '.github/workflows/ci-python.yml'
             node:
               - *shared
+              - '.github/actions/setup-node/**'
               - 'sdks/node/**'
               - 'dashboard/**'
               - '.github/workflows/ci-node.yml'
             java:
               - *shared
+              - '.github/actions/setup-java/**'
               - 'sdks/java/**'
               - '.github/workflows/ci-java.yml'
 
