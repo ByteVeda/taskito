@@ -1481,7 +1481,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "taskito-core"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "taskito-java"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
@@ -1523,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "taskito-mesh"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "base64",
  "bincode",
@@ -1538,7 +1538,7 @@ dependencies = [
 
 [[package]]
 name = "taskito-node"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
@@ -1557,7 +1557,7 @@ dependencies = [
 
 [[package]]
 name = "taskito-python"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "taskito-workflows"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "dagron-core",
  "diesel",

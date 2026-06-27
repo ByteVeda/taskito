@@ -1,6 +1,6 @@
 [package]
 name = "taskito-node"
-version = "0.16.4"
+version = "0.17.0"
 edition = "2021"
 description = "Node.js (napi-rs) bindings for the Taskito task-queue core"
 license = "MIT"
