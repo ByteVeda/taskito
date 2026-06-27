@@ -5,7 +5,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import org.byteveda.taskito.Queue;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.scheduling.PeriodicTask;
@@ -25,7 +24,7 @@ public final class Smoke {
         Path dir = Files.createTempDirectory("taskito-graalvm-smoke");
         Task<String> echo = Task.of("echo", String.class);
 
-        try (Queue queue = Taskito.builder()
+        try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("smoke.db").toString())
                 .open()) {

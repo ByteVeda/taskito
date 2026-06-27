@@ -21,14 +21,14 @@ import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import org.byteveda.taskito.Queue;
+import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.JobStatus;
 
 /**
- * A read/action dashboard API + static-SPA server backed by a {@link Queue},
+ * A read/action dashboard API + static-SPA server backed by a {@link Taskito},
  * built on the JDK's {@code com.sun.net.httpserver}. The JSON contract is
  * snake_case with Unix-millisecond timestamps (see {@link Contract}).
  *
@@ -47,11 +47,11 @@ public final class DashboardServer implements AutoCloseable {
     private static final Pattern RESUME = Pattern.compile("^/api/queues/([^/]+)/resume$");
 
     private final HttpServer server;
-    private final Queue queue;
+    private final Taskito queue;
     private final String token;
     private final Path staticDir;
 
-    private DashboardServer(HttpServer server, Queue queue, String token, Path staticDir) {
+    private DashboardServer(HttpServer server, Taskito queue, String token, Path staticDir) {
         this.server = server;
         this.queue = queue;
         this.token = token;
@@ -59,12 +59,12 @@ public final class DashboardServer implements AutoCloseable {
     }
 
     /** Start on {@code port} (0 = ephemeral), serving the SPA bundled in the jar. */
-    public static DashboardServer start(Queue queue, int port) throws IOException {
+    public static DashboardServer start(Taskito queue, int port) throws IOException {
         return start(queue, port, null, null);
     }
 
-    /** As {@link #start(Queue, int)} but requiring {@code token} for {@code /api/*}. */
-    public static DashboardServer start(Queue queue, int port, String token) throws IOException {
+    /** As {@link #start(Taskito, int)} but requiring {@code token} for {@code /api/*}. */
+    public static DashboardServer start(Taskito queue, int port, String token) throws IOException {
         return start(queue, port, token, null);
     }
 
@@ -73,7 +73,7 @@ public final class DashboardServer implements AutoCloseable {
      * {@code staticDir} auto-discovers the SPA bundled in the jar; pass one only
      * to override it with an unpacked build.
      */
-    public static DashboardServer start(Queue queue, int port, String token, String staticDir) throws IOException {
+    public static DashboardServer start(Taskito queue, int port, String token, String staticDir) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         Path dir = staticDir != null ? Paths.get(staticDir).normalize() : DashboardAssets.resolveOrNull();
         DashboardServer dashboard = new DashboardServer(server, queue, token, dir);
@@ -183,13 +183,13 @@ public final class DashboardServer implements AutoCloseable {
         }
         Matcher pause = PAUSE.matcher(path);
         if (pause.matches()) {
-            queue.pauseQueue(pause.group(1));
+            queue.queue(pause.group(1)).pause();
             respond(exchange, 200, Collections.singletonMap("ok", true));
             return true;
         }
         Matcher resume = RESUME.matcher(path);
         if (resume.matches()) {
-            queue.resumeQueue(resume.group(1));
+            queue.queue(resume.group(1)).resume();
             respond(exchange, 200, Collections.singletonMap("ok", true));
             return true;
         }

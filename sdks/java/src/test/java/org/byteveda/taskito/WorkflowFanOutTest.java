@@ -26,7 +26,7 @@ class WorkflowFanOutTest {
         Task<Integer> seed = Task.of("fo.seed", Integer.class);
         Task<Integer> square = Task.of("fo.square", Integer.class);
         Task<List<Integer>> sum = Task.of("fo.sum", new TypeReference<List<Integer>>() {});
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().url(dir.resolve("fo.db").toString()).open()) {
             // seed(4) -> [1,2,3,4]; square each -> [1,4,9,16]; sum all -> 30
             Workflow wf = Workflow.named("fanpipe")

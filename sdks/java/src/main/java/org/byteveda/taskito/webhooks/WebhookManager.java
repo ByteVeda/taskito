@@ -8,7 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.byteveda.taskito.Queue;
+import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.Middleware;
@@ -24,12 +24,12 @@ public final class WebhookManager implements Middleware {
     private final WebhookStore store;
     private final Deliverer deliverer = new Deliverer();
 
-    private WebhookManager(Queue queue) {
+    private WebhookManager(Taskito queue) {
         this.store = new WebhookStore(queue);
     }
 
     /** Create a manager and register it on {@code queue} for automatic dispatch. */
-    public static WebhookManager attach(Queue queue) {
+    public static WebhookManager attach(Taskito queue) {
         WebhookManager manager = new WebhookManager(queue);
         queue.use(manager);
         return manager;

@@ -28,7 +28,7 @@ class WorkerTest {
     @Timeout(30)
     void runsTaskToCompletion(@TempDir Path dir) throws Exception {
         Task<Map<String, Object>> add = Task.of("add", mapType());
-        try (Queue queue = Taskito.builder()
+        try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
                 .open()) {

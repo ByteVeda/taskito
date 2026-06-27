@@ -5,23 +5,211 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.byteveda.taskito.internal.JniQueueBackend;
+import org.byteveda.taskito.locks.Lock;
+import org.byteveda.taskito.locks.LockInfo;
+import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.model.DeadJob;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobError;
+import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.PeriodicInfo;
+import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.model.TaskLog;
+import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.scheduling.PeriodicTask;
 import org.byteveda.taskito.serialization.JsonSerializer;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
+import org.byteveda.taskito.task.EnqueueOptions;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+import org.byteveda.taskito.workflows.Workflow;
+import org.byteveda.taskito.workflows.WorkflowRun;
+import org.byteveda.taskito.workflows.WorkflowStatus;
 
-/** Entry point: open a {@link Queue} over a storage backend. */
-public final class Taskito {
-    private Taskito() {}
+/**
+ * The Taskito client: a handle to a storage backend through which you enqueue,
+ * inspect, and administer jobs across every named queue. Obtain one from
+ * {@link #builder()}. Operations scoped to a single named queue (pause/resume)
+ * live on the {@link Queue} handle returned by {@link #queue(String)}.
+ */
+public interface Taskito extends AutoCloseable {
 
-    public static Builder builder() {
+    /** Begin configuring a client. */
+    static Builder builder() {
         return new Builder();
     }
 
-    /** Configures and opens a {@link Queue}. */
-    public static final class Builder {
+    /** A handle to one named queue, e.g. {@code taskito.queue("emails").pause()}. */
+    Queue queue(String name);
+
+    /** Register cross-cutting middleware (enqueue + worker hooks); returns {@code this}. */
+    Taskito use(Middleware middleware);
+
+    // ── Producer ────────────────────────────────────────────────────
+
+    /** Enqueue a typed payload using the task's default options; returns the job id. */
+    <T> String enqueue(Task<T> task, T payload);
+
+    <T> String enqueue(Task<T> task, T payload, EnqueueOptions options);
+
+    /** Enqueue by task name with an arbitrary payload and default options. */
+    String enqueue(String taskName, Object payload);
+
+    /** Enqueue a batch in one storage call; returns ids in input order. */
+    <T> List<String> enqueueMany(Task<T> task, List<T> payloads);
+
+    <T> List<String> enqueueMany(Task<T> task, List<T> payloads, EnqueueOptions options);
+
+    /** Alias of {@link #enqueueMany(Task, List)} in the guide's vocabulary. */
+    <T> List<String> enqueueAll(Task<T> task, List<T> payloads);
+
+    Optional<Job> getJob(String jobId);
+
+    /** Block until the job reaches a terminal state (tests only); throws on timeout. */
+    Optional<Job> awaitJob(String jobId, Duration timeout);
+
+    /** The job's raw serialized result, if complete. */
+    Optional<byte[]> getResult(String jobId);
+
+    /** The job's result deserialized to {@code type}, if complete. */
+    <R> Optional<R> getResult(String jobId, Class<R> type);
+
+    boolean cancel(String jobId);
+
+    boolean requestCancel(String jobId);
+
+    boolean isCancelRequested(String jobId);
+
+    void setProgress(String jobId, int progress);
+
+    // ── Inspection ──────────────────────────────────────────────────
+
+    QueueStats stats();
+
+    QueueStats statsByQueue(String queue);
+
+    Map<String, QueueStats> statsAllQueues();
+
+    List<Job> listJobs(JobFilter filter);
+
+    List<JobError> jobErrors(String jobId);
+
+    /** Per-execution metrics within the last {@code sinceMs}; null task = all. */
+    List<TaskMetric> metrics(String taskName, long sinceMs);
+
+    List<WorkerInfo> listWorkers();
+
+    // ── Admin ───────────────────────────────────────────────────────
+
+    List<DeadJob> listDead(long limit, long offset);
+
+    /** Dead-letter entries for a single task, newest first. */
+    List<DeadJob> listDeadByTask(String taskName, long limit, long offset);
+
+    /** Delete every dead-letter entry for a task; returns the number removed. */
+    long purgeDeadByTask(String taskName);
+
+    /** Re-enqueue a dead-letter entry; returns the new job id. */
+    String retryDead(String deadId);
+
+    /** Alias of {@link #retryDead(String)} in the guide's vocabulary. */
+    String retry(String deadId);
+
+    boolean deleteDead(String deadId);
+
+    long purgeDead(long olderThanMs);
+
+    long purgeCompleted(long olderThanMs);
+
+    /** The names of every currently paused queue. */
+    List<String> listPausedQueues();
+
+    Optional<String> getSetting(String key);
+
+    void setSetting(String key, String value);
+
+    boolean deleteSetting(String key);
+
+    Map<String, String> listSettings();
+
+    // ── Logs ────────────────────────────────────────────────────────
+
+    void writeTaskLog(String jobId, String taskName, String level, String message);
+
+    void writeTaskLog(String jobId, String taskName, String level, String message, String extra);
+
+    List<TaskLog> getTaskLogs(String jobId);
+
+    // ── Locks ───────────────────────────────────────────────────────
+
+    /** A distributed lock {@code name} with the given TTL; call {@link Lock#acquire()}. */
+    Lock lock(String name, long ttlMs);
+
+    /** A distributed lock {@code name} with a default 30s TTL. */
+    Lock lock(String name);
+
+    /** Acquire {@code name}, run {@code body} if obtained, then release; returns whether it ran. */
+    boolean withLock(String name, long ttlMs, Runnable body);
+
+    Optional<LockInfo> lockInfo(String name);
+
+    /** Alias of {@link #lockInfo(String)} in the guide's vocabulary. */
+    Optional<LockInfo> getLockInfo(String name);
+
+    // ── Periodic ────────────────────────────────────────────────────
+
+    /** Register (or replace) a cron task; returns the next fire time (Unix ms). */
+    long registerPeriodic(PeriodicTask task);
+
+    /** Every registered periodic task, enabled or paused. */
+    List<PeriodicInfo> listPeriodic();
+
+    /** Unschedule a periodic task; false if none had that name. */
+    boolean deletePeriodic(String name);
+
+    /** Stop a periodic task from firing without removing it; false if none had that name. */
+    boolean pausePeriodic(String name);
+
+    /** Resume a paused periodic task; false if none had that name. */
+    boolean resumePeriodic(String name);
+
+    // ── Workflows ───────────────────────────────────────────────────
+
+    /** Submit a workflow DAG; returns a handle to the run. */
+    WorkflowRun submitWorkflow(Workflow workflow);
+
+    /**
+     * Submit a workflow, supplying per-step payloads keyed by step name. A step's
+     * effective payload is {@code payloads.get(name)} when present, else the
+     * payload baked into the step. Pairs with the structural
+     * {@code Workflow.stepAfter(name, task, deps...)} form.
+     */
+    WorkflowRun submitWorkflow(Workflow workflow, Map<String, Object> payloads);
+
+    /** Current status of a workflow run, or empty if it no longer exists. */
+    Optional<WorkflowStatus> workflowStatus(String runId);
+
+    /** Cancel a workflow run: skip its pending nodes and mark it cancelled. */
+    void cancelWorkflow(String runId);
+
+    // ── Worker ──────────────────────────────────────────────────────
+
+    /** Begin building a worker over this client. */
+    Worker.Builder worker();
+
+    @Override
+    void close();
+
+    /** Configures and opens a {@link Taskito} client. */
+    final class Builder {
         private static final ObjectMapper JSON = new ObjectMapper();
         // Mirrors the Python/Node SDKs: a brokerless SQLite store under .taskito/.
         private static final String DEFAULT_SQLITE_DB = ".taskito/taskito.db";
@@ -86,12 +274,12 @@ public final class Taskito {
         }
 
         /** Open over an explicit backend, e.g. an in-memory fake in tests. */
-        public Queue open(QueueBackend backend) {
-            return new DefaultQueue(backend, serializer);
+        public Taskito open(QueueBackend backend) {
+            return new DefaultTaskito(backend, serializer);
         }
 
         /** Open the native backend described by the configured options. */
-        public Queue open() {
+        public Taskito open() {
             String backend = (String) options.getOrDefault("backend", "sqlite");
             if ("sqlite".equals(backend)) {
                 String dsn = (String) options.computeIfAbsent("dsn", key -> DEFAULT_SQLITE_DB);
@@ -99,7 +287,7 @@ public final class Taskito {
             } else if (!options.containsKey("dsn")) {
                 throw new TaskitoException("url (dsn) is required");
             }
-            return new DefaultQueue(JniQueueBackend.open(encodeOptions()), serializer);
+            return new DefaultTaskito(JniQueueBackend.open(encodeOptions()), serializer);
         }
 
         /** Create the SQLite file's parent directory (skip in-memory databases). */

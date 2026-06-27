@@ -26,7 +26,7 @@ class PeriodicTest {
     @Test
     @Timeout(30)
     void listPauseResumeDelete(@TempDir Path dir) {
-        try (Queue queue = Taskito.builder()
+        try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
                 .open()) {

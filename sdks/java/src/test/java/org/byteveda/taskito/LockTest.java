@@ -12,7 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class LockTest {
 
-    private Queue open(Path dir) {
+    private Taskito open(Path dir) {
         return Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
@@ -21,7 +21,7 @@ class LockTest {
 
     @Test
     void acquireContendRelease(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
+        try (Taskito queue = open(dir)) {
             Lock first = queue.lock("L", 60_000);
             assertTrue(first.acquire());
             assertFalse(queue.lock("L", 60_000).acquire());
@@ -38,7 +38,7 @@ class LockTest {
 
     @Test
     void registerPeriodicValidatesCron(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
+        try (Taskito queue = open(dir)) {
             long before = System.currentTimeMillis();
             long next = queue.registerPeriodic(
                     PeriodicTask.builder("p", "tick", "0 0 12 * * *").build());

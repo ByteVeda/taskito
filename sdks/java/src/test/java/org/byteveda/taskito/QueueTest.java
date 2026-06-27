@@ -28,7 +28,7 @@ class QueueTest {
         return (Class<Map<String, String>>) (Class<?>) Map.class;
     }
 
-    private Queue open(Path dir) {
+    private Taskito open(Path dir) {
         return Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
@@ -37,7 +37,7 @@ class QueueTest {
 
     @Test
     void enqueueGetCancelStats(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
+        try (Taskito queue = open(dir)) {
             String id = queue.enqueue(
                     SEND_EMAIL,
                     Collections.singletonMap("to", "a@b.c"),
@@ -60,14 +60,14 @@ class QueueTest {
 
     @Test
     void getMissingJobIsEmpty(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
+        try (Taskito queue = open(dir)) {
             assertTrue(queue.getJob("nope").isEmpty());
         }
     }
 
     @Test
     void enqueueManyAndFilteredList(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
+        try (Taskito queue = open(dir)) {
             List<String> ids = queue.enqueueMany(
                     SEND_EMAIL.withOptions(
                             EnqueueOptions.builder().queue("emails").build()),
@@ -88,7 +88,7 @@ class QueueTest {
 
     @Test
     void settingsRoundTrip(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
+        try (Taskito queue = open(dir)) {
             queue.setSetting("theme", "dark");
             assertEquals("dark", queue.getSetting("theme").orElse(""));
             assertEquals("dark", queue.listSettings().get("theme"));
@@ -99,17 +99,20 @@ class QueueTest {
 
     @Test
     void pauseAndResumeQueue(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
-            queue.pauseQueue("emails");
-            assertTrue(queue.listPausedQueues().contains("emails"));
-            queue.resumeQueue("emails");
-            assertFalse(queue.listPausedQueues().contains("emails"));
+        try (Taskito client = open(dir)) {
+            Queue emails = client.queue("emails");
+            emails.pause();
+            assertTrue(emails.isPaused());
+            assertTrue(client.listPausedQueues().contains("emails"));
+            emails.resume();
+            assertFalse(emails.isPaused());
+            assertFalse(client.listPausedQueues().contains("emails"));
         }
     }
 
     @Test
     void taskLogsRoundTrip(@TempDir Path dir) {
-        try (Queue queue = open(dir)) {
+        try (Taskito queue = open(dir)) {
             String id = queue.enqueue("send_email", Collections.singletonMap("to", "a"));
             queue.writeTaskLog(id, "send_email", "info", "hello");
             List<TaskLog> logs = queue.getTaskLogs(id);

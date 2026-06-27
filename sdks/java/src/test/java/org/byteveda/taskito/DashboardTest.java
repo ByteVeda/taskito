@@ -38,7 +38,7 @@ class DashboardTest {
     @Timeout(30)
     void servesSnakeCaseContract(@TempDir Path dir) throws Exception {
         Task<Map<String, Object>> add = Task.of("add", mapType());
-        try (Queue queue = Taskito.builder()
+        try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
                 .open()) {
@@ -68,7 +68,7 @@ class DashboardTest {
         Path spa = Files.createDirectories(dir.resolve("spa"));
         Files.writeString(spa.resolve("index.html"), "<h1>taskito</h1>");
         System.setProperty("taskito.dashboard.dir", spa.toString());
-        try (Queue queue =
+        try (Taskito queue =
                         Taskito.builder().sqlite(dir.resolve("t.db").toString()).open();
                 DashboardServer server = DashboardServer.start(queue, 0)) {
             int port = server.port();
@@ -85,7 +85,7 @@ class DashboardTest {
     @Test
     @Timeout(30)
     void enforcesToken(@TempDir Path dir) throws Exception {
-        try (Queue queue = Taskito.builder()
+        try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
                 .open()) {

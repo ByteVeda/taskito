@@ -38,11 +38,11 @@ import org.byteveda.taskito.workflows.WorkflowRun;
 import org.byteveda.taskito.workflows.WorkflowStatus;
 
 /**
- * Default {@link Queue}: maps the typed public API onto a {@link QueueBackend},
+ * Default {@link Taskito}: maps the typed public API onto a {@link QueueBackend},
  * serializing payloads with the configured {@link Serializer} and decoding
  * native JSON views with a private mapper.
  */
-final class DefaultQueue implements Queue {
+final class DefaultTaskito implements Taskito {
     private static final ObjectMapper VIEWS = new ObjectMapper();
 
     private static final long DEFAULT_LOCK_TTL_MS = 30_000;
@@ -52,14 +52,19 @@ final class DefaultQueue implements Queue {
     private final Serializer serializer;
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
 
-    DefaultQueue(QueueBackend backend, Serializer serializer) {
+    DefaultTaskito(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
         this.facade = new CoreFacade(backend);
         this.serializer = serializer;
     }
 
     @Override
-    public Queue use(Middleware middleware) {
+    public Queue queue(String name) {
+        return new NamedQueue(this, name);
+    }
+
+    @Override
+    public Taskito use(Middleware middleware) {
         this.middleware.add(middleware);
         return this;
     }
@@ -236,13 +241,13 @@ final class DefaultQueue implements Queue {
         return backend.purgeCompleted(olderThanMs);
     }
 
-    @Override
-    public void pauseQueue(String queue) {
+    /** Pause one named queue; backs {@link NamedQueue#pause()}. */
+    void pauseLane(String queue) {
         backend.pauseQueue(queue);
     }
 
-    @Override
-    public void resumeQueue(String queue) {
+    /** Resume one named queue; backs {@link NamedQueue#resume()}. */
+    void resumeLane(String queue) {
         backend.resumeQueue(queue);
     }
 

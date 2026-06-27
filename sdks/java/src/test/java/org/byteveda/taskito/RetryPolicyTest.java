@@ -32,7 +32,7 @@ class RetryPolicyTest {
                 .maxRetries(3)
                 .retryPolicy(RetryPolicy.delays(Duration.ofMillis(10), Duration.ofMillis(10)));
 
-        try (Queue queue = Taskito.builder()
+        try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
                 .open()) {
