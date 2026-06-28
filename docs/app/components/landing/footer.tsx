@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { useActiveSdk } from "@/hooks";
+import { VERSION } from "@/lib/version";
 
 type FootLink = {
   label: string;
@@ -95,7 +96,7 @@ export function Footer() {
       </div>
       <div className="foot-bottom">
         <span>© 2026 ByteVeda · taskito</span>
-        <span>MIT License · v0.16</span>
+        <span>MIT License · v{VERSION}</span>
       </div>
     </footer>
   );
