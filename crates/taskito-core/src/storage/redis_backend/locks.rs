@@ -12,8 +12,9 @@ use crate::storage::models::LockInfoRow;
 const RECLAIM_CLAIM_SCRIPT: &str = r#"
     local cur = redis.call('GET', KEYS[1])
     if not cur then return 0 end
-    local sep = string.find(cur, ':', 1, true)
-    local owner = sep and string.sub(cur, 1, sep - 1) or cur
+    -- Owner is everything before the LAST ':' (the timestamp is a numeric
+    -- suffix); the owner itself may contain ':' (e.g. "host:pid").
+    local owner = string.match(cur, '^(.*):') or cur
     if owner ~= ARGV[2] then return 0 end
     redis.call('SET', KEYS[1], ARGV[3] .. ':' .. ARGV[4], 'PX', 86400000)
     redis.call('ZADD', KEYS[2], ARGV[4], ARGV[1])

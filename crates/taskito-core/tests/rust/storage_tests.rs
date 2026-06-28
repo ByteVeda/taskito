@@ -460,7 +460,8 @@ fn test_reap_stale_jobs(s: &impl Storage) {
         stale.iter().any(|j| j.id == job.id),
         "a running job past its timeout must be reaped"
     );
-    s.complete(&job.id, None).ok();
+    // Clean up so this Running job doesn't bleed into later shared-instance tests.
+    s.complete(&job.id, None).unwrap();
 }
 
 fn test_reclaim_execution(s: &impl Storage) {
@@ -475,6 +476,20 @@ fn test_reclaim_execution(s: &impl Storage) {
     // No claim row → no-op.
     assert!(!s.reclaim_execution("no-such-claim", "x", "y").unwrap());
     s.complete_execution(job).unwrap();
+
+    // Owners may contain ':' (e.g. "host:pid"). The numeric timestamp suffix is
+    // split off from the LAST ':', so the full owner must match — a truncated
+    // prefix must not.
+    let colon_job = "reclaim-colon-job";
+    assert!(s.claim_execution(colon_job, "host:42").unwrap());
+    assert!(
+        !s.reclaim_execution(colon_job, "host", "x").unwrap(),
+        "a truncated owner prefix must not match"
+    );
+    assert!(s
+        .reclaim_execution(colon_job, "host:42", "rescuer")
+        .unwrap());
+    s.complete_execution(colon_job).unwrap();
 }
 
 fn test_reap_orphaned_jobs(s: &impl Storage) {
@@ -513,6 +528,30 @@ fn test_reap_orphaned_jobs(s: &impl Storage) {
         .unwrap();
     assert!(!after.iter().any(|(j, _)| j.id == job.id));
     s.complete_execution(&job.id).unwrap();
+
+    // Owners containing ':' must be parsed whole (split on the LAST ':'), so a
+    // truncated prefix is neither reported as the owner nor matched as live.
+    let cq = "q-orphan-colon";
+    let cjob = s.enqueue(make_job(cq, "orphan_colon_task")).unwrap();
+    s.dequeue(cq, now_millis() + 1000, None).unwrap().unwrap();
+    assert!(s.claim_execution(&cjob.id, "host:7").unwrap());
+    let co = s
+        .reap_orphaned_jobs(&["other".to_string()], now_millis())
+        .unwrap();
+    assert!(
+        co.iter()
+            .any(|(j, owner)| j.id == cjob.id && owner == "host:7"),
+        "the full colon-containing owner must be reported"
+    );
+    let cl = s
+        .reap_orphaned_jobs(&["host:7".to_string()], now_millis())
+        .unwrap();
+    assert!(
+        !cl.iter().any(|(j, _)| j.id == cjob.id),
+        "the full colon-containing owner being live means not orphaned"
+    );
+    s.complete(&cjob.id, None).unwrap();
+    s.complete_execution(&cjob.id).unwrap();
 }
 
 fn test_dashboard_settings(s: &impl Storage) {

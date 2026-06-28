@@ -109,9 +109,11 @@ impl RedisStorage {
         for id in &job_ids {
             let claim_key = self.key(&["exec_claim", id]);
             let claim: Option<String> = conn.get(&claim_key).map_err(map_err)?;
-            // Claim value is "{owner}:{ts}". No claim → time-based reap handles it.
-            let owner = match claim.as_deref().and_then(|v| v.split(':').next()) {
-                Some(o) => o.to_string(),
+            // Claim value is "{owner}:{ts}". The timestamp is a numeric suffix, so
+            // split on the LAST ':' — the owner itself may contain ':' (e.g.
+            // "host:pid"). No claim → time-based reap handles it.
+            let owner = match claim.as_deref() {
+                Some(v) => v.rsplit_once(':').map(|(o, _)| o).unwrap_or(v).to_string(),
                 None => continue,
             };
             if live.contains(owner.as_str()) {
