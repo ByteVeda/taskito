@@ -1033,37 +1033,18 @@ fn test_fail_and_cancel_archive_immediately() {
     );
 }
 
-// ── Payload side-table (job_payloads) ────────────────────────────────
-
-/// Count rows in `job_payloads` for a given job id.
-fn payload_row_count(storage: &SqliteStorage, job_id: &str) -> i64 {
-    use crate::storage::schema::job_payloads;
-    use diesel::prelude::*;
-    let mut conn = storage.conn().unwrap();
-    job_payloads::table
-        .filter(job_payloads::job_id.eq(job_id))
-        .count()
-        .get_result(&mut conn)
-        .unwrap()
-}
+// ── Payload storage (inline on jobs) ─────────────────────────────────
 
 #[test]
-fn test_enqueue_populates_payload_side_table() {
-    use crate::storage::schema::job_payloads;
-    use diesel::prelude::*;
+fn test_enqueue_stores_payload_inline() {
     let storage = test_storage();
-    let mut nj = make_job("side_table");
+    let mut nj = make_job("inline_payload");
     nj.payload = vec![9, 8, 7, 6];
     let job = storage.enqueue(nj).unwrap();
 
-    let mut conn = storage.conn().unwrap();
-    let (payload, result): (Vec<u8>, Option<Vec<u8>>) = job_payloads::table
-        .filter(job_payloads::job_id.eq(&job.id))
-        .select((job_payloads::payload, job_payloads::result))
-        .first(&mut conn)
-        .unwrap();
-    assert_eq!(payload, vec![9, 8, 7, 6]);
-    assert!(result.is_none());
+    let fetched = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.payload, vec![9, 8, 7, 6]);
+    assert_eq!(fetched.status, JobStatus::Pending);
 }
 
 #[test]
@@ -1082,50 +1063,129 @@ fn test_dequeue_returns_full_payload() {
 }
 
 #[test]
-fn test_complete_archives_and_removes_side_table_row() {
+fn test_dequeue_batch_returns_full_payload() {
     let storage = test_storage();
-    let job = storage.enqueue(make_job("complete_side")).unwrap();
+    let mut a = make_job("batch_pa");
+    a.payload = vec![1, 2, 3];
+    let mut b = make_job("batch_pb");
+    b.payload = vec![4, 5, 6];
+    storage.enqueue(a).unwrap();
+    storage.enqueue(b).unwrap();
+
+    let claimed = storage
+        .dequeue_batch("default", now_millis() + 1000, None, 10)
+        .unwrap();
+    assert_eq!(claimed.len(), 2);
+    for j in &claimed {
+        assert_eq!(j.status, JobStatus::Running);
+    }
+    let payloads: std::collections::HashSet<Vec<u8>> =
+        claimed.iter().map(|j| j.payload.clone()).collect();
+    assert!(payloads.contains(&vec![1, 2, 3]));
+    assert!(payloads.contains(&vec![4, 5, 6]));
+}
+
+#[test]
+fn test_dequeue_batch_archives_expired() {
+    let storage = test_storage();
+    let mut expired = make_job("batch_expired");
+    expired.expires_at = Some(now_millis() - 1000);
+    let expired_job = storage.enqueue(expired).unwrap();
+    let fresh_job = storage.enqueue(make_job("batch_fresh")).unwrap();
+
+    let claimed = storage
+        .dequeue_batch("default", now_millis() + 1000, None, 10)
+        .unwrap();
+
+    // Only the fresh job is claimed; the expired one is archived, not stranded
+    // in `jobs` as a terminal row.
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].id, fresh_job.id);
+    assert_eq!(jobs_row_count(&storage, &expired_job.id), 0);
+    let fetched = storage.get_job(&expired_job.id).unwrap().unwrap();
+    assert_eq!(fetched.status, JobStatus::Cancelled);
+}
+
+#[test]
+fn test_complete_archives_job() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("complete_inline")).unwrap();
     storage.dequeue("default", now_millis(), None).unwrap();
-    // The side-table row exists while the job is live.
-    assert_eq!(payload_row_count(&storage, &job.id), 1);
 
     storage.complete(&job.id, Some(vec![5, 5, 5])).unwrap();
 
-    // Completing archives the job: the live row and its side-table row are
-    // both gone; the result is preserved in `archived_jobs`.
+    // Completing archives the job: the live row is gone; payload+result are
+    // preserved inline in `archived_jobs`.
     assert_eq!(jobs_row_count(&storage, &job.id), 0);
-    assert_eq!(payload_row_count(&storage, &job.id), 0);
     let fetched = storage.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(fetched.status, JobStatus::Complete);
     assert_eq!(fetched.result, Some(vec![5, 5, 5]));
 }
 
 #[test]
 fn test_get_job_returns_payload_and_result() {
     let storage = test_storage();
-    let mut nj = make_job("get_side");
+    let mut nj = make_job("get_inline");
     nj.payload = vec![1, 1, 2, 3, 5];
     let job = storage.enqueue(nj).unwrap();
     storage.dequeue("default", now_millis(), None).unwrap();
     storage.complete(&job.id, Some(vec![8, 13])).unwrap();
 
-    // After archival, get_job assembles payload + result from `archived_jobs`.
+    // After archival, get_job reads payload + result from `archived_jobs`.
     let fetched = storage.get_job(&job.id).unwrap().unwrap();
     assert_eq!(fetched.payload, vec![1, 1, 2, 3, 5]);
     assert_eq!(fetched.result, Some(vec![8, 13]));
 }
 
 #[test]
-fn test_side_table_stays_one_to_one_with_live_jobs() {
+fn test_cancel_pending_archives_job() {
     let storage = test_storage();
-    let job = storage.enqueue(make_job("cascade_side")).unwrap();
-    // A live (pending) job has exactly one side-table row.
-    assert_eq!(payload_row_count(&storage, &job.id), 1);
+    let job = storage.enqueue(make_job("cancel_inline")).unwrap();
 
-    // Cancelling the pending job archives it and drops the side-table row,
-    // keeping `job_payloads` 1:1 with the live `jobs` table (no leak).
+    // Cancelling a pending job archives it: the live row leaves `jobs`.
     assert!(storage.cancel_job(&job.id).unwrap());
     assert_eq!(jobs_row_count(&storage, &job.id), 0);
-    assert_eq!(payload_row_count(&storage, &job.id), 0);
+    assert_eq!(
+        storage.get_job(&job.id).unwrap().unwrap().status,
+        JobStatus::Cancelled
+    );
+}
+
+#[test]
+fn test_new_indexes_present() {
+    use diesel::prelude::*;
+    use diesel::sql_types::Text;
+
+    #[derive(QueryableByName)]
+    struct IdxName {
+        #[diesel(sql_type = Text)]
+        name: String,
+    }
+
+    let storage = test_storage();
+    let mut conn = storage.conn().unwrap();
+    let names: Vec<String> =
+        diesel::sql_query("SELECT name FROM sqlite_master WHERE type = 'index'")
+            .load::<IdxName>(&mut conn)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+
+    for expected in [
+        "idx_dead_letter_failed_at",
+        "idx_dead_letter_task",
+        "idx_jobs_task_status",
+        "idx_jobs_expires_at",
+        "idx_jobs_namespace",
+        "idx_archived_jobs_created_at",
+        "idx_archived_jobs_namespace",
+    ] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "missing index {expected}"
+        );
+    }
 }
 
 // -- DLQ policies --

@@ -225,13 +225,4 @@ diesel::table! {
     }
 }
 
-diesel::table! {
-    job_payloads (job_id) {
-        job_id -> Text,
-        payload -> Binary,
-        result -> Nullable<Binary>,
-    }
-}
-
 diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies);
-diesel::allow_tables_to_appear_in_same_query!(jobs, job_payloads);

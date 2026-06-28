@@ -603,12 +603,11 @@ fn test_dependent_blocked_by_cancelled_parent(s: &impl Storage) {
     );
 }
 
-/// Exercise the payload/result round-trip through the full job lifecycle.
-/// On the Diesel backends this verifies the `job_payloads` side table is
-/// populated on enqueue, returned by dequeue, and read back by get_job after
-/// the job is archived. Redis passes trivially: its Job JSON already carries
-/// the blobs.
-fn test_payload_side_table(s: &impl Storage) {
+/// Exercise the payload/result round-trip through the full job lifecycle:
+/// payload stored on enqueue, returned by dequeue, and read back by get_job
+/// after the job is archived. On the Diesel backends payload/result live inline
+/// on `jobs`/`archived_jobs`; Redis carries them in the Job JSON.
+fn test_payload_roundtrip(s: &impl Storage) {
     let q = "q-payload-side-table";
     let mut nj = make_job(q, "payload_side_task");
     nj.payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
@@ -626,14 +625,10 @@ fn test_payload_side_table(s: &impl Storage) {
     assert_eq!(fetched.result, Some(vec![0x01, 0x02, 0x03]));
 }
 
-/// A job run to completion is archived: its blobs move into `archived_jobs`
-/// and its `job_payloads` side-table row is dropped (no leak). `get_job` must
-/// still resolve the full payload + result from the archive. On the Diesel
-/// backends the archived job has no side-table row, so a stray join would lose
-/// it — this guards that the archived fallback reads `archived_jobs` directly.
-/// Redis passes trivially. The SQLite-only test
-/// `test_side_table_stays_one_to_one_with_live_jobs` asserts the row removal
-/// directly against `job_payloads`.
+/// A job run to completion is archived: its blobs move into `archived_jobs` and
+/// the live `jobs` row is removed. `get_job` must still resolve the full payload
+/// and result from the archive, and a terminal-status list must carry the
+/// blobs. Redis passes trivially.
 fn test_archived_job_payload_resolves(s: &impl Storage) {
     let q = "q-archived-payload-resolves";
     let mut nj = make_job(q, "archived_payload_task");
@@ -709,6 +704,42 @@ fn test_periodic_crud(s: &impl Storage) {
     assert!(!s.delete_periodic("pc-a").unwrap());
 }
 
+/// Two workers draining one queue concurrently must claim disjoint jobs — every
+/// enqueued job is handed out exactly once, never twice. Exercises the Postgres
+/// `FOR UPDATE SKIP LOCKED` dequeue path and the SQLite `BEGIN IMMEDIATE` /
+/// affected-row-count guard, and the Redis Lua claim. Uses scoped threads so the
+/// shared `&Storage` needs no `Arc`.
+fn test_concurrent_dequeue_no_double_claim(s: &impl Storage) {
+    let q = "q-concurrent-claim";
+    const N: usize = 60;
+    for i in 0..N {
+        s.enqueue(make_job(q, &format!("cc_{i}"))).unwrap();
+    }
+
+    let claimed = std::sync::Mutex::new(Vec::<String>::new());
+    let now = now_millis() + 1000;
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                while let Some(job) = s.dequeue(q, now, None).unwrap() {
+                    claimed.lock().unwrap().push(job.id);
+                }
+            });
+        }
+    });
+
+    let mut ids = claimed.into_inner().unwrap();
+    let total = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), total, "a job was claimed more than once");
+    assert_eq!(
+        ids.len(),
+        N,
+        "every enqueued job must be claimed exactly once"
+    );
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -738,8 +769,9 @@ fn run_storage_tests(s: &impl Storage) {
     test_immediate_archival(s);
     test_enqueue_dep_on_completed_archived_job(s);
     test_dependent_blocked_by_cancelled_parent(s);
-    test_payload_side_table(s);
+    test_payload_roundtrip(s);
     test_archived_job_payload_resolves(s);
+    test_concurrent_dequeue_no_double_claim(s);
     test_rate_limit_token_exhaustion(s);
 }
 

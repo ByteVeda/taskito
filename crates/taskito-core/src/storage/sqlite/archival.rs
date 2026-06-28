@@ -39,17 +39,6 @@ impl SqliteStorage {
             .bind::<diesel::sql_types::BigInt, _>(cutoff_ms)
             .execute(conn)?;
 
-            // Drop the side-table rows for the jobs about to be deleted.
-            // SQLite doesn't enforce the ON DELETE CASCADE FK unless
-            // `PRAGMA foreign_keys = ON`, so delete explicitly to avoid orphans.
-            diesel::sql_query(format!(
-                "DELETE FROM job_payloads WHERE job_id IN \
-                 (SELECT id FROM jobs WHERE status IN ({archivable_statuses}) \
-                  AND completed_at IS NOT NULL AND completed_at < ?1)",
-            ))
-            .bind::<diesel::sql_types::BigInt, _>(cutoff_ms)
-            .execute(conn)?;
-
             diesel::sql_query(format!(
                 "DELETE FROM jobs WHERE status IN ({archivable_statuses}) AND completed_at IS NOT NULL AND completed_at < ?1",
             ))

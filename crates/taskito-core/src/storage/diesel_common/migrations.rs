@@ -96,13 +96,6 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
             )"
         ),
         format!(
-            "CREATE TABLE IF NOT EXISTS job_payloads (
-                job_id  TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
-                payload {bin} NOT NULL,
-                result  {bin}
-            )"
-        ),
-        format!(
             "CREATE TABLE IF NOT EXISTS dead_letter (
                 id              TEXT PRIMARY KEY,
                 original_job_id TEXT NOT NULL,
@@ -297,6 +290,21 @@ pub fn create_indexes() -> &'static [&'static str] {
                 ON archived_jobs(queue, status)",
         "CREATE INDEX IF NOT EXISTS idx_distributed_locks_expires ON distributed_locks(expires_at)",
         "CREATE INDEX IF NOT EXISTS idx_execution_claims_claimed ON execution_claims(claimed_at)",
+        // dead_letter had no indexes: every DLQ list/purge/auto-retry was a full
+        // scan, and list_dead_for_retry runs on every maintenance tick.
+        "CREATE INDEX IF NOT EXISTS idx_dead_letter_failed_at ON dead_letter(failed_at)",
+        "CREATE INDEX IF NOT EXISTS idx_dead_letter_task ON dead_letter(task_name)",
+        // count_running_by_task / cancel_pending_by_task filter (task_name, status).
+        "CREATE INDEX IF NOT EXISTS idx_jobs_task_status ON jobs(task_name, status)",
+        // expire_pending_jobs scans pending rows for a due expires_at.
+        "CREATE INDEX IF NOT EXISTS idx_jobs_expires_at
+                ON jobs(expires_at) WHERE expires_at IS NOT NULL",
+        // namespace-filtered listing (and namespace-less dequeue scans).
+        "CREATE INDEX IF NOT EXISTS idx_jobs_namespace
+                ON jobs(namespace) WHERE namespace IS NOT NULL",
+        // list_archived_filtered orders by created_at; namespace filter likewise.
+        "CREATE INDEX IF NOT EXISTS idx_archived_jobs_created_at ON archived_jobs(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_archived_jobs_namespace ON archived_jobs(namespace)",
     ]
 }
 
@@ -381,19 +389,14 @@ pub fn backfill_statements() -> &'static [&'static str] {
     ]
 }
 
-/// Backfill the `job_payloads` side table from the kept `jobs.payload` /
-/// `jobs.result` columns. Idempotent: SQLite uses `INSERT OR IGNORE`, Postgres
-/// `ON CONFLICT (job_id) DO NOTHING`, so it only copies rows that aren't there
-/// yet. After a database that pre-dates the side table is migrated, every live
-/// job gets a matching payload row; subsequent runs match nothing.
-pub fn backfill_payload_side_table(d: &Dialect) -> Vec<String> {
-    let stmt = if d.alter_if_not_exists.is_empty() {
-        // SQLite: empty `alter_if_not_exists` marks this dialect.
-        "INSERT OR IGNORE INTO job_payloads (job_id, payload, result) \
-         SELECT id, payload, result FROM jobs"
-    } else {
-        "INSERT INTO job_payloads (job_id, payload, result) \
-         SELECT id, payload, result FROM jobs ON CONFLICT (job_id) DO NOTHING"
-    };
-    vec![stmt.to_string()]
+/// Drop tables from earlier schema versions that are no longer used. Run after
+/// [`create_tables`]; `DROP TABLE IF EXISTS` makes it a no-op on fresh databases
+/// and idempotent on re-run.
+///
+/// `job_payloads` was a 1:1 side table that duplicated `jobs.payload`. Payload
+/// and result now live inline on `jobs`/`archived_jobs`; the narrow dequeue scan
+/// selects around the blobs (Postgres TOAST / SQLite overflow keep them off the
+/// scanned pages), so the side table bought nothing and is removed.
+pub fn drop_legacy_tables() -> &'static [&'static str] {
+    &["DROP TABLE IF EXISTS job_payloads"]
 }
