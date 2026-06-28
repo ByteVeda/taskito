@@ -17,9 +17,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.byteveda.taskito.core.CoreFacade;
+import org.byteveda.taskito.errors.InterceptionException;
 import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
+import org.byteveda.taskito.interception.Interception;
+import org.byteveda.taskito.interception.Interceptor;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
@@ -68,6 +71,7 @@ final class DefaultTaskito implements Taskito {
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
     private final ResourceRuntime resources = new ResourceRuntime();
     private final Map<String, List<Predicate>> predicates = new ConcurrentHashMap<>();
+    private final List<Interceptor> interceptors = new CopyOnWriteArrayList<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
@@ -119,6 +123,12 @@ final class DefaultTaskito implements Taskito {
         return this;
     }
 
+    @Override
+    public Taskito intercept(Interceptor interceptor) {
+        interceptors.add(interceptor);
+        return this;
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T cast(Object value) {
         return (T) value;
@@ -141,13 +151,26 @@ final class DefaultTaskito implements Taskito {
         return dispatchEnqueue(taskName, payload, EnqueueOptions.none());
     }
 
-    /** Run onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
+    /** Run interceptors + onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
     private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options) {
+        for (Interceptor interceptor : interceptors) {
+            Interception outcome = interceptor.intercept(taskName, payload);
+            if (outcome instanceof Interception.Reject reject) {
+                throw new InterceptionException("enqueue of '" + taskName + "' rejected: " + reject.reason());
+            } else if (outcome instanceof Interception.Redirect redirect) {
+                taskName = redirect.taskName();
+                payload = redirect.payload();
+            } else if (outcome instanceof Interception.Convert convert) {
+                payload = convert.payload();
+            }
+            // Pass: leave taskName/payload unchanged.
+        }
         EnqueueContext context = new EnqueueContext(taskName, payload, options);
         for (Middleware m : middleware) {
             m.onEnqueue(context);
         }
-        // Gate the payload that will actually be enqueued (after middleware may have rewritten it).
+        // Gate the payload that will actually be enqueued (after interceptors and
+        // middleware may have rewritten it).
         gate(taskName, context.payload());
         EnqueueOptions finalOptions = context.options();
         if (!context.metadata().isEmpty()) {
