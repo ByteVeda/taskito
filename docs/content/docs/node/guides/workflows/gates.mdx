@@ -31,12 +31,7 @@ queue.workflows.approveGate(handle.runId, "approve-deploy");
   chart={`graph LR
     build:::done --> gate["approve-deploy\n(waiting_approval)"]:::waiting
     gate -- approved --> deploy:::run
-    gate -- rejected --> deploy_skip["deploy\n(skipped)"]:::skip
-
-    classDef done fill:#bbf7d0,color:#14532d,stroke:#16a34a
-    classDef waiting fill:#fef9c3,color:#713f12,stroke:#ca8a04
-    classDef run fill:#bfdbfe,color:#1e3a8a,stroke:#3b82f6
-    classDef skip fill:#f3f4f6,color:#6b7280,stroke:#9ca3af`}
+    gate -- rejected --> deploy_skip["deploy\n(skipped)"]:::skip`}
 />
 
 ## Gate node status

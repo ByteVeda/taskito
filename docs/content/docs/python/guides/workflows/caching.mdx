@@ -30,16 +30,13 @@ nodes are also dirty — even if they had cached results:
 <Mermaid
   chart={`graph LR
     A["a — dirty (missing)"]:::failed --> B["b — dirty (propagated)"]:::failed
-    B --> C["c — dirty (propagated)"]:::failed
-    classDef failed fill:#fecaca,color:#7f1d1d,stroke:#dc2626`}
+    B --> C["c — dirty (propagated)"]:::failed`}
 />
 
 <Mermaid
   chart={`graph LR
     A["a — CACHE_HIT ✓"]:::success --> B["b — dirty (failed in base)"]:::failed
-    B --> C["c — dirty (propagated)"]:::failed
-    classDef success fill:#bbf7d0,color:#14532d,stroke:#16a34a
-    classDef failed fill:#fecaca,color:#7f1d1d,stroke:#dc2626`}
+    B --> C["c — dirty (propagated)"]:::failed`}
 />
 
 ## Cache TTL
