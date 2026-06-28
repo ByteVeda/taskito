@@ -7,6 +7,7 @@ import {
   ScrollRestoration,
 } from "react-router";
 import { usePrefetchDocs } from "@/hooks";
+import { DEFAULT_SDK, SDK_IDS } from "@/lib";
 import type { Route } from "./+types/root";
 import "./app.css";
 
@@ -27,15 +28,17 @@ export const links: Route.LinksFunction = () => [
 const THEME_INIT = `(function(){try{var t=localStorage.getItem('taskito-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
 
 // Apply the active SDK before paint (query > localStorage > default) so the
-// CSS show/hide picks the right variant with no flash. Mirrors readSdk().
-const SDK_INIT = `(function(){try{var u=new URLSearchParams(location.search).get('sdk');var s=(u==='python'||u==='node')?u:(localStorage.getItem('taskito-sdk')||'python');if(s!=='python'&&s!=='node'){s='python';}document.documentElement.setAttribute('data-sdk',s);}catch(e){document.documentElement.setAttribute('data-sdk','python');}})();`;
+// CSS show/hide picks the right variant with no flash. Mirrors readSdk(). The
+// valid-id list and default come from the SDK registry, so a new language needs
+// no edit here.
+const SDK_INIT = `(function(){try{var ids=${JSON.stringify([...SDK_IDS])},def='${DEFAULT_SDK}';var u=new URLSearchParams(location.search).get('sdk');var s=ids.indexOf(u)>=0?u:(localStorage.getItem('taskito-sdk')||def);if(ids.indexOf(s)<0){s=def;}document.documentElement.setAttribute('data-sdk',s);}catch(e){document.documentElement.setAttribute('data-sdk','${DEFAULT_SDK}');}})();`;
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
       data-theme="dark"
-      data-sdk="python"
+      data-sdk={DEFAULT_SDK}
       suppressHydrationWarning
     >
       <head>

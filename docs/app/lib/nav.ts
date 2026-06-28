@@ -1,5 +1,5 @@
 import { docTitle, hasDoc } from "./manifest";
-import type { Sdk } from "./sdk-store";
+import { SDK_IDS, SDK_PROFILES, type Sdk } from "./sdk-registry";
 
 interface Meta {
   title?: string;
@@ -83,38 +83,22 @@ function buildTree(sections: string[]): NavNode[] {
   });
 }
 
-// `architecture` and `resources` are SDK-neutral (the engine is identical across
-// SDKs); both live at top-level shared URLs and appear in every SDK's nav.
-export const PYTHON_SECTIONS = [
-  "python/getting-started",
-  "python/guides",
-  "architecture",
-  "python/api-reference",
-  "python/more/examples",
-  "resources",
-];
-export const NODE_SECTIONS = [
-  "node/getting-started",
-  "node/guides",
-  "architecture",
-  "node/api-reference",
-  "node/more/examples",
-  "resources",
-];
-
-export const PYTHON_NAV = buildTree(PYTHON_SECTIONS);
-export const NODE_NAV = buildTree(NODE_SECTIONS);
+// Each SDK's nav is its registry `navSections` built into a tree. `architecture`
+// and `resources` are SDK-neutral (the engine is identical across SDKs); both
+// appear in every SDK's section list at shared top-level URLs.
+const NAV_BY_SDK = Object.fromEntries(
+  SDK_IDS.map((id) => [id, buildTree(SDK_PROFILES[id].navSections)]),
+) as Record<Sdk, NavNode[]>;
 
 export type { Sdk };
 
-/** The SDK forced by an explicit `/python`|`/node` URL prefix, or null on a
- *  shared page (where the active SDK comes from the global store instead). */
+/** The SDK forced by an explicit `/<sdk>` URL prefix, or null on a shared page
+ *  (where the active SDK comes from the global store instead). */
 export function forcedSdkForPath(path: string): Sdk | null {
-  if (path === "/node" || path.startsWith("/node/")) {
-    return "node";
-  }
-  if (path === "/python" || path.startsWith("/python/")) {
-    return "python";
+  for (const id of SDK_IDS) {
+    if (path === `/${id}` || path.startsWith(`/${id}/`)) {
+      return id;
+    }
   }
   return null;
 }
@@ -123,10 +107,9 @@ export function forcedSdkForPath(path: string): Sdk | null {
  *  prefix if it exists, else that SDK's install landing. Shared pages stay put
  *  (the caller skips navigation when the current path isn't SDK-prefixed). */
 export function sdkSwitchTarget(path: string, target: Sdk): string {
-  const other: Sdk = target === "node" ? "python" : "node";
-  const prefix = `/${other}`;
-  if (path === prefix || path.startsWith(`${prefix}/`)) {
-    const swapped = `/${target}${path.slice(prefix.length)}`;
+  const current = forcedSdkForPath(path);
+  if (current && current !== target) {
+    const swapped = `/${target}${path.slice(`/${current}`.length)}`;
     if (hasDoc(swapped)) {
       return swapped;
     }
@@ -135,7 +118,7 @@ export function sdkSwitchTarget(path: string, target: Sdk): string {
 }
 
 export function navForSdk(sdk: Sdk): NavNode[] {
-  return sdk === "node" ? NODE_NAV : PYTHON_NAV;
+  return NAV_BY_SDK[sdk];
 }
 
 /** Depth-first flattened links for the active SDK — drives prev/next. */
