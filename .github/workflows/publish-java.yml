@@ -162,7 +162,10 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: ./gradlew publishToMavenCentral -x cargoBuild -x copyNative --no-daemon
+        # `publishAndReleaseToMavenCentral` uploads AND releases the Central Portal
+        # deployment. Plain `publishToMavenCentral` only stages it (state stays
+        # VALIDATED), requiring a manual "Publish" click in the portal.
+        run: ./gradlew publishAndReleaseToMavenCentral -x cargoBuild -x copyNative --no-daemon
 
       - name: Create git tag
         if: github.event_name != 'push' && !inputs.dry-run
