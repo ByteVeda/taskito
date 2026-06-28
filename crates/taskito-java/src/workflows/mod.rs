@@ -68,6 +68,8 @@ struct StepSpec {
     sub_workflow: Option<String>,
     /// Rollback task name — the saga runs it to compensate this node.
     compensate: Option<String>,
+    /// JSON `{ttlMs}` marking a cacheable node whose result the tracker may reuse.
+    cache: Option<String>,
 }
 
 /// Combined run + node snapshot returned by `getWorkflowStatus`. Timestamps are
@@ -233,6 +235,7 @@ fn submit(
                     gate: s.gate.clone(),
                     sub_workflow: s.sub_workflow.clone(),
                     compensate: s.compensate.clone(),
+                    cache: s.cache.clone(),
                     ..Default::default()
                 },
             )
@@ -522,6 +525,7 @@ struct PlanNodeView<'a> {
     gate: Option<&'a str>,
     sub_workflow: Option<&'a str>,
     compensate: Option<&'a str>,
+    cache: Option<&'a str>,
 }
 
 /// The run + node a job belongs to.
@@ -583,6 +587,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_getWor
                     gate: meta.and_then(|m| m.gate.as_deref()),
                     sub_workflow: meta.and_then(|m| m.sub_workflow.as_deref()),
                     compensate: meta.and_then(|m| m.compensate.as_deref()),
+                    cache: meta.and_then(|m| m.cache.as_deref()),
                 }
             })
             .collect();
@@ -1059,6 +1064,31 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_skipWo
             }
         }
         wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::Skipped)?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowNodeCacheHit(long, String runId, String nodeName)` — mark a
+/// node as a cache hit (terminal, treated as completed) without running it.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowNodeCacheHit<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        queue.workflow_store()?.update_workflow_node_status(
+            &run_id,
+            &node_name,
+            WorkflowNodeStatus::CacheHit,
+        )?;
         Ok(())
     })
 }

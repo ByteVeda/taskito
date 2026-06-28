@@ -239,6 +239,11 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
     }
 
+    /** Mark a node as a cache hit (terminal) without running it. */
+    default void setWorkflowNodeCacheHit(String runId, String nodeName) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
     // ── Saga compensation ─────────────────────────────────────────
 
     default void setWorkflowRunCompensating(String runId) {

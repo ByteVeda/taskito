@@ -5,9 +5,11 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -67,6 +69,8 @@ public final class WorkflowTracker {
     private final ConcurrentMap<String, String[]> childToParent = new ConcurrentHashMap<>();
     /** Rolls back failed runs that declared compensators. */
     private final SagaOrchestrator saga;
+    /** Incremental cache: {@code cacheKey -> expiry millis}, so a re-run of a cacheable step is a cache hit. */
+    private final ConcurrentMap<String, Long> resultCache = new ConcurrentHashMap<>();
 
     public WorkflowTracker(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
@@ -120,6 +124,14 @@ public final class WorkflowTracker {
         // Record the node outcome; the tracker (not the core) drives cascade + finalize.
         backend.markWorkflowNodeResult(jobId, succeeded, error, true);
         RunPlan plan = plans.computeIfAbsent(ref.runId, this::loadPlan);
+
+        // Cache a cacheable step's success so a later run of the same workflow can skip it.
+        if (succeeded && plan != null) {
+            PlanNode settled = plan.node(ref.nodeName);
+            if (settled != null && settled.cache != null) {
+                cacheResult(ref.runId, settled);
+            }
+        }
 
         if (ref.nodeName.indexOf('[') >= 0) {
             handleFanOutChild(ref.runId, ref.nodeName, plan);
@@ -273,10 +285,45 @@ public final class WorkflowTracker {
                 submitSubWorkflow(runId, node);
                 return;
             }
+            if (node.cache != null && reuseFromCache(runId, node, plan)) {
+                return; // cache hit — skipped re-running this step
+            }
             createDeferredJobFor(runId, node);
         } catch (RuntimeException e) {
             promotedNodes.remove(promotionKey);
             throw e;
+        }
+    }
+
+    /** If a prior run cached this step's result within its TTL, mark it a cache hit instead of running it. */
+    private boolean reuseFromCache(String runId, PlanNode node, RunPlan plan) {
+        Long expiry = resultCache.get(cacheKey(runId, node.name));
+        if (expiry == null || expiry <= System.currentTimeMillis()) {
+            return false;
+        }
+        backend.setWorkflowNodeCacheHit(runId, node.name);
+        promoteSuccessors(runId, node.name, plan); // CacheHit is terminal — advance successors
+        return true;
+    }
+
+    private void cacheResult(String runId, PlanNode node) {
+        CacheMeta meta = decode(node.cache, CacheMeta.class);
+        if (meta != null && meta.ttlMs != null) {
+            resultCache.put(cacheKey(runId, node.name), System.currentTimeMillis() + meta.ttlMs);
+        }
+    }
+
+    /** Stable across runs: workflow name + node + a hash of the node's payload. */
+    private String cacheKey(String runId, String nodeName) {
+        byte[] payload = deferredPayload(runId, nodeName);
+        return workflowName(runId) + ":" + nodeName + ":" + sha256(payload == null ? new byte[0] : payload);
+    }
+
+    private static String sha256(byte[] data) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
+        } catch (Exception e) {
+            throw new WorkflowException("failed to hash payload for the workflow cache", e);
         }
     }
 
@@ -660,6 +707,17 @@ public final class WorkflowTracker {
         @Override
         public int hashCode() {
             return 31 * runId.hashCode() + nodeName.hashCode();
+        }
+    }
+
+    /** {@code {ttlMs}} parsed from a node's cache metadata. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static final class CacheMeta {
+        final Long ttlMs;
+
+        @JsonCreator
+        CacheMeta(@JsonProperty("ttlMs") Long ttlMs) {
+            this.ttlMs = ttlMs;
         }
     }
 

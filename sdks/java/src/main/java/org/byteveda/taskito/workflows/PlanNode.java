@@ -22,6 +22,7 @@ final class PlanNode {
     final String condition;
     final String subWorkflow;
     final String compensate;
+    final String cache;
 
     @JsonCreator
     PlanNode(
@@ -37,7 +38,8 @@ final class PlanNode {
             @JsonProperty("gate") String gate,
             @JsonProperty("condition") String condition,
             @JsonProperty("subWorkflow") String subWorkflow,
-            @JsonProperty("compensate") String compensate) {
+            @JsonProperty("compensate") String compensate,
+            @JsonProperty("cache") String cache) {
         this.name = name;
         this.predecessors = predecessors == null ? Collections.emptyList() : predecessors;
         this.taskName = taskName;
@@ -51,6 +53,7 @@ final class PlanNode {
         this.condition = condition;
         this.subWorkflow = subWorkflow;
         this.compensate = compensate;
+        this.cache = cache;
     }
 
     /** Whether this node is a fan-out/fan-in node (its job is created by the fan-out machinery). */

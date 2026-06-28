@@ -104,6 +104,9 @@ public final class NativeWorkflows {
     /** Mark a node skipped (its condition evaluated false) and cancel any bound job. */
     public static native void skipWorkflowNode(long handle, String runId, String nodeName);
 
+    /** Mark a node as a cache hit (terminal, treated as completed) without running it. */
+    public static native void setWorkflowNodeCacheHit(long handle, String runId, String nodeName);
+
     // ── Saga compensation (driven by the worker-side tracker) ──
 
     public static native void setWorkflowRunCompensating(long handle, String runId);

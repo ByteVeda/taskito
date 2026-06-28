@@ -415,6 +415,7 @@ final class DefaultTaskito implements Taskito {
                     || step.fanIn != null
                     || step.gate != null
                     || step.subWorkflow != null
+                    || step.cacheTtlMs != null
                     || runtimeCondition) {
                 deferred.add(step.name);
             }
@@ -477,6 +478,9 @@ final class DefaultTaskito implements Taskito {
         }
         if (step.compensate != null) {
             spec.put("compensate", step.compensate);
+        }
+        if (step.cacheTtlMs != null) {
+            spec.put("cache", encode(Map.of("ttlMs", step.cacheTtlMs)));
         }
         return spec;
     }
