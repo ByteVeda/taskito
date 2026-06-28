@@ -79,6 +79,20 @@ public final class Workflow {
         return fanIn(name, task, mode.wire(), after);
     }
 
+    /**
+     * Add an approval gate that runs after {@code after}. The gate is a control
+     * node — it runs no task; it parks until {@code Worker.approveGate}/
+     * {@code rejectGate} (or its timeout) resolves it, then its successors run.
+     * The running worker must {@code trackWorkflows(this)} so its tracker holds
+     * the downstream steps' payloads.
+     */
+    public Workflow gate(String name, GateConfig gate, String... after) {
+        return step(Step.of(name, GATE_TASK, null).gate(gate).after(after).build());
+    }
+
+    /** Sentinel task name for gate control nodes (never enqueued). */
+    static final String GATE_TASK = "__gate__";
+
     // A fan-out/fan-in node has exactly one runtime trigger — its single producer.
     // Zero predecessors would never enqueue; multiple could fire from the wrong one.
     private static void requireSinglePredecessor(String kind, String name, String[] after) {

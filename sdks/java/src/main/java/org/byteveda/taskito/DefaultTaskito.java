@@ -32,6 +32,7 @@ import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
+import org.byteveda.taskito.workflows.GateConfig;
 import org.byteveda.taskito.workflows.Step;
 import org.byteveda.taskito.workflows.Workflow;
 import org.byteveda.taskito.workflows.WorkflowRun;
@@ -390,15 +391,21 @@ final class DefaultTaskito implements Taskito {
                 payloads.toArray(new byte[0][]),
                 null,
                 null,
-                deferred.toArray(new String[0]));
+                deferred.toArray(new String[0]),
+                null,
+                null);
         return new WorkflowRun(backend, VIEWS, runId, workflow.name());
     }
 
-    /** Fan-out/fan-in nodes, plus everything transitively downstream of them, are deferred. */
+    /**
+     * Fan-out/fan-in and gate nodes — plus everything transitively downstream of
+     * them — are deferred: they carry a node row but no job at submit, and the
+     * worker tracker creates/parks them at runtime.
+     */
     private static Set<String> deferredNodes(List<Step> steps) {
         Set<String> deferred = new HashSet<>();
         for (Step step : steps) {
-            if (step.fanOut != null || step.fanIn != null) {
+            if (step.fanOut != null || step.fanIn != null || step.gate != null) {
                 deferred.add(step.name);
             }
         }
@@ -449,7 +456,27 @@ final class DefaultTaskito implements Taskito {
         if (step.fanIn != null) {
             spec.put("fanIn", step.fanIn);
         }
+        if (step.gate != null) {
+            spec.put("gate", encodeGate(step.gate));
+        }
         return spec;
+    }
+
+    /**
+     * Encode a gate as a JSON string {@code {timeoutMs, onTimeout, message}}. The
+     * core stores it opaquely on the step ({@code StepMetadata.gate}) and the
+     * worker tracker parses it back when the gate is reached.
+     */
+    private static String encodeGate(GateConfig gate) {
+        Map<String, Object> blob = new LinkedHashMap<>();
+        if (gate.timeout() != null) {
+            blob.put("timeoutMs", gate.timeout().toMillis());
+        }
+        blob.put("onTimeout", gate.onTimeout().wire());
+        if (gate.message() != null) {
+            blob.put("message", gate.message());
+        }
+        return encode(blob);
     }
 
     @Override

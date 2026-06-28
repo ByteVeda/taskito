@@ -24,6 +24,7 @@ import org.byteveda.taskito.spi.WorkerControl;
 import org.byteveda.taskito.task.RetryPolicy;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.task.TaskFunction;
+import org.byteveda.taskito.workflows.Workflow;
 import org.byteveda.taskito.workflows.WorkflowTracker;
 
 /**
@@ -36,12 +37,14 @@ public final class Worker implements AutoCloseable {
 
     private final WorkerControl control;
     private final ExecutorService executor;
+    private final WorkflowTracker tracker;
     private final CountDownLatch shutdown = new CountDownLatch(1);
     private boolean closed;
 
-    private Worker(WorkerControl control, ExecutorService executor) {
+    private Worker(WorkerControl control, ExecutorService executor, WorkflowTracker tracker) {
         this.control = control;
         this.executor = executor;
+        this.tracker = tracker;
     }
 
     public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
@@ -51,6 +54,26 @@ public final class Worker implements AutoCloseable {
     /** Stop dispatching; in-flight jobs continue to drain. */
     public void stop() {
         control.stop();
+    }
+
+    /**
+     * Approve a parked workflow gate so its successors run. Requires this worker
+     * to be tracking workflows ({@code trackWorkflows()} on the builder).
+     */
+    public void approveGate(String runId, String nodeName) {
+        requireTracker().resolveGate(runId, nodeName, true, null);
+    }
+
+    /** Reject a parked workflow gate; the gate fails and its successors are skipped. */
+    public void rejectGate(String runId, String nodeName, String reason) {
+        requireTracker().resolveGate(runId, nodeName, false, reason == null ? "gate rejected" : reason);
+    }
+
+    private WorkflowTracker requireTracker() {
+        if (tracker == null) {
+            throw new TaskitoException("worker is not tracking workflows; call trackWorkflows() on the builder");
+        }
+        return tracker;
     }
 
     /** Block until {@link #close()} is called. */
@@ -82,6 +105,9 @@ public final class Worker implements AutoCloseable {
             executor.shutdownNow();
         }
         control.close(); // now safe to free the native handle — no handler can touch it
+        if (tracker != null) {
+            tracker.close(); // stop the gate-timeout scheduler
+        }
         shutdown.countDown();
     }
 
@@ -99,6 +125,7 @@ public final class Worker implements AutoCloseable {
         private int concurrency;
         private Integer channelCapacity;
         private Integer batchSize;
+        private WorkflowTracker tracker;
 
         Builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
             this.backend = backend;
@@ -173,10 +200,30 @@ public final class Worker implements AutoCloseable {
 
         /** Drive workflow node and run state from this worker's job outcomes. */
         public Builder trackWorkflows() {
-            WorkflowTracker tracker = new WorkflowTracker(backend, serializer);
-            on(EventName.SUCCESS, tracker::onSuccess);
-            on(EventName.DEAD, tracker::onDead);
+            ensureTracker();
             return this;
+        }
+
+        /**
+         * Track workflows and register {@code workflows} so the tracker can supply
+         * the payloads of their deferred nodes (gates' downstream steps, etc.).
+         */
+        public Builder trackWorkflows(Workflow... workflows) {
+            WorkflowTracker active = ensureTracker();
+            for (Workflow workflow : workflows) {
+                active.register(workflow);
+            }
+            return this;
+        }
+
+        /** Create the tracker and wire its outcome listeners once. */
+        private WorkflowTracker ensureTracker() {
+            if (tracker == null) {
+                tracker = new WorkflowTracker(backend, serializer);
+                on(EventName.SUCCESS, tracker::onSuccess);
+                on(EventName.DEAD, tracker::onDead);
+            }
+            return tracker;
         }
 
         public Worker start() {
@@ -188,7 +235,7 @@ public final class Worker implements AutoCloseable {
                     new WorkerDispatchBridge(backend, handlers, serializer, executor, emitter, middleware);
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
             bridge.bind(control);
-            return new Worker(control, executor);
+            return new Worker(control, executor, tracker);
         }
 
         private String encodeOptions() {

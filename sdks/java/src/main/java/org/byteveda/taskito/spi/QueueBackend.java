@@ -145,7 +145,9 @@ public interface QueueBackend extends AutoCloseable {
             byte[][] payloads,
             String queueDefault,
             String paramsJson,
-            String[] deferredNames) {
+            String[] deferredNames,
+            String parentRunId,
+            String parentNodeName) {
         throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
     }
 
@@ -167,6 +169,11 @@ public interface QueueBackend extends AutoCloseable {
     }
 
     default Optional<String> workflowNodeForJobJson(String jobId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    /** Returns the run's definition name, or empty if the run is absent. */
+    default Optional<String> workflowNameForRun(String runId) {
         throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
     }
 
@@ -204,6 +211,31 @@ public interface QueueBackend extends AutoCloseable {
     }
 
     default Optional<String> finalizeRunIfTerminal(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    /** Park an approval-gate node until it is resolved. */
+    default void setWorkflowNodeWaitingApproval(String runId, String nodeName) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    /** Settle a parked gate: completed if approved, else failed with {@code error}. */
+    default void resolveWorkflowGate(String runId, String nodeName, boolean approved, String error) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    /** Promote a gate / sub-workflow node to running. */
+    default void setWorkflowNodeRunning(String runId, String nodeName) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    /** Mark a node failed. */
+    default void failWorkflowNode(String runId, String nodeName, String error) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    /** Mark a node skipped (its condition evaluated false) and cancel any bound job. */
+    default void skipWorkflowNode(String runId, String nodeName) {
         throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
     }
 

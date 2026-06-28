@@ -18,6 +18,7 @@ public final class Step {
     public final Integer priority;
     public final String fanOut;
     public final String fanIn;
+    public final GateConfig gate;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -30,6 +31,7 @@ public final class Step {
         this.priority = builder.priority;
         this.fanOut = builder.fanOut;
         this.fanIn = builder.fanIn;
+        this.gate = builder.gate;
     }
 
     /** Begin a step bound to a typed task. */
@@ -59,6 +61,7 @@ public final class Step {
         private Integer priority;
         private String fanOut;
         private String fanIn;
+        private GateConfig gate;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -114,9 +117,22 @@ public final class Step {
             return fanIn(mode.wire());
         }
 
+        /**
+         * Park this step for approval before it runs. The node waits until
+         * {@code Worker.approveGate}/{@code rejectGate}, or until the gate's
+         * timeout elapses.
+         */
+        public Builder gate(GateConfig gate) {
+            this.gate = gate;
+            return this;
+        }
+
         public Step build() {
             if (fanOut != null && fanIn != null) {
                 throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
+            }
+            if (gate != null && (fanOut != null || fanIn != null)) {
+                throw new IllegalArgumentException("step '" + name + "' cannot be both a gate and a fan-out/fan-in");
             }
             return new Step(this);
         }

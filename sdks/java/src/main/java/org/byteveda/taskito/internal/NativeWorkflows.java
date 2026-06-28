@@ -15,7 +15,11 @@ public final class NativeWorkflows {
 
     private NativeWorkflows() {}
 
-    /** Record a run and pre-enqueue a job per static step; returns the run id. */
+    /**
+     * Record a run and pre-enqueue a job per static step; returns the run id.
+     * {@code parentRunId}/{@code parentNodeName} link a sub-workflow child to its
+     * parent node (both {@code null} for a top-level run).
+     */
     public static native String submitWorkflow(
             long handle,
             String name,
@@ -25,7 +29,9 @@ public final class NativeWorkflows {
             byte[][] payloads,
             String queueDefault,
             String paramsJson,
-            String[] deferredNames);
+            String[] deferredNames,
+            String parentRunId,
+            String parentNodeName);
 
     /** Record a node's terminal outcome; returns the run's final state, or {@code null}. */
     public static native String markWorkflowNodeResult(
@@ -43,6 +49,9 @@ public final class NativeWorkflows {
 
     /** Returns {@code {runId, nodeName}} for a job (JSON), or {@code null} if non-workflow. */
     public static native String workflowNodeForJob(long handle, String jobId);
+
+    /** Returns the run's definition name, or {@code null} if the run is absent. */
+    public static native String workflowNameForRun(long handle, String runId);
 
     /** Expand a fan-out parent into one child job per payload; returns the child job ids. */
     public static native String[] expandFanOut(
@@ -76,4 +85,22 @@ public final class NativeWorkflows {
 
     /** Finalize the run if every node is terminal; returns the final state, or {@code null}. */
     public static native String finalizeRunIfTerminal(long handle, String runId);
+
+    // ── Gates / conditional nodes (driven by the worker-side tracker) ──
+
+    /** Park an approval-gate node until it is resolved. */
+    public static native void setWorkflowNodeWaitingApproval(long handle, String runId, String nodeName);
+
+    /** Settle a parked gate (or sub-workflow parent): completed if approved, else failed with {@code error}. */
+    public static native void resolveWorkflowGate(
+            long handle, String runId, String nodeName, boolean approved, String error);
+
+    /** Promote a gate / sub-workflow node to running. */
+    public static native void setWorkflowNodeRunning(long handle, String runId, String nodeName);
+
+    /** Mark a node failed (e.g. a sub-workflow whose child could not be submitted). */
+    public static native void failWorkflowNode(long handle, String runId, String nodeName, String error);
+
+    /** Mark a node skipped (its condition evaluated false) and cancel any bound job. */
+    public static native void skipWorkflowNode(long handle, String runId, String nodeName);
 }
