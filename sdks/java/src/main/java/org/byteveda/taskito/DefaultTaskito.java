@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -408,7 +409,11 @@ final class DefaultTaskito implements Taskito {
             // "on_success" is the default/static path — only runtime-evaluated
             // conditions (on_failure / always / callable) force a deferred node.
             boolean runtimeCondition = step.condition != null && !"on_success".equals(step.condition);
-            if (step.fanOut != null || step.fanIn != null || step.gate != null || runtimeCondition) {
+            if (step.fanOut != null
+                    || step.fanIn != null
+                    || step.gate != null
+                    || step.subWorkflow != null
+                    || runtimeCondition) {
                 deferred.add(step.name);
             }
         }
@@ -436,7 +441,7 @@ final class DefaultTaskito implements Taskito {
     }
 
     /** Encode a step's structure + per-step overrides for the native submit call. */
-    private static Map<String, Object> stepSpec(Step step) {
+    private Map<String, Object> stepSpec(Step step) {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("name", step.name);
         spec.put("taskName", step.taskName);
@@ -465,7 +470,36 @@ final class DefaultTaskito implements Taskito {
         if (step.condition != null) {
             spec.put("condition", step.condition);
         }
+        if (step.subWorkflow != null) {
+            spec.put("subWorkflow", encodeChild(step.subWorkflow));
+        }
         return spec;
+    }
+
+    /**
+     * Encode a child workflow as a JSON string the worker tracker submits when the
+     * sub-workflow node is reached: its name/version, the child's step specs, its
+     * deferred set, and every child step's payload (Base64). Recurses through
+     * {@link #stepSpec}, so a child may itself contain gates/conditions/sub-workflows.
+     */
+    private String encodeChild(Workflow child) {
+        List<Step> steps = child.steps();
+        Set<String> deferred = deferredNodes(steps);
+        List<Map<String, Object>> specs = new ArrayList<>(steps.size());
+        Map<String, String> payloads = new LinkedHashMap<>();
+        for (Step step : steps) {
+            specs.add(stepSpec(step));
+            if (step.payload != null) {
+                payloads.put(step.name, Base64.getEncoder().encodeToString(serializer.serialize(step.payload)));
+            }
+        }
+        Map<String, Object> blob = new LinkedHashMap<>();
+        blob.put("name", child.name());
+        blob.put("version", child.version());
+        blob.put("stepsJson", encode(specs));
+        blob.put("deferred", new ArrayList<>(deferred));
+        blob.put("payloads", payloads);
+        return encode(blob);
     }
 
     /**

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +60,8 @@ public final class WorkflowTracker {
     private final Set<GateKey> resolvedGates = ConcurrentHashMap.newKeySet();
     /** Deferred nodes already promoted (job created or gate parked), to dedupe concurrent outcomes. */
     private final Set<GateKey> promotedNodes = ConcurrentHashMap.newKeySet();
+    /** Sub-workflow child run → its parent {@code [runId, nodeName]}, so a finalized child resolves its parent node. */
+    private final ConcurrentMap<String, String[]> childToParent = new ConcurrentHashMap<>();
 
     public WorkflowTracker(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
@@ -254,11 +257,47 @@ public final class WorkflowTracker {
                 enterGate(runId, node);
                 return;
             }
+            if (node.subWorkflow != null) {
+                submitSubWorkflow(runId, node);
+                return;
+            }
             createDeferredJobFor(runId, node);
         } catch (RuntimeException e) {
             promotedNodes.remove(promotionKey);
             throw e;
         }
+    }
+
+    /** Submit a sub-workflow node's child run and mark the node running until the child finalizes. */
+    private void submitSubWorkflow(String runId, PlanNode node) {
+        ChildSpec child = decode(node.subWorkflow, ChildSpec.class);
+        Set<String> deferred = new HashSet<>(child.deferred);
+        List<String> payloadNames = new ArrayList<>();
+        List<byte[]> payloadBytes = new ArrayList<>();
+        Map<String, byte[]> allPayloads = new HashMap<>();
+        child.payloads.forEach((nodeName, base64) -> {
+            byte[] bytes = java.util.Base64.getDecoder().decode(base64);
+            allPayloads.put(nodeName, bytes);
+            if (!deferred.contains(nodeName)) {
+                payloadNames.add(nodeName);
+                payloadBytes.add(bytes);
+            }
+        });
+        // Register the child's payloads so the tracker can promote its own deferred nodes.
+        deferredPayloads.put(child.name, allPayloads);
+        String childRun = backend.submitWorkflow(
+                child.name,
+                child.version,
+                child.stepsJson,
+                payloadNames.toArray(new String[0]),
+                payloadBytes.toArray(new byte[0][]),
+                null,
+                null,
+                deferred.toArray(new String[0]),
+                runId,
+                node.name);
+        childToParent.put(childRun, new String[] {runId, node.name});
+        backend.setWorkflowNodeRunning(runId, node.name);
     }
 
     /** Whether {@code node}'s condition holds given its predecessors' outcomes. */
@@ -395,9 +434,30 @@ public final class WorkflowTracker {
     }
 
     private void finalizeIfTerminal(String runId) {
-        if (backend.finalizeRunIfTerminal(runId).isPresent()) {
-            forget(runId); // run reached a terminal state — drop its cached state
+        Optional<String> finalState = backend.finalizeRunIfTerminal(runId);
+        if (finalState.isEmpty()) {
+            return;
         }
+        String[] parent = childToParent.remove(runId);
+        forget(runId); // run reached a terminal state — drop its cached state
+        if (parent != null) {
+            // This run is a sub-workflow child — resolve its parent node, then advance the parent.
+            boolean succeeded = "completed".equals(finalState.get());
+            resolveSubWorkflowParent(
+                    parent[0],
+                    parent[1],
+                    succeeded,
+                    succeeded ? null : "sub-workflow " + runId + " " + finalState.get());
+        }
+    }
+
+    private void resolveSubWorkflowParent(String parentRun, String parentNode, boolean succeeded, String error) {
+        backend.resolveWorkflowGate(parentRun, parentNode, succeeded, error);
+        RunPlan plan = plans.computeIfAbsent(parentRun, this::loadPlan);
+        if (plan != null) {
+            promoteSuccessors(parentRun, parentNode, plan);
+        }
+        finalizeIfTerminal(parentRun);
     }
 
     /** Drop all per-run state once a run is terminal, cancelling any lingering timers. */
@@ -416,6 +476,8 @@ public final class WorkflowTracker {
         });
         resolvedGates.removeIf(key -> key.runId.equals(runId));
         promotedNodes.removeIf(key -> key.runId.equals(runId));
+        childToParent.remove(runId);
+        childToParent.values().removeIf(parent -> parent[0].equals(runId));
     }
 
     /** Stop the gate-timeout scheduler. Called when the owning worker closes. */
@@ -574,6 +636,30 @@ public final class WorkflowTracker {
                 @JsonProperty("message") String message) {
             this.timeoutMs = timeoutMs;
             this.onTimeout = onTimeout;
+        }
+    }
+
+    /** A serialized child workflow carried in a sub-workflow node's metadata. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static final class ChildSpec {
+        final String name;
+        final int version;
+        final String stepsJson;
+        final List<String> deferred;
+        final Map<String, String> payloads;
+
+        @JsonCreator
+        ChildSpec(
+                @JsonProperty("name") String name,
+                @JsonProperty("version") int version,
+                @JsonProperty("stepsJson") String stepsJson,
+                @JsonProperty("deferred") List<String> deferred,
+                @JsonProperty("payloads") Map<String, String> payloads) {
+            this.name = name;
+            this.version = version;
+            this.stepsJson = stepsJson;
+            this.deferred = deferred == null ? List.of() : deferred;
+            this.payloads = payloads == null ? Map.of() : payloads;
         }
     }
 

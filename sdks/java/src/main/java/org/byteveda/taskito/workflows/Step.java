@@ -21,6 +21,7 @@ public final class Step {
     public final GateConfig gate;
     public final String condition;
     public final Condition callableCondition;
+    public final Workflow subWorkflow;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -36,6 +37,7 @@ public final class Step {
         this.gate = builder.gate;
         this.condition = builder.condition;
         this.callableCondition = builder.callableCondition;
+        this.subWorkflow = builder.subWorkflow;
     }
 
     /** Begin a step bound to a typed task. */
@@ -68,6 +70,7 @@ public final class Step {
         private GateConfig gate;
         private String condition;
         private Condition callableCondition;
+        private Workflow subWorkflow;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -177,6 +180,17 @@ public final class Step {
             return this;
         }
 
+        /**
+         * Make this step a sub-workflow: instead of running a task it submits
+         * {@code child} as a child run and completes when the child finalizes
+         * (failing if the child fails). The running worker must
+         * {@code trackWorkflows(parent)}.
+         */
+        public Builder subWorkflow(Workflow child) {
+            this.subWorkflow = child;
+            return this;
+        }
+
         public Step build() {
             if (fanOut != null && fanIn != null) {
                 throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
@@ -190,6 +204,10 @@ public final class Step {
                 throw new IllegalArgumentException("step '" + name
                         + "': a gate may only be created via Workflow.gate(...); a gate on a normal task step "
                         + "would defer the node and never enqueue its task");
+            }
+            if (subWorkflow != null && (fanOut != null || fanIn != null || gate != null)) {
+                throw new IllegalArgumentException(
+                        "step '" + name + "' cannot be both a sub-workflow and a gate/fan-out/fan-in");
             }
             return new Step(this);
         }
