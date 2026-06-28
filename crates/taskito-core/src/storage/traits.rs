@@ -70,6 +70,11 @@ pub trait Storage: Send + Sync + Clone {
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64>;
     fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64>;
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>>;
+    /// Running jobs whose execution-claim owner is not in `live_owner_ids` (the
+    /// worker that claimed them has died). Read-only — paired with the dead
+    /// owner so the caller can atomically reclaim before requeuing.
+    fn reap_orphaned_jobs(&self, live_owner_ids: &[String], now: i64)
+        -> Result<Vec<(Job, String)>>;
     fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()>;
     fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobErrorRow>>;
     fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64>;
@@ -218,6 +223,16 @@ pub trait Storage: Send + Sync + Clone {
     fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool>;
     fn complete_execution(&self, job_id: &str) -> Result<()>;
     fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64>;
+    /// Atomically transfer an existing claim from `expected_owner` to
+    /// `new_owner`. Returns `true` only if the claim was held by
+    /// `expected_owner` — the `job_id` PK serializes concurrent rescuers so
+    /// exactly one wins.
+    fn reclaim_execution(
+        &self,
+        job_id: &str,
+        expected_owner: &str,
+        new_owner: &str,
+    ) -> Result<bool>;
 
     // ── Per-task concurrency ──────────────────────────────────────
 

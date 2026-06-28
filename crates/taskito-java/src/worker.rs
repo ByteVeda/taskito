@@ -72,6 +72,9 @@ fn start_worker(
     let worker_id = format!("java-{}", uuid::Uuid::now_v7());
 
     let mut scheduler = Scheduler::new(storage, queues, config, namespace);
+    // Claim execution under this worker's id so dead-worker recovery can
+    // attribute orphaned jobs (matches the register_worker id below).
+    scheduler.set_claim_owner(worker_id.clone());
     register_task_policies(&mut scheduler, options.task_configs);
     let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();

@@ -97,6 +97,9 @@ pub fn start_worker(
     // Per-task/queue config must be registered before the scheduler is shared
     // (register_* take &mut self).
     let mut scheduler = Scheduler::new(storage, queues, config, namespace);
+    // Claim execution under this worker's id so dead-worker recovery can
+    // attribute orphaned jobs (matches the register_worker id below).
+    scheduler.set_claim_owner(worker_id.clone());
     for input in options.task_configs.iter().flatten() {
         scheduler.register_task(input.name.clone(), crate::convert::task_config(input)?);
     }

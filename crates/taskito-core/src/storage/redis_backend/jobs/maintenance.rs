@@ -87,6 +87,46 @@ impl RedisStorage {
         Ok(stale)
     }
 
+    /// Running jobs whose execution-claim owner is not in `live_owner_ids` (its
+    /// worker died). Read-only — paired with the dead owner so the scheduler can
+    /// atomically reclaim before requeuing. Iterates the bounded Running set.
+    pub fn reap_orphaned_jobs(
+        &self,
+        live_owner_ids: &[String],
+        _now: i64,
+    ) -> Result<Vec<(Job, String)>> {
+        if live_owner_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let live: std::collections::HashSet<&str> =
+            live_owner_ids.iter().map(String::as_str).collect();
+
+        let mut conn = self.conn()?;
+        let status_key = self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
+        let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
+
+        let mut orphaned = Vec::new();
+        for id in &job_ids {
+            let claim_key = self.key(&["exec_claim", id]);
+            let claim: Option<String> = conn.get(&claim_key).map_err(map_err)?;
+            // Claim value is "{owner}:{ts}". No claim → time-based reap handles it.
+            let owner = match claim.as_deref().and_then(|v| v.split(':').next()) {
+                Some(o) => o.to_string(),
+                None => continue,
+            };
+            if live.contains(owner.as_str()) {
+                continue;
+            }
+            if let Some(job) = self.load_job(&mut conn, id)? {
+                if job.status == JobStatus::Running {
+                    orphaned.push((job, owner));
+                }
+            }
+        }
+
+        Ok(orphaned)
+    }
+
     pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let status_key = self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);

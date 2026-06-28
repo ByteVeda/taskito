@@ -445,6 +445,76 @@ fn test_execution_claims_purge(s: &impl Storage) {
     s.complete_execution(fresh_job).unwrap();
 }
 
+fn test_reap_stale_jobs(s: &impl Storage) {
+    // A running job past its timeout is reported by reap_stale_jobs (the
+    // scheduler then requeues it). Within-budget jobs are left alone.
+    let q = "q-reap-stale";
+    let mut nj = make_job(q, "stale_task");
+    nj.timeout_ms = 1;
+    let job = s.enqueue(nj).unwrap();
+    let t0 = now_millis();
+    s.dequeue(q, t0, None).unwrap().unwrap(); // Running, started_at = t0
+
+    let stale = s.reap_stale_jobs(t0 + 1000).unwrap();
+    assert!(
+        stale.iter().any(|j| j.id == job.id),
+        "a running job past its timeout must be reaped"
+    );
+    s.complete(&job.id, None).ok();
+}
+
+fn test_reclaim_execution(s: &impl Storage) {
+    // Atomic claim transfer: only the rescuer expecting the current owner wins.
+    let job = "reclaim-job-id";
+    assert!(s.claim_execution(job, "dead").unwrap());
+    assert!(s.reclaim_execution(job, "dead", "rescuer").unwrap());
+    // A second rescuer still expecting "dead" loses — owner is now "rescuer".
+    assert!(!s.reclaim_execution(job, "dead", "other").unwrap());
+    // The current owner can hand it on.
+    assert!(s.reclaim_execution(job, "rescuer", "rescuer2").unwrap());
+    // No claim row → no-op.
+    assert!(!s.reclaim_execution("no-such-claim", "x", "y").unwrap());
+    s.complete_execution(job).unwrap();
+}
+
+fn test_reap_orphaned_jobs(s: &impl Storage) {
+    // A running job whose claim owner is not in the live set is orphaned and
+    // paired with that dead owner; a live owner or an empty set yields nothing.
+    let q = "q-orphan-recovery";
+    let job = s.enqueue(make_job(q, "orphan_task")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap().unwrap();
+    assert!(s.claim_execution(&job.id, "dead-worker").unwrap());
+
+    let orphans = s
+        .reap_orphaned_jobs(&["other".to_string()], now_millis())
+        .unwrap();
+    assert!(
+        orphans
+            .iter()
+            .any(|(j, owner)| j.id == job.id && owner == "dead-worker"),
+        "claim owned by a non-live worker must be reported as orphaned"
+    );
+
+    let live = s
+        .reap_orphaned_jobs(&["dead-worker".to_string()], now_millis())
+        .unwrap();
+    assert!(
+        !live.iter().any(|(j, _)| j.id == job.id),
+        "a live owner's job must not be orphaned"
+    );
+
+    // Empty live set is a defensive no-op (never sweeps).
+    assert!(s.reap_orphaned_jobs(&[], now_millis()).unwrap().is_empty());
+
+    // Once the job leaves Running it is no longer orphaned.
+    s.complete(&job.id, None).unwrap();
+    let after = s
+        .reap_orphaned_jobs(&["other".to_string()], now_millis())
+        .unwrap();
+    assert!(!after.iter().any(|(j, _)| j.id == job.id));
+    s.complete_execution(&job.id).unwrap();
+}
+
 fn test_dashboard_settings(s: &impl Storage) {
     // get on missing key
     assert!(s.get_setting("settings-nonexistent").unwrap().is_none());
@@ -765,6 +835,9 @@ fn run_storage_tests(s: &impl Storage) {
     test_periodic_crud(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
+    test_reap_stale_jobs(s);
+    test_reclaim_execution(s);
+    test_reap_orphaned_jobs(s);
     test_dashboard_settings(s);
     test_immediate_archival(s);
     test_enqueue_dep_on_completed_archived_job(s);

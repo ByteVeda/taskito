@@ -1274,6 +1274,56 @@ macro_rules! impl_diesel_job_ops {
                     .collect())
             }
 
+            /// Running jobs whose execution-claim owner is no longer alive (the
+            /// worker that claimed them died). Read-only, like `reap_stale_jobs`:
+            /// the scheduler atomically reclaims and requeues each one. Two
+            /// indexed queries rather than a join, since `jobs` and
+            /// `execution_claims` are not declared joinable.
+            pub fn reap_orphaned_jobs(
+                &self,
+                live_owner_ids: &[String],
+                _now: i64,
+            ) -> Result<Vec<(Job, String)>> {
+                // Defensive: never treat every claim as orphaned. The caller
+                // always includes its own owner, so this is unreachable in
+                // practice but guards against a `NOT IN (empty)` sweep.
+                if live_owner_ids.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                let mut conn = self.conn()?;
+
+                // Claims owned by a worker not in the live set.
+                let orphan_claims: Vec<(String, String)> = execution_claims::table
+                    .filter(diesel::dsl::not(
+                        execution_claims::worker_id.eq_any(live_owner_ids),
+                    ))
+                    .select((execution_claims::job_id, execution_claims::worker_id))
+                    .load(&mut conn)?;
+                if orphan_claims.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                let job_ids: Vec<String> = orphan_claims.iter().map(|(id, _)| id.clone()).collect();
+                let owner_by_job: std::collections::HashMap<String, String> =
+                    orphan_claims.into_iter().collect();
+
+                // Of those, the ones still Running (blob-free narrow row).
+                let rows: Vec<NarrowJobRow> = jobs::table
+                    .filter(jobs::id.eq_any(&job_ids))
+                    .filter(jobs::status.eq(JobStatus::Running as i32))
+                    .select(NarrowJobRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows
+                    .into_iter()
+                    .map(|narrow| {
+                        let owner = owner_by_job.get(&narrow.id).cloned().unwrap_or_default();
+                        (Job::from_narrow(narrow, Vec::new(), None), owner)
+                    })
+                    .collect())
+            }
+
             /// Record an error for a job attempt.
             pub fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()> {
                 let mut conn = self.conn()?;

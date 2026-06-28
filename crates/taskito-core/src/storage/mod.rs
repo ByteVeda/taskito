@@ -212,6 +212,13 @@ macro_rules! impl_storage {
             fn reap_stale_jobs(&self, now: i64) -> $crate::error::Result<Vec<$crate::job::Job>> {
                 self.reap_stale_jobs(now)
             }
+            fn reap_orphaned_jobs(
+                &self,
+                live_owner_ids: &[String],
+                now: i64,
+            ) -> $crate::error::Result<Vec<($crate::job::Job, String)>> {
+                self.reap_orphaned_jobs(live_owner_ids, now)
+            }
             fn record_error(
                 &self,
                 job_id: &str,
@@ -539,6 +546,14 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<u64> {
                 self.purge_execution_claims(older_than_ms)
             }
+            fn reclaim_execution(
+                &self,
+                job_id: &str,
+                expected_owner: &str,
+                new_owner: &str,
+            ) -> $crate::error::Result<bool> {
+                self.reclaim_execution(job_id, expected_owner, new_owner)
+            }
             fn count_running_by_task(
                 &self,
                 task_name: &str,
@@ -762,6 +777,13 @@ impl Storage for StorageBackend {
     }
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>> {
         delegate!(self, reap_stale_jobs, now)
+    }
+    fn reap_orphaned_jobs(
+        &self,
+        live_owner_ids: &[String],
+        now: i64,
+    ) -> Result<Vec<(Job, String)>> {
+        delegate!(self, reap_orphaned_jobs, live_owner_ids, now)
     }
     fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()> {
         delegate!(self, record_error, job_id, attempt, error)
@@ -1021,6 +1043,14 @@ impl Storage for StorageBackend {
     }
     fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {
         delegate!(self, purge_execution_claims, older_than_ms)
+    }
+    fn reclaim_execution(
+        &self,
+        job_id: &str,
+        expected_owner: &str,
+        new_owner: &str,
+    ) -> Result<bool> {
+        delegate!(self, reclaim_execution, job_id, expected_owner, new_owner)
     }
     fn count_running_by_task(&self, task_name: &str) -> Result<i64> {
         delegate!(self, count_running_by_task, task_name)
