@@ -27,11 +27,12 @@ export const links: Route.LinksFunction = () => [
 // Apply the persisted theme before paint to avoid a light/dark flash.
 const THEME_INIT = `(function(){try{var t=localStorage.getItem('taskito-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
 
-// Apply the active SDK before paint (query > localStorage > default) so the
-// CSS show/hide picks the right variant with no flash. Mirrors readSdk(). The
-// valid-id list and default come from the SDK registry, so a new language needs
-// no edit here.
-const SDK_INIT = `(function(){try{var ids=${JSON.stringify([...SDK_IDS])},def='${DEFAULT_SDK}';var u=new URLSearchParams(location.search).get('sdk');var s=ids.indexOf(u)>=0?u:(localStorage.getItem('taskito-sdk')||def);if(ids.indexOf(s)<0){s=def;}document.documentElement.setAttribute('data-sdk',s);}catch(e){document.documentElement.setAttribute('data-sdk','${DEFAULT_SDK}');}})();`;
+// Registry ids + default as inert JSON on the <html> data attribute below.
+const SDK_CONFIG = JSON.stringify({ ids: [...SDK_IDS], def: DEFAULT_SDK });
+
+// No-flash SDK bootstrap: query > localStorage > default, validated against the
+// data-sdk-config above. Static string (no interpolation); keeps the SSR default on error.
+const SDK_INIT = `(function(){try{var c=JSON.parse(document.documentElement.getAttribute('data-sdk-config')),ids=c.ids,def=c.def;var u=new URLSearchParams(location.search).get('sdk');var s=ids.indexOf(u)>=0?u:(localStorage.getItem('taskito-sdk')||def);if(ids.indexOf(s)<0){s=def;}document.documentElement.setAttribute('data-sdk',s);}catch(e){}})();`;
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -39,6 +40,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       lang="en"
       data-theme="dark"
       data-sdk={DEFAULT_SDK}
+      data-sdk-config={SDK_CONFIG}
       suppressHydrationWarning
     >
       <head>
@@ -46,7 +48,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: tiny no-flash theme bootstrap */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
-        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: tiny no-flash sdk bootstrap */}
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static no-flash sdk bootstrap */}
         <script dangerouslySetInnerHTML={{ __html: SDK_INIT }} />
         <Meta />
         <Links />
