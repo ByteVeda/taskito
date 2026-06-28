@@ -27,6 +27,7 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceScope;
 import org.byteveda.taskito.resources.ResourceStat;
@@ -73,6 +74,13 @@ public interface Taskito extends AutoCloseable {
 
     /** Per-resource counters (created / disposed / active). */
     Map<String, ResourceStat> resourceMetrics();
+
+    /**
+     * Gate enqueues of {@code taskName} with {@code predicate}: when it rejects,
+     * {@link #enqueue} throws and no job is created. Multiple predicates on one
+     * task must all pass. Returns {@code this}.
+     */
+    Taskito predicate(String taskName, Predicate predicate);
 
     // ── Producer ────────────────────────────────────────────────────
 

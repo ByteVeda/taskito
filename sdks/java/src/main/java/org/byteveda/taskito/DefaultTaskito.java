@@ -12,10 +12,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.byteveda.taskito.core.CoreFacade;
+import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.locks.Lock;
@@ -31,6 +33,8 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.predicates.Predicate;
+import org.byteveda.taskito.predicates.PredicateContext;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceDefinition;
 import org.byteveda.taskito.resources.ResourceRuntime;
@@ -63,6 +67,7 @@ final class DefaultTaskito implements Taskito {
     private final Serializer serializer;
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
     private final ResourceRuntime resources = new ResourceRuntime();
+    private final Map<String, List<Predicate>> predicates = new ConcurrentHashMap<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
@@ -106,6 +111,14 @@ final class DefaultTaskito implements Taskito {
         return resources.metrics();
     }
 
+    @Override
+    public Taskito predicate(String taskName, Predicate predicate) {
+        predicates
+                .computeIfAbsent(taskName, key -> new CopyOnWriteArrayList<>())
+                .add(predicate);
+        return this;
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T cast(Object value) {
         return (T) value;
@@ -130,6 +143,7 @@ final class DefaultTaskito implements Taskito {
 
     /** Run onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
     private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options) {
+        gate(taskName, payload);
         EnqueueContext context = new EnqueueContext(taskName, payload, options);
         for (Middleware m : middleware) {
             m.onEnqueue(context);
@@ -141,6 +155,20 @@ final class DefaultTaskito implements Taskito {
                     .build();
         }
         return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(finalOptions));
+    }
+
+    /** Run any registered enqueue gates for {@code taskName}; throw if one rejects. */
+    private void gate(String taskName, Object payload) {
+        List<Predicate> gates = predicates.get(taskName);
+        if (gates == null || gates.isEmpty()) {
+            return;
+        }
+        PredicateContext context = new PredicateContext(taskName, payload);
+        for (Predicate gate : gates) {
+            if (!gate.test(context)) {
+                throw new PredicateRejectedException("enqueue of task '" + taskName + "' rejected by a predicate");
+            }
+        }
     }
 
     @Override
