@@ -341,6 +341,42 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public void setWorkflowRunCompensating(String runId) {
+        NativeWorkflows.setWorkflowRunCompensating(handle, runId);
+    }
+
+    @Override
+    public void setWorkflowRunCompensated(String runId, long completedAt) {
+        NativeWorkflows.setWorkflowRunCompensated(handle, runId, completedAt);
+    }
+
+    @Override
+    public void setWorkflowRunCompensationFailed(String runId, long completedAt, String error) {
+        NativeWorkflows.setWorkflowRunCompensationFailed(handle, runId, completedAt, error);
+    }
+
+    @Override
+    public void setWorkflowRunCompletedWithFailures(String runId, long completedAt) {
+        NativeWorkflows.setWorkflowRunCompletedWithFailures(handle, runId, completedAt);
+    }
+
+    @Override
+    public void setWorkflowNodeCompensationJob(
+            String runId, String nodeName, String compensationJobId, long startedAt) {
+        NativeWorkflows.setWorkflowNodeCompensationJob(handle, runId, nodeName, compensationJobId, startedAt);
+    }
+
+    @Override
+    public void setWorkflowNodeCompensated(String runId, String nodeName, long completedAt) {
+        NativeWorkflows.setWorkflowNodeCompensated(handle, runId, nodeName, completedAt);
+    }
+
+    @Override
+    public void setWorkflowNodeCompensationFailed(String runId, String nodeName, String error, long completedAt) {
+        NativeWorkflows.setWorkflowNodeCompensationFailed(handle, runId, nodeName, error, completedAt);
+    }
+
+    @Override
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
         return new JniWorkerControl(NativeQueue.runWorker(handle, bridge, optionsJson));
     }

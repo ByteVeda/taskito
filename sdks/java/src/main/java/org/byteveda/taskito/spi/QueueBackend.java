@@ -239,6 +239,37 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
     }
 
+    // ── Saga compensation ─────────────────────────────────────────
+
+    default void setWorkflowRunCompensating(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default void setWorkflowRunCompensated(String runId, long completedAt) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default void setWorkflowRunCompensationFailed(String runId, long completedAt, String error) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default void setWorkflowRunCompletedWithFailures(String runId, long completedAt) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default void setWorkflowNodeCompensationJob(
+            String runId, String nodeName, String compensationJobId, long startedAt) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default void setWorkflowNodeCompensated(String runId, String nodeName, long completedAt) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default void setWorkflowNodeCompensationFailed(String runId, String nodeName, String error, long completedAt) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker that dispatches jobs to {@code bridge}; returns its control. */
     WorkerControl startWorker(WorkerBridge bridge, String optionsJson);

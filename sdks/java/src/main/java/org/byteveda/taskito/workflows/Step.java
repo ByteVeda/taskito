@@ -22,6 +22,7 @@ public final class Step {
     public final String condition;
     public final Condition callableCondition;
     public final Workflow subWorkflow;
+    public final String compensate;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -38,6 +39,7 @@ public final class Step {
         this.condition = builder.condition;
         this.callableCondition = builder.callableCondition;
         this.subWorkflow = builder.subWorkflow;
+        this.compensate = builder.compensate;
     }
 
     /** Begin a step bound to a typed task. */
@@ -71,6 +73,7 @@ public final class Step {
         private String condition;
         private Condition callableCondition;
         private Workflow subWorkflow;
+        private String compensate;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -189,6 +192,21 @@ public final class Step {
         public Builder subWorkflow(Workflow child) {
             this.subWorkflow = child;
             return this;
+        }
+
+        /**
+         * Register a rollback task for this step. If the run later fails, the saga
+         * runs {@code compensateTask} (with this step's result as its payload) to
+         * compensate it, rolling back completed steps in reverse order.
+         */
+        public Builder compensate(String compensateTask) {
+            this.compensate = compensateTask;
+            return this;
+        }
+
+        /** Register a typed rollback task; see {@link #compensate(String)}. */
+        public Builder compensate(Task<?> compensateTask) {
+            return compensate(compensateTask.name());
         }
 
         public Step build() {

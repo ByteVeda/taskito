@@ -475,6 +475,9 @@ final class DefaultTaskito implements Taskito {
         if (step.subWorkflow != null) {
             spec.put("subWorkflow", encodeChild(step.subWorkflow));
         }
+        if (step.compensate != null) {
+            spec.put("compensate", step.compensate);
+        }
         return spec;
     }
 
