@@ -5,6 +5,32 @@ All notable changes to taskito are documented here. The format is based on
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node, Java) and the
 underlying Rust crates are released together, in lock-step.
 
+## Unreleased
+
+### Changed
+
+- **Storage dequeue hardening.** Postgres now dequeues with `FOR UPDATE SKIP LOCKED`,
+  so concurrent workers claim disjoint jobs instead of all scanning the same
+  candidates and racing on the claim. `dequeue_batch` no longer reads payload blobs
+  during its candidate scan, and expired batch candidates are archived instead of
+  left stranded in the live table. No API or wire change.
+
+### Added
+
+- **Indexes for dead-letter and filter paths.** `dead_letter` (previously unindexed)
+  gains indexes on `failed_at` and `task_name`; `jobs` gains `(task_name, status)`
+  and partial indexes on `expires_at` / `namespace`; `archived_jobs` gains
+  `created_at` and `namespace`. Keeps DLQ, listing, and maintenance queries flat as
+  tables grow.
+
+### Removed
+
+- **`job_payloads` side table.** Reverted the 0.15 payload side table — payload and
+  result live inline on `jobs`/`archived_jobs` again. The narrow dequeue scan already
+  excludes the blobs by column selection (Postgres TOAST / SQLite overflow keep them
+  off the scanned pages), so the side table bought nothing. It is dropped on
+  migration; the inline columns were never removed, so no data moves.
+
 ## 0.17.0
 
 Feature release across the SDKs: periodic-task management, task-scoped dead-letter queries, and

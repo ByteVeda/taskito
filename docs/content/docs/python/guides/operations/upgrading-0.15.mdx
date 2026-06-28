@@ -145,24 +145,23 @@ and may take a few seconds on large databases.
 
 ## 6. Job payloads moved to a side table (`job_payloads`)
 
-**What changed.** Payload BLOBs are now stored in a separate `job_payloads`
-table rather than inline on the `jobs` row. The dequeue path no longer loads
-payload bytes for candidate jobs it does not ultimately claim, reducing I/O
-under contention.
+<Callout type="warn">
+  **Superseded.** A later release **removed** the `job_payloads` side table and
+  moved payloads back inline on `jobs`/`archived_jobs`. The narrow dequeue scan
+  already excludes the blobs by column selection, so the side table bought
+  nothing. The `jobs.payload`/`jobs.result` columns were never dropped, so the
+  removal moves no data and needs no upgrade window. This section is kept only as
+  history for databases that passed through 0.15.
+</Callout>
 
-This is transparent — no API change, no change to enqueue or result behaviour.
-
-**Rollback safety:** the `jobs.payload` and `jobs.result` columns are **kept
-and dual-written in 0.15**. If you need to roll back to a pre-0.15 binary, the
-data is still there.
-
-**0.16 column drop:** `jobs.payload` and `jobs.result` will be **dropped in the
-0.16 migration**. Plan your 0.16 upgrade window accordingly — once 0.16 is
-deployed you cannot roll that database back to 0.15.
+**What 0.15 did.** Payload BLOBs were stored in a separate `job_payloads` table
+rather than inline on the `jobs` row, dual-written alongside the kept
+`jobs.payload`/`jobs.result` columns. This was transparent — no API change, no
+change to enqueue or result behaviour.
 
 <Callout type="info">
-  Redis is unaffected by this change. The Redis backend stores job payloads
-  inline in the job JSON object and does not use the `job_payloads` table.
+  Redis was never affected: the Redis backend stores job payloads inline in the
+  job JSON object and never used a side table.
 </Callout>
 
 ## Upgrade checklist
