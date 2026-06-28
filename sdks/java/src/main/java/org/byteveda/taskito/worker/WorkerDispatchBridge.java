@@ -14,6 +14,9 @@ import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.JobInfo;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.middleware.TaskContext;
+import org.byteveda.taskito.resources.ResourceRuntime;
+import org.byteveda.taskito.resources.Resources;
+import org.byteveda.taskito.resources.TaskScope;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerBridge;
@@ -35,6 +38,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
     private final ExecutorService executor;
     private final Emitter emitter;
     private final List<Middleware> middleware;
+    private final ResourceRuntime resources;
     // Resolved once startWorker returns; job tasks await it before completing.
     private final CompletableFuture<WorkerControl> control = new CompletableFuture<>();
 
@@ -44,13 +48,15 @@ final class WorkerDispatchBridge implements WorkerBridge {
             Serializer serializer,
             ExecutorService executor,
             Emitter emitter,
-            List<Middleware> middleware) {
+            List<Middleware> middleware,
+            ResourceRuntime resources) {
         this.backend = backend;
         this.handlers = handlers;
         this.serializer = serializer;
         this.executor = executor;
         this.emitter = emitter;
         this.middleware = middleware;
+        this.resources = resources;
     }
 
     void bind(WorkerControl control) {
@@ -71,6 +77,12 @@ final class WorkerDispatchBridge implements WorkerBridge {
         }
         JobInfo job = new JobInfo(jobId, taskName, () -> loadMetadata(jobId));
         TaskContext context = new TaskContext(jobId, taskName, job);
+        // Bind a per-task resource scope around the handler; skip all wiring when
+        // no resources are registered (zero overhead for the common case).
+        TaskScope scope = resources.isEmpty() ? null : resources.createTaskScope();
+        if (scope != null) {
+            Resources.enter(scope);
+        }
         try {
             for (Middleware m : middleware) {
                 m.before(context);
@@ -86,6 +98,10 @@ final class WorkerDispatchBridge implements WorkerBridge {
                 m.onError(context, t);
             }
             bound.failJob(token, describe(t));
+        } finally {
+            if (scope != null) {
+                Resources.exit(scope); // unbind the thread + dispose task-scoped resources (LIFO)
+            }
         }
     }
 

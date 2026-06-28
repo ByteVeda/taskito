@@ -13,6 +13,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import org.byteveda.taskito.core.CoreFacade;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
@@ -29,6 +31,11 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.resources.ResourceContext;
+import org.byteveda.taskito.resources.ResourceDefinition;
+import org.byteveda.taskito.resources.ResourceRuntime;
+import org.byteveda.taskito.resources.ResourceScope;
+import org.byteveda.taskito.resources.ResourceStat;
 import org.byteveda.taskito.scheduling.PeriodicTask;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
@@ -55,6 +62,7 @@ final class DefaultTaskito implements Taskito {
     private final CoreFacade facade;
     private final Serializer serializer;
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
+    private final ResourceRuntime resources = new ResourceRuntime();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
@@ -71,6 +79,36 @@ final class DefaultTaskito implements Taskito {
     public Taskito use(Middleware middleware) {
         this.middleware.add(middleware);
         return this;
+    }
+
+    // ── Resources ────────────────────────────────────────────────────
+
+    @Override
+    public <T> Taskito resource(String name, Function<ResourceContext, T> factory) {
+        return resource(name, ResourceScope.WORKER, factory);
+    }
+
+    @Override
+    public <T> Taskito resource(String name, ResourceScope scope, Function<ResourceContext, T> factory) {
+        resources.register(name, new ResourceDefinition(factory::apply, scope, null));
+        return this;
+    }
+
+    @Override
+    public <T> Taskito resource(
+            String name, ResourceScope scope, Function<ResourceContext, T> factory, Consumer<T> dispose) {
+        resources.register(name, new ResourceDefinition(factory::apply, scope, value -> dispose.accept(cast(value))));
+        return this;
+    }
+
+    @Override
+    public Map<String, ResourceStat> resourceMetrics() {
+        return resources.metrics();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T cast(Object value) {
+        return (T) value;
     }
 
     // ── Producer ────────────────────────────────────────────────────
@@ -576,7 +614,7 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public Worker.Builder worker() {
-        return Worker.builder(backend, serializer, middleware);
+        return Worker.builder(backend, serializer, middleware, resources);
     }
 
     @Override

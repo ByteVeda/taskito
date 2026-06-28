@@ -19,6 +19,7 @@ import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.resources.ResourceRuntime;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerControl;
@@ -39,17 +40,21 @@ public final class Worker implements AutoCloseable {
     private final WorkerControl control;
     private final ExecutorService executor;
     private final WorkflowTracker tracker;
+    private final ResourceRuntime resources;
     private final CountDownLatch shutdown = new CountDownLatch(1);
     private boolean closed;
 
-    private Worker(WorkerControl control, ExecutorService executor, WorkflowTracker tracker) {
+    private Worker(
+            WorkerControl control, ExecutorService executor, WorkflowTracker tracker, ResourceRuntime resources) {
         this.control = control;
         this.executor = executor;
         this.tracker = tracker;
+        this.resources = resources;
     }
 
-    public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
-        return new Builder(backend, serializer, middleware);
+    public static Builder builder(
+            QueueBackend backend, Serializer serializer, List<Middleware> middleware, ResourceRuntime resources) {
+        return new Builder(backend, serializer, middleware, resources);
     }
 
     /** Stop dispatching; in-flight jobs continue to drain. */
@@ -109,6 +114,7 @@ public final class Worker implements AutoCloseable {
         if (tracker != null) {
             tracker.close(); // stop the gate-timeout scheduler
         }
+        resources.teardownWorker(); // dispose worker-scoped resources when the last lease drops
         shutdown.countDown();
     }
 
@@ -119,6 +125,7 @@ public final class Worker implements AutoCloseable {
         private final QueueBackend backend;
         private final Serializer serializer;
         private final List<Middleware> middleware;
+        private final ResourceRuntime resources;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
         private final Map<String, RetryPolicy> taskPolicies = new HashMap<>();
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
@@ -128,10 +135,11 @@ public final class Worker implements AutoCloseable {
         private Integer batchSize;
         private WorkflowTracker tracker;
 
-        Builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
+        Builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware, ResourceRuntime resources) {
             this.backend = backend;
             this.serializer = serializer;
             this.middleware = middleware;
+            this.resources = resources;
         }
 
         public <T, R> Builder handle(String taskName, Class<T> payloadType, TaskFunction<T, R> handler) {
@@ -233,10 +241,12 @@ public final class Worker implements AutoCloseable {
             Emitter emitter = new Emitter();
             listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
             WorkerDispatchBridge bridge =
-                    new WorkerDispatchBridge(backend, handlers, serializer, executor, emitter, middleware);
+                    new WorkerDispatchBridge(backend, handlers, serializer, executor, emitter, middleware, resources);
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
             bridge.bind(control);
-            return new Worker(control, executor, tracker);
+            // Lease worker resources only after the native worker started cleanly.
+            resources.acquireWorker();
+            return new Worker(control, executor, tracker, resources);
         }
 
         private String encodeOptions() {
