@@ -86,6 +86,7 @@ export function Hero() {
               <button
                 key={p.sdk}
                 type="button"
+                aria-pressed={p.sdk === sdk}
                 className={`langtab ${p.sdk === sdk ? "active" : ""}`.trim()}
                 onClick={() => setSdk(p.sdk)}
               >
