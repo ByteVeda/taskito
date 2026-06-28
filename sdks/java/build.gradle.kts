@@ -12,14 +12,15 @@ version = "0.18.0"
 
 java {
     // Sources + javadoc jars are added by the maven-publish plugin below.
-    // Compile to Java 11 bytecode with whatever JDK (>= 11) runs Gradle, rather
-    // than pinning a toolchain — `--release 11` also rejects post-11 stdlib APIs.
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    // Compile to Java 17 bytecode with whatever JDK (>= 17) runs Gradle, rather
+    // than pinning a toolchain — `--release 17` also rejects post-17 stdlib APIs.
+    // Floor is 17 so every Spring Boot 3 app can adopt the SDK.
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release.set(11)
+    options.release.set(17)
 }
 
 repositories {
