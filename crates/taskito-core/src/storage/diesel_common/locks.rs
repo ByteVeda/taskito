@@ -75,6 +75,35 @@ macro_rules! impl_diesel_lock_ops {
                 Ok(())
             }
 
+            /// Atomically transfer an existing claim from `expected_owner` to
+            /// `new_owner`. The `job_id` PK plus the `worker_id = expected_owner`
+            /// filter serialize concurrent rescuers: the first UPDATE rewrites the
+            /// owner, every other rescuer's filter no longer matches → 0 rows.
+            /// `claim_execution` is INSERT-only and cannot reclaim, so this is a
+            /// distinct primitive.
+            pub fn reclaim_execution(
+                &self,
+                job_id: &str,
+                expected_owner: &str,
+                new_owner: &str,
+            ) -> Result<bool> {
+                let mut conn = self.conn()?;
+                let now = now_millis();
+
+                let affected = diesel::update(
+                    execution_claims::table
+                        .filter(execution_claims::job_id.eq(job_id))
+                        .filter(execution_claims::worker_id.eq(expected_owner)),
+                )
+                .set((
+                    execution_claims::worker_id.eq(new_owner),
+                    execution_claims::claimed_at.eq(now),
+                ))
+                .execute(&mut conn)?;
+
+                Ok(affected > 0)
+            }
+
             /// Purge old execution claims. Returns count removed.
             pub fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {
                 let mut conn = self.conn()?;

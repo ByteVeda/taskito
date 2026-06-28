@@ -3,7 +3,7 @@ use log::{error, info, warn};
 use crate::error::Result;
 use crate::job::{now_millis, NewJob};
 use crate::periodic::{next_cron_time, next_cron_time_tz};
-use crate::storage::Storage;
+use crate::storage::{Storage, DEAD_WORKER_THRESHOLD_MS};
 
 use super::{JobResult, Scheduler};
 
@@ -43,6 +43,64 @@ impl Scheduler {
                 should_retry: true,
                 timed_out: true,
             })?;
+        }
+
+        // Fast-path recovery: requeue jobs whose worker died, without waiting
+        // for their full timeout. Log-and-continue so a failure here never
+        // aborts the rest of the sweep.
+        if let Err(e) = self.recover_orphaned_jobs(now) {
+            warn!("recover_orphaned_jobs error: {e}");
+        }
+
+        Ok(())
+    }
+
+    /// Requeue `Running` jobs whose claiming worker is no longer alive (crashed
+    /// without finishing). A surviving scheduler detects the dead owner via the
+    /// heartbeat table, atomically reclaims the orphaned claim — so exactly one
+    /// survivor rescues each job — then routes it through the normal
+    /// retry/dead-letter path.
+    fn recover_orphaned_jobs(&self, now: i64) -> Result<()> {
+        // Live owners = workers with a fresh heartbeat, plus self: a scheduler
+        // must never orphan its own in-flight jobs (covers the startup window
+        // before its first heartbeat row is written).
+        let mut live: Vec<String> = self
+            .storage
+            .list_workers()?
+            .into_iter()
+            .filter(|w| w.last_heartbeat >= now - DEAD_WORKER_THRESHOLD_MS)
+            .map(|w| w.worker_id)
+            .collect();
+        live.push(self.claim_owner.clone());
+
+        for (job, dead_owner) in self.storage.reap_orphaned_jobs(&live, now)? {
+            // Atomic election: only the survivor that wins the claim transfer
+            // requeues the job, so concurrent schedulers can't double-retry it.
+            match self
+                .storage
+                .reclaim_execution(&job.id, &dead_owner, &self.claim_owner)
+            {
+                Ok(true) => {
+                    let error = format!("worker {dead_owner} died; recovering in-flight job");
+                    if let Err(e) = self.handle_result(JobResult::Failure {
+                        job_id: job.id.clone(),
+                        error,
+                        retry_count: job.retry_count,
+                        max_retries: job.max_retries,
+                        task_name: job.task_name.clone(),
+                        wall_time_ns: 0,
+                        should_retry: true,
+                        timed_out: false,
+                    }) {
+                        warn!(
+                            "recover_orphaned_jobs: handle_result failed for {}: {e}",
+                            job.id
+                        );
+                    }
+                }
+                Ok(false) => {} // another survivor won the race
+                Err(e) => warn!("reclaim_execution failed for {}: {e}", job.id),
+            }
         }
 
         Ok(())

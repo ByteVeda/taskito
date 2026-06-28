@@ -23,8 +23,11 @@ const CONCURRENCY_RETRY_DELAY_MS: i64 = 500;
 /// catches up on the next tick rather than waiting for the stale-job reaper.
 const CHANNEL_BACKPRESSURE_RETRY_DELAY_MS: i64 = 100;
 
-/// Worker identifier recorded on execution claims taken by the scheduler.
-const SCHEDULER_CLAIM_OWNER: &str = "scheduler";
+/// Default execution-claim owner when the binding has not set the worker's id
+/// (tests / embedders that don't register a worker). Production bindings call
+/// [`Scheduler::set_claim_owner`] with the real `worker_id` so dead-worker
+/// recovery can attribute claims.
+pub(super) const SCHEDULER_CLAIM_OWNER: &str = "scheduler";
 
 impl Scheduler {
     pub(super) fn try_dispatch(&self, job_tx: &tokio::sync::mpsc::Sender<Job>) -> Result<bool> {
@@ -228,7 +231,7 @@ impl Scheduler {
     /// claim was actually taken; `Ok(false)` if it was already claimed by
     /// another scheduler **or** the claim attempt errored.
     fn claim_for_dispatch(&self, job: &Job) -> Result<bool> {
-        match self.storage.claim_execution(&job.id, SCHEDULER_CLAIM_OWNER) {
+        match self.storage.claim_execution(&job.id, &self.claim_owner) {
             Ok(true) => Ok(true),
             Ok(false) => Ok(false),
             Err(e) => {

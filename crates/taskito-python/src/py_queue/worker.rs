@@ -287,12 +287,17 @@ impl PyQueue {
             dlq_auto_retry_max: self.dlq_auto_retry_max,
             ..SchedulerConfig::default()
         };
+        // Resolve the worker id up front so the scheduler claims execution under
+        // it — dead-worker recovery attributes orphaned claims by this id, which
+        // must match the `register_worker`/`heartbeat` id below.
+        let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
         let mut scheduler = Scheduler::new(
             self.storage.clone(),
             queues,
             scheduler_config,
             self.namespace.clone(),
         );
+        scheduler.set_claim_owner(worker_id.clone());
 
         // Build retry filters dict from the Queue's _task_retry_filters
         let retry_filters = PyDict::new(py).into_any();
@@ -425,8 +430,8 @@ impl PyQueue {
         let scheduler_arc = Arc::new(scheduler);
         let scheduler_for_dispatch = scheduler_arc.clone();
 
-        // Generate or use the provided worker ID and register
-        let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        // Register the worker under the id resolved above (shared with the
+        // scheduler's claim owner).
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
         let pid = std::process::id() as i32;
         let _ = self.storage.register_worker(

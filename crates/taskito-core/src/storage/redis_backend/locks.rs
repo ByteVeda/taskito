@@ -5,6 +5,22 @@ use crate::error::Result;
 use crate::job::now_millis;
 use crate::storage::models::LockInfoRow;
 
+/// Lua script: atomically transfer an execution claim from `expected_owner`
+/// (ARGV[2]) to `new_owner` (ARGV[3]). The claim value is "{owner}:{ts}";
+/// returns 1 only if the current owner matches. KEYS[1] = claim key,
+/// KEYS[2] = the by-time index; ARGV[1] = job_id, ARGV[4] = now.
+const RECLAIM_CLAIM_SCRIPT: &str = r#"
+    local cur = redis.call('GET', KEYS[1])
+    if not cur then return 0 end
+    -- Owner is everything before the LAST ':' (the timestamp is a numeric
+    -- suffix); the owner itself may contain ':' (e.g. "host:pid").
+    local owner = string.match(cur, '^(.*):') or cur
+    if owner ~= ARGV[2] then return 0 end
+    redis.call('SET', KEYS[1], ARGV[3] .. ':' .. ARGV[4], 'PX', 86400000)
+    redis.call('ZADD', KEYS[2], ARGV[4], ARGV[1])
+    return 1
+"#;
+
 /// Lua script: release lock only if owner matches.
 const RELEASE_LOCK_SCRIPT: &str = r#"
     local key = KEYS[1]
@@ -208,6 +224,33 @@ impl RedisStorage {
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(())
+    }
+
+    /// Atomically transfer a claim from `expected_owner` to `new_owner`. Returns
+    /// `true` only if the claim was held by `expected_owner` — the single GET/SET
+    /// in the Lua script serializes concurrent rescuers so exactly one wins.
+    pub fn reclaim_execution(
+        &self,
+        job_id: &str,
+        expected_owner: &str,
+        new_owner: &str,
+    ) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let now = now_millis();
+        let ckey = self.key(&["exec_claim", job_id]);
+        let index_key = self.key(&["exec_claims", "by_time"]);
+
+        let result: i32 = redis::Script::new(RECLAIM_CLAIM_SCRIPT)
+            .key(&ckey)
+            .key(&index_key)
+            .arg(job_id)
+            .arg(expected_owner)
+            .arg(new_owner)
+            .arg(now)
+            .invoke(&mut conn)
+            .map_err(map_err)?;
+
+        Ok(result == 1)
     }
 
     pub fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {

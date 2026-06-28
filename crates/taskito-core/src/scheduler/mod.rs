@@ -149,6 +149,10 @@ pub struct Scheduler {
     shutdown: Arc<Notify>,
     paused_cache: Mutex<(HashSet<String>, Instant)>,
     namespace: Option<String>,
+    /// Owner id recorded on execution claims. Defaults to a placeholder; the
+    /// binding sets it to the process `worker_id` so dead-worker recovery can
+    /// attribute orphaned claims. See [`Self::set_claim_owner`].
+    claim_owner: String,
     /// Wake source for push-dispatch, installed before `run()`. Taken (moved
     /// out) once when the loop starts. `None` means the loop polls as today.
     #[cfg(feature = "push-dispatch")]
@@ -192,6 +196,7 @@ impl Scheduler {
             shutdown: Arc::new(Notify::new()),
             paused_cache: Mutex::new((HashSet::new(), Instant::now())),
             namespace,
+            claim_owner: poller::SCHEDULER_CLAIM_OWNER.to_string(),
             #[cfg(feature = "push-dispatch")]
             wake_source: Mutex::new(None),
             #[cfg(feature = "push-dispatch")]
@@ -201,6 +206,14 @@ impl Scheduler {
 
     pub fn storage(&self) -> &StorageBackend {
         &self.storage
+    }
+
+    /// Set the execution-claim owner to this process's `worker_id`. Bindings
+    /// call this right after construction so dead-worker recovery can identify
+    /// which worker owns each in-flight job. Must match the id passed to
+    /// `register_worker`/`heartbeat`.
+    pub fn set_claim_owner(&mut self, worker_id: String) {
+        self.claim_owner = worker_id;
     }
 
     pub fn shutdown_handle(&self) -> Arc<Notify> {
@@ -981,6 +994,108 @@ mod tests {
         // It should be rescheduled for retry (retry_count < max_retries)
         assert_eq!(reaped.status, JobStatus::Pending);
         assert_eq!(reaped.retry_count, 1);
+    }
+
+    fn retry_task_config(max_retries: i32) -> TaskConfig {
+        TaskConfig {
+            retry_policy: RetryPolicy {
+                max_retries,
+                base_delay_ms: 100,
+                max_delay_ms: 1000,
+                custom_delays_ms: None,
+            },
+            rate_limit: None,
+            circuit_breaker: None,
+            max_concurrent: None,
+        }
+    }
+
+    /// A Running job whose claim owner is a dead worker (no live heartbeat) is
+    /// requeued by `recover_orphaned_jobs` without waiting for its timeout.
+    #[test]
+    fn test_recover_orphaned_jobs_requeues_dead_worker_job() {
+        let mut scheduler = test_scheduler();
+        scheduler.set_claim_owner("survivor".to_string());
+        scheduler.register_task("orphan_task".to_string(), retry_task_config(3));
+
+        let job = scheduler.storage.enqueue(make_job("orphan_task")).unwrap();
+        // Move to Running and record a claim owned by a worker that never
+        // heartbeats (simulating a crashed worker). No workers are registered,
+        // so the live set is just the survivor → this claim is orphaned.
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap()
+            .unwrap();
+        assert!(scheduler
+            .storage
+            .claim_execution(&job.id, "dead-worker")
+            .unwrap());
+
+        scheduler.reap_stale().unwrap();
+
+        let recovered = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(recovered.status, JobStatus::Pending);
+        assert_eq!(recovered.retry_count, 1);
+        // The orphaned claim was reclaimed then cleared on requeue.
+        assert!(scheduler
+            .storage
+            .list_claims_by_worker("dead-worker")
+            .unwrap()
+            .is_empty());
+    }
+
+    /// A scheduler must never orphan its OWN in-flight jobs (self-rescue guard),
+    /// even before its first heartbeat row exists.
+    #[test]
+    fn test_recover_orphaned_jobs_skips_own_claims() {
+        let mut scheduler = test_scheduler();
+        scheduler.set_claim_owner("survivor".to_string());
+        scheduler.register_task("self_task".to_string(), retry_task_config(3));
+
+        let job = scheduler.storage.enqueue(make_job("self_task")).unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap()
+            .unwrap();
+        // Claim owned by this scheduler's own id.
+        assert!(scheduler
+            .storage
+            .claim_execution(&job.id, "survivor")
+            .unwrap());
+
+        scheduler.reap_stale().unwrap();
+
+        let still = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+        assert_eq!(still.status, JobStatus::Running);
+        assert_eq!(still.retry_count, 0);
+    }
+
+    /// An orphan with no retries left is dead-lettered, not requeued.
+    #[test]
+    fn test_recover_orphaned_jobs_dead_letters_when_exhausted() {
+        let mut scheduler = test_scheduler();
+        scheduler.set_claim_owner("survivor".to_string());
+        scheduler.register_task("exhausted_task".to_string(), retry_task_config(0));
+
+        let mut nj = make_job("exhausted_task");
+        nj.max_retries = 0;
+        let job = scheduler.storage.enqueue(nj).unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap()
+            .unwrap();
+        assert!(scheduler
+            .storage
+            .claim_execution(&job.id, "dead-worker")
+            .unwrap());
+
+        scheduler.reap_stale().unwrap();
+
+        let dead = scheduler.storage.list_dead(10, 0).unwrap();
+        assert!(dead.iter().any(|d| d.original_job_id == job.id));
     }
 
     #[test]
