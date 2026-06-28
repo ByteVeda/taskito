@@ -10,7 +10,12 @@ All notable changes to taskito are documented here. The format is based on
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node, Java) and the
 underlying Rust crates are released together, in lock-step.
 
-## Unreleased
+## 0.18.0
+
+Reliability and storage release: Postgres dequeues with `SKIP LOCKED`, crashed workers'
+in-flight jobs are recovered within ~30s instead of waiting their full timeout, and the
+dead-letter and filter paths are indexed. The internal `job_payloads` side table was removed
+(payloads inline again). No public API or wire-format change.
 
 ### Changed
 
