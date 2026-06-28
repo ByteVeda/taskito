@@ -1,5 +1,6 @@
 package org.byteveda.taskito.worker;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -11,8 +12,12 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import org.byteveda.taskito.autoscale.AutoscaleOptions;
+import org.byteveda.taskito.autoscale.Autoscaler;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.Emitter;
@@ -41,15 +46,21 @@ public final class Worker implements AutoCloseable {
     private final ExecutorService executor;
     private final WorkflowTracker tracker;
     private final ResourceRuntime resources;
+    private final Autoscaler autoscaler;
     private final CountDownLatch shutdown = new CountDownLatch(1);
     private boolean closed;
 
     private Worker(
-            WorkerControl control, ExecutorService executor, WorkflowTracker tracker, ResourceRuntime resources) {
+            WorkerControl control,
+            ExecutorService executor,
+            WorkflowTracker tracker,
+            ResourceRuntime resources,
+            Autoscaler autoscaler) {
         this.control = control;
         this.executor = executor;
         this.tracker = tracker;
         this.resources = resources;
+        this.autoscaler = autoscaler;
     }
 
     public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
@@ -104,6 +115,9 @@ public final class Worker implements AutoCloseable {
             return;
         }
         closed = true;
+        if (autoscaler != null) {
+            autoscaler.close(); // stop resizing before we tear the pool down
+        }
         control.stop(); // stop scheduling new work
         executor.shutdown(); // stop accepting; let running handlers finish
         try {
@@ -138,6 +152,7 @@ public final class Worker implements AutoCloseable {
         private Integer channelCapacity;
         private Integer batchSize;
         private WorkflowTracker tracker;
+        private AutoscaleOptions autoscale;
 
         Builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware, ResourceRuntime resources) {
             this.backend = backend;
@@ -206,6 +221,16 @@ public final class Worker implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Autoscale the handler pool between {@code min} and {@code max} threads
+         * based on queue depth. Replaces the fixed/cached pool with a resizable
+         * one driven by an {@link Autoscaler}.
+         */
+        public Builder autoscale(AutoscaleOptions options) {
+            this.autoscale = options;
+            return this;
+        }
+
         public Builder on(EventName name, Consumer<OutcomeEvent> listener) {
             listeners.computeIfAbsent(name, key -> new ArrayList<>()).add(listener);
             return this;
@@ -240,8 +265,21 @@ public final class Worker implements AutoCloseable {
         }
 
         public Worker start() {
-            ExecutorService executor =
-                    concurrency > 0 ? Executors.newFixedThreadPool(concurrency) : Executors.newCachedThreadPool();
+            Autoscaler scaler = null;
+            ExecutorService executor;
+            if (autoscale != null) {
+                ThreadPoolExecutor pool = new ThreadPoolExecutor(
+                        autoscale.minWorkers(),
+                        autoscale.maxWorkers(),
+                        60L,
+                        TimeUnit.SECONDS,
+                        new LinkedBlockingQueue<>());
+                scaler = new Autoscaler(pool, this::currentDepth, autoscale);
+                executor = pool;
+            } else {
+                executor =
+                        concurrency > 0 ? Executors.newFixedThreadPool(concurrency) : Executors.newCachedThreadPool();
+            }
             Emitter emitter = new Emitter();
             listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
             WorkerDispatchBridge bridge =
@@ -250,7 +288,20 @@ public final class Worker implements AutoCloseable {
             bridge.bind(control);
             // Lease worker resources only after the native worker started cleanly.
             resources.acquireWorker();
-            return new Worker(control, executor, tracker, resources);
+            if (scaler != null) {
+                scaler.start();
+            }
+            return new Worker(control, executor, tracker, resources, scaler);
+        }
+
+        /** Outstanding work (pending + running) read from the backend's stats. */
+        private long currentDepth() {
+            try {
+                JsonNode stats = JSON.readTree(backend.statsJson());
+                return stats.path("pending").asLong() + stats.path("running").asLong();
+            } catch (Exception e) {
+                return 0;
+            }
         }
 
         private String encodeOptions() {
