@@ -1,18 +1,22 @@
 ---
 title: Worker Pool
-description: "How the scheduler dispatches jobs to Python task functions across threads and async runtimes."
+description: "How the scheduler dispatches jobs to your task functions across threads and async runtimes."
 ---
 
-The worker pool dispatches jobs from the scheduler to Python task functions.
+The worker pool dispatches jobs from the scheduler to <SdkName /> task
+functions.
 
 <WorkerDispatch />
 
 ## Design decisions
 
-- **OS threads, not Python threads**: sync workers are Rust `std::thread` threads.
-  The GIL is only acquired when calling Python task code.
 - **Bounded channels**: both job and result channels are bounded to `workers × 2`
   to provide backpressure.
+
+<SdkOnly sdk="python">
+
+- **OS threads, not Python threads**: sync workers are Rust `std::thread` threads.
+  The GIL is only acquired when calling Python task code.
 - **GIL isolation**: each sync worker acquires the GIL independently using
   `Python::with_gil()`. The scheduler and result handler release the GIL via
   `py.allow_threads()`.
@@ -23,3 +27,19 @@ The worker pool dispatches jobs from the scheduler to Python task functions.
 - **Context isolation**: sync tasks use `threading.local` for `current_job`;
   async tasks use `contextvars.ContextVar`, which is properly scoped across
   `await` boundaries and isolated between concurrent coroutines.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+- **OS threads for sync, no GIL**: sync handlers run on a Rust `std::thread`
+  pool owned by the core, independent across workers — there's no global lock to
+  coordinate.
+- **Native async dispatch**: `async` handlers bypass the thread pool. They run
+  on your Node event loop as independent async invocations; each returned promise
+  is awaited and its result bridged back into the Rust scheduler.
+- **Context isolation**: the running job's context (`currentJob()`) is carried
+  with `AsyncLocalStorage`, so it stays correct across `await` boundaries and
+  between concurrently dispatched jobs.
+
+</SdkOnly>

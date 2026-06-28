@@ -1,12 +1,14 @@
 import { type CSSProperties, Fragment, type ReactNode } from "react";
+import { SdkBinding, SdkName, SdkSwap } from "@/components/sdk-text";
 
 // Layered architecture stack — exact port of the prototype's `.archstack` HTML
-// (semantic layers + PyO3/store boundaries as direct children).
+// (semantic layers + binding/store boundaries as direct children). The
+// user-facing layer adapts to the active SDK via the SDK-text atoms.
 
 type Kind = "py" | "rust" | "store" | "";
 
 interface Layer {
-  tag: string;
+  tag: ReactNode;
   /** Pill colour: `.ltag t-*`. */
   tagKind?: Kind;
   /** `.layer` modifier; defaults to `tagKind`. The prototype sometimes pairs a
@@ -68,13 +70,25 @@ export function ArchitectureStack() {
       }
       layers={[
         {
-          tag: "Python",
+          tag: <SdkName />,
           tagKind: "py",
           title: "User-facing API",
           body: (
             <>
-              <code>Queue</code>, <code>@task</code>, <code>.delay()</code>,
-              results, workflows, resources — the surface you write against.
+              <code>Queue</code>,{" "}
+              <SdkSwap
+                python={
+                  <>
+                    <code>@task</code>, <code>.delay()</code>
+                  </>
+                }
+                node={
+                  <>
+                    <code>.task()</code>, <code>.enqueue()</code>
+                  </>
+                }
+              />
+              , results, workflows, resources — the surface you write against.
             </>
           ),
           role: "what you write",
@@ -83,7 +97,12 @@ export function ArchitectureStack() {
           tag: "Rust",
           tagKind: "rust",
           title: "Engine",
-          body: "Scheduler, dispatcher, worker pool, rate limiter — Tokio runtime, OS-thread pool, near-zero Python overhead.",
+          body: (
+            <>
+              Scheduler, dispatcher, worker pool, rate limiter — Tokio runtime,
+              OS-thread pool, near-zero <SdkName /> overhead.
+            </>
+          ),
           role: "where the work runs",
         },
         {
@@ -97,7 +116,9 @@ export function ArchitectureStack() {
       bounds={[
         <>
           <span className="bdir">↓</span>
-          <span className="pyo3">PyO3 boundary</span>
+          <span className="pyo3">
+            <SdkBinding /> boundary
+          </span>
           <span className="bdir">↑</span>
         </>,
         <>
@@ -135,8 +156,19 @@ export function ResourcePipeline() {
             <>
               <code>ResourceRuntime</code> initializes resources at worker
               startup in topological order, then injects requested ones (via{" "}
-              <code>inject=</code> or <code>Inject["name"]</code>) as kwargs.
-              Task-scoped resources come from a semaphore pool.
+              <SdkSwap
+                python={
+                  <>
+                    <code>inject=</code> or <code>Inject["name"]</code>
+                  </>
+                }
+                node={
+                  <>
+                    <code>inject:</code> or <code>useResource()</code>
+                  </>
+                }
+              />
+              ). Task-scoped resources come from a semaphore pool.
             </>
           ),
         },

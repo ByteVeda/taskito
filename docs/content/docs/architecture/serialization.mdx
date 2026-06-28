@@ -1,10 +1,13 @@
 ---
 title: Serialization
-description: "Pluggable serializers for task arguments and results, with Cloudpickle as the default."
+description: "Pluggable serializers for task arguments and results, with a per-SDK default codec."
 ---
 
-taskito uses a pluggable serializer for task arguments and results. The default is
-`CloudpickleSerializer`, which supports lambdas, closures, and complex Python objects.
+taskito uses a pluggable serializer for task arguments and results. The default
+is <SdkSwap python={<code>CloudpickleSerializer</code>} node={<code>JsonSerializer</code>} />,
+which <SdkSwap python="supports lambdas, closures, and complex Python objects" node="emits human-readable JSON bytes" />.
+
+<SdkOnly sdk="python">
 
 ```python
 from taskito import Queue, JsonSerializer
@@ -13,20 +16,48 @@ from taskito import Queue, JsonSerializer
 queue = Queue(serializer=JsonSerializer())
 ```
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```ts
+import { Queue, MsgpackSerializer } from "@byteveda/taskito";
+
+// Use msgpack for compact, binary payloads
+new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
+```
+
+</SdkOnly>
+
 ## Built-in serializers
+
+<SdkOnly sdk="python">
 
 | Serializer | Format | Best for |
 |---|---|---|
 | `CloudpickleSerializer` (default) | Binary (pickle) | Complex Python objects, lambdas, closures |
 | `JsonSerializer` | JSON | Simple types, cross-language interop, debugging |
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Serializer | Format | Best for |
+|---|---|---|
+| `JsonSerializer` (default) | JSON | Simple types, cross-language interop, debugging |
+| `MsgpackSerializer` | Binary (msgpack) | Compact payloads, smaller storage |
+| `SignedSerializer` | Wraps a codec + HMAC-SHA256 | Tamper detection |
+| `EncryptedSerializer` | Wraps a codec + AES-256-GCM | Encrypted, authenticated payloads |
+
+</SdkOnly>
+
 ## Custom serializers
 
-Implement the `Serializer` protocol (`dumps(obj) -> bytes`, `loads(data) -> Any`).
+Implement the `Serializer` interface with <SdkSwap python={<><code>dumps(obj)</code> / <code>loads(data)</code></>} node={<><code>serialize(value)</code> / <code>deserialize(bytes)</code></>} /> methods.
 
 ## What gets serialized
 
-- **Arguments**: `serializer.dumps((args, kwargs))` — stored as BLOB in `payload`
-- **Results**: `serializer.dumps(return_value)` — stored as BLOB in `result`
+- **Arguments**: serialized and stored as a BLOB in `payload`
+- **Results**: serialized and stored as a BLOB in `result`
 - **Periodic task args**: serialized at registration time, stored as BLOBs in
   `periodic_tasks.args`

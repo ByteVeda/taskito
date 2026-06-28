@@ -1,6 +1,8 @@
+import { SdkSwap } from "@/components/sdk-text";
+
 // Worker pool — exact port of the prototype's `.archstack` + `.fork-route` +
 // `.archfork` (scheduler routes by task type; sync OS-thread pool vs async pool).
-// `architecture/worker-pool.mdx`.
+// The per-runtime details adapt to the active SDK. `architecture/worker-pool.mdx`.
 export function WorkerDispatch() {
   return (
     <div className="archstack">
@@ -11,12 +13,18 @@ export function WorkerDispatch() {
           <div className="ld">
             Dequeues a job, applies rate limits, then routes it{" "}
             <b>by task type</b> — sync functions to the thread pool,{" "}
-            <code>async def</code> functions to the async runtime.
+            <SdkSwap
+              python={<code>async def</code>}
+              node={<code>async</code>}
+            />{" "}
+            functions to the async runtime.
           </div>
         </div>
         <span className="lrole">routes by task type</span>
       </div>
-      <div className="fork-route">sync def &nbsp;·&nbsp; async def</div>
+      <div className="fork-route">
+        <SdkSwap python="sync def · async def" node="sync · async" />
+      </div>
       <div className="archfork">
         <div className="forkcol">
           <div className="forktag">bounded mpsc · workers × 2</div>
@@ -25,9 +33,23 @@ export function WorkerDispatch() {
             <div className="lbody">
               <div className="lt">OS-thread workers</div>
               <div className="ld">
-                Each sync worker is a Rust <code>std::thread</code>. The GIL is
-                acquired per task via <code>Python::with_gil()</code> —
-                independent across workers.
+                <SdkSwap
+                  python={
+                    <>
+                      Each sync worker is a Rust <code>std::thread</code>. The
+                      GIL is acquired per task via{" "}
+                      <code>Python::with_gil()</code> — independent across
+                      workers.
+                    </>
+                  }
+                  node={
+                    <>
+                      Sync handlers run on an OS-thread pool owned by the Rust
+                      core — independent across workers, with no event loop to
+                      block.
+                    </>
+                  }
+                />
               </div>
             </div>
           </div>
@@ -37,11 +59,26 @@ export function WorkerDispatch() {
           <div className="layer py">
             <span className="ltag t-py">Async pool</span>
             <div className="lbody">
-              <div className="lt">NativeAsyncPool</div>
+              <div className="lt">
+                <SdkSwap python="NativeAsyncPool" node="Native async pool" />
+              </div>
               <div className="ld">
-                <code>async def</code> tasks are dispatched to an{" "}
-                <code>AsyncTaskExecutor</code> on a Python daemon thread;{" "}
-                <code>PyResultSender</code> bridges results back.
+                <SdkSwap
+                  python={
+                    <>
+                      <code>async def</code> tasks are dispatched to an{" "}
+                      <code>AsyncTaskExecutor</code> on a Python daemon thread;{" "}
+                      <code>PyResultSender</code> bridges results back.
+                    </>
+                  }
+                  node={
+                    <>
+                      <code>async</code> handlers run on a native async pool —
+                      no thread per job; each runs on your Node event loop and
+                      its promise is awaited back into the core.
+                    </>
+                  }
+                />
               </div>
             </div>
           </div>

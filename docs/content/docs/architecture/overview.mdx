@@ -1,11 +1,11 @@
 ---
 title: Overview
-description: "Hybrid Python/Rust architecture: Python API on top, Rust engine underneath."
+description: "Hybrid architecture: a thin language SDK on top, one Rust engine underneath."
 ---
 
-taskito is a hybrid Python/Rust system. Python provides the user-facing API. Rust
-handles all the heavy lifting: storage, scheduling, dispatch, rate limiting, and
-worker management.
+taskito is a hybrid <SdkLang />/Rust system. <SdkName /> provides the
+user-facing API. Rust handles all the heavy lifting: storage, scheduling,
+dispatch, rate limiting, and worker management.
 
 <ArchitectureStack />
 
@@ -14,7 +14,7 @@ worker management.
 | Page | What it covers |
 |---|---|
 | [Job Lifecycle](/architecture/job-lifecycle) | State machine, status codes, transitions |
-| [Worker Pool](/architecture/worker-pool) | Thread architecture, async dispatch, GIL management |
+| [Worker Pool](/architecture/worker-pool) | Thread architecture, async dispatch, concurrency model |
 | [Storage Layer](/architecture/storage) | SQLite pragmas, schema, indexes, Postgres differences |
 | [Scheduler](/architecture/scheduler) | Poll loop, dispatch flow, periodic tasks |
 | [Resource System](/architecture/resources) | Argument interception, DI, proxy reconstruction |
