@@ -2,7 +2,7 @@ package org.byteveda.taskito.serialization;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Type;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.SerializationException;
 
 /** Default {@link Serializer}: JSON via Jackson. */
 public final class JsonSerializer implements Serializer {
@@ -21,7 +21,7 @@ public final class JsonSerializer implements Serializer {
         try {
             return mapper.writeValueAsBytes(value);
         } catch (Exception e) {
-            throw new TaskitoException("failed to serialize payload", e);
+            throw new SerializationException("failed to serialize payload", e);
         }
     }
 
@@ -30,7 +30,7 @@ public final class JsonSerializer implements Serializer {
         try {
             return mapper.readValue(bytes, type);
         } catch (Exception e) {
-            throw new TaskitoException("failed to deserialize payload", e);
+            throw new SerializationException("failed to deserialize payload", e);
         }
     }
 
@@ -39,7 +39,7 @@ public final class JsonSerializer implements Serializer {
         try {
             return mapper.readValue(bytes, mapper.getTypeFactory().constructType(type));
         } catch (Exception e) {
-            throw new TaskitoException("failed to deserialize payload", e);
+            throw new SerializationException("failed to deserialize payload", e);
         }
     }
 }

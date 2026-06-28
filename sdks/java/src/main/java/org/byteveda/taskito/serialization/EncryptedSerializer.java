@@ -6,7 +6,7 @@ import java.util.Arrays;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.CryptoException;
 
 /**
  * Wraps a delegate serializer with AES-GCM encryption. Each payload is prefixed
@@ -40,7 +40,7 @@ public final class EncryptedSerializer implements Serializer {
             System.arraycopy(ciphertext, 0, out, IV_LENGTH, ciphertext.length);
             return out;
         } catch (Exception e) {
-            throw new TaskitoException("encryption failed", e);
+            throw new CryptoException("encryption failed", e);
         }
     }
 
@@ -57,7 +57,7 @@ public final class EncryptedSerializer implements Serializer {
     /** Strip the IV, decrypt + authenticate (GCM), and return the plaintext. */
     private byte[] decrypt(byte[] bytes) {
         if (bytes.length < IV_LENGTH) {
-            throw new TaskitoException("encrypted payload is too short");
+            throw new CryptoException("encrypted payload is too short");
         }
         try {
             byte[] iv = Arrays.copyOfRange(bytes, 0, IV_LENGTH);
@@ -66,7 +66,7 @@ public final class EncryptedSerializer implements Serializer {
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
             return cipher.doFinal(ciphertext);
         } catch (Exception e) {
-            throw new TaskitoException("decryption failed", e);
+            throw new CryptoException("decryption failed", e);
         }
     }
 }

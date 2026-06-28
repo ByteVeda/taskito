@@ -14,6 +14,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.byteveda.taskito.core.CoreFacade;
+import org.byteveda.taskito.errors.SerializationException;
+import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
@@ -377,7 +379,7 @@ final class DefaultTaskito implements Taskito {
                 // A payloadless structural step (stepAfter) must get its payload at
                 // submit; fail fast rather than enqueue a null-payload job.
                 if (payload == null && !suppliedPayloads.containsKey(step.name)) {
-                    throw new TaskitoException("workflow step '" + step.name
+                    throw new WorkflowException("workflow step '" + step.name
                             + "' has no payload; supply one via submitWorkflow(wf, payloads)");
                 }
                 payloadNames.add(step.name);
@@ -547,7 +549,7 @@ final class DefaultTaskito implements Taskito {
         try {
             return VIEWS.writeValueAsString(value);
         } catch (Exception e) {
-            throw new TaskitoException("failed to encode request", e);
+            throw new SerializationException("failed to encode request", e);
         }
     }
 
@@ -555,7 +557,7 @@ final class DefaultTaskito implements Taskito {
         try {
             return VIEWS.readValue(json, type);
         } catch (Exception e) {
-            throw new TaskitoException("failed to decode native response", e);
+            throw new SerializationException("failed to decode native response", e);
         }
     }
 
@@ -564,7 +566,7 @@ final class DefaultTaskito implements Taskito {
         try {
             return VIEWS.readValue(json, type);
         } catch (Exception e) {
-            throw new TaskitoException("failed to decode native response", e);
+            throw new SerializationException("failed to decode native response", e);
         }
     }
 
@@ -573,7 +575,7 @@ final class DefaultTaskito implements Taskito {
         try {
             return VIEWS.readValue(json, type);
         } catch (Exception e) {
-            throw new TaskitoException("failed to decode native response", e);
+            throw new SerializationException("failed to decode native response", e);
         }
     }
 }

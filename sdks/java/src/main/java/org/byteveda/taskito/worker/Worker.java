@@ -13,7 +13,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.SerializationException;
+import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
@@ -71,7 +72,7 @@ public final class Worker implements AutoCloseable {
 
     private WorkflowTracker requireTracker() {
         if (tracker == null) {
-            throw new TaskitoException("worker is not tracking workflows; call trackWorkflows() on the builder");
+            throw new WorkflowException("worker is not tracking workflows; call trackWorkflows() on the builder");
         }
         return tracker;
     }
@@ -255,7 +256,7 @@ public final class Worker implements AutoCloseable {
             try {
                 return JSON.writeValueAsString(options);
             } catch (Exception e) {
-                throw new TaskitoException("failed to encode worker options", e);
+                throw new SerializationException("failed to encode worker options", e);
             }
         }
 

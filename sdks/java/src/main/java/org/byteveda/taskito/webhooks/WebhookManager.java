@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.byteveda.taskito.Taskito;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.WebhookException;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.Middleware;
 
@@ -118,7 +118,7 @@ public final class WebhookManager implements Middleware {
         try {
             return JSON.writeValueAsBytes(body);
         } catch (Exception e) {
-            throw new TaskitoException("webhook payload encoding failed", e);
+            throw new WebhookException("webhook payload encoding failed", e);
         }
     }
 }

@@ -18,7 +18,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.SerializationException;
+import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
@@ -308,7 +309,7 @@ public final class WorkflowTracker {
         if ("callable".equals(node.condition)) {
             Condition predicate = callableCondition(runId, node.name);
             if (predicate == null) {
-                throw new TaskitoException("callable condition for workflow node '" + node.name
+                throw new WorkflowException("callable condition for workflow node '" + node.name
                         + "' is not registered; track the workflow on the worker via trackWorkflows(workflow)");
             }
             return predicate.test(buildContext(runId, statuses));
@@ -401,7 +402,7 @@ public final class WorkflowTracker {
     private void createDeferredJobFor(String runId, PlanNode node) {
         byte[] payload = deferredPayload(runId, node.name);
         if (payload == null) {
-            throw new TaskitoException("no payload for deferred workflow node '" + node.name
+            throw new WorkflowException("no payload for deferred workflow node '" + node.name
                     + "'; register the workflow on the worker via trackWorkflows(workflow)");
         }
         backend.createDeferredJob(
@@ -509,10 +510,10 @@ public final class WorkflowTracker {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new TaskitoException("interrupted awaiting result for workflow job " + jobId, e);
+                throw new WorkflowException("interrupted awaiting result for workflow job " + jobId, e);
             }
         }
-        throw new TaskitoException("no result for workflow job " + jobId + " after 5s");
+        throw new WorkflowException("no result for workflow job " + jobId + " after 5s");
     }
 
     private Map<String, NodeSnapshot> statusMap(String runId) {
@@ -587,7 +588,7 @@ public final class WorkflowTracker {
         try {
             return json.readValue(raw, type);
         } catch (Exception e) {
-            throw new TaskitoException("failed to decode workflow data", e);
+            throw new SerializationException("failed to decode workflow data", e);
         }
     }
 
@@ -596,7 +597,7 @@ public final class WorkflowTracker {
         try {
             return json.readValue(raw, type);
         } catch (Exception e) {
-            throw new TaskitoException("failed to decode workflow plan", e);
+            throw new SerializationException("failed to decode workflow plan", e);
         }
     }
 

@@ -1,6 +1,6 @@
 package org.byteveda.taskito.events;
 
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.SerializationException;
 
 /** Terminal outcome of a job, delivered to worker event listeners. */
 public enum EventName {
@@ -21,7 +21,7 @@ public enum EventName {
             case "cancelled":
                 return CANCELLED;
             default:
-                throw new TaskitoException("unknown outcome kind: " + kind);
+                throw new SerializationException("unknown outcome kind: " + kind);
         }
     }
 }

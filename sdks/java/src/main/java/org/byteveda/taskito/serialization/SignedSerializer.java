@@ -5,7 +5,7 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.CryptoException;
 
 /**
  * Wraps a delegate serializer, prefixing each payload with an HMAC-SHA256 tag.
@@ -46,12 +46,12 @@ public final class SignedSerializer implements Serializer {
     /** Verify the HMAC tag (constant-time) and return the signed body. */
     private byte[] verify(byte[] bytes) {
         if (bytes.length < MAC_LENGTH) {
-            throw new TaskitoException("signed payload is too short");
+            throw new CryptoException("signed payload is too short");
         }
         byte[] mac = Arrays.copyOfRange(bytes, 0, MAC_LENGTH);
         byte[] body = Arrays.copyOfRange(bytes, MAC_LENGTH, bytes.length);
         if (!MessageDigest.isEqual(mac, mac(body))) {
-            throw new TaskitoException("signature mismatch");
+            throw new CryptoException("signature mismatch");
         }
         return body;
     }
@@ -62,7 +62,7 @@ public final class SignedSerializer implements Serializer {
             mac.init(new SecretKeySpec(key, ALGORITHM));
             return mac.doFinal(body);
         } catch (Exception e) {
-            throw new TaskitoException("HMAC computation failed", e);
+            throw new CryptoException("HMAC computation failed", e);
         }
     }
 }
