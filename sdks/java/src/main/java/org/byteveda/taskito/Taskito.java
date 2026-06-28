@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -33,7 +35,9 @@ import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceScope;
 import org.byteveda.taskito.resources.ResourceStat;
 import org.byteveda.taskito.scheduling.PeriodicTask;
+import org.byteveda.taskito.serialization.CodecSerializer;
 import org.byteveda.taskito.serialization.JsonSerializer;
+import org.byteveda.taskito.serialization.PayloadCodec;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
@@ -252,6 +256,7 @@ public interface Taskito extends AutoCloseable {
 
         private final Map<String, Object> options = new LinkedHashMap<>();
         private Serializer serializer = new JsonSerializer();
+        private final List<PayloadCodec> codecs = new ArrayList<>();
 
         public Builder backend(String backend) {
             // Normalize at the boundary so callers may pass "SQLite"/"REDIS"; the
@@ -311,9 +316,24 @@ public interface Taskito extends AutoCloseable {
             return this;
         }
 
+        /**
+         * Apply payload codecs (compress/encrypt/sign) around the serializer, in
+         * order on the way out and reversed on the way in. The same chain must be
+         * configured on producers and workers. Returns {@code this}.
+         */
+        public Builder codec(PayloadCodec... codecs) {
+            this.codecs.addAll(Arrays.asList(codecs));
+            return this;
+        }
+
+        /** The serializer wrapped in the configured codec chain (if any). */
+        private Serializer effectiveSerializer() {
+            return codecs.isEmpty() ? serializer : new CodecSerializer(serializer, codecs);
+        }
+
         /** Open over an explicit backend, e.g. an in-memory fake in tests. */
         public Taskito open(QueueBackend backend) {
-            return new DefaultTaskito(backend, serializer);
+            return new DefaultTaskito(backend, effectiveSerializer());
         }
 
         /** Open the native backend described by the configured options. */
@@ -325,7 +345,7 @@ public interface Taskito extends AutoCloseable {
             } else if (!options.containsKey("dsn")) {
                 throw new ConfigurationException("url (dsn) is required");
             }
-            return new DefaultTaskito(JniQueueBackend.open(encodeOptions()), serializer);
+            return new DefaultTaskito(JniQueueBackend.open(encodeOptions()), effectiveSerializer());
         }
 
         /** Create the SQLite file's parent directory (skip in-memory databases). */
