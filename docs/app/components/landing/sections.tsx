@@ -154,7 +154,6 @@ export function HowItWorks() {
             ))}
           </div>
           <div className="returnlane">
-            <span className="rspark" />
             <span className="rlabel">result written back to the store</span>
           </div>
         </div>
@@ -397,6 +396,7 @@ function InstallPill({ cmd }: { cmd: string }) {
 }
 
 export function CTA() {
+  const sdk = useActiveSdk();
   return (
     <section className="section">
       <div className="cta-wrap reveal">
@@ -414,7 +414,7 @@ export function CTA() {
           <InstallPill cmd="pnpm add @byteveda/taskito" />
         </div>
         <div className="btns">
-          <Link className="btn pri" to="/python/getting-started/quickstart">
+          <Link className="btn pri" to={`/${sdk}/getting-started/quickstart`}>
             Start the quickstart →
           </Link>
           <Link className="btn sec" to="/resources/comparison">

@@ -1,5 +1,7 @@
 // Landing-page copy + code, ported verbatim from the prototype (index.html / landing.js).
 
+import type { Sdk } from "./sdk-registry";
+
 /** A worker-output line: glyph + text, optionally a result value + timing. */
 export interface OutLine {
   glyph: string;
@@ -10,8 +12,10 @@ export interface OutLine {
 }
 
 export interface LangPane {
-  id: "py" | "ts";
-  label: string;
+  /** Which SDK this snippet is for — selecting it sets the global SDK. */
+  sdk: Sdk;
+  /** Highlighter dialect for the snippet. */
+  lang: "py" | "ts";
   filename: string;
   install: string;
   code: string;
@@ -20,10 +24,13 @@ export interface LangPane {
   docLabel: string;
 }
 
+/** SDKs shown in the hero tab strip as "Soon" (no pane yet). */
+export const HERO_COMING_SOON: string[] = ["Java"];
+
 export const HERO_PANES: LangPane[] = [
   {
-    id: "py",
-    label: "Python",
+    sdk: "python",
+    lang: "py",
     filename: "tasks.py",
     install: "pip install taskito",
     code: `from taskito import Queue
@@ -55,8 +62,8 @@ print(job.result())   # → 5`,
     docLabel: "Read the Python quickstart",
   },
   {
-    id: "ts",
-    label: "Node.js",
+    sdk: "node",
+    lang: "ts",
     filename: "tasks.ts",
     install: "pnpm add taskito",
     code: `import { Queue } from "taskito";

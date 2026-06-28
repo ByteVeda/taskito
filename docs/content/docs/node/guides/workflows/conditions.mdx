@@ -51,11 +51,7 @@ event, submit and execute may be different processes.
 <Mermaid
   chart={`graph LR
     riskyStep --> celebrate["celebrate\n(on_success)"]
-    riskyStep --> recover["recover\n(on_failure)"]
-
-    classDef skip fill:#fef9c3,color:#713f12,stroke:#ca8a04
-    classDef run fill:#bbf7d0,color:#14532d,stroke:#16a34a
-    classDef fail fill:#fee2e2,color:#7f1d1d,stroke:#ef4444`}
+    riskyStep --> recover["recover\n(on_failure)"]`}
 />
 
 When `riskyStep` fails: `celebrate` → `skipped`, `recover` → enqueued and runs.

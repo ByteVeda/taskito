@@ -9,8 +9,7 @@ import {
 } from "react";
 import { Link } from "react-router";
 import { type Sdk, useSdk } from "@/hooks";
-
-const LABELS: Record<Sdk, string> = { python: "Python", node: "Node.js" };
+import { SDK_PROFILES } from "@/lib";
 
 /** Show children only under one SDK. All variants ship in the HTML; the inactive
  *  one is hidden by CSS off `<html data-sdk>` — no flash, no hydration mismatch. */
@@ -87,7 +86,7 @@ export function CodeTabs({ children }: { children: ReactNode }) {
               onClick={() => setSdk(variant)}
               onKeyDown={(e) => onKeyDown(e, index)}
             >
-              {LABELS[variant]}
+              {SDK_PROFILES[variant].label}
             </button>
           );
         })}

@@ -1,6 +1,7 @@
 import { Menu, Search } from "lucide-react";
 import { Link } from "react-router";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { useActiveSdk } from "@/hooks";
 
 // lucide dropped brand glyphs, so the GitHub mark is inlined.
 function GithubMark() {
@@ -17,11 +18,13 @@ function GithubMark() {
   );
 }
 
-const LINKS = [
-  { label: "Getting Started", href: "/python/getting-started/installation" },
-  { label: "Guides", href: "/python/guides" },
+// `sdk` links are SDK-relative (prefixed with the active /python|/node); the rest
+// are shared, SDK-neutral pages.
+const LINKS: { label: string; href: string; sdk?: boolean }[] = [
+  { label: "Getting Started", href: "getting-started/installation", sdk: true },
+  { label: "Guides", href: "guides", sdk: true },
   { label: "Architecture", href: "/architecture" },
-  { label: "API", href: "/python/api-reference" },
+  { label: "API", href: "api-reference", sdk: true },
   { label: "Changelog", href: "/resources/changelog" },
 ];
 
@@ -35,6 +38,7 @@ export function SiteNav({
   onSearch?: () => void;
   onMenu?: () => void;
 }) {
+  const sdk = useActiveSdk();
   return (
     <nav className="nav">
       {onMenu ? (
@@ -55,7 +59,7 @@ export function SiteNav({
       </Link>
       <div className="navlinks">
         {LINKS.map((l) => (
-          <Link key={l.href} to={l.href}>
+          <Link key={l.href} to={l.sdk ? `/${sdk}/${l.href}` : l.href}>
             {l.label}
           </Link>
         ))}

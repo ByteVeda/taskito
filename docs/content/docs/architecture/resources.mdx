@@ -1,11 +1,14 @@
 ---
 title: Resource System
-description: "The three-layer Python pipeline that intercepts arguments, injects DI, and reconstructs proxies."
+description: "How external dependencies are registered, injected into tasks, and reconstructed on the worker."
 ---
 
-The resource system is a three-layer Python pipeline that runs entirely outside Rust:
+The resource system injects external dependencies into tasks and runs entirely
+outside Rust. It is a three-layer <SdkName /> pipeline:
 
 <ResourcePipeline />
+
+<SdkOnly sdk="python">
 
 **Layer 1 — Argument Interception**: the `ArgumentInterceptor` walks every argument
 before serialization, applying the strategy registered for its type. CONVERT types
@@ -23,3 +26,25 @@ returned after the task finishes.
 live objects (file handles, HTTP sessions, cloud clients) into a JSON-serializable
 recipe, and how to reconstruct them on the worker before the task function is called.
 Recipes are optionally HMAC-signed for tamper detection.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+**Layer 1 — Registration**: resources are registered once with
+`queue.resource(name, factory, { scope })`. A factory may depend on another
+resource through the context it receives (`ctx.use("other")`), so the runtime
+builds them in topological dependency order.
+
+**Layer 2 — Worker Resource Runtime**: at worker startup the runtime initializes
+every registered resource. At dispatch time it resolves the ones a task asked
+for — declaratively via `inject:` (received as a trailing `deps` object) or
+imperatively via `useResource()` inside the handler. The `scope`
+(worker / task / …) decides each resource's lifetime.
+
+**Layer 3 — Resource Proxies**: handlers deconstruct live objects (file handles,
+HTTP sessions, cloud clients) into a serializable recipe and reconstruct them on
+the worker before the handler runs. Recipes are optionally HMAC-signed for
+tamper detection.
+
+</SdkOnly>

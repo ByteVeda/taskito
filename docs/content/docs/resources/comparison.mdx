@@ -3,16 +3,16 @@ title: Comparison
 description: "Taskito vs Celery, RQ, Dramatiq, Huey, TaskIQ — feature matrix and decision guide."
 ---
 
-**TL;DR**: Taskito is Celery without the broker. Rust scheduler, no
-Redis/RabbitMQ, lower latency, better concurrency. Start with SQLite, scale to
-Postgres when needed.
+**TL;DR**: Taskito is <SdkSwap python="Celery" node="BullMQ" /> without the
+broker. Rust scheduler, no Redis/RabbitMQ, lower latency, better concurrency.
+Start with SQLite, scale to Postgres when needed.
 
 ## Feature matrix
 
 | Feature | taskito | Celery | RQ | Dramatiq | Huey | TaskIQ |
 |---|---|---|---|---|---|---|
 | Broker required | **No** | Redis / RabbitMQ | Redis | Redis / RabbitMQ | Redis | Redis / RabbitMQ / Nats |
-| Core language | **Rust + Python** | Python | Python | Python | Python | Python |
+| Core language | **Rust + <SdkSwap python="Python" node="Node.js" />** | Python | Python | Python | Python | Python |
 | Priority queues | **Yes** | Yes | No | No | Yes | Yes |
 | Rate limiting | **Yes** | Yes | No | Yes | No | No |
 | Dead letter queue | **Yes** | No | Yes | No | No | No |
@@ -77,8 +77,11 @@ widely adopted.
 **Choose taskito** if you want zero-infrastructure simplicity on a single machine.
 **Choose Celery** if you need distributed workers, complex routing, or enterprise features.
 
-Looking to switch? See the <SdkLink to="guides/operations">Migrating from Celery</SdkLink> guide for a
-step-by-step walkthrough with side-by-side code examples.
+Looking to switch? See the{" "}
+<SdkLink to="guides/operations">
+  Migrating from <SdkSwap python="Celery" node="BullMQ" />
+</SdkLink>{" "}
+guide for a step-by-step walkthrough with side-by-side code examples.
 
 ### vs RQ (Redis Queue)
 

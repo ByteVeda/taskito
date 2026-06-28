@@ -5,16 +5,14 @@
 // without a hydration mismatch. The live value lives on `<html data-sdk>`; CSS
 // shows/hides each SDK's variants off that attribute.
 
-export type Sdk = "python" | "node";
+import { DEFAULT_SDK, isSdk, type Sdk } from "./sdk-registry";
+
+export type { Sdk };
 
 const KEY = "taskito-sdk";
-const DEFAULT: Sdk = "python";
+const DEFAULT = DEFAULT_SDK;
 
 const listeners = new Set<() => void>();
-
-function isSdk(value: string | null | undefined): value is Sdk {
-  return value === "python" || value === "node";
-}
 
 /** Resolve the active SDK: `?sdk=` query > localStorage > default. Used by the
  *  no-flash bootstrap in root.tsx and as the first client read. */

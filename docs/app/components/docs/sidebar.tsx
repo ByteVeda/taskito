@@ -6,6 +6,7 @@ import {
   type NavNode,
   navForSdk,
   type Sdk,
+  sdkLabels,
   sdkSwitchTarget,
 } from "@/lib";
 
@@ -16,10 +17,9 @@ function containsHref(node: NavNode, current: string): boolean {
   );
 }
 
-const SDK_LABELS: { id: Sdk; label: string }[] = [
-  { id: "python", label: "Python" },
-  { id: "node", label: "Node.js" },
-];
+// Switcher options come from the SDK registry, so a new language appears here
+// automatically.
+const SDK_LABELS = sdkLabels();
 
 /** Global SDK toggle. Sets the shared store (flips inline variants + this nav);
  *  on an SDK-specific page it also navigates to the counterpart page, on a shared
