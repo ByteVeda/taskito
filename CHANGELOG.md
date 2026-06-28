@@ -17,6 +17,12 @@ underlying Rust crates are released together, in lock-step.
 
 ### Added
 
+- **Fast in-flight recovery on worker death.** When a worker process crashes mid-job,
+  a surviving worker now requeues its `Running` jobs within ~30s of the missed
+  heartbeat (via retry / dead-letter) instead of waiting the job's full timeout. The
+  scheduler claims execution under its real `worker_id` and a new maintenance step
+  reclaims orphaned claims atomically, so concurrent survivors never double-rescue.
+  Works across Python, Node, and Java; SQLite/Postgres/Redis. No API change.
 - **Indexes for dead-letter and filter paths.** `dead_letter` (previously unindexed)
   gains indexes on `failed_at` and `task_name`; `jobs` gains `(task_name, status)`
   and partial indexes on `expires_at` / `namespace`; `archived_jobs` gains
