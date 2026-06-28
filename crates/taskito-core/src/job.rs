@@ -159,10 +159,9 @@ impl From<ArchivedJobRow> for Job {
 }
 
 impl Job {
-    /// Assemble a [`Job`] from a blob-free [`NarrowJobRow`] plus the
-    /// `payload`/`result` fetched separately from the `job_payloads` side
-    /// table. The narrow row carries every non-blob column; the caller
-    /// supplies the blobs after claiming the single job it wants.
+    /// Assemble a [`Job`] from a blob-free [`NarrowJobRow`] plus `payload`/
+    /// `result` supplied by the caller. The narrow row carries every non-blob
+    /// column; reap/listing paths that don't need the blobs pass empty ones.
     pub fn from_narrow(narrow: NarrowJobRow, payload: Vec<u8>, result: Option<Vec<u8>>) -> Self {
         Self {
             id: narrow.id,

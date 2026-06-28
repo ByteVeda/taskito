@@ -136,19 +136,23 @@ impl SqliteStorage {
         for sql in common_migrations::create_tables(&common_migrations::SQLITE) {
             diesel::sql_query(&sql).execute(&mut conn)?;
         }
-        for sql in common_migrations::create_indexes() {
-            diesel::sql_query(*sql).execute(&mut conn)?;
-        }
+        // Alters run before indexes: some indexed columns (e.g. `namespace`) are
+        // added here, so the index DDL must see the fully-widened tables.
         for sql in common_migrations::alter_statements(&common_migrations::SQLITE) {
             migration_alter(&mut conn, &sql)?;
+        }
+        for sql in common_migrations::create_indexes() {
+            diesel::sql_query(*sql).execute(&mut conn)?;
         }
         // Data backfills must fail loudly — a swallowed failure would leave
         // has_deps wrong and let dequeue bypass dependency enforcement.
         for sql in common_migrations::backfill_statements() {
             diesel::sql_query(*sql).execute(&mut conn)?;
         }
-        for sql in common_migrations::backfill_payload_side_table(&common_migrations::SQLITE) {
-            diesel::sql_query(&sql).execute(&mut conn)?;
+        // Drop legacy tables (e.g. the old `job_payloads` side table). `IF EXISTS`
+        // keeps it idempotent, so run it directly rather than via `migration_alter`.
+        for sql in common_migrations::drop_legacy_tables() {
+            diesel::sql_query(*sql).execute(&mut conn)?;
         }
         drop(conn);
 

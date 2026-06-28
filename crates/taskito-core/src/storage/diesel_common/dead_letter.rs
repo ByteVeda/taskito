@@ -218,17 +218,6 @@ macro_rules! impl_diesel_dead_letter_ops {
                         .values(&row)
                         .execute(conn)?;
 
-                    // Dual-write the payload to the 1:1 side table so the
-                    // re-enqueued job is readable through the narrow dequeue /
-                    // get_job join path.
-                    diesel::insert_into(super::super::schema::job_payloads::table)
-                        .values(&super::super::models::NewJobPayloadRow {
-                            job_id: &job.id,
-                            payload: &job.payload,
-                            result: None,
-                        })
-                        .execute(conn)?;
-
                     let deleted = diesel::delete(dead_letter::table.find(dead_id)).execute(conn)?;
                     if deleted == 0 {
                         // A concurrent retry won the race. Roll back the

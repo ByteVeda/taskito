@@ -3,8 +3,7 @@ use diesel::sqlite::SqliteConnection;
 
 use super::super::models::*;
 use super::super::schema::{
-    archived_jobs, job_dependencies, job_errors, job_payloads, jobs, replay_history, task_logs,
-    task_metrics,
+    archived_jobs, job_dependencies, job_errors, jobs, replay_history, task_logs, task_metrics,
 };
 use super::SqliteStorage;
 use crate::error::{QueueError, Result};
@@ -32,5 +31,30 @@ impl SqliteStorage {
     {
         let mut conn = self.conn()?;
         conn.immediate_transaction(f)
+    }
+
+    /// Load up to `limit` ready candidate rows (narrow — no payload/result
+    /// blobs) for a dequeue. SQLite needs no row-level locking clause: the
+    /// `BEGIN IMMEDIATE` write transaction already serializes writers, so two
+    /// dequeues never scan the same uncommitted candidates concurrently.
+    fn scan_dequeue_candidates(
+        conn: &mut SqliteConnection,
+        queue_name: &str,
+        now: i64,
+        namespace: Option<&str>,
+        limit: i64,
+    ) -> diesel::result::QueryResult<Vec<NarrowJobRow>> {
+        let mut query = jobs::table
+            .filter(jobs::queue.eq(queue_name))
+            .filter(jobs::status.eq(JobStatus::Pending as i32))
+            .filter(jobs::scheduled_at.le(now))
+            .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+            .limit(limit)
+            .into_boxed();
+        query = match namespace {
+            Some(ns) => query.filter(jobs::namespace.eq(ns)),
+            None => query.filter(jobs::namespace.is_null()),
+        };
+        query.select(NarrowJobRow::as_select()).load(conn)
     }
 }

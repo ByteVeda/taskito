@@ -3,8 +3,7 @@ use diesel::prelude::*;
 
 use super::super::models::*;
 use super::super::schema::{
-    archived_jobs, job_dependencies, job_errors, job_payloads, jobs, replay_history, task_logs,
-    task_metrics,
+    archived_jobs, job_dependencies, job_errors, jobs, replay_history, task_logs, task_metrics,
 };
 use super::PostgresStorage;
 use crate::error::{QueueError, Result};
@@ -25,5 +24,49 @@ impl PostgresStorage {
         let mut pooled = self.conn()?;
         let conn: &mut PgConnection = &mut pooled;
         conn.transaction(f)
+    }
+
+    /// Load up to `limit` ready candidate rows (narrow — no payload/result
+    /// blobs) for a dequeue, locking each with `FOR UPDATE SKIP LOCKED`.
+    ///
+    /// SKIP LOCKED is what lets many Postgres workers dequeue concurrently
+    /// without contending: each worker's scan skips rows another worker has
+    /// already locked in its open transaction, so they claim disjoint sets
+    /// instead of all racing on the same head rows. Runs inside the caller's
+    /// `write_transaction`, which holds the locks until the claim commits.
+    ///
+    /// Locking is not available on a boxed query in Diesel, so the namespace
+    /// filter is branched into two concrete (un-boxed) statements rather than
+    /// built dynamically.
+    fn scan_dequeue_candidates(
+        conn: &mut PgConnection,
+        queue_name: &str,
+        now: i64,
+        namespace: Option<&str>,
+        limit: i64,
+    ) -> diesel::result::QueryResult<Vec<NarrowJobRow>> {
+        let base = jobs::table
+            .filter(jobs::queue.eq(queue_name))
+            .filter(jobs::status.eq(JobStatus::Pending as i32))
+            .filter(jobs::scheduled_at.le(now));
+
+        match namespace {
+            Some(ns) => base
+                .filter(jobs::namespace.eq(ns))
+                .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+                .limit(limit)
+                .select(NarrowJobRow::as_select())
+                .for_update()
+                .skip_locked()
+                .load(conn),
+            None => base
+                .filter(jobs::namespace.is_null())
+                .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+                .limit(limit)
+                .select(NarrowJobRow::as_select())
+                .for_update()
+                .skip_locked()
+                .load(conn),
+        }
     }
 }

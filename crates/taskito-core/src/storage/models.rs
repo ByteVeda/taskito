@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use super::schema::{
     archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
-    execution_claims, job_dependencies, job_errors, job_payloads, jobs, periodic_tasks,
-    queue_state, rate_limits, replay_history, task_logs, task_metrics, workers,
+    execution_claims, job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits,
+    replay_history, task_logs, task_metrics, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -40,7 +40,9 @@ pub struct JobRow {
 /// A row in the `jobs` table with every column EXCEPT the `payload`/`result`
 /// blobs. The hot dequeue candidate scan, reap, and listing paths select this
 /// so claiming one job never reads up to 100 discarded payload blobs into heap.
-/// The blobs live in the 1:1 `job_payloads` side table.
+/// The blobs live inline in `jobs.payload`/`jobs.result` and are loaded (via the
+/// full [`JobRow`]) only for the single claimed winner. Postgres TOAST and SQLite
+/// overflow pages keep them off the pages a narrow select scans.
 #[derive(Queryable, Selectable, Debug, Clone)]
 #[diesel(table_name = jobs)]
 pub struct NarrowJobRow {
@@ -66,24 +68,6 @@ pub struct NarrowJobRow {
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<String>,
     pub has_deps: bool,
-}
-
-/// A row in the 1:1 `job_payloads` side table (for SELECT queries).
-#[derive(Queryable, Selectable, Debug, Clone)]
-#[diesel(table_name = job_payloads)]
-pub struct JobPayloadRow {
-    pub job_id: String,
-    pub payload: Vec<u8>,
-    pub result: Option<Vec<u8>>,
-}
-
-/// Insertable struct for `job_payloads` side-table rows.
-#[derive(Insertable, Debug)]
-#[diesel(table_name = job_payloads)]
-pub struct NewJobPayloadRow<'a> {
-    pub job_id: &'a str,
-    pub payload: &'a [u8],
-    pub result: Option<&'a [u8]>,
 }
 
 /// Insertable struct for creating new jobs.
