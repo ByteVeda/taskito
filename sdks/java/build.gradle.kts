@@ -86,6 +86,11 @@ dependencies {
     api("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("info.picocli:picocli:4.7.6")
 
+    // Optional: the MessagePack serializer. Compiled against, not bundled — a
+    // consumer that uses MsgpackSerializer adds this dependency themselves.
+    compileOnly("org.msgpack:jackson-dataformat-msgpack:0.9.8")
+    testImplementation("org.msgpack:jackson-dataformat-msgpack:0.9.8")
+
     // Run the @TaskHandler processor over the tests so the generated companions
     // are exercised end-to-end. Consumers wire it the same way.
     testAnnotationProcessor(project(":processor"))
