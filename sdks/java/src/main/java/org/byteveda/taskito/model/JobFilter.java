@@ -3,7 +3,7 @@ package org.byteveda.taskito.model;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-/** Immutable filter for {@link org.byteveda.taskito.Queue#listJobs(JobFilter)}. Unset fields are ignored. */
+/** Immutable filter for {@link org.byteveda.taskito.Taskito#listJobs(JobFilter)}. Unset fields are ignored. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class JobFilter {
     @JsonProperty("status")

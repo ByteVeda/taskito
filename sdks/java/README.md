@@ -8,13 +8,25 @@ A typed Java 11+ client over the Taskito Rust core, via a hand-written JNI shell
 > distributed locks, periodic/cron, and static-DAG workflows are implemented and
 > verified end-to-end.
 
+## Migration
+
+**0.18 — source-breaking (pre-1.0):** the client interface was renamed and the
+name `Queue` now denotes a single named queue.
+
+- The client you open is now `Taskito`, not `Queue`:
+  `Taskito client = Taskito.builder()…open();` (was `Queue queue = …`).
+  `Taskito.builder()` is unchanged.
+- `Queue` is a per-queue handle from `Taskito.queue(name)`, exposing
+  `pause()` / `resume()` / `isPaused()`.
+- `client.pauseQueue("emails")` → `client.queue("emails").pause()` (likewise
+  `resume`). `listPausedQueues()` stays on the client as the global view.
+
 ## Usage
 
 ### Enqueue
 
 ```java
 import com.fasterxml.jackson.core.type.TypeReference;
-import org.byteveda.taskito.Queue;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
@@ -29,11 +41,15 @@ Task<Map<String, Object>> sendEmail =
                 .queue("emails")
                 .priority(5);
 
-try (Queue queue = Taskito.builder().sqlite("taskito.db").open()) {
-    String id = queue.enqueue(sendEmail, Map.of("to", "a@b.c"));
-    Job job = queue.getJob(id).orElseThrow();   // job.status == JobStatus.PENDING
-    QueueStats stats = queue.stats();
-    queue.cancel(id);
+try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open()) {
+    String id = taskito.enqueue(sendEmail, Map.of("to", "a@b.c"));
+    Job job = taskito.getJob(id).orElseThrow();   // job.status == JobStatus.PENDING
+    QueueStats stats = taskito.stats();
+    taskito.cancel(id);
+
+    // Pause/resume are scoped to one named queue:
+    taskito.queue("emails").pause();
+    taskito.queue("emails").resume();
 }
 ```
 
@@ -48,8 +64,8 @@ import org.byteveda.taskito.worker.Worker;
 
 Task<Map> add = Task.of("add", Map.class);
 
-Queue queue = Taskito.builder().backend("sqlite").url("taskito.db").open();
-Worker worker = queue.worker()
+Taskito taskito = Taskito.builder().backend("sqlite").url("taskito.db").open();
+Worker worker = taskito.worker()
         .handle(add, p -> ((Number) p.get("a")).intValue() + ((Number) p.get("b")).intValue())
         .concurrency(4)
         .on(EventName.SUCCESS, e -> System.out.println("done: " + e.jobId))
@@ -60,7 +76,7 @@ Worker worker = queue.worker()
 // exit to trigger close(), so it would deadlock.)
 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
     worker.close();
-    queue.close();
+    taskito.close();
 }));
 worker.awaitShutdown();
 ```
@@ -82,9 +98,9 @@ class EmailTasks {
 }
 
 // generated EmailTasksTasks:
-String id = queue.enqueue(EmailTasksTasks.SEND, payload);
+String id = taskito.enqueue(EmailTasksTasks.SEND, payload);
 
-queue.worker()
+taskito.worker()
         .apply(b -> EmailTasksTasks.bind(b, new EmailTasks()))
         .start();
 ```
@@ -114,9 +130,9 @@ Workflow wf = Workflow.named("etl")
         .step("transform", transform, 2, "extract")
         .step("load", load, 3, "transform");
 
-WorkflowRun run = queue.submitWorkflow(wf);
+WorkflowRun run = taskito.submitWorkflow(wf);
 
-try (Worker worker = queue.worker()
+try (Worker worker = taskito.worker()
         .handle(extract, p -> p * 10)
         .handle(transform, p -> p + 1)
         .handle(load, p -> p)
@@ -139,7 +155,7 @@ Workflow etl = Workflow.named("etl")
         .stepAfter("transform", transform, "extract")
         .stepAfter("load", load, "transform");
 
-queue.submitWorkflow(etl, Map.of("extract", 5, "transform", 6, "load", 7));
+taskito.submitWorkflow(etl, Map.of("extract", 5, "transform", 6, "load", 7));
 ```
 
 A step's effective payload is `map.get(name)` when present, else the one baked
@@ -163,7 +179,7 @@ gates, and sagas are not yet exposed.
 ### Middleware
 
 ```java
-queue.use(new Middleware() {
+taskito.use(new Middleware() {
     @Override public void onEnqueue(EnqueueContext ctx) { /* validate / rewrite */ }
     @Override public void before(TaskContext ctx) { /* trace */ }
     @Override public void onDeadLetter(OutcomeEvent e) { /* alert */ }
@@ -183,7 +199,7 @@ try (DashboardServer dashboard = DashboardServer.start(queue, 8080, token, stati
 
 ```java
 byte[] key = ...; // 16/24/32 bytes for AES
-Queue secure = Taskito.builder()
+Taskito secure = Taskito.builder()
         .backend("sqlite").url("taskito.db")
         .serializer(new EncryptedSerializer(new JsonSerializer(), key))
         .open();
@@ -195,9 +211,10 @@ Packages are organized by feature; the root holds only the front door.
 
 ```text
 org.byteveda.taskito
-├── Taskito            entry point — Taskito.builder()...open()
-├── Queue              public interface
-├── DefaultQueue       package-private impl (not exported)
+├── Taskito            client interface + entry — Taskito.builder()...open()
+├── Queue              named-queue handle (pause/resume) — Taskito.queue(name)
+├── DefaultTaskito     package-private client impl (not exported)
+├── NamedQueue         package-private Queue impl (not exported)
 ├── TaskitoException   unchecked error type
 ├── task/              Task, TaskFunction, EnqueueOptions
 ├── model/             Job, JobStatus, QueueStats, DeadJob, JobError,

@@ -22,7 +22,7 @@ class ErgonomicsTest {
     @Timeout(30)
     void awaitJobReturnsTerminalState(@TempDir Path dir) throws Exception {
         Task<Integer> echo = Task.of("erg.echo", Integer.class).retries(0).timeout(Duration.ofSeconds(10));
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().sqlite(dir.resolve("erg.db").toString()).open()) {
             String id = queue.enqueue(echo, 42);
             try (Worker worker = queue.worker().handle(echo, p -> p).start()) {
@@ -42,7 +42,7 @@ class ErgonomicsTest {
     @Test
     @Timeout(30)
     void lockSugar(@TempDir Path dir) {
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().sqlite(dir.resolve("lock.db").toString()).open()) {
             try (Lock lock = queue.lock("erg-lock")) { // default-TTL overload
                 assertTrue(lock.tryAcquire(Duration.ofSeconds(1)));

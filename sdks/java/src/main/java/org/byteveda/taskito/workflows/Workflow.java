@@ -7,7 +7,7 @@ import org.byteveda.taskito.task.Task;
 
 /**
  * A workflow definition: a named, versioned DAG of {@link Step}s. Build one, then
- * submit it with {@code Queue.submitWorkflow}. Steps run in topological order;
+ * submit it with {@code Taskito.submitWorkflow}. Steps run in topological order;
  * a step waits for every predecessor named in its {@code after} list.
  */
 public final class Workflow {

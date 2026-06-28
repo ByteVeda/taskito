@@ -23,7 +23,7 @@ class WorkflowSubmitMapTest {
         Task<Integer> extract = Task.of("sm.extract", Integer.class);
         Task<Integer> transform = Task.of("sm.transform", Integer.class);
         Task<Integer> load = Task.of("sm.load", Integer.class);
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().sqlite(dir.resolve("sm.db").toString()).open()) {
             // Structural steps (deps only); payloads supplied at submit.
             Workflow etl = Workflow.named("etl")

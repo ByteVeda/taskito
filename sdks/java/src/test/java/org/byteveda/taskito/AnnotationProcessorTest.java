@@ -18,7 +18,7 @@ class AnnotationProcessorTest {
     @Test
     @Timeout(30)
     void generatedCompanionEnqueuesAndHandles(@TempDir Path dir) throws Exception {
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().sqlite(dir.resolve("ap.db").toString()).open()) {
             // GreeterTasks is generated from @TaskHandler on Greeter; GREET/TOTAL
             // are typed Task constants (TOTAL carries the generic List<Integer>).
@@ -40,7 +40,7 @@ class AnnotationProcessorTest {
     @Test
     @Timeout(30)
     void registerViaGeneratedHandlerRegistry(@TempDir Path dir) throws Exception {
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().sqlite(dir.resolve("hr.db").toString()).open()) {
             String id = queue.enqueue(GreeterTasks.GREET, "grace");
             CountDownLatch done = new CountDownLatch(1);

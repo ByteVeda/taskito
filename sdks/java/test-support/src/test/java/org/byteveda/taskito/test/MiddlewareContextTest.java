@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
-import org.byteveda.taskito.Queue;
+import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.middleware.EnqueueContext;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.middleware.TaskContext;
@@ -20,7 +20,7 @@ class MiddlewareContextTest {
     void metadataTravelsAndAttributesAreShared() throws Exception {
         AtomicReference<String> afterSaw = new AtomicReference<>();
         Task<Integer> echo = Task.of("mw.echo", Integer.class);
-        try (Queue queue = InMemoryTaskito.open()) {
+        try (Taskito queue = InMemoryTaskito.open()) {
             queue.use(new Middleware() {
                 @Override
                 public void onEnqueue(EnqueueContext ctx) {

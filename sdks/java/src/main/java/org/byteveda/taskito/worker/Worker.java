@@ -27,7 +27,7 @@ import org.byteveda.taskito.task.TaskFunction;
 import org.byteveda.taskito.workflows.WorkflowTracker;
 
 /**
- * A running worker. Build one with {@link org.byteveda.taskito.Queue#worker()}, register handlers,
+ * A running worker. Build one with {@link org.byteveda.taskito.Taskito#worker()}, register handlers,
  * then {@link Builder#start()}. {@link #close()} stops it and drains in-flight
  * jobs.
  */

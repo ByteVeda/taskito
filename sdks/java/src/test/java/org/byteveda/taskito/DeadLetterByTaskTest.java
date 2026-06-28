@@ -23,7 +23,7 @@ class DeadLetterByTaskTest {
         Task<String> alpha = Task.of("alpha", String.class).maxRetries(0);
         Task<String> beta = Task.of("beta", String.class).maxRetries(0);
 
-        try (Queue queue = Taskito.builder()
+        try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
                 .url(dir.resolve("t.db").toString())
                 .open()) {

@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
-import org.byteveda.taskito.Queue;
+import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
 import org.byteveda.taskito.task.Task;
@@ -18,7 +18,7 @@ class InMemoryQueueBackendTest {
     @Timeout(20)
     void runsJobToCompletion() throws Exception {
         Task<Integer> dbl = Task.of("im.double", Integer.class);
-        try (Queue queue = InMemoryTaskito.open()) { // no JNI, no disk
+        try (Taskito queue = InMemoryTaskito.open()) { // no JNI, no disk
             String id = queue.enqueue(dbl, 21);
             try (Worker worker = queue.worker().handle(dbl, p -> p * 2).start()) {
                 Job job = queue.awaitJob(id, Duration.ofSeconds(10)).orElseThrow();
@@ -32,7 +32,7 @@ class InMemoryQueueBackendTest {
     @Timeout(20)
     void retriesThenDeadLetters() throws Exception {
         Task<Integer> boom = Task.of("im.boom", Integer.class).retries(2);
-        try (Queue queue = InMemoryTaskito.open()) {
+        try (Taskito queue = InMemoryTaskito.open()) {
             String id = queue.enqueue(boom, 1);
             try (Worker worker = queue.worker()
                     .handle(boom, p -> {

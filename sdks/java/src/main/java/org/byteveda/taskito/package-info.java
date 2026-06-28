@@ -2,9 +2,10 @@
  * Taskito Java SDK — a typed client over the Rust task-queue core.
  *
  * <p>This root package is the front door: open a
- * {@link org.byteveda.taskito.Queue} via
- * {@link org.byteveda.taskito.Taskito#builder()}. Everything else is grouped by
- * feature:
+ * {@link org.byteveda.taskito.Taskito} client via
+ * {@link org.byteveda.taskito.Taskito#builder()}, then scope to one named queue
+ * with {@link org.byteveda.taskito.Taskito#queue(String)}. Everything else is
+ * grouped by feature:
  *
  * <ul>
  *   <li>{@code task} — {@link org.byteveda.taskito.task.Task} descriptors,

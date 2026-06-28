@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-import org.byteveda.taskito.Queue;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.dashboard.DashboardServer;
 import org.byteveda.taskito.model.DeadJob;
@@ -34,14 +33,26 @@ import picocli.CommandLine.ParentCommand;
 public final class Cli {
     static final ObjectMapper JSON = new ObjectMapper();
 
+    @CommandLine.Spec
+    CommandLine.Model.CommandSpec spec;
+
     @Option(names = "--backend", description = "Storage backend (default sqlite).", defaultValue = "sqlite")
     String backend;
 
-    @Option(names = "--url", required = true, description = "Connection string (SQLite path or URL).")
+    @Option(names = "--url", description = "Connection string (SQLite path or URL); defaults to .taskito/taskito.db.")
     String url;
 
-    Queue open() {
-        return Taskito.builder().backend(backend).url(url).open();
+    Taskito open() {
+        // Only SQLite has a sensible default store; every other backend needs a URL.
+        if (url == null && !"sqlite".equalsIgnoreCase(backend)) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(), "--url is required for the '" + backend + "' backend");
+        }
+        Taskito.Builder builder = Taskito.builder().backend(backend);
+        if (url != null) {
+            builder.url(url);
+        }
+        return builder.open();
     }
 
     static String json(Object value) {
@@ -63,7 +74,7 @@ public final class Cli {
 
         @Override
         public Integer call() {
-            try (Queue queue = parent.open()) {
+            try (Taskito queue = parent.open()) {
                 System.out.println(json(queue.stats()));
             }
             return 0;
@@ -84,7 +95,7 @@ public final class Cli {
         @Override
         public Integer call() throws Exception {
             Object value = payload == null ? null : JSON.readValue(payload, Object.class);
-            try (Queue queue = parent.open()) {
+            try (Taskito queue = parent.open()) {
                 System.out.println(queue.enqueue(task, value));
             }
             return 0;
@@ -114,7 +125,7 @@ public final class Cli {
             if (queue != null) {
                 filter.queue(queue);
             }
-            try (Queue q = parent.open()) {
+            try (Taskito q = parent.open()) {
                 List<Job> jobs = q.listJobs(filter.build());
                 System.out.println(json(jobs));
             }
@@ -132,7 +143,7 @@ public final class Cli {
 
         @Override
         public Integer call() {
-            try (Queue queue = parent.open()) {
+            try (Taskito queue = parent.open()) {
                 return queue.cancel(id) ? 0 : 1;
             }
         }
@@ -148,8 +159,8 @@ public final class Cli {
 
         @Override
         public Integer call() {
-            try (Queue q = parent.open()) {
-                q.pauseQueue(queue);
+            try (Taskito q = parent.open()) {
+                q.queue(queue).pause();
             }
             return 0;
         }
@@ -165,8 +176,8 @@ public final class Cli {
 
         @Override
         public Integer call() {
-            try (Queue q = parent.open()) {
-                q.resumeQueue(queue);
+            try (Taskito q = parent.open()) {
+                q.queue(queue).resume();
             }
             return 0;
         }
@@ -180,7 +191,7 @@ public final class Cli {
         @ParentCommand
         Cli parent;
 
-        Queue open() {
+        Taskito open() {
             return parent.open();
         }
 
@@ -194,7 +205,7 @@ public final class Cli {
 
             @Override
             public Integer call() {
-                try (Queue queue = dlq.open()) {
+                try (Taskito queue = dlq.open()) {
                     List<DeadJob> dead = queue.listDead(limit, 0);
                     System.out.println(json(dead));
                 }
@@ -212,7 +223,7 @@ public final class Cli {
 
             @Override
             public Integer call() {
-                try (Queue queue = dlq.open()) {
+                try (Taskito queue = dlq.open()) {
                     System.out.println(queue.retryDead(id));
                 }
                 return 0;
@@ -229,7 +240,7 @@ public final class Cli {
 
             @Override
             public Integer call() {
-                try (Queue queue = dlq.open()) {
+                try (Taskito queue = dlq.open()) {
                     return queue.deleteDead(id) ? 0 : 1;
                 }
             }
@@ -252,7 +263,7 @@ public final class Cli {
 
         @Override
         public Integer call() throws Exception {
-            try (Queue queue = parent.open();
+            try (Taskito queue = parent.open();
                     DashboardServer server = DashboardServer.start(queue, port, token, staticDir)) {
                 System.out.println("dashboard on http://localhost:" + server.port());
                 new CountDownLatch(1).await();

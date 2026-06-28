@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.CollectionType;
 import java.util.ArrayList;
 import java.util.List;
-import org.byteveda.taskito.Queue;
+import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.TaskitoException;
 
 /** Persists webhooks as a JSON list in the queue's settings key/value store. */
@@ -12,9 +12,9 @@ final class WebhookStore {
     private static final String KEY = "taskito.webhooks";
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private final Queue queue;
+    private final Taskito queue;
 
-    WebhookStore(Queue queue) {
+    WebhookStore(Taskito queue) {
         this.queue = queue;
     }
 

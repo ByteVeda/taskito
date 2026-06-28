@@ -26,7 +26,7 @@ class WorkflowTest {
         Task<Integer> a = Task.of("wf.a", Integer.class);
         Task<Integer> b = Task.of("wf.b", Integer.class);
         Task<Integer> c = Task.of("wf.c", Integer.class);
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().url(dir.resolve("wf.db").toString()).open()) {
             Workflow wf = Workflow.named("pipeline")
                     .step("a", a, 1)
@@ -55,7 +55,7 @@ class WorkflowTest {
         Task<Integer> a = Task.of("fc.a", Integer.class);
         Task<Integer> b = Task.of("fc.b", Integer.class);
         Task<Integer> c = Task.of("fc.c", Integer.class);
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().url(dir.resolve("fc.db").toString()).open()) {
             Workflow wf = Workflow.named("failpipe")
                     .step("a", a, 1)
@@ -86,7 +86,7 @@ class WorkflowTest {
     void cancelSkipsPendingNodes(@TempDir Path dir) {
         Task<Integer> a = Task.of("cx.a", Integer.class);
         Task<Integer> b = Task.of("cx.b", Integer.class);
-        try (Queue queue =
+        try (Taskito queue =
                 Taskito.builder().url(dir.resolve("cx.db").toString()).open()) {
             Workflow wf = Workflow.named("cancelpipe").step("a", a, 1).step("b", b, 2, "a");
             WorkflowRun run = queue.submitWorkflow(wf);
