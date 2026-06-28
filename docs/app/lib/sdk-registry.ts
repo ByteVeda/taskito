@@ -1,13 +1,8 @@
-// Single source of truth for every SDK the docs site supports.
-//
-// Adding a language (java, go, …) is a one-entry change: append its id to
-// `SDK_IDS` and add a `SDK_PROFILES` row. Everything else — the `Sdk` type, the
-// nav trees, the sidebar switcher, the no-flash boot script, the SDK-aware
-// diagrams and prose primitives — derives from this file. Nothing else should
-// hardcode the literals `"python"`/`"node"`.
+// Single source of truth for every SDK. Add a language = append to `SDK_IDS` +
+// add a `SDK_PROFILES` row; the `Sdk` type, nav, switcher, boot script and
+// SDK-aware docs all derive from here. Don't hardcode "python"/"node" elsewhere.
 
-/** Every supported SDK id, in display order. Also the URL prefix (`/python/…`)
- *  and the `<html data-sdk>` value. Order drives the switcher + nav. */
+/** Supported SDK ids in display order; also the URL prefix + `data-sdk` value. */
 export const SDK_IDS = ["python", "node"] as const;
 
 export type Sdk = (typeof SDK_IDS)[number];
@@ -23,11 +18,9 @@ export interface SdkProfile {
   label: string;
   /** Language name for prose ("a hybrid <language>/Rust system"). */
   language: string;
-  /** The FFI boundary crossed into the shared Rust core, shown in the
-   *  architecture stack ("<binding> boundary"), e.g. "PyO3", "N-API". */
+  /** FFI boundary into the Rust core, e.g. "PyO3", "N-API". */
   binding: string;
-  /** Section directories under `content/docs`, in nav order. `architecture` and
-   *  `resources` are SDK-neutral and appear in every SDK's nav. */
+  /** Section dirs under `content/docs`, in nav order (architecture/resources shared). */
   navSections: string[];
 }
 

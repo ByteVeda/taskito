@@ -1,11 +1,9 @@
 import type { ReactNode } from "react";
 import { SDK_IDS, SDK_PROFILES, type Sdk, type SdkProfile } from "@/lib";
 
-// Inline SDK-aware text atoms for shared pages (architecture, resources) and the
-// architecture diagrams. They follow the site's no-flash rule: every SDK's text
-// ships in the HTML and CSS hides all but the active one (off `<html data-sdk>`,
-// the same mechanism as `<SdkOnly>`), so switching the SDK needs no re-render,
-// there's no hydration flash, and every variant stays indexable.
+// Inline SDK-aware text atoms for shared pages + arch diagrams. No-flash: every
+// SDK's text ships and CSS hides the inactive ones (off `<html data-sdk>`, like
+// `<SdkOnly>`) — no re-render, no hydration flash, all variants indexable.
 
 /** Render one span per SDK, picking a value from each profile; CSS shows only
  *  the active SDK's span. */
@@ -38,8 +36,7 @@ export function SdkBinding() {
 
 /** Inline value that differs per SDK, e.g.
  *  `<SdkSwap python={<code>@task</code>} node={<code>.task()</code>} />`.
- *  A missing SDK falls back to `fallback`, then the default SDK, then the first
- *  provided value — so adding a new SDK never breaks existing call sites. */
+ *  Missing SDK falls back to `fallback` → default SDK → first provided. */
 export function SdkSwap({
   fallback,
   ...bySdk

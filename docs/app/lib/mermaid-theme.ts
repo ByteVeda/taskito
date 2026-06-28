@@ -1,19 +1,7 @@
-// Central Mermaid theming. One source of truth for how every diagram in the
-// docs looks, so individual charts never hardcode colors.
-//
-// Two layers:
-//   1. base theme variables — default node/edge/cluster colors, aligned to the
-//      Taskito tokens (tokens.css) for dark + light. Charts with no semantic
-//      classes still look on-brand.
-//   2. a semantic class palette — `success`/`failed`/`skipped`/… mapped to
-//      brand-tinted, theme-aware fills. `applyDiagramTheme()` strips whatever
-//      `classDef`s a chart author wrote and injects these, so a chart only has
-//      to *name* a state (`A:::failed`) and theming stays consistent and
-//      theme-reactive (light/dark) everywhere.
-//
-// Hex values mirror tokens.css on purpose: Mermaid bakes `classDef` colors into
-// the SVG as literal styles, so CSS vars can't be used reliably here. Keep the
-// two in sync when the brand palette changes.
+// Central Mermaid theming: base node/edge colors (aligned to tokens.css, dark +
+// light) plus a semantic class palette. `applyDiagramTheme()` strips author
+// `classDef`s and injects these, so charts only name states (`A:::failed`). Hex
+// mirrors tokens.css — Mermaid bakes classDef colors into the SVG — keep in sync.
 
 export type DiagramTheme = "dark" | "light";
 
