@@ -78,6 +78,10 @@ tasks.withType<Checkstyle>().configureEach {
     source = fileTree("src") { include("**/*.java") }
 }
 
+sourceSets["test"].java.srcDir(
+    layout.buildDirectory.dir("generated/sources/annotationProcessor/java/test")
+)
+
 dependencies {
     api("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("info.picocli:picocli:4.7.6")
