@@ -19,6 +19,7 @@ final class PlanNode {
     final String fanOut;
     final String fanIn;
     final String gate;
+    final String condition;
 
     @JsonCreator
     PlanNode(
@@ -31,7 +32,8 @@ final class PlanNode {
             @JsonProperty("priority") Integer priority,
             @JsonProperty("fanOut") String fanOut,
             @JsonProperty("fanIn") String fanIn,
-            @JsonProperty("gate") String gate) {
+            @JsonProperty("gate") String gate,
+            @JsonProperty("condition") String condition) {
         this.name = name;
         this.predecessors = predecessors == null ? Collections.emptyList() : predecessors;
         this.taskName = taskName;
@@ -42,6 +44,7 @@ final class PlanNode {
         this.fanOut = fanOut;
         this.fanIn = fanIn;
         this.gate = gate;
+        this.condition = condition;
     }
 
     /** Whether this node is a fan-out/fan-in node (its job is created by the fan-out machinery). */

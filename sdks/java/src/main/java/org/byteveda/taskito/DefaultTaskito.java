@@ -398,14 +398,14 @@ final class DefaultTaskito implements Taskito {
     }
 
     /**
-     * Fan-out/fan-in and gate nodes — plus everything transitively downstream of
-     * them — are deferred: they carry a node row but no job at submit, and the
-     * worker tracker creates/parks them at runtime.
+     * Fan-out/fan-in, gate, and conditional nodes — plus everything transitively
+     * downstream of them — are deferred: they carry a node row but no job at
+     * submit, and the worker tracker creates/parks/evaluates them at runtime.
      */
     private static Set<String> deferredNodes(List<Step> steps) {
         Set<String> deferred = new HashSet<>();
         for (Step step : steps) {
-            if (step.fanOut != null || step.fanIn != null || step.gate != null) {
+            if (step.fanOut != null || step.fanIn != null || step.gate != null || step.condition != null) {
                 deferred.add(step.name);
             }
         }
@@ -458,6 +458,9 @@ final class DefaultTaskito implements Taskito {
         }
         if (step.gate != null) {
             spec.put("gate", encodeGate(step.gate));
+        }
+        if (step.condition != null) {
+            spec.put("condition", step.condition);
         }
         return spec;
     }
