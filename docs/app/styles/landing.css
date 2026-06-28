@@ -677,36 +677,6 @@ main {
   font-size: 11.5px;
   color: var(--cyan);
 }
-.rspark {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 7px;
-  height: 7px;
-  margin-top: -3.5px;
-  border-radius: 50%;
-  background: var(--cyan);
-  box-shadow: 0 0 10px var(--cyan);
-  opacity: 0;
-  animation: rmove 2.6s ease-in-out infinite;
-  animation-delay: 1s;
-}
-@keyframes rmove {
-  0% {
-    left: 2%;
-    opacity: 0;
-  }
-  15% {
-    opacity: 1;
-  }
-  85% {
-    opacity: 1;
-  }
-  100% {
-    left: 98%;
-    opacity: 0;
-  }
-}
 
 /* ===== features ===== */
 .feat-grid {

@@ -154,7 +154,6 @@ export function HowItWorks() {
             ))}
           </div>
           <div className="returnlane">
-            <span className="rspark" />
             <span className="rlabel">result written back to the store</span>
           </div>
         </div>
