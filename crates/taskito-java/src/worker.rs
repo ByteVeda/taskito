@@ -38,6 +38,10 @@ pub struct WorkerHandle {
     registry: Arc<Registry>,
     shutdown: Arc<Notify>,
     heartbeat_stop: Arc<Notify>,
+    /// The mesh node, when mesh scheduling is enabled. Held so `stop` can signal
+    /// its gossip + steal-server tasks and `meshClusterInfo` can read its state.
+    #[cfg(feature = "mesh")]
+    mesh: Option<Arc<taskito_mesh::MeshNode>>,
 }
 
 /// Build and start a worker over `storage`, calling back into the Java
@@ -56,6 +60,9 @@ fn start_worker(
     let queues = options
         .queues
         .unwrap_or_else(|| vec![DEFAULT_QUEUE.to_string()]);
+    // Mesh gossip advertises the served queues; capture before `queues` moves.
+    #[cfg(feature = "mesh")]
+    let mesh_queues = queues.clone();
     let capacity = options
         .channel_capacity
         .map(|c| (c as usize).max(1))
@@ -70,6 +77,9 @@ fn start_worker(
     let lifecycle_storage = storage.clone();
     let queues_csv = queues.join(",");
     let worker_id = format!("java-{}", uuid::Uuid::now_v7());
+    // The mesh node id is this worker's id; capture before `worker_id` moves.
+    #[cfg(feature = "mesh")]
+    let mesh_worker_id = worker_id.clone();
 
     let mut scheduler = Scheduler::new(storage, queues, config, namespace);
     // Claim execution under this worker's id so dead-worker recovery can
@@ -87,8 +97,30 @@ fn start_worker(
     // so the result queue can't grow without bound.
     let (result_tx, result_rx) = crossbeam_channel::unbounded();
 
-    // Scheduler loop: poll storage and dispatch ready jobs.
+    // Scheduler loop: poll storage and dispatch ready jobs. With mesh enabled and
+    // a config supplied, route the scheduler's output through the mesh bridge
+    // (affinity-sorted local deque + work-stealing) instead of straight to the
+    // dispatcher; the DB stays the source of truth, so the plain path is identical.
     let scheduler_run = scheduler.clone();
+    #[cfg(feature = "mesh")]
+    let mesh = match options.mesh_config.as_deref() {
+        Some(config_json) => Some(crate::mesh::spawn_mesh(
+            &runtime,
+            scheduler_run,
+            job_tx,
+            config_json,
+            mesh_worker_id,
+            mesh_queues,
+            capacity as u16,
+        )),
+        None => {
+            runtime.spawn(async move {
+                scheduler_run.run(job_tx).await;
+            });
+            None
+        }
+    };
+    #[cfg(not(feature = "mesh"))]
     runtime.spawn(async move {
         scheduler_run.run(job_tx).await;
     });
@@ -121,6 +153,8 @@ fn start_worker(
         registry,
         shutdown,
         heartbeat_stop,
+        #[cfg(feature = "mesh")]
+        mesh,
     })
 }
 
@@ -412,7 +446,35 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_stop(
         let worker = unsafe { borrow_worker(handle) };
         worker.shutdown.notify_one();
         worker.heartbeat_stop.notify_one();
+        // Signal the mesh node so its gossip + steal-server tasks exit instead of
+        // lingering until the runtime drops.
+        #[cfg(feature = "mesh")]
+        if let Some(mesh) = &worker.mesh {
+            mesh.request_shutdown();
+        }
         Ok(())
+    })
+}
+
+/// `String meshClusterInfo(long workerHandle)` — a JSON `ClusterInfo` snapshot,
+/// or `null` when this worker is not mesh-enabled.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorker_meshClusterInfo<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jni::sys::jstring {
+    guard(&mut env, std::ptr::null_mut(), |_env| {
+        let worker = unsafe { borrow_worker(handle) };
+        #[cfg(feature = "mesh")]
+        if let Some(mesh) = &worker.mesh {
+            let json = serde_json::to_string(&mesh.cluster_info()).map_err(|e| {
+                crate::error::BindingError::new(format!("failed to encode cluster info: {e}"))
+            })?;
+            return crate::ffi::new_string(_env, json);
+        }
+        let _ = worker;
+        Ok(std::ptr::null_mut())
     })
 }
 

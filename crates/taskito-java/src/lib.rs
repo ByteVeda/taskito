@@ -16,6 +16,8 @@ mod ffi;
 mod ffi_c;
 mod handle;
 mod jvm;
+#[cfg(feature = "mesh")]
+mod mesh;
 mod queue;
 mod worker;
 #[cfg(feature = "workflows")]
