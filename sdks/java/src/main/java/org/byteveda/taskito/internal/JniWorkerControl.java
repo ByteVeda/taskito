@@ -1,5 +1,6 @@
 package org.byteveda.taskito.internal;
 
+import java.util.Optional;
 import org.byteveda.taskito.spi.WorkerControl;
 
 /** JNI-backed {@link WorkerControl} over a native worker handle. */
@@ -29,6 +30,11 @@ public final class JniWorkerControl implements WorkerControl {
     @Override
     public void stop() {
         NativeWorker.stop(handle);
+    }
+
+    @Override
+    public Optional<String> meshClusterInfoJson() {
+        return Optional.ofNullable(NativeWorker.meshClusterInfo(handle));
     }
 
     /** Idempotent: frees the native worker handle exactly once. */

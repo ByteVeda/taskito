@@ -23,4 +23,7 @@ public final class NativeWorker {
     public static native void stop(long handle);
 
     public static native void close(long handle);
+
+    /** A JSON {@code ClusterInfo} snapshot, or {@code null} when not mesh-enabled. */
+    public static native String meshClusterInfo(long handle);
 }
