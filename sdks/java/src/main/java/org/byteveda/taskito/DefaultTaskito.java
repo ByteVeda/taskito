@@ -405,7 +405,10 @@ final class DefaultTaskito implements Taskito {
     private static Set<String> deferredNodes(List<Step> steps) {
         Set<String> deferred = new HashSet<>();
         for (Step step : steps) {
-            if (step.fanOut != null || step.fanIn != null || step.gate != null || step.condition != null) {
+            // "on_success" is the default/static path — only runtime-evaluated
+            // conditions (on_failure / always / callable) force a deferred node.
+            boolean runtimeCondition = step.condition != null && !"on_success".equals(step.condition);
+            if (step.fanOut != null || step.fanIn != null || step.gate != null || runtimeCondition) {
                 deferred.add(step.name);
             }
         }
