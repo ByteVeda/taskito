@@ -1,6 +1,7 @@
 package org.byteveda.taskito.workflows;
 
 import java.time.Duration;
+import java.util.Objects;
 
 /**
  * An approval gate on a workflow step. The node parks ({@code WAITING_APPROVAL})
@@ -29,11 +30,11 @@ public record GateConfig(Duration timeout, GateAction onTimeout, String message)
 
     /** A gate that auto-resolves to {@code onTimeout} after {@code timeout}. */
     public static GateConfig timeout(Duration timeout, GateAction onTimeout) {
-        return new GateConfig(timeout, onTimeout, null);
+        return new GateConfig(Objects.requireNonNull(timeout, "timeout"), onTimeout, null);
     }
 
     /** A gate with a timeout and an approver-facing message. */
     public static GateConfig timeout(Duration timeout, GateAction onTimeout, String message) {
-        return new GateConfig(timeout, onTimeout, message);
+        return new GateConfig(Objects.requireNonNull(timeout, "timeout"), onTimeout, message);
     }
 }
