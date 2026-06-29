@@ -169,7 +169,13 @@ public final class WorkflowTracker {
             return; // siblings still running, or already handled by a concurrent outcome
         }
         if (!done.succeeded) {
-            backend.cascadeSkipPending(runId);
+            // The fan-out parent is now Failed; evaluate its successors' conditions
+            // (on_failure/always run, on_success skip-cascade) like any other node.
+            if (plan != null) {
+                promoteSuccessors(runId, parent, plan);
+            } else {
+                backend.cascadeSkipPending(runId);
+            }
             finalizeIfTerminal(runId);
             return;
         }
