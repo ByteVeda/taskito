@@ -134,6 +134,13 @@ public final class Step {
             if (gate != null && (fanOut != null || fanIn != null)) {
                 throw new IllegalArgumentException("step '" + name + "' cannot be both a gate and a fan-out/fan-in");
             }
+            // A gate is a deferred control node (its task never enqueues), valid only
+            // on the Workflow.gate(...) sentinel — not on a normal task step.
+            if (gate != null && !Workflow.GATE_TASK.equals(taskName)) {
+                throw new IllegalArgumentException("step '" + name
+                        + "': a gate may only be created via Workflow.gate(...); a gate on a normal task step "
+                        + "would defer the node and never enqueue its task");
+            }
             return new Step(this);
         }
     }
