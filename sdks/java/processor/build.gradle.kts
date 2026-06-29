@@ -4,7 +4,7 @@
 plugins {
     `java-library`
     checkstyle
-    id("com.diffplug.spotless") version "6.25.0"
+    id("com.diffplug.spotless") version "7.2.1"
 }
 
 group = "org.byteveda"
