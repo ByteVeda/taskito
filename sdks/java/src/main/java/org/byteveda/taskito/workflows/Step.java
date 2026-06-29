@@ -140,6 +140,13 @@ public final class Step {
          * conditional step is evaluated by the worker tracker, not pre-enqueued.
          */
         public Builder condition(String condition) {
+            if (condition != null
+                    && !"on_success".equals(condition)
+                    && !"on_failure".equals(condition)
+                    && !"always".equals(condition)) {
+                throw new IllegalArgumentException("unknown condition '" + condition
+                        + "'; use on_success, on_failure, always, or condition(Condition)");
+            }
             this.condition = condition;
             return this;
         }
