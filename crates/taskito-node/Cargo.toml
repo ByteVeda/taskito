@@ -19,7 +19,7 @@ workflows = ["dep:taskito-workflows"]
 [dependencies]
 taskito-core = { path = "../taskito-core" }
 napi = { version = "2", default-features = false, features = ["napi8", "tokio_rt"] }
-napi-derive = "2"
+napi-derive = "3"
 tokio = { workspace = true }
 crossbeam-channel = { workspace = true }
 async-trait = { workspace = true }
