@@ -65,7 +65,11 @@ jobs:
       # -x cargoBuild skips the Rust compile; copyNative still stages the .so.
       - name: Build and test the Java SDK
         working-directory: sdks/java
-        run: ./gradlew build -x cargoBuild --no-daemon
+        # Spotless/Checkstyle are JDK-independent (and palantir-java-format reaches
+        # into javac internals that newer JDKs change), so run the full `build`
+        # (which includes `check`) only on the baseline JDK; the other legs run the
+        # test suite to verify runtime behaviour on each JDK.
+        run: ./gradlew ${{ matrix.java == '17' && 'build' || 'test' }} -x cargoBuild --no-daemon
 
   # Smoke the other published platforms on one JDK: their native binary differs,
   # so they rebuild it (cargoBuild) instead of reusing the Linux artifact.
