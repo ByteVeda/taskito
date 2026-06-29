@@ -1,10 +1,9 @@
-import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
     `java-library`
     checkstyle
-    id("com.diffplug.spotless") version "6.25.0"
-    id("com.vanniktech.maven.publish") version "0.30.0"
+    id("com.diffplug.spotless") version "7.2.1"
+    id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
 group = "org.byteveda"
@@ -12,14 +11,15 @@ version = "0.18.0"
 
 java {
     // Sources + javadoc jars are added by the maven-publish plugin below.
-    // Compile to Java 11 bytecode with whatever JDK (>= 11) runs Gradle, rather
-    // than pinning a toolchain — `--release 11` also rejects post-11 stdlib APIs.
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    // Compile to Java 17 bytecode with whatever JDK (>= 17) runs Gradle, rather
+    // than pinning a toolchain — `--release 17` also rejects post-17 stdlib APIs.
+    // Floor is 17 so every Spring Boot 3 app can adopt the SDK.
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release.set(11)
+    options.release.set(17)
 }
 
 repositories {
@@ -29,7 +29,7 @@ repositories {
 // --- Publishing: Maven Central via the Central Publisher Portal ------------
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
     coordinates(group.toString(), "taskito", version.toString())
     pom {
@@ -102,13 +102,13 @@ val cargoTargetDir = layout.projectDirectory.dir("../../target")
 val nativeStaging = layout.buildDirectory.dir("native")
 
 // Build the native library for the local platform.
-val cargoBuild by tasks.registering(Exec::class) {
+val cargoBuild = tasks.register<Exec>("cargoBuild") {
     workingDir = crateDir.asFile
     commandLine("cargo", "build", "--release", "--features", "postgres,redis,workflows")
 }
 
 // Stage the built library under its platform-classifier resource path.
-val copyNative by tasks.registering(Copy::class) {
+val copyNative = tasks.register<Copy>("copyNative") {
     dependsOn(cargoBuild)
     from(cargoTargetDir.dir("release")) {
         include("libtaskito_java.so", "libtaskito_java.dylib", "taskito_java.dll")

@@ -6,8 +6,12 @@
 //! and drives the run forward. Deferred steps (fan-out / fan-in, and anything
 //! downstream of them) carry a node row but no job at submit; the tracker
 //! expands a fan-out into per-item child jobs and collects them into a fan-in
-//! job at runtime via [`expand_fan_out`] / [`create_deferred_job`]. Gates and
-//! sub-workflows are not produced by the Java builder yet.
+//! job at runtime via [`expand_fan_out`] / [`create_deferred_job`]. Approval
+//! gates, conditional nodes, and sub-workflows are also deferred: the tracker
+//! parks a gate node ([`set_workflow_node_waiting_approval`]) until resolved,
+//! skips a node whose condition is false ([`skip_workflow_node`]), and submits a
+//! sub-workflow as a child run (`submitWorkflow` with a parent link), resolving
+//! the parent node when the child run finalizes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -55,6 +59,13 @@ struct StepSpec {
     fan_out: Option<String>,
     /// Fan-in strategy (e.g. "all") — this node collects its fan-out children's results.
     fan_in: Option<String>,
+    /// Condition controlling whether this node runs: "on_success" / "on_failure"
+    /// / "always", or "callable" when the tracker holds a Java predicate.
+    condition: Option<String>,
+    /// JSON `{timeoutMs, onTimeout, message}` marking an approval gate node.
+    gate: Option<String>,
+    /// Serialized child-workflow spec marking a sub-workflow node.
+    sub_workflow: Option<String>,
 }
 
 /// Combined run + node snapshot returned by `getWorkflowStatus`. Timestamps are
@@ -109,8 +120,10 @@ unsafe fn borrow_queue<'a>(handle: jlong) -> &'a QueueHandle {
 
 /// `String submitWorkflow(long, String name, int version, String stepsJson,
 /// String[] payloadNames, byte[][] payloads, String queueDefault,
-/// String paramsJson, String[] deferredNames)` — record a run and pre-enqueue a
-/// job per static step. Returns the run id.
+/// String paramsJson, String[] deferredNames, String parentRunId,
+/// String parentNodeName)` — record a run and pre-enqueue a job per static step.
+/// `parentRunId`/`parentNodeName` link a sub-workflow child to its parent node
+/// (both null for a top-level run). Returns the run id.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_submitWorkflow<'local>(
@@ -125,6 +138,8 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_submit
     queue_default: JString<'local>,
     params_json: JString<'local>,
     deferred_names: JObjectArray<'local>,
+    parent_run_id: JString<'local>,
+    parent_node_name: JString<'local>,
 ) -> jstring {
     guard(&mut env, std::ptr::null_mut(), |env| {
         let queue = unsafe { borrow_queue(handle) };
@@ -135,6 +150,8 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_submit
         let queue_default = read_optional_string(env, &queue_default)?;
         let params = read_optional_string(env, &params_json)?;
         let deferred = read_string_array(env, &deferred_names)?;
+        let parent_run = read_optional_string(env, &parent_run_id)?;
+        let parent_node = read_optional_string(env, &parent_node_name)?;
         let run_id = submit(
             queue,
             name,
@@ -145,6 +162,8 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_submit
             queue_default,
             params,
             deferred,
+            parent_run,
+            parent_node,
         )?;
         new_string(env, run_id)
     })
@@ -161,6 +180,8 @@ fn submit(
     queue_default: Option<String>,
     params_json: Option<String>,
     deferred_names: Vec<String>,
+    parent_run_id: Option<String>,
+    parent_node_name: Option<String>,
 ) -> Result<String, BindingError> {
     if payload_names.len() != payloads.len() {
         return Err(BindingError::new(
@@ -206,6 +227,9 @@ fn submit(
                     priority: s.priority,
                     fan_out: s.fan_out.clone(),
                     fan_in: s.fan_in.clone(),
+                    condition: s.condition.clone(),
+                    gate: s.gate.clone(),
+                    sub_workflow: s.sub_workflow.clone(),
                     ..Default::default()
                 },
             )
@@ -253,8 +277,8 @@ fn submit(
         started_at: Some(now),
         completed_at: None,
         error: None,
-        parent_run_id: None,
-        parent_node_name: None,
+        parent_run_id,
+        parent_node_name,
         created_at: now,
     })?;
 
@@ -491,6 +515,9 @@ struct PlanNodeView<'a> {
     priority: Option<i32>,
     fan_out: Option<&'a str>,
     fan_in: Option<&'a str>,
+    condition: Option<&'a str>,
+    gate: Option<&'a str>,
+    sub_workflow: Option<&'a str>,
 }
 
 /// The run + node a job belongs to.
@@ -548,10 +575,40 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_getWor
                     priority: meta.and_then(|m| m.priority),
                     fan_out: meta.and_then(|m| m.fan_out.as_deref()),
                     fan_in: meta.and_then(|m| m.fan_in.as_deref()),
+                    condition: meta.and_then(|m| m.condition.as_deref()),
+                    gate: meta.and_then(|m| m.gate.as_deref()),
+                    sub_workflow: meta.and_then(|m| m.sub_workflow.as_deref()),
                 }
             })
             .collect();
         new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String workflowNameForRun(long, String runId)` — the run's definition name,
+/// or `null` if the run (or its definition) is absent. Lets the tracker resolve a
+/// run back to a registered `Workflow` so it can supply a deferred node's payload.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_workflowNameForRun<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        let run = match wf.get_workflow_run(&run_id)? {
+            Some(r) => r,
+            None => return Ok(std::ptr::null_mut()),
+        };
+        match wf.get_workflow_definition_by_id(&run.definition_id)? {
+            Some(def) => new_string(env, def.name),
+            None => Ok(std::ptr::null_mut()),
+        }
     })
 }
 
@@ -866,6 +923,138 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_finali
         )?;
         wf.set_workflow_run_completed(&run_id, now_millis())?;
         new_string(env, final_state.as_str().to_string())
+    })
+}
+
+/// `void setWorkflowNodeWaitingApproval(long, String runId, String nodeName)` —
+/// park an approval-gate node until it is resolved.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowNodeWaitingApproval<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        queue.workflow_store()?.update_workflow_node_status(
+            &run_id,
+            &node_name,
+            WorkflowNodeStatus::WaitingApproval,
+        )?;
+        Ok(())
+    })
+}
+
+/// `void resolveWorkflowGate(long, String runId, String nodeName,
+/// boolean approved, String error)` — settle a parked gate (or a sub-workflow
+/// parent) as completed when approved, else failed with `error`.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_resolveWorkflowGate<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+    approved: jboolean,
+    error: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        let error = read_optional_string(env, &error)?;
+        let wf = queue.workflow_store()?;
+        if approved != JNI_FALSE {
+            wf.set_workflow_node_completed(&run_id, &node_name, now_millis(), None)?;
+        } else {
+            let msg = error.unwrap_or_else(|| "gate rejected".to_string());
+            wf.set_workflow_node_error(&run_id, &node_name, &msg)?;
+        }
+        Ok(())
+    })
+}
+
+/// `void setWorkflowNodeRunning(long, String runId, String nodeName)` — promote a
+/// gate / sub-workflow node to running without fan-out bookkeeping.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowNodeRunning<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        queue
+            .workflow_store()?
+            .set_workflow_node_running(&run_id, &node_name, now_millis())?;
+        Ok(())
+    })
+}
+
+/// `void failWorkflowNode(long, String runId, String nodeName, String error)` —
+/// mark a node failed (e.g. a sub-workflow whose child could not be submitted).
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_failWorkflowNode<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+    error: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        let error = read_optional_string(env, &error)?.unwrap_or_else(|| "failed".to_string());
+        queue
+            .workflow_store()?
+            .set_workflow_node_error(&run_id, &node_name, &error)?;
+        Ok(())
+    })
+}
+
+/// `void skipWorkflowNode(long, String runId, String nodeName)` — mark a node
+/// skipped (its condition evaluated false) and cancel any bound job.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_skipWorkflowNode<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        let wf = queue.workflow_store()?;
+        if let Some(node) = wf.get_workflow_node(&run_id, &node_name)? {
+            if let Some(job_id) = &node.job_id {
+                // Surface a storage failure rather than skipping while the bound job runs.
+                queue.storage.cancel_job(job_id)?;
+            }
+        }
+        wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::Skipped)?;
+        Ok(())
     })
 }
 

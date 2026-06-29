@@ -224,9 +224,21 @@ public final class JniQueueBackend implements QueueBackend {
             byte[][] payloads,
             String queueDefault,
             String paramsJson,
-            String[] deferredNames) {
+            String[] deferredNames,
+            String parentRunId,
+            String parentNodeName) {
         return NativeWorkflows.submitWorkflow(
-                handle, name, version, stepsJson, payloadNames, payloads, queueDefault, paramsJson, deferredNames);
+                handle,
+                name,
+                version,
+                stepsJson,
+                payloadNames,
+                payloads,
+                queueDefault,
+                paramsJson,
+                deferredNames,
+                parentRunId,
+                parentNodeName);
     }
 
     @Override
@@ -252,6 +264,11 @@ public final class JniQueueBackend implements QueueBackend {
     @Override
     public Optional<String> workflowNodeForJobJson(String jobId) {
         return Optional.ofNullable(NativeWorkflows.workflowNodeForJob(handle, jobId));
+    }
+
+    @Override
+    public Optional<String> workflowNameForRun(String runId) {
+        return Optional.ofNullable(NativeWorkflows.workflowNameForRun(handle, runId));
     }
 
     @Override
@@ -296,6 +313,31 @@ public final class JniQueueBackend implements QueueBackend {
     @Override
     public Optional<String> finalizeRunIfTerminal(String runId) {
         return Optional.ofNullable(NativeWorkflows.finalizeRunIfTerminal(handle, runId));
+    }
+
+    @Override
+    public void setWorkflowNodeWaitingApproval(String runId, String nodeName) {
+        NativeWorkflows.setWorkflowNodeWaitingApproval(handle, runId, nodeName);
+    }
+
+    @Override
+    public void resolveWorkflowGate(String runId, String nodeName, boolean approved, String error) {
+        NativeWorkflows.resolveWorkflowGate(handle, runId, nodeName, approved, error);
+    }
+
+    @Override
+    public void setWorkflowNodeRunning(String runId, String nodeName) {
+        NativeWorkflows.setWorkflowNodeRunning(handle, runId, nodeName);
+    }
+
+    @Override
+    public void failWorkflowNode(String runId, String nodeName, String error) {
+        NativeWorkflows.failWorkflowNode(handle, runId, nodeName, error);
+    }
+
+    @Override
+    public void skipWorkflowNode(String runId, String nodeName) {
+        NativeWorkflows.skipWorkflowNode(handle, runId, nodeName);
     }
 
     @Override

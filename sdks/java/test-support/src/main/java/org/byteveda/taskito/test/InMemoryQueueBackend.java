@@ -476,7 +476,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
             byte[][] payloads,
             String queueDefault,
             String paramsJson,
-            String[] deferredNames) {
+            String[] deferredNames,
+            String parentRunId,
+            String parentNodeName) {
         return unsupported();
     }
 

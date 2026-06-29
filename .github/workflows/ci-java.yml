@@ -36,7 +36,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Build + test on every supported JDK; the SDK targets 11 but runs on 11/17/21
+  # Build + test on every supported JDK; the SDK targets 17 but runs on 17/21/25
   # over a native .so, so JVM behaviour is runtime-sensitive.
   test:
     name: Java SDK Tests (JDK ${{ matrix.java }})
@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: ["11", "17", "21"]
+        java: ["17", "21", "25"]
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -65,7 +65,11 @@ jobs:
       # -x cargoBuild skips the Rust compile; copyNative still stages the .so.
       - name: Build and test the Java SDK
         working-directory: sdks/java
-        run: ./gradlew build -x cargoBuild --no-daemon
+        # Spotless/Checkstyle are JDK-independent (and palantir-java-format reaches
+        # into javac internals that newer JDKs change), so run the full `build`
+        # (which includes `check`) only on the baseline JDK; the other legs run the
+        # test suite to verify runtime behaviour on each JDK.
+        run: ./gradlew ${{ matrix.java == '17' && 'build' || 'test' }} -x cargoBuild --no-daemon
 
   # Smoke the other published platforms on one JDK: their native binary differs,
   # so they rebuild it (cargoBuild) instead of reusing the Linux artifact.

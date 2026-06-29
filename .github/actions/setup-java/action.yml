@@ -2,7 +2,7 @@ name: Set up Java
 description: >-
   Installs a Temurin JDK and enables Gradle build caching. Used by every
   Java-touching job so toolchain setup lives in one place. The SDK targets Java
-  11 bytecode via `--release 11`, so any JDK >= 11 works; we use 21 to match the
+  17 bytecode via `--release 17`, so any JDK >= 17 works; we use 21 to match the
   publish workflow.
 
 inputs:

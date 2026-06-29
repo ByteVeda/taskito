@@ -18,6 +18,7 @@ public final class Step {
     public final Integer priority;
     public final String fanOut;
     public final String fanIn;
+    public final GateConfig gate;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -30,6 +31,7 @@ public final class Step {
         this.priority = builder.priority;
         this.fanOut = builder.fanOut;
         this.fanIn = builder.fanIn;
+        this.gate = builder.gate;
     }
 
     /** Begin a step bound to a typed task. */
@@ -59,6 +61,7 @@ public final class Step {
         private Integer priority;
         private String fanOut;
         private String fanIn;
+        private GateConfig gate;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -114,9 +117,29 @@ public final class Step {
             return fanIn(mode.wire());
         }
 
+        /**
+         * Park this step for approval before it runs. The node waits until
+         * {@code Worker.approveGate}/{@code rejectGate}, or until the gate's
+         * timeout elapses.
+         */
+        public Builder gate(GateConfig gate) {
+            this.gate = gate;
+            return this;
+        }
+
         public Step build() {
             if (fanOut != null && fanIn != null) {
                 throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
+            }
+            if (gate != null && (fanOut != null || fanIn != null)) {
+                throw new IllegalArgumentException("step '" + name + "' cannot be both a gate and a fan-out/fan-in");
+            }
+            // A gate is a deferred control node (its task never enqueues), valid only
+            // on the Workflow.gate(...) sentinel — not on a normal task step.
+            if (gate != null && !Workflow.GATE_TASK.equals(taskName)) {
+                throw new IllegalArgumentException("step '" + name
+                        + "': a gate may only be created via Workflow.gate(...); a gate on a normal task step "
+                        + "would defer the node and never enqueue its task");
             }
             return new Step(this);
         }
