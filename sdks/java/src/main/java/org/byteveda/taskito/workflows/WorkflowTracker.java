@@ -210,19 +210,26 @@ public final class WorkflowTracker {
         if (!allTerminal(node.predecessors, statuses)) {
             return; // a predecessor is still in flight
         }
-        if (!promotedNodes.add(new GateKey(runId, node.name))) {
+        GateKey promotionKey = new GateKey(runId, node.name);
+        if (!promotedNodes.add(promotionKey)) {
             return; // a concurrent outcome already promoted it
         }
-        if (!allCompleted(node.predecessors, statuses)) {
-            backend.skipWorkflowNode(runId, node.name);
-            promoteSuccessors(runId, node.name, plan); // cascade the skip downstream
-            return;
+        // Roll back the dedupe marker if promotion fails, else the node wedges PENDING.
+        try {
+            if (!allCompleted(node.predecessors, statuses)) {
+                backend.skipWorkflowNode(runId, node.name);
+                promoteSuccessors(runId, node.name, plan); // cascade the skip downstream
+                return;
+            }
+            if (node.gate != null) {
+                enterGate(runId, node);
+                return;
+            }
+            createDeferredJobFor(runId, node);
+        } catch (RuntimeException e) {
+            promotedNodes.remove(promotionKey);
+            throw e;
         }
-        if (node.gate != null) {
-            enterGate(runId, node);
-            return;
-        }
-        createDeferredJobFor(runId, node);
     }
 
     /** Park a gate node for approval, scheduling its timeout auto-resolution if any. */
@@ -251,6 +258,10 @@ public final class WorkflowTracker {
      * first of a manual call and a timeout wins.
      */
     public void resolveGate(String runId, String nodeName, boolean approved, String error) {
+        NodeSnapshot snap = statusMap(runId).get(nodeName);
+        if (snap == null || snap.status != NodeStatus.WAITING_APPROVAL) {
+            return; // only a parked gate can be resolved (wrong node, not yet parked, or already settled)
+        }
         GateKey key = new GateKey(runId, nodeName);
         if (!resolvedGates.add(key)) {
             return; // already resolved by a timer or another caller
