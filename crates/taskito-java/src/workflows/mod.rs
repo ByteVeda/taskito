@@ -1049,7 +1049,8 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_skipWo
         let wf = queue.workflow_store()?;
         if let Some(node) = wf.get_workflow_node(&run_id, &node_name)? {
             if let Some(job_id) = &node.job_id {
-                let _ = queue.storage.cancel_job(job_id);
+                // Surface a storage failure rather than skipping while the bound job runs.
+                queue.storage.cancel_job(job_id)?;
             }
         }
         wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::Skipped)?;
