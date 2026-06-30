@@ -31,10 +31,11 @@ public final class Smoke {
             String id = queue.enqueue(echo, "graalvm");
 
             CountDownLatch done = new CountDownLatch(1);
-            try (Worker worker = queue.worker()
+            Worker worker = queue.worker()
                     .handle(echo, (String payload) -> payload.length())
                     .on(EventName.SUCCESS, event -> done.countDown())
-                    .start()) {
+                    .start();
+            try (worker) {
                 if (!done.await(20, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("task did not complete");
                 }
