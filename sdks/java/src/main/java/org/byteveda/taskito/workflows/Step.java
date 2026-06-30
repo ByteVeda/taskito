@@ -22,6 +22,7 @@ public final class Step {
     public final String condition;
     public final Condition callableCondition;
     public final Workflow subWorkflow;
+    public final String compensate;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -38,6 +39,7 @@ public final class Step {
         this.condition = builder.condition;
         this.callableCondition = builder.callableCondition;
         this.subWorkflow = builder.subWorkflow;
+        this.compensate = builder.compensate;
     }
 
     /** Begin a step bound to a typed task. */
@@ -71,6 +73,7 @@ public final class Step {
         private String condition;
         private Condition callableCondition;
         private Workflow subWorkflow;
+        private String compensate;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -191,6 +194,21 @@ public final class Step {
             return this;
         }
 
+        /**
+         * Register a rollback task for this step. If the run later fails, the saga
+         * runs {@code compensateTask} (with this step's result as its payload) to
+         * compensate it, rolling back completed steps in reverse order.
+         */
+        public Builder compensate(String compensateTask) {
+            this.compensate = compensateTask;
+            return this;
+        }
+
+        /** Register a typed rollback task; see {@link #compensate(String)}. */
+        public Builder compensate(Task<?> compensateTask) {
+            return compensate(compensateTask.name());
+        }
+
         public Step build() {
             if (fanOut != null && fanIn != null) {
                 throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
@@ -208,6 +226,13 @@ public final class Step {
             if (subWorkflow != null && (fanOut != null || fanIn != null || gate != null)) {
                 throw new IllegalArgumentException(
                         "step '" + name + "' cannot be both a sub-workflow and a gate/fan-out/fan-in");
+            }
+            // Compensation replays the step's forward result as the rollback payload.
+            // Gate, sub-workflow, and fan-out nodes never run a task of their own
+            // (so they have no forward result) — reject a compensator on them.
+            if (compensate != null && (gate != null || subWorkflow != null || fanOut != null)) {
+                throw new IllegalArgumentException("step '" + name
+                        + "' cannot be compensated: a gate/sub-workflow/fan-out node has no forward result");
             }
             return new Step(this);
         }

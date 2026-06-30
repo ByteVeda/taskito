@@ -33,6 +33,16 @@ final class RunPlan {
         return new RunPlan(byName, successors);
     }
 
+    /** The plan node by name, or {@code null} if absent. */
+    PlanNode node(String name) {
+        return byName.get(name);
+    }
+
+    /** Every plan node. */
+    java.util.Collection<PlanNode> allNodes() {
+        return byName.values();
+    }
+
     /** Every successor of {@code node} whose plan entry matches {@code match}. */
     List<PlanNode> successorsMatching(String node, Predicate<PlanNode> match) {
         List<PlanNode> matches = new ArrayList<>();

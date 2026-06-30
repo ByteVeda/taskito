@@ -66,6 +66,8 @@ struct StepSpec {
     gate: Option<String>,
     /// Serialized child-workflow spec marking a sub-workflow node.
     sub_workflow: Option<String>,
+    /// Rollback task name — the saga runs it to compensate this node.
+    compensate: Option<String>,
 }
 
 /// Combined run + node snapshot returned by `getWorkflowStatus`. Timestamps are
@@ -230,6 +232,7 @@ fn submit(
                     condition: s.condition.clone(),
                     gate: s.gate.clone(),
                     sub_workflow: s.sub_workflow.clone(),
+                    compensate: s.compensate.clone(),
                     ..Default::default()
                 },
             )
@@ -518,6 +521,7 @@ struct PlanNodeView<'a> {
     condition: Option<&'a str>,
     gate: Option<&'a str>,
     sub_workflow: Option<&'a str>,
+    compensate: Option<&'a str>,
 }
 
 /// The run + node a job belongs to.
@@ -578,6 +582,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_getWor
                     condition: meta.and_then(|m| m.condition.as_deref()),
                     gate: meta.and_then(|m| m.gate.as_deref()),
                     sub_workflow: meta.and_then(|m| m.sub_workflow.as_deref()),
+                    compensate: meta.and_then(|m| m.compensate.as_deref()),
                 }
             })
             .collect();
@@ -1054,6 +1059,179 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_skipWo
             }
         }
         wf.update_workflow_node_status(&run_id, &node_name, WorkflowNodeStatus::Skipped)?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowRunCompensating(long, String runId)` — mark a run as
+/// compensating (the saga is rolling back completed nodes).
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowRunCompensating<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        queue.workflow_store()?.update_workflow_run_state(
+            &run_id,
+            WorkflowState::Compensating,
+            None,
+        )?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowRunCompensated(long, String runId, long completedAt)` — the
+/// saga rolled everything back successfully.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowRunCompensated<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    completed_at: jlong,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        wf.update_workflow_run_state(&run_id, WorkflowState::Compensated, None)?;
+        wf.set_workflow_run_completed(&run_id, completed_at)?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowRunCompensationFailed(long, String runId, long completedAt,
+/// String error)` — a compensation job itself failed; rollback is incomplete.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowRunCompensationFailed<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    completed_at: jlong,
+    error: JString<'local>,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let error = read_optional_string(env, &error)?;
+        let wf = queue.workflow_store()?;
+        wf.update_workflow_run_state(&run_id, WorkflowState::CompensationFailed, error.as_deref())?;
+        wf.set_workflow_run_completed(&run_id, completed_at)?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowRunCompletedWithFailures(long, String runId, long completedAt)`
+/// — the run finished with some failed nodes (on-failure=continue).
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowRunCompletedWithFailures<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    completed_at: jlong,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        wf.update_workflow_run_state(&run_id, WorkflowState::CompletedWithFailures, None)?;
+        wf.set_workflow_run_completed(&run_id, completed_at)?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowNodeCompensationJob(long, String runId, String nodeName,
+/// String compensationJobId, long startedAt)` — bind a node's rollback job.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowNodeCompensationJob<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+    compensation_job_id: JString<'local>,
+    started_at: jlong,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        let comp_job_id = read_string(env, &compensation_job_id)?;
+        queue.workflow_store()?.set_workflow_node_compensation_job(
+            &run_id,
+            &node_name,
+            &comp_job_id,
+            started_at,
+        )?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowNodeCompensated(long, String runId, String nodeName,
+/// long completedAt)` — a node's rollback succeeded.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowNodeCompensated<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+    completed_at: jlong,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        queue
+            .workflow_store()?
+            .set_workflow_node_compensated(&run_id, &node_name, completed_at)?;
+        Ok(())
+    })
+}
+
+/// `void setWorkflowNodeCompensationFailed(long, String runId, String nodeName,
+/// String error, long completedAt)` — a node's rollback failed.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_setWorkflowNodeCompensationFailed<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+    node_name: JString<'local>,
+    error: JString<'local>,
+    completed_at: jlong,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let node_name = read_string(env, &node_name)?;
+        let error =
+            read_optional_string(env, &error)?.unwrap_or_else(|| "compensation failed".to_string());
+        queue
+            .workflow_store()?
+            .set_workflow_node_compensation_failed(&run_id, &node_name, &error, completed_at)?;
         Ok(())
     })
 }

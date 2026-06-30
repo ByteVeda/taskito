@@ -103,4 +103,23 @@ public final class NativeWorkflows {
 
     /** Mark a node skipped (its condition evaluated false) and cancel any bound job. */
     public static native void skipWorkflowNode(long handle, String runId, String nodeName);
+
+    // ── Saga compensation (driven by the worker-side tracker) ──
+
+    public static native void setWorkflowRunCompensating(long handle, String runId);
+
+    public static native void setWorkflowRunCompensated(long handle, String runId, long completedAt);
+
+    public static native void setWorkflowRunCompensationFailed(
+            long handle, String runId, long completedAt, String error);
+
+    public static native void setWorkflowRunCompletedWithFailures(long handle, String runId, long completedAt);
+
+    public static native void setWorkflowNodeCompensationJob(
+            long handle, String runId, String nodeName, String compensationJobId, long startedAt);
+
+    public static native void setWorkflowNodeCompensated(long handle, String runId, String nodeName, long completedAt);
+
+    public static native void setWorkflowNodeCompensationFailed(
+            long handle, String runId, String nodeName, String error, long completedAt);
 }

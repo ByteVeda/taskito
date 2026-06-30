@@ -65,10 +65,13 @@ public final class WorkflowTracker {
     private final Set<GateKey> promotedNodes = ConcurrentHashMap.newKeySet();
     /** Sub-workflow child run → its parent {@code [runId, nodeName]}, so a finalized child resolves its parent node. */
     private final ConcurrentMap<String, String[]> childToParent = new ConcurrentHashMap<>();
+    /** Rolls back failed runs that declared compensators. */
+    private final SagaOrchestrator saga;
 
     public WorkflowTracker(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
         this.serializer = serializer;
+        this.saga = new SagaOrchestrator(backend, this, json);
     }
 
     /**
@@ -102,6 +105,12 @@ public final class WorkflowTracker {
     }
 
     private void onOutcome(String jobId, boolean succeeded, String error) {
+        // Compensation jobs carry compensation:true metadata, so they never map to
+        // a forward node — route them to the saga instead.
+        if (saga.isCompensationJob(jobId)) {
+            saga.onCompensationCompleted(jobId, succeeded, error);
+            return;
+        }
         NodeRef ref = backend.workflowNodeForJobJson(jobId)
                 .map(raw -> decode(raw, NodeRef.class))
                 .orElse(null);
@@ -442,6 +451,19 @@ public final class WorkflowTracker {
     }
 
     private void finalizeIfTerminal(String runId) {
+        Map<String, NodeSnapshot> statuses = statusMap(runId);
+        if (statuses.isEmpty() || !allNodesTerminal(statuses)) {
+            return; // not every node has settled yet
+        }
+        // A failed top-level run with compensators rolls back BEFORE the core marks
+        // it failed, so observers never see a transient Failed before Compensating.
+        boolean anyFailed = statuses.values().stream().anyMatch(node -> node.status == NodeStatus.FAILED);
+        if (anyFailed && !childToParent.containsKey(runId)) {
+            RunPlan plan = plans.computeIfAbsent(runId, this::loadPlan);
+            if (plan != null && saga.startCompensation(runId, plan, statuses)) {
+                return; // the saga owns the run and will finalize it
+            }
+        }
         Optional<String> finalState = backend.finalizeRunIfTerminal(runId);
         if (finalState.isEmpty()) {
             return;
@@ -469,7 +491,7 @@ public final class WorkflowTracker {
     }
 
     /** Drop all per-run state once a run is terminal, cancelling any lingering timers. */
-    private void forget(String runId) {
+    void forget(String runId) {
         plans.remove(runId);
         runNames.remove(runId);
         gateTimers.keySet().removeIf(key -> {
@@ -558,6 +580,15 @@ public final class WorkflowTracker {
             }
         }
         return false;
+    }
+
+    private static boolean allNodesTerminal(Map<String, NodeSnapshot> statuses) {
+        for (NodeSnapshot node : statuses.values()) {
+            if (!isTerminal(node.status)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isTerminal(NodeStatus status) {
