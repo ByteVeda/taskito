@@ -614,7 +614,8 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public Worker.Builder worker() {
-        return Worker.builder(backend, serializer, middleware, resources);
+        // Each worker gets its own runtime (own WORKER-scoped cache) over shared definitions.
+        return Worker.builder(backend, serializer, middleware, resources.forWorker());
     }
 
     @Override

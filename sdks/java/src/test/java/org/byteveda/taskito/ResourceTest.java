@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.byteveda.taskito.errors.ResourceException;
@@ -14,6 +15,7 @@ import org.byteveda.taskito.resources.ResourceScope;
 import org.byteveda.taskito.resources.ResourceStat;
 import org.byteveda.taskito.resources.Resources;
 import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.task.TaskFunction;
 import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -59,5 +61,32 @@ class ResourceTest {
     @Test
     void useOutsideTaskThrows() {
         assertThrows(ResourceException.class, () -> Resources.use("anything"));
+    }
+
+    @Test
+    @Timeout(30)
+    void workerScopedResourceIsBuiltPerWorker(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rpw.db").toString()).open()) {
+            queue.resource("perWorker", ctx -> new Object());
+            // Force exactly one job per worker so both live workers resolve the resource.
+            CyclicBarrier bothBusy = new CyclicBarrier(2);
+            CountDownLatch ran = new CountDownLatch(2);
+            TaskFunction<Integer, Integer> handler = p -> {
+                Resources.use("perWorker");
+                bothBusy.await(20, TimeUnit.SECONDS);
+                ran.countDown();
+                return p;
+            };
+            try (Worker w1 = queue.worker().concurrency(1).handle(TASK, handler).start();
+                    Worker w2 =
+                            queue.worker().concurrency(1).handle(TASK, handler).start()) {
+                queue.enqueue(TASK, 1);
+                queue.enqueue(TASK, 2);
+                assertTrue(ran.await(25, TimeUnit.SECONDS));
+            }
+            // Shared-runtime would build once (created==1); per-worker builds one each.
+            assertEquals(2, queue.resourceMetrics().get("perWorker").created());
+        }
     }
 }

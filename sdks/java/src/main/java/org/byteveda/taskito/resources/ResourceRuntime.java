@@ -14,21 +14,24 @@ import java.util.function.Consumer;
 import org.byteveda.taskito.errors.ResourceException;
 
 /**
- * Registry and lifecycle for worker resources. Holds the definitions, the
- * single shared cache of worker-scoped instances, and per-resource counters.
- * Worker-scoped resources are built at most once (under a per-name lock, so a
- * concurrent first-use does not double-build) and disposed LIFO when the last
- * worker lease is released.
+ * Registry and lifecycle for worker resources. The client-level instance holds
+ * the definitions and per-resource counters; each worker gets its own live
+ * runtime via {@link #forWorker()}, sharing those definitions/counters but with
+ * its own cache of worker-scoped instances — so a {@code WORKER}-scoped resource
+ * is one instance <em>per worker</em>, not one per client. Worker-scoped
+ * resources are built at most once per worker (under a per-name lock, so a
+ * concurrent first-use does not double-build) and disposed LIFO when that
+ * worker's last lease is released.
  */
 public final class ResourceRuntime {
     private static final Logger LOG = System.getLogger(ResourceRuntime.class.getName());
     /** Cache sentinel for a factory that legitimately returned {@code null}. */
     private static final Object NULL = new Object();
 
-    private final ConcurrentMap<String, ResourceDefinition> definitions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, ResourceDefinition> definitions;
+    private final ConcurrentMap<String, Counter> counters;
     private final ConcurrentMap<String, Object> workerCache = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ReentrantLock> workerLocks = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, Counter> counters = new ConcurrentHashMap<>();
     private final Deque<Runnable> workerTeardown = new ArrayDeque<>();
     private int leases; // guarded by this
 
@@ -44,6 +47,27 @@ public final class ResourceRuntime {
             return cast(resolveWorker(name));
         }
     };
+
+    /** A client-level runtime: holds definitions + counters, hands each worker a child via {@link #forWorker()}. */
+    public ResourceRuntime() {
+        this.definitions = new ConcurrentHashMap<>();
+        this.counters = new ConcurrentHashMap<>();
+    }
+
+    private ResourceRuntime(
+            ConcurrentMap<String, ResourceDefinition> definitions, ConcurrentMap<String, Counter> counters) {
+        this.definitions = definitions;
+        this.counters = counters;
+    }
+
+    /**
+     * A per-worker runtime sharing this runtime's definitions and counters but with
+     * its own worker-scoped cache, teardown stack, and lease count — so each worker
+     * builds and disposes its own {@code WORKER}-scoped instances.
+     */
+    public ResourceRuntime forWorker() {
+        return new ResourceRuntime(definitions, counters);
+    }
 
     /** Register a resource under {@code name}, replacing any prior definition. */
     public void register(String name, ResourceDefinition definition) {
