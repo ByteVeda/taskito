@@ -10,6 +10,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.byteveda.taskito.errors.ResourceException;
 import org.byteveda.taskito.resources.ResourceScope;
 import org.byteveda.taskito.resources.ResourceStat;
@@ -69,6 +70,36 @@ class ResourceTest {
                 Taskito.builder().url(dir.resolve("rdup.db").toString()).open()) {
             queue.resource("db", ctx -> new Object());
             assertThrows(ResourceException.class, () -> queue.resource("db", ctx -> new Object()));
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void circularResourceDependencyIsRejected(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rcyc.db").toString()).open()) {
+            queue.resource("self", ctx -> {
+                ctx.use("self"); // self-reference — must fail fast, not StackOverflow
+                return new Object();
+            });
+            AtomicReference<Class<?>> thrown = new AtomicReference<>();
+            CountDownLatch ran = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .handle(TASK, p -> {
+                        try {
+                            Resources.use("self");
+                        } catch (RuntimeException e) {
+                            thrown.set(e.getClass());
+                        } finally {
+                            ran.countDown();
+                        }
+                        return p;
+                    })
+                    .start()) {
+                queue.enqueue(TASK, 1);
+                assertTrue(ran.await(20, TimeUnit.SECONDS));
+            }
+            assertEquals(ResourceException.class, thrown.get());
         }
     }
 

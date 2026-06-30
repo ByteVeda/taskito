@@ -5,7 +5,9 @@ import java.lang.System.Logger.Level;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -33,6 +35,9 @@ public final class ResourceRuntime {
     private final ConcurrentMap<String, Object> workerCache = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ReentrantLock> workerLocks = new ConcurrentHashMap<>();
     private final Deque<Runnable> workerTeardown = new ArrayDeque<>();
+    /** Names being resolved on the current thread, so a dependency cycle fails fast instead of recursing. */
+    private final ThreadLocal<Set<String>> resolving = ThreadLocal.withInitial(LinkedHashSet::new);
+
     private int leases; // guarded by this
 
     /** Context handed to a worker factory: it may only use other worker resources. */
@@ -165,10 +170,18 @@ public final class ResourceRuntime {
     }
 
     private Object build(String name, ResourceDefinition definition, ResourceContext context) {
+        Set<String> chain = resolving.get();
+        if (!chain.add(name)) {
+            throw new ResourceException("circular resource dependency at '" + name + "' (chain: " + chain + ")");
+        }
         try {
             return definition.factory().apply(context);
+        } catch (ResourceException e) {
+            throw e; // a nested unknown/cycle/build failure already carries its message
         } catch (RuntimeException e) {
             throw new ResourceException("failed to build resource '" + name + "'", e);
+        } finally {
+            chain.remove(name);
         }
     }
 
