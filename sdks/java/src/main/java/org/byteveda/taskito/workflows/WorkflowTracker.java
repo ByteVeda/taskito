@@ -52,6 +52,8 @@ public final class WorkflowTracker {
 
     /** Deferred-node payloads from registered workflows: {@code wfName -> node -> serialized payload}. */
     private final ConcurrentMap<String, Map<String, byte[]>> deferredPayloads = new ConcurrentHashMap<>();
+    /** Sub-workflow child runs' deferred-node payloads, keyed by run id so same-named runs don't collide. */
+    private final ConcurrentMap<String, Map<String, byte[]>> childRunPayloads = new ConcurrentHashMap<>();
     /** Callable conditions from registered workflows: {@code wfName -> node -> predicate}. */
     private final ConcurrentMap<String, Map<String, Condition>> callableConditions = new ConcurrentHashMap<>();
     /** Live gate timeout timers, so a manual resolution can cancel a pending auto-resolution. */
@@ -283,8 +285,6 @@ public final class WorkflowTracker {
                 payloadBytes.add(bytes);
             }
         });
-        // Register the child's payloads so the tracker can promote its own deferred nodes.
-        deferredPayloads.put(child.name, allPayloads);
         String childRun = backend.submitWorkflow(
                 child.name,
                 child.version,
@@ -296,6 +296,9 @@ public final class WorkflowTracker {
                 deferred.toArray(new String[0]),
                 runId,
                 node.name);
+        // Register the child's payloads under its run id so the tracker can promote the
+        // child's own deferred nodes — run-scoped, so two same-named child runs can't stomp.
+        childRunPayloads.put(childRun, allPayloads);
         childToParent.put(childRun, new String[] {runId, node.name});
         backend.setWorkflowNodeRunning(runId, node.name);
     }
@@ -413,6 +416,10 @@ public final class WorkflowTracker {
     }
 
     private byte[] deferredPayload(String runId, String nodeName) {
+        Map<String, byte[]> childPayloads = childRunPayloads.get(runId);
+        if (childPayloads != null) {
+            return childPayloads.get(nodeName); // a child run resolves only its run-scoped payloads
+        }
         String wfName = workflowName(runId);
         if (wfName == null) {
             return null;
@@ -478,6 +485,7 @@ public final class WorkflowTracker {
         promotedNodes.removeIf(key -> key.runId.equals(runId));
         childToParent.remove(runId);
         childToParent.values().removeIf(parent -> parent[0].equals(runId));
+        childRunPayloads.remove(runId);
     }
 
     /** Stop the gate-timeout scheduler. Called when the owning worker closes. */
