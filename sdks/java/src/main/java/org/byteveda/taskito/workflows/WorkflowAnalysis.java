@@ -19,8 +19,28 @@ import org.byteveda.taskito.errors.WorkflowException;
 public final class WorkflowAnalysis {
     private WorkflowAnalysis() {}
 
+    /**
+     * Ensure every {@code after} edge names a declared step. Throws a
+     * {@link WorkflowException} on the first dangling dependency. Every query below
+     * runs this first, so they all reject the same invalid workflows.
+     */
+    public static void validate(Workflow workflow) {
+        Set<String> names = new HashSet<>();
+        for (Step step : workflow.steps()) {
+            names.add(step.name);
+        }
+        for (Step step : workflow.steps()) {
+            for (String pred : step.after) {
+                if (!names.contains(pred)) {
+                    throw new WorkflowException("step '" + step.name + "' depends on unknown step '" + pred + "'");
+                }
+            }
+        }
+    }
+
     /** Nodes in a topological order (predecessors before successors). Throws on a cycle. */
     public static List<String> topologicalOrder(Workflow workflow) {
+        validate(workflow);
         Map<String, List<String>> successors = successors(workflow);
         Map<String, Integer> indegree = indegree(workflow);
         Deque<String> ready = new ArrayDeque<>();
@@ -68,16 +88,19 @@ public final class WorkflowAnalysis {
 
     /** All nodes that must complete before {@code node} (transitive predecessors). */
     public static Set<String> ancestors(Workflow workflow, String node) {
+        validate(workflow);
         return reachable(predecessors(workflow), node);
     }
 
     /** All nodes that run after {@code node} (transitive successors). */
     public static Set<String> descendants(Workflow workflow, String node) {
+        validate(workflow);
         return reachable(successors(workflow), node);
     }
 
     /** Nodes with no predecessors. */
     public static List<String> roots(Workflow workflow) {
+        validate(workflow);
         Map<String, Integer> indegree = indegree(workflow);
         List<String> roots = new ArrayList<>();
         for (Step step : workflow.steps()) {
@@ -90,6 +113,7 @@ public final class WorkflowAnalysis {
 
     /** Nodes with no successors. */
     public static List<String> leaves(Workflow workflow) {
+        validate(workflow);
         Map<String, List<String>> successors = successors(workflow);
         List<String> leaves = new ArrayList<>();
         for (Step step : workflow.steps()) {
@@ -132,18 +156,8 @@ public final class WorkflowAnalysis {
 
     private static Map<String, Integer> indegree(Workflow workflow) {
         Map<String, Integer> indegree = new HashMap<>();
-        Set<String> names = new HashSet<>();
         for (Step step : workflow.steps()) {
-            names.add(step.name);
-            indegree.putIfAbsent(step.name, 0);
-        }
-        for (Step step : workflow.steps()) {
-            for (String pred : step.after) {
-                if (!names.contains(pred)) {
-                    throw new WorkflowException("step '" + step.name + "' depends on unknown step '" + pred + "'");
-                }
-                indegree.merge(step.name, 1, Integer::sum);
-            }
+            indegree.put(step.name, step.after.size());
         }
         return indegree;
     }
