@@ -52,6 +52,10 @@ public final class Worker implements AutoCloseable {
         this.resources = resources;
     }
 
+    public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
+        return new Builder(backend, serializer, middleware, new ResourceRuntime());
+    }
+
     public static Builder builder(
             QueueBackend backend, Serializer serializer, List<Middleware> middleware, ResourceRuntime resources) {
         return new Builder(backend, serializer, middleware, resources);
