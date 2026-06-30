@@ -50,9 +50,13 @@ final class SagaOrchestrator {
             if (node.compensate == null || snap == null || !isCompensable(snap.status)) {
                 continue;
             }
-            byte[] forward = snap.jobId == null
-                    ? new byte[0]
-                    : backend.getResult(snap.jobId).orElseGet(() -> new byte[0]);
+            if (snap.jobId == null) {
+                throw new WorkflowException(
+                        "completed workflow node '" + node.name + "' has no forward job to compensate from");
+            }
+            byte[] forward = backend.getResult(snap.jobId)
+                    .orElseThrow(() ->
+                            new WorkflowException("missing forward result for workflow node '" + node.name + "'"));
             targets.put(
                     node.name,
                     new CompTarget(
@@ -176,7 +180,9 @@ final class SagaOrchestrator {
     }
 
     private static boolean isCompensable(NodeStatus status) {
-        return status == NodeStatus.COMPLETED || status == NodeStatus.CACHE_HIT;
+        // Only nodes that actually executed their forward task this run. A CACHE_HIT
+        // skipped the task, so its side effects were never performed here.
+        return status == NodeStatus.COMPLETED;
     }
 
     private static long now() {
