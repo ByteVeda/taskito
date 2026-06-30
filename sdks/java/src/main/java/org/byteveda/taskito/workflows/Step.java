@@ -217,6 +217,10 @@ public final class Step {
          * workflow, if this step's task + payload are unchanged and within the TTL,
          * the worker marks it a cache hit and skips re-running it. (Cache state is
          * per worker process.)
+         *
+         * <p>A cache hit does not produce a forward result, so a cached step's result
+         * is not available downstream: it cannot feed a fan-out/fan-in (rejected at
+         * submit) and a callable {@code condition} won't see its result.
          */
         public Builder cache(java.time.Duration ttl) {
             if (ttl == null || ttl.isNegative() || ttl.isZero()) {
@@ -227,6 +231,12 @@ public final class Step {
         }
 
         public Step build() {
+            // A cacheable step is a deferred node; deferred roots are never promoted,
+            // so a cacheable step with no predecessor would wedge the run in PENDING.
+            if (cacheTtlMs != null && after.isEmpty()) {
+                throw new IllegalArgumentException("step '" + name
+                        + "' cannot be cacheable without a predecessor; a deferred root is never promoted");
+            }
             if (fanOut != null && fanIn != null) {
                 throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
             }

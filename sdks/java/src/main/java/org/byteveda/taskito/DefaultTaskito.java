@@ -365,6 +365,7 @@ final class DefaultTaskito implements Taskito {
     @Override
     public WorkflowRun submitWorkflow(Workflow workflow, Map<String, Object> suppliedPayloads) {
         List<Step> steps = workflow.steps();
+        rejectCachedFanProducers(steps);
         Set<String> deferred = deferredNodes(steps);
         List<Map<String, Object>> specs = new ArrayList<>(steps.size());
         // Deferred nodes (fan-out/fan-in + their downstream) have no job — and so
@@ -405,6 +406,33 @@ final class DefaultTaskito implements Taskito {
      * downstream of them — are deferred: they carry a node row but no job at
      * submit, and the worker tracker creates/parks/evaluates them at runtime.
      */
+    /**
+     * A cache hit produces no forward result, so a fan-out/fan-in over a cached step
+     * would have nothing to expand or collect (the run would hang). Reject it at submit.
+     */
+    private static void rejectCachedFanProducers(List<Step> steps) {
+        Set<String> cacheable = new HashSet<>();
+        for (Step step : steps) {
+            if (step.cacheTtlMs != null) {
+                cacheable.add(step.name);
+            }
+        }
+        if (cacheable.isEmpty()) {
+            return;
+        }
+        for (Step step : steps) {
+            if (step.fanOut == null && step.fanIn == null) {
+                continue;
+            }
+            for (String predecessor : step.after) {
+                if (cacheable.contains(predecessor)) {
+                    throw new WorkflowException("step '" + step.name + "' fans over cached step '" + predecessor
+                            + "', but a cache hit yields no result to fan — don't cache a fan-out/fan-in producer");
+                }
+            }
+        }
+    }
+
     private static Set<String> deferredNodes(List<Step> steps) {
         Set<String> deferred = new HashSet<>();
         for (Step step : steps) {

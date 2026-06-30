@@ -1,12 +1,15 @@
 package org.byteveda.taskito;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
+import org.byteveda.taskito.workflows.FanMode;
 import org.byteveda.taskito.workflows.NodeStatus;
 import org.byteveda.taskito.workflows.Step;
 import org.byteveda.taskito.workflows.Workflow;
@@ -57,6 +60,33 @@ class WorkflowCacheTest {
                 assertEquals(NodeStatus.COMPLETED, second.node("after").orElseThrow().status);
                 assertEquals(1, computeRuns.get());
             }
+        }
+    }
+
+    @Test
+    void cacheableRootStepIsRejected() {
+        // A deferred root is never promoted, so a cacheable step with no predecessor would hang.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Step.of("root", COMPUTE, 1).cache(Duration.ofMinutes(1)).build());
+    }
+
+    @Test
+    void cachedFanProducerIsRejected(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("wc2.db").toString()).open()) {
+            // A cache hit yields no result list, so a fan-out over a cached step can't expand.
+            Workflow wf = Workflow.named("badcache")
+                    .step("seed", SEED, 0)
+                    .step(Step.of("producer", COMPUTE, 1)
+                            .cache(Duration.ofMinutes(5))
+                            .after("seed")
+                            .build())
+                    .step(Step.of("fan", AFTER)
+                            .fanOut(FanMode.EACH)
+                            .after("producer")
+                            .build());
+            assertThrows(WorkflowException.class, () -> queue.submitWorkflow(wf));
         }
     }
 }
