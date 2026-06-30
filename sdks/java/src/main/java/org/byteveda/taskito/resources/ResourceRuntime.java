@@ -69,9 +69,11 @@ public final class ResourceRuntime {
         return new ResourceRuntime(definitions, counters);
     }
 
-    /** Register a resource under {@code name}, replacing any prior definition. */
+    /** Register a resource under {@code name}. A name may be registered only once. */
     public void register(String name, ResourceDefinition definition) {
-        definitions.put(name, definition);
+        if (definitions.putIfAbsent(name, definition) != null) {
+            throw new ResourceException("resource '" + name + "' is already registered");
+        }
         counters.computeIfAbsent(name, key -> new Counter());
     }
 

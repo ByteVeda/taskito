@@ -64,6 +64,15 @@ class ResourceTest {
     }
 
     @Test
+    void duplicateRegistrationThrows(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rdup.db").toString()).open()) {
+            queue.resource("db", ctx -> new Object());
+            assertThrows(ResourceException.class, () -> queue.resource("db", ctx -> new Object()));
+        }
+    }
+
+    @Test
     @Timeout(30)
     void workerScopedResourceIsBuiltPerWorker(@TempDir Path dir) throws Exception {
         try (Taskito queue =
