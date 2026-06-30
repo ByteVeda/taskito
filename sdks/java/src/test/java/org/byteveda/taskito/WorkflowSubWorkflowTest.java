@@ -1,6 +1,7 @@
 package org.byteveda.taskito;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -83,6 +84,29 @@ class WorkflowSubWorkflowTest {
                 assertEquals(NodeStatus.SKIPPED, status.node("finish").orElseThrow().status);
                 assertEquals(0, finished.get());
             }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void rejectsChildStepsThatLoseStateAtSubmit(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("sw.db").toString()).open()) {
+            // A child has no submit-time payload map: a payloadless plain task step can't run.
+            Workflow noPayload =
+                    Workflow.named("child").step(Step.of("a", CHILD_A).build());
+            Workflow parentNoPayload = Workflow.named("p1").subWorkflow("sub", noPayload);
+            assertThrows(TaskitoException.class, () -> queue.submitWorkflow(parentNoPayload));
+
+            // A child has no callable registry across the submit boundary.
+            Workflow callableChild = Workflow.named("child")
+                    .step("a", CHILD_A, 1)
+                    .step(Step.of("b", CHILD_B, 2)
+                            .after("a")
+                            .condition(ctx -> true)
+                            .build());
+            Workflow parentCallable = Workflow.named("p2").subWorkflow("sub", callableChild);
+            assertThrows(TaskitoException.class, () -> queue.submitWorkflow(parentCallable));
         }
     }
 }
