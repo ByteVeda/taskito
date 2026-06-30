@@ -505,6 +505,12 @@ final class DefaultTaskito implements Taskito {
                 throw new WorkflowException("child workflow step '" + step.name
                         + "' has no payload; a sub-workflow cannot supply child step payloads at submit");
             }
+            // The saga only compensates top-level runs; a child run resolves its parent
+            // node without rolling back, so a child compensator would never fire.
+            if (step.compensate != null) {
+                throw new WorkflowException("child workflow step '" + step.name
+                        + "' declares a compensator; sub-workflow runs cannot compensate yet");
+            }
             specs.add(stepSpec(step));
             if (step.payload != null) {
                 payloads.put(step.name, Base64.getEncoder().encodeToString(serializer.serialize(step.payload)));
