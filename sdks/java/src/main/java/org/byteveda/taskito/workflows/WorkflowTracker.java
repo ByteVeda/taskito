@@ -51,6 +51,8 @@ public final class WorkflowTracker {
 
     /** Deferred-node payloads from registered workflows: {@code wfName -> node -> serialized payload}. */
     private final ConcurrentMap<String, Map<String, byte[]>> deferredPayloads = new ConcurrentHashMap<>();
+    /** Callable conditions from registered workflows: {@code wfName -> node -> predicate}. */
+    private final ConcurrentMap<String, Map<String, Condition>> callableConditions = new ConcurrentHashMap<>();
     /** Live gate timeout timers, so a manual resolution can cancel a pending auto-resolution. */
     private final ConcurrentMap<GateKey, ScheduledFuture<?>> gateTimers = new ConcurrentHashMap<>();
     /** Gate keys already resolved, so a timer and a manual call never both fire. */
@@ -70,12 +72,17 @@ public final class WorkflowTracker {
      */
     public void register(Workflow workflow) {
         Map<String, byte[]> byNode = new HashMap<>();
+        Map<String, Condition> conditions = new HashMap<>();
         for (Step step : workflow.steps()) {
             if (step.payload != null) {
                 byNode.put(step.name, serializer.serialize(step.payload));
             }
+            if (step.callableCondition != null) {
+                conditions.put(step.name, step.callableCondition);
+            }
         }
         deferredPayloads.put(workflow.name(), byNode);
+        callableConditions.put(workflow.name(), conditions);
     }
 
     /** Route a successful job outcome. */
@@ -103,12 +110,20 @@ public final class WorkflowTracker {
             handleFanOutChild(ref.runId, ref.nodeName, plan);
             return;
         }
-        if (succeeded && plan != null) {
-            expandFanOutIfAny(ref.runId, ref.nodeName, jobId, plan);
-            promoteSuccessors(ref.runId, ref.nodeName, plan);
-        } else if (!succeeded) {
-            backend.cascadeSkipPending(ref.runId);
+        if (plan == null) {
+            // No plan to drive (e.g. an untracked run) — fall back to fail-fast.
+            if (!succeeded) {
+                backend.cascadeSkipPending(ref.runId);
+            }
+            finalizeIfTerminal(ref.runId);
+            return;
         }
+        if (succeeded) {
+            expandFanOutIfAny(ref.runId, ref.nodeName, jobId, plan);
+        }
+        // Evaluate every successor's condition — running on-failure recovery nodes
+        // and skip-cascading the rest. Replaces a blanket fail-fast cascade.
+        promoteSuccessors(ref.runId, ref.nodeName, plan);
         finalizeIfTerminal(ref.runId);
     }
 
@@ -154,7 +169,13 @@ public final class WorkflowTracker {
             return; // siblings still running, or already handled by a concurrent outcome
         }
         if (!done.succeeded) {
-            backend.cascadeSkipPending(runId);
+            // The fan-out parent is now Failed; evaluate its successors' conditions
+            // (on_failure/always run, on_success skip-cascade) like any other node.
+            if (plan != null) {
+                promoteSuccessors(runId, parent, plan);
+            } else {
+                backend.cascadeSkipPending(runId);
+            }
             finalizeIfTerminal(runId);
             return;
         }
@@ -191,35 +212,43 @@ public final class WorkflowTracker {
     }
 
     /**
-     * Promote every deferred non-fan successor of {@code settledNode} whose
-     * predecessors have all settled: park a gate, or create the node's job when
-     * all predecessors completed, or skip-and-cascade when one did not.
+     * Evaluate every successor of {@code settledNode} whose predecessors have all
+     * settled: run it (its condition holds) or skip-and-cascade it. A satisfied
+     * gate parks; a satisfied deferred node's job is created; a satisfied static
+     * node is left for the scheduler; an unsatisfied node is skipped and the skip
+     * cascades to its own successors.
      */
     private void promoteSuccessors(String runId, String settledNode, RunPlan plan) {
         Map<String, NodeSnapshot> statuses = statusMap(runId);
-        for (PlanNode succ : plan.successorsMatching(settledNode, candidate -> !candidate.isFanNode())) {
-            promoteDeferred(runId, succ, statuses, plan);
+        for (PlanNode succ : plan.successorsMatching(settledNode, candidate -> true)) {
+            promoteOrSkip(runId, succ, statuses, plan);
         }
     }
 
-    private void promoteDeferred(String runId, PlanNode node, Map<String, NodeSnapshot> statuses, RunPlan plan) {
+    private void promoteOrSkip(String runId, PlanNode node, Map<String, NodeSnapshot> statuses, RunPlan plan) {
         NodeSnapshot snap = statuses.get(node.name);
-        if (snap == null || snap.jobId != null || snap.status != NodeStatus.PENDING) {
-            return; // static (scheduler-run), already promoted, or already parked
+        if (snap == null || snap.status != NodeStatus.PENDING) {
+            return; // already running, parked, promoted, or terminal
         }
         if (!allTerminal(node.predecessors, statuses)) {
             return; // a predecessor is still in flight
         }
         GateKey promotionKey = new GateKey(runId, node.name);
         if (!promotedNodes.add(promotionKey)) {
-            return; // a concurrent outcome already promoted it
+            return; // a concurrent outcome already decided this node
         }
         // Roll back the dedupe marker if promotion fails, else the node wedges PENDING.
         try {
-            if (!allCompleted(node.predecessors, statuses)) {
+            if (!shouldRun(runId, node, statuses)) {
                 backend.skipWorkflowNode(runId, node.name);
                 promoteSuccessors(runId, node.name, plan); // cascade the skip downstream
                 return;
+            }
+            if (node.fanOut != null || node.fanIn != null) {
+                return; // fan nodes are driven by expandFanOut / fan-out completion
+            }
+            if (snap.jobId != null) {
+                return; // static node — the scheduler runs it once its deps complete
             }
             if (node.gate != null) {
                 enterGate(runId, node);
@@ -230,6 +259,54 @@ public final class WorkflowTracker {
             promotedNodes.remove(promotionKey);
             throw e;
         }
+    }
+
+    /** Whether {@code node}'s condition holds given its predecessors' outcomes. */
+    private boolean shouldRun(String runId, PlanNode node, Map<String, NodeSnapshot> statuses) {
+        if ("callable".equals(node.condition)) {
+            Condition predicate = callableCondition(runId, node.name);
+            if (predicate == null) {
+                throw new TaskitoException("callable condition for workflow node '" + node.name
+                        + "' is not registered; track the workflow on the worker via trackWorkflows(workflow)");
+            }
+            return predicate.test(buildContext(runId, statuses));
+        }
+        if ("on_failure".equals(node.condition)) {
+            return anyFailed(node.predecessors, statuses);
+        }
+        if ("always".equals(node.condition)) {
+            return true;
+        }
+        // null / "on_success": run only when every predecessor completed.
+        return allCompleted(node.predecessors, statuses);
+    }
+
+    private Condition callableCondition(String runId, String nodeName) {
+        String wfName = workflowName(runId);
+        if (wfName == null) {
+            return null;
+        }
+        return callableConditions.getOrDefault(wfName, Map.of()).get(nodeName);
+    }
+
+    /** Build the run snapshot a callable condition sees: completed nodes' results + statuses. */
+    private WorkflowContext buildContext(String runId, Map<String, NodeSnapshot> statuses) {
+        Map<String, Object> results = new HashMap<>();
+        Map<String, NodeStatus> statusByNode = new HashMap<>();
+        int succeeded = 0;
+        int failed = 0;
+        for (NodeSnapshot node : statuses.values()) {
+            statusByNode.put(node.nodeName, node.status);
+            if (isCompleted(node.status)) {
+                succeeded++;
+                if (node.jobId != null) {
+                    results.put(node.nodeName, serializer.deserialize(fetchResult(node.jobId), Object.class));
+                }
+            } else if (node.status == NodeStatus.FAILED) {
+                failed++;
+            }
+        }
+        return new WorkflowContext(runId, results, statusByNode, succeeded, failed);
     }
 
     /** Park a gate node for approval, scheduling its timeout auto-resolution if any. */
@@ -297,12 +374,24 @@ public final class WorkflowTracker {
     }
 
     private byte[] deferredPayload(String runId, String nodeName) {
-        String wfName = runNames.computeIfAbsent(
-                runId, id -> backend.workflowNameForRun(id).orElse(null));
+        String wfName = workflowName(runId);
         if (wfName == null) {
             return null;
         }
         return deferredPayloads.getOrDefault(wfName, Map.of()).get(nodeName);
+    }
+
+    /** The run's workflow-definition name, cached (drives the deferred-payload + condition registries). */
+    private String workflowName(String runId) {
+        String cached = runNames.get(runId);
+        if (cached != null) {
+            return cached;
+        }
+        String name = backend.workflowNameForRun(runId).orElse(null);
+        if (name != null) {
+            runNames.put(runId, name);
+        }
+        return name;
     }
 
     private void finalizeIfTerminal(String runId) {
@@ -388,6 +477,16 @@ public final class WorkflowTracker {
             }
         }
         return true;
+    }
+
+    private static boolean anyFailed(List<String> predecessors, Map<String, NodeSnapshot> statuses) {
+        for (String pred : predecessors) {
+            NodeSnapshot snap = statuses.get(pred);
+            if (snap != null && snap.status == NodeStatus.FAILED) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isTerminal(NodeStatus status) {

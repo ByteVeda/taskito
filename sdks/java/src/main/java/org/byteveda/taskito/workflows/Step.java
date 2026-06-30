@@ -19,6 +19,8 @@ public final class Step {
     public final String fanOut;
     public final String fanIn;
     public final GateConfig gate;
+    public final String condition;
+    public final Condition callableCondition;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -32,6 +34,8 @@ public final class Step {
         this.fanOut = builder.fanOut;
         this.fanIn = builder.fanIn;
         this.gate = builder.gate;
+        this.condition = builder.condition;
+        this.callableCondition = builder.callableCondition;
     }
 
     /** Begin a step bound to a typed task. */
@@ -62,6 +66,8 @@ public final class Step {
         private String fanOut;
         private String fanIn;
         private GateConfig gate;
+        private String condition;
+        private Condition callableCondition;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -124,6 +130,50 @@ public final class Step {
          */
         public Builder gate(GateConfig gate) {
             this.gate = gate;
+            return this;
+        }
+
+        /**
+         * Run this step only when {@code condition} holds: {@code "on_success"}
+         * (every predecessor completed — the default), {@code "on_failure"} (any
+         * predecessor failed), or {@code "always"} (once predecessors settle). A
+         * conditional step is evaluated by the worker tracker, not pre-enqueued.
+         */
+        public Builder condition(String condition) {
+            if (condition != null
+                    && !"on_success".equals(condition)
+                    && !"on_failure".equals(condition)
+                    && !"always".equals(condition)) {
+                throw new IllegalArgumentException("unknown condition '" + condition
+                        + "'; use on_success, on_failure, always, or condition(Condition)");
+            }
+            this.condition = condition;
+            return this;
+        }
+
+        /** Run this step only if every predecessor completed (the default). */
+        public Builder onSuccess() {
+            return condition("on_success");
+        }
+
+        /** Run this step only if a predecessor failed (a recovery branch). */
+        public Builder onFailure() {
+            return condition("on_failure");
+        }
+
+        /** Run this step once predecessors settle, regardless of their outcome. */
+        public Builder always() {
+            return condition("always");
+        }
+
+        /**
+         * Run this step only when {@code predicate} holds. The predicate is code,
+         * so the workflow must be registered on the running worker via
+         * {@code trackWorkflows(workflow)}.
+         */
+        public Builder condition(Condition predicate) {
+            this.callableCondition = predicate;
+            this.condition = "callable";
             return this;
         }
 
