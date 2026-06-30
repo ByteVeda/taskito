@@ -493,13 +493,13 @@ final class DefaultTaskito implements Taskito {
             // A child run has no submit-time payload map and no callable registry, so
             // any step that depends on either would lose state — reject it at build time.
             if ("callable".equals(step.condition)) {
-                throw new TaskitoException("child workflow step '" + step.name
+                throw new WorkflowException("child workflow step '" + step.name
                         + "' uses condition(Condition); a sub-workflow cannot carry callable predicates");
             }
             boolean controlNode =
                     step.fanOut != null || step.fanIn != null || step.gate != null || step.subWorkflow != null;
             if (!controlNode && step.payload == null) {
-                throw new TaskitoException("child workflow step '" + step.name
+                throw new WorkflowException("child workflow step '" + step.name
                         + "' has no payload; a sub-workflow cannot supply child step payloads at submit");
             }
             specs.add(stepSpec(step));
