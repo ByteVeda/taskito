@@ -93,6 +93,21 @@ public final class Workflow {
     /** Sentinel task name for gate control nodes (never enqueued). */
     static final String GATE_TASK = "__gate__";
 
+    /**
+     * Add a sub-workflow step: when reached it submits {@code child} as a child
+     * run and completes when the child finalizes (failing if the child fails).
+     * The running worker must {@code trackWorkflows(this)}.
+     */
+    public Workflow subWorkflow(String name, Workflow child, String... after) {
+        return step(Step.of(name, SUB_WORKFLOW_TASK, null)
+                .subWorkflow(child)
+                .after(after)
+                .build());
+    }
+
+    /** Sentinel task name for sub-workflow control nodes (never enqueued). */
+    static final String SUB_WORKFLOW_TASK = "__subworkflow__";
+
     // A fan-out/fan-in node has exactly one runtime trigger — its single producer.
     // Zero predecessors would never enqueue; multiple could fire from the wrong one.
     private static void requireSinglePredecessor(String kind, String name, String[] after) {
