@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.type.CollectionType;
 import java.util.ArrayList;
 import java.util.List;
 import org.byteveda.taskito.Taskito;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.WebhookException;
 
 /** Persists webhooks as a JSON list in the queue's settings key/value store. */
 final class WebhookStore {
@@ -26,7 +26,7 @@ final class WebhookStore {
         try {
             queue.setSetting(KEY, JSON.writeValueAsString(webhooks));
         } catch (Exception e) {
-            throw new TaskitoException("failed to persist webhooks", e);
+            throw new WebhookException("failed to persist webhooks", e);
         }
     }
 
@@ -35,7 +35,7 @@ final class WebhookStore {
             CollectionType type = JSON.getTypeFactory().constructCollectionType(List.class, Webhook.class);
             return JSON.readValue(json, type);
         } catch (Exception e) {
-            throw new TaskitoException("failed to read webhooks", e);
+            throw new WebhookException("failed to read webhooks", e);
         }
     }
 }

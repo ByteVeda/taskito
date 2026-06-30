@@ -22,7 +22,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.JobStatus;
@@ -317,7 +317,7 @@ public final class DashboardServer implements AutoCloseable {
         try {
             out = JSON.writeValueAsBytes(body);
         } catch (Exception e) {
-            throw new TaskitoException("failed to encode response", e);
+            throw new SerializationException("failed to encode response", e);
         }
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(status, out.length);

@@ -2,7 +2,7 @@ package org.byteveda.taskito.locks;
 
 import java.time.Duration;
 import java.util.UUID;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.LockException;
 import org.byteveda.taskito.spi.QueueBackend;
 
 /**
@@ -40,7 +40,7 @@ public final class Lock implements AutoCloseable {
                 Thread.sleep(50);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new TaskitoException("interrupted while acquiring lock '" + name + "'", e);
+                throw new LockException("interrupted while acquiring lock '" + name + "'", e);
             }
         }
         return true;

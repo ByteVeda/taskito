@@ -3,7 +3,8 @@ package org.byteveda.taskito.workflows;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.Optional;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.SerializationException;
+import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.spi.QueueBackend;
 
 /** A submitted workflow run. Query {@link #status()}, block on {@link #await}, or {@link #cancel()}. */
@@ -47,18 +48,18 @@ public final class WorkflowRun implements AutoCloseable {
     public WorkflowStatus await(Duration timeout, Duration pollInterval) {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (true) {
-            WorkflowStatus status = status().orElseThrow(() -> new TaskitoException("workflow run not found: " + id));
+            WorkflowStatus status = status().orElseThrow(() -> new WorkflowException("workflow run not found: " + id));
             if (status.isTerminal()) {
                 return status;
             }
             if (System.nanoTime() >= deadline) {
-                throw new TaskitoException("workflow '" + id + "' did not finish within " + timeout);
+                throw new WorkflowException("workflow '" + id + "' did not finish within " + timeout);
             }
             try {
                 Thread.sleep(pollInterval.toMillis());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new TaskitoException("interrupted while awaiting workflow " + id, e);
+                throw new WorkflowException("interrupted while awaiting workflow " + id, e);
             }
         }
     }
@@ -78,7 +79,7 @@ public final class WorkflowRun implements AutoCloseable {
         try {
             return json.readValue(raw, WorkflowStatus.class);
         } catch (Exception e) {
-            throw new TaskitoException("failed to decode workflow status", e);
+            throw new SerializationException("failed to decode workflow status", e);
         }
     }
 }

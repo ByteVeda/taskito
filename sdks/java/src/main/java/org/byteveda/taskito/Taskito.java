@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import org.byteveda.taskito.errors.ConfigurationException;
 import org.byteveda.taskito.internal.JniQueueBackend;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
@@ -288,7 +289,7 @@ public interface Taskito extends AutoCloseable {
                 String dsn = (String) options.computeIfAbsent("dsn", key -> DEFAULT_SQLITE_DB);
                 ensureSqliteParentDir(dsn);
             } else if (!options.containsKey("dsn")) {
-                throw new TaskitoException("url (dsn) is required");
+                throw new ConfigurationException("url (dsn) is required");
             }
             return new DefaultTaskito(JniQueueBackend.open(encodeOptions()), serializer);
         }
@@ -305,7 +306,7 @@ public interface Taskito extends AutoCloseable {
             try {
                 Files.createDirectories(parent);
             } catch (IOException e) {
-                throw new TaskitoException("failed to create sqlite directory " + parent, e);
+                throw new ConfigurationException("failed to create sqlite directory " + parent, e);
             }
         }
 
@@ -313,7 +314,7 @@ public interface Taskito extends AutoCloseable {
             try {
                 return JSON.writeValueAsString(options);
             } catch (Exception e) {
-                throw new TaskitoException("failed to encode open options", e);
+                throw new ConfigurationException("failed to encode open options", e);
             }
         }
     }

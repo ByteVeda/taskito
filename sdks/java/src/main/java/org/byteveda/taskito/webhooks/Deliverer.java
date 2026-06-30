@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import org.byteveda.taskito.TaskitoException;
+import org.byteveda.taskito.errors.WebhookException;
 
 /** Delivers webhook payloads over HTTP with an optional HMAC signature and retries. */
 final class Deliverer {
@@ -45,7 +45,7 @@ final class Deliverer {
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), ALGORITHM));
             return hex(mac.doFinal(body));
         } catch (Exception e) {
-            throw new TaskitoException("webhook signature failed", e);
+            throw new WebhookException("webhook signature failed", e);
         }
     }
 
