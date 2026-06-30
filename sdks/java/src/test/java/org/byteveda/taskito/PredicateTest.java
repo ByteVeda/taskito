@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.util.List;
 import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.middleware.EnqueueContext;
 import org.byteveda.taskito.middleware.Middleware;
@@ -35,6 +36,16 @@ class PredicateTest {
                 Taskito.builder().url(dir.resolve("p.db").toString()).open()) {
             queue.predicate("p.task", ctx -> (Integer) ctx.payload() > 0);
             assertThrows(PredicateRejectedException.class, () -> queue.enqueue(TASK, -1));
+        }
+    }
+
+    @Test
+    void batchEnqueueRejectsViaPredicate(@TempDir Path dir) {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("pb.db").toString()).open()) {
+            queue.predicate("p.task", ctx -> (Integer) ctx.payload() > 0);
+            // One rejected payload fails the whole batch — the batch API can't bypass the gate.
+            assertThrows(PredicateRejectedException.class, () -> queue.enqueueMany(TASK, List.of(1, -1, 2)));
         }
     }
 

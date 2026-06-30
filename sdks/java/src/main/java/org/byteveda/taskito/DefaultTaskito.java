@@ -179,6 +179,10 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> List<String> enqueueMany(Task<T> task, List<T> payloads, EnqueueOptions options) {
+        // Preflight every payload through the task's gates; a single rejection fails the whole batch.
+        for (T payload : payloads) {
+            gate(task.name(), payload);
+        }
         byte[][] bytes = new byte[payloads.size()][];
         List<EnqueueOptions> perJob = new ArrayList<>(payloads.size());
         for (int i = 0; i < payloads.size(); i++) {
