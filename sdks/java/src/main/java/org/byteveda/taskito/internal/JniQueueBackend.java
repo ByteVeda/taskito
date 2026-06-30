@@ -341,6 +341,11 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public void setWorkflowNodeCacheHit(String runId, String nodeName) {
+        NativeWorkflows.setWorkflowNodeCacheHit(handle, runId, nodeName);
+    }
+
+    @Override
     public void setWorkflowRunCompensating(String runId) {
         NativeWorkflows.setWorkflowRunCompensating(handle, runId);
     }

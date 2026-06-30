@@ -23,6 +23,7 @@ public final class Step {
     public final Condition callableCondition;
     public final Workflow subWorkflow;
     public final String compensate;
+    public final Long cacheTtlMs;
 
     private Step(Builder builder) {
         this.name = builder.name;
@@ -40,6 +41,7 @@ public final class Step {
         this.callableCondition = builder.callableCondition;
         this.subWorkflow = builder.subWorkflow;
         this.compensate = builder.compensate;
+        this.cacheTtlMs = builder.cacheTtlMs;
     }
 
     /** Begin a step bound to a typed task. */
@@ -74,6 +76,7 @@ public final class Step {
         private Condition callableCondition;
         private Workflow subWorkflow;
         private String compensate;
+        private Long cacheTtlMs;
 
         private Builder(String name, String taskName, Object payload) {
             this.name = name;
@@ -209,7 +212,31 @@ public final class Step {
             return compensate(compensateTask.name());
         }
 
+        /**
+         * Cache this step's execution for {@code ttl}: on a later run of the same
+         * workflow, if this step's task + payload are unchanged and within the TTL,
+         * the worker marks it a cache hit and skips re-running it. (Cache state is
+         * per worker process.)
+         *
+         * <p>A cache hit does not produce a forward result, so a cached step's result
+         * is not available downstream: it cannot feed a fan-out/fan-in (rejected at
+         * submit) and a callable {@code condition} won't see its result.
+         */
+        public Builder cache(java.time.Duration ttl) {
+            if (ttl == null || ttl.isNegative() || ttl.isZero()) {
+                throw new IllegalArgumentException("cache ttl must be positive");
+            }
+            this.cacheTtlMs = ttl.toMillis();
+            return this;
+        }
+
         public Step build() {
+            // A cacheable step is a deferred node; deferred roots are never promoted,
+            // so a cacheable step with no predecessor would wedge the run in PENDING.
+            if (cacheTtlMs != null && after.isEmpty()) {
+                throw new IllegalArgumentException("step '" + name
+                        + "' cannot be cacheable without a predecessor; a deferred root is never promoted");
+            }
             if (fanOut != null && fanIn != null) {
                 throw new IllegalArgumentException("step '" + name + "' cannot be both fan-out and fan-in");
             }
