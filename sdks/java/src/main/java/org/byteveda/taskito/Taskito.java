@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import org.byteveda.taskito.errors.ConfigurationException;
 import org.byteveda.taskito.internal.JniQueueBackend;
 import org.byteveda.taskito.locks.Lock;
@@ -25,6 +27,9 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.resources.ResourceContext;
+import org.byteveda.taskito.resources.ResourceScope;
+import org.byteveda.taskito.resources.ResourceStat;
 import org.byteveda.taskito.scheduling.PeriodicTask;
 import org.byteveda.taskito.serialization.JsonSerializer;
 import org.byteveda.taskito.serialization.Serializer;
@@ -54,6 +59,20 @@ public interface Taskito extends AutoCloseable {
 
     /** Register cross-cutting middleware (enqueue + worker hooks); returns {@code this}. */
     Taskito use(Middleware middleware);
+
+    // ── Resources (worker-side dependency injection) ─────────────────
+
+    /** Register a worker-scoped resource resolved in handlers via {@code Resources.use(name)}. */
+    <T> Taskito resource(String name, Function<ResourceContext, T> factory);
+
+    /** Register a resource with an explicit {@link ResourceScope}. */
+    <T> Taskito resource(String name, ResourceScope scope, Function<ResourceContext, T> factory);
+
+    /** Register a resource with a scope and a disposer run when the scope ends. */
+    <T> Taskito resource(String name, ResourceScope scope, Function<ResourceContext, T> factory, Consumer<T> dispose);
+
+    /** Per-resource counters (created / disposed / active). */
+    Map<String, ResourceStat> resourceMetrics();
 
     // ── Producer ────────────────────────────────────────────────────
 
