@@ -12,10 +12,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.byteveda.taskito.core.CoreFacade;
+import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.locks.Lock;
@@ -31,6 +33,8 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.predicates.Predicate;
+import org.byteveda.taskito.predicates.PredicateContext;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceDefinition;
 import org.byteveda.taskito.resources.ResourceRuntime;
@@ -63,6 +67,7 @@ final class DefaultTaskito implements Taskito {
     private final Serializer serializer;
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
     private final ResourceRuntime resources = new ResourceRuntime();
+    private final Map<String, List<Predicate>> predicates = new ConcurrentHashMap<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
@@ -106,6 +111,14 @@ final class DefaultTaskito implements Taskito {
         return resources.metrics();
     }
 
+    @Override
+    public Taskito predicate(String taskName, Predicate predicate) {
+        predicates
+                .computeIfAbsent(taskName, key -> new CopyOnWriteArrayList<>())
+                .add(predicate);
+        return this;
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T cast(Object value) {
         return (T) value;
@@ -134,6 +147,8 @@ final class DefaultTaskito implements Taskito {
         for (Middleware m : middleware) {
             m.onEnqueue(context);
         }
+        // Gate the payload that will actually be enqueued (after middleware may have rewritten it).
+        gate(taskName, context.payload());
         EnqueueOptions finalOptions = context.options();
         if (!context.metadata().isEmpty()) {
             finalOptions = finalOptions.toBuilder()
@@ -143,6 +158,20 @@ final class DefaultTaskito implements Taskito {
         return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(finalOptions));
     }
 
+    /** Run any registered enqueue gates for {@code taskName}; throw if one rejects. */
+    private void gate(String taskName, Object payload) {
+        List<Predicate> gates = predicates.get(taskName);
+        if (gates == null || gates.isEmpty()) {
+            return;
+        }
+        PredicateContext context = new PredicateContext(taskName, payload);
+        for (Predicate gate : gates) {
+            if (!gate.test(context)) {
+                throw new PredicateRejectedException("enqueue of task '" + taskName + "' rejected by a predicate");
+            }
+        }
+    }
+
     @Override
     public <T> List<String> enqueueMany(Task<T> task, List<T> payloads) {
         return enqueueMany(task, payloads, task.options());
@@ -150,6 +179,10 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> List<String> enqueueMany(Task<T> task, List<T> payloads, EnqueueOptions options) {
+        // Preflight every payload through the task's gates; a single rejection fails the whole batch.
+        for (T payload : payloads) {
+            gate(task.name(), payload);
+        }
         byte[][] bytes = new byte[payloads.size()][];
         List<EnqueueOptions> perJob = new ArrayList<>(payloads.size());
         for (int i = 0; i < payloads.size(); i++) {
