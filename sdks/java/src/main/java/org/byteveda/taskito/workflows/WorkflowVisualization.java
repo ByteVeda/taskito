@@ -1,5 +1,8 @@
 package org.byteveda.taskito.workflows;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Renders a {@link Workflow}'s DAG as text for docs or debugging: Mermaid
  * ({@code graph TD}) or Graphviz DOT. Node labels note the step kind (gate,
@@ -10,9 +13,11 @@ public final class WorkflowVisualization {
 
     /** A Mermaid {@code graph TD} diagram of the workflow. */
     public static String mermaid(Workflow workflow) {
+        WorkflowAnalysis.validate(workflow);
+        Map<String, String> ids = nodeIds(workflow);
         StringBuilder out = new StringBuilder("graph TD\n");
         for (Step step : workflow.steps()) {
-            String id = id(step.name);
+            String id = ids.get(step.name);
             String label = quote(label(step));
             if (step.gate != null) {
                 out.append("  ").append(id).append("{").append(label).append("}\n");
@@ -23,9 +28,9 @@ public final class WorkflowVisualization {
         for (Step step : workflow.steps()) {
             for (String pred : step.after) {
                 out.append("  ")
-                        .append(id(pred))
+                        .append(ids.get(pred))
                         .append(" --> ")
-                        .append(id(step.name))
+                        .append(ids.get(step.name))
                         .append("\n");
             }
         }
@@ -34,6 +39,7 @@ public final class WorkflowVisualization {
 
     /** A Graphviz DOT digraph of the workflow. */
     public static String dot(Workflow workflow) {
+        WorkflowAnalysis.validate(workflow);
         StringBuilder out =
                 new StringBuilder("digraph ").append(quote(workflow.name())).append(" {\n");
         for (Step step : workflow.steps()) {
@@ -79,9 +85,19 @@ public final class WorkflowVisualization {
         return null;
     }
 
-    /** A Mermaid-safe node id (only the structure uses it; the label keeps the real name). */
-    private static String id(String name) {
-        return "n_" + name.replaceAll("[^A-Za-z0-9_]", "_");
+    /**
+     * Assign each step a collision-free Mermaid id ({@code n0}, {@code n1}, …) in
+     * declaration order. A lossy name-to-id mapping could merge distinct steps
+     * (e.g. {@code "a-b"} and {@code "a b"}); sequential ids never collide. The real
+     * name stays in the node label.
+     */
+    private static Map<String, String> nodeIds(Workflow workflow) {
+        Map<String, String> ids = new HashMap<>();
+        int next = 0;
+        for (Step step : workflow.steps()) {
+            ids.put(step.name, "n" + next++);
+        }
+        return ids;
     }
 
     private static String quote(String text) {

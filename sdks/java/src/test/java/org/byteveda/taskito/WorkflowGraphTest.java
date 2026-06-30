@@ -60,25 +60,40 @@ class WorkflowGraphTest {
     }
 
     @Test
-    void unknownDependencyIsRejected() {
+    void unknownDependencyIsRejectedByEveryQuery() {
         Workflow bad = Workflow.named("bad").step("a", T, 1, "missing");
         assertThrows(WorkflowException.class, () -> WorkflowAnalysis.roots(bad));
+        assertThrows(WorkflowException.class, () -> WorkflowAnalysis.leaves(bad));
+        assertThrows(WorkflowException.class, () -> WorkflowAnalysis.ancestors(bad, "a"));
+        assertThrows(WorkflowException.class, () -> WorkflowAnalysis.descendants(bad, "a"));
+        assertThrows(WorkflowException.class, () -> WorkflowVisualization.mermaid(bad));
+        assertThrows(WorkflowException.class, () -> WorkflowVisualization.dot(bad));
     }
 
     @Test
     void mermaidRendersNodesAndEdges() {
         String mermaid = WorkflowVisualization.mermaid(diamond());
         assertTrue(mermaid.startsWith("graph TD"));
-        assertTrue(mermaid.contains("n_a --> n_b"));
-        assertTrue(mermaid.contains("n_c --> n_d"));
+        // a,b,c,d → n0,n1,n2,n3; edges a→b and c→d.
+        assertTrue(mermaid.contains("n0 --> n1"));
+        assertTrue(mermaid.contains("n2 --> n3"));
     }
 
     @Test
     void mermaidMarksGates() {
         Workflow gated = Workflow.named("g").step("a", T, 1).gate("approve", GateConfig.manual(), "a");
         String mermaid = WorkflowVisualization.mermaid(gated);
-        assertTrue(mermaid.contains("n_approve{"));
+        assertTrue(mermaid.contains("n1{"));
         assertTrue(mermaid.contains("(gate)"));
+    }
+
+    @Test
+    void mermaidIdsDoNotCollideOnLossyNames() {
+        // "a-b" and "a b" both normalize to "n_a_b" under lossy mapping — must stay distinct.
+        Workflow wf = Workflow.named("collide").step("a-b", T, 1).step("a b", T, 1);
+        String mermaid = WorkflowVisualization.mermaid(wf);
+        assertTrue(mermaid.contains("n0["));
+        assertTrue(mermaid.contains("n1["));
     }
 
     @Test
