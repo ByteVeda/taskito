@@ -4,8 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 import org.byteveda.taskito.workflows.NodeStatus;
@@ -37,7 +38,7 @@ class WorkflowSagaTest {
                     .step(Step.of("c", C, 3).after("b").maxRetries(0).build());
 
             WorkflowRun run = queue.submitWorkflow(wf);
-            Set<Integer> undone = ConcurrentHashMap.newKeySet();
+            Queue<Integer> undone = new ConcurrentLinkedQueue<>();
             try (Worker worker = queue.worker()
                     .handle(A, p -> p)
                     .handle(B, p -> p)
@@ -59,8 +60,9 @@ class WorkflowSagaTest {
                 assertEquals(NodeStatus.COMPENSATED, status.node("a").orElseThrow().status);
                 assertEquals(NodeStatus.COMPENSATED, status.node("b").orElseThrow().status);
                 assertEquals(NodeStatus.FAILED, status.node("c").orElseThrow().status);
-                // undoA saw a's result (1) → 101; undoB saw b's result (2) → 202.
-                assertEquals(Set.of(101, 202), undone);
+                // Reverse-dependency order, each exactly once: b rolls back before a
+                // (undoB saw b's result 2 → 202; undoA saw a's result 1 → 101).
+                assertEquals(List.of(202, 101), List.copyOf(undone));
             }
         }
     }
