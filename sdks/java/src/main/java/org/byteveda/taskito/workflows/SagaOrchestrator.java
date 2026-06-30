@@ -70,10 +70,22 @@ final class SagaOrchestrator {
         if (targets.isEmpty()) {
             return false;
         }
-        backend.setWorkflowRunCompensating(runId);
         SagaRun run = new SagaRun(reverseTopoWaves(plan, targets.keySet()), targets);
-        runs.put(runId, run);
-        dispatchNextWave(runId, run);
+        // Concurrent terminal outcomes can both reach here for the same run; only the
+        // first owns it, so the run is marked compensating and dispatched exactly once.
+        if (runs.putIfAbsent(runId, run) != null) {
+            return true;
+        }
+        synchronized (run) {
+            backend.setWorkflowRunCompensating(runId);
+            try {
+                dispatchNextWave(runId, run);
+            } catch (RuntimeException e) {
+                run.anyFailed = true;
+                finalizeSaga(runId, run); // never leave the run stuck in COMPENSATING
+                throw e;
+            }
+        }
         return true;
     }
 
@@ -89,22 +101,27 @@ final class SagaOrchestrator {
         if (run == null) {
             return;
         }
-        if (succeeded) {
-            backend.setWorkflowNodeCompensated(runId, node, now());
-        } else {
-            backend.setWorkflowNodeCompensationFailed(runId, node, error, now());
-            run.anyFailed = true;
-        }
-        run.inflight.remove(node);
-        if (run.inflight.isEmpty()) {
-            if (run.anyFailed) {
-                finalizeSaga(runId, run); // first failure stops further rollback
+        // Serialize wave advancement: two outcomes in one wave must not both observe an
+        // empty in-flight set and double-dispatch (or skip) the next wave.
+        synchronized (run) {
+            if (succeeded) {
+                backend.setWorkflowNodeCompensated(runId, node, now());
             } else {
-                dispatchNextWave(runId, run);
+                backend.setWorkflowNodeCompensationFailed(runId, node, error, now());
+                run.anyFailed = true;
+            }
+            run.inflight.remove(node);
+            if (run.inflight.isEmpty()) {
+                if (run.anyFailed) {
+                    finalizeSaga(runId, run); // first failure stops further rollback
+                } else {
+                    dispatchNextWave(runId, run);
+                }
             }
         }
     }
 
+    /** Enqueue the next wave's compensation jobs. The caller must hold {@code run}'s monitor. */
     private void dispatchNextWave(String runId, SagaRun run) {
         if (run.waveIndex >= run.waves.size()) {
             finalizeSaga(runId, run);
@@ -113,6 +130,8 @@ final class SagaOrchestrator {
         List<String> wave = run.waves.get(run.waveIndex++);
         run.inflight.addAll(wave);
         for (String node : wave) {
+            // The runtime job id (the saga's routing key) is the value enqueue returns,
+            // not the idempotency key we pass in — so register routing once we have it.
             String compJobId = enqueueCompensation(runId, node, run.targets.get(node));
             compensationJobs.put(compJobId, new String[] {runId, node});
             backend.setWorkflowNodeCompensationJob(runId, node, compJobId, now());
