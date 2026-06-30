@@ -227,6 +227,13 @@ public final class Step {
                 throw new IllegalArgumentException(
                         "step '" + name + "' cannot be both a sub-workflow and a gate/fan-out/fan-in");
             }
+            // Compensation replays the step's forward result as the rollback payload.
+            // Gate, sub-workflow, and fan-out nodes never run a task of their own
+            // (so they have no forward result) — reject a compensator on them.
+            if (compensate != null && (gate != null || subWorkflow != null || fanOut != null)) {
+                throw new IllegalArgumentException("step '" + name
+                        + "' cannot be compensated: a gate/sub-workflow/fan-out node has no forward result");
+            }
             return new Step(this);
         }
     }
