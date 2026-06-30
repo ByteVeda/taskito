@@ -78,13 +78,7 @@ final class SagaOrchestrator {
         }
         synchronized (run) {
             backend.setWorkflowRunCompensating(runId);
-            try {
-                dispatchNextWave(runId, run);
-            } catch (RuntimeException e) {
-                run.anyFailed = true;
-                finalizeSaga(runId, run); // never leave the run stuck in COMPENSATING
-                throw e;
-            }
+            dispatchOrFail(runId, run);
         }
         return true;
     }
@@ -115,9 +109,20 @@ final class SagaOrchestrator {
                 if (run.anyFailed) {
                     finalizeSaga(runId, run); // first failure stops further rollback
                 } else {
-                    dispatchNextWave(runId, run);
+                    dispatchOrFail(runId, run);
                 }
             }
+        }
+    }
+
+    /** Dispatch the next wave, finalizing the run instead of stranding it in COMPENSATING if enqueue fails. */
+    private void dispatchOrFail(String runId, SagaRun run) {
+        try {
+            dispatchNextWave(runId, run);
+        } catch (RuntimeException e) {
+            run.anyFailed = true;
+            finalizeSaga(runId, run);
+            throw e;
         }
     }
 
