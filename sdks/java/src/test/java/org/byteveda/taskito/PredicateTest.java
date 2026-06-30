@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import org.byteveda.taskito.errors.PredicateRejectedException;
+import org.byteveda.taskito.middleware.EnqueueContext;
+import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.predicates.PredicateContext;
 import org.byteveda.taskito.predicates.Predicates;
@@ -33,6 +35,22 @@ class PredicateTest {
                 Taskito.builder().url(dir.resolve("p.db").toString()).open()) {
             queue.predicate("p.task", ctx -> (Integer) ctx.payload() > 0);
             assertThrows(PredicateRejectedException.class, () -> queue.enqueue(TASK, -1));
+        }
+    }
+
+    @Test
+    void predicateSeesMiddlewareRewrittenPayload(@TempDir Path dir) {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("pm.db").toString()).open()) {
+            queue.predicate("p.task", ctx -> (Integer) ctx.payload() > 0);
+            queue.use(new Middleware() {
+                @Override
+                public void onEnqueue(EnqueueContext context) {
+                    context.payload(5); // rewrite the rejected -1 into an accepted value
+                }
+            });
+            // Gate runs after middleware, so it sees the rewritten 5 and allows the enqueue.
+            assertNotNull(queue.enqueue(TASK, -1));
         }
     }
 

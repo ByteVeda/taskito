@@ -143,11 +143,12 @@ final class DefaultTaskito implements Taskito {
 
     /** Run onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
     private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options) {
-        gate(taskName, payload);
         EnqueueContext context = new EnqueueContext(taskName, payload, options);
         for (Middleware m : middleware) {
             m.onEnqueue(context);
         }
+        // Gate the payload that will actually be enqueued (after middleware may have rewritten it).
+        gate(taskName, context.payload());
         EnqueueOptions finalOptions = context.options();
         if (!context.metadata().isEmpty()) {
             finalOptions = finalOptions.toBuilder()
