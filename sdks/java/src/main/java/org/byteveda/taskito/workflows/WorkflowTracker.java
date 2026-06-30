@@ -297,8 +297,13 @@ public final class WorkflowTracker {
 
     /** If a prior run cached this step's result within its TTL, mark it a cache hit instead of running it. */
     private boolean reuseFromCache(String runId, PlanNode node, RunPlan plan) {
-        Long expiry = resultCache.get(cacheKey(runId, node.name));
-        if (expiry == null || expiry <= System.currentTimeMillis()) {
+        String key = cacheKey(runId, node.name);
+        Long expiry = resultCache.get(key);
+        if (expiry == null) {
+            return false;
+        }
+        if (expiry <= System.currentTimeMillis()) {
+            resultCache.remove(key, expiry); // drop the stale entry rather than let it linger
             return false;
         }
         backend.setWorkflowNodeCacheHit(runId, node.name);
@@ -309,7 +314,9 @@ public final class WorkflowTracker {
     private void cacheResult(String runId, PlanNode node) {
         CacheMeta meta = decode(node.cache, CacheMeta.class);
         if (meta != null && meta.ttlMs != null) {
-            resultCache.put(cacheKey(runId, node.name), System.currentTimeMillis() + meta.ttlMs);
+            long now = System.currentTimeMillis();
+            resultCache.values().removeIf(expiry -> expiry <= now); // sweep expired keys before adding
+            resultCache.put(cacheKey(runId, node.name), now + meta.ttlMs);
         }
     }
 
