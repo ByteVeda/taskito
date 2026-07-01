@@ -1,12 +1,18 @@
 # Taskito Java SDK
 
-A typed Java 11+ client over the Taskito Rust core, via a hand-written JNI shell
+A typed Java 17+ client over the Taskito Rust core, via a hand-written JNI shell
 (`crates/taskito-java`).
 
 > Status: **build-out**. Producer + inspection + admin + logs, worker task
-> execution, middleware, signed/encrypted serializers, dashboard, webhooks, CLI,
-> distributed locks, periodic/cron, and static-DAG workflows are implemented and
-> verified end-to-end.
+> execution, middleware, JSON/signed/encrypted/MessagePack serializers,
+> dashboard, webhooks, CLI, distributed locks, periodic/cron, and the full
+> workflow engine (DAG, fan-out/fan-in, gates, conditions, sub-workflows, sagas,
+> analysis + visualization, canvas) are implemented and verified end-to-end.
+> Also: worker resources (DI), enqueue predicates, a KEDA scaler endpoint,
+> producer batching, in-process autoscaling, observability middleware
+> (Micrometer Observation + Sentry), and a Spring Boot 3 starter. Baseline:
+> **Java 17** (`--release 17`). Spring Boot 3 apps can adopt it directly;
+> native `.so` is JDK-independent.
 
 ## Migration
 
@@ -173,8 +179,31 @@ Workflow wf = Workflow.named("pipeline")
 
 `trackWorkflows()` advances run state from worker outcomes, so **every worker
 that processes workflow jobs must enable it** — in a multi-worker deployment, a
-run stalls on any node finished by a worker that did not opt in. Conditions,
-gates, and sagas are not yet exposed.
+run stalls on any node finished by a worker that did not opt in.
+
+**Approval gates** park a step until it is resolved (or its timeout elapses);
+register the workflow so the worker holds downstream payloads:
+
+```java
+Workflow wf = Workflow.named("deploy")
+        .step("build", build, 1)
+        .gate("approve", GateConfig.timeout(Duration.ofMinutes(30), GateAction.REJECT), "build")
+        .step("ship", ship, 2, "approve");
+try (Worker w = taskito.worker().handle(build, ...).handle(ship, ...).trackWorkflows(wf).start()) {
+    w.approveGate(run.runId(), "approve");   // or w.rejectGate(runId, "approve", reason)
+}
+```
+
+**Conditions** gate a step on its predecessors' outcomes —
+`Step.of(...).onFailure()` / `.onSuccess()` / `.always()`, or a callable
+`condition(ctx -> ...)`. **Sub-workflows** run a child workflow as a step
+(`Workflow.subWorkflow(name, child, after...)`). **Sagas** roll a failed run
+back: `Step.of(...).compensate(undoTask)` compensates completed steps in
+reverse order, ending the run `COMPENSATED`.
+
+`WorkflowAnalysis` (topological order, levels, ancestors/descendants),
+`WorkflowVisualization` (Mermaid / DOT), and `Canvas` (`chain`/`group`/`chord`)
+round out the engine.
 
 ### Middleware
 
@@ -205,6 +234,56 @@ Taskito secure = Taskito.builder()
         .open();
 ```
 
+### Resources (worker dependency injection)
+
+Register a resource once; resolve it inside handlers. Scopes: `WORKER` (built
+once, shared) and `TASK` (built + disposed per invocation).
+
+```java
+taskito.resource("db", ctx -> openPool());                       // WORKER
+taskito.resource("tx", ResourceScope.TASK, ctx -> ctx.<Pool>use("db").begin(), Tx::close);
+taskito.worker().handle(save, p -> Resources.<Tx>use("tx").save(p)).start();
+```
+
+### Enqueue predicates (gates)
+
+```java
+taskito.predicate("send_email", ctx -> isBusinessHours());       // rejects → PredicateRejectedException
+// Predicates.allOf / anyOf / not compose them.
+```
+
+### Producer batching
+
+```java
+try (Batcher<Event> batcher = Batcher.of(taskito, ingest, 500, Duration.ofMillis(200))) {
+    events.forEach(batcher::add);   // flushed in one enqueueMany when full or after the delay
+}
+```
+
+### Autoscaling + scaler endpoint
+
+```java
+taskito.worker().autoscale(AutoscaleOptions.of(2, 32)).handle(task, ...).start();  // resize by depth
+try (Scaler scaler = Scaler.start(taskito, ScalerOptions.onPort(9090))) { /* GET /api/scaler for KEDA */ }
+```
+
+### Observability + MessagePack (optional deps)
+
+```java
+taskito.use(new TaskitoObservation(observationRegistry));   // Micrometer (metrics + tracing)
+taskito.use(new SentryMiddleware());                        // report failures to Sentry
+Taskito.builder().sqlite("t.db").serializer(new MsgpackSerializer()).open();
+```
+
+`io.micrometer:micrometer-observation`, `io.sentry:sentry`, and
+`org.msgpack:jackson-dataformat-msgpack` are `compileOnly` — add the one you use.
+
+### Spring Boot 3 starter
+
+Add `org.byteveda:taskito-spring`; it auto-configures a `Taskito` bean from
+`taskito.url` / `taskito.pool-size` / `taskito.namespace`. Define your own
+`Taskito` bean to override it.
+
 ## Structure
 
 Packages are organized by feature; the root holds only the front door.
@@ -215,22 +294,35 @@ org.byteveda.taskito
 ├── Queue              named-queue handle (pause/resume) — Taskito.queue(name)
 ├── DefaultTaskito     package-private client impl (not exported)
 ├── NamedQueue         package-private Queue impl (not exported)
-├── TaskitoException   unchecked error type
+├── TaskitoException   unchecked error base type
+├── errors/            typed exceptions (Serialization/Crypto, Workflow, Lock,
+│                      Configuration, Webhook, Resource, PredicateRejected)
 ├── task/              Task, TaskFunction, EnqueueOptions
 ├── model/             Job, JobStatus, QueueStats, DeadJob, JobError,
 │                      TaskMetric, WorkerInfo, TaskLog, JobFilter  (read-only views)
-├── worker/            Worker runtime
+├── worker/            Worker runtime (concurrency, autoscale)
+├── resources/         worker DI — ResourceRuntime, Resources.use(name), scopes
+├── predicates/        enqueue gates — Predicate, Predicates (allOf/anyOf/not)
+├── batch/             Batcher — producer-side batching
+├── autoscale/         Autoscaler, AutoscaleOptions
+├── scaler/            Scaler — KEDA HTTP endpoint
 ├── locks/             Lock, LockInfo
 ├── scheduling/        PeriodicTask
-├── workflows/         Workflow DAG builder, run, status, tracker
-├── serialization/     Serializer SPI + JsonSerializer (Jackson) default
+├── workflows/         DAG builder, run, status, tracker; gates, conditions,
+│                      sub-workflows, sagas, Canvas, analysis + visualization
+├── serialization/     Serializer SPI + JsonSerializer default; Signed/Encrypted/Msgpack
 ├── annotation/        @TaskHandler (source-retention; see :processor)
 ├── middleware/        Middleware hooks
+├── contrib/           observability — TaskitoObservation (Micrometer), SentryMiddleware
 ├── events/            worker outcome events
 ├── dashboard/ webhooks/ cli/
 ├── spi/               QueueBackend — seam between API and the native layer
 └── internal/          JNI bindings (NativeQueue, NativeWorkflows, NativeLoader, ...)
 ```
+
+Subprojects: `:processor` (compile-time `@TaskHandler`), `:test-support`
+(`taskito-test` in-memory backend), `:spring` (`taskito-spring` Boot 3 starter),
+`:graalvm-smoke` (native-image CI check).
 
 The `:processor` subproject is a standalone compile-time annotation processor
 (`TaskHandlerProcessor`) — it depends on nothing, reading `@TaskHandler`
