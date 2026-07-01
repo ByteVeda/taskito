@@ -296,11 +296,20 @@ public final class Worker implements AutoCloseable {
 
         /** Outstanding work (pending + running) read from the backend's stats. */
         private long currentDepth() {
+            return depthFrom(backend.statsJson());
+        }
+
+        /**
+         * Depth from one stats blob. Propagates on failure rather than reporting
+         * {@code 0}: the autoscaler swallows a tick error and retries, whereas a
+         * false-empty reading would shrink the pool while backlog still exists.
+         */
+        private static long depthFrom(String statsJson) {
             try {
-                JsonNode stats = JSON.readTree(backend.statsJson());
+                JsonNode stats = JSON.readTree(statsJson);
                 return stats.path("pending").asLong() + stats.path("running").asLong();
             } catch (Exception e) {
-                return 0;
+                throw new IllegalStateException("failed to read worker queue depth", e);
             }
         }
 
