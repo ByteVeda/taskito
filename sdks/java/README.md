@@ -10,10 +10,9 @@ A typed Java 17+ client over the Taskito Rust core, via a hand-written JNI shell
 > analysis + visualization, canvas) are implemented and verified end-to-end.
 > Also: worker resources (DI), enqueue predicates, a KEDA scaler endpoint,
 > producer batching, in-process autoscaling, observability middleware
-> (Micrometer Observation + Sentry), and a Spring Boot 3 starter.
-
-> Baseline: **Java 17** (`--release 17`). Spring Boot 3 apps can adopt it
-> directly; native `.so` is JDK-independent.
+> (Micrometer Observation + Sentry), and a Spring Boot 3 starter. Baseline:
+> **Java 17** (`--release 17`). Spring Boot 3 apps can adopt it directly;
+> native `.so` is JDK-independent.
 
 ## Migration
 
