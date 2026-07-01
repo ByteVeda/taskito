@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.byteveda.taskito.errors.CryptoException;
+import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.serialization.AesGcmCodec;
 import org.byteveda.taskito.serialization.CodecSerializer;
 import org.byteveda.taskito.serialization.GzipCodec;
@@ -85,5 +86,13 @@ class PayloadCodecTest {
                 assertEquals(42, queue.getResult(id, Integer.class).orElseThrow()); // result decoded back
             }
         }
+    }
+
+    @Test
+    void gzipDecodeRejectsPayloadExceedingCap() {
+        GzipCodec codec = new GzipCodec(16); // cap at 16 bytes decompressed
+        byte[] large = new byte[1024]; // compresses tiny (all zeros), expands past the cap
+        byte[] compressed = codec.encode(large);
+        assertThrows(SerializationException.class, () -> codec.decode(compressed));
     }
 }

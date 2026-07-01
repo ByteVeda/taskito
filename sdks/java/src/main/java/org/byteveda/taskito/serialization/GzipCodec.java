@@ -7,8 +7,28 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import org.byteveda.taskito.errors.SerializationException;
 
-/** A {@link PayloadCodec} that gzip-compresses payloads. */
+/**
+ * A {@link PayloadCodec} that gzip-compresses payloads. Decompression is bounded
+ * by {@code maxDecompressedBytes} so a small malicious payload can't expand to
+ * exhaust worker memory (zip bomb). Order {@code GzipCodec} <em>after</em> a
+ * signing/encryption codec in the chain to verify integrity before decompressing.
+ */
 public final class GzipCodec implements PayloadCodec {
+    /** Default cap on decompressed output: 64 MiB. */
+    public static final int DEFAULT_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
+
+    private final int maxDecompressedBytes;
+
+    public GzipCodec() {
+        this(DEFAULT_MAX_DECOMPRESSED_BYTES);
+    }
+
+    public GzipCodec(int maxDecompressedBytes) {
+        if (maxDecompressedBytes <= 0) {
+            throw new IllegalArgumentException("maxDecompressedBytes must be > 0");
+        }
+        this.maxDecompressedBytes = maxDecompressedBytes;
+    }
 
     @Override
     public byte[] encode(byte[] data) {
@@ -24,7 +44,19 @@ public final class GzipCodec implements PayloadCodec {
     @Override
     public byte[] decode(byte[] data) {
         try (GZIPInputStream gzip = new GZIPInputStream(new ByteArrayInputStream(data))) {
-            return gzip.readAllBytes();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            long total = 0;
+            int read;
+            while ((read = gzip.read(buffer)) != -1) {
+                total += read;
+                if (total > maxDecompressedBytes) {
+                    throw new SerializationException(
+                            "gzip payload exceeds max decompressed size of " + maxDecompressedBytes + " bytes");
+                }
+                out.write(buffer, 0, read);
+            }
+            return out.toByteArray();
         } catch (IOException e) {
             throw new SerializationException("gzip decompression failed", e);
         }
