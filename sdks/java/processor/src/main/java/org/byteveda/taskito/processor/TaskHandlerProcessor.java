@@ -18,6 +18,7 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 
@@ -31,6 +32,7 @@ import javax.tools.JavaFileObject;
 @SupportedSourceVersion(SourceVersion.RELEASE_11)
 public final class TaskHandlerProcessor extends AbstractProcessor {
     static final String ANNOTATION = "org.byteveda.taskito.annotation.TaskHandler";
+    static final String RESOURCE = "org.byteveda.taskito.annotation.Resource";
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
@@ -56,9 +58,16 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
     }
 
     private boolean validate(ExecutableElement method) {
-        if (method.getParameters().size() != 1) {
-            error(method, "@TaskHandler method must take exactly one parameter (the payload)");
+        List<? extends VariableElement> params = method.getParameters();
+        if (params.isEmpty()) {
+            error(method, "@TaskHandler method must take the payload as its first parameter");
             return false;
+        }
+        for (int i = 1; i < params.size(); i++) {
+            if (resourceName(params.get(i)) == null) {
+                error(method, "@TaskHandler parameters after the payload must be annotated @Resource");
+                return false;
+            }
         }
         if (method.getModifiers().contains(Modifier.PRIVATE)) {
             error(method, "@TaskHandler method must not be private");
@@ -76,6 +85,7 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         String ownerSimple = owner.getSimpleName().toString();
         String companion = ownerSimple + "Tasks";
         String qualified = pkg.isEmpty() ? companion : pkg + "." + companion;
+        boolean anyResources = methods.stream().anyMatch(m -> m.getParameters().size() > 1);
 
         StringBuilder out = new StringBuilder();
         if (!pkg.isEmpty()) {
@@ -85,7 +95,9 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
                 .append("import org.byteveda.taskito.task.Task;\n")
                 .append("import org.byteveda.taskito.worker.Handler;\n")
                 .append("import org.byteveda.taskito.worker.HandlerRegistry;\n")
-                .append("import org.byteveda.taskito.worker.Worker;\n\n")
+                .append("import org.byteveda.taskito.worker.Worker;\n")
+                .append(anyResources ? "import org.byteveda.taskito.resources.Resources;\n" : "")
+                .append("\n")
                 .append("/** Generated task descriptors + worker binding for {@link ")
                 .append(ownerSimple)
                 .append("}. */\n")
@@ -118,20 +130,11 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
                 .append(" impl) {\n");
         for (ExecutableElement method : methods) {
             String constant = upperSnake(method.getSimpleName().toString());
-            String methodName = method.getSimpleName().toString();
-            if (isVoid(method)) {
-                out.append("        builder.handle(")
-                        .append(constant)
-                        .append(", payload -> {\n            impl.")
-                        .append(methodName)
-                        .append("(payload);\n            return null;\n        });\n");
-            } else {
-                out.append("        builder.handle(")
-                        .append(constant)
-                        .append(", impl::")
-                        .append(methodName)
-                        .append(");\n");
-            }
+            out.append("        builder.handle(")
+                    .append(constant)
+                    .append(", ")
+                    .append(handlerExpr(method))
+                    .append(");\n");
         }
         out.append("        return builder;\n    }\n\n");
 
@@ -142,15 +145,11 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         for (int i = 0; i < methods.size(); i++) {
             ExecutableElement method = methods.get(i);
             String constant = upperSnake(method.getSimpleName().toString());
-            String methodName = method.getSimpleName().toString();
-            out.append("                Handler.of(").append(constant).append(", ");
-            if (isVoid(method)) {
-                out.append("payload -> {\n                    impl.")
-                        .append(methodName)
-                        .append("(payload);\n                    return null;\n                })");
-            } else {
-                out.append("impl::").append(methodName).append(")");
-            }
+            out.append("                Handler.of(")
+                    .append(constant)
+                    .append(", ")
+                    .append(handlerExpr(method))
+                    .append(")");
             out.append(i + 1 < methods.size() ? ",\n" : ");\n");
         }
         out.append("    }\n}\n");
@@ -179,6 +178,37 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
             chain.append(".priority(").append(priority).append(")");
         }
         return chain.toString();
+    }
+
+    /**
+     * The {@code TaskFunction} expression for a handler: a method reference when it
+     * takes only the payload, otherwise a lambda that resolves each {@code @Resource}
+     * parameter from the worker resource runtime.
+     */
+    private String handlerExpr(ExecutableElement method) {
+        String methodName = method.getSimpleName().toString();
+        List<? extends VariableElement> params = method.getParameters();
+        StringBuilder args = new StringBuilder("payload");
+        for (int i = 1; i < params.size(); i++) {
+            args.append(", Resources.use(\"")
+                    .append(escape(resourceName(params.get(i))))
+                    .append("\")");
+        }
+        if (isVoid(method)) {
+            return "payload -> { impl." + methodName + "(" + args + "); return null; }";
+        }
+        return params.size() > 1 ? "payload -> impl." + methodName + "(" + args + ")" : "impl::" + methodName;
+    }
+
+    /** The {@code @Resource} value on a parameter, or null if it is not annotated. */
+    private String resourceName(VariableElement param) {
+        for (AnnotationMirror annotation : param.getAnnotationMirrors()) {
+            if (annotation.getAnnotationType().toString().equals(RESOURCE)) {
+                Object value = rawValue(annotation, "value");
+                return value == null ? "" : value.toString();
+            }
+        }
+        return null;
     }
 
     private String taskName(ExecutableElement method) {
