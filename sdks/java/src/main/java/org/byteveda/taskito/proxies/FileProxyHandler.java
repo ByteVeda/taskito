@@ -49,6 +49,9 @@ public final class FileProxyHandler implements ProxyHandler<File> {
 
     @Override
     public File reconstruct(Map<String, Object> reference) {
+        if (reference == null) {
+            throw new ProxyException("file proxy ref has no reference");
+        }
         Object path = reference.get("path");
         if (!(path instanceof String)) {
             throw new ProxyException("file proxy ref missing 'path'");
