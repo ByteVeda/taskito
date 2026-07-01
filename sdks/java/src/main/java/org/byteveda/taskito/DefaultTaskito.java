@@ -205,17 +205,42 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> List<String> enqueueMany(Task<T> task, List<T> payloads, EnqueueOptions options) {
-        // Preflight every payload through the task's gates; a single rejection fails the whole batch.
-        for (T payload : payloads) {
-            gate(task.name(), payload);
-        }
+        // Run each payload through interceptors then gates (a single rejection fails
+        // the whole batch), so batch enqueue can't bypass the interception contract.
+        // Nothing is submitted until the single enqueueMany call, so it stays all-or-nothing.
         byte[][] bytes = new byte[payloads.size()][];
         List<EnqueueOptions> perJob = new ArrayList<>(payloads.size());
         for (int i = 0; i < payloads.size(); i++) {
-            bytes[i] = serializer.serialize(payloads.get(i));
+            Object payload = interceptBatchPayload(task.name(), payloads.get(i));
+            gate(task.name(), payload);
+            bytes[i] = serializer.serialize(payload);
             perJob.add(options);
         }
         return Arrays.asList(backend.enqueueMany(task.name(), bytes, encode(perJob)));
+    }
+
+    /**
+     * Apply interceptors to one batched payload: {@code Convert} rewrites it,
+     * {@code Reject} fails the batch. {@code Redirect} is unsupported here — it would
+     * move an item to a different task, breaking the single-task batch — so it throws.
+     */
+    private Object interceptBatchPayload(String taskName, Object payload) {
+        for (Interceptor interceptor : interceptors) {
+            Interception outcome = interceptor.intercept(taskName, payload);
+            if (outcome == null) {
+                throw new InterceptionException("interceptor returned null for task '" + taskName + "'");
+            }
+            if (outcome instanceof Interception.Reject reject) {
+                throw new InterceptionException("enqueue of '" + taskName + "' rejected: " + reject.reason());
+            } else if (outcome instanceof Interception.Convert convert) {
+                payload = convert.payload();
+            } else if (outcome instanceof Interception.Redirect) {
+                throw new InterceptionException(
+                        "interceptor Redirect is not supported for batch enqueue of task '" + taskName + "'");
+            }
+            // Pass: leave payload unchanged.
+        }
+        return payload;
     }
 
     @Override
