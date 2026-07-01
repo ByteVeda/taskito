@@ -1,6 +1,7 @@
 package org.byteveda.taskito;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -38,6 +39,16 @@ class BatcherTest {
                 batcher.add(2);
             }
             assertEquals(2, queue.stats().pending);
+        }
+    }
+
+    @Test
+    void addAfterCloseThrows(@TempDir Path dir) {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("b.db").toString()).open()) {
+            Batcher<Integer> batcher = Batcher.of(queue, TASK, 100, Duration.ofSeconds(60));
+            batcher.close();
+            assertThrows(IllegalStateException.class, () -> batcher.add(1));
         }
     }
 

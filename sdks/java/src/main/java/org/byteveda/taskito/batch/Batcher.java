@@ -27,6 +27,7 @@ public final class Batcher<T> implements AutoCloseable {
     private final Object lock = new Object();
     private final List<T> buffer = new ArrayList<>();
     private ScheduledFuture<?> pendingFlush;
+    private boolean closed; // guarded by lock
 
     public Batcher(Taskito queue, Task<T> task, int maxBatch, Duration maxDelay) {
         if (maxBatch <= 0) {
@@ -51,6 +52,9 @@ public final class Batcher<T> implements AutoCloseable {
      */
     public List<String> add(T payload) {
         synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("batcher is closed");
+            }
             buffer.add(payload);
             if (buffer.size() >= maxBatch) {
                 return flushLocked();
@@ -69,7 +73,15 @@ public final class Batcher<T> implements AutoCloseable {
 
     @Override
     public void close() {
-        flush();
+        synchronized (lock) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            // Flush and mark closed atomically so no add() can slip in and
+            // schedule a delayed flush that shutdownNow() would then cancel.
+            flushLocked();
+        }
         scheduler.shutdownNow();
     }
 
