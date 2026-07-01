@@ -47,6 +47,9 @@ public final class Proxies {
     /** Deconstruct {@code value} into a signed ref; throws if no handler accepts it. */
     @SuppressWarnings("unchecked")
     public ProxyRef deconstruct(Object value) {
+        if (value == null) {
+            throw new ProxyException("cannot deconstruct null");
+        }
         for (ProxyHandler<?> handler : handlers.values()) {
             if (handler.handles(value)) {
                 Map<String, Object> reference = ((ProxyHandler<Object>) handler).deconstruct(value);

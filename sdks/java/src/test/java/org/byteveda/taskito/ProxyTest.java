@@ -81,4 +81,16 @@ class ProxyTest {
         Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
         assertThrows(ProxyException.class, () -> proxies.reconstruct(new ProxyRef("nope", Map.of(), "sig")));
     }
+
+    @Test
+    void rejectsNullValueOnDeconstruct() {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        assertThrows(ProxyException.class, () -> proxies.deconstruct(null));
+    }
+
+    @Test
+    void rejectsDuplicateHandlerId() {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        assertThrows(ProxyException.class, () -> proxies.register(new FileProxyHandler()));
+    }
 }
