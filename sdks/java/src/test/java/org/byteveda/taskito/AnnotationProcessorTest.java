@@ -39,6 +39,26 @@ class AnnotationProcessorTest {
 
     @Test
     @Timeout(30)
+    void injectsResourceParameter(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().sqlite(dir.resolve("ri.db").toString()).open()) {
+            // ResourceGreeter.greet takes a @Resource("salutation") param; the generated
+            // bind resolves it from the worker resource runtime.
+            queue.resource("salutation", ctx -> "hi");
+            String id = queue.enqueue(ResourceGreeterTasks.GREET, "ada");
+            CountDownLatch done = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .apply(builder -> ResourceGreeterTasks.bind(builder, new ResourceGreeter()))
+                    .on(EventName.SUCCESS, event -> done.countDown())
+                    .start()) {
+                assertTrue(done.await(20, TimeUnit.SECONDS), "task should complete");
+                assertEquals("hi ada", queue.getResult(id, String.class).orElseThrow());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void registerViaGeneratedHandlerRegistry(@TempDir Path dir) throws Exception {
         try (Taskito queue =
                 Taskito.builder().sqlite(dir.resolve("hr.db").toString()).open()) {
