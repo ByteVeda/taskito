@@ -82,8 +82,11 @@ public final class Batcher<T> implements AutoCloseable {
             return List.of();
         }
         List<T> batch = new ArrayList<>(buffer);
+        // Enqueue before clearing: if enqueueMany throws, the buffer keeps the
+        // payloads so a delayed-flush failure doesn't silently drop them.
+        List<String> ids = queue.enqueueMany(task, batch);
         buffer.clear();
-        return queue.enqueueMany(task, batch);
+        return ids;
     }
 
     private void scheduleFlush() {
