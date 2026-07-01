@@ -1,5 +1,6 @@
 package org.byteveda.taskito.worker;
 
+import com.fasterxml.jackson.core.JacksonException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -316,12 +317,27 @@ public final class Worker implements AutoCloseable {
          * false-empty reading would shrink the pool while backlog still exists.
          */
         private static long depthFrom(String statsJson) {
+            JsonNode stats;
             try {
-                JsonNode stats = JSON.readTree(statsJson);
-                return stats.path("pending").asLong() + stats.path("running").asLong();
-            } catch (Exception e) {
-                throw new IllegalStateException("failed to read worker queue depth", e);
+                stats = JSON.readTree(statsJson);
+            } catch (JacksonException e) {
+                throw new IllegalStateException("failed to parse worker queue stats", e);
             }
+            return numericField(stats, "pending") + numericField(stats, "running");
+        }
+
+        /**
+         * Read an integral stats field, rejecting a missing or non-numeric value
+         * instead of coercing it to {@code 0} (which would read as an empty queue
+         * and shrink the pool). The autoscaler swallows the resulting error and
+         * retries on the next tick.
+         */
+        private static long numericField(JsonNode stats, String name) {
+            JsonNode node = stats.get(name);
+            if (node == null || !node.canConvertToLong()) {
+                throw new IllegalStateException("worker queue stats field '" + name + "' is missing or non-numeric");
+            }
+            return node.asLong();
         }
 
         private String encodeOptions() {
