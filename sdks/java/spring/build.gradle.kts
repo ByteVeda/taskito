@@ -1,0 +1,56 @@
+// taskito-spring: a Spring Boot 3 starter that auto-configures a Taskito bean.
+// Spring Boot 3 requires Java 17, which matches the SDK baseline.
+plugins {
+    `java-library`
+    checkstyle
+    id("com.diffplug.spotless") version "7.2.1"
+}
+
+group = "org.byteveda"
+
+version = "0.18.0"
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType<JavaCompile>().configureEach { options.release.set(17) }
+
+repositories { mavenCentral() }
+
+val springBoot = "3.3.5"
+
+dependencies {
+    api(project(":"))
+    compileOnly("org.springframework.boot:spring-boot-autoconfigure:$springBoot")
+    annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:$springBoot")
+
+    testImplementation(platform("org.junit:junit-bom:5.10.3"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("org.springframework.boot:spring-boot-autoconfigure:$springBoot")
+    testImplementation("org.springframework.boot:spring-boot-test:$springBoot")
+    testImplementation("org.springframework:spring-test:6.1.14")
+    // AssertableApplicationContext implements AssertJ's AssertProvider, so the
+    // type must be on the test classpath even though we assert with JUnit.
+    testImplementation("org.assertj:assertj-core:3.25.3")
+}
+
+spotless {
+    java {
+        target("src/**/*.java")
+        palantirJavaFormat("2.50.0")
+        removeUnusedImports()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+checkstyle {
+    toolVersion = "10.21.4"
+    configFile = file("../config/checkstyle/checkstyle.xml")
+    isIgnoreFailures = false
+}
+
+tasks.test { useJUnitPlatform() }
