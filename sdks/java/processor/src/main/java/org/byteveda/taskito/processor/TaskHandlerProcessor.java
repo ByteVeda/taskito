@@ -63,6 +63,10 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
             error(method, "@TaskHandler method must take the payload as its first parameter");
             return false;
         }
+        if (resourceName(params.get(0)) != null) {
+            error(method, "the first @TaskHandler parameter is the payload and must not be annotated @Resource");
+            return false;
+        }
         for (int i = 1; i < params.size(); i++) {
             if (resourceName(params.get(i)) == null) {
                 error(method, "@TaskHandler parameters after the payload must be annotated @Resource");
