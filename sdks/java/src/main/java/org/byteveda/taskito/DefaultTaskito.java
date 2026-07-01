@@ -155,6 +155,9 @@ final class DefaultTaskito implements Taskito {
     private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options) {
         for (Interceptor interceptor : interceptors) {
             Interception outcome = interceptor.intercept(taskName, payload);
+            if (outcome == null) {
+                throw new InterceptionException("interceptor returned null for task '" + taskName + "'");
+            }
             if (outcome instanceof Interception.Reject reject) {
                 throw new InterceptionException("enqueue of '" + taskName + "' rejected: " + reject.reason());
             } else if (outcome instanceof Interception.Redirect redirect) {

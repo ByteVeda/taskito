@@ -74,4 +74,13 @@ class InterceptionTest {
             assertThrows(InterceptionException.class, () -> queue.enqueue(A, 1));
         }
     }
+
+    @Test
+    void rejectsNullInterceptorResult(@TempDir Path dir) {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("ic.db").toString()).open()) {
+            queue.intercept((task, payload) -> null);
+            assertThrows(InterceptionException.class, () -> queue.enqueue(A, 1));
+        }
+    }
 }
