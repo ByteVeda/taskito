@@ -1,6 +1,8 @@
 package org.byteveda.taskito.proxies;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -23,7 +25,9 @@ public final class FileProxyHandler implements ProxyHandler<File> {
     public FileProxyHandler(List<Path> allowedRoots) {
         List<Path> roots = new ArrayList<>(allowedRoots.size());
         for (Path root : allowedRoots) {
-            roots.add(root.toAbsolutePath().normalize());
+            // Resolve each root to its real path so containment is checked against
+            // the true filesystem location, not a symlinked alias.
+            roots.add(realPath(root.toAbsolutePath().normalize()));
         }
         this.allowedRoots = List.copyOf(roots);
     }
@@ -60,11 +64,34 @@ public final class FileProxyHandler implements ProxyHandler<File> {
         if (allowedRoots.isEmpty()) {
             return true;
         }
+        Path real = realPath(path);
         for (Path root : allowedRoots) {
-            if (path.startsWith(root)) {
+            if (real.startsWith(root)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * The real (symlink-resolved) path. Since the target may not exist yet, resolve
+     * the nearest existing ancestor to its real path — collapsing any symlinked
+     * ancestor — then re-append the remaining segments. A path whose ancestors do
+     * not exist yet has no symlink to hide behind, so its normalized form stands.
+     */
+    private static Path realPath(Path path) {
+        Path existing = path;
+        while (existing != null && !Files.exists(existing)) {
+            existing = existing.getParent();
+        }
+        if (existing == null) {
+            return path;
+        }
+        try {
+            Path realExisting = existing.toRealPath();
+            return realExisting.resolve(existing.relativize(path)).normalize();
+        } catch (IOException e) {
+            throw new ProxyException("failed to resolve real path for " + path, e);
+        }
     }
 }

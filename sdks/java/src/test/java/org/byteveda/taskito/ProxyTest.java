@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,21 @@ class ProxyTest {
 
         File outside = dir.getParent().resolve("outside.txt").toFile();
         ProxyRef ref = proxies.deconstruct(outside);
+        assertThrows(ProxyException.class, () -> proxies.reconstruct(ref));
+    }
+
+    @Test
+    void allowlistRejectsSymlinkedAncestorEscape(@TempDir Path dir) throws Exception {
+        Path allowed = Files.createDirectory(dir.resolve("allowed"));
+        Path secret = Files.createDirectory(dir.resolve("secret"));
+        Files.writeString(secret.resolve("data.txt"), "top secret");
+        // A symlink inside the allowed root pointing at the secret dir: lexically
+        // under the allowlist, but its real target is not.
+        Path link = allowed.resolve("link");
+        Files.createSymbolicLink(link, secret);
+
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler(List.of(allowed)));
+        ProxyRef ref = proxies.deconstruct(link.resolve("data.txt").toFile());
         assertThrows(ProxyException.class, () -> proxies.reconstruct(ref));
     }
 
