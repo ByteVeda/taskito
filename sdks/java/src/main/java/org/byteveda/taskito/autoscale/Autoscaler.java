@@ -1,5 +1,7 @@
 package org.byteveda.taskito.autoscale;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -14,6 +16,8 @@ import java.util.function.LongSupplier;
  * never interrupted.
  */
 public final class Autoscaler implements AutoCloseable {
+    private static final Logger LOG = System.getLogger(Autoscaler.class.getName());
+
     private final ThreadPoolExecutor pool;
     private final LongSupplier depth;
     private final AutoscaleOptions options;
@@ -48,8 +52,10 @@ public final class Autoscaler implements AutoCloseable {
     private void tickSafely() {
         try {
             tick();
-        } catch (RuntimeException e) {
-            // A transient depth read must not kill the scaler loop.
+        } catch (Throwable e) {
+            // scheduleAtFixedRate cancels all future runs if a task escapes with
+            // any Throwable — catch everything and log so the loop survives a bad tick.
+            LOG.log(Level.WARNING, "autoscaler tick failed; retrying next interval", e);
         }
     }
 
