@@ -22,7 +22,7 @@ public final class Batcher<T> implements AutoCloseable {
     private final Taskito queue;
     private final Task<T> task;
     private final int maxBatch;
-    private final long maxDelayMs;
+    private final long maxDelayNanos;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(Batcher::daemon);
     private final Object lock = new Object();
     private final List<T> buffer = new ArrayList<>();
@@ -39,7 +39,9 @@ public final class Batcher<T> implements AutoCloseable {
         this.queue = queue;
         this.task = task;
         this.maxBatch = maxBatch;
-        this.maxDelayMs = maxDelay.toMillis();
+        // Nanoseconds, not millis: toMillis() would truncate a sub-millisecond
+        // delay to 0 and flush eagerly instead of honoring the requested delay.
+        this.maxDelayNanos = maxDelay.toNanos();
     }
 
     public static <T> Batcher<T> of(Taskito queue, Task<T> task, int maxBatch, Duration maxDelay) {
@@ -103,7 +105,7 @@ public final class Batcher<T> implements AutoCloseable {
 
     private void scheduleFlush() {
         if (pendingFlush == null) {
-            pendingFlush = scheduler.schedule(this::flush, maxDelayMs, TimeUnit.MILLISECONDS);
+            pendingFlush = scheduler.schedule(this::flush, maxDelayNanos, TimeUnit.NANOSECONDS);
         }
     }
 
