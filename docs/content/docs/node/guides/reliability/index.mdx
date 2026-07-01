@@ -1,0 +1,19 @@
+---
+title: Reliability
+description: "Harden your Node.js task queue for production workloads."
+---
+
+Harden your task queue for production workloads.
+
+| Guide | Description |
+|---|---|
+| [Error Handling](/node/guides/reliability/error-handling) | Task failure lifecycle, error inspection, debugging patterns |
+| [Delivery Guarantees](/node/guides/reliability/guarantees) | At-least-once delivery and exactly-once patterns |
+| [Retries](/node/guides/reliability/retries) | Automatic retries with exponential backoff |
+| [Timeouts](/node/guides/reliability/timeouts) | Bound task runtime and reclaim stalled jobs |
+| [Idempotency](/node/guides/reliability/idempotency) | Deduplicate enqueues with unique keys |
+| [Rate Limiting](/node/guides/reliability/rate-limiting) | Throttle task execution with token-bucket limits |
+| [Concurrency](/node/guides/reliability/concurrency) | Cap how many jobs of a task run at once |
+| [Circuit Breakers](/node/guides/reliability/circuit-breakers) | Protect downstream services from cascading failures |
+| [Dead-letter queue](/node/guides/reliability/dead-letter) | Capture and replay exhausted jobs |
+| [Distributed Locking](/node/guides/reliability/locks) | Mutual exclusion across workers with database-backed locks |
