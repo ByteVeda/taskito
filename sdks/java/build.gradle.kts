@@ -91,6 +91,14 @@ dependencies {
     compileOnly("org.msgpack:jackson-dataformat-msgpack:0.9.8")
     testImplementation("org.msgpack:jackson-dataformat-msgpack:0.9.8")
 
+    // Optional: observability contrib middleware. Consumers that use them add the
+    // matching runtime dependency themselves.
+    compileOnly("io.micrometer:micrometer-observation:1.13.6")
+    testImplementation("io.micrometer:micrometer-observation:1.13.6")
+    testImplementation("io.micrometer:micrometer-observation-test:1.13.6")
+    compileOnly("io.sentry:sentry:7.14.0")
+    testImplementation("io.sentry:sentry:7.14.0")
+
     // Run the @TaskHandler processor over the tests so the generated companions
     // are exercised end-to-end. Consumers wire it the same way.
     testAnnotationProcessor(project(":processor"))
