@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.byteveda.taskito.errors.ConfigurationException;
+import org.byteveda.taskito.interception.Interceptor;
 import org.byteveda.taskito.internal.JniQueueBackend;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
@@ -81,6 +82,12 @@ public interface Taskito extends AutoCloseable {
      * task must all pass. Returns {@code this}.
      */
     Taskito predicate(String taskName, Predicate predicate);
+
+    /**
+     * Register an interceptor that may convert, redirect, or reject each enqueue
+     * before it is serialized (see {@link Interceptor}). Returns {@code this}.
+     */
+    Taskito intercept(Interceptor interceptor);
 
     // ── Producer ────────────────────────────────────────────────────
 

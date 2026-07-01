@@ -17,9 +17,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.byteveda.taskito.core.CoreFacade;
+import org.byteveda.taskito.errors.InterceptionException;
 import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
+import org.byteveda.taskito.interception.Interception;
+import org.byteveda.taskito.interception.Interceptor;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
@@ -68,6 +71,7 @@ final class DefaultTaskito implements Taskito {
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
     private final ResourceRuntime resources = new ResourceRuntime();
     private final Map<String, List<Predicate>> predicates = new ConcurrentHashMap<>();
+    private final List<Interceptor> interceptors = new CopyOnWriteArrayList<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer) {
         this.backend = backend;
@@ -119,6 +123,12 @@ final class DefaultTaskito implements Taskito {
         return this;
     }
 
+    @Override
+    public Taskito intercept(Interceptor interceptor) {
+        interceptors.add(interceptor);
+        return this;
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T cast(Object value) {
         return (T) value;
@@ -141,13 +151,29 @@ final class DefaultTaskito implements Taskito {
         return dispatchEnqueue(taskName, payload, EnqueueOptions.none());
     }
 
-    /** Run onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
+    /** Run interceptors + onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
     private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options) {
+        for (Interceptor interceptor : interceptors) {
+            Interception outcome = interceptor.intercept(taskName, payload);
+            if (outcome == null) {
+                throw new InterceptionException("interceptor returned null for task '" + taskName + "'");
+            }
+            if (outcome instanceof Interception.Reject reject) {
+                throw new InterceptionException("enqueue of '" + taskName + "' rejected: " + reject.reason());
+            } else if (outcome instanceof Interception.Redirect redirect) {
+                taskName = redirect.taskName();
+                payload = redirect.payload();
+            } else if (outcome instanceof Interception.Convert convert) {
+                payload = convert.payload();
+            }
+            // Pass: leave taskName/payload unchanged.
+        }
         EnqueueContext context = new EnqueueContext(taskName, payload, options);
         for (Middleware m : middleware) {
             m.onEnqueue(context);
         }
-        // Gate the payload that will actually be enqueued (after middleware may have rewritten it).
+        // Gate the payload that will actually be enqueued (after interceptors and
+        // middleware may have rewritten it).
         gate(taskName, context.payload());
         EnqueueOptions finalOptions = context.options();
         if (!context.metadata().isEmpty()) {
@@ -179,17 +205,42 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> List<String> enqueueMany(Task<T> task, List<T> payloads, EnqueueOptions options) {
-        // Preflight every payload through the task's gates; a single rejection fails the whole batch.
-        for (T payload : payloads) {
-            gate(task.name(), payload);
-        }
+        // Run each payload through interceptors then gates (a single rejection fails
+        // the whole batch), so batch enqueue can't bypass the interception contract.
+        // Nothing is submitted until the single enqueueMany call, so it stays all-or-nothing.
         byte[][] bytes = new byte[payloads.size()][];
         List<EnqueueOptions> perJob = new ArrayList<>(payloads.size());
         for (int i = 0; i < payloads.size(); i++) {
-            bytes[i] = serializer.serialize(payloads.get(i));
+            Object payload = interceptBatchPayload(task.name(), payloads.get(i));
+            gate(task.name(), payload);
+            bytes[i] = serializer.serialize(payload);
             perJob.add(options);
         }
         return Arrays.asList(backend.enqueueMany(task.name(), bytes, encode(perJob)));
+    }
+
+    /**
+     * Apply interceptors to one batched payload: {@code Convert} rewrites it,
+     * {@code Reject} fails the batch. {@code Redirect} is unsupported here — it would
+     * move an item to a different task, breaking the single-task batch — so it throws.
+     */
+    private Object interceptBatchPayload(String taskName, Object payload) {
+        for (Interceptor interceptor : interceptors) {
+            Interception outcome = interceptor.intercept(taskName, payload);
+            if (outcome == null) {
+                throw new InterceptionException("interceptor returned null for task '" + taskName + "'");
+            }
+            if (outcome instanceof Interception.Reject reject) {
+                throw new InterceptionException("enqueue of '" + taskName + "' rejected: " + reject.reason());
+            } else if (outcome instanceof Interception.Convert convert) {
+                payload = convert.payload();
+            } else if (outcome instanceof Interception.Redirect) {
+                throw new InterceptionException(
+                        "interceptor Redirect is not supported for batch enqueue of task '" + taskName + "'");
+            }
+            // Pass: leave payload unchanged.
+        }
+        return payload;
     }
 
     @Override
