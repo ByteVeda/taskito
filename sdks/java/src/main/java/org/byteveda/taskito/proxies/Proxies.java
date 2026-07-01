@@ -30,9 +30,17 @@ public final class Proxies {
         this.key = hmacKey.clone();
     }
 
-    /** Register a handler (id must be unique); returns {@code this}. */
+    /** Register a handler under its non-null, unique id; returns {@code this}. */
     public Proxies register(ProxyHandler<?> handler) {
-        handlers.put(handler.id(), handler);
+        String id = handler.id();
+        if (id == null) {
+            throw new ProxyException("proxy handler id must not be null");
+        }
+        // Fail fast on a duplicate: silently overwriting would let a producer and
+        // worker disagree on what a given ProxyRef's handler id means.
+        if (handlers.putIfAbsent(id, handler) != null) {
+            throw new ProxyException("proxy handler '" + id + "' is already registered");
+        }
         return this;
     }
 
