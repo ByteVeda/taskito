@@ -294,9 +294,20 @@ public final class Worker implements AutoCloseable {
             return new Worker(control, executor, tracker, resources, scaler);
         }
 
-        /** Outstanding work (pending + running) read from the backend's stats. */
+        /**
+         * Outstanding work (pending + running) this worker can actually consume.
+         * Scoped to the configured {@code queues} so backlog on queues this worker
+         * doesn't serve can't drive it to {@code maxWorkers}; unscoped otherwise.
+         */
         private long currentDepth() {
-            return depthFrom(backend.statsJson());
+            if (queues == null || queues.isEmpty()) {
+                return depthFrom(backend.statsJson());
+            }
+            long total = 0;
+            for (String queue : queues) {
+                total += depthFrom(backend.statsByQueueJson(queue));
+            }
+            return total;
         }
 
         /**
