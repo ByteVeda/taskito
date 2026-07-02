@@ -236,8 +236,9 @@ Taskito secure = Taskito.builder()
 
 ### Resources (worker dependency injection)
 
-Register a resource once; resolve it inside handlers. Scopes: `WORKER` (built
-once, shared) and `TASK` (built + disposed per invocation).
+The primary way to use a non-serializable dependency (pool, client, logger) in a
+handler: register it once and resolve it inside the worker. Scopes: `WORKER`
+(built once, shared) and `TASK` (built + disposed per invocation).
 
 ```java
 taskito.resource("db", ctx -> openPool());                       // WORKER
@@ -245,11 +246,28 @@ taskito.resource("tx", ResourceScope.TASK, ctx -> ctx.<Pool>use("db").begin(), T
 taskito.worker().handle(save, p -> Resources.<Tx>use("tx").save(p)).start();
 ```
 
-### Enqueue predicates (gates)
+When a handler takes `@Resource` parameters, the `@TaskHandler` processor wires
+them from the runtime for you — no `Resources.use` call needed.
+
+### Cross-process references (proxies)
+
+Secondary to resources: when a *specific* resource identity must travel inside a
+payload to another process, carry a signed `ProxyRef` and rebuild it on the
+worker. Bind an optional TTL and purpose — both are folded into the HMAC.
 
 ```java
-taskito.predicate("send_email", ctx -> isBusinessHours());       // rejects → PredicateRejectedException
-// Predicates.allOf / anyOf / not compose them.
+Proxies proxies = new Proxies(hmacKey).register(new FileProxyHandler());
+ProxyRef ref = proxies.deconstruct(file, Duration.ofMinutes(5), "report"); // producer
+File same = proxies.resolve(ref, "report");                                // worker (expiry + purpose checked)
+```
+
+### Enqueue gates
+
+```java
+taskito.predicate("send_email", ctx -> payloadValid(ctx));       // boolean: false → PredicateRejectedException
+taskito.gate("send_email", Recipes.businessHours(zone));         // allow / skip / defer / reject
+Optional<String> id = taskito.tryEnqueue(emailTask, msg);        // empty when a gate skips
+// Recipes: businessHours / timeWindow / dayOfWeek / payloadMatches / featureFlag.
 ```
 
 ### Producer batching
@@ -302,7 +320,9 @@ org.byteveda.taskito
 │                      TaskMetric, WorkerInfo, TaskLog, JobFilter  (read-only views)
 ├── worker/            Worker runtime (concurrency, autoscale)
 ├── resources/         worker DI — ResourceRuntime, Resources.use(name), scopes
-├── predicates/        enqueue gates — Predicate, Predicates (allOf/anyOf/not)
+├── proxies/           signed cross-process references — Proxies, ProxyRef, handlers
+├── interception/      enqueue-time arg interception — Interceptor, Interception
+├── predicates/        enqueue gates — Predicate, EnqueueGate, EnqueueDecision, Recipes
 ├── batch/             Batcher — producer-side batching
 ├── autoscale/         Autoscaler, AutoscaleOptions
 ├── scaler/            Scaler — KEDA HTTP endpoint

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -44,32 +45,62 @@ public final class Proxies {
         return this;
     }
 
-    /** Deconstruct {@code value} into a signed ref; throws if no handler accepts it. */
-    @SuppressWarnings("unchecked")
+    /** Deconstruct {@code value} into a signed ref with no expiry or purpose. */
     public ProxyRef deconstruct(Object value) {
+        return deconstruct(value, null, null);
+    }
+
+    /** Deconstruct {@code value} into a ref that expires after {@code ttl}. */
+    public ProxyRef deconstruct(Object value, Duration ttl) {
+        return deconstruct(value, ttl, null);
+    }
+
+    /**
+     * Deconstruct {@code value} into a signed ref bound to {@code ttl} (nullable)
+     * and {@code purpose} (nullable); throws if no handler accepts it.
+     */
+    @SuppressWarnings("unchecked")
+    public ProxyRef deconstruct(Object value, Duration ttl, String purpose) {
         if (value == null) {
             throw new ProxyException("cannot deconstruct null");
         }
+        Long expiresAtMs = ttl == null ? null : System.currentTimeMillis() + ttl.toMillis();
         for (ProxyHandler<?> handler : handlers.values()) {
             if (handler.handles(value)) {
                 Map<String, Object> reference = ((ProxyHandler<Object>) handler).deconstruct(value);
-                return new ProxyRef(handler.id(), reference, sign(handler.id(), reference));
+                String signature = sign(handler.id(), reference, expiresAtMs, purpose);
+                return new ProxyRef(handler.id(), reference, signature, expiresAtMs, purpose);
             }
         }
         throw new ProxyException("no proxy handler for " + value.getClass().getName());
     }
 
-    /** Verify a ref's signature and reconstruct the resource. */
-    @SuppressWarnings("unchecked")
+    /** Verify a ref's signature and expiry, then reconstruct the resource. */
     public Object reconstruct(ProxyRef ref) {
+        return reconstruct(ref, null);
+    }
+
+    /**
+     * Verify a ref's signature, expiry, and (when {@code expectedPurpose} is
+     * non-null) its bound purpose, then reconstruct the resource.
+     */
+    @SuppressWarnings("unchecked")
+    public Object reconstruct(ProxyRef ref, String expectedPurpose) {
         ProxyHandler<Object> handler = (ProxyHandler<Object>) handlers.get(ref.handler());
         if (handler == null) {
             throw new ProxyException("unknown proxy handler '" + ref.handler() + "'");
         }
-        byte[] expected = sign(ref.handler(), ref.reference()).getBytes(StandardCharsets.UTF_8);
+        byte[] expected = sign(ref.handler(), ref.reference(), ref.expiresAtMs(), ref.purpose())
+                .getBytes(StandardCharsets.UTF_8);
         byte[] actual = (ref.signature() == null ? "" : ref.signature()).getBytes(StandardCharsets.UTF_8);
         if (!MessageDigest.isEqual(expected, actual)) {
             throw new ProxyException("proxy signature mismatch for handler '" + ref.handler() + "'");
+        }
+        if (ref.expiresAtMs() != null && System.currentTimeMillis() > ref.expiresAtMs()) {
+            throw new ProxyException("proxy ref expired for handler '" + ref.handler() + "'");
+        }
+        if (expectedPurpose != null && !expectedPurpose.equals(ref.purpose())) {
+            throw new ProxyException("proxy purpose mismatch for handler '" + ref.handler() + "'");
         }
         return handler.reconstruct(ref.reference());
     }
@@ -80,13 +111,23 @@ public final class Proxies {
         return (T) reconstruct(ref);
     }
 
-    private String sign(String handlerId, Map<String, Object> reference) {
+    /** {@link #reconstruct(ProxyRef, String)} cast to the caller's type. */
+    @SuppressWarnings("unchecked")
+    public <T> T resolve(ProxyRef ref, String expectedPurpose) {
+        return (T) reconstruct(ref, expectedPurpose);
+    }
+
+    private String sign(String handlerId, Map<String, Object> reference, Long expiresAtMs, String purpose) {
         try {
             Mac mac = Mac.getInstance(ALGORITHM);
             mac.init(new SecretKeySpec(key, ALGORITHM));
             mac.update(handlerId.getBytes(StandardCharsets.UTF_8));
             mac.update((byte) '\n');
             mac.update(canonical.writeValueAsBytes(reference));
+            mac.update((byte) '\n');
+            mac.update(String.valueOf(expiresAtMs).getBytes(StandardCharsets.UTF_8));
+            mac.update((byte) '\n');
+            mac.update((purpose == null ? "" : purpose).getBytes(StandardCharsets.UTF_8));
             return Base64.getEncoder().encodeToString(mac.doFinal());
         } catch (Exception e) {
             throw new ProxyException("failed to sign proxy ref", e);

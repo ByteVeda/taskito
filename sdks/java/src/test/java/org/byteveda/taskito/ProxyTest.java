@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.byteveda.taskito.errors.ProxyException;
@@ -92,5 +93,46 @@ class ProxyTest {
     void rejectsDuplicateHandlerId() {
         Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
         assertThrows(ProxyException.class, () -> proxies.register(new FileProxyHandler()));
+    }
+
+    @Test
+    void roundTripsWithinTtl(@TempDir Path dir) {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        File file = dir.resolve("data.txt").toFile();
+
+        ProxyRef ref = proxies.deconstruct(file, Duration.ofHours(1));
+        File back = proxies.resolve(ref);
+        assertEquals(file.getAbsolutePath(), back.getAbsolutePath());
+    }
+
+    @Test
+    void rejectsExpiredRef(@TempDir Path dir) throws Exception {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        ProxyRef ref = proxies.deconstruct(dir.resolve("a").toFile(), Duration.ofMillis(10));
+
+        Thread.sleep(40);
+        assertThrows(ProxyException.class, () -> proxies.reconstruct(ref));
+    }
+
+    @Test
+    void rejectsTamperedExpiry(@TempDir Path dir) {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        ProxyRef ref = proxies.deconstruct(dir.resolve("a").toFile(), Duration.ofMillis(10));
+        // Extend the expiry while keeping the original signature → signature must fail.
+        ProxyRef extended =
+                new ProxyRef(ref.handler(), ref.reference(), ref.signature(), ref.expiresAtMs() + 3_600_000L, null);
+
+        assertThrows(ProxyException.class, () -> proxies.reconstruct(extended));
+    }
+
+    @Test
+    void enforcesPurposeWhenRequested(@TempDir Path dir) {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        File file = dir.resolve("a").toFile();
+        ProxyRef ref = proxies.deconstruct(file, null, "emails");
+
+        assertEquals(file.getAbsolutePath(), ((File) proxies.reconstruct(ref, "emails")).getAbsolutePath());
+        assertEquals(file.getAbsolutePath(), ((File) proxies.reconstruct(ref)).getAbsolutePath()); // unchecked
+        assertThrows(ProxyException.class, () -> proxies.reconstruct(ref, "billing"));
     }
 }
