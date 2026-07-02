@@ -214,13 +214,20 @@ public final class FfmTransport implements NativeTransport {
         if (pointer.address() == 0 || length == 0) {
             return new byte[0];
         }
-        byte[] copy = pointer.reinterpret(length).toArray(ValueLayout.JAVA_BYTE);
+        // Free in finally so a failed copy never leaks the Rust allocation.
+        try {
+            return pointer.reinterpret(length).toArray(ValueLayout.JAVA_BYTE);
+        } finally {
+            free(pointer, length);
+        }
+    }
+
+    private static void free(MemorySegment pointer, long length) {
         try {
             FREE.invokeExact(pointer, length);
         } catch (Throwable t) {
             throw rethrow(t);
         }
-        return copy;
     }
 
     private static TaskitoException error(byte[] message) {
