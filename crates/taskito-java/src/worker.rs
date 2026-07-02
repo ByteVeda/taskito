@@ -111,7 +111,7 @@ fn start_worker(
             config_json,
             mesh_worker_id,
             mesh_queues,
-            capacity as u16,
+            capacity.min(u16::MAX as usize) as u16,
         )),
         None => {
             runtime.spawn(async move {
