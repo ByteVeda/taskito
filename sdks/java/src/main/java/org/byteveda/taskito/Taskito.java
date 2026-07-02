@@ -257,6 +257,7 @@ public interface Taskito extends AutoCloseable {
         private final Map<String, Object> options = new LinkedHashMap<>();
         private Serializer serializer = new JsonSerializer();
         private final List<PayloadCodec> codecs = new ArrayList<>();
+        private final Map<String, PayloadCodec> namedCodecs = new LinkedHashMap<>();
 
         public Builder backend(String backend) {
             // Normalize at the boundary so callers may pass "SQLite"/"REDIS"; the
@@ -326,6 +327,16 @@ public interface Taskito extends AutoCloseable {
             return this;
         }
 
+        /**
+         * Register a named codec for per-task selection (e.g. via {@code Task.codecs(...)}
+         * or the {@code @Encrypted}/{@code @Compressed} annotations). The same names
+         * must be registered on producers and workers. Returns {@code this}.
+         */
+        public Builder codec(String name, PayloadCodec codec) {
+            this.namedCodecs.put(name, codec);
+            return this;
+        }
+
         /** The serializer wrapped in the configured codec chain (if any). */
         private Serializer effectiveSerializer() {
             return codecs.isEmpty() ? serializer : new CodecSerializer(serializer, codecs);
@@ -333,7 +344,7 @@ public interface Taskito extends AutoCloseable {
 
         /** Open over an explicit backend, e.g. an in-memory fake in tests. */
         public Taskito open(QueueBackend backend) {
-            return new DefaultTaskito(backend, effectiveSerializer());
+            return new DefaultTaskito(backend, effectiveSerializer(), namedCodecs);
         }
 
         /** Open the native backend described by the configured options. */
@@ -345,7 +356,7 @@ public interface Taskito extends AutoCloseable {
             } else if (!options.containsKey("dsn")) {
                 throw new ConfigurationException("url (dsn) is required");
             }
-            return new DefaultTaskito(JniQueueBackend.open(encodeOptions()), effectiveSerializer());
+            return new DefaultTaskito(JniQueueBackend.open(encodeOptions()), effectiveSerializer(), namedCodecs);
         }
 
         /** Create the SQLite file's parent directory (skip in-memory databases). */

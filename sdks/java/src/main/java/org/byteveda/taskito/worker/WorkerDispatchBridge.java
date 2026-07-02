@@ -17,6 +17,7 @@ import org.byteveda.taskito.middleware.TaskContext;
 import org.byteveda.taskito.resources.ResourceRuntime;
 import org.byteveda.taskito.resources.Resources;
 import org.byteveda.taskito.resources.TaskScope;
+import org.byteveda.taskito.serialization.PayloadCodec;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerBridge;
@@ -39,6 +40,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
     private final Emitter emitter;
     private final List<Middleware> middleware;
     private final ResourceRuntime resources;
+    private final Map<String, PayloadCodec> codecs;
     // Resolved once startWorker returns; job tasks await it before completing.
     private final CompletableFuture<WorkerControl> control = new CompletableFuture<>();
 
@@ -49,7 +51,8 @@ final class WorkerDispatchBridge implements WorkerBridge {
             ExecutorService executor,
             Emitter emitter,
             List<Middleware> middleware,
-            ResourceRuntime resources) {
+            ResourceRuntime resources,
+            Map<String, PayloadCodec> codecs) {
         this.backend = backend;
         this.handlers = handlers;
         this.serializer = serializer;
@@ -57,6 +60,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
         this.emitter = emitter;
         this.middleware = middleware;
         this.resources = resources;
+        this.codecs = codecs;
     }
 
     void bind(WorkerControl control) {
@@ -87,7 +91,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
             for (Middleware m : middleware) {
                 m.before(context);
             }
-            Object argument = serializer.deserialize(payload, task.payloadType);
+            Object argument = serializer.deserialize(decodePayload(payload, task.codecs), task.payloadType);
             Object result = task.handler.apply(argument);
             for (Middleware m : middleware) {
                 m.after(context, result);
@@ -103,6 +107,20 @@ final class WorkerDispatchBridge implements WorkerBridge {
                 Resources.exit(scope); // unbind the thread + dispose task-scoped resources (LIFO)
             }
         }
+    }
+
+    /** Reverse a task's payload codecs (last applied, first undone). */
+    private byte[] decodePayload(byte[] payload, List<String> codecNames) {
+        byte[] bytes = payload;
+        for (int i = codecNames.size() - 1; i >= 0; i--) {
+            String name = codecNames.get(i);
+            PayloadCodec codec = codecs.get(name);
+            if (codec == null) {
+                throw new IllegalStateException("no codec registered named '" + name + "'");
+            }
+            bytes = codec.decode(bytes);
+        }
+        return bytes;
     }
 
     @Override

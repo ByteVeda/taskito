@@ -26,6 +26,7 @@ import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.resources.ResourceRuntime;
+import org.byteveda.taskito.serialization.PayloadCodec;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerControl;
@@ -65,12 +66,16 @@ public final class Worker implements AutoCloseable {
     }
 
     public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
-        return new Builder(backend, serializer, middleware, new ResourceRuntime());
+        return new Builder(backend, serializer, middleware, new ResourceRuntime(), Map.of());
     }
 
     public static Builder builder(
-            QueueBackend backend, Serializer serializer, List<Middleware> middleware, ResourceRuntime resources) {
-        return new Builder(backend, serializer, middleware, resources);
+            QueueBackend backend,
+            Serializer serializer,
+            List<Middleware> middleware,
+            ResourceRuntime resources,
+            Map<String, PayloadCodec> codecs) {
+        return new Builder(backend, serializer, middleware, resources, codecs);
     }
 
     /** Stop dispatching; in-flight jobs continue to drain. */
@@ -145,6 +150,7 @@ public final class Worker implements AutoCloseable {
         private final Serializer serializer;
         private final List<Middleware> middleware;
         private final ResourceRuntime resources;
+        private final Map<String, PayloadCodec> codecs;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
         private final Map<String, RetryPolicy> taskPolicies = new HashMap<>();
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
@@ -155,20 +161,26 @@ public final class Worker implements AutoCloseable {
         private WorkflowTracker tracker;
         private AutoscaleOptions autoscale;
 
-        Builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware, ResourceRuntime resources) {
+        Builder(
+                QueueBackend backend,
+                Serializer serializer,
+                List<Middleware> middleware,
+                ResourceRuntime resources,
+                Map<String, PayloadCodec> codecs) {
             this.backend = backend;
             this.serializer = serializer;
             this.middleware = middleware;
             this.resources = resources;
+            this.codecs = codecs;
         }
 
         public <T, R> Builder handle(String taskName, Class<T> payloadType, TaskFunction<T, R> handler) {
-            handlers.put(taskName, new RegisteredTask(payloadType, cast(handler)));
+            handlers.put(taskName, new RegisteredTask(payloadType, cast(handler), List.of()));
             return this;
         }
 
         public <T, R> Builder handle(Task<T> task, TaskFunction<T, R> handler) {
-            handlers.put(task.name(), new RegisteredTask(task.payloadType(), cast(handler)));
+            handlers.put(task.name(), new RegisteredTask(task.payloadType(), cast(handler), task.codecNames()));
             capturePolicy(task);
             return this;
         }
@@ -182,7 +194,11 @@ public final class Worker implements AutoCloseable {
         /** Register a single {@link Handler} (a task + its function). */
         public Builder register(Handler<?, ?> handler) {
             handlers.put(
-                    handler.task().name(), new RegisteredTask(handler.task().payloadType(), cast(handler.function())));
+                    handler.task().name(),
+                    new RegisteredTask(
+                            handler.task().payloadType(),
+                            cast(handler.function()),
+                            handler.task().codecNames()));
             capturePolicy(handler.task());
             return this;
         }
@@ -283,8 +299,8 @@ public final class Worker implements AutoCloseable {
             }
             Emitter emitter = new Emitter();
             listeners.forEach((name, bound) -> bound.forEach(listener -> emitter.on(name, listener)));
-            WorkerDispatchBridge bridge =
-                    new WorkerDispatchBridge(backend, handlers, serializer, executor, emitter, middleware, resources);
+            WorkerDispatchBridge bridge = new WorkerDispatchBridge(
+                    backend, handlers, serializer, executor, emitter, middleware, resources, codecs);
             WorkerControl control = backend.startWorker(bridge, encodeOptions());
             bridge.bind(control);
             // Lease worker resources only after the native worker started cleanly.

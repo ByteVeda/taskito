@@ -44,6 +44,7 @@ import org.byteveda.taskito.resources.ResourceRuntime;
 import org.byteveda.taskito.resources.ResourceScope;
 import org.byteveda.taskito.resources.ResourceStat;
 import org.byteveda.taskito.scheduling.PeriodicTask;
+import org.byteveda.taskito.serialization.PayloadCodec;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
@@ -68,15 +69,17 @@ final class DefaultTaskito implements Taskito {
     private final QueueBackend backend;
     private final CoreFacade facade;
     private final Serializer serializer;
+    private final Map<String, PayloadCodec> codecs;
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
     private final ResourceRuntime resources = new ResourceRuntime();
     private final Map<String, List<Predicate>> predicates = new ConcurrentHashMap<>();
     private final List<Interceptor> interceptors = new CopyOnWriteArrayList<>();
 
-    DefaultTaskito(QueueBackend backend, Serializer serializer) {
+    DefaultTaskito(QueueBackend backend, Serializer serializer, Map<String, PayloadCodec> codecs) {
         this.backend = backend;
         this.facade = new CoreFacade(backend);
         this.serializer = serializer;
+        this.codecs = codecs;
     }
 
     @Override
@@ -143,16 +146,17 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> String enqueue(Task<T> task, T payload, EnqueueOptions options) {
-        return dispatchEnqueue(task.name(), payload, options);
+        return dispatchEnqueue(task.name(), payload, options, task.codecNames());
     }
 
     @Override
     public String enqueue(String taskName, Object payload) {
-        return dispatchEnqueue(taskName, payload, EnqueueOptions.none());
+        return dispatchEnqueue(taskName, payload, EnqueueOptions.none(), List.of());
     }
 
-    /** Run interceptors + onEnqueue middleware, then serialize and submit the (possibly rewritten) job. */
-    private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options) {
+    /** Interceptors + onEnqueue middleware, then serialize, codec-encode, and submit the job. */
+    private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options, List<String> codecNames) {
+        String originalTaskName = taskName;
         for (Interceptor interceptor : interceptors) {
             Interception outcome = interceptor.intercept(taskName, payload);
             if (outcome == null) {
@@ -168,6 +172,14 @@ final class DefaultTaskito implements Taskito {
             }
             // Pass: leave taskName/payload unchanged.
         }
+        // A redirect to a different task invalidates the source task's codec chain:
+        // codecNames is the ORIGINAL task's, and the target's codecs can't be resolved
+        // from a bare name — encoding with the wrong chain would corrupt the payload or
+        // break the worker's decode. Reject (batch enqueue rejects Redirect wholesale).
+        if (!codecNames.isEmpty() && !taskName.equals(originalTaskName)) {
+            throw new InterceptionException("interceptor Redirect is not supported for a task with payload codecs ('"
+                    + originalTaskName + "')");
+        }
         EnqueueContext context = new EnqueueContext(taskName, payload, options);
         for (Middleware m : middleware) {
             m.onEnqueue(context);
@@ -181,7 +193,21 @@ final class DefaultTaskito implements Taskito {
                     .metadata(encode(context.metadata()))
                     .build();
         }
-        return backend.enqueue(taskName, serializer.serialize(context.payload()), encode(finalOptions));
+        byte[] data = encodeCodecs(serializer.serialize(context.payload()), codecNames);
+        return backend.enqueue(taskName, data, encode(finalOptions));
+    }
+
+    /** Apply a task's payload codecs in order; throws if a name is not registered. */
+    private byte[] encodeCodecs(byte[] data, List<String> codecNames) {
+        byte[] bytes = data;
+        for (String name : codecNames) {
+            PayloadCodec codec = codecs.get(name);
+            if (codec == null) {
+                throw new IllegalStateException("no codec registered named '" + name + "'");
+            }
+            bytes = codec.encode(bytes);
+        }
+        return bytes;
     }
 
     /** Run any registered enqueue gates for {@code taskName}; throw if one rejects. */
@@ -213,7 +239,7 @@ final class DefaultTaskito implements Taskito {
         for (int i = 0; i < payloads.size(); i++) {
             Object payload = interceptBatchPayload(task.name(), payloads.get(i));
             gate(task.name(), payload);
-            bytes[i] = serializer.serialize(payload);
+            bytes[i] = encodeCodecs(serializer.serialize(payload), task.codecNames());
             perJob.add(options);
         }
         return Arrays.asList(backend.enqueueMany(task.name(), bytes, encode(perJob)));
@@ -699,7 +725,7 @@ final class DefaultTaskito implements Taskito {
     @Override
     public Worker.Builder worker() {
         // Each worker gets its own runtime (own WORKER-scoped cache) over shared definitions.
-        return Worker.builder(backend, serializer, middleware, resources.forWorker());
+        return Worker.builder(backend, serializer, middleware, resources.forWorker(), codecs);
     }
 
     @Override
