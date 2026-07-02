@@ -100,7 +100,10 @@ jobs:
       - uses: ./.github/actions/rust-prelude
 
       - name: Run Rust test suite (PostgreSQL backend)
-        run: LD_LIBRARY_PATH="$pythonLocation/lib" cargo test --workspace --features postgres,workflows
+        # Drop LD_LIBRARY_PATH + exclude taskito-python: Python's OpenSSL (on that
+        # path) and libpq's duel at-exit → flaky SIGSEGV. PG contract is in
+        # taskito-core/taskito-workflows; python's Rust tests run in the SQLite job.
+        run: cargo test --workspace --exclude taskito-python --features postgres,workflows
         env:
           TASKITO_POSTGRES_TEST_URL: postgres://postgres:test@localhost:5432/taskito_test
 
