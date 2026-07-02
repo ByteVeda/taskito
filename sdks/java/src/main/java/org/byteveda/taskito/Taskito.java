@@ -30,6 +30,7 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceScope;
@@ -88,6 +89,14 @@ public interface Taskito extends AutoCloseable {
     Taskito predicate(String taskName, Predicate predicate);
 
     /**
+     * Gate enqueues of {@code taskName} with a richer {@link EnqueueGate} whose
+     * {@link org.byteveda.taskito.predicates.EnqueueDecision} can allow, skip,
+     * defer, or reject. Gates run in registration order and the first non-allow
+     * decision wins. Returns {@code this}.
+     */
+    Taskito gate(String taskName, EnqueueGate gate);
+
+    /**
      * Register an interceptor that may convert, redirect, or reject each enqueue
      * before it is serialized (see {@link Interceptor}). Returns {@code this}.
      */
@@ -102,6 +111,18 @@ public interface Taskito extends AutoCloseable {
 
     /** Enqueue by task name with an arbitrary payload and default options. */
     String enqueue(String taskName, Object payload);
+
+    /**
+     * Like {@link #enqueue(Task, Object)} but gate-aware: returns the job id, or
+     * an empty {@code Optional} when a gate skips the enqueue. A gate
+     * {@code Reject} still throws.
+     */
+    <T> Optional<String> tryEnqueue(Task<T> task, T payload);
+
+    <T> Optional<String> tryEnqueue(Task<T> task, T payload, EnqueueOptions options);
+
+    /** Gate-aware {@link #enqueue(String, Object)}; empty when a gate skips the enqueue. */
+    Optional<String> tryEnqueue(String taskName, Object payload);
 
     /** Enqueue a batch in one storage call; returns ids in input order. */
     <T> List<String> enqueueMany(Task<T> task, List<T> payloads);
