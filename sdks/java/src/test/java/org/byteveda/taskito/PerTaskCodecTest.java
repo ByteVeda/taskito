@@ -8,7 +8,9 @@ import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.byteveda.taskito.errors.InterceptionException;
 import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.interception.Interception;
 import org.byteveda.taskito.serialization.AesGcmCodec;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
@@ -71,6 +73,19 @@ class PerTaskCodecTest {
         try (Taskito queue =
                 Taskito.builder().url(dir.resolve("ar.db").toString()).open()) {
             assertThrows(IllegalStateException.class, () -> queue.enqueue(EncryptedGreeterTasks.GREET, "ada"));
+        }
+    }
+
+    @Test
+    void redirectingACodecTaskIsRejected(@TempDir Path dir) {
+        try (Taskito queue = Taskito.builder()
+                .url(dir.resolve("rc.db").toString())
+                .codec("secret", new AesGcmCodec(KEY32))
+                .open()) {
+            queue.intercept((task, payload) -> Interception.redirect("other", payload));
+            Task<String> task = Task.of("rc.echo", String.class).codecs("secret");
+            // Redirect can't carry the source task's codec chain to a different task — fail fast.
+            assertThrows(InterceptionException.class, () -> queue.enqueue(task, "hello"));
         }
     }
 }

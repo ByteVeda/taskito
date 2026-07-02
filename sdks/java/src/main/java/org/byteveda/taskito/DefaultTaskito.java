@@ -156,6 +156,7 @@ final class DefaultTaskito implements Taskito {
 
     /** Interceptors + onEnqueue middleware, then serialize, codec-encode, and submit the job. */
     private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options, List<String> codecNames) {
+        String originalTaskName = taskName;
         for (Interceptor interceptor : interceptors) {
             Interception outcome = interceptor.intercept(taskName, payload);
             if (outcome == null) {
@@ -170,6 +171,14 @@ final class DefaultTaskito implements Taskito {
                 payload = convert.payload();
             }
             // Pass: leave taskName/payload unchanged.
+        }
+        // A redirect to a different task invalidates the source task's codec chain:
+        // codecNames is the ORIGINAL task's, and the target's codecs can't be resolved
+        // from a bare name — encoding with the wrong chain would corrupt the payload or
+        // break the worker's decode. Reject (batch enqueue rejects Redirect wholesale).
+        if (!codecNames.isEmpty() && !taskName.equals(originalTaskName)) {
+            throw new InterceptionException("interceptor Redirect is not supported for a task with payload codecs ('"
+                    + originalTaskName + "')");
         }
         EnqueueContext context = new EnqueueContext(taskName, payload, options);
         for (Middleware m : middleware) {
