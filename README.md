@@ -6,7 +6,7 @@ A Rust-powered task queue with native SDKs. One engine — no broker required, j
 
 [![PyPI version](https://img.shields.io/pypi/v/taskito.svg)](https://pypi.org/project/taskito/)
 [![npm version](https://img.shields.io/npm/v/@byteveda/taskito.svg)](https://www.npmjs.com/package/@byteveda/taskito)
-[![License](https://img.shields.io/github/license/ByteVeda/taskito.svg)](https://github.com/ByteVeda/taskito/blob/master/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ByteVeda/taskito/blob/master/LICENSE)
 
 </div>
 
