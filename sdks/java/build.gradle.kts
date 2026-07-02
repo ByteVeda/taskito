@@ -159,8 +159,10 @@ if (ffmCapable) {
         manifest {
             attributes(
                 "Multi-Release" to "true",
-                // Restricted FFM methods only warn today but will be denied by
-                // default in a future JDK; grant native access for this artifact.
+                // Only takes effect when the jar is run directly (java -jar); it does
+                // NOT cover consumers that depend on the SDK on their classpath — they
+                // must pass --enable-native-access=ALL-UNNAMED themselves (see README).
+                // Restricted FFM methods only warn today but a future JDK denies them.
                 "Enable-Native-Access" to "ALL-UNNAMED",
             )
         }
