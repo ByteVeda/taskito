@@ -17,6 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.byteveda.taskito.core.CoreFacade;
+import org.byteveda.taskito.errors.EnqueueSkippedException;
 import org.byteveda.taskito.errors.InterceptionException;
 import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.errors.SerializationException;
@@ -36,6 +37,8 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.predicates.EnqueueDecision;
+import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.predicates.PredicateContext;
 import org.byteveda.taskito.resources.ResourceContext;
@@ -72,7 +75,7 @@ final class DefaultTaskito implements Taskito {
     private final Map<String, PayloadCodec> codecs;
     private final List<Middleware> middleware = new CopyOnWriteArrayList<>();
     private final ResourceRuntime resources = new ResourceRuntime();
-    private final Map<String, List<Predicate>> predicates = new ConcurrentHashMap<>();
+    private final Map<String, List<EnqueueGate>> gates = new ConcurrentHashMap<>();
     private final List<Interceptor> interceptors = new CopyOnWriteArrayList<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer, Map<String, PayloadCodec> codecs) {
@@ -120,9 +123,16 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public Taskito predicate(String taskName, Predicate predicate) {
-        predicates
-                .computeIfAbsent(taskName, key -> new CopyOnWriteArrayList<>())
-                .add(predicate);
+        return gate(
+                taskName,
+                context -> predicate.test(context)
+                        ? EnqueueDecision.allow()
+                        : EnqueueDecision.reject("enqueue of task '" + taskName + "' rejected by a predicate"));
+    }
+
+    @Override
+    public Taskito gate(String taskName, EnqueueGate gate) {
+        gates.computeIfAbsent(taskName, key -> new CopyOnWriteArrayList<>()).add(gate);
         return this;
     }
 
@@ -146,16 +156,42 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> String enqueue(Task<T> task, T payload, EnqueueOptions options) {
-        return dispatchEnqueue(task.name(), payload, options, task.codecNames());
+        return required(dispatchEnqueue(task.name(), payload, options, task.codecNames()), task.name());
     }
 
     @Override
     public String enqueue(String taskName, Object payload) {
+        return required(dispatchEnqueue(taskName, payload, EnqueueOptions.none(), List.of()), taskName);
+    }
+
+    @Override
+    public <T> Optional<String> tryEnqueue(Task<T> task, T payload) {
+        return tryEnqueue(task, payload, task.options());
+    }
+
+    @Override
+    public <T> Optional<String> tryEnqueue(Task<T> task, T payload, EnqueueOptions options) {
+        return dispatchEnqueue(task.name(), payload, options, task.codecNames());
+    }
+
+    @Override
+    public Optional<String> tryEnqueue(String taskName, Object payload) {
         return dispatchEnqueue(taskName, payload, EnqueueOptions.none(), List.of());
     }
 
-    /** Interceptors + onEnqueue middleware, then serialize, codec-encode, and submit the job. */
-    private String dispatchEnqueue(String taskName, Object payload, EnqueueOptions options, List<String> codecNames) {
+    /** Unwrap a dispatch result, turning a gate {@code Skip} into an {@link EnqueueSkippedException}. */
+    private static String required(Optional<String> jobId, String taskName) {
+        return jobId.orElseThrow(() ->
+                new EnqueueSkippedException("enqueue of '" + taskName + "' was skipped by a gate; use tryEnqueue"));
+    }
+
+    /**
+     * Interceptors → onEnqueue middleware → enqueue gates, then serialize,
+     * codec-encode, and submit. Returns the job id, or empty when a gate skips
+     * the enqueue; throws when a gate rejects it.
+     */
+    private Optional<String> dispatchEnqueue(
+            String taskName, Object payload, EnqueueOptions options, List<String> codecNames) {
         String originalTaskName = taskName;
         for (Interceptor interceptor : interceptors) {
             Interception outcome = interceptor.intercept(taskName, payload);
@@ -185,16 +221,31 @@ final class DefaultTaskito implements Taskito {
             m.onEnqueue(context);
         }
         // Gate the payload that will actually be enqueued (after interceptors and
-        // middleware may have rewritten it).
-        gate(taskName, context.payload());
+        // middleware may have rewritten it); the first non-Allow decision wins.
+        EnqueueDecision decision = evaluate(taskName, context.payload());
+        if (decision instanceof EnqueueDecision.Reject reject) {
+            throw new PredicateRejectedException("enqueue of '" + taskName + "' rejected: " + reject.reason());
+        }
+        if (decision instanceof EnqueueDecision.Skip) {
+            return Optional.empty();
+        }
         EnqueueOptions finalOptions = context.options();
+        if (decision instanceof EnqueueDecision.Defer defer) {
+            finalOptions = withDelay(finalOptions, defer.delay());
+        }
         if (!context.metadata().isEmpty()) {
             finalOptions = finalOptions.toBuilder()
                     .metadata(encode(context.metadata()))
                     .build();
         }
         byte[] data = encodeCodecs(serializer.serialize(context.payload()), codecNames);
-        return backend.enqueue(taskName, data, encode(finalOptions));
+        return Optional.of(backend.enqueue(taskName, data, encode(finalOptions)));
+    }
+
+    /** Apply a defer delay to the options (overriding any delay already set). */
+    private static EnqueueOptions withDelay(EnqueueOptions options, Duration delay) {
+        long delayMs = delay.toMillis();
+        return delayMs <= 0 ? options : options.toBuilder().delayMs(delayMs).build();
     }
 
     /** Apply a task's payload codecs in order; throws if a name is not registered. */
@@ -210,18 +261,20 @@ final class DefaultTaskito implements Taskito {
         return bytes;
     }
 
-    /** Run any registered enqueue gates for {@code taskName}; throw if one rejects. */
-    private void gate(String taskName, Object payload) {
-        List<Predicate> gates = predicates.get(taskName);
-        if (gates == null || gates.isEmpty()) {
-            return;
+    /** Evaluate registered gates in order; the first non-{@code Allow} decision wins. */
+    private EnqueueDecision evaluate(String taskName, Object payload) {
+        List<EnqueueGate> taskGates = gates.get(taskName);
+        if (taskGates == null || taskGates.isEmpty()) {
+            return EnqueueDecision.allow();
         }
         PredicateContext context = new PredicateContext(taskName, payload);
-        for (Predicate gate : gates) {
-            if (!gate.test(context)) {
-                throw new PredicateRejectedException("enqueue of task '" + taskName + "' rejected by a predicate");
+        for (EnqueueGate gate : taskGates) {
+            EnqueueDecision decision = gate.decide(context);
+            if (!(decision instanceof EnqueueDecision.Allow)) {
+                return decision;
             }
         }
+        return EnqueueDecision.allow();
     }
 
     @Override
@@ -238,7 +291,15 @@ final class DefaultTaskito implements Taskito {
         List<EnqueueOptions> perJob = new ArrayList<>(payloads.size());
         for (int i = 0; i < payloads.size(); i++) {
             Object payload = interceptBatchPayload(task.name(), payloads.get(i));
-            gate(task.name(), payload);
+            EnqueueDecision decision = evaluate(task.name(), payload);
+            if (decision instanceof EnqueueDecision.Reject reject) {
+                throw new PredicateRejectedException("enqueue of '" + task.name() + "' rejected: " + reject.reason());
+            }
+            if (!(decision instanceof EnqueueDecision.Allow)) {
+                // Skip/Defer can't be expressed per-item in a single all-or-nothing batch.
+                throw new EnqueueSkippedException("enqueue of '" + task.name()
+                        + "' was skipped or deferred by a gate; batch enqueue needs Allow");
+            }
             bytes[i] = encodeCodecs(serializer.serialize(payload), task.codecNames());
             perJob.add(options);
         }
