@@ -136,6 +136,49 @@ tasks.named("processResources") { dependsOn(copyNative) }
 // dependency lazily — sourcesJar is registered after this script evaluates.
 tasks.withType<Jar>().configureEach { dependsOn(copyNative) }
 
+// --- FFM fast-path overlay (Multi-Release JAR) ----------------------------
+// Base classes target 17 (JNI transport + the fallback). On a build JDK >= 22 we
+// also compile the Project Panama (FFM) transport at --release 22 and package it
+// under META-INF/versions/22; the runtime selects it on JDK 22+ (see
+// NativeTransport.create), else stays on JNI. Older build JDKs simply omit the
+// overlay — same public API, faster impl where available (not feature divergence).
+val ffmCapable = JavaVersion.current() >= JavaVersion.VERSION_22
+
+if (ffmCapable) {
+    val java22 by sourceSets.creating {
+        java.srcDir("src/main/java22")
+        compileClasspath += sourceSets["main"].output
+        runtimeClasspath += sourceSets["main"].output
+    }
+
+    tasks.named<JavaCompile>("compileJava22Java") {
+        options.release.set(22)
+    }
+
+    tasks.named<Jar>("jar") {
+        manifest {
+            attributes(
+                "Multi-Release" to "true",
+                // Only takes effect when the jar is run directly (java -jar); it does
+                // NOT cover consumers that depend on the SDK on their classpath — they
+                // must pass --enable-native-access=ALL-UNNAMED themselves (see README).
+                // Restricted FFM methods only warn today but a future JDK denies them.
+                "Enable-Native-Access" to "ALL-UNNAMED",
+            )
+        }
+        into("META-INF/versions/22") { from(java22.output) }
+    }
+
+    // Exercise the FFM transport in the test suite on this JDK 22+ build. Set on
+    // the test task directly: mutating the source set's runtimeClasspath here is
+    // too late (the java plugin has already captured the test task's classpath).
+    tasks.named<Test>("test") {
+        classpath += java22.output
+        // Silence (and forward-proof against) the restricted-native-access warning.
+        jvmArgs("--enable-native-access=ALL-UNNAMED")
+    }
+}
+
 tasks.test {
     useJUnitPlatform()
 }

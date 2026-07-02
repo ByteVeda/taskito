@@ -13,6 +13,7 @@ mod convert;
 mod dispatcher;
 mod error;
 mod ffi;
+mod ffi_c;
 mod handle;
 mod jvm;
 mod queue;

@@ -129,7 +129,9 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
+          # 22+ so the jar task compiles the FFM overlay into META-INF/versions/22
+          # (see build.gradle.kts ffmCapable); a 17/21 build ships JNI-only.
+          java-version: "25"
 
       - name: Build dashboard SPA
         uses: ./.github/actions/dashboard-build

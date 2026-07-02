@@ -8,10 +8,15 @@ import org.byteveda.taskito.spi.WorkerControl;
 /** JNI-backed {@link QueueBackend} over a native queue handle. */
 public final class JniQueueBackend implements QueueBackend {
     private final long handle;
+
+    /** Hot byte ops (enqueue/enqueueMany/getResult) route through this; FFM when available, else JNI. */
+    private final NativeTransport transport;
+
     private volatile boolean closed;
 
     private JniQueueBackend(long handle) {
         this.handle = handle;
+        this.transport = NativeTransport.create(handle);
     }
 
     /** Open a native backend from its JSON options. */
@@ -21,12 +26,12 @@ public final class JniQueueBackend implements QueueBackend {
 
     @Override
     public String enqueue(String taskName, byte[] payload, String optionsJson) {
-        return NativeQueue.enqueue(handle, taskName, payload, optionsJson);
+        return transport.enqueue(taskName, payload, optionsJson);
     }
 
     @Override
     public String[] enqueueMany(String taskName, byte[][] payloads, String optionsJson) {
-        return NativeQueue.enqueueMany(handle, taskName, payloads, optionsJson);
+        return transport.enqueueMany(taskName, payloads, optionsJson);
     }
 
     @Override
@@ -36,7 +41,7 @@ public final class JniQueueBackend implements QueueBackend {
 
     @Override
     public Optional<byte[]> getResult(String jobId) {
-        return Optional.ofNullable(NativeQueue.getResult(handle, jobId));
+        return Optional.ofNullable(transport.getResult(jobId));
     }
 
     @Override

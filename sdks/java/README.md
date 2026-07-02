@@ -379,3 +379,10 @@ development against a freshly built library, point the loader at it directly:
 ```bash
 -Dtaskito.native.lib=/abs/path/to/target/release/libtaskito_java.so
 ```
+
+On JDK 22+ the hot byte ops use a Project Panama (FFM) fast path; older JDKs (or
+a jar built without the overlay) transparently fall back to JNI. FFM calls a
+restricted native method, so a future JDK will deny it by default. The jar's
+`Enable-Native-Access: ALL-UNNAMED` manifest attribute only covers `java -jar`;
+apps that use the SDK as a classpath dependency should launch with
+`--enable-native-access=ALL-UNNAMED` to grant access and silence the warning.
