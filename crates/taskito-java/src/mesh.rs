@@ -27,7 +27,10 @@ pub fn spawn_mesh(
     queues: Vec<String>,
     threads: u16,
 ) -> Arc<MeshNode> {
-    let config: MeshConfig = serde_json::from_str(config_json).unwrap_or_default();
+    let config: MeshConfig = serde_json::from_str(config_json).unwrap_or_else(|e| {
+        log::error!("[taskito-java] invalid mesh config, falling back to defaults: {e}");
+        MeshConfig::default()
+    });
     log::info!(
         "[taskito-java] mesh scheduling enabled (gossip_port={}, local_buffer={})",
         config.gossip_port,
@@ -52,7 +55,13 @@ pub fn spawn_mesh(
     // Keep the gossip + steal-server tasks alive for the worker's lifetime; they
     // stop when the node's shutdown is signalled (see `request_shutdown`).
     runtime.spawn(async move {
-        let _ = tokio::join!(gossip, steal_server);
+        let (gossip_res, steal_res) = tokio::join!(gossip, steal_server);
+        if let Err(e) = gossip_res {
+            log::error!("[taskito-java] mesh gossip task failed: {e}");
+        }
+        if let Err(e) = steal_res {
+            log::error!("[taskito-java] mesh steal-server task failed: {e}");
+        }
     });
 
     node
