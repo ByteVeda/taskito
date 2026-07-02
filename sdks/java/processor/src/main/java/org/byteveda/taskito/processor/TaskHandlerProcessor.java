@@ -33,6 +33,8 @@ import javax.tools.JavaFileObject;
 public final class TaskHandlerProcessor extends AbstractProcessor {
     static final String ANNOTATION = "org.byteveda.taskito.annotation.TaskHandler";
     static final String RESOURCE = "org.byteveda.taskito.annotation.Resource";
+    static final String COMPRESSED = "org.byteveda.taskito.annotation.Compressed";
+    static final String ENCRYPTED = "org.byteveda.taskito.annotation.Encrypted";
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
@@ -126,6 +128,7 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
                     .append(payloadType)
                     .append(">() {})")
                     .append(options(method))
+                    .append(codecsChain(method))
                     .append(";\n\n");
         }
 
@@ -202,6 +205,43 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
             return "payload -> { impl." + methodName + "(" + args + "); return null; }";
         }
         return params.size() > 1 ? "payload -> impl." + methodName + "(" + args + ")" : "impl::" + methodName;
+    }
+
+    /** A {@code .codecs(...)} call for the task's @Compressed/@Encrypted markers (compress before encrypt). */
+    private String codecsChain(ExecutableElement method) {
+        List<String> names = new java.util.ArrayList<>();
+        if (hasAnnotation(method, COMPRESSED)) {
+            names.add("compressed");
+        }
+        if (hasAnnotation(method, ENCRYPTED)) {
+            names.add("encrypted");
+        }
+        if (names.isEmpty()) {
+            return "";
+        }
+        StringBuilder chain = new StringBuilder(".codecs(");
+        for (int i = 0; i < names.size(); i++) {
+            chain.append("\"").append(names.get(i)).append("\"");
+            if (i + 1 < names.size()) {
+                chain.append(", ");
+            }
+        }
+        return chain.append(")").toString();
+    }
+
+    /** Whether the method or its enclosing class carries the annotation {@code fqn}. */
+    private boolean hasAnnotation(ExecutableElement method, String fqn) {
+        return hasAnnotation(method.getAnnotationMirrors(), fqn)
+                || hasAnnotation(method.getEnclosingElement().getAnnotationMirrors(), fqn);
+    }
+
+    private boolean hasAnnotation(List<? extends AnnotationMirror> mirrors, String fqn) {
+        for (AnnotationMirror mirror : mirrors) {
+            if (mirror.getAnnotationType().toString().equals(fqn)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The {@code @Resource} value on a parameter, or null if it is not annotated. */
