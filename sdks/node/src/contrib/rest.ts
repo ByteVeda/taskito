@@ -127,7 +127,10 @@ function defineRoutes(resultTimeoutMs: number): RestRoute[] {
       name: "job-errors",
       method: "GET",
       path: "/jobs/:id/errors",
-      handle: (queue, { params }) => ({ status: 200, body: queue.getJobErrors(params.id ?? "") }),
+      handle: async (queue, { params }) => ({
+        status: 200,
+        body: await queue.getJobErrors(params.id ?? ""),
+      }),
     },
     {
       name: "job-result",
