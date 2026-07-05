@@ -18,7 +18,8 @@ no separate install.
 
 ```kotlin
 // Gradle
-implementation("org.byteveda:taskito:0.19.0")
+implementation("org.byteveda:taskito:0.18.0")
+annotationProcessor("org.byteveda:taskito-processor:0.18.0") // compile-time TaskHandler bindings
 ```
 
 ```xml
@@ -26,14 +27,29 @@ implementation("org.byteveda:taskito:0.19.0")
 <dependency>
   <groupId>org.byteveda</groupId>
   <artifactId>taskito</artifactId>
-  <version>0.19.0</version>
+  <version>0.18.0</version>
 </dependency>
 ```
 
-Companion artifacts: `org.byteveda:taskito-processor` (compile-time
-`TaskHandler` bindings, add via `annotationProcessor`), `org.byteveda:taskito-test`
-(in-memory backend for unit tests), `org.byteveda:taskito-spring` (Boot 3
-starter).
+```xml
+<!-- Maven: the processor is wired through the compiler plugin, not a dependency -->
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-compiler-plugin</artifactId>
+  <configuration>
+    <annotationProcessorPaths>
+      <path>
+        <groupId>org.byteveda</groupId>
+        <artifactId>taskito-processor</artifactId>
+        <version>0.18.0</version>
+      </path>
+    </annotationProcessorPaths>
+  </configuration>
+</plugin>
+```
+
+Companion artifacts: `org.byteveda:taskito-test` (in-memory backend for unit
+tests) and `org.byteveda:taskito-spring` (Boot 3 starter).
 
 ## Migration
 
