@@ -149,11 +149,7 @@ public final class WorkflowTracker {
             return;
         }
         if (succeeded) {
-            try {
-                expandFanOutIfAny(ref.runId, ref.nodeName, jobId, plan);
-            } catch (RuntimeException e) {
-                failFanOutsOf(ref.runId, ref.nodeName, plan, e);
-            }
+            expandFanOutIfAny(ref.runId, ref.nodeName, jobId, plan);
         }
         // Evaluate every successor's condition — running on-failure recovery nodes
         // and skip-cascading the rest. Replaces a blanket fail-fast cascade.
@@ -161,35 +157,59 @@ public final class WorkflowTracker {
         finalizeIfTerminal(ref.runId);
     }
 
-    /** If the just-completed node feeds fan-outs, split its result list into child jobs. */
+    /**
+     * If the just-completed node feeds fan-outs, split its result list into child
+     * jobs. Failures are scoped per branch: an unusable producer result fails
+     * every branch, but one branch's expansion error never touches a sibling
+     * whose children are already running.
+     */
     private void expandFanOutIfAny(String runId, String node, String jobId, RunPlan plan) {
         List<PlanNode> fanOuts = plan.successorsMatching(node, candidate -> candidate.fanOut != null);
         if (fanOuts.isEmpty()) {
             return;
         }
-        List<?> items = serializer.deserialize(fetchResult(jobId), List.class);
+        List<?> items;
+        try {
+            items = serializer.deserialize(fetchResult(jobId), List.class);
+        } catch (RuntimeException e) {
+            LOG.warn("reading fan-out producer result of node '" + node + "' in run " + runId + " failed", e);
+            for (PlanNode fanOut : fanOuts) {
+                failFanOut(runId, fanOut, plan, e);
+            }
+            return;
+        }
         for (PlanNode fanOut : fanOuts) {
-            String[] names = new String[items.size()];
-            byte[][] payloads = new byte[items.size()][];
-            for (int i = 0; i < items.size(); i++) {
-                names[i] = fanOut.name + "[" + i + "]";
-                payloads[i] = serializer.serialize(items.get(i));
+            try {
+                expandFanOut(runId, fanOut, items, plan);
+            } catch (RuntimeException e) {
+                LOG.warn("expanding fan-out node '" + fanOut.name + "' in run " + runId + " failed", e);
+                failFanOut(runId, fanOut, plan, e);
             }
-            backend.expandFanOut(
-                    runId,
-                    fanOut.name,
-                    names,
-                    payloads,
-                    fanOut.taskName,
-                    fanOut.queueOrDefault(),
-                    fanOut.retries(),
-                    fanOut.timeout(),
-                    fanOut.priorityOrDefault());
-            // An empty producer list yields no child jobs, so no child outcome will
-            // ever drive the fan-in — collect it now with an empty result list.
-            if (items.isEmpty()) {
-                collectFanIns(runId, fanOut.name, List.of(), plan);
-            }
+        }
+    }
+
+    /** Split the producer's items into one child job per element of {@code fanOut}. */
+    private void expandFanOut(String runId, PlanNode fanOut, List<?> items, RunPlan plan) {
+        String[] names = new String[items.size()];
+        byte[][] payloads = new byte[items.size()][];
+        for (int i = 0; i < items.size(); i++) {
+            names[i] = fanOut.name + "[" + i + "]";
+            payloads[i] = serializer.serialize(items.get(i));
+        }
+        backend.expandFanOut(
+                runId,
+                fanOut.name,
+                names,
+                payloads,
+                fanOut.taskName,
+                fanOut.queueOrDefault(),
+                fanOut.retries(),
+                fanOut.timeout(),
+                fanOut.priorityOrDefault());
+        // An empty producer list yields no child jobs, so no child outcome will
+        // ever drive the fan-in — collect it now with an empty result list.
+        if (items.isEmpty()) {
+            collectFanIns(runId, fanOut.name, List.of(), plan);
         }
     }
 
@@ -321,21 +341,17 @@ public final class WorkflowTracker {
     }
 
     /**
-     * A fan-out expansion failed (undeserializable producer result, native error):
-     * fail each fan-out node instead of leaving it PENDING forever, then cascade.
+     * Fail one fan-out node (its expansion failed) and cascade. On a storage
+     * failure the promotion marker is rolled back so the node is not treated as
+     * decided while it is still PENDING.
      */
-    private void failFanOutsOf(String runId, String producer, RunPlan plan, RuntimeException cause) {
-        LOG.warn("expanding fan-out(s) after node '" + producer + "' in run " + runId + " failed", cause);
-        if (plan == null) {
-            return;
-        }
-        for (PlanNode fanOut : plan.successorsMatching(producer, candidate -> candidate.fanOut != null)) {
-            try {
-                backend.failWorkflowNode(runId, fanOut.name, describe(cause));
-                promoteSuccessors(runId, fanOut.name, plan);
-            } catch (RuntimeException e) {
-                LOG.error("failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId, e);
-            }
+    private void failFanOut(String runId, PlanNode fanOut, RunPlan plan, RuntimeException cause) {
+        try {
+            backend.failWorkflowNode(runId, fanOut.name, describe(cause));
+            promoteSuccessors(runId, fanOut.name, plan);
+        } catch (RuntimeException e) {
+            promotedNodes.remove(new GateKey(runId, fanOut.name));
+            LOG.error("failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId, e);
         }
     }
 
