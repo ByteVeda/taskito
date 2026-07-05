@@ -41,6 +41,9 @@ export class ResourceRuntime {
   /** Register (or replace) a resource definition. */
   register<T>(name: string, definition: ResourceDefinition<T>): void {
     this.defs.set(name, definition as ResourceDefinition);
+    // Drop any built worker instance so "replace" takes effect; the old
+    // instance is still disposed by its queued teardown.
+    this.workerCache.delete(name);
   }
 
   /** True when nothing is registered — lets the worker skip resource wiring. */

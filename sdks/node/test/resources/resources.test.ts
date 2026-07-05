@@ -46,6 +46,16 @@ describe("ResourceRuntime", () => {
     expect(builds).toBe(1);
   });
 
+  it("re-registering a worker resource replaces the built instance", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("cfg", { scope: "worker", factory: () => ({ version: 1 }) });
+    const scope = rt.createTaskScope();
+    expect(await scope.resolver("cfg")).toEqual({ version: 1 });
+
+    rt.register("cfg", { scope: "worker", factory: () => ({ version: 2 }) });
+    expect(await scope.resolver("cfg")).toEqual({ version: 2 });
+  });
+
   it("builds a task-scoped resource once per scope, fresh across scopes", async () => {
     const rt = new ResourceRuntime();
     let builds = 0;
