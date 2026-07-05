@@ -14,6 +14,9 @@ export class HmacCodec implements PayloadCodec {
   private readonly key: Buffer;
 
   constructor(key: Uint8Array) {
+    if (key.length === 0) {
+      throw new CryptoError("HmacCodec: key must not be empty");
+    }
     this.key = Buffer.from(key);
   }
 

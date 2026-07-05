@@ -134,6 +134,10 @@ describe("HmacCodec", () => {
   it("rejects a short payload", () => {
     expect(() => new HmacCodec(HMAC_KEY).decode(Buffer.from("short"))).toThrow(/too short/);
   });
+
+  it("rejects an empty key", () => {
+    expect(() => new HmacCodec(new Uint8Array())).toThrow(/must not be empty/);
+  });
 });
 
 describe("CodecSerializer", () => {
