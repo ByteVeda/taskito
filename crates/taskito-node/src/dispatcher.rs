@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
-use napi::bindgen_prelude::{spawn, Buffer, Promise};
+use napi::bindgen_prelude::{spawn, spawn_blocking, Buffer, Promise};
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
@@ -48,8 +48,19 @@ impl WorkerDispatcher for NodeDispatcher {
             let storage = self.storage.clone();
             let result_tx = result_tx.clone();
             spawn(async move {
+                let job_id = job.id.clone();
                 let result = run_one(&callback, &storage, job).await;
-                let _ = result_tx.send(result);
+                // A full bounded channel parks the sender — do it on the
+                // blocking pool, never on the shared async runtime.
+                match spawn_blocking(move || result_tx.send(result)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) | Err(_) => {
+                        // A closed channel means the drain loop died — surface it.
+                        log::error!(
+                            "[taskito-node] result channel closed; dropping outcome for {job_id}"
+                        );
+                    }
+                }
             });
         }
     }

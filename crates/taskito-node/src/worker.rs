@@ -179,16 +179,22 @@ pub fn start_worker(
     let scheduler_results = scheduler;
     spawn_blocking(move || {
         while let Ok(result) = result_rx.recv() {
-            match scheduler_results.handle_result(result) {
+            // A panicking result must not kill the drain loop — a dead loop
+            // silently drops every later outcome.
+            let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                scheduler_results.handle_result(result)
+            }));
+            match handled {
                 // Surface each outcome to JS so the shell can emit events and run
                 // middleware (the events layer).
-                Ok(outcome) => {
+                Ok(Ok(outcome)) => {
                     outcome_callback.call(
                         outcome_to_js(&outcome),
                         ThreadsafeFunctionCallMode::NonBlocking,
                     );
                 }
-                Err(err) => log::error!("[taskito-node] result handling error: {err}"),
+                Ok(Err(err)) => log::error!("[taskito-node] result handling error: {err}"),
+                Err(_) => log::error!("[taskito-node] result handling panicked; outcome dropped"),
             }
         }
     });
