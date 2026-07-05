@@ -149,11 +149,18 @@ fn run_task(py: Python<'_>, task_registry: &Py<PyAny>, job: &Job) -> PyResult<Op
     let _ = context_mod.call_method0("_clear_context");
     let result = result?;
 
+    // Serialize result using the queue-level serializer (with any codec
+    // chain); fall back to raw cloudpickle when no queue is registered.
     if result.is_none() {
         Ok(None)
     } else {
-        let pickled = cloudpickle.call_method1("dumps", (result,))?;
-        let bytes: Vec<u8> = pickled.extract()?;
+        let queue_ref = context_mod.getattr("_queue_ref")?;
+        let serialized = if !queue_ref.is_none() {
+            queue_ref.call_method1("_serialize_result", (&job.task_name, result))?
+        } else {
+            cloudpickle.call_method1("dumps", (result,))?
+        };
+        let bytes: Vec<u8> = serialized.extract()?;
         Ok(Some(bytes))
     }
 }

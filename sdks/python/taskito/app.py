@@ -440,6 +440,16 @@ class Queue(
         args, kwargs = self._get_serializer(task_name).loads(payload)
         return tuple(args), kwargs
 
+    def _serialize_result(self, task_name: str, result: Any) -> bytes:
+        """Serialize a task result with the queue-level serializer.
+
+        Results always use the queue serializer, never per-task serializers:
+        consumers (``JobResult.get``, workflow trackers) read results back
+        with only the queue-level configuration. ``task_name`` is part of the
+        contract with the Rust worker paths, which call this per job.
+        """
+        return self._serializer.dumps(result)
+
     def enqueue(
         self,
         task_name: str,

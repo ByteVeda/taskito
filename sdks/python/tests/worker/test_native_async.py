@@ -152,6 +152,7 @@ def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -195,6 +196,7 @@ def test_async_exception_reported(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -237,6 +239,7 @@ def test_async_cancellation(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -276,6 +279,7 @@ def test_async_retry_filter(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -327,6 +331,7 @@ def test_async_concurrency_limit(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -383,6 +388,7 @@ def test_async_middleware_hooks(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -424,6 +430,7 @@ def test_async_task_with_injection(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -470,6 +477,7 @@ def test_async_context_available_inside_task(poll_until: PollUntil) -> None:
 
     queue_ref = MagicMock()
     queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -504,10 +512,9 @@ def test_async_concurrency_default(tmp_path: Path) -> None:
 
 def test_async_executor_honors_per_task_serializer(poll_until: PollUntil) -> None:
     """Regression: the async executor deserializes via
-    ``queue._deserialize_payload`` (honoring ``@task(serializer=...)``) rather
-    than a hardcoded ``cloudpickle.loads``."""
-    import cloudpickle
-
+    ``queue._deserialize_payload`` (honoring ``@task(serializer=...)``) and
+    serializes results via ``queue._serialize_result`` rather than hardcoded
+    cloudpickle in either direction."""
     from taskito.async_support.executor import AsyncTaskExecutor
     from taskito.serializers import JsonSerializer
 
@@ -526,6 +533,7 @@ def test_async_executor_honors_per_task_serializer(poll_until: PollUntil) -> Non
     # Route deserialization through a NON-cloudpickle serializer; a hardcoded
     # cloudpickle.loads would raise on this JSON payload.
     queue_ref._deserialize_payload.side_effect = lambda _name, data: serializer.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: serializer.dumps(result)
     queue_ref._interceptor = None
     queue_ref._proxy_registry = None
     queue_ref._test_mode_active = False
@@ -544,5 +552,6 @@ def test_async_executor_honors_per_task_serializer(poll_until: PollUntil) -> Non
     executor.stop()
 
     queue_ref._deserialize_payload.assert_called_once_with("mod.add", payload)
-    result = cloudpickle.loads(sender.report_success.call_args[0][2])
+    queue_ref._serialize_result.assert_called_once_with("mod.add", 5)
+    result = serializer.loads(sender.report_success.call_args[0][2])
     assert result == 5
