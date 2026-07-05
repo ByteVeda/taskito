@@ -20,6 +20,11 @@ pub struct QueueHandle {
     /// runs the workflow-table migrations). Shares this queue's connection pool.
     #[cfg(feature = "workflows")]
     pub workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowStorageBackend>,
+    /// Serializes the lazy init above: the constructor runs DDL migrations, and
+    /// concurrent `CREATE TABLE/INDEX IF NOT EXISTS` from separate sessions can
+    /// race in Postgres's catalog, failing one thread's first workflow call.
+    #[cfg(feature = "workflows")]
+    workflow_init: std::sync::Mutex<()>,
 }
 
 #[cfg(feature = "workflows")]
@@ -31,8 +36,16 @@ impl QueueHandle {
         if let Some(wf) = self.workflow_storage.get() {
             return Ok(wf.clone());
         }
+        // A poisoned lock only means another thread panicked mid-init; the
+        // OnceLock still tells the truth, so recover and retry the init.
+        let _init = self
+            .workflow_init
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(wf) = self.workflow_storage.get() {
+            return Ok(wf.clone()); // another thread won the race while we waited
+        }
         let wf = build_workflow_storage(&self.storage)?;
-        // A racing thread's handle wraps the same pool, so either is fine.
         let _ = self.workflow_storage.set(wf.clone());
         Ok(wf)
     }
@@ -110,5 +123,7 @@ pub fn open(options: OpenOptions) -> Result<QueueHandle, BindingError> {
         namespace: options.namespace,
         #[cfg(feature = "workflows")]
         workflow_storage: std::sync::OnceLock::new(),
+        #[cfg(feature = "workflows")]
+        workflow_init: std::sync::Mutex::new(()),
     })
 }
