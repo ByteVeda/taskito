@@ -8,16 +8,16 @@ the `job.dead` [event](/node/guides/extensibility/events) fires. The DLQ keeps
 the payload and error history so you can investigate and replay.
 
 ```ts
-const dead = queue.deadLetters();   // dead-letter entries
-queue.retryDead(deadId);            // re-enqueue (preserves notes/metadata)
-queue.deleteDead(deadId);           // drop one entry
-queue.purgeDead(olderThanMs);       // bulk-drop entries older than a cutoff
+const dead = await queue.deadLetters(); // dead-letter entries
+queue.retryDead(deadId);                // re-enqueue (preserves notes/metadata)
+queue.deleteDead(deadId);                // drop one entry
+await queue.purgeDead(olderThanMs);      // bulk-drop entries older than a cutoff
 ```
 
 Inspect why a job failed:
 
 ```ts
-queue.getJobErrors(jobId); // per-attempt error history
+await queue.getJobErrors(jobId); // per-attempt error history
 ```
 
 From the CLI:

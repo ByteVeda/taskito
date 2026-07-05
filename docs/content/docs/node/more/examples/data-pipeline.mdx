@@ -83,7 +83,7 @@ failure history of any step's underlying job.
 ```ts
 import { queue } from "./pipeline";
 
-export function report(runId: string) {
+export async function report(runId: string) {
   const analysis = queue.workflows.analyze(runId);
   if (!analysis) return;
 
@@ -93,7 +93,7 @@ export function report(runId: string) {
   // Inspect the failure history of a specific step.
   const node = analysis.node("enrich");
   if (node?.jobId) {
-    for (const err of queue.getJobErrors(node.jobId)) {
+    for (const err of await queue.getJobErrors(node.jobId)) {
       console.log(`enrich attempt ${err.attempt}: ${err.error}`);
     }
   }

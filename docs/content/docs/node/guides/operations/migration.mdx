@@ -22,7 +22,7 @@ handlers are **registered by name** on the queue rather than wired to a separate
 | `QueueEvents` | `queue.on(event, …)` + [middleware](/node/guides/extensibility/middleware) |
 | Repeatable jobs (cron) | `queue.registerPeriodic(name, task, cron)` |
 | Flows (parent/child) | [Workflows](/node/guides/workflows) (DAG, fan-out, gates, saga) |
-| `queue.getJobCounts()` | `queue.stats()` / `statsAllQueues()` |
+| `queue.getJobCounts()` | `await queue.stats()` / `statsAllQueues()` |
 | Bull Board | the built-in [dashboard](/node/guides/operations/dashboard) |
 
 ## Side by side

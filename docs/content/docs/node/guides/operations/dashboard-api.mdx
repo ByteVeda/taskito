@@ -23,7 +23,41 @@ directly too. All timestamps are Unix milliseconds.
 | `GET /api/event-types` | Known job event names. |
 | `GET /api/workflows/runs` · `/:id` | Workflow runs, and one run. |
 | `GET /api/workflows/runs/:id/dag` · `/children` | A run's DAG graph and child runs. |
-| `GET /api/webhooks` · `/:id` · `/:id/deliveries` | Webhook config and delivery log. |
+| `GET /api/webhooks` · `/:id` | Webhook config. |
+| `GET /api/webhooks/:id/deliveries` | Paged delivery log — see below. |
+
+### Webhook deliveries
+
+`GET /api/webhooks/:id/deliveries` supports `?status=&limit=&offset=` and
+returns a page, fields in snake_case:
+
+```json
+{
+  "items": [
+    {
+      "id": "d_1",
+      "subscription_id": "wh_1",
+      "event": "job.dead",
+      "payload": { "jobId": "j_1", "taskName": "sendEmail" },
+      "task_name": "sendEmail",
+      "job_id": "j_1",
+      "status": "delivered",
+      "attempts": 1,
+      "response_code": 200,
+      "response_body": "ok",
+      "latency_ms": 42,
+      "error": null,
+      "created_at": 1732550400000,
+      "completed_at": 1732550400042
+    }
+  ],
+  "total": 128,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+`status` is `"delivered"` or `"dead"`. `response_body` is truncated to 2 KiB.
 
 ## Write
 

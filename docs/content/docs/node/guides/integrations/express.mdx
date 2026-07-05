@@ -31,7 +31,7 @@ JSON body parsing is mounted internally on the router.
 | `GET` | `/stats/queues?queue=` | Per-queue statistics. |
 | `GET` | `/jobs/:id` | Fetch a job by ID. |
 | `GET` | `/jobs/:id/errors` | Error history for a job. |
-| `GET` | `/jobs/:id/result?timeoutMs=` | Wait for a result (long-poll). |
+| `GET` | `/jobs/:id/result?timeoutMs=` | Wait for a result (long-poll). `timeoutMs` is clamped to `resultTimeoutMs`. |
 | `POST` | `/jobs/:id/cancel` | Request cancellation. |
 | `GET` | `/dead-letters?limit=&offset=` | List dead-lettered jobs. |
 | `POST` | `/dead-letters/:id/retry` | Retry a dead-lettered job. |
@@ -42,7 +42,7 @@ JSON body parsing is mounted internally on the router.
 |---|---|---|---|
 | `includeRoutes` | `string[]` | all | Route names to expose (see below). |
 | `excludeRoutes` | `string[]` | none | Route names to suppress. |
-| `resultTimeoutMs` | `number` | `5000` | Max wait for `/jobs/:id/result`. |
+| `resultTimeoutMs` | `number` | `5000` | Ceiling for `/jobs/:id/result`; a client `timeoutMs` above this is clamped down to it. |
 
 Route names: `enqueue`, `stats`, `queue-stats`, `job`, `job-errors`,
 `job-result`, `cancel`, `dead-letters`, `retry-dead`.

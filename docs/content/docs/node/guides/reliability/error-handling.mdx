@@ -36,9 +36,9 @@ queue.task("slow", handler, { timeoutMs: 30_000 });
 Every attempt's error is recorded:
 
 ```ts
-queue.getJobErrors(id); // one entry per failed attempt
-queue.listJobs({ status: "failed" });
-queue.deadLetters(); // exhausted jobs
+await queue.getJobErrors(id); // one entry per failed attempt
+await queue.listJobs({ status: "failed" });
+await queue.deadLetters(); // exhausted jobs
 ```
 
 ## Reacting to outcomes
