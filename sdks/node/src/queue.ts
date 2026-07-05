@@ -52,6 +52,7 @@ import type {
 import { WebhookManager } from "./webhooks";
 import { Worker } from "./worker";
 import { WorkflowManager } from "./workflows";
+import { WorkflowTracker } from "./workflows/tracker";
 
 /** Construction options for a {@link Queue}. */
 export interface QueueOptions {
@@ -90,6 +91,8 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly webhookManager: WebhookManager;
   /** Built lazily — its constructor throws on addons lacking the `workflows` feature. */
   private workflowManager?: WorkflowManager;
+  /** Shared by workers and `workflows.resolveGate()` so gate timers clear. */
+  private workflowTracker?: WorkflowTracker;
 
   constructor(options: QueueOptions = {}) {
     this.native = JsQueue.open(toOpenOptions(options));
@@ -105,9 +108,22 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Workflow definitions and runs — DAG/linear orchestration over the queue. */
   get workflows(): WorkflowManager {
     if (!this.workflowManager) {
-      this.workflowManager = new WorkflowManager(this.native, this.serializer);
+      this.workflowManager = new WorkflowManager(
+        this.native,
+        this.serializer,
+        this.trackerIfSupported(),
+      );
     }
     return this.workflowManager;
+  }
+
+  /** The shared workflow tracker, or `undefined` on addons without workflows. */
+  private trackerIfSupported(): WorkflowTracker | undefined {
+    if (typeof this.native.markWorkflowNodeResult !== "function") {
+      return undefined;
+    }
+    this.workflowTracker ??= new WorkflowTracker(this.native, this.serializer);
+    return this.workflowTracker;
   }
 
   /** Create a distributed lock handle (not yet acquired). */
@@ -513,6 +529,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       middleware: this.middleware,
       emitter: this.emitter,
       resources: this.resources,
+      workflowTracker: this.trackerIfSupported(),
       run: options,
     });
   }

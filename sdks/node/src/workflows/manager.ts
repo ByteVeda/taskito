@@ -41,6 +41,8 @@ export class WorkflowManager {
   constructor(
     private readonly native: NativeQueue,
     private readonly serializer: Serializer,
+    /** The queue's shared tracker, so gate resolution clears the worker's timers. */
+    private readonly tracker?: WorkflowTracker,
   ) {
     if (typeof this.native.submitWorkflow !== "function") {
       throw new WorkflowError("the native addon was built without the 'workflows' feature");
@@ -110,7 +112,9 @@ export class WorkflowManager {
    * Idempotent: resolving an already-resolved gate is a no-op.
    */
   resolveGate(runId: string, nodeName: string, approved: boolean, error?: string): void {
-    new WorkflowTracker(this.native, this.serializer).resolveGate(runId, nodeName, approved, error);
+    // No shared tracker (out-of-process resolution) → a throwaway one is fine.
+    const tracker = this.tracker ?? new WorkflowTracker(this.native, this.serializer);
+    tracker.resolveGate(runId, nodeName, approved, error);
   }
 
   /** Approve a waiting gate (shorthand for `resolveGate(runId, node, true)`). */

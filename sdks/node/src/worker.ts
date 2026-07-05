@@ -15,7 +15,7 @@ import { type ResourceRuntime, runWithResolver } from "./resources";
 import type { Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
-import { WorkflowTracker } from "./workflows";
+import type { WorkflowTracker } from "./workflows";
 import { CACHE_TASK } from "./workflows/cache";
 
 const log = createLogger("worker");
@@ -39,6 +39,8 @@ export interface WorkerStartParams {
   middleware: readonly Middleware[];
   emitter: Emitter;
   resources: ResourceRuntime;
+  /** The queue's shared tracker (undefined on addons without workflows). */
+  workflowTracker?: WorkflowTracker;
   run?: WorkerRunOptions;
 }
 
@@ -59,10 +61,7 @@ export class Worker {
     const { tasks, queueLimits, serializer, middleware, emitter, resources, run } = params;
 
     // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
-    const tracker =
-      (run?.advanceWorkflows ?? true) && typeof queue.markWorkflowNodeResult === "function"
-        ? new WorkflowTracker(queue, serializer)
-        : null;
+    const tracker = (run?.advanceWorkflows ?? true) ? (params.workflowTracker ?? null) : null;
 
     const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
       // Built-in workflow cache-return: echo the single (cached) arg as the result.
