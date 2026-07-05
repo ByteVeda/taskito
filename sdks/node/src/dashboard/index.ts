@@ -1,8 +1,11 @@
 import type { Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Queue } from "../index";
+import { createLogger } from "../utils";
 import type { DashboardAuth } from "./auth";
 import { createDashboardServer } from "./server";
+
+const log = createLogger("dashboard");
 
 export interface DashboardOptions {
   /** Port to listen on (default 8787). */
@@ -33,6 +36,10 @@ export function serveDashboard(queue: Queue, options: DashboardOptions = {}): Se
     options.staticDir ?? defaultStaticDir(),
     options.auth,
   );
+  // A bind failure (e.g. EADDRINUSE) without an 'error' listener crashes the process.
+  server.on("error", (error) => {
+    log.error(() => "dashboard server error", error);
+  });
   server.listen(options.port ?? 8787, options.host ?? "127.0.0.1");
   return server;
 }
