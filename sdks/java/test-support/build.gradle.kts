@@ -5,10 +5,39 @@ plugins {
     `java-library`
     checkstyle
     id("com.diffplug.spotless") version "7.2.1"
+    id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
 group = "org.byteveda"
 version = "0.18.0"
+
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    coordinates(group.toString(), "taskito-test", version.toString())
+    pom {
+        name.set("Taskito Test Support")
+        description.set("In-memory queue backend for testing Taskito JVM applications without the native runtime.")
+        url.set("https://github.com/ByteVeda/taskito")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                id.set("byteveda")
+                name.set("ByteVeda")
+            }
+        }
+        scm {
+            url.set("https://github.com/ByteVeda/taskito")
+            connection.set("scm:git:https://github.com/ByteVeda/taskito.git")
+            developerConnection.set("scm:git:ssh://git@github.com/ByteVeda/taskito.git")
+        }
+    }
+}
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
