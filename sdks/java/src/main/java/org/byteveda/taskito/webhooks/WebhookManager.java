@@ -22,9 +22,15 @@ import org.byteveda.taskito.middleware.Middleware;
 public final class WebhookManager implements Middleware {
     private static final TaskitoLogger LOG = TaskitoLogger.create("webhooks");
     private static final ObjectMapper JSON = new ObjectMapper();
+    // Dispatch runs on the worker's single outcome-drain thread for every job, so
+    // it must not re-read + re-parse the settings blob per outcome. Local
+    // create/delete invalidate immediately; the TTL bounds staleness from writers
+    // in other processes.
+    private static final long CACHE_TTL_MS = 30_000;
 
     private final WebhookStore store;
     private final Deliverer deliverer = new Deliverer();
+    private volatile CachedHooks cached;
 
     private WebhookManager(Taskito queue) {
         this.store = new WebhookStore(queue);
@@ -55,6 +61,7 @@ public final class WebhookManager implements Middleware {
         List<Webhook> all = store.load();
         all.add(hook);
         store.save(all);
+        cached = null;
         return hook;
     }
 
@@ -71,6 +78,7 @@ public final class WebhookManager implements Middleware {
         boolean removed = all.removeIf(hook -> hook.id.equals(id));
         if (removed) {
             store.save(all);
+            cached = null;
         }
         return removed;
     }
@@ -96,9 +104,13 @@ public final class WebhookManager implements Middleware {
     }
 
     private void dispatch(OutcomeEvent event) {
+        List<Webhook> hooks = activeHooks();
+        if (hooks.isEmpty()) {
+            return;
+        }
         String wire = event.name.name().toLowerCase(Locale.ROOT);
         byte[] body = payload(event, wire);
-        for (Webhook hook : store.load()) {
+        for (Webhook hook : hooks) {
             if (hook.enabled && hook.events.contains(wire) && matches(hook.taskFilter, event.taskName)) {
                 try {
                     deliverer.deliver(hook, body);
@@ -109,6 +121,19 @@ public final class WebhookManager implements Middleware {
             }
         }
     }
+
+    private List<Webhook> activeHooks() {
+        CachedHooks snapshot = cached;
+        long now = System.currentTimeMillis();
+        if (snapshot == null || now - snapshot.loadedAt() > CACHE_TTL_MS) {
+            snapshot = new CachedHooks(List.copyOf(store.load()), now);
+            cached = snapshot;
+        }
+        return snapshot.hooks();
+    }
+
+    /** An immutable webhook list plus when it was read from the store. */
+    private record CachedHooks(List<Webhook> hooks, long loadedAt) {}
 
     private static boolean matches(String filter, String taskName) {
         return filter == null || filter.equals(taskName);
