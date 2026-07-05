@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.JobInfo;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.middleware.TaskContext;
@@ -30,6 +31,7 @@ import org.byteveda.taskito.spi.WorkerControl;
  * and event listeners.
  */
 final class WorkerDispatchBridge implements WorkerBridge {
+    private static final TaskitoLogger LOG = TaskitoLogger.create("worker");
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<Map<String, Object>>() {};
 
@@ -129,7 +131,12 @@ final class WorkerDispatchBridge implements WorkerBridge {
         OutcomeEvent event = new OutcomeEvent(name, jobId, taskName, error, retryCount, timedOut);
         emitter.emit(event);
         for (Middleware m : middleware) {
-            dispatch(m, name, event);
+            try {
+                dispatch(m, name, event);
+            } catch (RuntimeException e) {
+                // One faulty middleware must not starve the rest of this outcome.
+                LOG.warn("middleware " + m.getClass().getName() + " threw on " + name + " (job " + jobId + ")", e);
+            }
         }
     }
 

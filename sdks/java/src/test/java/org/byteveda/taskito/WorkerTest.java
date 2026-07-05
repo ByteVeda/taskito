@@ -11,6 +11,8 @@ import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.byteveda.taskito.events.EventName;
+import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
@@ -50,6 +52,34 @@ class WorkerTest {
                 Optional<byte[]> result = queue.getResult(id);
                 assertTrue(result.isPresent());
                 assertEquals("5", new String(result.get(), StandardCharsets.UTF_8));
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void middlewareFaultDoesNotStarveOthers(@TempDir Path dir) throws Exception {
+        Task<Map<String, Object>> noop = Task.of("noop", mapType());
+        try (Taskito queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
+            CountDownLatch secondSaw = new CountDownLatch(1);
+            queue.use(new Middleware() {
+                @Override
+                public void onCompleted(OutcomeEvent event) {
+                    throw new IllegalStateException("boom");
+                }
+            });
+            queue.use(new Middleware() {
+                @Override
+                public void onCompleted(OutcomeEvent event) {
+                    secondSaw.countDown();
+                }
+            });
+            queue.enqueue(noop, new HashMap<>());
+            try (Worker worker = queue.worker().handle(noop, p -> "ok").start()) {
+                assertTrue(secondSaw.await(20, TimeUnit.SECONDS), "second middleware must still see the outcome");
             }
         }
     }
