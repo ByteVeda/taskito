@@ -21,6 +21,8 @@ final class Deliverer {
     // Exponential backoff matching the Node SDK: 500ms, 1s, 2s, ... capped at 30s.
     private static final long BASE_BACKOFF_MS = 500;
     private static final long MAX_BACKOFF_MS = 30_000;
+    // 500ms << 6 = 32s > cap, so larger shifts can never change the delay.
+    private static final int MAX_BACKOFF_SHIFT = 6;
 
     private final HttpClient client = HttpClient.newHttpClient();
 
@@ -48,16 +50,18 @@ final class Deliverer {
                         + " attempt(s)" + (error != null ? ": " + error : ": HTTP " + response.statusCode()));
                 return;
             }
-            long delayMs = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS << attempt);
+            // Clamp the exponent before shifting: an unbounded shift overflows and
+            // would schedule negative delays for very large maxRetries.
+            long delayMs = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS << Math.min(attempt, MAX_BACKOFF_SHIFT));
             CompletableFuture.delayedExecutor(delayMs, TimeUnit.MILLISECONDS)
                     .execute(() -> sendWithRetry(request, attempt + 1, maxRetries));
         });
     }
 
-    /** Strip credentials and query string from a URI before logging it. */
+    /** Origin only (scheme://host:port) — path segments and queries can carry tokens. */
     private static String redact(URI uri) {
         try {
-            return new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), uri.getPath(), null, null).toString();
+            return new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), null, null, null).toString();
         } catch (Exception e) {
             return "<invalid-url>";
         }

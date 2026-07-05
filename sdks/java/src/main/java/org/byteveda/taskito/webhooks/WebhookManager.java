@@ -115,8 +115,10 @@ public final class WebhookManager implements Middleware {
                 try {
                     deliverer.deliver(hook, body);
                 } catch (RuntimeException e) {
-                    // A bad hook (e.g. malformed URL) must not block the rest.
-                    LOG.warn("webhook " + hook.id + " delivery failed", e);
+                    // A bad hook (e.g. malformed URL) must not block the rest. Log the
+                    // class only — URI parse messages can echo the URL's tokens.
+                    LOG.warn("webhook " + hook.id + " delivery failed: "
+                            + e.getClass().getSimpleName());
                 }
             }
         }
