@@ -150,3 +150,11 @@ export class PredicateRejectedError extends TaskitoError {
     this.name = "PredicateRejectedError";
   }
 }
+
+/** Thrown when an enqueue interceptor rejects, misbehaves, or redirects illegally. */
+export class InterceptionError extends TaskitoError {
+  constructor(message: string) {
+    super(message);
+    this.name = "InterceptionError";
+  }
+}
