@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 
@@ -45,7 +46,7 @@ import org.byteveda.taskito.spi.QueueBackend;
  * run reaches a terminal state.
  */
 public final class WorkflowTracker {
-    private static final System.Logger LOG = System.getLogger(WorkflowTracker.class.getName());
+    private static final TaskitoLogger LOG = TaskitoLogger.create("workflows");
 
     private final QueueBackend backend;
     private final Serializer serializer;
@@ -296,13 +297,10 @@ public final class WorkflowTracker {
             }
             createDeferredJobFor(runId, node);
         } catch (RuntimeException e) {
-            // A failed promotion (native error, missing payload, bad metadata) must
-            // never leave the node wedged PENDING with no trace — outcome listeners
-            // swallow throws, so rethrowing here would silently stall the run.
-            LOG.log(
-                    System.Logger.Level.WARNING,
-                    "promoting workflow node '" + node.name + "' in run " + runId + " failed",
-                    e);
+            // A failed promotion must never leave the node wedged PENDING with no
+            // trace — outcome listeners swallow throws, so rethrowing would
+            // silently stall the run.
+            LOG.warn("promoting workflow node '" + node.name + "' in run " + runId + " failed", e);
             failNodeAndCascade(runId, node.name, promotionKey, plan, e);
         }
     }
@@ -318,10 +316,7 @@ public final class WorkflowTracker {
             // Even the failure record failed (e.g. storage down). Roll the dedupe
             // marker back so the next outcome can retry the promotion.
             promotedNodes.remove(promotionKey);
-            LOG.log(
-                    System.Logger.Level.ERROR,
-                    "failed to record failure of workflow node '" + nodeName + "' in run " + runId,
-                    e);
+            LOG.error("failed to record failure of workflow node '" + nodeName + "' in run " + runId, e);
         }
     }
 
@@ -330,10 +325,7 @@ public final class WorkflowTracker {
      * fail each fan-out node instead of leaving it PENDING forever, then cascade.
      */
     private void failFanOutsOf(String runId, String producer, RunPlan plan, RuntimeException cause) {
-        LOG.log(
-                System.Logger.Level.WARNING,
-                "expanding fan-out(s) after node '" + producer + "' in run " + runId + " failed",
-                cause);
+        LOG.warn("expanding fan-out(s) after node '" + producer + "' in run " + runId + " failed", cause);
         if (plan == null) {
             return;
         }
@@ -342,10 +334,7 @@ public final class WorkflowTracker {
                 backend.failWorkflowNode(runId, fanOut.name, describe(cause));
                 promoteSuccessors(runId, fanOut.name, plan);
             } catch (RuntimeException e) {
-                LOG.log(
-                        System.Logger.Level.ERROR,
-                        "failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId,
-                        e);
+                LOG.error("failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId, e);
             }
         }
     }

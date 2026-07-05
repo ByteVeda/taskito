@@ -25,6 +25,7 @@ import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.resources.ResourceRuntime;
 import org.byteveda.taskito.serialization.PayloadCodec;
@@ -43,7 +44,7 @@ import org.byteveda.taskito.workflows.WorkflowTracker;
  * jobs.
  */
 public final class Worker implements AutoCloseable {
-    private static final System.Logger LOG = System.getLogger(Worker.class.getName());
+    private static final TaskitoLogger LOG = TaskitoLogger.create("worker");
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
     private static final ObjectMapper MESH_JSON = new ObjectMapper();
 
@@ -145,16 +146,12 @@ public final class Worker implements AutoCloseable {
         executor.shutdown(); // stop accepting; let running handlers finish
         try {
             if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                // Interrupt stragglers, then give them one more window: shutdownNow()
-                // only *requests* interruption, and a handler stuck in
-                // non-interruptible work can outlive it.
+                // shutdownNow() only *requests* interruption; give stuck handlers
+                // one more window before closing the handle out from under them.
                 executor.shutdownNow();
                 if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    LOG.log(
-                            System.Logger.Level.WARNING,
-                            "handler threads still running after {0}s; closing the native worker anyway —"
-                                    + " their late completions will be rejected",
-                            2 * SHUTDOWN_TIMEOUT_SECONDS);
+                    LOG.warn("handler threads still running after " + (2 * SHUTDOWN_TIMEOUT_SECONDS)
+                            + "s; closing the native worker — their late completions will be rejected");
                 }
             }
         } catch (InterruptedException e) {
