@@ -12,6 +12,7 @@ import org.byteveda.taskito.errors.EnqueueSkippedException;
 import org.byteveda.taskito.errors.PredicateRejectedException;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.predicates.EnqueueDecision;
+import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -50,6 +51,23 @@ class EnqueueDecisionTest {
             Job job = queue.getJob(id.get()).orElseThrow();
             long delayMs = job.scheduledAt - job.createdAt;
             assertTrue(delayMs >= Duration.ofMinutes(59).toMillis(), "expected ~1h defer, got " + delayMs + "ms");
+        }
+    }
+
+    @Test
+    void zeroDeferOverridesTaskDelay(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir, "deferzero")) {
+            queue.gate(TASK.name(), context -> EnqueueDecision.defer(Duration.ZERO));
+
+            Task<String> delayed =
+                    TASK.withOptions(EnqueueOptions.builder().delayMs(60_000).build());
+            Optional<String> id = queue.tryEnqueue(delayed, "now");
+            assertTrue(id.isPresent());
+            Job job = queue.getJob(id.get()).orElseThrow();
+            // Defer(ZERO) means "enqueue now" — the task's baked-in delay must not survive.
+            assertTrue(
+                    job.scheduledAt - job.createdAt < 1_000,
+                    "expected immediate schedule, got " + (job.scheduledAt - job.createdAt) + "ms");
         }
     }
 

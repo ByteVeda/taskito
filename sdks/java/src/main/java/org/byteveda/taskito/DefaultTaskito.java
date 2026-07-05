@@ -242,10 +242,14 @@ final class DefaultTaskito implements Taskito {
         return Optional.of(backend.enqueue(taskName, data, encode(finalOptions)));
     }
 
-    /** Apply a defer delay to the options (overriding any delay already set). */
+    /**
+     * Apply a defer delay to the options, overriding any delay already set —
+     * {@code Defer(Duration.ZERO)} (e.g. {@code deferUntil} of a past instant)
+     * means "enqueue now", not "keep the task's baked-in delay".
+     */
     private static EnqueueOptions withDelay(EnqueueOptions options, Duration delay) {
-        long delayMs = delay.toMillis();
-        return delayMs <= 0 ? options : options.toBuilder().delayMs(delayMs).build();
+        long delayMs = Math.max(delay.toMillis(), 0);
+        return options.toBuilder().delayMs(delayMs).build();
     }
 
     /** Apply a task's payload codecs in order; throws if a name is not registered. */
