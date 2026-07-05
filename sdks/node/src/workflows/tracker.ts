@@ -535,7 +535,7 @@ export class WorkflowTracker {
       return;
     }
     this.evaluateSuccessors(runId, node, plan);
-    this.evictIfTerminal(runId, this.native.finalizeRunIfTerminal(runId));
+    this.settle(runId, this.native.finalizeRunIfTerminal(runId));
   }
 
   private clearGateTimer(runId: string, node: string): void {
