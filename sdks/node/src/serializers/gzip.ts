@@ -8,7 +8,7 @@ const DEFAULT_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 /**
  * Gzip compression codec. Decompression is capped at `maxDecompressedBytes`
  * (default 64 MiB) so a malicious or corrupt payload cannot expand into a zip
- * bomb. Wire format matches the Java and Python SDK gzip codecs.
+ * bomb. Wire format is a standard gzip stream — the cross-SDK contract.
  */
 export class GzipCodec implements PayloadCodec {
   private readonly maxDecompressedBytes: number;

@@ -7,7 +7,7 @@ const MAC_BYTES = 32;
 
 /**
  * HMAC-SHA256 signing codec (authenticates, does not encrypt). Wire format:
- * `[32-byte mac][body]` — identical to the Java and Python SDK codecs. The
+ * `[32-byte mac][body]` — the cross-SDK contract. The
  * key is raw bytes shared by producers and workers.
  */
 export class HmacCodec implements PayloadCodec {

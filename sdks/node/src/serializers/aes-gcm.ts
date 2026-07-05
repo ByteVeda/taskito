@@ -15,7 +15,7 @@ const CIPHER_BY_KEY_LENGTH: Record<number, CipherGCMTypes> = {
 
 /**
  * AES-GCM encryption codec. Wire format: `[12-byte random IV][ciphertext ||
- * 16-byte GCM tag]` — identical to the Java and Python SDK codecs. Note the
+ * 16-byte GCM tag]` — the cross-SDK contract. Note the
  * tag trails the ciphertext, unlike {@link EncryptedSerializer}'s
  * `[iv | tag | ciphertext]` layout — do not "align" them; this order is the
  * cross-SDK contract.
