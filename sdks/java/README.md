@@ -3,16 +3,37 @@
 A typed Java 17+ client over the Taskito Rust core, via a hand-written JNI shell
 (`crates/taskito-java`).
 
-> Status: **build-out**. Producer + inspection + admin + logs, worker task
-> execution, middleware, JSON/signed/encrypted/MessagePack serializers,
-> dashboard, webhooks, CLI, distributed locks, periodic/cron, and the full
-> workflow engine (DAG, fan-out/fan-in, gates, conditions, sub-workflows, sagas,
-> analysis + visualization, canvas) are implemented and verified end-to-end.
-> Also: worker resources (DI), enqueue predicates, a KEDA scaler endpoint,
-> producer batching, in-process autoscaling, observability middleware
-> (Micrometer Observation + Sentry), and a Spring Boot 3 starter. Baseline:
-> **Java 17** (`--release 17`). Spring Boot 3 apps can adopt it directly;
-> native `.so` is JDK-independent.
+Feature-complete: producer + inspection + admin + logs, worker task execution,
+middleware, JSON/signed/encrypted/MessagePack serializers, dashboard, webhooks,
+CLI, distributed locks, periodic/cron, and the full workflow engine (DAG,
+fan-out/fan-in, gates, conditions, sub-workflows, sagas, analysis +
+visualization, canvas). Also: worker resources (DI), enqueue predicates, a KEDA
+scaler endpoint, producer batching, in-process autoscaling, observability
+middleware (Micrometer Observation + Sentry), and a Spring Boot 3 starter.
+Baseline: **Java 17** (`--release 17`); on JDK 22+ hot byte ops take a Panama
+(FFM) fast path automatically. The native library is bundled per platform —
+no separate install.
+
+## Install
+
+```kotlin
+// Gradle
+implementation("org.byteveda:taskito:0.19.0")
+```
+
+```xml
+<!-- Maven -->
+<dependency>
+  <groupId>org.byteveda</groupId>
+  <artifactId>taskito</artifactId>
+  <version>0.19.0</version>
+</dependency>
+```
+
+Companion artifacts: `org.byteveda:taskito-processor` (compile-time
+`TaskHandler` bindings, add via `annotationProcessor`), `org.byteveda:taskito-test`
+(in-memory backend for unit tests), `org.byteveda:taskito-spring` (Boot 3
+starter).
 
 ## Migration
 

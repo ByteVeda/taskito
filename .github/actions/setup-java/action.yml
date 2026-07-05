@@ -2,8 +2,8 @@ name: Set up Java
 description: >-
   Installs a Temurin JDK and enables Gradle build caching. Used by every
   Java-touching job so toolchain setup lives in one place. The SDK targets Java
-  17 bytecode via `--release 17`, so any JDK >= 17 works; we use 21 to match the
-  publish workflow.
+  17 bytecode via `--release 17`, so any JDK >= 17 works; the publish workflow
+  builds on 25 so the FFM overlay ships.
 
 inputs:
   java-version:
