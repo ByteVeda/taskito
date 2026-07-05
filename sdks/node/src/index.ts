@@ -1,6 +1,7 @@
 export { currentJob, type JobContext } from "./context";
 export { type DashboardAuth, type DashboardOptions, serveDashboard } from "./dashboard";
 export {
+  CryptoError,
   JobCancelledError,
   JobFailedError,
   LockLostError,
@@ -40,9 +41,14 @@ export {
 } from "./resources";
 export { type ScalerOptions, serveScaler } from "./scaler";
 export {
+  AesGcmCodec,
+  CodecSerializer,
   EncryptedSerializer,
+  GzipCodec,
+  HmacCodec,
   JsonSerializer,
   MsgpackSerializer,
+  type PayloadCodec,
   type Serializer,
   SignedSerializer,
 } from "./serializers";
