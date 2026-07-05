@@ -73,7 +73,8 @@ public final class InMemoryQueueBackend implements QueueBackend {
             }
         }
         JobRec job = new JobRec();
-        job.id = "im-" + seq.incrementAndGet();
+        job.enqueueSeq = seq.incrementAndGet();
+        job.id = "im-" + job.enqueueSeq;
         job.taskName = taskName;
         job.payload = payload;
         job.queue = optText(opts, "queue", DEFAULT_QUEUE);
@@ -215,7 +216,8 @@ public final class InMemoryQueueBackend implements QueueBackend {
                 JobRec source = jobs.get((String) entry.get("originalJobId"));
                 dead.remove(entry);
                 JobRec job = new JobRec();
-                job.id = "im-" + seq.incrementAndGet();
+                job.enqueueSeq = seq.incrementAndGet();
+                job.id = "im-" + job.enqueueSeq;
                 job.taskName = (String) entry.get("taskName");
                 job.queue = (String) entry.get("queue");
                 job.payload = source == null ? new byte[0] : source.payload;
@@ -563,7 +565,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
             if (!queues.isEmpty() && !queues.contains(job.queue)) {
                 continue;
             }
-            if (best == null || job.priority > best.priority) {
+            if (best == null || claimsBefore(job, best)) {
                 best = job;
             }
         }
@@ -572,6 +574,17 @@ public final class InMemoryQueueBackend implements QueueBackend {
             best.startedAt = now;
         }
         return best;
+    }
+
+    /** Production dequeue order: priority DESC, then FIFO (scheduled_at ASC, insertion order on ties). */
+    private static boolean claimsBefore(JobRec candidate, JobRec current) {
+        if (candidate.priority != current.priority) {
+            return candidate.priority > current.priority;
+        }
+        if (candidate.scheduledAt != current.scheduledAt) {
+            return candidate.scheduledAt < current.scheduledAt;
+        }
+        return candidate.enqueueSeq < current.enqueueSeq;
     }
 
     private synchronized void onComplete(JobRec job, byte[] result) {
@@ -690,6 +703,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
     /** A stored job. */
     private static final class JobRec {
         String id;
+        long enqueueSeq;
         String queue = DEFAULT_QUEUE;
         String taskName;
         byte[] payload;

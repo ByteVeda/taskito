@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
@@ -24,6 +27,32 @@ class InMemoryQueueBackendTest {
                 Job job = queue.awaitJob(id, Duration.ofSeconds(10)).orElseThrow();
                 assertEquals(JobStatus.COMPLETE, job.status);
                 assertEquals(42, queue.getResult(id, Integer.class).orElseThrow());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void samePriorityJobsRunInEnqueueOrder() throws Exception {
+        Task<Integer> order = Task.of("im.order", Integer.class);
+        List<Integer> seen = Collections.synchronizedList(new ArrayList<>());
+        try (Taskito queue = InMemoryTaskito.open()) {
+            String last = null;
+            for (int i = 0; i < 5; i++) {
+                last = queue.enqueue(order, i);
+            }
+            // Single-threaded worker so claim order is observable as run order.
+            try (Worker worker = queue.worker()
+                    .concurrency(1)
+                    .handle(order, p -> {
+                        seen.add(p);
+                        return p;
+                    })
+                    .start()) {
+                queue.awaitJob(last, Duration.ofSeconds(10)).orElseThrow();
+                // Production dequeues FIFO within a priority tier; the in-memory
+                // backend must match, not follow hash-map iteration order.
+                assertEquals(List.of(0, 1, 2, 3, 4), seen);
             }
         }
     }
