@@ -135,6 +135,10 @@ tasks.named("processResources") { dependsOn(copyNative) }
 // resource srcDirs, so any Jar task reads the staged native dir. Wire the
 // dependency lazily — sourcesJar is registered after this script evaluates.
 tasks.withType<Jar>().configureEach { dependsOn(copyNative) }
+// Sources jar ships sources only — cdylibs + dashboard already ship in the main jar.
+tasks.withType<Jar>().matching { it.name == "sourcesJar" }.configureEach {
+    exclude("org/byteveda/taskito/native/**", "org/byteveda/taskito/dashboard/**")
+}
 
 // --- FFM fast-path overlay (Multi-Release JAR) ----------------------------
 // Base classes target 17 (JNI transport + the fallback). On a build JDK >= 22 we

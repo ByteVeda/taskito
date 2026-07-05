@@ -3,16 +3,53 @@
 A typed Java 17+ client over the Taskito Rust core, via a hand-written JNI shell
 (`crates/taskito-java`).
 
-> Status: **build-out**. Producer + inspection + admin + logs, worker task
-> execution, middleware, JSON/signed/encrypted/MessagePack serializers,
-> dashboard, webhooks, CLI, distributed locks, periodic/cron, and the full
-> workflow engine (DAG, fan-out/fan-in, gates, conditions, sub-workflows, sagas,
-> analysis + visualization, canvas) are implemented and verified end-to-end.
-> Also: worker resources (DI), enqueue predicates, a KEDA scaler endpoint,
-> producer batching, in-process autoscaling, observability middleware
-> (Micrometer Observation + Sentry), and a Spring Boot 3 starter. Baseline:
-> **Java 17** (`--release 17`). Spring Boot 3 apps can adopt it directly;
-> native `.so` is JDK-independent.
+Feature-complete: producer + inspection + admin + logs, worker task execution,
+middleware, JSON/signed/encrypted/MessagePack serializers, dashboard, webhooks,
+CLI, distributed locks, periodic/cron, and the full workflow engine (DAG,
+fan-out/fan-in, gates, conditions, sub-workflows, sagas, analysis +
+visualization, canvas). Also: worker resources (DI), enqueue predicates, a KEDA
+scaler endpoint, producer batching, in-process autoscaling, observability
+middleware (Micrometer Observation + Sentry), and a Spring Boot 3 starter.
+Baseline: **Java 17** (`--release 17`); on JDK 22+ hot byte ops take a Panama
+(FFM) fast path automatically. The native library is bundled per platform —
+no separate install.
+
+## Install
+
+```kotlin
+// Gradle
+implementation("org.byteveda:taskito:0.18.0")
+annotationProcessor("org.byteveda:taskito-processor:0.18.0") // compile-time TaskHandler bindings
+```
+
+```xml
+<!-- Maven -->
+<dependency>
+  <groupId>org.byteveda</groupId>
+  <artifactId>taskito</artifactId>
+  <version>0.18.0</version>
+</dependency>
+```
+
+```xml
+<!-- Maven: the processor is wired through the compiler plugin, not a dependency -->
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-compiler-plugin</artifactId>
+  <configuration>
+    <annotationProcessorPaths>
+      <path>
+        <groupId>org.byteveda</groupId>
+        <artifactId>taskito-processor</artifactId>
+        <version>0.18.0</version>
+      </path>
+    </annotationProcessorPaths>
+  </configuration>
+</plugin>
+```
+
+Companion artifacts: `org.byteveda:taskito-test` (in-memory backend for unit
+tests) and `org.byteveda:taskito-spring` (Boot 3 starter).
 
 ## Migration
 
