@@ -464,7 +464,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.getJobErrors(id);
   }
 
-  /** Per-execution task metrics within the last `sinceMs` milliseconds. */
+  /** Per-execution task metrics recorded at or after `sinceMs` (Unix epoch ms). */
   getMetrics(sinceMs: number, task?: string): Promise<Metric[]> {
     return this.native.getMetrics(task ?? null, sinceMs);
   }
