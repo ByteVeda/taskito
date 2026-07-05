@@ -8,6 +8,7 @@ pub const TASKITO_EXCEPTION: &str = "org/byteveda/taskito/TaskitoException";
 
 /// A deferred Java exception. The binding builds one of these on failure and
 /// throws it at the FFI boundary instead of unwinding a Rust panic across it.
+#[derive(Debug)]
 pub struct BindingError {
     class: &'static str,
     message: String,
@@ -26,6 +27,14 @@ impl BindingError {
     /// already in a bad state, so there is nothing further to do.
     pub fn throw(&self, env: &mut JNIEnv) {
         let _ = env.throw_new(self.class, &self.message);
+    }
+}
+
+/// The message alone: the C-ABI surface (`ffi_c`) reports errors as strings,
+/// with no exception class to carry.
+impl std::fmt::Display for BindingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
     }
 }
 

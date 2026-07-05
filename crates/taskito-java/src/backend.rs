@@ -1,6 +1,6 @@
 //! Construct a [`QueueHandle`] from caller options (mirrors the Node shell).
 
-use taskito_core::{SqliteStorage, StorageBackend};
+use taskito_core::{NewJob, SqliteStorage, Storage, StorageBackend};
 
 use crate::convert::OpenOptions;
 use crate::error::BindingError;
@@ -73,6 +73,40 @@ fn build_workflow_storage(
     Ok(wf)
 }
 
+/// Enqueue a batch, routing any job with a `unique_key` through the dedup path
+/// (matching single `enqueue`) instead of the raw batch insert. The raw insert
+/// would hit the partial unique index on an active duplicate and roll back the
+/// whole batch; here a duplicate resolves to the existing job's id, and only
+/// keyless jobs share the one-transaction fast path. Ids come back in input order.
+pub fn enqueue_batch_dedup(
+    storage: &StorageBackend,
+    jobs: Vec<NewJob>,
+) -> Result<Vec<String>, BindingError> {
+    let mut ids: Vec<Option<String>> = std::iter::repeat_with(|| None).take(jobs.len()).collect();
+    let mut plain_jobs = Vec::new();
+    let mut plain_slots = Vec::new();
+    for (index, job) in jobs.into_iter().enumerate() {
+        if job.unique_key.is_some() {
+            ids[index] = Some(storage.enqueue_unique(job)?.id);
+        } else {
+            plain_jobs.push(job);
+            plain_slots.push(index);
+        }
+    }
+    if !plain_jobs.is_empty() {
+        let created = storage.enqueue_batch(plain_jobs)?;
+        if created.len() != plain_slots.len() {
+            return Err(BindingError::new(
+                "storage returned a different number of jobs than were batch-enqueued",
+            ));
+        }
+        for (slot, job) in plain_slots.into_iter().zip(created) {
+            ids[slot] = Some(job.id);
+        }
+    }
+    Ok(ids.into_iter().flatten().collect())
+}
+
 /// Error for a backend that is unknown or whose cargo feature is not compiled in.
 fn unknown_backend(name: &str) -> BindingError {
     BindingError::new(format!(
@@ -126,4 +160,50 @@ pub fn open(options: OpenOptions) -> Result<QueueHandle, BindingError> {
         #[cfg(feature = "workflows")]
         workflow_init: std::sync::Mutex::new(()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_job(unique_key: Option<&str>) -> NewJob {
+        NewJob {
+            queue: "default".into(),
+            task_name: "task".into(),
+            payload: Vec::new(),
+            priority: 0,
+            scheduled_at: 0,
+            max_retries: 0,
+            timeout_ms: 0,
+            unique_key: unique_key.map(str::to_owned),
+            metadata: None,
+            notes: None,
+            depends_on: Vec::new(),
+            expires_at: None,
+            result_ttl_ms: None,
+            namespace: None,
+        }
+    }
+
+    /// A batch containing an active duplicate `unique_key` must dedup that job
+    /// to the existing id instead of failing the whole batch on the unique index.
+    #[test]
+    fn batch_dedup_resolves_duplicate_unique_keys() {
+        let storage = StorageBackend::Sqlite(SqliteStorage::in_memory().expect("storage"));
+        let existing = storage
+            .enqueue_unique(new_job(Some("k1")))
+            .expect("seed enqueue");
+        let ids = enqueue_batch_dedup(
+            &storage,
+            vec![new_job(Some("k1")), new_job(Some("k2")), new_job(None)],
+        )
+        .expect("batch enqueue");
+        assert_eq!(ids.len(), 3);
+        assert_eq!(
+            ids[0], existing.id,
+            "duplicate key resolves to existing job"
+        );
+        assert_ne!(ids[1], ids[0]);
+        assert_ne!(ids[2], ids[0]);
+    }
 }

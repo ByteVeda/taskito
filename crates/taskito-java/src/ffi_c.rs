@@ -190,11 +190,9 @@ pub unsafe extern "C" fn taskito_ffi_enqueue_many(
             .zip(option_list)
             .map(|(payload, options)| build_new_job(task.clone(), payload, options, namespace))
             .collect();
-        let created = queue
-            .storage
-            .enqueue_batch(new_jobs)
+        let ids = crate::backend::enqueue_batch_dedup(&queue.storage, new_jobs)
             .map_err(|e| e.to_string())?;
-        let ids: Vec<Vec<u8>> = created.into_iter().map(|job| job.id.into_bytes()).collect();
+        let ids: Vec<Vec<u8>> = ids.into_iter().map(String::into_bytes).collect();
         Ok::<Vec<u8>, String>(frame(&ids))
     });
     finish(catch_unwind(work), out_data, out_len)

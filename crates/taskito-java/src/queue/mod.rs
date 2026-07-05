@@ -93,8 +93,11 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_enqueue<'l
 }
 
 /// `String[] enqueueMany(long handle, String taskName, byte[][] payloads, String optionsJson)`
-/// — enqueue a batch in one storage transaction. `optionsJson` is a JSON array
-/// of per-job options, the same length as `payloads`. Returns the new job ids.
+/// — enqueue a batch. `optionsJson` is a JSON array of per-job options, the same
+/// length as `payloads`. Keyless jobs insert in one storage transaction; a job
+/// with a `uniqueKey` takes the dedup path instead (an active duplicate resolves
+/// to the existing job's id, matching single `enqueue`). Returns the job ids in
+/// input order.
 #[no_mangle]
 pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_enqueueMany<'local>(
     mut env: JNIEnv<'local>,
@@ -121,8 +124,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_enqueueMan
             .zip(option_list)
             .map(|(payload, options)| build_new_job(task.clone(), payload, options, namespace))
             .collect();
-        let created = queue.storage.enqueue_batch(new_jobs)?;
-        let ids: Vec<String> = created.into_iter().map(|job| job.id).collect();
+        let ids = backend::enqueue_batch_dedup(&queue.storage, new_jobs)?;
         new_string_array(env, &ids)
     })
 }
