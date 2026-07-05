@@ -93,6 +93,21 @@ impl RedisStorage {
         Ok(rows)
     }
 
+    /// Logs for a job with id strictly after `after_id` (cursor scan).
+    pub fn get_task_logs_after(
+        &self,
+        job_id: &str,
+        after_id: Option<&str>,
+    ) -> Result<Vec<TaskLogRow>> {
+        let mut rows = self.get_task_logs(job_id)?;
+        if let Some(cursor) = after_id {
+            rows.retain(|row| row.id.as_str() > cursor);
+        }
+        // UUIDv7 ids sort by creation time, so id order == time order.
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(rows)
+    }
+
     pub fn query_task_logs(
         &self,
         task_name: Option<&str>,

@@ -153,6 +153,9 @@ pub trait Storage: Send + Sync + Clone {
         extra: Option<&str>,
     ) -> Result<()>;
     fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogRow>>;
+    /// Logs for a job with id strictly after `after_id` (UUIDv7 ids are
+    /// time-ordered, so the id doubles as a stream cursor). `None` = all.
+    fn get_task_logs_after(&self, job_id: &str, after_id: Option<&str>) -> Result<Vec<TaskLogRow>>;
     fn query_task_logs(
         &self,
         task_name: Option<&str>,

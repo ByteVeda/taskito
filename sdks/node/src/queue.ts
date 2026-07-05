@@ -404,12 +404,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     const timeoutMs = options?.timeoutMs ?? 60_000;
     const pollMs = options?.pollMs ?? 200;
     const deadline = Date.now() + timeoutMs;
-    const seen = new Set<string>();
+    // Cursor-based: each poll fetches only rows after the last seen log id
+    // (UUIDv7 → time-ordered), instead of rescanning the full history.
+    let cursor: string | undefined;
     for (;;) {
-      yield* this.newPartials(id, seen);
+      const batch = this.newPartials(id, cursor);
+      cursor = batch.cursor;
+      yield* batch.values;
       const job = this.native.getJob(id);
       if (job && TERMINAL_STATUSES.has(job.status)) {
-        yield* this.newPartials(id, seen); // final drain for values committed at completion
+        yield* this.newPartials(id, cursor).values; // drain values committed at completion
         return;
       }
       if (Date.now() >= deadline) {
@@ -424,15 +428,15 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.getTaskLogs(id);
   }
 
-  /** Yield not-yet-seen partial-result entries (dedup by id, robust to same-ms writes). */
-  private *newPartials(id: string, seen: Set<string>): Generator<unknown> {
-    for (const log of this.native.getTaskLogs(id)) {
-      if (log.level !== STREAM_LEVEL || seen.has(log.id)) {
-        continue;
-      }
-      seen.add(log.id);
-      yield decodePartial(log.extra);
-    }
+  /** Partial-result values logged after `cursor`, plus the advanced cursor. */
+  private newPartials(id: string, cursor?: string): { values: unknown[]; cursor?: string } {
+    const logs = this.native.getTaskLogsAfter(id, cursor);
+    return {
+      values: logs
+        .filter((log) => log.level === STREAM_LEVEL)
+        .map((log) => decodePartial(log.extra)),
+      cursor: logs[logs.length - 1]?.id ?? cursor,
+    };
   }
 
   /** Job counts by status across all queues. */
