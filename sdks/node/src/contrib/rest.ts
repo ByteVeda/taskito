@@ -167,9 +167,9 @@ function defineRoutes(resultTimeoutMs: number): RestRoute[] {
       name: "dead-letters",
       method: "GET",
       path: "/dead-letters",
-      handle: (queue, { query }) => ({
+      handle: async (queue, { query }) => ({
         status: 200,
-        body: queue.deadLetters(toInt(query.limit), toInt(query.offset)),
+        body: await queue.deadLetters(toInt(query.limit), toInt(query.offset)),
       }),
     },
     {
