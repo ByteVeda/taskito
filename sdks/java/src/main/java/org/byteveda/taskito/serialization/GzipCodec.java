@@ -10,8 +10,9 @@ import org.byteveda.taskito.errors.SerializationException;
 /**
  * A {@link PayloadCodec} that gzip-compresses payloads. Decompression is bounded
  * by {@code maxDecompressedBytes} so a small malicious payload can't expand to
- * exhaust worker memory (zip bomb). Order {@code GzipCodec} <em>after</em> a
- * signing/encryption codec in the chain to verify integrity before decompressing.
+ * exhaust worker memory (zip bomb). Order {@code GzipCodec} <em>before</em> a
+ * signing/encryption codec in the list (e.g. {@code List.of(gzip, hmac)}):
+ * codecs decode in reverse, so integrity is verified before decompressing.
  */
 public final class GzipCodec implements PayloadCodec {
     /** Default cap on decompressed output: 64 MiB. */
