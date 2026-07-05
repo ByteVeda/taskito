@@ -132,6 +132,8 @@ class HmacCodec:
     def __init__(self, key: bytes):
         if not isinstance(key, bytes):
             raise TypeError(f"key must be bytes, got {type(key).__name__}")
+        if not key:
+            raise ValueError("key must not be empty")
         self._key = key
 
     def encode(self, data: bytes) -> bytes:

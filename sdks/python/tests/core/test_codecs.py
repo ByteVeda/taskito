@@ -130,6 +130,10 @@ class TestHmacCodec:
         with pytest.raises(TypeError, match="bytes"):
             HmacCodec("string-key")  # type: ignore[arg-type]
 
+    def test_constructor_rejects_empty_key(self) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            HmacCodec(b"")
+
 
 class TestPayloadCodecProtocol:
     def test_built_in_codecs_satisfy_protocol(self) -> None:
