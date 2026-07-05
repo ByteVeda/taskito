@@ -1,6 +1,10 @@
 """Unit tests for payload codecs and the codec serializer."""
 
 import gzip
+import threading
+from collections.abc import Generator
+from contextlib import AbstractContextManager, contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +16,7 @@ from taskito import (
     HmacCodec,
     JsonSerializer,
     PayloadCodec,
+    Queue,
     SerializationError,
     Serializer,
     SmartSerializer,
@@ -160,3 +165,103 @@ class TestCodecSerializer:
         obj = (1, "two", [3])
         assert serializer.loads(serializer.dumps(obj)) == obj
         assert serializer.dumps(obj) == SmartSerializer().dumps(obj)
+
+
+class TestQueueCodecIntegration:
+    @staticmethod
+    def _run_worker(queue: Queue) -> AbstractContextManager[None]:
+        @contextmanager
+        def _ctx() -> Generator[None]:
+            thread = threading.Thread(target=queue.run_worker, daemon=True)
+            thread.start()
+            try:
+                yield
+            finally:
+                queue._inner.request_shutdown()
+                thread.join(timeout=5)
+
+        return _ctx()
+
+    def test_global_chain_round_trips_through_worker(self, tmp_path: Path) -> None:
+        queue = Queue(
+            db_path=str(tmp_path / "chain.db"),
+            workers=1,
+            codec=[GzipCodec(), HmacCodec(HMAC_KEY)],
+        )
+
+        @queue.task()
+        def double(x: int) -> int:
+            return x * 2
+
+        with self._run_worker(queue):
+            result = double.delay(21)
+            assert result.result(timeout=10) == 42
+            # Both the payload and the result are codec-framed in storage.
+            job = queue._inner.get_job(result.id)
+            assert job is not None and job.result_bytes is not None
+            hmac_codec = HmacCodec(HMAC_KEY)
+            assert gzip.decompress(hmac_codec.decode(bytes(job.payload_bytes)))
+            assert gzip.decompress(hmac_codec.decode(bytes(job.result_bytes)))
+
+    def test_single_codec_accepted_without_list(self, tmp_path: Path) -> None:
+        queue = Queue(db_path=str(tmp_path / "single.db"), workers=1, codec=GzipCodec())
+        assert len(queue._codec_chain) == 1
+
+    def test_per_task_codec_round_trips_through_worker(self, tmp_path: Path) -> None:
+        queue = Queue(
+            db_path=str(tmp_path / "pertask.db"),
+            workers=1,
+            codecs={"gzip": GzipCodec()},
+        )
+
+        @queue.task(codecs=["gzip"])
+        def shout(text: str) -> str:
+            return text.upper()
+
+        @queue.task()
+        def plain(text: str) -> str:
+            return text
+
+        with self._run_worker(queue):
+            result = shout.delay("hello")
+            assert result.result(timeout=10) == "HELLO"
+            job = queue._inner.get_job(result.id)
+            assert job is not None and job.result_bytes is not None
+            # Payload is gzip-framed; the result skips per-task codecs and
+            # stays on the plain queue serializer.
+            assert bytes(job.payload_bytes[:2]) == b"\x1f\x8b"
+            assert queue._serializer.loads(bytes(job.result_bytes)) == "HELLO"
+
+            plain_result = plain.delay("untouched")
+            assert plain_result.result(timeout=10) == "untouched"
+            plain_job = queue._inner.get_job(plain_result.id)
+            assert plain_job is not None
+            assert bytes(plain_job.payload_bytes[:2]) != b"\x1f\x8b"
+
+    def test_unregistered_codec_name_raises_at_enqueue(self, tmp_path: Path) -> None:
+        queue = Queue(db_path=str(tmp_path / "missing.db"), workers=1)
+
+        @queue.task(codecs=["nope"])
+        def orphan() -> None:
+            return None
+
+        with pytest.raises(ValueError, match="no codec registered named 'nope'"):
+            orphan.delay()
+
+    def test_idempotency_key_stable_under_encryption_codec(self, tmp_path: Path) -> None:
+        pytest.importorskip("cryptography")
+        queue = Queue(
+            db_path=str(tmp_path / "idem.db"),
+            workers=1,
+            codecs={"aes": make_aes_codec()},
+        )
+
+        @queue.task(codecs=["aes"], idempotent=True)
+        def once(x: int) -> int:
+            return x
+
+        # AES adds a random nonce per encode; dedup keys hash the pre-codec
+        # bytes, so the second enqueue dedups onto the first job.
+        first = once.delay(7)
+        second = once.delay(7)
+        assert first.id == second.id
