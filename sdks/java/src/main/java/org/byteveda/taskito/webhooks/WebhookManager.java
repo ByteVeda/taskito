@@ -11,6 +11,7 @@ import java.util.UUID;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.errors.WebhookException;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.Middleware;
 
 /**
@@ -19,6 +20,7 @@ import org.byteveda.taskito.middleware.Middleware;
  * delivered automatically. Persisted via the queue's settings store.
  */
 public final class WebhookManager implements Middleware {
+    private static final TaskitoLogger LOG = TaskitoLogger.create("webhooks");
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final WebhookStore store;
@@ -98,7 +100,12 @@ public final class WebhookManager implements Middleware {
         byte[] body = payload(event, wire);
         for (Webhook hook : store.load()) {
             if (hook.enabled && hook.events.contains(wire) && matches(hook.taskFilter, event.taskName)) {
-                deliverer.deliver(hook, body);
+                try {
+                    deliverer.deliver(hook, body);
+                } catch (RuntimeException e) {
+                    // A bad hook (e.g. malformed URL) must not block the rest.
+                    LOG.warn("webhook " + hook.id + " delivery failed", e);
+                }
             }
         }
     }
