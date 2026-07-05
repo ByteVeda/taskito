@@ -217,35 +217,51 @@ fn spawn_worker_lifecycle(
 ) {
     let hostname = gethostname::gethostname().to_string_lossy().to_string();
     let pid = std::process::id() as i32;
-    // Log lifecycle failures: a worker that can't register/heartbeat goes
-    // invisible or stale in the dashboard, and a silent error hides that.
-    if let Err(err) = storage.register_worker(
-        &worker_id,
-        &queues_csv,
-        None,
-        None,
-        None,
-        capacity as i32,
-        Some(&hostname),
-        Some(pid),
-        Some("node"),
-    ) {
-        log::warn!("[taskito-node] worker registration failed: {err}");
-    }
-
+    // Lifecycle calls are blocking storage I/O → run each on the blocking
+    // pool, off the JS thread and the shared async runtime. Failures are
+    // logged: a silent one leaves the worker invisible in the dashboard.
     spawn(async move {
+        let reg_storage = storage.clone();
+        let reg_id = worker_id.clone();
+        match spawn_blocking(move || {
+            reg_storage.register_worker(
+                &reg_id,
+                &queues_csv,
+                None,
+                None,
+                None,
+                capacity as i32,
+                Some(&hostname),
+                Some(pid),
+                Some("node"),
+            )
+        })
+        .await
+        {
+            Ok(Err(err)) => log::warn!("[taskito-node] worker registration failed: {err}"),
+            Err(err) => log::warn!("[taskito-node] worker registration task failed: {err}"),
+            Ok(Ok(_)) => {}
+        }
+
         loop {
             tokio::select! {
                 _ = stop.notified() => break,
                 _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {
-                    if let Err(err) = storage.heartbeat(&worker_id, None) {
-                        log::warn!("[taskito-node] worker heartbeat failed: {err}");
+                    let hb_storage = storage.clone();
+                    let hb_id = worker_id.clone();
+                    match spawn_blocking(move || hb_storage.heartbeat(&hb_id, None)).await {
+                        Ok(Err(err)) => log::warn!("[taskito-node] worker heartbeat failed: {err}"),
+                        Err(err) => log::warn!("[taskito-node] worker heartbeat task failed: {err}"),
+                        Ok(Ok(_)) => {}
                     }
                 }
             }
         }
-        if let Err(err) = storage.unregister_worker(&worker_id) {
-            log::warn!("[taskito-node] worker unregister failed: {err}");
+
+        match spawn_blocking(move || storage.unregister_worker(&worker_id)).await {
+            Ok(Err(err)) => log::warn!("[taskito-node] worker unregister failed: {err}"),
+            Err(err) => log::warn!("[taskito-node] worker unregister task failed: {err}"),
+            Ok(Ok(_)) => {}
         }
     });
 }
