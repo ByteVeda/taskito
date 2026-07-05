@@ -8,6 +8,7 @@ import type { WebhookInput } from "../webhooks";
 import type { WorkflowNode } from "../workflows";
 import {
   deadToContract,
+  deliveryToContract,
   jobToContract,
   webhookToContract,
   workerToContract,
@@ -189,20 +190,24 @@ export function deleteWebhook(queue: Queue, id: string) {
 
 export async function testWebhook(queue: Queue, id: string) {
   const delivery = await queue.webhooks.test(id);
-  return delivery ? { status: delivery.status, delivered: delivery.ok } : undefined;
+  // The SPA's TestWebhookResult wants the HTTP status code (or null).
+  return delivery ? { status: delivery.responseCode, delivered: delivery.ok } : undefined;
 }
 
-export function webhookDeliveries(queue: Queue, id: string) {
-  return queue.webhooks.deliveries(id).map((delivery) => ({
-    id: delivery.id,
-    subscription_id: delivery.webhookId,
-    event: delivery.event,
-    status: delivery.status,
-    ok: delivery.ok,
-    attempts: delivery.attempts,
-    error: delivery.error ?? null,
-    at: delivery.at,
-  }));
+export function webhookDeliveries(queue: Queue, id: string, url: URL) {
+  const limit = num(url, "limit") ?? 50;
+  const offset = num(url, "offset") ?? 0;
+  const statusFilter = url.searchParams.get("status");
+  const all = queue.webhooks
+    .deliveries(id)
+    .filter((delivery) => !statusFilter || delivery.status === statusFilter)
+    .reverse(); // newest first, matching the Python delivery store
+  return {
+    items: all.slice(offset, offset + limit).map(deliveryToContract),
+    total: all.length,
+    limit,
+    offset,
+  };
 }
 
 /** Parse a snake_case webhook request body into a {@link WebhookInput}. */
