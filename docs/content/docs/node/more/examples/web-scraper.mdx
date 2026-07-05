@@ -56,7 +56,7 @@ queue.task("aggregate", (pages: string[]) => {
 });
 
 queue.task("cleanupCache", async (olderThanMs: number) => {
-  queue.purgeCompleted(olderThanMs);
+  await queue.purgeCompleted(olderThanMs);
 });
 
 // Middleware: one log line per execution and per failure.

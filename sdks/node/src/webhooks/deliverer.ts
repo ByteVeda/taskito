@@ -5,6 +5,7 @@ import type { Delivery, Webhook } from "./types";
 
 const MAX_RECENT = 100;
 const MAX_BACKOFF_MS = 30_000;
+const MAX_RESPONSE_BODY_CHARS = 2048;
 
 const log = createLogger("webhooks");
 
@@ -17,7 +18,8 @@ export class Deliverer {
   }
 
   async deliver(webhook: Webhook, event: EventName, payload: OutcomeEvent): Promise<Delivery> {
-    const body = JSON.stringify({ event, ...payload });
+    const payloadRecord: Record<string, unknown> = { event, ...payload };
+    const body = JSON.stringify(payloadRecord);
     const headers: Record<string, string> = {
       "content-type": "application/json",
       ...webhook.headers,
@@ -27,8 +29,10 @@ export class Deliverer {
       headers["x-taskito-signature"] = `sha256=${signature}`;
     }
 
+    const createdAt = Date.now();
     let attempts = 0;
-    let status = 0;
+    let responseCode: number | null = null;
+    let responseBody: string | null = null;
     let error: string | undefined;
     while (attempts <= webhook.maxRetries) {
       attempts += 1;
@@ -39,14 +43,16 @@ export class Deliverer {
           body,
           signal: AbortSignal.timeout(webhook.timeoutMs),
         });
-        status = response.status;
+        responseCode = response.status;
+        responseBody = await readBody(response);
         if (response.ok) {
           error = undefined;
           break;
         }
         error = `HTTP ${response.status}`;
       } catch (cause) {
-        status = 0;
+        responseCode = null;
+        responseBody = null;
         error = cause instanceof Error ? cause.message : String(cause);
       }
       if (attempts <= webhook.maxRetries) {
@@ -54,15 +60,25 @@ export class Deliverer {
       }
     }
 
+    const completedAt = Date.now();
+    const ok = responseCode !== null && responseCode >= 200 && responseCode < 300;
     const delivery: Delivery = {
       id: randomUUID(),
       webhookId: webhook.id,
       event,
-      status,
-      ok: status >= 200 && status < 300,
+      // The retry chain is inline, so a non-delivered outcome is `dead`.
+      status: ok ? "delivered" : "dead",
+      ok,
       attempts,
+      payload: payloadRecord,
+      taskName: payload.taskName ?? null,
+      jobId: payload.jobId ?? null,
+      responseCode,
+      responseBody,
+      latencyMs: completedAt - createdAt,
       error,
-      at: Date.now(),
+      createdAt,
+      completedAt,
     };
     this.recent.push(delivery);
     if (this.recent.length > MAX_RECENT) {
@@ -75,6 +91,15 @@ export class Deliverer {
       );
     }
     return delivery;
+  }
+}
+
+/** Read a response body for the delivery log, truncated; `null` if unreadable. */
+async function readBody(response: Response): Promise<string | null> {
+  try {
+    return (await response.text()).slice(0, MAX_RESPONSE_BODY_CHARS);
+  } catch {
+    return null;
   }
 }
 

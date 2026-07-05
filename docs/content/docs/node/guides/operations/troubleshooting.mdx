@@ -59,6 +59,6 @@ in-flight job. Offload CPU-bound work to `worker_threads` and `await` it, or set
 a [`timeoutMs`](/node/guides/reliability/timeouts) so a stuck attempt is aborted.
 
 <Callout type="info">
-  Inspect failures with `queue.getJobErrors(id)` and `queue.deadLetters()`; see
+  Inspect failures with `await queue.getJobErrors(id)` and `await queue.deadLetters()`; see
   [job management](/node/guides/operations/inspection).
 </Callout>

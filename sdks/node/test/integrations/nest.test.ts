@@ -20,10 +20,13 @@ function newQueue(): Queue {
   return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-nest-")), "q.db") });
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 4000,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -44,8 +47,8 @@ it("injects TaskitoService bound to the queue", async () => {
 
   const id = service.enqueue("add", [6, 7]);
   worker = queue.runWorker();
-  expect(await waitFor(() => queue.stats().completed >= 1)).toBe(true);
+  expect(await waitFor(async () => (await queue.stats()).completed >= 1)).toBe(true);
 
   expect(await service.result(id)).toBe(13);
-  expect(service.stats().completed).toBeGreaterThanOrEqual(1);
+  expect((await service.stats()).completed).toBeGreaterThanOrEqual(1);
 });

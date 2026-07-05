@@ -52,6 +52,7 @@ import type {
 import { WebhookManager } from "./webhooks";
 import { Worker } from "./worker";
 import { WorkflowManager } from "./workflows";
+import { WorkflowTracker } from "./workflows/tracker";
 
 /** Construction options for a {@link Queue}. */
 export interface QueueOptions {
@@ -90,6 +91,8 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly webhookManager: WebhookManager;
   /** Built lazily — its constructor throws on addons lacking the `workflows` feature. */
   private workflowManager?: WorkflowManager;
+  /** Shared by workers and `workflows.resolveGate()` so gate timers clear. */
+  private workflowTracker?: WorkflowTracker;
 
   constructor(options: QueueOptions = {}) {
     this.native = JsQueue.open(toOpenOptions(options));
@@ -105,9 +108,22 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Workflow definitions and runs — DAG/linear orchestration over the queue. */
   get workflows(): WorkflowManager {
     if (!this.workflowManager) {
-      this.workflowManager = new WorkflowManager(this.native, this.serializer);
+      this.workflowManager = new WorkflowManager(
+        this.native,
+        this.serializer,
+        this.trackerIfSupported(),
+      );
     }
     return this.workflowManager;
+  }
+
+  /** The shared workflow tracker, or `undefined` on addons without workflows. */
+  private trackerIfSupported(): WorkflowTracker | undefined {
+    if (typeof this.native.markWorkflowNodeResult !== "function") {
+      return undefined;
+    }
+    this.workflowTracker ??= new WorkflowTracker(this.native, this.serializer);
+    return this.workflowTracker;
   }
 
   /** Create a distributed lock handle (not yet acquired). */
@@ -388,12 +404,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     const timeoutMs = options?.timeoutMs ?? 60_000;
     const pollMs = options?.pollMs ?? 200;
     const deadline = Date.now() + timeoutMs;
-    const seen = new Set<string>();
+    // Cursor-based: each poll fetches only rows after the last seen log id
+    // (UUIDv7 → time-ordered), instead of rescanning the full history.
+    let cursor: string | undefined;
     for (;;) {
-      yield* this.newPartials(id, seen);
+      const batch = this.newPartials(id, cursor);
+      cursor = batch.cursor;
+      yield* batch.values;
       const job = this.native.getJob(id);
       if (job && TERMINAL_STATUSES.has(job.status)) {
-        yield* this.newPartials(id, seen); // final drain for values committed at completion
+        yield* this.newPartials(id, cursor).values; // drain values committed at completion
         return;
       }
       if (Date.now() >= deadline) {
@@ -408,59 +428,59 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.getTaskLogs(id);
   }
 
-  /** Yield not-yet-seen partial-result entries (dedup by id, robust to same-ms writes). */
-  private *newPartials(id: string, seen: Set<string>): Generator<unknown> {
-    for (const log of this.native.getTaskLogs(id)) {
-      if (log.level !== STREAM_LEVEL || seen.has(log.id)) {
-        continue;
-      }
-      seen.add(log.id);
-      yield decodePartial(log.extra);
-    }
+  /** Partial-result values logged after `cursor`, plus the advanced cursor. */
+  private newPartials(id: string, cursor?: string): { values: unknown[]; cursor?: string } {
+    const logs = this.native.getTaskLogsAfter(id, cursor);
+    return {
+      values: logs
+        .filter((log) => log.level === STREAM_LEVEL)
+        .map((log) => decodePartial(log.extra)),
+      cursor: logs[logs.length - 1]?.id ?? cursor,
+    };
   }
 
   /** Job counts by status across all queues. */
-  stats(): Stats {
+  stats(): Promise<Stats> {
     return this.native.stats();
   }
 
   /** Job counts by status for a single queue. */
-  statsByQueue(queue: string): Stats {
+  statsByQueue(queue: string): Promise<Stats> {
     return this.native.statsByQueue(queue);
   }
 
   /** Job counts by status, keyed by queue name. */
-  statsAllQueues(): Record<string, Stats> {
+  statsAllQueues(): Promise<Record<string, Stats>> {
     return this.native.statsAllQueues();
   }
 
   /** List jobs, optionally filtered and paginated. */
-  listJobs(filter?: JobFilter): Job[] {
+  listJobs(filter?: JobFilter): Promise<Job[]> {
     return this.native.listJobs(filter);
   }
 
   /** Error history for a job (one entry per failed attempt). */
-  getJobErrors(id: string): JobError[] {
+  getJobErrors(id: string): Promise<JobError[]> {
     return this.native.getJobErrors(id);
   }
 
-  /** Per-execution task metrics within the last `sinceMs` milliseconds. */
-  getMetrics(sinceMs: number, task?: string): Metric[] {
+  /** Per-execution task metrics recorded at or after `sinceMs` (Unix epoch ms). */
+  getMetrics(sinceMs: number, task?: string): Promise<Metric[]> {
     return this.native.getMetrics(task ?? null, sinceMs);
   }
 
   /** List dead-letter entries (paginated). */
-  deadLetters(limit?: number, offset?: number): DeadJob[] {
+  deadLetters(limit?: number, offset?: number): Promise<DeadJob[]> {
     return this.native.deadLetters(limit, offset);
   }
 
   /** List dead-letter entries for a single task (paginated, newest first). */
-  deadLettersByTask(taskName: string, limit?: number, offset?: number): DeadJob[] {
+  deadLettersByTask(taskName: string, limit?: number, offset?: number): Promise<DeadJob[]> {
     return this.native.deadLettersByTask(taskName, limit, offset);
   }
 
   /** Delete every dead-letter entry for a task. Returns the count removed. */
-  purgeDeadByTask(taskName: string): number {
+  purgeDeadByTask(taskName: string): Promise<number> {
     return this.native.purgeDeadByTask(taskName);
   }
 
@@ -475,12 +495,12 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /** Purge dead-letter entries older than `olderThanMs`. Returns the count removed. */
-  purgeDead(olderThanMs: number): number {
+  purgeDead(olderThanMs: number): Promise<number> {
     return this.native.purgeDead(olderThanMs);
   }
 
   /** Purge completed jobs older than `olderThanMs`. Returns the count removed. */
-  purgeCompleted(olderThanMs: number): number {
+  purgeCompleted(olderThanMs: number): Promise<number> {
     return this.native.purgeCompleted(olderThanMs);
   }
 
@@ -500,7 +520,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /** Registered workers (heartbeat + identity). */
-  listWorkers(): WorkerInfo[] {
+  listWorkers(): Promise<WorkerInfo[]> {
     return this.native.listWorkers();
   }
 
@@ -513,6 +533,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       middleware: this.middleware,
       emitter: this.emitter,
       resources: this.resources,
+      workflowTracker: this.trackerIfSupported(),
       run: options,
     });
   }

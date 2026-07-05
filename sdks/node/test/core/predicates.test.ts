@@ -14,11 +14,11 @@ it("enqueues when the gate passes", () => {
   expect(typeof queue.enqueue("charge", [5])).toBe("string");
 });
 
-it("rejects the enqueue when the gate fails", () => {
+it("rejects the enqueue when the gate fails", async () => {
   const queue = newQueue().task("charge", (n: number) => n);
   queue.gate("charge", ({ args }) => args[0] > 0);
   expect(() => queue.enqueue("charge", [-1])).toThrow(PredicateRejectedError);
-  expect(queue.stats().pending).toBe(0);
+  expect((await queue.stats()).pending).toBe(0);
 });
 
 it("requires every gate to pass", () => {

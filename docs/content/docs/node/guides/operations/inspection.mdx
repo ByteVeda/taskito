@@ -10,19 +10,25 @@ queue-wide health — stats, per-task metrics, progress, workers — see
 ## Jobs
 
 ```ts
-queue.listJobs({ status: "failed", limit: 50 });
-queue.getJobErrors(id); // per-attempt error history
+await queue.listJobs({ status: "failed", limit: 50 });
+await queue.getJobErrors(id); // per-attempt error history
 ```
 
 ## Dead letters
 
 ```ts
-queue.deadLetters();
+await queue.deadLetters();
 queue.retryDead(deadId);
 queue.deleteDead(deadId);
-queue.purgeDead(olderThanMs);
-queue.purgeCompleted(olderThanMs);
+await queue.purgeDead(olderThanMs);
+await queue.purgeCompleted(olderThanMs);
 ```
+
+<Callout type="info">
+  Scan-heavy methods (`listJobs`, `getJobErrors`, `deadLetters`, `purgeDead`,
+  `purgeCompleted`) run off the JS event loop on a background thread pool and
+  return a `Promise`.
+</Callout>
 
 ## Pause / resume
 

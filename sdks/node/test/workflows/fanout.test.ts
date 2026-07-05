@@ -142,6 +142,40 @@ it("runs a fan-out without a fan-in collector", async () => {
   expect(nodesByName(handle).process?.fanOutCount).toBe(2);
 });
 
+it("runs a fan-out's sibling successor alongside its fan-in", async () => {
+  const queue = freshQueue();
+  let combined: number[] | undefined;
+  let notified = false;
+
+  queue.task("source", () => [1, 2]);
+  queue.task("double", (n: number) => n * 2);
+  queue.task("sum", (results: number[]) => {
+    combined = results;
+    return results.length;
+  });
+  queue.task("notify", () => {
+    notified = true;
+  });
+
+  const handle = queue.workflows
+    .define("fanout-sibling")
+    .step("source", "source")
+    .fanOut("process", { after: "source", task: "double", itemsFrom: "source" })
+    .fanIn("collect", { after: "process", task: "sum" })
+    .step("notify", "notify", { after: "process", condition: "always" })
+    .submit();
+
+  worker = queue.runWorker({ queues: ["default"] });
+  const run = await handle.wait({ timeoutMs: 10_000 });
+
+  expect(run.state).toBe("completed");
+  expect(notified).toBe(true);
+  expect(combined?.slice().sort((a, b) => a - b)).toEqual([2, 4]);
+  const nodes = nodesByName(handle);
+  expect(nodes.collect?.status).toBe("completed");
+  expect(nodes.notify?.status).toBe("completed");
+});
+
 it("rejects a fan-in whose target is not a fan-out step", () => {
   const queue = freshQueue();
   expect(() =>

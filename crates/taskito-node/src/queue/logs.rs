@@ -33,4 +33,19 @@ impl JsQueue {
         let rows = self.storage.get_task_logs(&job_id).map_err(to_napi_err)?;
         Ok(rows.into_iter().map(log_to_js).collect())
     }
+
+    /// Task-log entries for a job with id after `afterId` (UUIDv7 ids are
+    /// time-ordered, so the last seen id is the stream cursor).
+    #[napi]
+    pub fn get_task_logs_after(
+        &self,
+        job_id: String,
+        after_id: Option<String>,
+    ) -> Result<Vec<JsTaskLog>> {
+        let rows = self
+            .storage
+            .get_task_logs_after(&job_id, after_id.as_deref())
+            .map_err(to_napi_err)?;
+        Ok(rows.into_iter().map(log_to_js).collect())
+    }
 }

@@ -43,16 +43,19 @@ const queue = new Queue(options);
 
 ## Inspection & management
 
+Scan-heavy calls (marked `Promise` below) run off the JS event loop on a
+background thread pool.
+
 | Method | Description |
 |---|---|
-| `stats()` / `statsByQueue(q)` / `statsAllQueues()` | Counts by status. |
-| `listJobs(filter)` | List jobs. |
-| `getJobErrors(id)` | Per-attempt error history. |
-| `getMetrics(windowMs, task?)` | Aggregated metrics. |
-| `deadLetters()` / `retryDead(id)` / `deleteDead(id)` / `purgeDead(ms)` | DLQ ops. |
-| `purgeCompleted(ms)` | Drop old completed jobs. |
+| `stats()` → `Promise<Stats>` / `statsByQueue(q)` → `Promise<Stats>` / `statsAllQueues()` → `Promise<Record<string, Stats>>` | Counts by status. |
+| `listJobs(filter)` → `Promise<Job[]>` | List jobs. |
+| `getJobErrors(id)` → `Promise<JobError[]>` | Per-attempt error history. |
+| `getMetrics(windowMs, task?)` → `Promise<Metric[]>` | Aggregated metrics. |
+| `deadLetters()` → `Promise<DeadJob[]>` / `retryDead(id)` / `deleteDead(id)` / `purgeDead(ms)` → `Promise<number>` | DLQ ops. |
+| `purgeCompleted(ms)` → `Promise<number>` | Drop old completed jobs. |
 | `pauseQueue(q)` / `resumeQueue(q)` / `listPausedQueues()` | Queue control. |
-| `listWorkers()` | Registered workers. |
+| `listWorkers()` → `Promise<WorkerInfo[]>` | Registered workers. |
 
 ## Subsystems
 

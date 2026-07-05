@@ -1,14 +1,16 @@
-//! Management (mutating) methods on `JsQueue`.
+//! Management (mutating) methods on `JsQueue`. List/purge methods scan whole
+//! tables, so they are async and offload to the blocking pool; single-row
+//! operations stay sync.
 
 use std::collections::HashMap;
 
-use napi::bindgen_prelude::Result;
+use napi::bindgen_prelude::{spawn_blocking, Result};
 use napi_derive::napi;
 use taskito_core::Storage;
 
 use super::JsQueue;
 use crate::convert::{dead_job_to_js, JsDeadJob};
-use crate::error::{non_negative, to_napi_err};
+use crate::error::{join_to_napi_err, non_negative, to_napi_err};
 
 const DEFAULT_LIMIT: i64 = 50;
 
@@ -16,16 +18,25 @@ const DEFAULT_LIMIT: i64 = 50;
 impl JsQueue {
     /// List dead-letter entries (paginated).
     #[napi]
-    pub fn dead_letters(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<JsDeadJob>> {
+    pub async fn dead_letters(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<JsDeadJob>> {
         let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
         let offset = non_negative(offset.unwrap_or(0), "offset")?;
-        let dead = self.storage.list_dead(limit, offset).map_err(to_napi_err)?;
-        Ok(dead.into_iter().map(dead_job_to_js).collect())
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let dead = storage.list_dead(limit, offset).map_err(to_napi_err)?;
+            Ok(dead.into_iter().map(dead_job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
     }
 
     /// List dead-letter entries for a single task (paginated, newest first).
     #[napi]
-    pub fn dead_letters_by_task(
+    pub async fn dead_letters_by_task(
         &self,
         task_name: String,
         limit: Option<i64>,
@@ -33,20 +44,29 @@ impl JsQueue {
     ) -> Result<Vec<JsDeadJob>> {
         let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
         let offset = non_negative(offset.unwrap_or(0), "offset")?;
-        let dead = self
-            .storage
-            .list_dead_by_task(&task_name, limit, offset)
-            .map_err(to_napi_err)?;
-        Ok(dead.into_iter().map(dead_job_to_js).collect())
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let dead = storage
+                .list_dead_by_task(&task_name, limit, offset)
+                .map_err(to_napi_err)?;
+            Ok(dead.into_iter().map(dead_job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
     }
 
     /// Delete every dead-letter entry for a task. Returns the count removed.
     #[napi]
-    pub fn purge_dead_by_task(&self, task_name: String) -> Result<i64> {
-        self.storage
-            .purge_dead_by_task(&task_name)
-            .map(|n| n as i64)
-            .map_err(to_napi_err)
+    pub async fn purge_dead_by_task(&self, task_name: String) -> Result<i64> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .purge_dead_by_task(&task_name)
+                .map(|n| n as i64)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
     }
 
     /// Re-enqueue a dead-letter entry. Returns the new job id.
@@ -63,22 +83,32 @@ impl JsQueue {
 
     /// Purge dead-letter entries older than `older_than_ms`. Returns the count removed.
     #[napi]
-    pub fn purge_dead(&self, older_than_ms: i64) -> Result<i64> {
+    pub async fn purge_dead(&self, older_than_ms: i64) -> Result<i64> {
         let older_than_ms = non_negative(older_than_ms, "olderThanMs")?;
-        self.storage
-            .purge_dead(older_than_ms)
-            .map(|n| n as i64)
-            .map_err(to_napi_err)
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .purge_dead(older_than_ms)
+                .map(|n| n as i64)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
     }
 
     /// Purge completed jobs older than `older_than_ms`. Returns the count removed.
     #[napi]
-    pub fn purge_completed(&self, older_than_ms: i64) -> Result<i64> {
+    pub async fn purge_completed(&self, older_than_ms: i64) -> Result<i64> {
         let older_than_ms = non_negative(older_than_ms, "olderThanMs")?;
-        self.storage
-            .purge_completed(older_than_ms)
-            .map(|n| n as i64)
-            .map_err(to_napi_err)
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .purge_completed(older_than_ms)
+                .map(|n| n as i64)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
     }
 
     /// Pause a queue — workers stop dispatching its jobs until resumed.

@@ -44,16 +44,18 @@ export function serveScaler(queue: Queue, options: ScalerOptions = {}): Server {
     }
     if (url.pathname === "/api/scaler" && req.method === "GET") {
       const queueName = url.searchParams.get("queue") ?? defaultQueue;
-      try {
-        const metricValue = queueName
-          ? queue.statsByQueue(queueName).pending
-          : queue.stats().pending;
-        sendJson(res, 200, { metricValue, targetValue, queueName: queueName ?? "*" });
-      } catch (error) {
+      void (async () => {
+        const stats = queueName ? await queue.statsByQueue(queueName) : await queue.stats();
+        sendJson(res, 200, {
+          metricValue: stats.pending,
+          targetValue,
+          queueName: queueName ?? "*",
+        });
+      })().catch((error) => {
         // Keep backend/path details in the logs; never echo them to the caller.
         log.error(() => "scaler metric read failed", error);
         sendJson(res, 500, { error: "internal server error" });
-      }
+      });
       return;
     }
     sendJson(res, 404, { error: "not found" });

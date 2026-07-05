@@ -885,6 +885,32 @@ fn run_storage_tests(s: &impl Storage) {
     test_archived_job_payload_resolves(s);
     test_concurrent_dequeue_no_double_claim(s);
     test_rate_limit_token_exhaustion(s);
+    test_task_logs_after_cursor(s);
+}
+
+fn test_task_logs_after_cursor(s: &impl Storage) {
+    let job = s.enqueue(make_job("q-logs", "log_task")).unwrap();
+    for i in 0..3 {
+        s.write_task_log(&job.id, "log_task", "result", &format!("m{i}"), None)
+            .unwrap();
+    }
+
+    // No cursor → everything, in id (time) order, matching get_task_logs.
+    let all = s.get_task_logs_after(&job.id, None).unwrap();
+    assert_eq!(all.len(), 3);
+    assert!(all.windows(2).all(|w| w[0].id < w[1].id));
+
+    // A cursor at entry N yields only the entries written after it.
+    let after_first = s.get_task_logs_after(&job.id, Some(&all[0].id)).unwrap();
+    assert_eq!(
+        after_first
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        all[1..].iter().map(|r| r.id.as_str()).collect::<Vec<_>>()
+    );
+    let after_last = s.get_task_logs_after(&job.id, Some(&all[2].id)).unwrap();
+    assert!(after_last.is_empty());
 }
 
 fn test_rate_limit_token_exhaustion(s: &impl Storage) {

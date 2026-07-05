@@ -11,10 +11,10 @@ export function registerDlq(program: Command): void {
     .description("List dead-letter entries")
     .option("--limit <n>", "page size", "50")
     .option("--offset <n>", "page offset", "0")
-    .action((options: { limit?: string; offset?: string }, command: Command) => {
+    .action(async (options: { limit?: string; offset?: string }, command: Command) => {
       const globals = command.optsWithGlobals() as GlobalOptions;
       const queue = connect(globals);
-      const dead = queue.deadLetters(
+      const dead = await queue.deadLetters(
         nonNegativeIntFlag(options.limit, "limit"),
         nonNegativeIntFlag(options.offset, "offset"),
       );
@@ -52,9 +52,9 @@ export function registerDlq(program: Command): void {
     .command("purge")
     .description("Purge dead-letter entries older than a cutoff")
     .option("--older-than-ms <n>", "age cutoff in ms", "0")
-    .action((options: { olderThanMs?: string }, command: Command) => {
+    .action(async (options: { olderThanMs?: string }, command: Command) => {
       const queue = connect(command.optsWithGlobals() as GlobalOptions);
       const olderThanMs = nonNegativeIntFlag(options.olderThanMs, "older-than-ms") ?? 0;
-      printJson({ purged: queue.purgeDead(olderThanMs) });
+      printJson({ purged: await queue.purgeDead(olderThanMs) });
     });
 }

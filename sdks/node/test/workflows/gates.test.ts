@@ -88,6 +88,73 @@ it("skips downstream and fails the run when a gate is rejected", async () => {
   expect(nodes.ship?.status).toBe("skipped");
 });
 
+it("starts saga compensation when a gate is rejected", async () => {
+  const queue = freshQueue();
+  const rollbacks: string[] = [];
+
+  queue.task("reserve", () => "reservation");
+  queue.task("ship", () => 1);
+  queue.task("unreserve", (forward: string) => rollbacks.push(`unreserve:${forward}`));
+
+  const handle = queue.workflows
+    .define("gate-reject-saga")
+    .step("reserve", "reserve", { compensate: "unreserve" })
+    .gate("review", { after: "reserve" })
+    .step("ship", "ship", { after: "review" })
+    .submit();
+
+  worker = queue.runWorker({ queues: ["default"] });
+  expect(await waitFor(() => nodesByName(handle).review?.status === "waiting_approval")).toBe(true);
+
+  queue.workflows.rejectGate(handle.runId, "review", "not allowed");
+
+  const run = await handle.wait({ timeoutMs: 8000 });
+  expect(run.state).toBe("compensated");
+  expect(rollbacks).toEqual(["unreserve:reservation"]);
+  expect(nodesByName(handle).reserve?.status).toBe("compensated");
+});
+
+it("resolves the parent node when a gate inside a sub-workflow is approved", async () => {
+  const queue = freshQueue();
+  const ran: string[] = [];
+
+  queue.task("prep", () => ran.push("prep"));
+  queue.task("childTask", () => ran.push("childTask"));
+  queue.task("finish", () => ran.push("finish"));
+
+  const child = queue.workflows
+    .define("child-gated")
+    .step("a", "childTask")
+    .gate("approval", { after: "a" })
+    .build();
+
+  const handle = queue.workflows
+    .define("parent-gated")
+    .step("prep", "prep")
+    .subWorkflow("sub", { after: "prep", workflow: child })
+    .step("finish", "finish", { after: "sub" })
+    .submit();
+
+  worker = queue.runWorker({ queues: ["default"] });
+
+  expect(await waitFor(() => queue.workflows.children(handle.runId).length > 0)).toBe(true);
+  const childId = queue.workflows.children(handle.runId)[0]?.id ?? "";
+  expect(
+    await waitFor(() =>
+      queue.workflows
+        .nodes(childId)
+        .some((n) => n.nodeName === "approval" && n.status === "waiting_approval"),
+    ),
+  ).toBe(true);
+
+  queue.workflows.approveGate(childId, "approval");
+
+  const run = await handle.wait({ timeoutMs: 10_000 });
+  expect(run.state).toBe("completed");
+  expect(nodesByName(handle).sub?.status).toBe("completed");
+  expect(ran).toEqual(["prep", "childTask", "finish"]);
+});
+
 it("auto-resolves a gate on timeout per onTimeout", async () => {
   const queue = freshQueue();
   let shipped = false;

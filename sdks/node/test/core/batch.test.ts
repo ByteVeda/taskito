@@ -25,7 +25,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<bool
   return false;
 }
 
-it("enqueueMany inserts a batch and returns ids in input order", () => {
+it("enqueueMany inserts a batch and returns ids in input order", async () => {
   const queue = newQueue();
   queue.task("double", (n: number) => n * 2);
 
@@ -37,7 +37,7 @@ it("enqueueMany inserts a batch and returns ids in input order", () => {
   ]);
   expect(ids).toHaveLength(3);
   expect(new Set(ids).size).toBe(3); // distinct ids
-  expect(queue.stats().pending).toBe(3);
+  expect((await queue.stats()).pending).toBe(3);
 
   // Returned ids must line up with the input rows, not just be present.
   expect(ids.map((id) => queue.getJob(id)?.queue)).toEqual(["q0", "q1", "q2"]);

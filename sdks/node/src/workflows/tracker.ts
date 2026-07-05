@@ -122,8 +122,9 @@ export class WorkflowTracker {
       }
       this.advance(outcome.jobId, ref.runId, ref.nodeName, succeeded, outcome.error ?? null);
     } catch (error) {
-      // Workflow bookkeeping must never break the worker loop.
-      log.debug(() => `workflow advance for ${outcome.jobId} failed`, error);
+      // Workflow bookkeeping must never break the worker loop — but a swallowed
+      // failure means a stuck run, so it must be visible at the default level.
+      log.error(() => `workflow advance for ${outcome.jobId} failed`, error);
     }
   }
 
@@ -378,9 +379,9 @@ export class WorkflowTracker {
     const fanInNode = this.fanInNodeFor(parent, plan);
     if (fanInNode) {
       this.createFanInJob(runId, fanInNode, childJobIds, plan);
-    } else {
-      this.evaluateSuccessors(runId, parent, plan);
     }
+    // evaluateSuccessors skips fan-in nodes, so the combiner isn't recreated.
+    this.evaluateSuccessors(runId, parent, plan);
   }
 
   /** Read `itemsFrom`'s array result and expand the fan-out into one child per item. */
@@ -446,10 +447,18 @@ export class WorkflowTracker {
     );
   }
 
-  /** Enqueue/expand/skip any deferred successor whose predecessors are now all terminal. */
+  /** Enqueue/expand/skip any successor whose predecessors are now all terminal. */
   private evaluateSuccessors(runId: string, nodeName: string, plan: RunPlan): void {
     for (const succ of plan.successors.get(nodeName) ?? []) {
-      if (!plan.deferred.has(succ) || !this.allPredecessorsTerminal(runId, succ, plan)) {
+      if (!this.allPredecessorsTerminal(runId, succ, plan)) {
+        continue;
+      }
+      if (!plan.deferred.has(succ)) {
+        // The core's fail-fast cascade is suppressed on managed runs, so a
+        // static successor of a failed predecessor must be skipped here.
+        if (!this.shouldExecute(runId, succ, plan)) {
+          this.skipNode(runId, succ, plan);
+        }
         continue;
       }
       // Evaluate the condition first: a not-taken branch is skipped (and the
@@ -535,7 +544,7 @@ export class WorkflowTracker {
       return;
     }
     this.evaluateSuccessors(runId, node, plan);
-    this.evictIfTerminal(runId, this.native.finalizeRunIfTerminal(runId));
+    this.settle(runId, this.native.finalizeRunIfTerminal(runId));
   }
 
   private clearGateTimer(runId: string, node: string): void {

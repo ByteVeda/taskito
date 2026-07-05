@@ -8,6 +8,9 @@
 import { Counter, register as defaultRegister, Gauge, Histogram, type Registry } from "prom-client";
 import type { Middleware } from "../middleware";
 import type { Queue } from "../queue";
+import { createLogger } from "../utils";
+
+const log = createLogger("prometheus");
 
 /** The per-(registry, namespace) metric bundle, created once and reused. */
 interface TaskitoMetrics {
@@ -170,8 +173,13 @@ export class PrometheusStatsCollector {
     if (this.timer) {
       return;
     }
-    this.sample();
-    this.timer = setInterval(() => this.sample(), this.intervalMs);
+    const sampleSafely = () =>
+      void this.sample().catch((error) => {
+        // A transient storage failure must not kill the polling loop.
+        log.warn(() => "stats sample failed", error);
+      });
+    sampleSafely();
+    this.timer = setInterval(sampleSafely, this.intervalMs);
     this.timer.unref();
   }
 
@@ -184,10 +192,10 @@ export class PrometheusStatsCollector {
   }
 
   /** Read current queue/DLQ stats into the gauges. Public for one-shot scrapes. */
-  sample(): void {
-    for (const [name, stats] of Object.entries(this.queue.statsAllQueues())) {
+  async sample(): Promise<void> {
+    for (const [name, stats] of Object.entries(await this.queue.statsAllQueues())) {
       this.metrics.queueDepth.set({ queue: name }, stats.pending);
     }
-    this.metrics.dlqSize.set(this.queue.stats().dead);
+    this.metrics.dlqSize.set((await this.queue.stats()).dead);
   }
 }

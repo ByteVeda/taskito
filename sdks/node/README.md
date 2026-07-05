@@ -64,6 +64,12 @@ automatically. Postgres isolates its tables in the `schema` (default
 `"taskito"`); Redis isolates its keys under `prefix`. Override either to share
 or separate state.
 
+Scan-heavy methods (`stats*`, `listJobs`, `deadLetters*`, `purge*`,
+`listWorkers`, `getMetrics`, `getJobErrors`) are async and run off the event
+loop. Single-row operations (`enqueue`, `getJob`, `cancelJob`, …) are sync and
+block for one storage round-trip — negligible on SQLite, but on Postgres/Redis
+that is a network hop, so keep them off latency-critical request paths.
+
 ## Enqueue options
 
 `priority`, `maxRetries`, `timeoutMs`, `delayMs` (delayed run), `uniqueKey`
@@ -92,18 +98,18 @@ queue.requestCancel(jobId); // aborts the task's signal
 ## Inspection & management
 
 ```ts
-queue.stats();              // { pending, running, completed, failed, dead, cancelled }
-queue.statsByQueue("default");
-queue.statsAllQueues();
-queue.listJobs({ status: "failed", limit: 50 });
-queue.getJobErrors(id);
-queue.getMetrics(3600_000, "add");
+await queue.stats();        // { pending, running, completed, failed, dead, cancelled }
+await queue.statsByQueue("default");
+await queue.statsAllQueues();
+await queue.listJobs({ status: "failed", limit: 50 });
+await queue.getJobErrors(id);
+await queue.getMetrics(3600_000, "add");
 
-queue.deadLetters();        // dead-letter entries
+await queue.deadLetters();  // dead-letter entries
 queue.retryDead(deadId);    // re-enqueue
 queue.deleteDead(deadId);
-queue.purgeDead(olderThanMs);
-queue.purgeCompleted(olderThanMs);
+await queue.purgeDead(olderThanMs);
+await queue.purgeCompleted(olderThanMs);
 
 queue.pauseQueue("default");
 queue.resumeQueue("default");

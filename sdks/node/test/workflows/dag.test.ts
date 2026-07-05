@@ -68,6 +68,35 @@ it("fails the run and skips downstream steps when a step dead-letters", async ()
   expect(status.c).toBe("skipped");
 });
 
+it("skips a static successor of a failed step in a managed run", async () => {
+  const queue = freshQueue();
+  const ran: string[] = [];
+  queue.task("boom", () => {
+    throw new Error("kaboom");
+  });
+  queue.task("after", () => ran.push("after"));
+  queue.task("recover", () => ran.push("recover"));
+
+  // `recover`'s condition makes the run tracker-managed, which suppresses the
+  // core's fail-fast cascade — the tracker must settle `next` itself.
+  const handle = queue.workflows
+    .define("managed-static-cascade")
+    .step("risky", "boom", { maxRetries: 0 })
+    .step("next", "after", { after: "risky" })
+    .step("recover", "recover", { after: "risky", condition: "on_failure" })
+    .submit();
+
+  worker = queue.runWorker();
+  const run = await handle.wait({ timeoutMs: 8000 });
+
+  expect(run.state).toBe("failed");
+  const status = Object.fromEntries(handle.nodes().map((n) => [n.nodeName, n.status]));
+  expect(status.risky).toBe("failed");
+  expect(status.next).toBe("skipped");
+  expect(status.recover).toBe("completed");
+  expect(ran).toEqual(["recover"]);
+});
+
 it("lists submitted runs and filters by state", async () => {
   const queue = freshQueue();
   queue.task("noop", () => null);

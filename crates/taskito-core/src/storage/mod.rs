@@ -399,6 +399,13 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::storage::models::TaskLogRow>> {
                 self.get_task_logs(job_id)
             }
+            fn get_task_logs_after(
+                &self,
+                job_id: &str,
+                after_id: Option<&str>,
+            ) -> $crate::error::Result<Vec<$crate::storage::models::TaskLogRow>> {
+                self.get_task_logs_after(job_id, after_id)
+            }
             fn query_task_logs(
                 &self,
                 task_name: Option<&str>,
@@ -930,6 +937,13 @@ impl Storage for StorageBackend {
     }
     fn get_task_logs(&self, job_id: &str) -> Result<Vec<models::TaskLogRow>> {
         delegate!(self, get_task_logs, job_id)
+    }
+    fn get_task_logs_after(
+        &self,
+        job_id: &str,
+        after_id: Option<&str>,
+    ) -> Result<Vec<models::TaskLogRow>> {
+        delegate!(self, get_task_logs_after, job_id, after_id)
     }
     fn query_task_logs(
         &self,

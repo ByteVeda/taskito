@@ -21,10 +21,13 @@ function newQueue(): Queue {
   return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-fastify-")), "q.db") });
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 4000,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -48,7 +51,7 @@ it("serves the REST API through a prefixed plugin", async () => {
   const { jobId } = enqueued.json() as { jobId: string };
 
   worker = queue.runWorker();
-  expect(await waitFor(() => queue.stats().completed >= 1)).toBe(true);
+  expect(await waitFor(async () => (await queue.stats()).completed >= 1)).toBe(true);
 
   const result = await app.inject({ method: "GET", url: `/tasks/jobs/${jobId}/result` });
   expect(result.json()).toMatchObject({ jobId, status: "completed", result: 9 });

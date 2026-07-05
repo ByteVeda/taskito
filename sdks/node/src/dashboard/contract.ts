@@ -2,7 +2,7 @@
 // (`dashboard/`) expects. Timestamps are Unix milliseconds throughout.
 
 import type { DeadJob, Job, WorkerInfo } from "../types";
-import type { Webhook } from "../webhooks";
+import type { Delivery, Webhook } from "../webhooks";
 import type { WorkflowNode, WorkflowRun } from "../workflows";
 
 /** Replace header values with a mask so outbound credentials aren't exposed. */
@@ -28,6 +28,26 @@ export function webhookToContract(webhook: Webhook) {
     description: webhook.description ?? null,
     created_at: webhook.createdAt,
     updated_at: webhook.updatedAt,
+  };
+}
+
+/** Map a webhook delivery to the SPA's `WebhookDelivery` contract. */
+export function deliveryToContract(delivery: Delivery) {
+  return {
+    id: delivery.id,
+    subscription_id: delivery.webhookId,
+    event: delivery.event,
+    payload: delivery.payload,
+    task_name: delivery.taskName,
+    job_id: delivery.jobId,
+    status: delivery.status,
+    attempts: delivery.attempts,
+    response_code: delivery.responseCode,
+    response_body: delivery.responseBody,
+    latency_ms: delivery.latencyMs,
+    error: delivery.error ?? null,
+    created_at: delivery.createdAt,
+    completed_at: delivery.completedAt,
   };
 }
 

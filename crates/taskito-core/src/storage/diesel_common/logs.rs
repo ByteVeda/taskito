@@ -43,6 +43,27 @@ macro_rules! impl_diesel_log_ops {
                 Ok(rows)
             }
 
+            /// Logs for a job with id strictly after `after_id` (cursor scan).
+            pub fn get_task_logs_after(
+                &self,
+                job_id: &str,
+                after_id: Option<&str>,
+            ) -> Result<Vec<TaskLogRow>> {
+                let mut conn = self.conn()?;
+                let mut query = task_logs::table
+                    .filter(task_logs::job_id.eq(job_id))
+                    .into_boxed();
+                if let Some(cursor) = after_id {
+                    query = query.filter(task_logs::id.gt(cursor.to_string()));
+                }
+                // UUIDv7 ids sort by creation time, so id order == time order.
+                let rows = query
+                    .order(task_logs::id.asc())
+                    .select(TaskLogRow::as_select())
+                    .load(&mut conn)?;
+                Ok(rows)
+            }
+
             /// Query logs by task name, level, etc.
             pub fn query_task_logs(
                 &self,

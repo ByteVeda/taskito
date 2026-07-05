@@ -187,15 +187,20 @@ class WorkflowTracker:
     # ── Successor evaluation ───────────────────────────────────────
 
     def _evaluate_successors(self, run_id: str, completed_node: str, config: _RunConfig) -> None:
-        """Evaluate and create/skip deferred successor nodes."""
+        """Evaluate and create/skip successor nodes."""
         for successor in config.successors.get(completed_node, []):
-            if successor not in config.deferred_nodes:
-                continue
             meta = config.step_metadata.get(successor)
             if meta is None:
                 continue
 
             if not dag.all_predecessors_terminal(self, run_id, successor, config):
+                continue
+
+            if successor not in config.deferred_nodes:
+                # The core's fail-fast cascade is suppressed on managed runs, so
+                # a static successor of a failed predecessor is skipped here.
+                if not dag.should_execute(self, run_id, successor, config):
+                    dag.skip_and_propagate(self, run_id, successor, config)
                 continue
 
             # Fan-out/fan-in nodes: only skip them here (expansion is

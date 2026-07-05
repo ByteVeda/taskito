@@ -7,10 +7,10 @@ export function registerStats(program: Command): void {
     .command("stats")
     .description("Show job counts by status")
     .option("-q, --queue <name>", "limit to a single queue")
-    .action((options: { queue?: string }, command: Command) => {
+    .action(async (options: { queue?: string }, command: Command) => {
       const globals = command.optsWithGlobals() as GlobalOptions;
       const queue = connect(globals);
-      const stats = options.queue ? queue.statsByQueue(options.queue) : queue.stats();
+      const stats = options.queue ? await queue.statsByQueue(options.queue) : await queue.stats();
       if (globals.json) {
         printJson(stats);
       } else {

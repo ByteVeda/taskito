@@ -99,14 +99,16 @@ function defineRoutes(resultTimeoutMs: number): RestRoute[] {
       name: "stats",
       method: "GET",
       path: "/stats",
-      handle: (queue) => ({ status: 200, body: queue.stats() }),
+      handle: async (queue) => ({ status: 200, body: await queue.stats() }),
     },
     {
       name: "queue-stats",
       method: "GET",
       path: "/stats/queues",
-      handle: (queue, { query }) => {
-        const body = query.queue ? queue.statsByQueue(query.queue) : queue.statsAllQueues();
+      handle: async (queue, { query }) => {
+        const body = query.queue
+          ? await queue.statsByQueue(query.queue)
+          : await queue.statsAllQueues();
         return { status: 200, body };
       },
     },
@@ -125,7 +127,10 @@ function defineRoutes(resultTimeoutMs: number): RestRoute[] {
       name: "job-errors",
       method: "GET",
       path: "/jobs/:id/errors",
-      handle: (queue, { params }) => ({ status: 200, body: queue.getJobErrors(params.id ?? "") }),
+      handle: async (queue, { params }) => ({
+        status: 200,
+        body: await queue.getJobErrors(params.id ?? ""),
+      }),
     },
     {
       name: "job-result",
@@ -133,7 +138,12 @@ function defineRoutes(resultTimeoutMs: number): RestRoute[] {
       path: "/jobs/:id/result",
       handle: async (queue, { params, query }) => {
         const id = params.id ?? "";
-        const timeoutMs = toInt(query.timeoutMs) ?? resultTimeoutMs;
+        // Clamp client-supplied timeouts so a huge value can't pin the
+        // connection (and its polling loop) open indefinitely.
+        const timeoutMs = Math.min(
+          Math.max(toInt(query.timeoutMs) ?? resultTimeoutMs, 0),
+          resultTimeoutMs,
+        );
         try {
           const result = await queue.result(id, { timeoutMs });
           return { status: 200, body: { jobId: id, status: "completed", result } };
@@ -157,9 +167,9 @@ function defineRoutes(resultTimeoutMs: number): RestRoute[] {
       name: "dead-letters",
       method: "GET",
       path: "/dead-letters",
-      handle: (queue, { query }) => ({
+      handle: async (queue, { query }) => ({
         status: 200,
-        body: queue.deadLetters(toInt(query.limit), toInt(query.offset)),
+        body: await queue.deadLetters(toInt(query.limit), toInt(query.offset)),
       }),
     },
     {

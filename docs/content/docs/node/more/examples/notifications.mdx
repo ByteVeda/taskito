@@ -74,7 +74,7 @@ export function cancelScheduled(jobId: string) {
 }
 
 // 5. Inspection — what's still pending?
-export function pendingSends() {
+export async function pendingSends() {
   return queue.listJobs({ status: "pending", task: "sendEmail", limit: 50 });
 }
 ```

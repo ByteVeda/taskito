@@ -93,7 +93,8 @@ def expand_fan_out(
             succ_meta = config.step_metadata.get(successor)
             if succ_meta is not None and succ_meta.get("fan_in") is not None:
                 create_fan_in_job(tracker, run_id, successor, succ_meta, [], config)
-                return
+                break
+        # _evaluate_successors never creates fan-in nodes, so no duplicate.
         tracker._evaluate_successors(run_id, fan_out_node, config)
 
 
@@ -118,14 +119,14 @@ def handle_fan_out_child(
         tracker._try_finalize(run_id)
         return
 
-    # Trigger fan-in.
+    # Trigger fan-in, if any.
     for successor in config.successors.get(parent_name, []):
         meta = config.step_metadata.get(successor)
         if meta is not None and meta.get("fan_in") is not None:
             create_fan_in_job(tracker, run_id, successor, meta, child_job_ids, config)
-            return
+            break
 
-    # No fan-in — evaluate deferred successors.
+    # _evaluate_successors never creates fan-in nodes, so no duplicate.
     tracker._evaluate_successors(run_id, parent_name, config)
 
 

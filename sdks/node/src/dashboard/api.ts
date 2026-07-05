@@ -12,12 +12,12 @@ function numParam(query: URLSearchParams, key: string): number | undefined {
   return Number.isFinite(num) && num >= 0 ? num : undefined;
 }
 
-export function getStats(queue: Queue) {
-  return { overall: queue.stats(), queues: queue.statsAllQueues() };
+export async function getStats(queue: Queue) {
+  return { overall: await queue.stats(), queues: await queue.statsAllQueues() };
 }
 
-export function getQueues(queue: Queue) {
-  return { paused: queue.listPausedQueues(), stats: queue.statsAllQueues() };
+export async function getQueues(queue: Queue) {
+  return { paused: queue.listPausedQueues(), stats: await queue.statsAllQueues() };
 }
 
 export function getJobs(queue: Queue, query: URLSearchParams) {

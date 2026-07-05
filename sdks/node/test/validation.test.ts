@@ -22,22 +22,22 @@ describe("N-API boundary validation", () => {
     expect(() => queue.enqueue("t", [], { delayMs: -1 })).toThrow(/delayMs/);
   });
 
-  it("rejects negative pagination on listJobs", () => {
+  it("rejects negative pagination on listJobs", async () => {
     const queue = newQueue();
-    expect(() => queue.listJobs({ limit: -1 })).toThrow(/limit/);
-    expect(() => queue.listJobs({ offset: -1 })).toThrow(/offset/);
+    await expect(queue.listJobs({ limit: -1 })).rejects.toThrow(/limit/);
+    await expect(queue.listJobs({ offset: -1 })).rejects.toThrow(/offset/);
   });
 
-  it("rejects an unknown status filter rather than returning everything", () => {
+  it("rejects an unknown status filter rather than returning everything", async () => {
     const queue = newQueue();
-    expect(() => queue.listJobs({ status: "nope" })).toThrow(/unknown status/);
+    await expect(queue.listJobs({ status: "nope" })).rejects.toThrow(/unknown status/);
   });
 
-  it("rejects negative dead-letter pagination and purge cutoffs", () => {
+  it("rejects negative dead-letter pagination and purge cutoffs", async () => {
     const queue = newQueue();
-    expect(() => queue.deadLetters(-1)).toThrow(/limit/);
-    expect(() => queue.purgeDead(-1)).toThrow(/olderThanMs/);
-    expect(() => queue.purgeCompleted(-1)).toThrow(/olderThanMs/);
+    await expect(queue.deadLetters(-1)).rejects.toThrow(/limit/);
+    await expect(queue.purgeDead(-1)).rejects.toThrow(/olderThanMs/);
+    await expect(queue.purgeCompleted(-1)).rejects.toThrow(/olderThanMs/);
   });
 
   it("fails fast on a malformed task rate limit instead of disabling it", () => {

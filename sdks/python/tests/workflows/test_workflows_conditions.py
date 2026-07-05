@@ -403,3 +403,40 @@ def test_fan_out_with_on_failure_downstream(
     assert final.nodes["collect"].status == NodeStatus.SKIPPED
     assert final.nodes["handle_error"].status == NodeStatus.COMPLETED
     assert collected == ["error handled"]
+
+
+def test_static_successor_skipped_in_managed_run(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
+    """A plain (static) successor of a failed step is skipped in a managed run."""
+
+    @queue.task(max_retries=0)
+    def risky() -> str:
+        raise RuntimeError("boom")
+
+    ran: list[str] = []
+
+    @queue.task()
+    def follow_up() -> str:
+        ran.append("follow_up")
+        return "next"
+
+    @queue.task()
+    def recover() -> str:
+        ran.append("recover")
+        return "recovered"
+
+    wf = Workflow(name="managed_static_cascade")
+    wf.step("a", risky)
+    wf.step("b", follow_up, after="a")
+    wf.step("c", recover, after="a", condition="on_failure")
+
+    with workflow_worker():
+        run = queue.submit_workflow(wf)
+        final = run.wait(timeout=20)
+
+    assert final.state == WorkflowState.FAILED
+    assert final.nodes["a"].status == NodeStatus.FAILED
+    assert final.nodes["b"].status == NodeStatus.SKIPPED
+    assert final.nodes["c"].status == NodeStatus.COMPLETED
+    assert ran == ["recover"]

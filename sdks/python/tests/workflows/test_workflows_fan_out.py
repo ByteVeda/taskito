@@ -365,3 +365,46 @@ def test_linear_workflow_still_works(queue: Queue, workflow_worker: WorkflowWork
 
     assert final.state == WorkflowState.COMPLETED
     assert order == ["a", "b", "c"]
+
+
+def test_fan_out_sibling_successor_runs(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
+    """A fan-out parent's non-fan-in successor runs alongside the fan-in."""
+
+    @queue.task()
+    def source() -> list[int]:
+        return [1, 2]
+
+    @queue.task()
+    def double(x: int) -> int:
+        return x * 2
+
+    collected: list[int] = []
+
+    @queue.task()
+    def aggregate(results: list[int]) -> str:
+        collected.extend(results)
+        return "done"
+
+    ran: list[str] = []
+
+    @queue.task()
+    def notify() -> str:
+        ran.append("notify")
+        return "sent"
+
+    wf = Workflow(name="fan_out_sibling")
+    wf.step("fetch", source)
+    wf.step("process", double, after="fetch", fan_out="each")
+    wf.step("collect", aggregate, after="process", fan_in="all")
+    wf.step("notify", notify, after="process", condition="always")
+
+    with workflow_worker():
+        run = queue.submit_workflow(wf)
+        final = run.wait(timeout=20)
+
+    assert final.state == WorkflowState.COMPLETED
+    assert sorted(collected) == [2, 4]
+    assert ran == ["notify"]
+    assert final.nodes["notify"].status == NodeStatus.COMPLETED

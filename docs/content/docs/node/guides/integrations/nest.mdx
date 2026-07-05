@@ -35,6 +35,10 @@ export class ReportService {
       timeoutMs: 60_000,
     });
   }
+
+  async health() {
+    return this.tasks.stats(); // Promise<Stats>
+  }
 }
 ```
 
@@ -45,9 +49,9 @@ export class ReportService {
 | `enqueue(task, args?, options?)` | Enqueue a job, returns the job ID. |
 | `result(id, options?)` | Wait for a result. |
 | `getJob(id)` | Fetch job details by ID. |
-| `stats()` | Overall queue statistics. |
+| `stats()` | Overall queue statistics. Returns a `Promise`. |
 | `requestCancel(id)` | Request cancellation of a running job. |
-| `deadLetters(limit?, offset?)` | List dead-lettered jobs. |
+| `deadLetters(limit?, offset?)` | List dead-lettered jobs. Returns a `Promise`. |
 | `queue` | The raw `Queue` instance for the full API surface. |
 
 <Callout type="info">

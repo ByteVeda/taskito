@@ -20,10 +20,10 @@ export function registerJobs(program: Command): void {
     .option("-t, --task <t>", "filter by task name")
     .option("--limit <n>", "page size", "50")
     .option("--offset <n>", "page offset", "0")
-    .action((options: JobsOptions, command: Command) => {
+    .action(async (options: JobsOptions, command: Command) => {
       const globals = command.optsWithGlobals() as GlobalOptions;
       const queue = connect(globals);
-      const jobs = queue.listJobs({
+      const jobs = await queue.listJobs({
         status: options.status,
         queue: options.queue,
         task: options.task,

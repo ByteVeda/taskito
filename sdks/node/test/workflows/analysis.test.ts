@@ -67,3 +67,22 @@ it("reports node-status stats", () => {
   expect(stats?.completed).toBe(0); // no worker ran
   expect(stats?.failed).toBe(0);
 });
+
+it("counts cache_hit and compensated as terminal, not pending", () => {
+  const graph = {
+    nodes: [{ name: "a" }, { name: "b" }, { name: "c" }],
+    edges: [
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+    ],
+  };
+  const nodes = [
+    { runId: "r", nodeName: "a", status: "cache_hit" },
+    { runId: "r", nodeName: "b", status: "compensated" },
+    { runId: "r", nodeName: "c", status: "compensation_failed" },
+  ];
+  const stats = new WorkflowAnalysis(graph, nodes).stats();
+  expect(stats.pending).toBe(0);
+  expect(stats.completed).toBe(1); // cache_hit is a success
+  expect(stats.failed).toBe(2); // compensated + compensation_failed
+});

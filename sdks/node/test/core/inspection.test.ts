@@ -21,12 +21,12 @@ it("reports stats and lists jobs", async () => {
   queue.task("add", (a: number, b: number) => a + b);
   const id = queue.enqueue("add", [1, 2]);
 
-  expect(queue.stats().pending).toBe(1);
-  expect(queue.listJobs({ status: "pending" }).map((job) => job.id)).toContain(id);
+  expect((await queue.stats()).pending).toBe(1);
+  expect((await queue.listJobs({ status: "pending" })).map((job) => job.id)).toContain(id);
 
   worker = queue.runWorker();
   expect(await queue.result(id)).toBe(3);
-  expect(queue.stats().completed).toBe(1);
+  expect((await queue.stats()).completed).toBe(1);
 });
 
 it("result() rejects with JobFailedError on a dead job", async () => {
@@ -77,18 +77,18 @@ it("lists and purges dead-letter entries by task", async () => {
   worker = queue.runWorker();
 
   const deadline = Date.now() + 10000;
-  while (Date.now() < deadline && queue.deadLetters().length < 3) {
+  while (Date.now() < deadline && (await queue.deadLetters()).length < 3) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  expect(queue.deadLettersByTask("alpha")).toHaveLength(2);
-  expect(queue.deadLettersByTask("beta")).toHaveLength(1);
+  await expect(queue.deadLettersByTask("alpha")).resolves.toHaveLength(2);
+  await expect(queue.deadLettersByTask("beta")).resolves.toHaveLength(1);
   // Pagination applies within the task's own entries.
-  expect(queue.deadLettersByTask("alpha", 1, 1)).toHaveLength(1);
+  await expect(queue.deadLettersByTask("alpha", 1, 1)).resolves.toHaveLength(1);
 
-  expect(queue.purgeDeadByTask("alpha")).toBe(2);
-  expect(queue.deadLettersByTask("alpha")).toHaveLength(0);
-  expect(queue.deadLetters()).toHaveLength(1);
+  await expect(queue.purgeDeadByTask("alpha")).resolves.toBe(2);
+  await expect(queue.deadLettersByTask("alpha")).resolves.toHaveLength(0);
+  await expect(queue.deadLetters()).resolves.toHaveLength(1);
 });
 
 it("pauses and resumes a queue", () => {
@@ -103,7 +103,7 @@ it("pauses and resumes a queue", () => {
 async function waitForDead(queue: Queue, timeoutMs = 10000): Promise<DeadJob[]> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const dead = queue.deadLetters();
+    const dead = await queue.deadLetters();
     if (dead.length > 0) {
       return dead;
     }

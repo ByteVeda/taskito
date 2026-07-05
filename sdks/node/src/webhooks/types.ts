@@ -33,14 +33,28 @@ export interface Webhook {
   updatedAt: number;
 }
 
+/** Terminal state of a delivery attempt-chain. */
+export type DeliveryStatus = "delivered" | "failed" | "dead";
+
 /** The result of a single delivery attempt-chain. */
 export interface Delivery {
   id: string;
   webhookId: string;
   event: EventName;
-  status: number;
+  /** `delivered` on a 2xx; `dead` once every retry is exhausted. */
+  status: DeliveryStatus;
   ok: boolean;
   attempts: number;
+  /** The JSON body that was POSTed. */
+  payload: Record<string, unknown>;
+  taskName: string | null;
+  jobId: string | null;
+  /** Last HTTP status, or `null` when no request completed (network error). */
+  responseCode: number | null;
+  /** Last response body (truncated), or `null` when unread. */
+  responseBody: string | null;
+  latencyMs: number;
   error?: string;
-  at: number;
+  createdAt: number;
+  completedAt: number;
 }

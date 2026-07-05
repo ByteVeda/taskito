@@ -81,7 +81,7 @@ export const routes: Route[] = [
   {
     method: "GET",
     pattern: /^\/api\/webhooks\/([^/]+)\/deliveries$/,
-    handle: (q, _url, p) => h.webhookDeliveries(q, id(p)),
+    handle: (q, url, p) => h.webhookDeliveries(q, id(p), url),
   },
   {
     method: "GET",

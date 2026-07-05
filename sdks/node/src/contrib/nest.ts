@@ -39,7 +39,7 @@ export class TaskitoService {
   }
 
   /** Aggregate counts across all queues. */
-  stats(): Stats {
+  stats(): Promise<Stats> {
     return this.queue.stats();
   }
 
@@ -49,7 +49,7 @@ export class TaskitoService {
   }
 
   /** List dead-letter entries. */
-  deadLetters(limit?: number, offset?: number): DeadJob[] {
+  deadLetters(limit?: number, offset?: number): Promise<DeadJob[]> {
     return this.queue.deadLetters(limit, offset);
   }
 }
