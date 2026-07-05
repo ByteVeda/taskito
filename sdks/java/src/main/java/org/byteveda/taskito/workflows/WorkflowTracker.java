@@ -45,6 +45,8 @@ import org.byteveda.taskito.spi.QueueBackend;
  * run reaches a terminal state.
  */
 public final class WorkflowTracker {
+    private static final System.Logger LOG = System.getLogger(WorkflowTracker.class.getName());
+
     private final QueueBackend backend;
     private final Serializer serializer;
     private final ObjectMapper json = new ObjectMapper();
@@ -146,7 +148,11 @@ public final class WorkflowTracker {
             return;
         }
         if (succeeded) {
-            expandFanOutIfAny(ref.runId, ref.nodeName, jobId, plan);
+            try {
+                expandFanOutIfAny(ref.runId, ref.nodeName, jobId, plan);
+            } catch (RuntimeException e) {
+                failFanOutsOf(ref.runId, ref.nodeName, plan, e);
+            }
         }
         // Evaluate every successor's condition — running on-failure recovery nodes
         // and skip-cascading the rest. Replaces a blanket fail-fast cascade.
@@ -290,9 +296,63 @@ public final class WorkflowTracker {
             }
             createDeferredJobFor(runId, node);
         } catch (RuntimeException e) {
-            promotedNodes.remove(promotionKey);
-            throw e;
+            // A failed promotion (native error, missing payload, bad metadata) must
+            // never leave the node wedged PENDING with no trace — outcome listeners
+            // swallow throws, so rethrowing here would silently stall the run.
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    "promoting workflow node '" + node.name + "' in run " + runId + " failed",
+                    e);
+            failNodeAndCascade(runId, node.name, promotionKey, plan, e);
         }
+    }
+
+    /** Mark a node Failed so the run still settles; on storage failure, allow a later retry. */
+    private void failNodeAndCascade(
+            String runId, String nodeName, GateKey promotionKey, RunPlan plan, RuntimeException cause) {
+        try {
+            backend.failWorkflowNode(runId, nodeName, describe(cause));
+            promoteSuccessors(runId, nodeName, plan);
+            finalizeIfTerminal(runId);
+        } catch (RuntimeException e) {
+            // Even the failure record failed (e.g. storage down). Roll the dedupe
+            // marker back so the next outcome can retry the promotion.
+            promotedNodes.remove(promotionKey);
+            LOG.log(
+                    System.Logger.Level.ERROR,
+                    "failed to record failure of workflow node '" + nodeName + "' in run " + runId,
+                    e);
+        }
+    }
+
+    /**
+     * A fan-out expansion failed (undeserializable producer result, native error):
+     * fail each fan-out node instead of leaving it PENDING forever, then cascade.
+     */
+    private void failFanOutsOf(String runId, String producer, RunPlan plan, RuntimeException cause) {
+        LOG.log(
+                System.Logger.Level.WARNING,
+                "expanding fan-out(s) after node '" + producer + "' in run " + runId + " failed",
+                cause);
+        if (plan == null) {
+            return;
+        }
+        for (PlanNode fanOut : plan.successorsMatching(producer, candidate -> candidate.fanOut != null)) {
+            try {
+                backend.failWorkflowNode(runId, fanOut.name, describe(cause));
+                promoteSuccessors(runId, fanOut.name, plan);
+            } catch (RuntimeException e) {
+                LOG.log(
+                        System.Logger.Level.ERROR,
+                        "failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId,
+                        e);
+            }
+        }
+    }
+
+    private static String describe(RuntimeException cause) {
+        String message = cause.getMessage();
+        return cause.getClass().getSimpleName() + (message == null ? "" : ": " + message);
     }
 
     /** If a prior run cached this step's result within its TTL, mark it a cache hit instead of running it. */
