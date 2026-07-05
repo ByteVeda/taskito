@@ -5,8 +5,8 @@ and reverses the transform on the way in (worker) — compression, encryption,
 signing. Codecs compose: a chain encodes in list order and decodes in reverse,
 so ``[gzip, hmac]`` verifies integrity *before* decompressing.
 
-Wire formats match the Java and Node SDKs byte-for-byte, so codec-framed
-payloads are cross-SDK compatible.
+Wire formats are part of the cross-SDK contract, so codec-framed payloads
+decode from any Taskito SDK.
 
 Enable globally via ``Queue(codec=...)`` (wraps the queue serializer, covers
 payloads and results) or per task via ``Queue(codecs={"name": codec})`` +
@@ -89,9 +89,9 @@ class AesGcmCodec:
     """AES-GCM encryption codec.
 
     Wire format: ``[12-byte random nonce][ciphertext || 16-byte GCM tag]`` —
-    identical to the Java and Node SDK codecs. Requires the ``encryption``
-    extra (``pip install taskito[encryption]``). Key must be 16, 24, or 32
-    bytes (AES-128/192/256).
+    the cross-SDK contract. Requires the ``encryption`` extra
+    (``pip install taskito[encryption]``). Key must be 16, 24, or 32 bytes
+    (AES-128/192/256).
     """
 
     def __init__(self, key: bytes):
@@ -126,8 +126,7 @@ class AesGcmCodec:
 class HmacCodec:
     """HMAC-SHA256 signing codec (authenticates, does not encrypt).
 
-    Wire format: ``[32-byte mac][body]`` — identical to the Java and Node SDK
-    codecs.
+    Wire format: ``[32-byte mac][body]`` — the cross-SDK contract.
     """
 
     def __init__(self, key: bytes):
