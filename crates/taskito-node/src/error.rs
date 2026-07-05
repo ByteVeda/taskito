@@ -8,6 +8,14 @@ pub fn to_napi_err(err: QueueError) -> Error {
     Error::new(Status::GenericFailure, err.to_string())
 }
 
+/// Map a blocking-task join failure onto a napi [`Error`].
+pub fn join_to_napi_err(err: tokio::task::JoinError) -> Error {
+    Error::new(
+        Status::GenericFailure,
+        format!("blocking storage task failed: {err}"),
+    )
+}
+
 /// Build an `InvalidArg` error for caller-supplied input that fails validation
 /// at the N-API boundary (negative pagination, zero pool size, bad rate limit…).
 pub fn invalid_arg(message: impl Into<String>) -> Error {

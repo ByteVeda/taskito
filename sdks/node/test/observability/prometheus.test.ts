@@ -17,10 +17,13 @@ function newQueue(): Queue {
   return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-prom-")), "q.db") });
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 4000,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -45,7 +48,11 @@ it("records job counters and a duration histogram", async () => {
   queue.enqueue("boom", []);
   worker = queue.runWorker();
 
-  expect(await waitFor(() => queue.stats().completed >= 1 && queue.stats().dead >= 1)).toBe(true);
+  expect(
+    await waitFor(
+      async () => (await queue.stats()).completed >= 1 && (await queue.stats()).dead >= 1,
+    ),
+  ).toBe(true);
 
   const text = await register.metrics();
   expect(text).toContain('taskito_jobs_total{task="add",status="completed"} 1');
@@ -80,13 +87,14 @@ it("samples queue depth and DLQ size", async () => {
 
   const collector = new PrometheusStatsCollector(queue, { register, intervalMs: 60_000 });
   collector.start();
+  await collector.sample();
   let text = await register.metrics();
   expect(text).toContain('taskito_queue_depth{queue="default"} 2');
 
   // Drain to the DLQ, then re-sample.
   worker = queue.runWorker();
-  expect(await waitFor(() => queue.stats().dead >= 2)).toBe(true);
-  collector.sample();
+  expect(await waitFor(async () => (await queue.stats()).dead >= 2)).toBe(true);
+  await collector.sample();
   text = await register.metrics();
   expect(text).toContain("taskito_dlq_size 2");
   collector.stop();

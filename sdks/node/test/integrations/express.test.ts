@@ -32,10 +32,13 @@ async function serve(configure: (app: express.Express) => void): Promise<string>
   return `http://127.0.0.1:${port}`;
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 4000,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -58,7 +61,7 @@ it("enqueues, runs, and reports results over the REST router", async () => {
   expect(typeof jobId).toBe("string");
 
   worker = queue.runWorker();
-  expect(await waitFor(() => queue.stats().completed >= 1)).toBe(true);
+  expect(await waitFor(async () => (await queue.stats()).completed >= 1)).toBe(true);
 
   const result = await (await fetch(`${base}/tasks/jobs/${jobId}/result`)).json();
   expect(result).toMatchObject({ jobId, status: "completed", result: 5 });

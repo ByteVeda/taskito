@@ -39,16 +39,16 @@ export function stats(queue: Queue) {
   return queue.stats();
 }
 
-export function statsQueues(queue: Queue, url: URL) {
+export async function statsQueues(queue: Queue, url: URL) {
   const name = url.searchParams.get("queue");
-  return name ? { [name]: queue.statsByQueue(name) } : queue.statsAllQueues();
+  return name ? { [name]: await queue.statsByQueue(name) } : queue.statsAllQueues();
 }
 
 export function queuesPaused(queue: Queue) {
   return queue.listPausedQueues();
 }
 
-export function jobs(queue: Queue, url: URL) {
+export async function jobs(queue: Queue, url: URL) {
   const sp = url.searchParams;
   const page = sp.get("page");
   const pageSize = sp.get("pageSize");
@@ -56,15 +56,14 @@ export function jobs(queue: Queue, url: URL) {
   const offset =
     sp.get("offset") ??
     (page !== null && pageSize !== null ? String(Number(page) * Number(pageSize)) : undefined);
-  return queue
-    .listJobs({
-      status: sp.get("status") ?? undefined,
-      queue: sp.get("queue") ?? undefined,
-      task: sp.get("task") ?? undefined,
-      limit: toNonNegative(limit),
-      offset: toNonNegative(offset),
-    })
-    .map(jobToContract);
+  const found = await queue.listJobs({
+    status: sp.get("status") ?? undefined,
+    queue: sp.get("queue") ?? undefined,
+    task: sp.get("task") ?? undefined,
+    limit: toNonNegative(limit),
+    offset: toNonNegative(offset),
+  });
+  return found.map(jobToContract);
 }
 
 export function job(queue: Queue, id: string) {
@@ -72,24 +71,28 @@ export function job(queue: Queue, id: string) {
   return found ? jobToContract(found) : undefined;
 }
 
-export function deadLetters(queue: Queue, url: URL) {
-  return queue.deadLetters(num(url, "limit"), num(url, "offset")).map(deadToContract);
+export async function deadLetters(queue: Queue, url: URL) {
+  const dead = await queue.deadLetters(num(url, "limit"), num(url, "offset"));
+  return dead.map(deadToContract);
 }
 
-export function metrics(queue: Queue, url: URL) {
+export async function metrics(queue: Queue, url: URL) {
   const since = positiveOr(url.searchParams.get("since"), 3600);
   const task = url.searchParams.get("task") ?? undefined;
-  return aggregateByTask(queue.getMetrics(Date.now() - since * 1000, task));
+  return aggregateByTask(await queue.getMetrics(Date.now() - since * 1000, task));
 }
 
-export function timeseries(queue: Queue, url: URL) {
+export async function timeseries(queue: Queue, url: URL) {
   const since = positiveOr(url.searchParams.get("since"), 3600);
   const bucket = positiveOr(url.searchParams.get("bucket"), 60);
-  return bucketTimeseries(queue.getMetrics(Date.now() - since * 1000, undefined), bucket * 1000);
+  return bucketTimeseries(
+    await queue.getMetrics(Date.now() - since * 1000, undefined),
+    bucket * 1000,
+  );
 }
 
-export function workers(queue: Queue) {
-  return queue.listWorkers().map(workerToContract);
+export async function workers(queue: Queue) {
+  return (await queue.listWorkers()).map(workerToContract);
 }
 
 export function eventTypes(queue: Queue) {

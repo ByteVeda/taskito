@@ -60,7 +60,7 @@ it("onEnqueue can rewrite options before they reach the core", () => {
   expect(job?.metadata).toBe("tagged-by-mw");
 });
 
-it("a throwing onEnqueue aborts the enqueue", () => {
+it("a throwing onEnqueue aborts the enqueue", async () => {
   const queue = newQueue();
   queue.use({
     onEnqueue: (ctx) => {
@@ -72,7 +72,7 @@ it("a throwing onEnqueue aborts the enqueue", () => {
   queue.task("charge", (_amount: number) => undefined);
 
   expect(() => queue.enqueue("charge", [-5])).toThrow("amount must be non-negative");
-  expect(queue.stats().pending).toBe(0); // nothing was enqueued
+  expect((await queue.stats()).pending).toBe(0); // nothing was enqueued
 });
 
 it("runs onEnqueue hooks in registration order", () => {

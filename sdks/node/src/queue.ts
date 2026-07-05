@@ -420,47 +420,47 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /** Job counts by status across all queues. */
-  stats(): Stats {
+  stats(): Promise<Stats> {
     return this.native.stats();
   }
 
   /** Job counts by status for a single queue. */
-  statsByQueue(queue: string): Stats {
+  statsByQueue(queue: string): Promise<Stats> {
     return this.native.statsByQueue(queue);
   }
 
   /** Job counts by status, keyed by queue name. */
-  statsAllQueues(): Record<string, Stats> {
+  statsAllQueues(): Promise<Record<string, Stats>> {
     return this.native.statsAllQueues();
   }
 
   /** List jobs, optionally filtered and paginated. */
-  listJobs(filter?: JobFilter): Job[] {
+  listJobs(filter?: JobFilter): Promise<Job[]> {
     return this.native.listJobs(filter);
   }
 
   /** Error history for a job (one entry per failed attempt). */
-  getJobErrors(id: string): JobError[] {
+  getJobErrors(id: string): Promise<JobError[]> {
     return this.native.getJobErrors(id);
   }
 
   /** Per-execution task metrics within the last `sinceMs` milliseconds. */
-  getMetrics(sinceMs: number, task?: string): Metric[] {
+  getMetrics(sinceMs: number, task?: string): Promise<Metric[]> {
     return this.native.getMetrics(task ?? null, sinceMs);
   }
 
   /** List dead-letter entries (paginated). */
-  deadLetters(limit?: number, offset?: number): DeadJob[] {
+  deadLetters(limit?: number, offset?: number): Promise<DeadJob[]> {
     return this.native.deadLetters(limit, offset);
   }
 
   /** List dead-letter entries for a single task (paginated, newest first). */
-  deadLettersByTask(taskName: string, limit?: number, offset?: number): DeadJob[] {
+  deadLettersByTask(taskName: string, limit?: number, offset?: number): Promise<DeadJob[]> {
     return this.native.deadLettersByTask(taskName, limit, offset);
   }
 
   /** Delete every dead-letter entry for a task. Returns the count removed. */
-  purgeDeadByTask(taskName: string): number {
+  purgeDeadByTask(taskName: string): Promise<number> {
     return this.native.purgeDeadByTask(taskName);
   }
 
@@ -475,12 +475,12 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /** Purge dead-letter entries older than `olderThanMs`. Returns the count removed. */
-  purgeDead(olderThanMs: number): number {
+  purgeDead(olderThanMs: number): Promise<number> {
     return this.native.purgeDead(olderThanMs);
   }
 
   /** Purge completed jobs older than `olderThanMs`. Returns the count removed. */
-  purgeCompleted(olderThanMs: number): number {
+  purgeCompleted(olderThanMs: number): Promise<number> {
     return this.native.purgeCompleted(olderThanMs);
   }
 
@@ -500,7 +500,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /** Registered workers (heartbeat + identity). */
-  listWorkers(): WorkerInfo[] {
+  listWorkers(): Promise<WorkerInfo[]> {
     return this.native.listWorkers();
   }
 
