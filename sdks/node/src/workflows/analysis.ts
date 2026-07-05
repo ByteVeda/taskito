@@ -31,7 +31,8 @@ export interface WorkflowStats {
   pending: number;
 }
 
-const TERMINAL_FAILURE = new Set(["failed", "compensation_failed"]);
+// Failure-side terminal statuses: failed outright, rolled back, or rollback failed.
+const TERMINAL_FAILURE = new Set(["failed", "compensated", "compensation_failed"]);
 
 /**
  * Structural and status analysis of a workflow run's DAG. Built from the graph
@@ -174,7 +175,8 @@ export class WorkflowAnalysis {
     for (const name of this.nodeNames) {
       const status = this.nodeByName.get(name)?.status ?? "pending";
       byStatus[status] = (byStatus[status] ?? 0) + 1;
-      if (status === "completed") {
+      // A cache hit is a success: the node settled with a (reused) result.
+      if (status === "completed" || status === "cache_hit") {
         completed += 1;
       } else if (TERMINAL_FAILURE.has(status)) {
         failed += 1;
