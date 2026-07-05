@@ -378,9 +378,9 @@ export class WorkflowTracker {
     const fanInNode = this.fanInNodeFor(parent, plan);
     if (fanInNode) {
       this.createFanInJob(runId, fanInNode, childJobIds, plan);
-    } else {
-      this.evaluateSuccessors(runId, parent, plan);
     }
+    // evaluateSuccessors skips fan-in nodes, so the combiner isn't recreated.
+    this.evaluateSuccessors(runId, parent, plan);
   }
 
   /** Read `itemsFrom`'s array result and expand the fan-out into one child per item. */
