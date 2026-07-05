@@ -43,6 +43,7 @@ import org.byteveda.taskito.workflows.WorkflowTracker;
  * jobs.
  */
 public final class Worker implements AutoCloseable {
+    private static final System.Logger LOG = System.getLogger(Worker.class.getName());
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
     private static final ObjectMapper MESH_JSON = new ObjectMapper();
 
@@ -144,13 +145,25 @@ public final class Worker implements AutoCloseable {
         executor.shutdown(); // stop accepting; let running handlers finish
         try {
             if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                // Interrupt stragglers, then give them one more window: shutdownNow()
+                // only *requests* interruption, and a handler stuck in
+                // non-interruptible work can outlive it.
                 executor.shutdownNow();
+                if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    LOG.log(
+                            System.Logger.Level.WARNING,
+                            "handler threads still running after {0}s; closing the native worker anyway —"
+                                    + " their late completions will be rejected",
+                            2 * SHUTDOWN_TIMEOUT_SECONDS);
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             executor.shutdownNow();
         }
-        control.close(); // now safe to free the native handle — no handler can touch it
+        // Safe even if a straggler survives: JniWorkerControl serializes close()
+        // against in-flight native calls and rejects any call made afterwards.
+        control.close();
         if (tracker != null) {
             tracker.close(); // stop the gate-timeout scheduler
         }
