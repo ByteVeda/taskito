@@ -55,6 +55,29 @@ it("emits job.completed and runs before/after/onCompleted middleware", async () 
   expect(calls).toContain("completed");
 });
 
+it("survives async listener and hook rejections", async () => {
+  const queue = newQueue();
+  const events: OutcomeEvent[] = [];
+  // Both an async listener and an async outcome hook reject: neither may crash
+  // the process (unhandledRejection) or block later listeners.
+  queue.on("job.completed", async () => {
+    throw new Error("listener boom");
+  });
+  queue.on("job.completed", (event) => events.push(event));
+  queue.use({
+    onCompleted: (async () => {
+      throw new Error("hook boom");
+    }) as unknown as Middleware["onCompleted"],
+  });
+  queue.task("ok", () => 1);
+
+  queue.enqueue("ok");
+  worker = queue.runWorker();
+
+  expect(await waitFor(() => events.length > 0)).toBe(true);
+  expect(events[0]?.taskName).toBe("ok");
+});
+
 it("emits job.dead and runs onDeadLetter for an exhausted task", async () => {
   const queue = newQueue();
   const dead: OutcomeEvent[] = [];

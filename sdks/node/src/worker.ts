@@ -164,7 +164,10 @@ export class Worker {
       for (const mw of middleware) {
         const hook = mw[mapping.hook] as ((e: OutcomeEvent) => void) | undefined;
         try {
-          hook?.(event);
+          // Promise.resolve captures async hooks' rejections too.
+          void Promise.resolve(hook?.(event)).catch((error) => {
+            log.debug(() => `${mapping.hook} middleware hook rejected for ${outcome.jobId}`, error);
+          });
         } catch (error) {
           // outcome hook errors must not break the worker
           log.debug(() => `${mapping.hook} middleware hook threw for ${outcome.jobId}`, error);

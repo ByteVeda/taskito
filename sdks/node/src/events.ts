@@ -34,7 +34,11 @@ export class Emitter {
     }
     for (const handler of set) {
       try {
-        handler(payload);
+        // Promise.resolve captures async listeners' rejections (else they
+        // crash the process as unhandled rejections).
+        void Promise.resolve(handler(payload)).catch(() => {
+          // A listener rejecting must not break other listeners or the worker.
+        });
       } catch {
         // A listener throwing must not break other listeners or the worker.
       }
