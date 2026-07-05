@@ -150,11 +150,30 @@ jobs:
 
       # The cargo/copyNative tasks build only the host platform; skip them since
       # every platform's binary is already staged in resources from the matrix.
-      # Dry-run only assembles the JAR — keep publishing secrets out of it.
-      - name: Assemble JAR (dry-run)
+      # Dry-run assembles all publish artifacts so javadoc/doclint failures
+      # surface here, not during the live publish; secrets stay out of it.
+      - name: Assemble publish artifacts (dry-run)
         if: inputs.dry-run
         working-directory: sdks/java
-        run: ./gradlew jar -x cargoBuild -x copyNative --no-daemon
+        run: ./gradlew jar sourcesJar plainJavadocJar -x cargoBuild -x copyNative --no-daemon
+
+      # MR-jar layout + native bundling only come together here — assert them.
+      - name: Verify jar contents (dry-run)
+        if: inputs.dry-run
+        working-directory: sdks/java
+        run: |
+          jar=$(ls build/libs/taskito-*[0-9].jar)
+          echo "checking $jar"
+          unzip -p "$jar" META-INF/MANIFEST.MF | grep -q "Multi-Release: true"
+          unzip -l "$jar" | grep -q "META-INF/versions/22/org/byteveda/taskito/internal/FfmTransport.class"
+          for platform in linux-x86_64 linux-aarch64 osx-x86_64 osx-aarch64 windows-x86_64; do
+            unzip -l "$jar" | grep -q "org/byteveda/taskito/native/$platform/" \
+              || { echo "missing native library for $platform"; exit 1; }
+          done
+          sources=$(ls build/libs/taskito-*-sources.jar)
+          if unzip -l "$sources" | grep -qE "org/byteveda/taskito/(native|dashboard)/"; then
+            echo "sources jar must not bundle natives or dashboard assets"; exit 1
+          fi
 
       - name: Publish to Maven Central
         if: ${{ !inputs.dry-run }}
