@@ -47,6 +47,8 @@ import org.byteveda.taskito.spi.QueueBackend;
  */
 public final class WorkflowTracker {
     private static final TaskitoLogger LOG = TaskitoLogger.create("workflows");
+    private static final int FAIL_RECORD_MAX_ATTEMPTS = 5;
+    private static final long FAIL_RECORD_RETRY_MS = 1_000;
 
     private final QueueBackend backend;
     private final Serializer serializer;
@@ -341,17 +343,37 @@ public final class WorkflowTracker {
     }
 
     /**
-     * Fail one fan-out node (its expansion failed) and cascade. On a storage
-     * failure the promotion marker is rolled back so the node is not treated as
-     * decided while it is still PENDING.
+     * Fail one fan-out node (its expansion failed) and cascade. Unlike deferred
+     * nodes, nothing re-drives a fan-out after its producer settles, so a storage
+     * failure while recording the node failure is retried on the scheduler
+     * (bounded) instead of relying on a later outcome.
      */
     private void failFanOut(String runId, PlanNode fanOut, RunPlan plan, RuntimeException cause) {
+        failFanOut(runId, fanOut, plan, cause, 1);
+    }
+
+    private void failFanOut(String runId, PlanNode fanOut, RunPlan plan, RuntimeException cause, int attempt) {
         try {
             backend.failWorkflowNode(runId, fanOut.name, describe(cause));
             promoteSuccessors(runId, fanOut.name, plan);
+            finalizeIfTerminal(runId);
         } catch (RuntimeException e) {
             promotedNodes.remove(new GateKey(runId, fanOut.name));
-            LOG.error("failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId, e);
+            if (attempt >= FAIL_RECORD_MAX_ATTEMPTS) {
+                LOG.error(
+                        "failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId + " after "
+                                + attempt + " attempts; run cannot finalize",
+                        e);
+                return;
+            }
+            LOG.warn(
+                    "recording failure of fan-out node '" + fanOut.name + "' in run " + runId + " failed (attempt "
+                            + attempt + "); retrying",
+                    e);
+            gateScheduler.schedule(
+                    () -> failFanOut(runId, fanOut, plan, cause, attempt + 1),
+                    FAIL_RECORD_RETRY_MS,
+                    TimeUnit.MILLISECONDS);
         }
     }
 
