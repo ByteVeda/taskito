@@ -446,10 +446,18 @@ export class WorkflowTracker {
     );
   }
 
-  /** Enqueue/expand/skip any deferred successor whose predecessors are now all terminal. */
+  /** Enqueue/expand/skip any successor whose predecessors are now all terminal. */
   private evaluateSuccessors(runId: string, nodeName: string, plan: RunPlan): void {
     for (const succ of plan.successors.get(nodeName) ?? []) {
-      if (!plan.deferred.has(succ) || !this.allPredecessorsTerminal(runId, succ, plan)) {
+      if (!this.allPredecessorsTerminal(runId, succ, plan)) {
+        continue;
+      }
+      if (!plan.deferred.has(succ)) {
+        // The core's fail-fast cascade is suppressed on managed runs, so a
+        // static successor of a failed predecessor must be skipped here.
+        if (!this.shouldExecute(runId, succ, plan)) {
+          this.skipNode(runId, succ, plan);
+        }
         continue;
       }
       // Evaluate the condition first: a not-taken branch is skipped (and the
