@@ -29,6 +29,10 @@ class SerializationError(TaskitoError):
     """Raised on serialization or deserialization failures."""
 
 
+class CryptoError(SerializationError):
+    """Raised when a payload codec fails to decrypt or verify a payload."""
+
+
 class CircuitBreakerOpenError(TaskitoError):
     """Raised when a task's circuit breaker is open."""
 
