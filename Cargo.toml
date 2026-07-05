@@ -22,3 +22,8 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 pyo3 = { version = "0.29", features = ["multiple-pymethods"] }
 async-trait = "0.1"
 dagron-core = { git = "https://github.com/ByteVeda/dagron.git", rev = "d1b61aaf2ed2d516b9a239f089a55b143cb05f65" }
+
+# Release cdylibs ship inside SDK packages; strip + thin-LTO keep them small.
+[profile.release]
+strip = true
+lto = "thin"
