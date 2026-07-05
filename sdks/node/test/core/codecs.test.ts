@@ -1,5 +1,8 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   AesGcmCodec,
   CodecSerializer,
@@ -9,8 +12,12 @@ import {
   JsonSerializer,
   MsgpackSerializer,
   type PayloadCodec,
+  Queue,
   SerializationError,
+  type Worker,
 } from "../../src/index";
+
+let worker: Worker | undefined;
 
 const HMAC_KEY = Buffer.from("codec-hmac-secret");
 const AES_KEY = Buffer.from("0123456789abcdef0123456789abcdef"); // 32 bytes -> AES-256
@@ -166,5 +173,79 @@ describe("CodecSerializer", () => {
     const serializer = new CodecSerializer(new JsonSerializer(), []);
     const value = [1, "two", [3]];
     expect(serializer.deserialize(serializer.serialize(value))).toEqual(value);
+  });
+});
+
+describe("Queue codec integration", () => {
+  function tempDb(): string {
+    return join(mkdtempSync(join(tmpdir(), "taskito-codecs-")), "queue.db");
+  }
+
+  async function waitFor<T>(read: () => T | undefined, timeoutMs = 10_000): Promise<T> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const value = read();
+      if (value !== undefined) {
+        return value;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("timed out waiting for job result");
+  }
+
+  afterEach(() => {
+    worker?.stop();
+    worker = undefined;
+  });
+
+  it("global chain round-trips payload and result through a worker", async () => {
+    const queue = new Queue({
+      dbPath: tempDb(),
+      codec: [new GzipCodec(), new HmacCodec(HMAC_KEY)],
+    }).task("codecs.double", (x: number) => x * 2);
+
+    const id = queue.enqueue("codecs.double", [21]);
+    worker = queue.runWorker();
+    await expect(waitFor(() => queue.getResult(id))).resolves.toBe(42);
+
+    // The stored result is codec-framed: [32B mac][gzip(json)].
+    const stored = queue.getJob(id)?.result;
+    expect(stored).toBeDefined();
+    const body = gunzipSync(Buffer.from(new HmacCodec(HMAC_KEY).decode(stored as Buffer)));
+    expect(JSON.parse(body.toString("utf8"))).toBe(42);
+  });
+
+  it("per-task named codecs round-trip; results skip them", async () => {
+    const queue = new Queue({
+      dbPath: tempDb(),
+      codecs: { gzip: new GzipCodec() },
+    }).task("codecs.shout", (text: string) => text.toUpperCase(), { codecs: ["gzip"] });
+
+    const id = queue.enqueue("codecs.shout", ["hello"]);
+    worker = queue.runWorker();
+    await expect(waitFor(() => queue.getResult(id))).resolves.toBe("HELLO");
+
+    // The result is plain serializer output — per-task codecs never touch it.
+    const stored = queue.getJob(id)?.result;
+    expect(JSON.parse(Buffer.from(stored as Buffer).toString("utf8"))).toBe("HELLO");
+  });
+
+  it("enqueueMany applies per-task codecs to every entry", async () => {
+    const queue = new Queue({
+      dbPath: tempDb(),
+      codecs: { gzip: new GzipCodec() },
+    }).task("codecs.add", (a: number, b: number) => a + b, { codecs: ["gzip"] });
+
+    const ids = queue.enqueueMany("codecs.add", [{ args: [1, 2] }, { args: [3, 4] }]);
+    worker = queue.runWorker();
+    await expect(waitFor(() => queue.getResult(ids[0] as string))).resolves.toBe(3);
+    await expect(waitFor(() => queue.getResult(ids[1] as string))).resolves.toBe(7);
+  });
+
+  it("throws at enqueue for an unregistered codec name", () => {
+    const queue = new Queue({ dbPath: tempDb() }).task("codecs.orphan", () => null, {
+      codecs: ["nope"],
+    });
+    expect(() => queue.enqueue("codecs.orphan", [])).toThrow(/no codec registered named "nope"/);
   });
 });

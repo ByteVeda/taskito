@@ -1,5 +1,5 @@
 import { type JobContext, runInContext } from "./context";
-import { TaskNotRegisteredError } from "./errors";
+import { SerializationError, TaskNotRegisteredError } from "./errors";
 import type { Emitter, EventName, OutcomeEvent } from "./events";
 import type { Middleware, TaskContext } from "./middleware";
 import type {
@@ -12,7 +12,7 @@ import type {
   TaskConfigInput,
 } from "./native";
 import { type ResourceRuntime, runWithResolver } from "./resources";
-import type { Serializer } from "./serializers";
+import type { PayloadCodec, Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
 import type { WorkflowTracker } from "./workflows";
@@ -36,6 +36,8 @@ export interface WorkerStartParams {
   tasks: ReadonlyMap<string, RegisteredTask>;
   queueLimits: ReadonlyMap<string, QueueLimits>;
   serializer: Serializer;
+  /** Named codec registry for per-task payload decode (see `TaskOptions.codecs`). */
+  codecs?: ReadonlyMap<string, PayloadCodec>;
   middleware: readonly Middleware[];
   emitter: Emitter;
   resources: ResourceRuntime;
@@ -58,7 +60,7 @@ export class Worker {
    * @internal
    */
   static start(queue: NativeQueue, params: WorkerStartParams): Worker {
-    const { tasks, queueLimits, serializer, middleware, emitter, resources, run } = params;
+    const { tasks, queueLimits, serializer, codecs, middleware, emitter, resources, run } = params;
 
     // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
     const tracker = (run?.advanceWorkflows ?? true) ? (params.workflowTracker ?? null) : null;
@@ -73,7 +75,16 @@ export class Worker {
       if (!task) {
         throw new TaskNotRegisteredError(invocation.taskName);
       }
-      const args = serializer.deserialize(invocation.payload) as unknown[];
+      // Reverse the task's named codecs (see `TaskOptions.codecs`) before decode.
+      let payload: Uint8Array = invocation.payload;
+      for (const codecName of [...(task.options?.codecs ?? [])].reverse()) {
+        const codec = codecs?.get(codecName);
+        if (!codec) {
+          throw new SerializationError(`no codec registered named "${codecName}"`);
+        }
+        payload = codec.decode(payload);
+      }
+      const args = serializer.deserialize(payload) as unknown[];
       const ctx: TaskContext = { jobId: invocation.id, taskName: invocation.taskName, args };
 
       // Cooperative cancel signal + job context exposed to the handler.

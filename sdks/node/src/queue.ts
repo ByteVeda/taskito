@@ -8,6 +8,7 @@ import {
   PredicateRejectedError,
   QueueError,
   ResultTimeoutError,
+  SerializationError,
   TaskitoError,
 } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
@@ -27,7 +28,7 @@ import {
   ResourceRuntime,
   type ResourceScope,
 } from "./resources";
-import { JsonSerializer, type Serializer } from "./serializers";
+import { CodecSerializer, JsonSerializer, type PayloadCodec, type Serializer } from "./serializers";
 import type {
   AnyHandler,
   DeadJob,
@@ -73,6 +74,19 @@ export interface QueueOptions {
   namespace?: string;
   /** Codec for task args/results. Defaults to {@link JsonSerializer}. */
   serializer?: Serializer;
+  /**
+   * Global payload codec chain, applied in order after serialization and in
+   * reverse before deserialization. Wraps the queue serializer, so it covers
+   * every payload and result. Jobs persisted before the chain was enabled
+   * cannot be decoded through it.
+   */
+  codec?: PayloadCodec | PayloadCodec[];
+  /**
+   * Named codec registry for per-task codecs. Tasks opt in via
+   * {@link TaskOptions.codecs}; applies to task payloads only (results stay
+   * on the queue serializer).
+   */
+  codecs?: Record<string, PayloadCodec>;
 }
 
 /**
@@ -82,6 +96,7 @@ export interface QueueOptions {
 export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly native: NativeQueue;
   private readonly serializer: Serializer;
+  private readonly codecs: ReadonlyMap<string, PayloadCodec>;
   private readonly tasks = new Map<string, RegisteredTask>();
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
@@ -96,7 +111,11 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
 
   constructor(options: QueueOptions = {}) {
     this.native = JsQueue.open(toOpenOptions(options));
-    this.serializer = options.serializer ?? new JsonSerializer();
+    const chain = options.codec === undefined ? [] : [options.codec].flat();
+    const baseSerializer = options.serializer ?? new JsonSerializer();
+    this.serializer =
+      chain.length > 0 ? new CodecSerializer(baseSerializer, chain) : baseSerializer;
+    this.codecs = new Map(Object.entries(options.codecs ?? {}));
     this.webhookManager = new WebhookManager(this.native, this.emitter);
   }
 
@@ -112,6 +131,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
         this.native,
         this.serializer,
         this.trackerIfSupported(),
+        (taskName, value) => this.encodeTaskPayload(taskName, value),
       );
     }
     return this.workflowManager;
@@ -166,7 +186,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     cronExpr: string,
     options?: PeriodicOptions,
   ): number {
-    const args = Buffer.from(this.serializer.serialize(options?.args ?? []));
+    const args = this.encodeTaskPayload(taskName, options?.args ?? []);
     return this.native.registerPeriodic(
       name,
       taskName,
@@ -334,9 +354,25 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       }
     }
     return {
-      payload: Buffer.from(this.serializer.serialize(ctx.args)),
+      payload: this.encodeTaskPayload(name, ctx.args),
       options: toNativeEnqueueOptions(ctx.options),
     };
+  }
+
+  /**
+   * Serialize a task payload and apply the task's named codecs in order.
+   * Payload only — results stay on the queue serializer.
+   */
+  private encodeTaskPayload(taskName: string, value: unknown): Buffer {
+    let data = this.serializer.serialize(value);
+    for (const name of this.tasks.get(taskName)?.options?.codecs ?? []) {
+      const codec = this.codecs.get(name);
+      if (!codec) {
+        throw new SerializationError(`no codec registered named "${name}"`);
+      }
+      data = codec.encode(data);
+    }
+    return Buffer.from(data);
   }
 
   /** Fetch a job by id, or `null` if unknown. */
@@ -530,6 +566,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       tasks: this.tasks,
       queueLimits: this.queueLimits,
       serializer: this.serializer,
+      codecs: this.codecs,
       middleware: this.middleware,
       emitter: this.emitter,
       resources: this.resources,
