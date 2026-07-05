@@ -99,10 +99,29 @@ impl RedisStorage {
         job_id: &str,
         after_id: Option<&str>,
     ) -> Result<Vec<TaskLogRow>> {
-        let mut rows = self.get_task_logs(job_id)?;
+        let mut conn = self.conn()?;
+        let by_job_key = self.key(&["logs", "by_job", job_id]);
+
+        // Filter ids before fetching values so old entries cost one cheap
+        // ZRANGEBYSCORE, not a GET per historical log.
+        let mut ids: Vec<String> = conn
+            .zrangebyscore(&by_job_key, "-inf", "+inf")
+            .map_err(map_err)?;
         if let Some(cursor) = after_id {
-            rows.retain(|row| row.id.as_str() > cursor);
+            ids.retain(|id| id.as_str() > cursor);
         }
+
+        let mut rows = Vec::new();
+        for id in ids {
+            let log_key = self.key(&["log", &id]);
+            let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
+            if let Some(d) = data {
+                let entry: LogEntry =
+                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                rows.push(TaskLogRow::from(entry));
+            }
+        }
+
         // UUIDv7 ids sort by creation time, so id order == time order.
         rows.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(rows)
