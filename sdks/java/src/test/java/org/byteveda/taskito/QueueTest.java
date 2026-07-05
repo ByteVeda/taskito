@@ -3,6 +3,7 @@ package org.byteveda.taskito;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -94,6 +95,33 @@ class QueueTest {
                     .build());
             assertEquals(3, jobs.size());
         }
+    }
+
+    @Test
+    void enqueueManyDedupesActiveUniqueKeys(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            String first = queue.enqueue(
+                    SEND_EMAIL,
+                    Collections.singletonMap("to", "a"),
+                    EnqueueOptions.builder().uniqueKey("k1").build());
+            // The batch's duplicate key must resolve to the existing job instead
+            // of rolling back the whole batch on the unique index.
+            List<String> ids = queue.enqueueMany(
+                    SEND_EMAIL,
+                    Arrays.asList(Collections.singletonMap("to", "a"), Collections.singletonMap("to", "b")),
+                    EnqueueOptions.builder().uniqueKey("k1").build());
+            assertEquals(2, ids.size());
+            assertEquals(first, ids.get(0));
+            assertEquals(first, ids.get(1));
+            assertEquals(1, queue.stats().pending);
+        }
+    }
+
+    @Test
+    void callsAfterCloseThrowInsteadOfTouchingFreedHandle(@TempDir Path dir) {
+        Taskito queue = open(dir);
+        queue.close();
+        assertThrows(IllegalStateException.class, queue::stats);
     }
 
     @Test

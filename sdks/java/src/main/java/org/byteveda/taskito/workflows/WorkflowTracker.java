@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 
@@ -45,6 +46,10 @@ import org.byteveda.taskito.spi.QueueBackend;
  * run reaches a terminal state.
  */
 public final class WorkflowTracker {
+    private static final TaskitoLogger LOG = TaskitoLogger.create("workflows");
+    private static final int FAIL_RECORD_MAX_ATTEMPTS = 5;
+    private static final long FAIL_RECORD_RETRY_MS = 1_000;
+
     private final QueueBackend backend;
     private final Serializer serializer;
     private final ObjectMapper json = new ObjectMapper();
@@ -154,35 +159,59 @@ public final class WorkflowTracker {
         finalizeIfTerminal(ref.runId);
     }
 
-    /** If the just-completed node feeds fan-outs, split its result list into child jobs. */
+    /**
+     * If the just-completed node feeds fan-outs, split its result list into child
+     * jobs. Failures are scoped per branch: an unusable producer result fails
+     * every branch, but one branch's expansion error never touches a sibling
+     * whose children are already running.
+     */
     private void expandFanOutIfAny(String runId, String node, String jobId, RunPlan plan) {
         List<PlanNode> fanOuts = plan.successorsMatching(node, candidate -> candidate.fanOut != null);
         if (fanOuts.isEmpty()) {
             return;
         }
-        List<?> items = serializer.deserialize(fetchResult(jobId), List.class);
+        List<?> items;
+        try {
+            items = serializer.deserialize(fetchResult(jobId), List.class);
+        } catch (RuntimeException e) {
+            LOG.warn("reading fan-out producer result of node '" + node + "' in run " + runId + " failed", e);
+            for (PlanNode fanOut : fanOuts) {
+                failFanOut(runId, fanOut, plan, e);
+            }
+            return;
+        }
         for (PlanNode fanOut : fanOuts) {
-            String[] names = new String[items.size()];
-            byte[][] payloads = new byte[items.size()][];
-            for (int i = 0; i < items.size(); i++) {
-                names[i] = fanOut.name + "[" + i + "]";
-                payloads[i] = serializer.serialize(items.get(i));
+            try {
+                expandFanOut(runId, fanOut, items, plan);
+            } catch (RuntimeException e) {
+                LOG.warn("expanding fan-out node '" + fanOut.name + "' in run " + runId + " failed", e);
+                failFanOut(runId, fanOut, plan, e);
             }
-            backend.expandFanOut(
-                    runId,
-                    fanOut.name,
-                    names,
-                    payloads,
-                    fanOut.taskName,
-                    fanOut.queueOrDefault(),
-                    fanOut.retries(),
-                    fanOut.timeout(),
-                    fanOut.priorityOrDefault());
-            // An empty producer list yields no child jobs, so no child outcome will
-            // ever drive the fan-in — collect it now with an empty result list.
-            if (items.isEmpty()) {
-                collectFanIns(runId, fanOut.name, List.of(), plan);
-            }
+        }
+    }
+
+    /** Split the producer's items into one child job per element of {@code fanOut}. */
+    private void expandFanOut(String runId, PlanNode fanOut, List<?> items, RunPlan plan) {
+        String[] names = new String[items.size()];
+        byte[][] payloads = new byte[items.size()][];
+        for (int i = 0; i < items.size(); i++) {
+            names[i] = fanOut.name + "[" + i + "]";
+            payloads[i] = serializer.serialize(items.get(i));
+        }
+        backend.expandFanOut(
+                runId,
+                fanOut.name,
+                names,
+                payloads,
+                fanOut.taskName,
+                fanOut.queueOrDefault(),
+                fanOut.retries(),
+                fanOut.timeout(),
+                fanOut.priorityOrDefault());
+        // An empty producer list yields no child jobs, so no child outcome will
+        // ever drive the fan-in — collect it now with an empty result list.
+        if (items.isEmpty()) {
+            collectFanIns(runId, fanOut.name, List.of(), plan);
         }
     }
 
@@ -290,9 +319,67 @@ public final class WorkflowTracker {
             }
             createDeferredJobFor(runId, node);
         } catch (RuntimeException e) {
-            promotedNodes.remove(promotionKey);
-            throw e;
+            // A failed promotion must never leave the node wedged PENDING with no
+            // trace — outcome listeners swallow throws, so rethrowing would
+            // silently stall the run.
+            LOG.warn("promoting workflow node '" + node.name + "' in run " + runId + " failed", e);
+            failNodeAndCascade(runId, node.name, promotionKey, plan, e);
         }
+    }
+
+    /** Mark a node Failed so the run still settles; on storage failure, allow a later retry. */
+    private void failNodeAndCascade(
+            String runId, String nodeName, GateKey promotionKey, RunPlan plan, RuntimeException cause) {
+        try {
+            backend.failWorkflowNode(runId, nodeName, describe(cause));
+            promoteSuccessors(runId, nodeName, plan);
+            finalizeIfTerminal(runId);
+        } catch (RuntimeException e) {
+            // Even the failure record failed (e.g. storage down). Roll the dedupe
+            // marker back so the next outcome can retry the promotion.
+            promotedNodes.remove(promotionKey);
+            LOG.error("failed to record failure of workflow node '" + nodeName + "' in run " + runId, e);
+        }
+    }
+
+    /**
+     * Fail one fan-out node (its expansion failed) and cascade. Unlike deferred
+     * nodes, nothing re-drives a fan-out after its producer settles, so a storage
+     * failure while recording the node failure is retried on the scheduler
+     * (bounded) instead of relying on a later outcome.
+     */
+    private void failFanOut(String runId, PlanNode fanOut, RunPlan plan, RuntimeException cause) {
+        failFanOut(runId, fanOut, plan, cause, 1);
+    }
+
+    private void failFanOut(String runId, PlanNode fanOut, RunPlan plan, RuntimeException cause, int attempt) {
+        try {
+            backend.failWorkflowNode(runId, fanOut.name, describe(cause));
+            promoteSuccessors(runId, fanOut.name, plan);
+            finalizeIfTerminal(runId);
+        } catch (RuntimeException e) {
+            promotedNodes.remove(new GateKey(runId, fanOut.name));
+            if (attempt >= FAIL_RECORD_MAX_ATTEMPTS) {
+                LOG.error(
+                        "failed to record failure of fan-out node '" + fanOut.name + "' in run " + runId + " after "
+                                + attempt + " attempts; run cannot finalize",
+                        e);
+                return;
+            }
+            LOG.warn(
+                    "recording failure of fan-out node '" + fanOut.name + "' in run " + runId + " failed (attempt "
+                            + attempt + "); retrying",
+                    e);
+            gateScheduler.schedule(
+                    () -> failFanOut(runId, fanOut, plan, cause, attempt + 1),
+                    FAIL_RECORD_RETRY_MS,
+                    TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private static String describe(RuntimeException cause) {
+        String message = cause.getMessage();
+        return cause.getClass().getSimpleName() + (message == null ? "" : ": " + message);
     }
 
     /** If a prior run cached this step's result within its TTL, mark it a cache hit instead of running it. */

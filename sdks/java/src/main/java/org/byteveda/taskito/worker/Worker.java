@@ -25,6 +25,7 @@ import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.resources.ResourceRuntime;
 import org.byteveda.taskito.serialization.PayloadCodec;
@@ -43,6 +44,7 @@ import org.byteveda.taskito.workflows.WorkflowTracker;
  * jobs.
  */
 public final class Worker implements AutoCloseable {
+    private static final TaskitoLogger LOG = TaskitoLogger.create("worker");
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
     private static final ObjectMapper MESH_JSON = new ObjectMapper();
 
@@ -144,13 +146,21 @@ public final class Worker implements AutoCloseable {
         executor.shutdown(); // stop accepting; let running handlers finish
         try {
             if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                // shutdownNow() only *requests* interruption; give stuck handlers
+                // one more window before closing the handle out from under them.
                 executor.shutdownNow();
+                if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    LOG.warn("handler threads still running after " + (2 * SHUTDOWN_TIMEOUT_SECONDS)
+                            + "s; closing the native worker — their late completions will be rejected");
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             executor.shutdownNow();
         }
-        control.close(); // now safe to free the native handle — no handler can touch it
+        // Safe even if a straggler survives: JniWorkerControl serializes close()
+        // against in-flight native calls and rejects any call made afterwards.
+        control.close();
         if (tracker != null) {
             tracker.close(); // stop the gate-timeout scheduler
         }

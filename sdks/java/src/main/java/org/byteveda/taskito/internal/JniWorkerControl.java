@@ -1,48 +1,85 @@
 package org.byteveda.taskito.internal;
 
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
 import org.byteveda.taskito.spi.WorkerControl;
 
-/** JNI-backed {@link WorkerControl} over a native worker handle. */
+/**
+ * JNI-backed {@link WorkerControl} over a native worker handle. Every call holds
+ * the read lock; {@code close()} takes the write lock, so it waits out in-flight
+ * calls and later calls throw {@link IllegalStateException} instead of touching
+ * freed native memory.
+ */
 public final class JniWorkerControl implements WorkerControl {
     private final long handle;
-    private volatile boolean closed;
+    private final ReentrantReadWriteLock stateLock = new ReentrantReadWriteLock();
+    private boolean closed; // guarded by stateLock
 
     JniWorkerControl(long handle) {
         this.handle = handle;
     }
 
+    private <T> T withOpenHandle(Supplier<T> nativeCall) {
+        stateLock.readLock().lock();
+        try {
+            if (closed) {
+                throw new IllegalStateException("worker control is closed");
+            }
+            return nativeCall.get();
+        } finally {
+            stateLock.readLock().unlock();
+        }
+    }
+
     @Override
     public void completeJob(long token, byte[] result) {
-        NativeWorker.completeJob(handle, token, result);
+        withOpenHandle(() -> {
+            NativeWorker.completeJob(handle, token, result);
+            return null;
+        });
     }
 
     @Override
     public void failJob(long token, String error) {
-        NativeWorker.failJob(handle, token, error);
+        withOpenHandle(() -> {
+            NativeWorker.failJob(handle, token, error);
+            return null;
+        });
     }
 
     @Override
     public void cancelJob(long token) {
-        NativeWorker.cancelJob(handle, token);
+        withOpenHandle(() -> {
+            NativeWorker.cancelJob(handle, token);
+            return null;
+        });
     }
 
     @Override
     public void stop() {
-        NativeWorker.stop(handle);
+        withOpenHandle(() -> {
+            NativeWorker.stop(handle);
+            return null;
+        });
     }
 
     @Override
     public Optional<String> meshClusterInfoJson() {
-        return Optional.ofNullable(NativeWorker.meshClusterInfo(handle));
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorker.meshClusterInfo(handle)));
     }
 
-    /** Idempotent: frees the native worker handle exactly once. */
+    /** Idempotent: frees the native worker handle exactly once, after in-flight calls drain. */
     @Override
-    public synchronized void close() {
-        if (!closed) {
-            closed = true;
-            NativeWorker.close(handle);
+    public void close() {
+        stateLock.writeLock().lock();
+        try {
+            if (!closed) {
+                closed = true;
+                NativeWorker.close(handle);
+            }
+        } finally {
+            stateLock.writeLock().unlock();
         }
     }
 }

@@ -5,9 +5,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import org.byteveda.taskito.logging.TaskitoLogger;
 
 /** Dispatches {@link OutcomeEvent}s to registered listeners. Thread-safe. */
 public final class Emitter {
+    private static final TaskitoLogger LOG = TaskitoLogger.create("events");
+
     private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
 
     public void on(EventName name, Consumer<OutcomeEvent> listener) {
@@ -23,8 +26,10 @@ public final class Emitter {
         for (Consumer<OutcomeEvent> listener : bound) {
             try {
                 listener.accept(event);
-            } catch (RuntimeException ignored) {
-                // A listener fault must not break event dispatch.
+            } catch (RuntimeException e) {
+                // A listener fault must not break dispatch — but log it: this is
+                // the only place a workflow-tracker failure would surface.
+                LOG.warn("listener for " + event.name + " (job " + event.jobId + ") threw", e);
             }
         }
     }

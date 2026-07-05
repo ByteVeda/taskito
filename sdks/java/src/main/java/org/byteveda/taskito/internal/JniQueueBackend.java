@@ -1,18 +1,26 @@
 package org.byteveda.taskito.internal;
 
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerBridge;
 import org.byteveda.taskito.spi.WorkerControl;
 
-/** JNI-backed {@link QueueBackend} over a native queue handle. */
+/**
+ * JNI-backed {@link QueueBackend} over a native queue handle. Every call holds
+ * the read lock; {@code close()} takes the write lock, so it waits out in-flight
+ * calls and later calls throw {@link IllegalStateException} instead of touching
+ * freed native memory.
+ */
 public final class JniQueueBackend implements QueueBackend {
     private final long handle;
 
     /** Hot byte ops (enqueue/enqueueMany/getResult) route through this; FFM when available, else JNI. */
     private final NativeTransport transport;
 
-    private volatile boolean closed;
+    private final ReentrantReadWriteLock stateLock = new ReentrantReadWriteLock();
+    private boolean closed; // guarded by stateLock
 
     private JniQueueBackend(long handle) {
         this.handle = handle;
@@ -24,200 +32,228 @@ public final class JniQueueBackend implements QueueBackend {
         return new JniQueueBackend(NativeQueue.open(optionsJson));
     }
 
+    private <T> T withOpenHandle(Supplier<T> nativeCall) {
+        stateLock.readLock().lock();
+        try {
+            if (closed) {
+                throw new IllegalStateException("queue backend is closed");
+            }
+            return nativeCall.get();
+        } finally {
+            stateLock.readLock().unlock();
+        }
+    }
+
     @Override
     public String enqueue(String taskName, byte[] payload, String optionsJson) {
-        return transport.enqueue(taskName, payload, optionsJson);
+        return withOpenHandle(() -> transport.enqueue(taskName, payload, optionsJson));
     }
 
     @Override
     public String[] enqueueMany(String taskName, byte[][] payloads, String optionsJson) {
-        return transport.enqueueMany(taskName, payloads, optionsJson);
+        return withOpenHandle(() -> transport.enqueueMany(taskName, payloads, optionsJson));
     }
 
     @Override
     public Optional<String> getJobJson(String jobId) {
-        return Optional.ofNullable(NativeQueue.getJob(handle, jobId));
+        return withOpenHandle(() -> Optional.ofNullable(NativeQueue.getJob(handle, jobId)));
     }
 
     @Override
     public Optional<byte[]> getResult(String jobId) {
-        return Optional.ofNullable(transport.getResult(jobId));
+        return withOpenHandle(() -> Optional.ofNullable(transport.getResult(jobId)));
     }
 
     @Override
     public boolean cancel(String jobId) {
-        return NativeQueue.cancel(handle, jobId);
+        return withOpenHandle(() -> NativeQueue.cancel(handle, jobId));
     }
 
     @Override
     public boolean requestCancel(String jobId) {
-        return NativeQueue.requestCancel(handle, jobId);
+        return withOpenHandle(() -> NativeQueue.requestCancel(handle, jobId));
     }
 
     @Override
     public boolean isCancelRequested(String jobId) {
-        return NativeQueue.isCancelRequested(handle, jobId);
+        return withOpenHandle(() -> NativeQueue.isCancelRequested(handle, jobId));
     }
 
     @Override
     public void setProgress(String jobId, int progress) {
-        NativeQueue.setProgress(handle, jobId, progress);
+        withOpenHandle(() -> {
+            NativeQueue.setProgress(handle, jobId, progress);
+            return null;
+        });
     }
 
     @Override
     public String statsJson() {
-        return NativeQueue.stats(handle);
+        return withOpenHandle(() -> NativeQueue.stats(handle));
     }
 
     @Override
     public String statsByQueueJson(String queue) {
-        return NativeQueue.statsByQueue(handle, queue);
+        return withOpenHandle(() -> NativeQueue.statsByQueue(handle, queue));
     }
 
     @Override
     public String statsAllQueuesJson() {
-        return NativeQueue.statsAllQueues(handle);
+        return withOpenHandle(() -> NativeQueue.statsAllQueues(handle));
     }
 
     @Override
     public String listJobsJson(String filterJson) {
-        return NativeQueue.listJobs(handle, filterJson);
+        return withOpenHandle(() -> NativeQueue.listJobs(handle, filterJson));
     }
 
     @Override
     public String jobErrorsJson(String jobId) {
-        return NativeQueue.jobErrors(handle, jobId);
+        return withOpenHandle(() -> NativeQueue.jobErrors(handle, jobId));
     }
 
     @Override
     public String metricsJson(String taskNameOrNull, long sinceMs) {
-        return NativeQueue.metrics(handle, taskNameOrNull, sinceMs);
+        return withOpenHandle(() -> NativeQueue.metrics(handle, taskNameOrNull, sinceMs));
     }
 
     @Override
     public String listWorkersJson() {
-        return NativeQueue.listWorkers(handle);
+        return withOpenHandle(() -> NativeQueue.listWorkers(handle));
     }
 
     @Override
     public String listDeadJson(long limit, long offset) {
-        return NativeQueue.listDead(handle, limit, offset);
+        return withOpenHandle(() -> NativeQueue.listDead(handle, limit, offset));
     }
 
     @Override
     public String retryDead(String deadId) {
-        return NativeQueue.retryDead(handle, deadId);
+        return withOpenHandle(() -> NativeQueue.retryDead(handle, deadId));
     }
 
     @Override
     public boolean deleteDead(String deadId) {
-        return NativeQueue.deleteDead(handle, deadId);
+        return withOpenHandle(() -> NativeQueue.deleteDead(handle, deadId));
     }
 
     @Override
     public long purgeDead(long olderThanMs) {
-        return NativeQueue.purgeDead(handle, olderThanMs);
+        return withOpenHandle(() -> NativeQueue.purgeDead(handle, olderThanMs));
     }
 
     @Override
     public String listDeadByTaskJson(String taskName, long limit, long offset) {
-        return NativeQueue.listDeadByTask(handle, taskName, limit, offset);
+        return withOpenHandle(() -> NativeQueue.listDeadByTask(handle, taskName, limit, offset));
     }
 
     @Override
     public long purgeDeadByTask(String taskName) {
-        return NativeQueue.purgeDeadByTask(handle, taskName);
+        return withOpenHandle(() -> NativeQueue.purgeDeadByTask(handle, taskName));
     }
 
     @Override
     public long purgeCompleted(long olderThanMs) {
-        return NativeQueue.purgeCompleted(handle, olderThanMs);
+        return withOpenHandle(() -> NativeQueue.purgeCompleted(handle, olderThanMs));
     }
 
     @Override
     public void pauseQueue(String queue) {
-        NativeQueue.pauseQueue(handle, queue);
+        withOpenHandle(() -> {
+            NativeQueue.pauseQueue(handle, queue);
+            return null;
+        });
     }
 
     @Override
     public void resumeQueue(String queue) {
-        NativeQueue.resumeQueue(handle, queue);
+        withOpenHandle(() -> {
+            NativeQueue.resumeQueue(handle, queue);
+            return null;
+        });
     }
 
     @Override
     public String listPausedQueuesJson() {
-        return NativeQueue.listPausedQueues(handle);
+        return withOpenHandle(() -> NativeQueue.listPausedQueues(handle));
     }
 
     @Override
     public Optional<String> getSetting(String key) {
-        return Optional.ofNullable(NativeQueue.getSetting(handle, key));
+        return withOpenHandle(() -> Optional.ofNullable(NativeQueue.getSetting(handle, key)));
     }
 
     @Override
     public void setSetting(String key, String value) {
-        NativeQueue.setSetting(handle, key, value);
+        withOpenHandle(() -> {
+            NativeQueue.setSetting(handle, key, value);
+            return null;
+        });
     }
 
     @Override
     public boolean deleteSetting(String key) {
-        return NativeQueue.deleteSetting(handle, key);
+        return withOpenHandle(() -> NativeQueue.deleteSetting(handle, key));
     }
 
     @Override
     public String listSettingsJson() {
-        return NativeQueue.listSettings(handle);
+        return withOpenHandle(() -> NativeQueue.listSettings(handle));
     }
 
     @Override
     public void writeTaskLog(String jobId, String taskName, String level, String message, String extraOrNull) {
-        NativeQueue.writeTaskLog(handle, jobId, taskName, level, message, extraOrNull);
+        withOpenHandle(() -> {
+            NativeQueue.writeTaskLog(handle, jobId, taskName, level, message, extraOrNull);
+            return null;
+        });
     }
 
     @Override
     public String getTaskLogsJson(String jobId) {
-        return NativeQueue.getTaskLogs(handle, jobId);
+        return withOpenHandle(() -> NativeQueue.getTaskLogs(handle, jobId));
     }
 
     @Override
     public boolean acquireLock(String name, String ownerId, long ttlMs) {
-        return NativeQueue.acquireLock(handle, name, ownerId, ttlMs);
+        return withOpenHandle(() -> NativeQueue.acquireLock(handle, name, ownerId, ttlMs));
     }
 
     @Override
     public boolean releaseLock(String name, String ownerId) {
-        return NativeQueue.releaseLock(handle, name, ownerId);
+        return withOpenHandle(() -> NativeQueue.releaseLock(handle, name, ownerId));
     }
 
     @Override
     public boolean extendLock(String name, String ownerId, long ttlMs) {
-        return NativeQueue.extendLock(handle, name, ownerId, ttlMs);
+        return withOpenHandle(() -> NativeQueue.extendLock(handle, name, ownerId, ttlMs));
     }
 
     @Override
     public Optional<String> lockInfoJson(String name) {
-        return Optional.ofNullable(NativeQueue.getLockInfo(handle, name));
+        return withOpenHandle(() -> Optional.ofNullable(NativeQueue.getLockInfo(handle, name)));
     }
 
     @Override
     public long registerPeriodic(
             String name, String taskName, String cron, byte[] args, String queue, String timezone, boolean enabled) {
-        return NativeQueue.registerPeriodic(handle, name, taskName, cron, args, queue, timezone, enabled);
+        return withOpenHandle(
+                () -> NativeQueue.registerPeriodic(handle, name, taskName, cron, args, queue, timezone, enabled));
     }
 
     @Override
     public String listPeriodicJson() {
-        return NativeQueue.listPeriodic(handle);
+        return withOpenHandle(() -> NativeQueue.listPeriodic(handle));
     }
 
     @Override
     public boolean deletePeriodic(String name) {
-        return NativeQueue.deletePeriodic(handle, name);
+        return withOpenHandle(() -> NativeQueue.deletePeriodic(handle, name));
     }
 
     @Override
     public boolean setPeriodicEnabled(String name, boolean enabled) {
-        return NativeQueue.setPeriodicEnabled(handle, name, enabled);
+        return withOpenHandle(() -> NativeQueue.setPeriodicEnabled(handle, name, enabled));
     }
 
     @Override
@@ -232,7 +268,7 @@ public final class JniQueueBackend implements QueueBackend {
             String[] deferredNames,
             String parentRunId,
             String parentNodeName) {
-        return NativeWorkflows.submitWorkflow(
+        return withOpenHandle(() -> NativeWorkflows.submitWorkflow(
                 handle,
                 name,
                 version,
@@ -243,37 +279,41 @@ public final class JniQueueBackend implements QueueBackend {
                 paramsJson,
                 deferredNames,
                 parentRunId,
-                parentNodeName);
+                parentNodeName));
     }
 
     @Override
     public String markWorkflowNodeResult(String jobId, boolean succeeded, String error, boolean skipCascade) {
-        return NativeWorkflows.markWorkflowNodeResult(handle, jobId, succeeded, error, skipCascade);
+        return withOpenHandle(
+                () -> NativeWorkflows.markWorkflowNodeResult(handle, jobId, succeeded, error, skipCascade));
     }
 
     @Override
     public Optional<String> getWorkflowStatusJson(String runId) {
-        return Optional.ofNullable(NativeWorkflows.getWorkflowStatus(handle, runId));
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorkflows.getWorkflowStatus(handle, runId)));
     }
 
     @Override
     public void cancelWorkflowRun(String runId) {
-        NativeWorkflows.cancelWorkflowRun(handle, runId);
+        withOpenHandle(() -> {
+            NativeWorkflows.cancelWorkflowRun(handle, runId);
+            return null;
+        });
     }
 
     @Override
     public Optional<String> getWorkflowPlanJson(String runId) {
-        return Optional.ofNullable(NativeWorkflows.getWorkflowPlan(handle, runId));
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorkflows.getWorkflowPlan(handle, runId)));
     }
 
     @Override
     public Optional<String> workflowNodeForJobJson(String jobId) {
-        return Optional.ofNullable(NativeWorkflows.workflowNodeForJob(handle, jobId));
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorkflows.workflowNodeForJob(handle, jobId)));
     }
 
     @Override
     public Optional<String> workflowNameForRun(String runId) {
-        return Optional.ofNullable(NativeWorkflows.workflowNameForRun(handle, runId));
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorkflows.workflowNameForRun(handle, runId)));
     }
 
     @Override
@@ -287,13 +327,23 @@ public final class JniQueueBackend implements QueueBackend {
             int maxRetries,
             long timeoutMs,
             int priority) {
-        return NativeWorkflows.expandFanOut(
-                handle, runId, parentNode, childNames, childPayloads, taskName, queue, maxRetries, timeoutMs, priority);
+        return withOpenHandle(() -> NativeWorkflows.expandFanOut(
+                handle,
+                runId,
+                parentNode,
+                childNames,
+                childPayloads,
+                taskName,
+                queue,
+                maxRetries,
+                timeoutMs,
+                priority));
     }
 
     @Override
     public Optional<String> checkFanOutCompletionJson(String runId, String parentNode) {
-        return Optional.ofNullable(NativeWorkflows.checkFanOutCompletion(handle, runId, parentNode));
+        return withOpenHandle(
+                () -> Optional.ofNullable(NativeWorkflows.checkFanOutCompletion(handle, runId, parentNode)));
     }
 
     @Override
@@ -306,98 +356,144 @@ public final class JniQueueBackend implements QueueBackend {
             int maxRetries,
             long timeoutMs,
             int priority) {
-        return NativeWorkflows.createDeferredJob(
-                handle, runId, nodeName, payload, taskName, queue, maxRetries, timeoutMs, priority);
+        return withOpenHandle(() -> NativeWorkflows.createDeferredJob(
+                handle, runId, nodeName, payload, taskName, queue, maxRetries, timeoutMs, priority));
     }
 
     @Override
     public void cascadeSkipPending(String runId) {
-        NativeWorkflows.cascadeSkipPending(handle, runId);
+        withOpenHandle(() -> {
+            NativeWorkflows.cascadeSkipPending(handle, runId);
+            return null;
+        });
     }
 
     @Override
     public Optional<String> finalizeRunIfTerminal(String runId) {
-        return Optional.ofNullable(NativeWorkflows.finalizeRunIfTerminal(handle, runId));
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorkflows.finalizeRunIfTerminal(handle, runId)));
     }
 
     @Override
     public void setWorkflowNodeWaitingApproval(String runId, String nodeName) {
-        NativeWorkflows.setWorkflowNodeWaitingApproval(handle, runId, nodeName);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowNodeWaitingApproval(handle, runId, nodeName);
+            return null;
+        });
     }
 
     @Override
     public void resolveWorkflowGate(String runId, String nodeName, boolean approved, String error) {
-        NativeWorkflows.resolveWorkflowGate(handle, runId, nodeName, approved, error);
+        withOpenHandle(() -> {
+            NativeWorkflows.resolveWorkflowGate(handle, runId, nodeName, approved, error);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowNodeRunning(String runId, String nodeName) {
-        NativeWorkflows.setWorkflowNodeRunning(handle, runId, nodeName);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowNodeRunning(handle, runId, nodeName);
+            return null;
+        });
     }
 
     @Override
     public void failWorkflowNode(String runId, String nodeName, String error) {
-        NativeWorkflows.failWorkflowNode(handle, runId, nodeName, error);
+        withOpenHandle(() -> {
+            NativeWorkflows.failWorkflowNode(handle, runId, nodeName, error);
+            return null;
+        });
     }
 
     @Override
     public void skipWorkflowNode(String runId, String nodeName) {
-        NativeWorkflows.skipWorkflowNode(handle, runId, nodeName);
+        withOpenHandle(() -> {
+            NativeWorkflows.skipWorkflowNode(handle, runId, nodeName);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowNodeCacheHit(String runId, String nodeName) {
-        NativeWorkflows.setWorkflowNodeCacheHit(handle, runId, nodeName);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowNodeCacheHit(handle, runId, nodeName);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowRunCompensating(String runId) {
-        NativeWorkflows.setWorkflowRunCompensating(handle, runId);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowRunCompensating(handle, runId);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowRunCompensated(String runId, long completedAt) {
-        NativeWorkflows.setWorkflowRunCompensated(handle, runId, completedAt);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowRunCompensated(handle, runId, completedAt);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowRunCompensationFailed(String runId, long completedAt, String error) {
-        NativeWorkflows.setWorkflowRunCompensationFailed(handle, runId, completedAt, error);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowRunCompensationFailed(handle, runId, completedAt, error);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowRunCompletedWithFailures(String runId, long completedAt) {
-        NativeWorkflows.setWorkflowRunCompletedWithFailures(handle, runId, completedAt);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowRunCompletedWithFailures(handle, runId, completedAt);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowNodeCompensationJob(
             String runId, String nodeName, String compensationJobId, long startedAt) {
-        NativeWorkflows.setWorkflowNodeCompensationJob(handle, runId, nodeName, compensationJobId, startedAt);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowNodeCompensationJob(handle, runId, nodeName, compensationJobId, startedAt);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowNodeCompensated(String runId, String nodeName, long completedAt) {
-        NativeWorkflows.setWorkflowNodeCompensated(handle, runId, nodeName, completedAt);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowNodeCompensated(handle, runId, nodeName, completedAt);
+            return null;
+        });
     }
 
     @Override
     public void setWorkflowNodeCompensationFailed(String runId, String nodeName, String error, long completedAt) {
-        NativeWorkflows.setWorkflowNodeCompensationFailed(handle, runId, nodeName, error, completedAt);
+        withOpenHandle(() -> {
+            NativeWorkflows.setWorkflowNodeCompensationFailed(handle, runId, nodeName, error, completedAt);
+            return null;
+        });
     }
 
     @Override
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
-        return new JniWorkerControl(NativeQueue.runWorker(handle, bridge, optionsJson));
+        return withOpenHandle(() -> new JniWorkerControl(NativeQueue.runWorker(handle, bridge, optionsJson)));
     }
 
-    /** Idempotent: the native handle is freed exactly once, so a second {@code close()}
-     * (e.g. an explicit call plus try-with-resources) can't double-free. */
+    /** Idempotent: frees the native queue handle exactly once, after in-flight calls drain. */
     @Override
-    public synchronized void close() {
-        if (!closed) {
-            closed = true;
-            NativeQueue.close(handle);
+    public void close() {
+        stateLock.writeLock().lock();
+        try {
+            if (!closed) {
+                closed = true;
+                NativeQueue.close(handle);
+            }
+        } finally {
+            stateLock.writeLock().unlock();
         }
     }
 }
