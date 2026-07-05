@@ -165,6 +165,11 @@ pub struct WorkerOptions {
     /// Per-task retry-backoff policies, registered with the scheduler at start.
     /// The core owns the retry engine; this only feeds it the backoff curve.
     pub task_configs: Option<Vec<TaskRetryConfig>>,
+    /// Raw `taskito_mesh::MeshConfig` JSON. When present (and the `mesh` feature
+    /// is built), the worker interposes the mesh bridge between scheduler and
+    /// dispatcher; otherwise this is ignored.
+    #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
+    pub mesh_config: Option<String>,
 }
 
 /// A task's retry-backoff curve. Fields left unset fall back to the core's

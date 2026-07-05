@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,6 +44,7 @@ import org.byteveda.taskito.workflows.WorkflowTracker;
  */
 public final class Worker implements AutoCloseable {
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
+    private static final ObjectMapper MESH_JSON = new ObjectMapper();
 
     private final WorkerControl control;
     private final ExecutorService executor;
@@ -81,6 +83,20 @@ public final class Worker implements AutoCloseable {
     /** Stop dispatching; in-flight jobs continue to drain. */
     public void stop() {
         control.stop();
+    }
+
+    /**
+     * A snapshot of this worker's mesh cluster view (peer count, capacity, load),
+     * or empty when the worker was not started with {@link Builder#mesh}.
+     */
+    public Optional<MeshClusterInfo> meshClusterInfo() {
+        return control.meshClusterInfoJson().map(json -> {
+            try {
+                return MESH_JSON.readValue(json, MeshClusterInfo.class);
+            } catch (Exception e) {
+                throw new SerializationException("failed to decode mesh cluster info", e);
+            }
+        });
     }
 
     /**
@@ -160,6 +176,7 @@ public final class Worker implements AutoCloseable {
         private Integer batchSize;
         private WorkflowTracker tracker;
         private AutoscaleOptions autoscale;
+        private MeshOptions mesh;
 
         Builder(
                 QueueBackend backend,
@@ -245,6 +262,16 @@ public final class Worker implements AutoCloseable {
          */
         public Builder autoscale(AutoscaleOptions options) {
             this.autoscale = options;
+            return this;
+        }
+
+        /**
+         * Join a scheduling mesh: discover peers via gossip and steal work from
+         * busy ones. The DB stays the source of truth — mesh only changes how
+         * ready jobs are buffered and balanced, so it is safe to add to any worker.
+         */
+        public Builder mesh(MeshOptions options) {
+            this.mesh = options;
             return this;
         }
 
@@ -369,6 +396,9 @@ public final class Worker implements AutoCloseable {
             }
             if (!taskPolicies.isEmpty()) {
                 options.put("taskConfigs", encodeTaskConfigs());
+            }
+            if (mesh != null) {
+                options.put("meshConfig", mesh.toConfigJson());
             }
             try {
                 return JSON.writeValueAsString(options);
