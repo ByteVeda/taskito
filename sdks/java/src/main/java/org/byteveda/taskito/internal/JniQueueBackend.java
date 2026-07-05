@@ -8,13 +8,10 @@ import org.byteveda.taskito.spi.WorkerBridge;
 import org.byteveda.taskito.spi.WorkerControl;
 
 /**
- * JNI-backed {@link QueueBackend} over a native queue handle.
- *
- * <p>The native contract forbids using a handle after {@code close()} or closing
- * concurrently with a call — violating it is a use-after-free in the native
- * layer. Every call therefore holds the read lock while touching the handle;
- * {@code close()} takes the write lock, so it waits out in-flight calls and any
- * later call fails with {@link IllegalStateException} instead of crashing the JVM.
+ * JNI-backed {@link QueueBackend} over a native queue handle. Every call holds
+ * the read lock; {@code close()} takes the write lock, so it waits out in-flight
+ * calls and later calls throw {@link IllegalStateException} instead of touching
+ * freed native memory.
  */
 public final class JniQueueBackend implements QueueBackend {
     private final long handle;
