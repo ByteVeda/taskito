@@ -122,8 +122,9 @@ export class WorkflowTracker {
       }
       this.advance(outcome.jobId, ref.runId, ref.nodeName, succeeded, outcome.error ?? null);
     } catch (error) {
-      // Workflow bookkeeping must never break the worker loop.
-      log.debug(() => `workflow advance for ${outcome.jobId} failed`, error);
+      // Workflow bookkeeping must never break the worker loop — but a swallowed
+      // failure means a stuck run, so it must be visible at the default level.
+      log.error(() => `workflow advance for ${outcome.jobId} failed`, error);
     }
   }
 
