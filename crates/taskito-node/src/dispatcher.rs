@@ -69,12 +69,14 @@ impl WorkerDispatcher for NodeDispatcher {
 }
 
 /// Invoke the JS task for one job and translate the outcome into a [`JobResult`].
-async fn run_one(callback: &TaskCallback, storage: &StorageBackend, job: Job) -> JobResult {
+async fn run_one(callback: &TaskCallback, storage: &StorageBackend, mut job: Job) -> JobResult {
     let started = Instant::now();
     let invocation = JsTaskInvocation {
         id: job.id.clone(),
         task_name: job.task_name.clone(),
-        payload: Buffer::from(job.payload.clone()),
+        // Never read from `job` again — take, don't clone (payloads can be
+        // large); `job` stays whole for the later `failure(job, ...)` moves.
+        payload: Buffer::from(std::mem::take(&mut job.payload)),
     };
 
     // The callback runs on the JS thread and returns a Promise; bridge its
