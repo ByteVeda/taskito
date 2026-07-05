@@ -69,6 +69,12 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
             error(method, "the first @TaskHandler parameter is the payload and must not be annotated @Resource");
             return false;
         }
+        if (params.get(0).asType().getKind().isPrimitive()) {
+            // A primitive payload would generate `new TypeReference<int>() {}` —
+            // invalid Java that only surfaces as a cryptic error in the generated file.
+            error(method, "@TaskHandler payload must be a reference type (use the boxed type, e.g. Integer)");
+            return false;
+        }
         for (int i = 1; i < params.size(); i++) {
             if (resourceName(params.get(i)) == null) {
                 error(method, "@TaskHandler parameters after the payload must be annotated @Resource");
