@@ -46,7 +46,7 @@ describe("HealthChecker", () => {
     const checker = new HealthChecker(rt);
     checker.start();
     expect(await waitFor(() => builds >= 3, 8000)).toBe(true);
-    checker.stop();
+    await checker.stop();
 
     expect(rt.isUnhealthy("svc")).toBe(false); // recreation succeeded every time
     const replaced = await rt.createTaskScope().resolver("svc");
@@ -76,7 +76,7 @@ describe("HealthChecker", () => {
     const checker = new HealthChecker(rt);
     checker.start();
     expect(await waitFor(() => rt.isUnhealthy("svc"), 8000)).toBe(true);
-    checker.stop();
+    await checker.stop();
 
     // Terminal: resolving now (and forever) rejects.
     await expect(rt.createTaskScope().resolver("svc")).rejects.toThrow(ResourceUnavailableError);
@@ -99,11 +99,11 @@ describe("HealthChecker", () => {
     const checker = new HealthChecker(rt);
     checker.start();
     expect(await waitFor(() => builds >= 2, 8000)).toBe(true); // recreate path ran
-    checker.stop();
+    await checker.stop();
     expect(rt.isUnhealthy("svc")).toBe(false); // recreation kept succeeding
   });
 
-  it("start() is a no-op without health-checked resources; stop() is idempotent", () => {
+  it("start() is a no-op without health-checked resources; stop() is idempotent", async () => {
     const rt = new ResourceRuntime();
     rt.register("plain", { scope: "worker", factory: () => 1 });
     rt.register("disabled", {
@@ -114,10 +114,42 @@ describe("HealthChecker", () => {
     });
     const checker = new HealthChecker(rt);
     checker.start(); // no timer started — nothing asked for checking
-    checker.stop();
-    checker.stop(); // safe without a timer, and repeatedly
+    await checker.stop();
+    await checker.stop(); // safe without a timer, and repeatedly
+    checker.start(); // terminal: a stopped checker never restarts
+    await checker.stop();
+  });
+
+  it("stop() drains an in-flight tick and blocks recreation after it", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    let releaseCheck: ((healthy: boolean) => void) | undefined;
+    rt.register("svc", {
+      scope: "worker",
+      factory: () => ++builds,
+      healthCheck: () =>
+        new Promise<boolean>((resolve) => {
+          releaseCheck = resolve;
+        }),
+      healthCheckIntervalMs: 50,
+    });
+    await rt.createTaskScope().resolver("svc");
+
+    const checker = new HealthChecker(rt);
     checker.start();
-    checker.stop();
+    expect(await waitFor(() => releaseCheck !== undefined, 8000)).toBe(true); // check in flight
+
+    const stopping = checker.stop(); // must wait for the pending check
+    let drained = false;
+    void stopping.then(() => {
+      drained = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(drained).toBe(false); // still blocked on the in-flight check
+
+    releaseCheck?.(false); // fails — but shutdown already began
+    await stopping;
+    expect(builds).toBe(1); // no recreate ran into the teardown window
   });
 
   it("rejects health checks on task- and pooled-scoped resources", () => {

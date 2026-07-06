@@ -11,7 +11,7 @@ import type {
   QueueConfigInput,
   TaskConfigInput,
 } from "./native";
-import { HealthChecker, type ResourceRuntime, runWithResolver } from "./resources";
+import { type ResourceRuntime, runWithResolver } from "./resources";
 import type { PayloadCodec, Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
@@ -54,7 +54,6 @@ export class Worker {
   private constructor(
     private readonly native: NativeWorker,
     private readonly resources: ResourceRuntime,
-    private readonly healthChecker: HealthChecker,
     private readonly heartbeat: ReturnType<typeof setInterval>,
   ) {}
 
@@ -204,11 +203,9 @@ export class Worker {
     // Lease the shared resource runtime only once the native worker actually
     // started, so its worker-scoped values survive until the last worker on this
     // queue stops (see ResourceRuntime). A failed start leaks no lease.
+    // The lease also starts the runtime's shared health checker (first lease
+    // only) — recreation of failing resources is per runtime, not per worker.
     resources.acquireWorker();
-
-    // Recreate failing health-checked resources; no-op when none asked for it.
-    const healthChecker = new HealthChecker(resources);
-    healthChecker.start();
 
     // Heartbeat with current resource health so inspection (and dead-worker
     // reaping) see this worker as alive. Failures are logged, never thrown —
@@ -223,16 +220,16 @@ export class Worker {
     const heartbeat = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();
 
-    return new Worker(native, resources, healthChecker, heartbeat);
+    return new Worker(native, resources, heartbeat);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
-    this.healthChecker.stop();
     clearInterval(this.heartbeat);
     this.native.stop();
-    // Dispose worker-scoped resources after the native worker quiesces. Best
-    // effort: lazy resources mean this is a no-op when none were built.
+    // Dispose worker-scoped resources after the native worker quiesces (the
+    // teardown drains the runtime's health checker before touching caches).
+    // Best effort: lazy resources mean this is a no-op when none were built.
     void this.resources.teardownWorker().catch((error) => {
       log.debug(() => "worker-scope resource teardown failed", error);
     });

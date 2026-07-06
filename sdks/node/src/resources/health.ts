@@ -21,8 +21,10 @@ const DEFAULT_MAX_RECREATION_ATTEMPTS = 3;
  */
 export class HealthChecker {
   private timer: ReturnType<typeof setInterval> | undefined;
-  /** Guards against overlapping ticks while a check/recreate is still running. */
-  private running = false;
+  /** The tick currently running, if any — doubles as the overlap guard. */
+  private inFlight: Promise<void> | undefined;
+  /** Set by {@link HealthChecker.stop} — a stopped checker never restarts. */
+  private stopped = false;
   private readonly nextDue = new Map<string, number>();
   private readonly failCount = new Map<string, number>();
 
@@ -30,7 +32,7 @@ export class HealthChecker {
 
   /** Start the daemon. No-op unless some resource asked for health checks. */
   start(): void {
-    if (this.timer) {
+    if (this.timer || this.stopped) {
       return;
     }
     const checked = this.runtime.healthChecked();
@@ -44,26 +46,42 @@ export class HealthChecker {
     }
     // The tick never rejects (see below), so the timer can't leak an
     // unhandled rejection; unref keeps it from pinning the process open.
-    this.timer = setInterval(() => void this.tick(checked), TICK_MS);
+    this.timer = setInterval(() => this.onTick(checked), TICK_MS);
     this.timer.unref();
   }
 
-  /** Stop the daemon. Safe to call repeatedly or without a prior start. */
-  stop(): void {
+  /**
+   * Stop the daemon and wait for any in-flight tick to drain, so no
+   * check/recreate can mutate runtime state once this resolves — safe to run
+   * worker teardown right after. Terminal and idempotent: a stopped checker
+   * never restarts.
+   */
+  async stop(): Promise<void> {
+    this.stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+    await this.inFlight;
   }
 
-  /** One wake-up: run every due check. Catches everything — timers must survive. */
-  private async tick(checked: ReadonlyMap<string, ResourceDefinition>): Promise<void> {
-    if (this.running) {
-      return; // the previous tick's async work is still in flight
+  /** One timer wake-up: skip when the previous tick is still in flight. */
+  private onTick(checked: ReadonlyMap<string, ResourceDefinition>): void {
+    if (this.inFlight || this.stopped) {
+      return;
     }
-    this.running = true;
+    this.inFlight = this.tick(checked).finally(() => {
+      this.inFlight = undefined;
+    });
+  }
+
+  /** Run every due check. Catches everything — timers must survive. */
+  private async tick(checked: ReadonlyMap<string, ResourceDefinition>): Promise<void> {
     try {
       for (const [name, def] of checked) {
+        if (this.stopped) {
+          return; // shutdown began mid-tick — leave the runtime alone
+        }
         if (Date.now() < (this.nextDue.get(name) ?? 0) || this.runtime.isUnhealthy(name)) {
           continue;
         }
@@ -72,8 +90,6 @@ export class HealthChecker {
       }
     } catch (error) {
       log.warn(() => "health-check tick failed", error);
-    } finally {
-      this.running = false;
     }
   }
 
@@ -87,6 +103,9 @@ export class HealthChecker {
     this.failCount.set(name, failures);
     const maxAttempts = def.maxRecreationAttempts ?? DEFAULT_MAX_RECREATION_ATTEMPTS;
     log.warn(`resource "${name}" health check failed (${failures}/${maxAttempts})`);
+    if (this.stopped) {
+      return; // shutdown began while the check ran — don't recreate into teardown
+    }
     if (await this.runtime.recreate(name)) {
       this.failCount.set(name, 0); // a fresh instance starts with a clean slate
     } else if (failures >= maxAttempts) {

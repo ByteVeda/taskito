@@ -1,5 +1,6 @@
 import { ResourceNotFoundError, ResourceScopeError, ResourceUnavailableError } from "../errors";
 import { createLogger } from "../utils";
+import { HealthChecker } from "./health";
 import { ResourcePool } from "./pool";
 import type {
   ResourceContext,
@@ -52,6 +53,8 @@ export class ResourceRuntime {
   private workerLeases = 0;
   /** Resources marked permanently unhealthy — resolving them rejects for good. */
   private readonly unhealthy = new Set<string>();
+  /** One checker per runtime, shared by every lease — never one per worker. */
+  private healthChecker: HealthChecker | undefined;
 
   /** Register (or replace) a resource definition. */
   register<T>(name: string, definition: ResourceDefinition<T>): void {
@@ -239,6 +242,12 @@ export class ResourceRuntime {
   /** Register a worker that shares this runtime's worker-scoped resources. */
   acquireWorker(): void {
     this.workerLeases += 1;
+    // Start the shared checker on the first lease only — concurrent workers on
+    // one runtime must not race recreate() on the same resource.
+    if (this.workerLeases === 1) {
+      this.healthChecker = new HealthChecker(this);
+      this.healthChecker.start();
+    }
     // Best-effort prewarm of pooled resources that asked for warm instances.
     // `prewarm` never rejects — build failures are logged inside the pool.
     for (const [name, def] of this.defs) {
@@ -261,6 +270,11 @@ export class ResourceRuntime {
     if (this.workerLeases > 0) {
       return;
     }
+    // Drain the checker first: once stop() resolves, no in-flight tick can
+    // recreate a resource while the caches below are torn down.
+    const checker = this.healthChecker;
+    this.healthChecker = undefined;
+    await checker?.stop();
     const pending = this.workerTeardown.splice(0);
     this.workerCache.clear();
     // "Permanently unhealthy" is scoped to a worker run — the next worker
