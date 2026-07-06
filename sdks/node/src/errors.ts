@@ -151,6 +151,16 @@ export class PredicateRejectedError extends TaskitoError {
   }
 }
 
+// ── Proxies ─────────────────────────────────────────────────────────────────
+
+/** Thrown on proxy handler, signature, expiry, purpose, or allowlist failures. */
+export class ProxyError extends TaskitoError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProxyError";
+  }
+}
+
 /** Thrown when an enqueue interceptor rejects, misbehaves, or redirects illegally. */
 export class InterceptionError extends TaskitoError {
   constructor(message: string) {
