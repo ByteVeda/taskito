@@ -262,6 +262,13 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       scope?: ResourceScope;
       dispose?: (value: T) => void | Promise<void>;
       pool?: PoolOptions;
+      /** Returns truthy while healthy; failures trigger recreation. Worker scope only. */
+      healthCheck?: (value: T) => boolean | Promise<boolean>;
+      /** Milliseconds between health checks. 0 or absent disables checking. */
+      healthCheckIntervalMs?: number;
+      /** Failed checks tolerated (while recreation also fails) before the
+       * resource is marked permanently unhealthy. Default 3. */
+      maxRecreationAttempts?: number;
     },
   ): this {
     const scope = options?.scope ?? "worker";
@@ -270,11 +277,20 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
         `Resource "${name}": pool options require scope "pooled" (got "${scope}")`,
       );
     }
+    if (options?.healthCheck && scope !== "worker") {
+      throw new ResourceError(
+        `Resource "${name}": health checks require scope "worker" (got "${scope}") — ` +
+          "task and pooled instances are already rebuilt or recycled per job",
+      );
+    }
     this.resources.register<T>(name, {
       factory,
       scope,
       dispose: options?.dispose,
       pool: options?.pool,
+      healthCheck: options?.healthCheck,
+      healthCheckIntervalMs: options?.healthCheckIntervalMs,
+      maxRecreationAttempts: options?.maxRecreationAttempts,
     });
     return this;
   }

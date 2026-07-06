@@ -1,8 +1,9 @@
 //! Worker wiring — scheduler, dispatcher, result-drain, and worker lifecycle
-//! (registration + heartbeat) so the worker shows up in the dashboard.
+//! (registration + unregistration) so the worker shows up in the dashboard.
+//! Heartbeats are driven from JS via [`crate::queue::JsQueue::worker_heartbeat`]
+//! so they can carry resource health without a second writer flapping the column.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use napi::bindgen_prelude::{spawn, spawn_blocking, Result};
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
@@ -19,29 +20,36 @@ use crate::error::invalid_arg;
 
 const DEFAULT_QUEUE: &str = "default";
 const DEFAULT_CHANNEL_CAPACITY: usize = 128;
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Handle to a running worker. Hold it for the worker's lifetime; call
 /// [`JsWorker::stop`] to shut it down.
 #[napi]
 pub struct JsWorker {
+    worker_id: String,
     shutdown: Arc<Notify>,
-    heartbeat_stop: Arc<Notify>,
+    lifecycle_stop: Arc<Notify>,
     #[cfg(feature = "mesh")]
     mesh_shutdown: Arc<Notify>,
 }
 
 #[napi]
 impl JsWorker {
-    /// Stop the worker: the scheduler stops dispatching, the heartbeat loop ends
-    /// and unregisters, mesh gossip/steal tasks shut down, and the background
+    /// The id this worker registered (and claims executions) under. The JS
+    /// shell heartbeats with it via [`crate::queue::JsQueue::worker_heartbeat`].
+    #[napi(getter)]
+    pub fn id(&self) -> String {
+        self.worker_id.clone()
+    }
+
+    /// Stop the worker: the scheduler stops dispatching, the lifecycle task
+    /// unregisters, mesh gossip/steal tasks shut down, and the background
     /// tasks exit once in-flight results drain.
     #[napi]
     pub fn stop(&self) {
         // `notify_one` stores a permit if no waiter is parked yet, so the signal
         // is never lost between loop iterations.
         self.shutdown.notify_one();
-        self.heartbeat_stop.notify_one();
+        self.lifecycle_stop.notify_one();
         #[cfg(feature = "mesh")]
         self.mesh_shutdown.notify_one();
     }
@@ -112,14 +120,16 @@ pub fn start_worker(
     let (job_tx, job_rx) = tokio::sync::mpsc::channel(capacity);
     let (result_tx, result_rx) = crossbeam_channel::bounded(capacity);
 
-    // Worker lifecycle: register, heartbeat every 5s, unregister on stop.
-    let heartbeat_stop = Arc::new(Notify::new());
+    // Worker lifecycle: register (advertising resource names), unregister on
+    // stop. Heartbeats come from JS so they carry current resource health.
+    let lifecycle_stop = Arc::new(Notify::new());
     spawn_worker_lifecycle(
         lifecycle_storage,
         worker_id.clone(),
         queues_csv,
+        resources_json(options.resources.as_deref()),
         capacity,
-        heartbeat_stop.clone(),
+        lifecycle_stop.clone(),
     );
 
     // Scheduler loop: poll storage, dispatch ready jobs onto `job_tx`. With the
@@ -200,18 +210,29 @@ pub fn start_worker(
     });
 
     Ok(JsWorker {
+        worker_id,
         shutdown,
-        heartbeat_stop,
+        lifecycle_stop,
         #[cfg(feature = "mesh")]
         mesh_shutdown,
     })
 }
 
-/// Register this worker and heartbeat until `stop` is signalled, then unregister.
+/// Serialize advertised resource names to the cross-SDK wire shape: a sorted
+/// JSON array, or `None` when the worker registered no resources.
+fn resources_json(resources: Option<&[String]>) -> Option<String> {
+    let names = resources.filter(|names| !names.is_empty())?;
+    let mut sorted = names.to_vec();
+    sorted.sort();
+    serde_json::to_string(&sorted).ok()
+}
+
+/// Register this worker, then unregister once `stop` is signalled.
 fn spawn_worker_lifecycle(
     storage: StorageBackend,
     worker_id: String,
     queues_csv: String,
+    resources: Option<String>,
     capacity: usize,
     stop: Arc<Notify>,
 ) {
@@ -228,7 +249,7 @@ fn spawn_worker_lifecycle(
                 &reg_id,
                 &queues_csv,
                 None,
-                None,
+                resources.as_deref(),
                 None,
                 capacity as i32,
                 Some(&hostname),
@@ -243,20 +264,7 @@ fn spawn_worker_lifecycle(
             Ok(Ok(_)) => {}
         }
 
-        loop {
-            tokio::select! {
-                _ = stop.notified() => break,
-                _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {
-                    let hb_storage = storage.clone();
-                    let hb_id = worker_id.clone();
-                    match spawn_blocking(move || hb_storage.heartbeat(&hb_id, None)).await {
-                        Ok(Err(err)) => log::warn!("[taskito-node] worker heartbeat failed: {err}"),
-                        Err(err) => log::warn!("[taskito-node] worker heartbeat task failed: {err}"),
-                        Ok(Ok(_)) => {}
-                    }
-                }
-            }
-        }
+        stop.notified().await;
 
         match spawn_blocking(move || storage.unregister_worker(&worker_id)).await {
             Ok(Err(err)) => log::warn!("[taskito-node] worker unregister failed: {err}"),

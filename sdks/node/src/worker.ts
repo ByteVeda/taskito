@@ -23,6 +23,9 @@ const log = createLogger("worker");
 /** How often a running job polls the storage cancel flag. */
 const CANCEL_POLL_INTERVAL_MS = 200;
 
+/** How often the worker heartbeats (with resource health) to storage. */
+const HEARTBEAT_INTERVAL_MS = 5000;
+
 /** Outcome kind -> event name + the middleware hook it triggers. */
 const OUTCOMES: Record<string, { event: EventName; hook: keyof Middleware }> = {
   success: { event: "job.completed", hook: "onCompleted" },
@@ -51,6 +54,7 @@ export class Worker {
   private constructor(
     private readonly native: NativeWorker,
     private readonly resources: ResourceRuntime,
+    private readonly heartbeat: ReturnType<typeof setInterval>,
   ) {}
 
   /**
@@ -192,21 +196,40 @@ export class Worker {
       batchSize: run?.batchSize,
       taskConfigs: buildTaskConfigs(tasks),
       queueConfigs: buildQueueConfigs(queueLimits),
+      resources: resources.isEmpty ? undefined : resources.names,
       mesh: run?.mesh,
     };
     const native = queue.runWorker(taskCallback, outcomeCallback, nativeOptions);
     // Lease the shared resource runtime only once the native worker actually
     // started, so its worker-scoped values survive until the last worker on this
     // queue stops (see ResourceRuntime). A failed start leaks no lease.
+    // The lease also starts the runtime's shared health checker (first lease
+    // only) — recreation of failing resources is per runtime, not per worker.
     resources.acquireWorker();
-    return new Worker(native, resources);
+
+    // Heartbeat with current resource health so inspection (and dead-worker
+    // reaping) see this worker as alive. Failures are logged, never thrown —
+    // the next beat retries. First beat goes out immediately.
+    const sendHeartbeat = (): void => {
+      const snapshot = resources.healthSnapshot();
+      void queue.workerHeartbeat(native.id, snapshot && JSON.stringify(snapshot)).catch((error) => {
+        log.debug(() => "worker heartbeat failed", error);
+      });
+    };
+    sendHeartbeat();
+    const heartbeat = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+    heartbeat.unref();
+
+    return new Worker(native, resources, heartbeat);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
+    clearInterval(this.heartbeat);
     this.native.stop();
-    // Dispose worker-scoped resources after the native worker quiesces. Best
-    // effort: lazy resources mean this is a no-op when none were built.
+    // Dispose worker-scoped resources after the native worker quiesces (the
+    // teardown drains the runtime's health checker before touching caches).
+    // Best effort: lazy resources mean this is a no-op when none were built.
     void this.resources.teardownWorker().catch((error) => {
       log.debug(() => "worker-scope resource teardown failed", error);
     });

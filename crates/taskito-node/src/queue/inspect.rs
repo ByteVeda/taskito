@@ -126,4 +126,25 @@ impl JsQueue {
         .await
         .map_err(join_to_napi_err)?
     }
+
+    /// Record a heartbeat for a running worker, carrying its current resource
+    /// health as a JSON object (`null` clears it). Called from the JS shell
+    /// every 5s. Returns the ids of dead workers reaped as a side effect.
+    #[napi]
+    pub async fn worker_heartbeat(
+        &self,
+        worker_id: String,
+        resource_health: Option<String>,
+    ) -> Result<Vec<String>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .heartbeat(&worker_id, resource_health.as_deref())
+                .map_err(to_napi_err)?;
+            // Reaping is opportunistic — a failure must not fail the heartbeat.
+            Ok(storage.reap_dead_workers().unwrap_or_default())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
 }
