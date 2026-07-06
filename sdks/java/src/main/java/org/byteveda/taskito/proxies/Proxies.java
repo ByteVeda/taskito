@@ -84,12 +84,32 @@ public final class Proxies {
      * Verify a ref's signature, expiry, and (when {@code expectedPurpose} is
      * non-null) its bound purpose, then reconstruct the resource.
      */
-    @SuppressWarnings("unchecked")
     public Object reconstruct(ProxyRef ref, String expectedPurpose) {
-        ProxyHandler<Object> handler = (ProxyHandler<Object>) handlers.get(ref.handler());
+        ProxyHandler<Object> handler = handlerFor(ref.handler());
+        verify(ref, expectedPurpose);
+        return handler.reconstruct(ref.reference());
+    }
+
+    /**
+     * A new {@link ProxySession}: deconstruct/reconstruct with per-instance
+     * identity dedup and close-time cleanup. Confine a session to one thread.
+     */
+    public ProxySession session() {
+        return new ProxySession(this);
+    }
+
+    /** Look up a handler by id, failing on an unknown id. */
+    @SuppressWarnings("unchecked")
+    ProxyHandler<Object> handlerFor(String handlerId) {
+        ProxyHandler<Object> handler = (ProxyHandler<Object>) handlers.get(handlerId);
         if (handler == null) {
-            throw new ProxyException("unknown proxy handler '" + ref.handler() + "'");
+            throw new ProxyException("unknown proxy handler '" + handlerId + "'");
         }
+        return handler;
+    }
+
+    /** Verify a ref's signature, expiry, and (when requested) bound purpose. */
+    void verify(ProxyRef ref, String expectedPurpose) {
         byte[] expected = sign(ref.handler(), ref.reference(), ref.expiresAtMs(), ref.purpose())
                 .getBytes(StandardCharsets.UTF_8);
         byte[] actual = (ref.signature() == null ? "" : ref.signature()).getBytes(StandardCharsets.UTF_8);
@@ -102,7 +122,6 @@ public final class Proxies {
         if (expectedPurpose != null && !expectedPurpose.equals(ref.purpose())) {
             throw new ProxyException("proxy purpose mismatch for handler '" + ref.handler() + "'");
         }
-        return handler.reconstruct(ref.reference());
     }
 
     /** {@link #reconstruct(ProxyRef)} cast to the caller's type. */

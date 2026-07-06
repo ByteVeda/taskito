@@ -1,6 +1,8 @@
 package org.byteveda.taskito;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,12 +10,16 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.byteveda.taskito.errors.ProxyException;
 import org.byteveda.taskito.proxies.FileProxyHandler;
 import org.byteveda.taskito.proxies.Proxies;
+import org.byteveda.taskito.proxies.ProxyHandler;
 import org.byteveda.taskito.proxies.ProxyRef;
+import org.byteveda.taskito.proxies.ProxySession;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -134,5 +140,132 @@ class ProxyTest {
         assertEquals(file.getAbsolutePath(), ((File) proxies.reconstruct(ref, "emails")).getAbsolutePath());
         assertEquals(file.getAbsolutePath(), ((File) proxies.reconstruct(ref)).getAbsolutePath()); // unchecked
         assertThrows(ProxyException.class, () -> proxies.reconstruct(ref, "billing"));
+    }
+
+    /** Counts handler invocations and records cleanups, for session tests. */
+    private static final class CountingFileHandler implements ProxyHandler<File> {
+        private final FileProxyHandler delegate = new FileProxyHandler();
+        final AtomicInteger deconstructs = new AtomicInteger();
+        final AtomicInteger reconstructs = new AtomicInteger();
+        final List<File> cleaned = new ArrayList<>();
+
+        @Override
+        public String id() {
+            return delegate.id();
+        }
+
+        @Override
+        public boolean handles(Object value) {
+            return delegate.handles(value);
+        }
+
+        @Override
+        public Map<String, Object> deconstruct(File value) {
+            deconstructs.incrementAndGet();
+            return delegate.deconstruct(value);
+        }
+
+        @Override
+        public File reconstruct(Map<String, Object> reference) {
+            reconstructs.incrementAndGet();
+            return delegate.reconstruct(reference);
+        }
+
+        @Override
+        public void cleanup(File value) {
+            cleaned.add(value);
+        }
+    }
+
+    @Test
+    void sessionDedupsSameInstanceOnDeconstruct(@TempDir Path dir) {
+        CountingFileHandler handler = new CountingFileHandler();
+        Proxies proxies = new Proxies(KEY).register(handler);
+        File file = dir.resolve("dedup.txt").toFile();
+        try (ProxySession session = proxies.session()) {
+            ProxyRef first = session.deconstruct(file);
+            ProxyRef second = session.deconstruct(file);
+            assertSame(first, second);
+        }
+        assertEquals(1, handler.deconstructs.get());
+    }
+
+    @Test
+    void sessionKeepsPurposesDistinct(@TempDir Path dir) {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        File file = dir.resolve("purpose.txt").toFile();
+        try (ProxySession session = proxies.session()) {
+            ProxyRef emails = session.deconstruct(file, null, "emails");
+            ProxyRef billing = session.deconstruct(file, null, "billing");
+            assertNotSame(emails, billing);
+            assertEquals(file.getAbsolutePath(), ((File) proxies.reconstruct(emails, "emails")).getAbsolutePath());
+            assertEquals(file.getAbsolutePath(), ((File) proxies.reconstruct(billing, "billing")).getAbsolutePath());
+        }
+    }
+
+    @Test
+    void sessionMemoizesReconstructBySignature(@TempDir Path dir) {
+        CountingFileHandler handler = new CountingFileHandler();
+        Proxies proxies = new Proxies(KEY).register(handler);
+        ProxyRef ref = proxies.deconstruct(dir.resolve("memo.txt").toFile());
+        try (ProxySession session = proxies.session()) {
+            Object first = session.reconstruct(ref);
+            Object second = session.reconstruct(ref);
+            assertSame(first, second);
+        }
+        assertEquals(1, handler.reconstructs.get());
+    }
+
+    @Test
+    void sessionCleanupRunsOnceLifo(@TempDir Path dir) {
+        CountingFileHandler handler = new CountingFileHandler();
+        Proxies proxies = new Proxies(KEY).register(handler);
+        ProxyRef refA = proxies.deconstruct(dir.resolve("a.txt").toFile());
+        ProxyRef refB = proxies.deconstruct(dir.resolve("b.txt").toFile());
+        ProxySession session = proxies.session();
+        File a = session.resolve(refA);
+        File b = session.resolve(refB);
+        session.resolve(refA); // memo hit — must not add a second cleanup
+        session.close();
+        session.close(); // idempotent
+        assertEquals(List.of(b, a), handler.cleaned, "cleanup runs once per instance, LIFO");
+    }
+
+    @Test
+    void sessionsAreIsolated(@TempDir Path dir) {
+        CountingFileHandler handler = new CountingFileHandler();
+        Proxies proxies = new Proxies(KEY).register(handler);
+        ProxyRef ref = proxies.deconstruct(dir.resolve("iso.txt").toFile());
+        try (ProxySession one = proxies.session();
+                ProxySession two = proxies.session()) {
+            File fromOne = one.resolve(ref);
+            File fromTwo = two.resolve(ref);
+            assertNotSame(fromOne, fromTwo);
+            one.close();
+            assertEquals(1, handler.cleaned.size(), "closing one session leaves the other live");
+            assertEquals(fromOne, handler.cleaned.get(0));
+        }
+    }
+
+    @Test
+    void sessionReverifiesOnMemoHit(@TempDir Path dir) throws Exception {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        ProxyRef ref = proxies.deconstruct(dir.resolve("ttl.txt").toFile(), Duration.ofMillis(30));
+        try (ProxySession session = proxies.session()) {
+            session.resolve(ref);
+            Thread.sleep(80);
+            assertThrows(ProxyException.class, () -> session.resolve(ref), "expired ref must stop resolving");
+        }
+    }
+
+    @Test
+    void sessionRejectsUseAfterClose(@TempDir Path dir) {
+        Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
+        File file = dir.resolve("closed.txt").toFile();
+        ProxyRef ref = proxies.deconstruct(file);
+        ProxySession session = proxies.session();
+        session.close();
+        assertThrows(ProxyException.class, () -> session.deconstruct(file));
+        assertThrows(ProxyException.class, () -> session.reconstruct(ref));
     }
 }

@@ -21,4 +21,12 @@ public interface ProxyHandler<T> {
 
     /** Rebuild the resource from a reference produced by {@link #deconstruct}. */
     T reconstruct(Map<String, Object> reference);
+
+    /**
+     * Release a resource this handler reconstructed, invoked (LIFO, once per
+     * unique instance) when a {@link ProxySession} that produced it closes.
+     * Direct {@link Proxies#reconstruct(ProxyRef)} calls have no lifecycle and
+     * never trigger this. Default: no-op.
+     */
+    default void cleanup(T value) {}
 }
