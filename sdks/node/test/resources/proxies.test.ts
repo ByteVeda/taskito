@@ -165,9 +165,18 @@ describe("canonicalJson", () => {
 
 describe("cross-SDK contract", () => {
   it("produces the contract vector signature", () => {
-    const proxies = fileProxies();
-    const ref = proxies.deconstruct(new FileReference("/tmp/data.txt"));
+    // A verbatim handler keeps the reference platform-independent — the file
+    // handler would resolve the path against the local filesystem root.
+    const verbatim: ProxyHandler<string> = {
+      id: "file",
+      handles: (value) => typeof value === "string",
+      deconstruct: (value) => ({ path: value }),
+      reconstruct: (reference) => String(reference.path),
+    };
+    const proxies = new Proxies(KEY).register(verbatim);
+    const ref = proxies.deconstruct("/tmp/data.txt");
     expect(ref.signature).toBe("FgmudNqaGsUBFsIKC4uBgtfZ+IAHrzBT+xRjUWGePyQ=");
+    expect(proxies.resolve<string>(ref)).toBe("/tmp/data.txt");
   });
 });
 
