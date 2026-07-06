@@ -385,7 +385,9 @@ public final class ResourceRuntime {
     private void disposeWorker() {
         // Pools first: pooled instances may depend on worker resources, which the
         // teardown stack below disposes.
-        pools.values().forEach(ResourcePool::shutdown);
+        for (ResourcePool pool : pools.values()) {
+            pool.shutdown();
+        }
         pools.clear();
         synchronized (workerTeardown) {
             while (!workerTeardown.isEmpty()) {

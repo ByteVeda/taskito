@@ -13,6 +13,6 @@ class Greeter {
 
     @TaskHandler
     Integer total(List<Integer> numbers) {
-        return numbers.stream().mapToInt(Integer::intValue).sum();
+        return numbers.stream().mapToInt(number -> number.intValue()).sum();
     }
 }
