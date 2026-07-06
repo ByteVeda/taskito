@@ -348,8 +348,8 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /**
-   * Run enqueue interceptors, merge per-task defaults, run the `onEnqueue`
-   * interception hooks, then serialize the args and encode the options — the
+   * Run enqueue interceptors, merge per-task defaults, run the middleware
+   * `onEnqueue` hooks, then serialize the args and encode the options — the
    * shared path for {@link Queue.enqueue} and {@link Queue.enqueueMany}.
    * Everything downstream of the interceptors keys off the (possibly
    * redirected) final task name.
@@ -367,7 +367,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       maxRetries: options?.maxRetries ?? defaults?.maxRetries,
       timeoutMs: options?.timeoutMs ?? defaults?.timeoutMs,
     };
-    // Interception seam: let middleware validate/redact/rewrite before serializing.
+    // Middleware seam: let onEnqueue hooks validate/redact/rewrite before serializing.
     const ctx: EnqueueContext = { taskName, args: finalArgs, options: merged };
     for (const mw of this.middleware) {
       mw.onEnqueue?.(ctx);
