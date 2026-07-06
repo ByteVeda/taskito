@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+  InterceptionError,
   JobCancelledError,
   JobFailedError,
   LockLostError,
@@ -12,6 +13,7 @@ import {
   TaskitoError,
 } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
+import type { Interceptor } from "./interception";
 import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
 import {
@@ -100,6 +102,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly tasks = new Map<string, RegisteredTask>();
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
+  private readonly interceptors: Interceptor[] = [];
   private readonly gates = new Map<string, Predicate[]>();
   private readonly emitter = new Emitter();
   private readonly resources = new ResourceRuntime();
@@ -281,6 +284,19 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    * `onEnqueue`). If it returns `false`, the enqueue throws
    * {@link PredicateRejectedError}. Multiple gates on a task all must pass.
    */
+  /**
+   * Register an enqueue interceptor. Interceptors run at the start of every
+   * enqueue — before defaults, middleware, and gates — chained in
+   * registration order, each seeing the previous one's task name and args.
+   * Returning `Interception.reject(...)` (or a null-ish value) makes the
+   * enqueue throw {@link InterceptionError}; `redirect` is not supported for
+   * batch enqueue or for tasks with per-task codecs.
+   */
+  intercept(interceptor: Interceptor): this {
+    this.interceptors.push(interceptor);
+    return this;
+  }
+
   gate<Name extends keyof TTasks & string>(
     name: Name,
     predicate: (ctx: { taskName: Name; args: Parameters<TTasks[Name]> }) => boolean,
@@ -309,8 +325,8 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     args?: Parameters<TTasks[Name]>,
     options?: EnqueueOptions,
   ): string {
-    const { payload, options: nativeOpts } = this.prepareEnqueue(name, args, options);
-    return this.native.enqueue(name, payload, nativeOpts);
+    const { taskName, payload, options: nativeOpts } = this.prepareEnqueue(name, args, options);
+    return this.native.enqueue(taskName, payload, nativeOpts);
   }
 
   /**
@@ -322,41 +338,98 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     name: Name,
     jobs: ReadonlyArray<{ args?: Parameters<TTasks[Name]>; options?: EnqueueOptions }>,
   ): string[] {
-    const prepared = jobs.map((job) => this.prepareEnqueue(name, job.args, job.options));
+    const prepared = jobs.map((job) => {
+      const { payload, options } = this.prepareEnqueue(name, job.args, job.options, {
+        batch: true,
+      });
+      return { payload, options };
+    });
     return this.native.enqueueMany(name, prepared);
   }
 
   /**
-   * Merge per-task defaults, run the `onEnqueue` interception hooks, then
-   * serialize the args and encode the options — the shared path for
-   * {@link Queue.enqueue} and {@link Queue.enqueueMany}.
+   * Run enqueue interceptors, merge per-task defaults, run the middleware
+   * `onEnqueue` hooks, then serialize the args and encode the options — the
+   * shared path for {@link Queue.enqueue} and {@link Queue.enqueueMany}.
+   * Everything downstream of the interceptors keys off the (possibly
+   * redirected) final task name.
    */
   private prepareEnqueue<Name extends keyof TTasks & string>(
     name: Name,
     args: Parameters<TTasks[Name]> | undefined,
     options: EnqueueOptions | undefined,
-  ): { payload: Buffer; options: NativeEnqueueOptions } {
-    const defaults = this.tasks.get(name)?.options;
+    mode?: { batch: boolean },
+  ): { taskName: string; payload: Buffer; options: NativeEnqueueOptions } {
+    const { taskName, args: finalArgs } = this.runInterceptors(name, [...(args ?? [])], mode);
+    const defaults = this.tasks.get(taskName)?.options;
     const merged: EnqueueOptions = {
       ...options,
       maxRetries: options?.maxRetries ?? defaults?.maxRetries,
       timeoutMs: options?.timeoutMs ?? defaults?.timeoutMs,
     };
-    // Interception seam: let middleware validate/redact/rewrite before serializing.
-    const ctx: EnqueueContext = { taskName: name, args: [...(args ?? [])], options: merged };
+    // Middleware seam: let onEnqueue hooks validate/redact/rewrite before serializing.
+    const ctx: EnqueueContext = { taskName, args: finalArgs, options: merged };
     for (const mw of this.middleware) {
       mw.onEnqueue?.(ctx);
     }
     // Gate: predicates see the (possibly rewritten) args and may reject the enqueue.
-    for (const gate of this.gates.get(name) ?? []) {
-      if (!gate({ taskName: name, args: ctx.args })) {
-        throw new PredicateRejectedError(name);
+    for (const gate of this.gates.get(taskName) ?? []) {
+      if (!gate({ taskName, args: ctx.args })) {
+        throw new PredicateRejectedError(taskName);
       }
     }
     return {
-      payload: this.encodeTaskPayload(name, ctx.args),
+      taskName,
+      payload: this.encodeTaskPayload(taskName, ctx.args),
       options: toNativeEnqueueOptions(ctx.options),
     };
+  }
+
+  /**
+   * Chain the registered interceptors over `(taskName, args)`: a null-ish
+   * outcome or `reject` throws; `redirect` swaps both
+   * the task name and args, and is rejected for batch enqueue (the batch is
+   * stored under one task name) and for tasks with per-task codecs (the
+   * redirect target's codec chain cannot be resolved from a bare name —
+   * a cross-SDK behavioral contract).
+   */
+  private runInterceptors(
+    name: string,
+    args: unknown[],
+    mode?: { batch: boolean },
+  ): { taskName: string; args: unknown[] } {
+    let taskName = name;
+    let currentArgs = args;
+    for (const interceptor of this.interceptors) {
+      const outcome = interceptor(taskName, currentArgs);
+      if (!outcome) {
+        throw new InterceptionError(`interceptor returned null for task "${taskName}"`);
+      }
+      switch (outcome.type) {
+        case "pass":
+          break;
+        case "convert":
+          currentArgs = outcome.args;
+          break;
+        case "redirect":
+          if (mode?.batch) {
+            throw new InterceptionError(
+              `interceptor Redirect is not supported for batch enqueue of task "${taskName}"`,
+            );
+          }
+          taskName = outcome.taskName;
+          currentArgs = outcome.args;
+          break;
+        case "reject":
+          throw new InterceptionError(`enqueue of "${taskName}" rejected: ${outcome.reason}`);
+      }
+    }
+    if (taskName !== name && (this.tasks.get(name)?.options?.codecs?.length ?? 0) > 0) {
+      throw new InterceptionError(
+        `interceptor Redirect is not supported for a task with payload codecs ("${name}")`,
+      );
+    }
+    return { taskName, args: currentArgs };
   }
 
   /**

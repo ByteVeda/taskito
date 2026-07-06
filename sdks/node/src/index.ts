@@ -2,6 +2,7 @@ export { currentJob, type JobContext } from "./context";
 export { type DashboardAuth, type DashboardOptions, serveDashboard } from "./dashboard";
 export {
   CryptoError,
+  InterceptionError,
   JobCancelledError,
   JobFailedError,
   LockLostError,
@@ -19,6 +20,7 @@ export {
   WorkflowError,
 } from "./errors";
 export type { EventHandler, EventName, OutcomeEvent } from "./events";
+export { Interception, type Interceptor } from "./interception";
 export { Lock, type LockInfo, type LockOptions } from "./locks";
 export type { EnqueueContext, Middleware, TaskContext } from "./middleware";
 export {
