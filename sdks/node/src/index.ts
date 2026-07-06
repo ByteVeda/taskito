@@ -33,7 +33,7 @@ export {
   type PredicateContext,
 } from "./predicates";
 export type { ProxyHandler, ProxyRef } from "./proxies";
-export { canonicalJson, FileProxyHandler, FileReference, Proxies } from "./proxies";
+export { canonicalJson, FileProxyHandler, FileReference, Proxies, ProxySession } from "./proxies";
 export { Queue, type QueueOptions } from "./queue";
 export {
   type MockResource,
