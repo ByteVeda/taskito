@@ -1,0 +1,140 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { Queue, ResourceUnavailableError, type Worker } from "../../src/index";
+import { HealthChecker } from "../../src/resources/health";
+import { ResourceRuntime } from "../../src/resources/runtime";
+
+let worker: Worker | undefined;
+
+afterEach(() => {
+  worker?.stop();
+  worker = undefined;
+});
+
+function newQueue(): Queue {
+  return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-health-")), "q.db") });
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return false;
+}
+
+describe("HealthChecker", () => {
+  it("recreates a resource whose health check fails", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("svc", {
+      scope: "worker",
+      factory: () => ({ id: ++builds }),
+      healthCheck: () => false,
+      healthCheckIntervalMs: 100,
+      // With successful recreates the fail count must keep resetting, so even
+      // many failed checks past this budget never mark the resource unhealthy.
+      maxRecreationAttempts: 1,
+    });
+    const first = await rt.createTaskScope().resolver("svc");
+
+    const checker = new HealthChecker(rt);
+    checker.start();
+    expect(await waitFor(() => builds >= 3, 8000)).toBe(true);
+    checker.stop();
+
+    expect(rt.isUnhealthy("svc")).toBe(false); // recreation succeeded every time
+    const replaced = await rt.createTaskScope().resolver("svc");
+    expect(replaced).not.toBe(first); // fresh instance, new identity
+    expect(rt.metrics().svc?.created).toBeGreaterThanOrEqual(3);
+    expect(rt.metrics().svc?.disposed).toBeGreaterThanOrEqual(2); // retired builds
+  });
+
+  it("marks a resource unhealthy once recreation attempts are exhausted", async () => {
+    const rt = new ResourceRuntime();
+    let calls = 0;
+    rt.register("svc", {
+      scope: "worker",
+      factory: () => {
+        calls += 1;
+        if (calls > 1) {
+          throw new Error("factory broken");
+        }
+        return "svc_v1";
+      },
+      healthCheck: () => false,
+      healthCheckIntervalMs: 50,
+      maxRecreationAttempts: 2,
+    });
+    expect(await rt.createTaskScope().resolver("svc")).toBe("svc_v1");
+
+    const checker = new HealthChecker(rt);
+    checker.start();
+    expect(await waitFor(() => rt.isUnhealthy("svc"), 8000)).toBe(true);
+    checker.stop();
+
+    // Terminal: resolving now (and forever) rejects.
+    await expect(rt.createTaskScope().resolver("svc")).rejects.toThrow(ResourceUnavailableError);
+    await expect(rt.createTaskScope().resolver("svc")).rejects.toThrow(/permanently unhealthy/);
+  });
+
+  it("treats a throwing health check as unhealthy and recreates", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("svc", {
+      scope: "worker",
+      factory: () => ++builds,
+      healthCheck: () => {
+        throw new Error("check exploded");
+      },
+      healthCheckIntervalMs: 50,
+    });
+    await rt.createTaskScope().resolver("svc");
+
+    const checker = new HealthChecker(rt);
+    checker.start();
+    expect(await waitFor(() => builds >= 2, 8000)).toBe(true); // recreate path ran
+    checker.stop();
+    expect(rt.isUnhealthy("svc")).toBe(false); // recreation kept succeeding
+  });
+
+  it("start() is a no-op without health-checked resources; stop() is idempotent", () => {
+    const rt = new ResourceRuntime();
+    rt.register("plain", { scope: "worker", factory: () => 1 });
+    rt.register("disabled", {
+      scope: "worker",
+      factory: () => 2,
+      healthCheck: () => true,
+      healthCheckIntervalMs: 0, // 0 = disabled
+    });
+    const checker = new HealthChecker(rt);
+    checker.start(); // no timer started — nothing asked for checking
+    checker.stop();
+    checker.stop(); // safe without a timer, and repeatedly
+    checker.start();
+    checker.stop();
+  });
+
+  it("rejects health checks on task- and pooled-scoped resources", () => {
+    const queue = newQueue();
+    expect(() =>
+      queue.resource("perJob", () => 1, {
+        scope: "task",
+        healthCheck: () => true,
+        healthCheckIntervalMs: 100,
+      }),
+    ).toThrow(/health checks require scope "worker"/);
+    expect(() =>
+      queue.resource("conn", () => 1, {
+        scope: "pooled",
+        healthCheck: () => true,
+        healthCheckIntervalMs: 100,
+      }),
+    ).toThrow(/health checks require scope "worker"/);
+  });
+});
