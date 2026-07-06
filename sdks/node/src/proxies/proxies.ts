@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ProxyError } from "../errors";
 import { canonicalJson } from "./canonical";
+import { ProxySession } from "./proxy-session";
 import type { ProxyHandler, ProxyRef } from "./types";
 
 /**
@@ -62,11 +63,8 @@ export class Proxies {
    * its bound purpose, then reconstruct the resource.
    */
   reconstruct(ref: ProxyRef, expectedPurpose?: string): unknown {
-    const handler = this.handlers.get(ref.handler);
-    if (!handler) {
-      throw new ProxyError(`unknown proxy handler "${ref.handler}"`);
-    }
-    this.verify(ref, expectedPurpose);
+    const handler = this.handlerFor(ref.handler);
+    this.verifyRef(ref, expectedPurpose);
     return handler.reconstruct(ref.reference);
   }
 
@@ -75,7 +73,26 @@ export class Proxies {
     return this.reconstruct(ref, expectedPurpose) as T;
   }
 
-  private verify(ref: ProxyRef, expectedPurpose?: string): void {
+  /**
+   * Open a {@link ProxySession} over this registry — a unit-of-work wrapper
+   * adding identity dedup on deconstruct, memoization on reconstruct, and a
+   * LIFO cleanup lifecycle on close.
+   */
+  session(): ProxySession {
+    return new ProxySession(this);
+  }
+
+  /** Look up the handler registered under `handlerId`. @internal */
+  handlerFor(handlerId: string): ProxyHandler {
+    const handler = this.handlers.get(handlerId);
+    if (!handler) {
+      throw new ProxyError(`unknown proxy handler "${handlerId}"`);
+    }
+    return handler;
+  }
+
+  /** Verify a ref's signature, expiry, and (optionally) purpose. @internal */
+  verifyRef(ref: ProxyRef, expectedPurpose?: string): void {
     const expected = Buffer.from(
       this.sign(ref.handler, ref.reference, ref.expiresAtMs, ref.purpose),
       "utf8",

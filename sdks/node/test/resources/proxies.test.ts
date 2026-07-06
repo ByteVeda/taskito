@@ -10,6 +10,7 @@ import {
   ProxyError,
   type ProxyHandler,
   type ProxyRef,
+  type ProxySession,
 } from "../../src/index";
 
 const KEY = Buffer.from("proxy-secret-key");
@@ -177,6 +178,145 @@ describe("cross-SDK contract", () => {
     const ref = proxies.deconstruct("/tmp/data.txt");
     expect(ref.signature).toBe("FgmudNqaGsUBFsIKC4uBgtfZ+IAHrzBT+xRjUWGePyQ=");
     expect(proxies.resolve<string>(ref)).toBe("/tmp/data.txt");
+  });
+});
+
+/** Counts handler invocations and records cleaned values, for session tests. */
+class CountingFileHandler implements ProxyHandler<FileReference> {
+  private readonly delegate = new FileProxyHandler();
+  readonly id = this.delegate.id;
+  deconstructs = 0;
+  reconstructs = 0;
+  readonly cleaned: FileReference[] = [];
+
+  handles(value: unknown): boolean {
+    return this.delegate.handles(value);
+  }
+
+  deconstruct(value: FileReference): Record<string, unknown> {
+    this.deconstructs += 1;
+    return this.delegate.deconstruct(value);
+  }
+
+  reconstruct(reference: Record<string, unknown>): FileReference {
+    this.reconstructs += 1;
+    return this.delegate.reconstruct(reference);
+  }
+
+  cleanup(value: FileReference): void {
+    this.cleaned.push(value);
+  }
+}
+
+describe("ProxySession", () => {
+  it("dedups the same instance on deconstruct", () => {
+    const handler = new CountingFileHandler();
+    const proxies = new Proxies(KEY).register(handler);
+    const file = new FileReference(join(tempDir(), "dedup.txt"));
+    const session = proxies.session();
+    expect(session.deconstruct(file)).toBe(session.deconstruct(file));
+    session.close();
+    expect(handler.deconstructs).toBe(1);
+  });
+
+  it("keeps purposes distinct", () => {
+    const proxies = fileProxies();
+    const file = new FileReference(join(tempDir(), "purpose.txt"));
+    const session = proxies.session();
+    const emails = session.deconstruct(file, { purpose: "emails" });
+    const billing = session.deconstruct(file, { purpose: "billing" });
+    expect(emails).not.toBe(billing);
+    expect(proxies.resolve<FileReference>(emails, "emails").path).toBe(resolve(file.path));
+    expect(proxies.resolve<FileReference>(billing, "billing").path).toBe(resolve(file.path));
+    session.close();
+  });
+
+  it("memoizes reconstruct by signature", () => {
+    const handler = new CountingFileHandler();
+    const proxies = new Proxies(KEY).register(handler);
+    const ref = proxies.deconstruct(new FileReference(join(tempDir(), "memo.txt")));
+    const session = proxies.session();
+    expect(session.reconstruct(ref)).toBe(session.reconstruct(ref));
+    session.close();
+    expect(handler.reconstructs).toBe(1);
+  });
+
+  it("runs cleanup once per instance, LIFO", () => {
+    const handler = new CountingFileHandler();
+    const proxies = new Proxies(KEY).register(handler);
+    const dir = tempDir();
+    const refA = proxies.deconstruct(new FileReference(join(dir, "a.txt")));
+    const refB = proxies.deconstruct(new FileReference(join(dir, "b.txt")));
+    const session = proxies.session();
+    const a = session.resolve<FileReference>(refA);
+    const b = session.resolve<FileReference>(refB);
+    session.resolve(refA); // memo hit — must not add a second cleanup
+    session.close();
+    session.close(); // idempotent
+    expect(handler.cleaned).toEqual([b, a]);
+  });
+
+  it("isolates sessions from each other", () => {
+    const handler = new CountingFileHandler();
+    const proxies = new Proxies(KEY).register(handler);
+    const ref = proxies.deconstruct(new FileReference(join(tempDir(), "iso.txt")));
+    const one = proxies.session();
+    const two = proxies.session();
+    const fromOne = one.resolve<FileReference>(ref);
+    const fromTwo = two.resolve<FileReference>(ref);
+    expect(fromOne).not.toBe(fromTwo);
+    one.close();
+    expect(handler.cleaned).toEqual([fromOne]); // closing one leaves the other live
+    two.close();
+    expect(handler.cleaned).toEqual([fromOne, fromTwo]);
+  });
+
+  it("re-verifies on a memo hit", async () => {
+    const proxies = fileProxies();
+    const ref = proxies.deconstruct(new FileReference(join(tempDir(), "ttl.txt")), { ttlMs: 30 });
+    const session = proxies.session();
+    session.resolve(ref);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(() => session.resolve(ref)).toThrow(ProxyError);
+    expect(() => session.resolve(ref)).toThrow(/expired/);
+    session.close();
+  });
+
+  it("drains the remaining cleanups when one throws", () => {
+    const cleaned: FileReference[] = [];
+    const delegate = new FileProxyHandler();
+    const proxies = new Proxies(KEY).register({
+      id: delegate.id,
+      handles: (value) => delegate.handles(value),
+      deconstruct: (value: FileReference) => delegate.deconstruct(value),
+      reconstruct: (reference) => delegate.reconstruct(reference),
+      cleanup: (value: FileReference) => {
+        cleaned.push(value);
+        if (value.path.endsWith("boom.txt")) {
+          throw new Error("cleanup failed");
+        }
+      },
+    });
+    const dir = tempDir();
+    const refA = proxies.deconstruct(new FileReference(join(dir, "a.txt")));
+    const refBoom = proxies.deconstruct(new FileReference(join(dir, "boom.txt")));
+    const session = proxies.session();
+    session.resolve(refA);
+    session.resolve(refBoom); // cleaned last-in-first-out → throws first
+    expect(() => session.close()).not.toThrow();
+    expect(cleaned).toHaveLength(2); // the failure must not abandon the rest
+  });
+
+  it("rejects use after close", () => {
+    const proxies = fileProxies();
+    const file = new FileReference(join(tempDir(), "closed.txt"));
+    const ref = proxies.deconstruct(file);
+    const session: ProxySession = proxies.session();
+    session.close();
+    expect(() => session.deconstruct(file)).toThrow(ProxyError);
+    expect(() => session.deconstruct(file)).toThrow(/session is closed/);
+    expect(() => session.reconstruct(ref)).toThrow(/session is closed/);
+    expect(() => session.resolve(ref)).toThrow(/session is closed/);
   });
 });
 
