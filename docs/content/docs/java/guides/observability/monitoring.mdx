@@ -1,0 +1,73 @@
+---
+title: Monitoring & Hooks
+description: "Queue stats, per-execution metrics, and worker heartbeats from the Taskito handle."
+---
+
+Read live queue health straight from the `Taskito` handle — no extra service.
+The same data powers the [dashboard](/java/guides/operations/dashboard) and the
+[CLI](/java/guides/operations/cli) read commands.
+
+## Stats
+
+Counts by status, globally or per queue:
+
+```java
+QueueStats stats = taskito.stats(); // pending, running, completed, failed, dead, cancelled
+taskito.statsByQueue("default");
+taskito.statsAllQueues();           // Map<String, QueueStats>
+```
+
+## Metrics
+
+`metrics(taskName, sinceMs)` returns the raw per-execution records within a
+trailing window — wall time, memory, and success flag for each finished
+attempt. Pass `null` as the task name for all tasks:
+
+```java
+List<TaskMetric> lastHour = taskito.metrics(null, 3_600_000L);
+for (TaskMetric m : taskito.metrics("add", 3_600_000L)) {
+    System.out.println(m.taskName + " " + m.wallTimeNs / 1_000_000 + "ms ok=" + m.succeeded);
+}
+```
+
+Each `TaskMetric` carries `taskName`, `jobId`, `wallTimeNs` (nanoseconds),
+`memoryBytes`, `succeeded`, and `recordedAt`. Aggregation (percentiles, rates)
+is up to you — or plug in [Micrometer](/java/guides/integrations/micrometer)
+for a ready-made timer per task.
+
+## Error history
+
+Per-attempt failures for one job:
+
+```java
+List<JobError> errors = taskito.jobErrors(jobId); // attempt, error, failedAt
+```
+
+## Workers
+
+Each running worker registers and heartbeats; list the live fleet:
+
+```java
+for (WorkerInfo w : taskito.listWorkers()) {
+    System.out.println(w.workerId + " " + w.hostname + " " + w.status
+            + " threads=" + w.threads + " beat=" + w.lastHeartbeat);
+}
+```
+
+A worker appears while it heartbeats (`lastHeartbeat` is Unix milliseconds);
+`stop()` unregisters it. See [Deployment](/java/guides/operations/deployment)
+for the worker lifecycle.
+
+## Metrics scraping & tracing
+
+For meters and distributed traces, the contrib integrations wrap the
+middleware layer:
+
+- [Micrometer](/java/guides/integrations/micrometer) — one `Observation` per execution: a timer plus a trace span, exported by whatever backend your registry is wired to.
+- [Sentry](/java/guides/integrations/sentry) — error capture.
+
+<Callout type="info">
+  Lifecycle [events](/java/guides/extensibility/events) and
+  [middleware](/java/guides/extensibility/middleware) hooks let you push the
+  same signals to any backend.
+</Callout>

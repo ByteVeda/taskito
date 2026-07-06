@@ -1,0 +1,32 @@
+---
+title: Backends
+description: "SQLite, PostgreSQL, or Redis — same API, different storage."
+---
+
+The queue stores everything — jobs, results, schedules, locks, rate-limit state
+— in one backend. The API is identical across all three; only the builder call
+differs.
+
+```java
+Taskito.builder().open();                                    // SQLite at .taskito/taskito.db (default)
+Taskito.builder().sqlite("/var/lib/app/taskito.db").open();  // SQLite, explicit path
+Taskito.builder().postgres(System.getenv("PG_URL")).schema("taskito").open();
+Taskito.builder().redis("redis://localhost").prefix("taskito").open();
+```
+
+| Backend | Use when | Notes |
+|---|---|---|
+| **SQLite** | Single host, simplest deploy | One file, WAL mode, no server. Bundled. |
+| **PostgreSQL** | Multiple hosts, durability | `SELECT ... FOR UPDATE SKIP LOCKED` dispatch; isolated `schema`. |
+| **Redis** | High throughput, ephemeral OK | JSON values + sorted sets; atomic Lua claims. |
+
+`backend(name)` + `url(dsn)` are the generic forms behind the shortcuts;
+`poolSize(int)` sizes the connection pool and `namespace(String)` isolates one
+application's jobs in a shared store. All three backends ship in the bundled
+native library — no extra build step.
+
+<Callout type="info">
+  Producers and workers must point at the same backend. SQLite is per-host
+  (shared file); Postgres/Redis let producers and workers run on different
+  machines against one shared store.
+</Callout>

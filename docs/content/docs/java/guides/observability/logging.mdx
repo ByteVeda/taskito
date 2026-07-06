@@ -1,0 +1,87 @@
+---
+title: Structured Task Logging
+description: "The built-in leveled logger — levels, namespaces, a pluggable sink — plus per-job task logs."
+---
+
+The SDK ships a tiny zero-dependency leveled logger, `TaskitoLogger`. It writes
+to **stderr** by default, so it never pollutes stdout (the CLI's JSON output and
+piped data stay clean). Taskito uses it internally; it is public API for your
+own use too.
+
+```java
+import org.byteveda.taskito.logging.TaskitoLogger;
+
+TaskitoLogger log = TaskitoLogger.create("billing"); // tagged [taskito:billing]
+
+taskito.worker().handle("charge", ChargeRequest.class, request -> {
+    log.info("charging " + request.amount());
+    return charge(request);
+});
+```
+
+## Levels
+
+`DEBUG < INFO < WARN < ERROR < SILENT`. The threshold defaults to `WARN` and is
+read once from `TASKITO_LOG_LEVEL`; override it at runtime — globally and
+immediately:
+
+```java
+import org.byteveda.taskito.logging.LogLevel;
+
+TaskitoLogger.setLevel(LogLevel.DEBUG);
+```
+
+`debug` also takes a `Supplier<String>` that is only evaluated when the level
+passes the threshold — so expensive log lines cost nothing when filtered out:
+
+```java
+log.debug(() -> "payload=" + bigObject);
+```
+
+`warn` and `error` take an optional `Throwable`; its stack trace is appended to
+the line.
+
+```java
+log.error("delivery failed", exception);
+```
+
+## Namespaces
+
+`TaskitoLogger.create(ns)` tags every line `[taskito:ns]`; `TaskitoLogger.root()`
+is the bare `[taskito]` logger.
+
+## Custom sink
+
+Replace the output sink to route lines to a file, a JSON transport, or your
+logging framework — globally and immediately. `LogSink` is a functional
+interface receiving every formatted line that clears the threshold:
+
+```java
+import org.byteveda.taskito.logging.LogSink;
+
+TaskitoLogger.setSink((level, line) -> slf4jLogger.info(line));
+```
+
+<Callout type="info">
+  The sink only sees the Java SDK's own lines — logs from the native core do
+  not flow through it.
+</Callout>
+
+## Per-job task logs
+
+Separately from the process logger, jobs can carry **persisted, queryable**
+log lines. `writeTaskLog` appends a line to storage; `getTaskLogs` reads a
+job's lines back:
+
+```java
+taskito.writeTaskLog(jobId, "import", "info", "processed batch 3/10");
+
+for (var entry : taskito.getTaskLogs(jobId)) {
+    System.out.println(entry.loggedAt + " " + entry.level + " " + entry.message);
+}
+```
+
+Each `TaskLog` carries `id`, `jobId`, `taskName`, `level`, `message`, an
+optional `extra` payload, and `loggedAt` (Unix milliseconds). Because they live
+in storage, task logs survive restarts and are visible from any process on the
+same backend.

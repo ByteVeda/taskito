@@ -1,0 +1,70 @@
+---
+title: Spring Boot Integration
+description: "Auto-configure a Taskito bean in Spring Boot 3 from taskito.* properties."
+---
+
+The `taskito-spring` starter auto-configures a `Taskito` bean for Spring Boot 3
+applications.
+
+```kotlin
+implementation("org.byteveda:taskito-spring:0.18.0")
+```
+
+When the starter is on the classpath, `TaskitoAutoConfiguration` builds and
+opens a client from your configuration and registers it as a singleton bean.
+The bean's destroy method is `close`, so the client shuts down with the
+application context.
+
+```yaml
+taskito:
+  url: postgres://localhost/taskito   # SQLite path, postgres:// or redis:// URL
+  pool-size: 8                        # optional; omit for the backend default
+  namespace: my-app                   # optional; isolates this app's jobs in a shared store
+```
+
+Inject it anywhere:
+
+```java
+@Service
+public class SignupService {
+    private final Taskito taskito;
+
+    public SignupService(Taskito taskito) {
+        this.taskito = taskito;
+    }
+
+    public void register(User user) {
+        taskito.enqueue("send_welcome_email", user.email());
+    }
+}
+```
+
+## Properties
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `taskito.url` | `String` | SQLite under `.taskito/` | Connection string — SQLite path, `postgres://`, or `redis://` |
+| `taskito.pool-size` | `Integer` | backend default | Connection-pool size |
+| `taskito.namespace` | `String` | — | Namespace isolating this app's jobs in a shared store |
+
+## Overriding the bean
+
+The auto-configuration backs off (`@ConditionalOnMissingBean`) when you define
+your own `Taskito` bean — do that when you need middleware, codecs, or a custom
+serializer:
+
+```java
+@Bean(destroyMethod = "close")
+Taskito taskito(TaskitoProperties properties) {
+    Taskito taskito = Taskito.builder().url(properties.getUrl()).open();
+    taskito.use(new SentryMiddleware()); // configure freely
+    return taskito;
+}
+```
+
+<Callout type="info">
+  The starter configures only the client bean. Workers are yours to build and
+  start — construct one from the injected bean with `taskito.worker()` (for
+  example in an `ApplicationRunner` or a `SmartLifecycle` bean) and register
+  your handlers on it.
+</Callout>

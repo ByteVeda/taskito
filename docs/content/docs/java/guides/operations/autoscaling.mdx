@@ -1,0 +1,80 @@
+---
+title: Autoscaling
+description: "In-process thread autoscaling, and scaling replicas with KEDA via the scaler endpoint."
+---
+
+Two layers scale with load: the **in-process autoscaler** resizes a single
+worker's handler-thread pool, and the **scaler endpoint** exposes queue depth
+over HTTP so an external autoscaler (such as KEDA) adds and removes worker
+replicas.
+
+## In-process: autoscale the handler pool
+
+`autoscale(...)` replaces the worker's fixed/cached pool with a resizable one
+driven by queue depth (pending + running, scoped to the worker's queues):
+
+```java
+Worker worker = taskito.worker()
+        .handle(task, handler)
+        .autoscale(AutoscaleOptions.of(2, 16)) // min 2, max 16 threads
+        .start();
+```
+
+`AutoscaleOptions.of(min, max)` targets ~10 outstanding tasks per thread,
+re-evaluated every 2 seconds. The full record constructor tunes both:
+
+```java
+new AutoscaleOptions(2, 16, 5, Duration.ofSeconds(1)); // 5 tasks/thread, 1s ticks
+```
+
+## Cross-process: the scaler endpoint
+
+`Scaler` serves queue depth over HTTP for an external autoscaler, which divides
+it by `targetQueueDepth` to pick a replica count:
+
+```java
+try (Taskito taskito = Taskito.builder().postgres(System.getenv("DATABASE_URL")).open();
+        Scaler scaler = Scaler.start(taskito, ScalerOptions.onPort(9090))) {
+    // serves until closed
+}
+```
+
+`ScalerOptions` is a record — `defaults()` is port `9090`, host `0.0.0.0`,
+target depth `10`, all queues; the full constructor sets
+`(port, host, targetQueueDepth, queue)`. Port `0` picks an ephemeral port
+(`scaler.port()` reports it).
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/scaler[?queue=<name>]` | `{ "metricValue": <pending+running>, "targetValue": <target>, "queueName": ... }` |
+| `GET /health` | `{ "status": "ok" }` |
+
+## KEDA
+
+Point KEDA's `metrics-api` scaler at the endpoint; it scales toward
+`ceil(metricValue / targetValue)` replicas:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: taskito-workers
+spec:
+  scaleTargetRef:
+    name: taskito-worker
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  triggers:
+    - type: metrics-api
+      metadata:
+        url: "http://taskito-scaler:9090/api/scaler"
+        valueLocation: "metricValue"
+        targetValue: "10"
+```
+
+<Callout type="info">
+  Run the scaler as its own small Deployment + Service (not in the worker pod)
+  so scaling to zero workers doesn't take the metric source down with it. The
+  two layers compose: KEDA sizes the fleet, `autoscale(...)` sizes each
+  member's threads.
+</Callout>

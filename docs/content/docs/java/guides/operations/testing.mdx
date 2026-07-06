@@ -1,0 +1,84 @@
+---
+title: Testing
+description: "Unit-test with the in-memory backend, integration-test against real SQLite."
+---
+
+Handlers are plain functions — unit-test them directly. One level up, the
+`taskito-test` artifact provides a **pure-Java in-memory backend**: the full
+client API with no native library and no disk, ideal for fast unit tests of
+producers, handlers, retries, and dead-lettering.
+
+```kotlin
+testImplementation("org.byteveda:taskito-test:0.18.0")
+```
+
+```java
+import org.byteveda.taskito.test.InMemoryTaskito;
+
+@Test
+void runsATaskEndToEnd() throws Exception {
+    try (Taskito taskito = InMemoryTaskito.open()) {
+        String id = taskito.enqueue("add", List.of(2, 3));
+
+        try (Worker worker = taskito.worker()
+                .handle("add", List.class, numbers ->
+                        (int) numbers.get(0) + (int) numbers.get(1))
+                .start()) {
+            Job job = taskito.awaitJob(id, Duration.ofSeconds(5)).orElseThrow();
+            assertEquals(JobStatus.COMPLETE, job.status);
+        }
+
+        assertEquals(5, taskito.getResult(id, Integer.class).orElseThrow());
+    }
+}
+```
+
+`InMemoryTaskito.open(serializer)` swaps the JSON default. To construct the
+backend explicitly (e.g. to share one across a custom builder), pass it to
+`Taskito.builder().open(new InMemoryQueueBackend())`.
+
+## Synchronization
+
+`awaitJob(id, timeout)` blocks until the job reaches a terminal state and is
+the simplest synchronization point — tests rarely need a sleep. Registering an
+event listener with a `CountDownLatch` works too:
+
+```java
+CountDownLatch done = new CountDownLatch(1);
+Worker worker = taskito.worker()
+        .handle(echo, payload -> payload.length())
+        .on(EventName.SUCCESS, event -> done.countDown())
+        .start();
+```
+
+## Integration tests
+
+For coverage of the real storage engine (scheduling, claims, locks), open a
+throwaway SQLite database — the whole enqueue → execute → result path runs
+in-process:
+
+```java
+Path dir = Files.createTempDirectory("taskito-test");
+try (Taskito taskito = Taskito.builder().sqlite(dir.resolve("q.db").toString()).open()) {
+    // real backend, no server
+}
+```
+
+Always close (or try-with-resources) workers — a leaked worker keeps polling
+across tests.
+
+## Faking dependencies
+
+Register a [resource](/java/guides/resources) with a stub in the test — the
+worker injects whatever is registered, so no real connection is opened:
+
+```java
+taskito.resource("db", context -> fakeDb);
+```
+
+<Callout type="warning">
+  The in-memory backend covers the queue contract, not the native engine:
+  workflows are not supported in-memory, and storage-engine behavior (SQL
+  claims, cron timing) is only exercised against a real backend. Keep a few
+  SQLite-backed integration tests alongside the fast in-memory suite.
+</Callout>

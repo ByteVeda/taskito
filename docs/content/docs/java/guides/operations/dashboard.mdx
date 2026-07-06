@@ -1,0 +1,66 @@
+---
+title: Dashboard
+description: "Serve the bundled web dashboard and its REST API from a Java process."
+---
+
+The jar bundles the web dashboard SPA; `DashboardServer` serves it plus a JSON
+REST API over the queue — no separate service, no asset build step.
+
+```java
+try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
+        DashboardServer server = DashboardServer.start(taskito, 8080)) {
+    System.out.println("dashboard on http://localhost:" + server.port());
+    // ...
+}
+```
+
+Or from the [CLI](/java/guides/operations/cli):
+
+```bash
+taskito --url taskito.db dashboard --port 8080
+```
+
+Pass `0` as the port for an ephemeral one (`server.port()` reports what was
+bound). The SPA is extracted from the jar to a per-user, content-addressed
+directory on first use; `-Dtaskito.dashboard.dir=/path` (or the `staticDir`
+argument) overrides it with an unpacked build. Without bundled assets only
+`/api/*` responds.
+
+## REST API
+
+Everything is JSON, fields in snake_case, timestamps in Unix milliseconds.
+
+| Method · Path | Effect |
+|---|---|
+| `GET /api/stats` | Counts by status across all queues. |
+| `GET /api/stats/queues` | Counts per queue. |
+| `GET /api/queues/paused` | Names of paused queues. |
+| `GET /api/jobs` | Job list — `?status=&queue=&task=&limit=&offset=`. |
+| `GET /api/jobs/{id}` | A single job. |
+| `GET /api/dead-letters` | Dead-letter entries — `?limit=&offset=`. |
+| `GET /api/metrics` | Per-execution metrics — `?task=&since=` (ms window). |
+| `GET /api/workers` | Registered workers + heartbeats. |
+| `GET /api/auth/status` | `{ "auth_required": true\|false }` — never needs a token. |
+| `POST /api/jobs/{id}/cancel` | Cancel a job. |
+| `POST /api/dead-letters/{id}/retry` | Re-enqueue a dead-letter entry. |
+| `POST /api/queues/{name}/pause` · `/resume` | Pause / resume a queue. |
+
+## Auth
+
+Auth runs **open** by default. Pass a token to require it on every `/api/*`
+request (except `/api/auth/status`):
+
+```java
+DashboardServer.start(taskito, 8080, System.getenv("DASH_TOKEN"));
+```
+
+Requests authenticate with `?token=<token>`; opening `/?token=<token>` once
+sets an httpOnly `taskito_token` cookie so the SPA works for the rest of the
+session. This is a single shared token — no per-user login, RBAC, or SSO. For
+those, put the server behind a reverse proxy that handles auth.
+
+<Callout type="warning">
+  Open mode means anyone who can reach the port has full control. Bind it to
+  localhost, front it with your own auth, or at minimum set a token — see
+  [Security](/java/guides/operations/security).
+</Callout>
