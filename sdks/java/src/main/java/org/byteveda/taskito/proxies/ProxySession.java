@@ -110,7 +110,8 @@ public final class ProxySession implements AutoCloseable {
     /**
      * Run {@link ProxyHandler#cleanup} for every reconstructed instance in
      * reverse order (LIFO), once each. A cleanup failure is logged and never
-     * skips the rest. Idempotent.
+     * skips the rest; a JVM-level {@link Error} is rethrown only after the
+     * remaining cleanups have drained. Idempotent.
      */
     @Override
     public void close() {
@@ -118,6 +119,7 @@ public final class ProxySession implements AutoCloseable {
             return;
         }
         closed = true;
+        Error fatal = null;
         while (!cleanups.isEmpty()) {
             Runnable cleanup = cleanups.pop();
             try {
@@ -125,10 +127,20 @@ public final class ProxySession implements AutoCloseable {
             } catch (RuntimeException e) {
                 // Cleanup must never fail the rest of the teardown — record and continue.
                 LOG.log(Level.WARNING, "proxy cleanup failed", e);
+            } catch (Error e) {
+                // Drain the remaining cleanups first, then let the error propagate —
+                // aborting here would abandon them for good (closed is already set).
+                if (fatal == null) {
+                    fatal = e;
+                }
+                LOG.log(Level.WARNING, "proxy cleanup threw an error", e);
             }
         }
         deconstructed.clear();
         reconstructed.clear();
+        if (fatal != null) {
+            throw fatal;
+        }
     }
 
     private void ensureOpen() {

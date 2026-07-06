@@ -259,6 +259,49 @@ class ProxyTest {
     }
 
     @Test
+    void sessionDrainsRemainingCleanupsWhenOneThrowsError(@TempDir Path dir) {
+        List<File> cleaned = new ArrayList<>();
+        Proxies proxies = new Proxies(KEY).register(new ProxyHandler<File>() {
+            private final FileProxyHandler delegate = new FileProxyHandler();
+
+            @Override
+            public String id() {
+                return delegate.id();
+            }
+
+            @Override
+            public boolean handles(Object value) {
+                return delegate.handles(value);
+            }
+
+            @Override
+            public Map<String, Object> deconstruct(File value) {
+                return delegate.deconstruct(value);
+            }
+
+            @Override
+            public File reconstruct(Map<String, Object> reference) {
+                return delegate.reconstruct(reference);
+            }
+
+            @Override
+            public void cleanup(File value) {
+                cleaned.add(value);
+                if (value.getName().equals("boom.txt")) {
+                    throw new AssertionError("cleanup error");
+                }
+            }
+        });
+        ProxyRef refA = proxies.deconstruct(dir.resolve("a.txt").toFile());
+        ProxyRef refBoom = proxies.deconstruct(dir.resolve("boom.txt").toFile());
+        ProxySession session = proxies.session();
+        session.resolve(refA);
+        session.resolve(refBoom); // cleaned last-in-first-out → throws first
+        assertThrows(AssertionError.class, session::close);
+        assertEquals(2, cleaned.size(), "the error must not abandon the remaining cleanups");
+    }
+
+    @Test
     void sessionRejectsUseAfterClose(@TempDir Path dir) {
         Proxies proxies = new Proxies(KEY).register(new FileProxyHandler());
         File file = dir.resolve("closed.txt").toFile();
