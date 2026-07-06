@@ -81,6 +81,12 @@ export interface TaskOptions {
    * `deps` param is stripped from the typed `enqueue` args.
    */
   inject?: readonly string[];
+  /**
+   * Names of payload codecs (registered via `QueueOptions.codecs`) applied in
+   * order to this task's serialized payload on enqueue and reversed on the
+   * worker. Payload only — results stay on the queue serializer.
+   */
+  codecs?: readonly string[];
 }
 
 /** Options for {@link Queue.registerPeriodic}. */

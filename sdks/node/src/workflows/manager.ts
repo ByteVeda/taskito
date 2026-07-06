@@ -43,6 +43,11 @@ export class WorkflowManager {
     private readonly serializer: Serializer,
     /** The queue's shared tracker, so gate resolution clears the worker's timers. */
     private readonly tracker?: WorkflowTracker,
+    /** Per-task payload encoder (serializer + named codecs); defaults to the bare serializer. */
+    private readonly encodePayload: (taskName: string, value: unknown) => Uint8Array = (
+      _taskName,
+      value,
+    ) => this.serializer.serialize(value),
   ) {
     if (typeof this.native.submitWorkflow !== "function") {
       throw new WorkflowError("the native addon was built without the 'workflows' feature");
@@ -183,9 +188,9 @@ export class WorkflowManager {
       if (!base) {
         throw new WorkflowError(`workflow step '${name}' is missing metadata`);
       }
-      const b64 = Buffer.from(this.serializer.serialize(spec.stepArgs[name] ?? [])).toString(
-        "base64",
-      );
+      const b64 = Buffer.from(
+        this.encodePayload(base.task_name, spec.stepArgs[name] ?? []),
+      ).toString("base64");
       nodePayloads[name] = b64;
       const meta: StepMetadataJson = { ...base };
       if (deferred.has(name)) {

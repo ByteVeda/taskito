@@ -82,6 +82,14 @@ export class SerializationError extends TaskitoError {
   }
 }
 
+/** Thrown when a payload codec fails to decrypt or verify a payload. */
+export class CryptoError extends SerializationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "CryptoError";
+  }
+}
+
 /** Thrown when a `notes` object violates the structured-notes contract. */
 export class NotesValidationError extends TaskitoError {
   constructor(message: string) {
