@@ -8,6 +8,7 @@ import {
   LockNotAcquiredError,
   PredicateRejectedError,
   QueueError,
+  ResourceError,
   ResultTimeoutError,
   SerializationError,
   TaskitoError,
@@ -25,6 +26,7 @@ import {
 import { encodeNotes } from "./notes";
 import type { Predicate } from "./predicates";
 import {
+  type PoolOptions,
   type ResourceContext,
   type ResourceMetrics,
   ResourceRuntime,
@@ -248,18 +250,31 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /**
    * Register an injectable resource. Worker-scoped (default) values are built
    * once and shared across the worker's lifetime; task-scoped values are built
-   * per job invocation. Reach them from a handler via `useResource(name)` or the
-   * declarative `inject` option on {@link Queue.task}.
+   * per job invocation; pooled values are checked out of a bounded pool per job
+   * and returned when it finishes (tune via `pool`). Reach them from a handler
+   * via `useResource(name)` or the declarative `inject` option on
+   * {@link Queue.task}.
    */
   resource<T>(
     name: string,
     factory: (ctx: ResourceContext) => T | Promise<T>,
-    options?: { scope?: ResourceScope; dispose?: (value: T) => void | Promise<void> },
+    options?: {
+      scope?: ResourceScope;
+      dispose?: (value: T) => void | Promise<void>;
+      pool?: PoolOptions;
+    },
   ): this {
+    const scope = options?.scope ?? "worker";
+    if (options?.pool && scope !== "pooled") {
+      throw new ResourceError(
+        `Resource "${name}": pool options require scope "pooled" (got "${scope}")`,
+      );
+    }
     this.resources.register<T>(name, {
       factory,
-      scope: options?.scope ?? "worker",
+      scope,
       dispose: options?.dispose,
+      pool: options?.pool,
     });
     return this;
   }

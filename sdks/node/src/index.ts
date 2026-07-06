@@ -14,6 +14,7 @@ export {
   ResourceError,
   ResourceNotFoundError,
   ResourceScopeError,
+  ResourceUnavailableError,
   ResultTimeoutError,
   SerializationError,
   TaskitoError,
@@ -37,6 +38,8 @@ export { Queue, type QueueOptions } from "./queue";
 export {
   type MockResource,
   mockResource,
+  type PoolOptions,
+  type PoolStats,
   type ResourceContext,
   type ResourceDefinition,
   type ResourceMetrics,

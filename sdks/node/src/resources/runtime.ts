@@ -1,9 +1,11 @@
 import { ResourceNotFoundError, ResourceScopeError } from "../errors";
+import { ResourcePool } from "./pool";
 import type {
   ResourceContext,
   ResourceDefinition,
   ResourceMetrics,
   ResourceResolver,
+  ResourceScope,
 } from "./types";
 
 /** A disposal thunk plus the resource name, for error context. */
@@ -22,9 +24,10 @@ export interface TaskScope {
 
 /**
  * Registry + lifecycle for injectable resources. Worker-scoped values are built
- * once and shared; task-scoped values are built per invocation. The worker wires
- * this into task execution; tasks reach values via `useResource` or declarative
- * `inject`.
+ * once and shared; task-scoped values are built per invocation; pooled values
+ * are checked out of a bounded pool per invocation and returned afterwards. The
+ * worker wires this into task execution; tasks reach values via `useResource`
+ * or declarative `inject`.
  *
  * Every resolver always returns a promise — guard and factory failures surface as
  * rejections, never synchronous throws — so a failed build is awaited and retried,
@@ -35,6 +38,8 @@ export class ResourceRuntime {
   private readonly workerCache = new Map<string, Promise<unknown>>();
   private readonly workerTeardown: Teardown[] = [];
   private readonly counters = new Map<string, { created: number; disposed: number }>();
+  /** Checkout pools behind pooled-scope resources, built lazily per resource. */
+  private readonly pools = new Map<string, ResourcePool>();
   /** Active worker leases sharing this runtime; teardown disposes only at zero. */
   private workerLeases = 0;
 
@@ -44,6 +49,12 @@ export class ResourceRuntime {
     // Drop any built worker instance so "replace" takes effect; the old
     // instance is still disposed by its queued teardown.
     this.workerCache.delete(name);
+    // Likewise retire the old pool; its idle instances are disposed best-effort.
+    const stalePool = this.pools.get(name);
+    if (stalePool) {
+      this.pools.delete(name);
+      void stalePool.shutdown();
+    }
   }
 
   /** True when nothing is registered — lets the worker skip resource wiring. */
@@ -81,7 +92,7 @@ export class ResourceRuntime {
       return Promise.reject(unregistered(name));
     }
     if (def.scope !== "worker") {
-      return Promise.reject(new ResourceScopeError(name));
+      return Promise.reject(new ResourceScopeError(name, def.scope));
     }
     const ctx: ResourceContext = {
       scope: "worker",
@@ -104,6 +115,43 @@ export class ResourceRuntime {
     return built;
   }
 
+  /**
+   * Resolve a dependency that must be worker-scoped. Pooled instances outlive
+   * any single task, so their factories may only depend on worker singletons.
+   */
+  private resolveWorkerDependency(name: string, context: ResourceScope): Promise<unknown> {
+    const def = this.defs.get(name);
+    if (!def) {
+      return Promise.reject(unregistered(name));
+    }
+    if (def.scope !== "worker") {
+      return Promise.reject(new ResourceScopeError(name, def.scope, context));
+    }
+    return this.resolveWorker(name);
+  }
+
+  /** Get-or-create the checkout pool behind a pooled-scope resource. */
+  private poolFor(name: string, def: ResourceDefinition): ResourcePool {
+    let pool = this.pools.get(name);
+    if (!pool) {
+      const ctx: ResourceContext = {
+        scope: "pooled",
+        use: <T>(dep: string) => this.resolveWorkerDependency(dep, "pooled") as Promise<T>,
+      };
+      const counter = this.counter(name);
+      pool = new ResourcePool(name, () => startFactory(def, ctx), def.dispose, def.pool ?? {}, {
+        onCreated: () => {
+          counter.created += 1;
+        },
+        onDisposed: () => {
+          counter.disposed += 1;
+        },
+      });
+      this.pools.set(name, pool);
+    }
+    return pool;
+  }
+
   /** Begin a per-invocation task scope. */
   createTaskScope(): TaskScope {
     const taskCache = new Map<string, Promise<unknown>>();
@@ -116,6 +164,33 @@ export class ResourceRuntime {
       }
       if (def.scope === "worker") {
         return this.resolveWorker(name); // shared singleton, even when first reached here
+      }
+      if (def.scope === "pooled") {
+        const pending = taskCache.get(name);
+        if (pending) {
+          return pending; // one checkout per task, shared by every resolve
+        }
+        const pool = this.poolFor(name, def);
+        // Cache the pending checkout BEFORE awaiting (see the task branch below)
+        // so concurrent resolves within the task share a single checkout.
+        const checkout = pool.acquire().catch((error) => {
+          taskCache.delete(name); // failed checkout is retryable, not cached
+          throw error;
+        });
+        taskCache.set(name, checkout);
+        taskTeardown.push({
+          name,
+          run: async () => {
+            let value: unknown;
+            try {
+              value = await checkout;
+            } catch {
+              return; // checkout failed — nothing to return to the pool
+            }
+            await pool.release(value); // return, don't dispose: the instance stays pooled
+          },
+        });
+        return checkout;
       }
       const cached = taskCache.get(name);
       if (cached) {
@@ -147,6 +222,13 @@ export class ResourceRuntime {
   /** Register a worker that shares this runtime's worker-scoped resources. */
   acquireWorker(): void {
     this.workerLeases += 1;
+    // Best-effort prewarm of pooled resources that asked for warm instances.
+    // `prewarm` never rejects — build failures are logged inside the pool.
+    for (const [name, def] of this.defs) {
+      if (def.scope === "pooled" && (def.pool?.poolMin ?? 0) > 0) {
+        void this.poolFor(name, def).prewarm();
+      }
+    }
   }
 
   /**
@@ -164,6 +246,13 @@ export class ResourceRuntime {
     }
     const pending = this.workerTeardown.splice(0);
     this.workerCache.clear();
+    // Shut pools down first — pooled instances may depend on worker resources.
+    // `shutdown` never throws; per-instance dispose failures are logged.
+    const pools = [...this.pools.values()];
+    this.pools.clear();
+    for (const pool of pools) {
+      await pool.shutdown();
+    }
     await runTeardown(pending);
   }
 

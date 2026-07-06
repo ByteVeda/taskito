@@ -2,7 +2,14 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { Queue, TaskitoError, useResource, type Worker } from "../../src/index";
+import {
+  Queue,
+  ResourceUnavailableError,
+  TaskitoError,
+  useResource,
+  type Worker,
+} from "../../src/index";
+import { ResourcePool } from "../../src/resources/pool";
 import { ResourceRuntime } from "../../src/resources/runtime";
 
 let worker: Worker | undefined;
@@ -166,6 +173,197 @@ describe("ResourceRuntime", () => {
   });
 });
 
+describe("ResourcePool", () => {
+  it("returns a released instance to the next acquire", async () => {
+    let builds = 0;
+    const pool = new ResourcePool(
+      "db",
+      async () => {
+        builds += 1;
+        return { id: builds };
+      },
+      undefined,
+      {},
+    );
+    const first = await pool.acquire();
+    await pool.release(first);
+    const second = await pool.acquire();
+    expect(second).toBe(first); // same instance came back
+    expect(builds).toBe(1);
+  });
+
+  it("times out with ResourceUnavailableError when the pool is exhausted", async () => {
+    const pool = new ResourcePool("db", async () => ({}), undefined, {
+      poolSize: 1,
+      acquireTimeoutMs: 30,
+    });
+    await pool.acquire(); // takes the only slot
+    await expect(pool.acquire()).rejects.toThrow(ResourceUnavailableError);
+    await expect(pool.acquire()).rejects.toThrow(/Resource "db" pool timed out/);
+    expect(pool.stats().totalTimeouts).toBe(2);
+  });
+
+  it("does not leak capacity when the factory rejects", async () => {
+    let attempts = 0;
+    const pool = new ResourcePool(
+      "db",
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("connect failed");
+        }
+        return "ok";
+      },
+      undefined,
+      { poolSize: 1, acquireTimeoutMs: 50 },
+    );
+    await expect(pool.acquire()).rejects.toThrow("connect failed");
+    expect(pool.stats().active).toBe(0); // never counted as checked out
+    expect(await pool.acquire()).toBe("ok"); // permit was returned, not leaked
+  });
+
+  it("prewarm builds poolMin instances eagerly", async () => {
+    let builds = 0;
+    const pool = new ResourcePool(
+      "db",
+      async () => {
+        builds += 1;
+        return builds;
+      },
+      undefined,
+      { poolMin: 2 },
+    );
+    await pool.prewarm();
+    expect(builds).toBe(2);
+    expect(pool.stats().idle).toBe(2);
+  });
+
+  it("evicts an idle instance past maxLifetime and builds a fresh one", async () => {
+    let builds = 0;
+    const disposed: number[] = [];
+    const pool = new ResourcePool(
+      "db",
+      async () => {
+        builds += 1;
+        return builds;
+      },
+      (value) => void disposed.push(value as number),
+      { maxLifetimeMs: 20 },
+    );
+    const first = await pool.acquire();
+    await pool.release(first);
+    await new Promise((resolve) => setTimeout(resolve, 40)); // let it expire
+    const second = await pool.acquire();
+    expect(second).toBe(2); // freshly built
+    expect(disposed).toEqual([1]); // expired instance was disposed
+  });
+
+  it("stats reflect active, idle, acquisitions, and timeouts", async () => {
+    const pool = new ResourcePool("db", async () => ({}), undefined, {
+      poolSize: 2,
+      acquireTimeoutMs: 20,
+    });
+    const a = await pool.acquire();
+    const b = await pool.acquire();
+    await expect(pool.acquire()).rejects.toThrow(ResourceUnavailableError);
+    expect(pool.stats()).toEqual({
+      size: 2,
+      active: 2,
+      idle: 0,
+      totalAcquisitions: 2,
+      totalTimeouts: 1,
+    });
+    await pool.release(a);
+    expect(pool.stats().active).toBe(1);
+    expect(pool.stats().idle).toBe(1);
+    await pool.release(b);
+    expect(pool.stats().active).toBe(0);
+    expect(pool.stats().idle).toBe(2);
+  });
+});
+
+describe("pooled resources in the runtime", () => {
+  it("checks out one pooled instance per task and returns it on teardown", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("conn", {
+      scope: "pooled",
+      factory: () => {
+        builds += 1;
+        return { id: builds };
+      },
+      pool: { poolSize: 1 },
+    });
+    const a = rt.createTaskScope();
+    const first = await a.resolver("conn");
+    expect(await a.resolver("conn")).toBe(first); // one checkout per task
+    await a.teardown(); // released back to the pool, not disposed
+    const b = rt.createTaskScope();
+    expect(await b.resolver("conn")).toBe(first); // reused across tasks
+    expect(builds).toBe(1);
+    expect(rt.metrics().conn).toEqual({ created: 1, disposed: 0, active: 1 });
+  });
+
+  it("rejects a pooled factory depending on a task-scoped resource", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("perJob", { scope: "task", factory: () => "x" });
+    rt.register("conn", {
+      scope: "pooled",
+      factory: (ctx) => ctx.use("perJob"),
+    });
+    const scope = rt.createTaskScope();
+    await expect(scope.resolver("conn")).rejects.toThrow(
+      /task-scoped and cannot be resolved at pooled scope/,
+    );
+  });
+
+  it("lets a pooled factory depend on a worker-scoped resource", async () => {
+    const rt = new ResourceRuntime();
+    rt.register("base", { scope: "worker", factory: () => 10 });
+    rt.register("conn", {
+      scope: "pooled",
+      factory: async (ctx) => (await ctx.use<number>("base")) * 2,
+    });
+    const scope = rt.createTaskScope();
+    expect(await scope.resolver("conn")).toBe(20);
+  });
+
+  it("prewarms pooled instances when a worker acquires the runtime", async () => {
+    const rt = new ResourceRuntime();
+    let builds = 0;
+    rt.register("conn", {
+      scope: "pooled",
+      factory: () => {
+        builds += 1;
+        return builds;
+      },
+      pool: { poolMin: 2 },
+    });
+    rt.acquireWorker();
+    expect(await waitFor(() => builds === 2)).toBe(true);
+    await rt.teardownWorker();
+  });
+
+  it("disposes idle pooled instances at worker teardown", async () => {
+    const rt = new ResourceRuntime();
+    let disposals = 0;
+    rt.register("conn", {
+      scope: "pooled",
+      factory: () => ({}),
+      dispose: () => {
+        disposals += 1;
+      },
+    });
+    rt.acquireWorker();
+    const scope = rt.createTaskScope();
+    await scope.resolver("conn");
+    await scope.teardown();
+    await rt.teardownWorker();
+    expect(disposals).toBe(1);
+    expect(rt.metrics().conn).toEqual({ created: 1, disposed: 1, active: 0 });
+  });
+});
+
 describe("resource injection in a worker", () => {
   it("resolves a worker-scoped resource via useResource(), shared across jobs", async () => {
     const queue = newQueue();
@@ -248,6 +446,84 @@ describe("resource injection in a worker", () => {
 
     expect(await waitFor(() => disposals === 2)).toBe(true);
     expect(builds).toBe(2); // one per invocation
+  });
+
+  it("reuses one pooled instance across jobs through a worker", async () => {
+    const queue = newQueue();
+    let builds = 0;
+    const seen: number[] = [];
+    queue.resource(
+      "conn",
+      () => {
+        builds += 1;
+        return { id: builds };
+      },
+      { scope: "pooled", pool: { poolSize: 1 } },
+    );
+    queue.task("hit", async () => {
+      const conn = await useResource<{ id: number }>("conn");
+      seen.push(conn.id);
+    });
+
+    queue.enqueue("hit");
+    queue.enqueue("hit");
+    worker = queue.runWorker();
+
+    expect(await waitFor(() => seen.length === 2)).toBe(true);
+    expect(seen).toEqual([1, 1]); // same instance both times
+    expect(builds).toBe(1);
+  });
+
+  it("disposes pooled instances when the worker stops", async () => {
+    const queue = newQueue();
+    let disposals = 0;
+    let done = false;
+    queue.resource("conn", () => ({}), {
+      scope: "pooled",
+      dispose: () => {
+        disposals += 1;
+      },
+      pool: { poolSize: 1 },
+    });
+    queue.task("touch", async () => {
+      await useResource("conn");
+      done = true;
+    });
+
+    queue.enqueue("touch");
+    worker = queue.runWorker();
+    expect(await waitFor(() => done)).toBe(true);
+
+    worker.stop();
+    worker = undefined;
+    expect(await waitFor(() => disposals === 1)).toBe(true);
+  });
+
+  it("fails a job whose pooled factory uses a task-scoped resource", async () => {
+    const queue = newQueue();
+    queue.resource("perJob", () => "x", { scope: "task" });
+    queue.resource("conn", (ctx) => ctx.use("perJob"), { scope: "pooled" });
+    let failure = "";
+    queue.task("guarded", async () => {
+      try {
+        await useResource("conn");
+      } catch (error) {
+        failure = (error as Error).message;
+      }
+    });
+
+    queue.enqueue("guarded");
+    worker = queue.runWorker();
+
+    expect(await waitFor(() => failure !== "")).toBe(true);
+    expect(failure).toMatch(/task-scoped and cannot be resolved at pooled scope/);
+  });
+
+  it("rejects pool options on a non-pooled scope", () => {
+    const queue = newQueue();
+    expect(() => queue.resource("bad", () => 1, { pool: { poolSize: 2 } })).toThrow(
+      /pool options require scope "pooled"/,
+    );
   });
 
   it("throws when useResource is called outside a task", () => {
