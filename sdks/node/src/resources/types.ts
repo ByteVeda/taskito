@@ -1,10 +1,10 @@
 /** Lifetime of a registered resource. */
-export type ResourceScope = "worker" | "task";
+export type ResourceScope = "worker" | "task" | "pooled";
 
 /**
- * Passed to a resource factory so it can depend on other resources. A
- * worker-scoped factory may only depend on other worker-scoped resources; a
- * task-scoped factory may depend on either.
+ * Passed to a resource factory so it can depend on other resources. Worker- and
+ * pooled-scoped factories may only depend on worker-scoped resources (their
+ * instances outlive any single task); a task-scoped factory may depend on any.
  */
 export interface ResourceContext {
   /** Scope of the resource currently being built. */
@@ -21,6 +21,34 @@ export interface ResourceDefinition<T = unknown> {
   scope: ResourceScope;
   /** Tear-down hook, run LIFO when the scope ends (worker stop / job finish). */
   dispose?: (value: T) => void | Promise<void>;
+  /** Pool tuning; only meaningful for `"pooled"` scope. */
+  pool?: PoolOptions;
+}
+
+/** Tuning for the bounded checkout pool behind a `"pooled"`-scope resource. */
+export interface PoolOptions {
+  /** Max instances checked out concurrently. Default 4. */
+  poolSize?: number;
+  /** Instances built eagerly when the worker starts. Default 0 (lazy). */
+  poolMin?: number;
+  /** How long a checkout waits for a free slot before failing. Default 10000. */
+  acquireTimeoutMs?: number;
+  /** Max age of an idle instance before it is disposed and rebuilt. Default unlimited. */
+  maxLifetimeMs?: number;
+}
+
+/** Point-in-time counters for one resource pool. */
+export interface PoolStats {
+  /** Configured capacity (`poolSize`). */
+  size: number;
+  /** Instances currently checked out. */
+  active: number;
+  /** Instances sitting idle, ready for reuse. */
+  idle: number;
+  /** Successful checkouts so far. */
+  totalAcquisitions: number;
+  /** Checkouts that timed out waiting for capacity. */
+  totalTimeouts: number;
 }
 
 /** Resolves a resource by name within the current scope. @internal */

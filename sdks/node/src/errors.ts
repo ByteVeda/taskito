@@ -116,11 +116,25 @@ export class ResourceNotFoundError extends ResourceError {
   }
 }
 
-/** Thrown when a task-scoped resource is resolved at worker scope. */
+/** Thrown when a resource is resolved from a scope that outlives it. */
 export class ResourceScopeError extends ResourceError {
-  constructor(readonly resourceName: string) {
-    super(`Resource "${resourceName}" is task-scoped and cannot be resolved at worker scope`);
+  constructor(
+    readonly resourceName: string,
+    scope: string = "task",
+    context: string = "worker",
+  ) {
+    super(
+      `Resource "${resourceName}" is ${scope}-scoped and cannot be resolved at ${context} scope`,
+    );
     this.name = "ResourceScopeError";
+  }
+}
+
+/** Thrown when a pooled resource cannot be checked out before its acquire timeout. */
+export class ResourceUnavailableError extends ResourceError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResourceUnavailableError";
   }
 }
 
