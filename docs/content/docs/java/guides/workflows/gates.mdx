@@ -1,0 +1,130 @@
+---
+title: Approval Gates
+description: "Pause a workflow run until a human or external system approves or rejects."
+---
+
+An approval gate pauses a workflow run until something external resolves it.
+No task runs at the gate — the run simply waits.
+
+```java
+Workflow release = Workflow.named("release-pipeline")
+        .step("build", buildTask, artifact)
+        .gate("approve-deploy",
+                GateConfig.timeout(
+                        Duration.ofHours(24),
+                        GateAction.REJECT,
+                        "Review build artifacts before deploying to production."),
+                "build")
+        .step("deploy", deployTask, artifact, "approve-deploy");
+
+WorkflowRun run = queue.submitWorkflow(release);
+
+try (Worker worker = queue.worker()
+        .handle(buildTask, p -> p)
+        .handle(deployTask, p -> p)
+        .trackWorkflows(release) // the tracker holds deploy's payload
+        .start()) {
+    // Later — once a human signs off:
+    worker.approveGate(run.runId(), "approve-deploy");
+    run.await(Duration.ofSeconds(30));
+}
+```
+
+<Mermaid
+  chart={`graph LR
+    build:::done --> gate["approve-deploy\n(waiting_approval)"]:::waiting
+    gate -- approved --> deploy:::run
+    gate -- rejected --> deploy_skip["deploy\n(skipped)"]:::skip`}
+/>
+
+<Callout type="warning">
+  A gated workflow must be registered on the tracking worker with
+  `trackWorkflows(workflow)`. The gate's downstream steps are deferred nodes —
+  their jobs are only created when the gate resolves, and the tracker supplies
+  their payloads from the registered definition.
+</Callout>
+
+## Gate node status
+
+While a gate is pending, its node status is `WAITING_APPROVAL`. The run itself
+stays in `RUNNING` state. Downstream steps do not start until the gate
+resolves.
+
+```java
+WorkflowStatus status = run.status().orElseThrow();
+status.node("approve-deploy").orElseThrow().status; // WAITING_APPROVAL
+```
+
+## Resolving a gate
+
+Resolution goes through the `Worker` that is tracking workflows — calling
+either method on a worker built without `trackWorkflows()` throws a
+`WorkflowException`.
+
+```java
+// Approve — the gate completes and downstream steps are enqueued.
+worker.approveGate(runId, "approve-deploy");
+
+// Reject with a reason — downstream steps are skipped, run transitions to FAILED.
+worker.rejectGate(runId, "approve-deploy", "Artifacts failed QA review.");
+```
+
+## Timeout behaviour
+
+Build the gate with one of the `GateConfig` factories:
+
+```java
+GateConfig.manual();                                          // waits forever
+GateConfig.timeout(Duration.ofHours(24), GateAction.REJECT);  // auto-reject after 24 h
+GateConfig.timeout(Duration.ofHours(24), GateAction.APPROVE, "Auto-ships unless stopped.");
+```
+
+When the timeout elapses the gate auto-resolves according to its `GateAction`:
+
+| `GateAction` | Effect |
+|---|---|
+| `REJECT` (default) | Same as `rejectGate` — downstream skipped, run `FAILED` |
+| `APPROVE` | Same as `approveGate` — downstream proceeds |
+
+The timeout must be positive; the timer is driven by the tracking worker and
+is cancelled when the gate is resolved manually first.
+
+## Gate options
+
+| `GateConfig` component | Type | Default | Description |
+|---|---|---|---|
+| `timeout` | `Duration` | `null` (wait forever) | Auto-resolve after this long |
+| `onTimeout` | `GateAction` | `REJECT` | Resolution taken when the timeout elapses |
+| `message` | `String` | `null` | Human-readable description shown to the approver |
+
+## Rejection behaviour
+
+Rejecting a gate marks the gate node `FAILED` and skips its default
+(`on_success`) successors; the workflow run ends in state `FAILED`. Any
+`on_failure` / `always` successors still run — use those (see
+[conditions](/java/guides/workflows/conditions)) if you need a rejection
+branch.
+
+<Callout type="warning">
+  Calling `approveGate` or `rejectGate` on a gate that has already been
+  resolved (approved, rejected, or timed out) is a no-op — the tracker ignores
+  stale resolutions.
+</Callout>
+
+## Webhooks and external triggers
+
+Any external system can drive a gate by reaching the process that hosts the
+tracking worker. A common pattern is an HTTP endpoint in that process which
+receives a webhook and resolves the gate:
+
+```java
+// Resolving a gate is a privileged state transition: authenticate the caller,
+// verify the webhook signature, and authorize access to this run first.
+void onDeployApproval(String runId, boolean approved, String reason) {
+    if (approved) {
+        worker.approveGate(runId, "approve-deploy");
+    } else {
+        worker.rejectGate(runId, "approve-deploy", reason);
+    }
+}
+```
