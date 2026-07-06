@@ -1,4 +1,6 @@
-import { ResourceNotFoundError, ResourceScopeError } from "../errors";
+import { ResourceNotFoundError, ResourceScopeError, ResourceUnavailableError } from "../errors";
+import { createLogger } from "../utils";
+import { HealthChecker } from "./health";
 import { ResourcePool } from "./pool";
 import type {
   ResourceContext,
@@ -8,11 +10,18 @@ import type {
   ResourceScope,
 } from "./types";
 
+const log = createLogger("resources");
+
 /** A disposal thunk plus the resource name, for error context. */
 interface Teardown {
   name: string;
   run: () => void | Promise<void>;
+  /** The build this thunk disposes, so recreation can retire exactly it. */
+  built?: Promise<unknown>;
 }
+
+/** Per-resource health, as advertised in the worker heartbeat. */
+export type HealthState = "healthy" | "unhealthy";
 
 /** Per-invocation task scope: caches task-scoped resources and disposes them. */
 export interface TaskScope {
@@ -42,10 +51,16 @@ export class ResourceRuntime {
   private readonly pools = new Map<string, ResourcePool>();
   /** Active worker leases sharing this runtime; teardown disposes only at zero. */
   private workerLeases = 0;
+  /** Resources marked permanently unhealthy — resolving them rejects for good. */
+  private readonly unhealthy = new Set<string>();
+  /** One checker per runtime, shared by every lease — never one per worker. */
+  private healthChecker: HealthChecker | undefined;
 
   /** Register (or replace) a resource definition. */
   register<T>(name: string, definition: ResourceDefinition<T>): void {
     this.defs.set(name, definition as ResourceDefinition);
+    // A replacement definition starts with a clean bill of health.
+    this.unhealthy.delete(name);
     // Drop any built worker instance so "replace" takes effect; the old
     // instance is still disposed by its queued teardown.
     this.workerCache.delete(name);
@@ -83,6 +98,11 @@ export class ResourceRuntime {
 
   /** Build a worker-scoped resource once, memoizing the promise (dedups concurrent init). */
   private resolveWorker(name: string): Promise<unknown> {
+    if (this.unhealthy.has(name)) {
+      return Promise.reject(
+        new ResourceUnavailableError(`Resource "${name}" is permanently unhealthy`),
+      );
+    }
     const cached = this.workerCache.get(name);
     if (cached) {
       return cached;
@@ -222,6 +242,12 @@ export class ResourceRuntime {
   /** Register a worker that shares this runtime's worker-scoped resources. */
   acquireWorker(): void {
     this.workerLeases += 1;
+    // Start the shared checker on the first lease only — concurrent workers on
+    // one runtime must not race recreate() on the same resource.
+    if (this.workerLeases === 1) {
+      this.healthChecker = new HealthChecker(this);
+      this.healthChecker.start();
+    }
     // Best-effort prewarm of pooled resources that asked for warm instances.
     // `prewarm` never rejects — build failures are logged inside the pool.
     for (const [name, def] of this.defs) {
@@ -244,8 +270,16 @@ export class ResourceRuntime {
     if (this.workerLeases > 0) {
       return;
     }
+    // Drain the checker first: once stop() resolves, no in-flight tick can
+    // recreate a resource while the caches below are torn down.
+    const checker = this.healthChecker;
+    this.healthChecker = undefined;
+    await checker?.stop();
     const pending = this.workerTeardown.splice(0);
     this.workerCache.clear();
+    // "Permanently unhealthy" is scoped to a worker run — the next worker
+    // starts from scratch and may succeed where this one gave up.
+    this.unhealthy.clear();
     // Shut pools down first — pooled instances may depend on worker resources.
     // `shutdown` never throws; per-instance dispose failures are logged.
     const pools = [...this.pools.values()];
@@ -254,6 +288,102 @@ export class ResourceRuntime {
       await pool.shutdown();
     }
     await runTeardown(pending);
+  }
+
+  // ── Health ────────────────────────────────────────────────────────────────
+
+  /** Registered resource names, sorted — advertised on worker registration. */
+  get names(): string[] {
+    return [...this.defs.keys()].sort();
+  }
+
+  /** Definitions that asked for periodic health checks (interval > 0). */
+  healthChecked(): ReadonlyMap<string, ResourceDefinition> {
+    const out = new Map<string, ResourceDefinition>();
+    for (const [name, def] of this.defs) {
+      if (def.healthCheck && (def.healthCheckIntervalMs ?? 0) > 0) {
+        out.set(name, def);
+      }
+    }
+    return out;
+  }
+
+  /** Whether `name` was marked permanently unhealthy. */
+  isUnhealthy(name: string): boolean {
+    return this.unhealthy.has(name);
+  }
+
+  /** The built (possibly pending) worker instance, or undefined before first build. */
+  builtWorkerInstance(name: string): Promise<unknown> | undefined {
+    return this.workerCache.get(name);
+  }
+
+  /**
+   * Mark a resource permanently unhealthy: every later resolve rejects with
+   * {@link ResourceUnavailableError}. Terminal — there is no auto-recovery.
+   */
+  markUnhealthy(name: string): void {
+    this.unhealthy.add(name);
+    log.error(`resource "${name}" marked permanently unhealthy`);
+  }
+
+  /**
+   * Dispose the current worker instance (best effort) and build a fresh one.
+   * Returns false when the factory fails — the caller decides whether that
+   * exhausts the recreation budget.
+   */
+  async recreate(name: string): Promise<boolean> {
+    const def = this.defs.get(name);
+    if (!def) {
+      return false;
+    }
+    await this.disposeReplacedInstance(name, def);
+    try {
+      await this.resolveWorker(name);
+      return true;
+    } catch (error) {
+      log.warn(() => `recreating resource "${name}" failed`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Per-resource health for the worker heartbeat, or undefined when nothing is
+   * registered (so the heartbeat clears the column instead of writing `{}`).
+   */
+  healthSnapshot(): Record<string, HealthState> | undefined {
+    if (this.defs.size === 0) {
+      return undefined;
+    }
+    const out: Record<string, HealthState> = {};
+    for (const name of this.defs.keys()) {
+      out[name] = this.unhealthy.has(name) ? "unhealthy" : "healthy";
+    }
+    return out;
+  }
+
+  /**
+   * Retire the currently-built worker instance ahead of recreation: drop it
+   * from the cache, cancel its queued teardown (recreation disposes it now),
+   * and run its `dispose` best-effort.
+   */
+  private async disposeReplacedInstance(name: string, def: ResourceDefinition): Promise<void> {
+    const old = this.workerCache.get(name);
+    if (!old) {
+      return;
+    }
+    this.workerCache.delete(name);
+    const staleIndex = this.workerTeardown.findIndex((entry) => entry.built === old);
+    if (staleIndex !== -1) {
+      this.workerTeardown.splice(staleIndex, 1);
+    }
+    try {
+      const value = await old;
+      await def.dispose?.(value);
+      this.counter(name).disposed += 1;
+    } catch (error) {
+      log.debug(() => `disposing resource "${name}" before recreation failed`, error);
+    }
   }
 
   /**
@@ -270,6 +400,7 @@ export class ResourceRuntime {
     const counter = this.counter(name);
     stack.push({
       name,
+      built,
       run: async () => {
         let value: unknown;
         try {

@@ -23,6 +23,18 @@ export interface ResourceDefinition<T = unknown> {
   dispose?: (value: T) => void | Promise<void>;
   /** Pool tuning; only meaningful for `"pooled"` scope. */
   pool?: PoolOptions;
+  /**
+   * Returns truthy while the value is healthy. Checked on the interval below;
+   * a failing (or throwing) check triggers recreation. Worker scope only.
+   */
+  healthCheck?: (value: T) => boolean | Promise<boolean>;
+  /** Milliseconds between health checks. 0 or absent disables checking. */
+  healthCheckIntervalMs?: number;
+  /**
+   * Consecutive failed checks tolerated while recreation also fails before the
+   * resource is marked permanently unhealthy. Default 3.
+   */
+  maxRecreationAttempts?: number;
 }
 
 /** Tuning for the bounded checkout pool behind a `"pooled"`-scope resource. */

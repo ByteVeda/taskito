@@ -140,6 +140,9 @@ pub struct WorkerOptions {
     pub batch_size: Option<u32>,
     pub task_configs: Option<Vec<TaskConfigInput>>,
     pub queue_configs: Option<Vec<QueueConfigInput>>,
+    /// Names of the injectable resources this worker serves, advertised on
+    /// registration so inspection surfaces them alongside heartbeat health.
+    pub resources: Option<Vec<String>>,
     /// Opt-in decentralized mesh overlay (requires the `mesh` build feature).
     pub mesh: Option<MeshWorkerConfig>,
 }
