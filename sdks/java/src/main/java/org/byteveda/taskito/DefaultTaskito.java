@@ -41,6 +41,7 @@ import org.byteveda.taskito.predicates.EnqueueDecision;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.predicates.PredicateContext;
+import org.byteveda.taskito.resources.PoolConfig;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceDefinition;
 import org.byteveda.taskito.resources.ResourceRuntime;
@@ -113,6 +114,16 @@ final class DefaultTaskito implements Taskito {
     public <T> Taskito resource(
             String name, ResourceScope scope, Function<ResourceContext, T> factory, Consumer<T> dispose) {
         resources.register(name, new ResourceDefinition(factory::apply, scope, value -> dispose.accept(cast(value))));
+        return this;
+    }
+
+    @Override
+    public <T> Taskito resource(
+            String name, PoolConfig pool, Function<ResourceContext, T> factory, Consumer<T> dispose) {
+        resources.register(
+                name,
+                new ResourceDefinition(
+                        factory::apply, ResourceScope.POOLED, value -> dispose.accept(cast(value)), pool));
         return this;
     }
 

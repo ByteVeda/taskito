@@ -32,6 +32,7 @@ import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
+import org.byteveda.taskito.resources.PoolConfig;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceScope;
 import org.byteveda.taskito.resources.ResourceStat;
@@ -77,6 +78,15 @@ public interface Taskito extends AutoCloseable {
 
     /** Register a resource with a scope and a disposer run when the scope ends. */
     <T> Taskito resource(String name, ResourceScope scope, Function<ResourceContext, T> factory, Consumer<T> dispose);
+
+    /**
+     * Register a {@link ResourceScope#POOLED} resource: a bounded pool of
+     * instances shared across tasks. Each task checks one instance out for its
+     * duration and returns it at task end; {@code pool} bounds capacity and
+     * {@code dispose} runs when the pool retires an instance (worker shutdown or
+     * {@link PoolConfig#maxLifetime()} expiry).
+     */
+    <T> Taskito resource(String name, PoolConfig pool, Function<ResourceContext, T> factory, Consumer<T> dispose);
 
     /** Per-resource counters (created / disposed / active). */
     Map<String, ResourceStat> resourceMetrics();

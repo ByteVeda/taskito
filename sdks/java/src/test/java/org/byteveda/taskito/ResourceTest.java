@@ -1,19 +1,24 @@
 package org.byteveda.taskito;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import org.byteveda.taskito.errors.ResourceException;
+import org.byteveda.taskito.resources.PoolConfig;
+import org.byteveda.taskito.resources.ResourcePool;
 import org.byteveda.taskito.resources.ResourceScope;
 import org.byteveda.taskito.resources.ResourceStat;
 import org.byteveda.taskito.resources.Resources;
@@ -246,6 +251,183 @@ class ResourceTest {
             }
             // Shared-runtime would build once (created==1); per-worker builds one each.
             assertEquals(2, queue.resourceMetrics().get("perWorker").created());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void pooledResourceReusedAcrossSequentialTasks(@TempDir Path dir) throws Exception {
+        int jobs = 2;
+        AtomicInteger disposed = new AtomicInteger();
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rpl.db").toString()).open()) {
+            queue.resource("pooled", PoolConfig.of(1), ctx -> new Object(), value -> disposed.incrementAndGet());
+            AtomicReference<Object> first = new AtomicReference<>();
+            AtomicReference<Object> second = new AtomicReference<>();
+            CountDownLatch ran = new CountDownLatch(jobs);
+            try (Worker worker = queue.worker()
+                    .concurrency(1)
+                    .handle(TASK, p -> {
+                        Object instance = Resources.use("pooled");
+                        if (!first.compareAndSet(null, instance)) {
+                            second.set(instance);
+                        }
+                        ran.countDown();
+                        return p;
+                    })
+                    .start()) {
+                for (int i = 0; i < jobs; i++) {
+                    queue.enqueue(TASK, i);
+                }
+                assertTrue(ran.await(20, TimeUnit.SECONDS));
+            } // worker close shuts the pool down and disposes its instances
+
+            assertSame(first.get(), second.get(), "a pool of one hands the same instance to sequential tasks");
+            Map<String, ResourceStat> metrics = queue.resourceMetrics();
+            assertEquals(1, metrics.get("pooled").created(), "one checkout at a time builds one instance");
+            assertEquals(1, metrics.get("pooled").disposed(), "disposed at worker shutdown");
+            assertEquals(1, disposed.get());
+        }
+    }
+
+    @Test
+    void pooledPoolMinCannotExceedPoolSize() {
+        IllegalArgumentException thrown = assertThrows(
+                IllegalArgumentException.class, () -> PoolConfig.of(2).withPoolMin(3));
+        assertTrue(thrown.getMessage().contains("poolMin must be <= poolSize"), thrown.getMessage());
+    }
+
+    @Test
+    @Timeout(30)
+    void pooledExhaustionTimesOut() {
+        PoolConfig config = new PoolConfig(1, 0, Duration.ofMillis(50), null);
+        ResourcePool pool = new ResourcePool("db", config, Object::new, null);
+        assertNotNull(pool.acquire(), "first checkout takes the only permit");
+        ResourceException thrown = assertThrows(ResourceException.class, pool::acquire);
+        assertTrue(thrown.getMessage().contains("pool timed out"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("db"), thrown.getMessage());
+        assertEquals(1, pool.stats().totalTimeouts());
+    }
+
+    @Test
+    @Timeout(30)
+    void pooledFactoryFailureDoesNotLeakCapacity() {
+        int failures = 3;
+        AtomicInteger attempts = new AtomicInteger();
+        Supplier<Object> factory = () -> {
+            if (attempts.incrementAndGet() <= failures) {
+                throw new IllegalStateException("connect failed");
+            }
+            return new Object();
+        };
+        ResourcePool pool =
+                new ResourcePool("flaky", new PoolConfig(1, 0, Duration.ofMillis(200), null), factory, null);
+        for (int i = 0; i < failures; i++) {
+            assertThrows(IllegalStateException.class, pool::acquire);
+            assertEquals(0, pool.stats().active(), "a failed build must not count as checked out");
+        }
+        // The permit was returned on every failure, so a size-1 pool still has capacity.
+        assertNotNull(pool.acquire());
+        assertEquals(1, pool.stats().active());
+    }
+
+    @Test
+    @Timeout(30)
+    void pooledPrewarmBuildsMinInstances(@TempDir Path dir) throws Exception {
+        AtomicInteger disposed = new AtomicInteger();
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rpp.db").toString()).open()) {
+            queue.resource(
+                    "warm", PoolConfig.of(4).withPoolMin(2), ctx -> new Object(), value -> disposed.incrementAndGet());
+            try (Worker worker = queue.worker().handle(TASK, p -> p).start()) {
+                assertEquals(
+                        2,
+                        queue.resourceMetrics().get("warm").created(),
+                        "prewarm builds poolMin instances at worker start, before any job");
+            }
+            assertEquals(2, queue.resourceMetrics().get("warm").disposed());
+            assertEquals(2, disposed.get());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void pooledMaxLifetimeDisposesExpired() throws Exception {
+        AtomicInteger built = new AtomicInteger();
+        AtomicInteger disposed = new AtomicInteger();
+        ResourcePool pool = new ResourcePool(
+                "aging",
+                new PoolConfig(1, 0, Duration.ofSeconds(5), Duration.ofMillis(20)),
+                () -> "instance-" + built.incrementAndGet(),
+                value -> disposed.incrementAndGet());
+        Object firstInstance = pool.acquire();
+        pool.release(firstInstance);
+        Thread.sleep(60); // outlive maxLifetime while parked
+        Object secondInstance = pool.acquire();
+        assertNotSame(firstInstance, secondInstance, "an expired idle instance is replaced, not reused");
+        assertEquals(2, built.get());
+        assertEquals(1, disposed.get(), "the expired instance was disposed");
+    }
+
+    @Test
+    @Timeout(30)
+    void pooledFactoryCannotUseTaskScopedResource(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rpg.db").toString()).open()) {
+            queue.resource("perTask", ResourceScope.TASK, ctx -> new Object());
+            queue.resource("pooled", PoolConfig.of(1), ctx -> ctx.use("perTask"), value -> {});
+            AtomicReference<RuntimeException> thrown = new AtomicReference<>();
+            CountDownLatch ran = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .handle(TASK, p -> {
+                        try {
+                            Resources.use("pooled");
+                        } catch (RuntimeException e) {
+                            thrown.set(e);
+                        } finally {
+                            ran.countDown();
+                        }
+                        return p;
+                    })
+                    .start()) {
+                queue.enqueue(TASK, 1);
+                assertTrue(ran.await(20, TimeUnit.SECONDS));
+            }
+            assertEquals(ResourceException.class, thrown.get().getClass());
+            assertTrue(
+                    thrown.get().getMessage().contains("a pooled resource may only use worker resources"),
+                    thrown.get().getMessage());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void pooledInstancesDisposedAtWorkerShutdown(@TempDir Path dir) throws Exception {
+        AtomicInteger disposed = new AtomicInteger();
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rpd.db").toString()).open()) {
+            queue.resource("conn", PoolConfig.of(2), ctx -> new Object(), value -> disposed.incrementAndGet());
+            // Hold both tasks at a barrier so each checks its own instance out.
+            CyclicBarrier bothBusy = new CyclicBarrier(2);
+            CountDownLatch ran = new CountDownLatch(2);
+            try (Worker worker = queue.worker()
+                    .concurrency(2)
+                    .handle(TASK, p -> {
+                        Resources.use("conn");
+                        bothBusy.await(20, TimeUnit.SECONDS);
+                        ran.countDown();
+                        return p;
+                    })
+                    .start()) {
+                queue.enqueue(TASK, 1);
+                queue.enqueue(TASK, 2);
+                assertTrue(ran.await(25, TimeUnit.SECONDS));
+            } // worker close returns both instances, then pool shutdown disposes them
+
+            Map<String, ResourceStat> metrics = queue.resourceMetrics();
+            assertEquals(2, metrics.get("conn").created(), "both concurrent tasks checked out an instance");
+            assertEquals(2, metrics.get("conn").disposed(), "pool shutdown disposed every instance");
+            assertEquals(2, disposed.get());
         }
     }
 }
