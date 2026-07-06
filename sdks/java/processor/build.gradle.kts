@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "org.byteveda"
-version = "0.18.0"
+version = "0.19.0"
 
 mavenPublishing {
     publishToMavenCentral()

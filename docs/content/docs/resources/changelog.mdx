@@ -10,6 +10,59 @@ All notable changes to taskito are documented here. The format is based on
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node, Java) and the
 underlying Rust crates are released together, in lock-step.
 
+## 0.19.0
+
+Parity release: the Java SDK reaches feature parity with the other SDKs (and its baseline moves
+to Java 17), payload codecs land as a cross-SDK wire contract, and the resource system gains a
+bounded pooled scope plus health-check-driven recreation. One breaking change in the Node SDK:
+scan-heavy queue methods now return Promises.
+
+### Added
+
+- **Java SDK full parity.** Workflows grow gates, conditional steps, sub-workflows, sagas,
+  incremental caching, analysis/visualization, and canvas shortcuts. New: worker resource
+  dependency injection with five scopes (worker / thread / task / request / pooled), enqueue
+  predicates and interception, two-sided payload codecs with per-task annotations, signed
+  resource proxies with expiry/purpose binding and sessions, producer-side batching, in-process
+  autoscaling plus a scaler HTTP endpoint, an optional MessagePack serializer, observability
+  middleware, a Spring Boot 3 starter, a mesh scheduling worker, and a Panama FFM fast-path for
+  hot byte operations. Maven Central publishing is automated end to end.
+- **Payload codecs (all SDKs).** A codec chain (gzip, AES-GCM, HMAC) that wraps the queue
+  serializer on both the enqueue and result paths — configurable globally or per task via a
+  named registry. The wire format is a cross-SDK contract: payloads encoded by one SDK decode
+  in any other. Dedup keys hash pre-codec bytes, so encryption does not break idempotency.
+- **Pooled resource scope (Node + Java).** A bounded checkout/return pool per resource:
+  each task checks out one instance for its duration and returns it at task end. Capacity,
+  prewarm, acquire timeout, and max lifetime are configurable; instances are disposed at
+  worker shutdown or lifetime expiry.
+- **Node resource health checks.** Per-resource `healthCheck` with automatic recreation and a
+  terminal unhealthy state after the recreation budget is spent. The worker heartbeat now
+  carries per-resource health, surfaced through `listWorkers()`.
+- **Node proxy system.** Signed proxy references with a file handler (HMAC-SHA256 over a
+  canonical JSON form, path allowlists, TTL and purpose binding), plus proxy sessions with
+  identity dedup on deconstruct, signature-keyed memoization on reconstruct (re-verified on
+  every resolve), and LIFO cleanup on close.
+- **Node enqueue interceptors.** Pass / convert / redirect / reject rules that run before
+  defaults, middleware, and serialization — same model as the other SDKs.
+- **Java THREAD and REQUEST resource scopes**, completing the scope matrix alongside worker,
+  task, and pooled.
+
+### Changed
+
+- **Node (breaking): scan-heavy queue methods are now async.** `stats*`, `listJobs`,
+  `deadLetters*`, `purge*`, `listWorkers`, `getMetrics`, and `getJobErrors` return Promises and
+  no longer block the event loop; webhook `Delivery` was reshaped to the dashboard contract.
+- **Java baseline is now 17** (previously 11).
+
+### Fixed
+
+- **Python results always use the queue serializer.** Task results were serialized with raw
+  cloudpickle on three of the four write paths while reads went through the configured
+  serializer; all result writes now route through the queue serializer (with a legacy fallback
+  so old results stay readable).
+- **Node workflow tracker correctness** (static-successor cascade on managed runs, fan-out
+  sibling successors — both also fixed in Python), plus cursor-based task-log streaming.
+
 ## 0.18.0
 
 Reliability and storage release: Postgres dequeues with `SKIP LOCKED`, crashed workers'
