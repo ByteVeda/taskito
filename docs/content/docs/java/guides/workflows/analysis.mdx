@@ -1,0 +1,68 @@
+---
+title: Analysis & Visualization
+description: "Introspect a workflow definition's DAG — order, levels, ancestors, and diagrams."
+---
+
+`WorkflowAnalysis` answers pure-graph questions about a `Workflow`'s DAG (its
+steps and their `after` edges) before a run starts — useful for validation and
+tooling. All methods are static and read-only.
+
+```java
+// a → {b, c} → d (a diamond)
+Workflow wf = Workflow.named("graph")
+        .step("a", task, 1)
+        .step("b", task, 1, "a")
+        .step("c", task, 1, "a")
+        .step("d", task, 1, "b", "c");
+```
+
+## Structure
+
+```java
+WorkflowAnalysis.roots(wf);              // ["a"]           — steps with no dependencies
+WorkflowAnalysis.leaves(wf);             // ["d"]           — steps nothing depends on
+WorkflowAnalysis.ancestors(wf, "d");     // {"a", "b", "c"} — transitive predecessors
+WorkflowAnalysis.descendants(wf, "a");   // {"b", "c", "d"} — transitive successors
+WorkflowAnalysis.topologicalOrder(wf);   // a valid execution order
+```
+
+## Levels
+
+`levels(wf)` groups steps by dependency depth — everything in one level can
+run in parallel:
+
+```java
+WorkflowAnalysis.levels(wf); // [["a"], ["b", "c"], ["d"]]
+```
+
+## Validation
+
+Every query first runs `WorkflowAnalysis.validate(wf)`, which throws a
+`WorkflowException` if any `after` edge names an undeclared step.
+`topologicalOrder` additionally throws when the DAG contains a cycle — call it
+in a test to catch a bad graph before submitting:
+
+```java
+Workflow cyclic = Workflow.named("cyc")
+        .step("x", task, 1, "y")
+        .step("y", task, 1, "x");
+WorkflowAnalysis.topologicalOrder(cyclic); // throws WorkflowException: has a cycle
+```
+
+## Diagrams
+
+`WorkflowVisualization` renders the same DAG as text for docs or debugging —
+Mermaid (`graph TD`) or Graphviz DOT. Node labels note the step kind (gate,
+fan-out, fan-in, sub-workflow, conditional), and gates render as Mermaid
+decision diamonds:
+
+```java
+WorkflowVisualization.mermaid(wf); // "graph TD\n  n0[\"a\"]\n  ..."
+WorkflowVisualization.dot(wf);     // "digraph \"graph\" {\n  \"a\" [label=\"a\"];\n  ..."
+```
+
+<Callout type="info">
+  Analysis and visualization operate on the workflow **definition**, not on a
+  submitted run — they need no queue or storage. For a live run's per-node
+  statuses, use `run.status()` and walk `WorkflowStatus.nodes`.
+</Callout>

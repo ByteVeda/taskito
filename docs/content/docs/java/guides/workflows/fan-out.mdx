@@ -1,0 +1,168 @@
+---
+title: Fan-Out & Fan-In
+description: "Split a step's result into parallel children, collect results into a downstream step."
+---
+
+Split a step's result into parallel child jobs, then collect all results into
+a downstream step.
+
+<Mermaid
+  chart={`graph LR
+    seed:::source --> square_0["square[0]"]
+    seed --> square_1["square[1]"]
+    seed --> square_2["square[2]"]
+    square_0 --> sum:::sink
+    square_1 --> sum
+    square_2 --> sum`}
+/>
+
+## Basic fan-out and fan-in
+
+Use `.fanOut()` to expand the predecessor's list result into one child job per
+item, and `.fanIn()` to collect the children's results into a combiner task.
+
+```java
+Task<Integer> seed = Task.of("seed", Integer.class);
+Task<Integer> square = Task.of("square", Integer.class);
+Task<List<Integer>> sum = Task.of("sum", new TypeReference<List<Integer>>() {});
+
+try (Taskito queue = Taskito.builder().url("fan.db").open()) {
+    // seed(4) -> [1,2,3,4]; square each -> [1,4,9,16]; sum all -> 30
+    Workflow batch = Workflow.named("batch")
+            .step("seed", seed, 4)
+            .fanOut("square", square, FanMode.EACH, "seed")
+            .fanIn("sum", sum, FanMode.ALL, "square");
+
+    WorkflowRun run = queue.submitWorkflow(batch);
+    try (Worker worker = queue.worker()
+            .handle(seed, n -> IntStream.rangeClosed(1, n).boxed().toList())
+            .handle(square, x -> x * x)
+            .handle(sum, xs -> xs.stream().mapToInt(Integer::intValue).sum())
+            .trackWorkflows()
+            .start()) {
+        WorkflowStatus status = run.await(Duration.ofSeconds(30));
+        String sumJob = status.node("sum").orElseThrow().jobId;
+        queue.getResult(sumJob, Integer.class); // Optional[30]
+    }
+}
+```
+
+The single predecessor named in `after` is the producer: its return value must
+be a list, and each item is passed to the child task as its payload. A fan-out
+or fan-in step requires **exactly one** predecessor — the builder rejects zero
+or several.
+
+Child nodes are named `square[0]`, `square[1]`, `square[2]` and appear in
+status queries. The parent node carries `fanOutCount` (the number of children
+spawned).
+
+```java
+WorkflowStatus status = run.status().orElseThrow();
+status.node("square").orElseThrow().fanOutCount;   // 3
+status.node("square[0]").orElseThrow().status;     // COMPLETED
+```
+
+## How it works
+
+1. `seed` completes — the tracker reads its return value (must be a list)
+2. The tracker expands the fan-out, creating N child nodes and N jobs — each
+   receives one item from the list; children are ready immediately
+3. Children execute in parallel; their statuses surface as `square[0]`,
+   `square[1]`, …
+4. As each child settles, the tracker checks whether every sibling is terminal
+5. Once all children complete, it collects results in item order and creates
+   the deferred fan-in job
+6. The `sum` fan-in node runs with the results list as its payload
+
+<Mermaid
+  chart={`sequenceDiagram
+    participant S as seed job
+    participant T as WorkflowTracker
+    participant R as Rust Engine
+
+    S->>T: outcome(seed, success)
+    T->>R: load run plan(runId)
+    T->>R: expandFanOut(3 children)
+    R-->>T: [childJobIds]
+    Note over R: Children execute in parallel
+    R->>T: outcome(square[0], success)
+    R->>T: outcome(square[1], success)
+    R->>T: outcome(square[2], success)
+    T->>R: checkFanOutCompletion → all done
+    T->>R: createDeferredJob(sum)`}
+/>
+
+The `WorkflowTracker` is driven entirely by the worker outcome stream and
+reconstructs the run plan from storage on each event, so submission and
+execution may run in different processes.
+
+## Empty fan-out
+
+If the producer returns an empty list, the fan-out parent is marked completed
+immediately with `fanOutCount` 0 and the fan-in runs with an empty list:
+
+```java
+// seed handler returns List.of() → no children spawn
+// sum receives [] → result is 0
+```
+
+## Downstream steps
+
+Steps after the fan-in work normally — declare them with `after` pointing to
+the fan-in node:
+
+```java
+Workflow pipeline = Workflow.named("full-pipeline")
+        .step("seed", seed, 4)
+        .fanOut("square", square, FanMode.EACH, "seed")
+        .fanIn("sum", sum, FanMode.ALL, "square")
+        .step("notify", notify, "done", "sum"); // runs after sum
+```
+
+## Per-step options
+
+For per-child overrides, build the fan-out step explicitly:
+
+```java
+Workflow batch = Workflow.named("batch")
+        .step("seed", seed, 4)
+        .step(Step.of("square", square)
+                .fanOut(FanMode.EACH)
+                .after("seed")
+                .queue("bulk")
+                .maxRetries(2)
+                .timeoutMs(30_000)
+                .priority(5)
+                .build())
+        .fanIn("sum", sum, FanMode.ALL, "square");
+```
+
+| Option | Description |
+|--------|-------------|
+| `after(...)` | The producer node (exactly one, required) |
+| `fanOut(FanMode.EACH)` | Run the task once per item of the producer's result list |
+| `fanIn(FanMode.ALL)` | Collect every child's result into one list |
+| `queue(...)` | Queue name for each child |
+| `maxRetries(...)` | Retry limit for each child |
+| `timeoutMs(...)` | Timeout for each child |
+| `priority(...)` | Priority for each child |
+
+Each child inherits the fan-out step's `queue`, `maxRetries`, `timeoutMs`, and
+`priority`. A single fan-out is capped at 10,000 children — expansion beyond
+that fails the fan-out node.
+
+## Failure handling
+
+If any child dead-letters, the tracker waits for the remaining children to
+settle, then:
+
+- The fan-out parent is marked `failed`
+- The fan-in and downstream `on_success` steps are `skipped`
+- The workflow run transitions to `failed`
+
+```java
+WorkflowStatus status = run.await(Duration.ofSeconds(30));
+if (status.state == WorkflowState.FAILED) {
+    status.failedStep().ifPresent(name -> System.err.println("failed node: " + name));
+}
+```
