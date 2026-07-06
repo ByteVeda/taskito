@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "org.byteveda"
-version = "0.18.0"
+version = "0.19.0"
 
 java {
     // Sources + javadoc jars are added by the maven-publish plugin below.
