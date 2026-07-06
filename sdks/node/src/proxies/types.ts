@@ -36,4 +36,10 @@ export interface ProxyHandler<T = unknown> {
   deconstruct(value: T): Record<string, unknown>;
   /** Rebuild the resource from a reference produced by {@link ProxyHandler.deconstruct}. */
   reconstruct(reference: Record<string, unknown>): T;
+  /**
+   * Release a value this handler reconstructed. Called once per reconstructed
+   * value when a `ProxySession` closes; absence means no-op. Direct
+   * {@link Proxies.reconstruct} calls have no lifecycle and never trigger it.
+   */
+  cleanup?(value: T): void;
 }
