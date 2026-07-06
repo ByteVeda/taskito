@@ -1,0 +1,56 @@
+---
+title: Concurrency
+description: "Size, fix, or autoscale the worker's handler thread pool."
+---
+
+Concurrency in the Java SDK is a **worker-level** setting: each worker runs its
+handlers on a thread pool, and the pool's size caps how many jobs that worker
+executes at once.
+
+```java
+Worker worker = queue.worker()
+        .handle(TRANSCODE, this::transcode)
+        .concurrency(2) // at most 2 handlers run at once on this worker
+        .start();
+```
+
+`concurrency(0)` (the default) uses a cached pool that grows with demand;
+any positive value fixes the thread count. Jobs beyond the cap stay `PENDING`
+and dispatch as running ones finish.
+
+## Autoscaling
+
+Instead of a fixed size, let the pool track queue depth — it resizes between
+`min` and `max` threads, re-evaluated every couple of seconds:
+
+```java
+Worker worker = queue.worker()
+        .handle(TRANSCODE, this::transcode)
+        .autoscale(AutoscaleOptions.of(2, 16)) // 2..16 threads, ~10 queued tasks per thread
+        .start();
+```
+
+## Scaling out
+
+Total parallelism is the sum across workers — run more worker processes over
+the same storage to scale horizontally, and partition with `queues(...)` so a
+heavy task class gets its own capacity:
+
+```java
+Worker videoWorker = queue.worker()
+        .handle(TRANSCODE, this::transcode)
+        .queues("video")
+        .concurrency(4)
+        .start();
+```
+
+Pair a bounded pool with [pooled resources](/java/guides/resources/dependency-injection)
+when handlers share an expensive client — the resource pool bounds the client
+instances while the thread pool bounds the executions.
+
+<Callout type="info">
+  The SDK does not enforce a per-task concurrency cap across workers — the
+  bound is per worker. To cap a task globally, give it a dedicated queue and a
+  single worker sized to the limit, or serialize the critical section with a
+  [distributed lock](/java/guides/reliability/locks).
+</Callout>

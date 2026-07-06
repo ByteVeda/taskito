@@ -1,0 +1,18 @@
+---
+title: Reliability
+description: "Harden your Java task queue for production workloads."
+---
+
+Harden your task queue for production workloads.
+
+| Guide | Description |
+|---|---|
+| [Error Handling](/java/guides/reliability/error-handling) | Task failure lifecycle, error inspection, the exception hierarchy |
+| [Delivery Guarantees](/java/guides/reliability/guarantees) | At-least-once delivery and exactly-once patterns |
+| [Retries](/java/guides/reliability/retries) | Automatic retries with exponential backoff |
+| [Timeouts](/java/guides/reliability/timeouts) | Bound task runtime per execution attempt |
+| [Idempotency](/java/guides/reliability/idempotency) | Deduplicate enqueues with unique keys |
+| [Rate Limiting](/java/guides/reliability/rate-limiting) | Throttle and defer enqueues with gates |
+| [Concurrency](/java/guides/reliability/concurrency) | Size and autoscale the worker's handler pool |
+| [Dead-letter queue](/java/guides/reliability/dead-letter) | Capture and replay exhausted jobs |
+| [Distributed Locking](/java/guides/reliability/locks) | Mutual exclusion across workers with database-backed locks |

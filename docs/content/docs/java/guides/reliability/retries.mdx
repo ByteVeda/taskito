@@ -1,0 +1,46 @@
+---
+title: Retries
+description: "Automatic retries with exponential backoff before dead-lettering."
+---
+
+A task whose handler throws is retried up to `maxRetries` times before it
+dead-letters. Retries are scheduled by the core with exponential backoff.
+
+```java
+Task<Order> CHARGE = Task.of("charge", Order.class)
+        .maxRetries(5)
+        .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(1), Duration.ofMinutes(1)));
+```
+
+| Option | Description |
+|---|---|
+| `maxRetries` | Attempts after the first before dead-lettering. Defaults to `0` — never retry — so set it on any task you want retried. |
+| `RetryPolicy.exponential(base, max)` | Retry N waits about `base · 2^N`, capped at `max`, plus a random jitter of up to `base`. Without a policy the core defaults apply (1s base, 5min cap). |
+| `RetryPolicy.delays(d0, d1, ...)` | Explicit per-attempt delays, applied exactly with no jitter. Supply at least `maxRetries` delays — once the list is exhausted, further retries fire immediately. |
+
+The retry *budget* travels with the job (`maxRetries`); the *backoff curve*
+(`retryPolicy`) is registered with the worker when it starts. Override the
+budget per job at enqueue time:
+
+```java
+queue.enqueue(CHARGE, order, EnqueueOptions.builder().maxRetries(1).build());
+```
+
+Observe retries as they happen — via middleware `onRetry` or a worker event
+listener; once the budget is exhausted the job moves to the
+[dead-letter queue](/java/guides/reliability/dead-letter) and the `DEAD` event
+fires:
+
+```java
+Worker worker = queue.worker()
+        .handle(CHARGE, this::charge)
+        .on(EventName.RETRY, event -> log.info("retrying {0}", event.taskName))
+        .on(EventName.DEAD, event -> alertOps(event))
+        .start();
+```
+
+<Callout type="info">
+  Retries re-run the whole handler, so design tasks to be
+  [idempotent](/java/guides/reliability/idempotency) — a crash after a side
+  effect but before the result write will re-execute.
+</Callout>

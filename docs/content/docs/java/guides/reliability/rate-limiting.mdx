@@ -1,0 +1,54 @@
+---
+title: Rate Limiting
+description: "Throttle and defer enqueues with gates instead of failing them."
+---
+
+The Java SDK shapes throughput on the **producer side**: an enqueue gate can
+defer a job into the future instead of creating it now, so bursts flatten out
+rather than fail. A gate returns one of four decisions — `Allow`, `Skip`,
+`Defer(delay)`, or `Reject(reason)` — and the first non-allow decision wins.
+
+```java
+queue.gate("call_api", context -> {
+    if (bucket.tryConsume()) {
+        return EnqueueDecision.allow();
+    }
+    return EnqueueDecision.defer(Duration.ofSeconds(1)); // reschedule, don't fail
+});
+```
+
+A deferred job is enqueued with its `scheduledAt` pushed out by the delay — it
+never consumes a retry, and the producer's `enqueue` still returns the job id.
+`Skip` creates no job — `tryEnqueue` returns an empty `Optional`, while plain
+`enqueue` throws `EnqueueSkippedException`; `Reject` always throws
+`PredicateRejectedException`.
+
+## Built-in recipes
+
+`Recipes` ships gates for the common time-window cases, each deferring to the
+next open slot instead of failing:
+
+```java
+queue.gate("send_report", Recipes.businessHours(ZoneId.of("America/New_York")));
+queue.gate("batch_sync", Recipes.timeWindow(ZoneId.of("UTC"),
+        LocalTime.of(22, 0), LocalTime.of(6, 0))); // wraps past midnight
+queue.gate("weekly_digest", Recipes.dayOfWeek(ZoneId.of("UTC"),
+        DayOfWeek.MONDAY, DayOfWeek.THURSDAY));
+```
+
+Simple boolean checks can use `predicate(...)` instead — it rejects the enqueue
+outright when the predicate fails, and composes with `Predicates.allOf`,
+`anyOf`, and `not`.
+
+## Bounding execution
+
+Gates shape how fast jobs *enter* the queue; to bound how many run at once,
+size the worker pool — see [concurrency](/java/guides/reliability/concurrency).
+For a fixed drain rate, a fixed `concurrency(n)` worker over a gated queue
+gives you both knobs.
+
+<Callout type="info">
+  Gates run in registration order at enqueue time, after
+  [interceptors](/java/guides/resources/interception) and `onEnqueue`
+  middleware — so they see the payload that will actually be stored.
+</Callout>

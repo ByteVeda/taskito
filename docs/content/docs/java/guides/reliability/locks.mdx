@@ -1,0 +1,58 @@
+---
+title: Distributed Locking
+description: "TTL-bounded, owner-scoped locks backed by the queue's storage."
+---
+
+Coordinate across processes without a separate lock server. Locks are
+TTL-bounded and owner-scoped, backed by the queue's storage — only the `Lock`
+instance that acquired a lock can extend or release it.
+
+<Seq
+  heads={["Worker", "Lock store"]}
+  rows={[
+    { left: "lock(\"report\", ttlMs).acquire()" },
+    { right: "granted — owner-scoped", rev: true },
+    { self: "extend(ttlMs) before long sections" },
+    { left: "release() (or close() via try-with-resources)" },
+  ]}
+/>
+
+## Scoped helper
+
+`withLock` acquires, runs, and releases — returning whether the body ran:
+
+```java
+boolean ran = queue.withLock("report:2026-06", 60_000, () -> rebuildReport());
+if (!ran) {
+    log.info("another worker holds the lock");
+}
+```
+
+## Manual handle
+
+`Lock` is `AutoCloseable`, so try-with-resources releases it at block exit:
+
+```java
+try (Lock lock = queue.lock("resource", 30_000)) {
+    if (lock.acquire()) {
+        // ... critical section
+    }
+} // released at block exit
+```
+
+| Method | Description |
+|---|---|
+| `acquire()` | Try once; `false` if another owner holds a live lock. |
+| `tryAcquire(Duration timeout)` | Retry every 50ms until obtained or the timeout elapses. |
+| `extend(long ttlMs)` | Push the expiry out if still held; `false` means the lock was lost. |
+| `release()` / `close()` | Give the lock up (no-op if not held). |
+| `queue.lockInfo(name)` | The current holder — owner id, acquired-at, expires-at — or empty. |
+
+`queue.lock(name)` without a TTL defaults to 30 seconds.
+
+<Callout type="warning">
+  Locks do not auto-extend. Choose a TTL comfortably longer than the protected
+  work's worst case, or call `extend()` at checkpoints — a failed extend means
+  the lock expired and another owner may now hold it, so stop the critical
+  section. Expiry is what keeps a crashed owner from holding a lock forever.
+</Callout>
