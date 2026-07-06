@@ -137,4 +137,36 @@ describe("HealthChecker", () => {
       }),
     ).toThrow(/health checks require scope "worker"/);
   });
+
+  it("advertises resource health through the worker heartbeat", async () => {
+    const queue = newQueue();
+    queue.resource("db", () => ({ ok: true }), {
+      healthCheck: (value) => value.ok,
+      healthCheckIntervalMs: 100,
+    });
+    queue.task("noop", () => undefined);
+
+    worker = queue.runWorker();
+    let row: { resources?: string; resourceHealth?: string } | undefined;
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline && row === undefined) {
+      const workers = await queue.listWorkers();
+      row = workers.find((w) => w.resourceHealth?.includes('"healthy"'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(row).toBeDefined();
+    expect(JSON.parse(row?.resourceHealth ?? "{}")).toEqual({ db: "healthy" });
+    expect(JSON.parse(row?.resources ?? "[]")).toEqual(["db"]);
+
+    worker.stop();
+    worker = undefined;
+    // Unregistration still runs on stop — the row disappears instead of flapping.
+    let gone = false;
+    const stopDeadline = Date.now() + 8000;
+    while (Date.now() < stopDeadline && !gone) {
+      gone = (await queue.listWorkers()).length === 0;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(gone).toBe(true);
+  });
 });

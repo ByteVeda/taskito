@@ -109,6 +109,11 @@ pub struct JsWorkerRow {
     pub pool_type: Option<String>,
     pub threads: i32,
     pub tags: Option<String>,
+    /// JSON array of resource names the worker advertised at registration.
+    pub resources: Option<String>,
+    /// JSON object of per-resource health (`"healthy"`/`"unhealthy"`), written
+    /// by the worker's heartbeat.
+    pub resource_health: Option<String>,
 }
 
 pub fn worker_to_js(worker: WorkerRow) -> JsWorkerRow {
@@ -123,6 +128,8 @@ pub fn worker_to_js(worker: WorkerRow) -> JsWorkerRow {
         pool_type: worker.pool_type,
         threads: worker.threads,
         tags: worker.tags,
+        resources: worker.resources,
+        resource_health: worker.resource_health,
     }
 }
 
