@@ -2,8 +2,9 @@ package org.byteveda.taskito.resources;
 
 /**
  * Handed to a resource factory so it can depend on other resources. A factory
- * may only depend on same-or-longer-lived resources: a {@code WORKER} factory
- * may {@link #use} only worker resources, a {@code THREAD} factory may use
+ * may only depend on same-or-longer-lived resources: {@code WORKER} and
+ * {@code POOLED} factories may {@link #use} only worker resources (a pooled
+ * instance outlives the task that built it), a {@code THREAD} factory may use
  * worker or thread resources, and {@code TASK}/{@code REQUEST} factories may
  * use any scope.
  */

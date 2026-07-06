@@ -41,6 +41,12 @@ public final class ResourceRuntime {
      * the concurrent maps exist for cross-thread visibility at worker teardown.
      */
     private final ConcurrentMap<String, ConcurrentMap<Thread, Object>> threadCache = new ConcurrentHashMap<>();
+    /**
+     * Per-name pools for {@code POOLED}-scoped resources. An instance field like
+     * {@code workerCache}, so each worker runtime from {@link #forWorker()} owns
+     * its own pools — capacity is per worker, never shared across workers.
+     */
+    private final ConcurrentMap<String, ResourcePool> pools = new ConcurrentHashMap<>();
 
     private final Deque<Runnable> workerTeardown = new ArrayDeque<>();
     /** Names being resolved on the current thread, so a dependency cycle fails fast instead of recursing. */
@@ -71,6 +77,23 @@ public final class ResourceRuntime {
         @Override
         public <T> T use(String name) {
             return cast(resolveThread(name));
+        }
+    };
+
+    /**
+     * Context handed to a pooled factory: it may only use worker resources —
+     * pooled instances outlive tasks, so a task/request/thread-scoped dependency
+     * would dangle after its own scope ends.
+     */
+    private final ResourceContext pooledContext = new ResourceContext() {
+        @Override
+        public ResourceScope scope() {
+            return ResourceScope.POOLED;
+        }
+
+        @Override
+        public <T> T use(String name) {
+            return cast(resolvePooledDependency(name));
         }
     };
 
@@ -113,8 +136,11 @@ public final class ResourceRuntime {
         return new TaskScope(this);
     }
 
-    /** Lease the worker resources (paired with {@link #teardownWorker}). */
+    /** Lease the worker resources (paired with {@link #teardownWorker}); the first lease prewarms pools. */
     public synchronized void acquireWorker() {
+        if (leases == 0) {
+            prewarmPools();
+        }
         leases++;
     }
 
@@ -175,7 +201,8 @@ public final class ResourceRuntime {
     /**
      * Resolve for a task, dispatching by the resource's scope: worker hits the
      * shared cache, thread hits the current thread's cache, request builds fresh
-     * on every use, task builds once per invocation.
+     * on every use, pooled checks an instance out for the invocation, task builds
+     * once per invocation.
      */
     Object resolveForTask(TaskScope scope, String name) {
         ResourceDefinition definition = definition(name);
@@ -186,6 +213,8 @@ public final class ResourceRuntime {
                 return resolveThread(name);
             case REQUEST:
                 return buildRequest(scope, name, definition);
+            case POOLED:
+                return resolvePooled(scope, name, definition);
             case TASK:
             default:
                 break;
@@ -246,6 +275,75 @@ public final class ResourceRuntime {
         return value;
     }
 
+    /**
+     * Resolve a pooled resource: one checkout per task per resource, cached in the
+     * task scope like a task-scoped instance and returned to the pool (not
+     * disposed) when the task ends.
+     */
+    private Object resolvePooled(TaskScope scope, String name, ResourceDefinition definition) {
+        Map<String, Object> cache = scope.cache();
+        Object cached = cache.get(name);
+        if (cached != null) {
+            return unwrap(cached);
+        }
+        ResourcePool pool = pool(name, definition);
+        Object value = pool.acquire();
+        cache.put(name, value == null ? NULL : value);
+        scope.pushTeardown(() -> pool.release(value));
+        return value;
+    }
+
+    /** Resolve a pooled factory's dependency, enforcing the worker-only guard. */
+    private Object resolvePooledDependency(String name) {
+        ResourceDefinition definition = definition(name);
+        if (definition.scope() != ResourceScope.WORKER) {
+            throw new ResourceException("resource '" + name + "' is "
+                    + scopeWord(definition.scope())
+                    + "-scoped; a pooled resource may only use worker resources");
+        }
+        return resolveWorker(name);
+    }
+
+    /** The pool for {@code name}, created lazily on first use. */
+    private ResourcePool pool(String name, ResourceDefinition definition) {
+        return pools.computeIfAbsent(name, key -> createPool(name, definition));
+    }
+
+    /**
+     * A pool whose factory and disposer keep the per-resource counters honest:
+     * {@code created} moves only when the factory builds, {@code disposed} only
+     * when the pool actually disposes — checkout/return never touch them.
+     */
+    private ResourcePool createPool(String name, ResourceDefinition definition) {
+        return new ResourcePool(
+                name,
+                definition.pool(),
+                () -> {
+                    Object value = build(name, definition, pooledContext);
+                    counter(name).created.incrementAndGet();
+                    return value;
+                },
+                value -> disposePooled(name, value, definition.dispose()));
+    }
+
+    /** Dispose one pooled instance; without a disposer the drop still counts as disposed. */
+    private void disposePooled(String name, Object value, Consumer<Object> disposer) {
+        if (disposer == null) {
+            counter(name).disposed.incrementAndGet();
+            return;
+        }
+        dispose(name, value, disposer);
+    }
+
+    /** Eagerly build {@code poolMin} instances for every pooled resource that asks for prewarm. */
+    private void prewarmPools() {
+        definitions.forEach((name, definition) -> {
+            if (definition.scope() == ResourceScope.POOLED && definition.pool().poolMin() > 0) {
+                pool(name, definition).prewarm();
+            }
+        });
+    }
+
     /** Context handed to a request factory: dependencies resolve through the active task scope. */
     private ResourceContext requestContext(TaskScope scope) {
         return new ResourceContext() {
@@ -278,6 +376,10 @@ public final class ResourceRuntime {
     }
 
     private void disposeWorker() {
+        // Pools first: pooled instances may depend on worker resources, which the
+        // teardown stack below disposes.
+        pools.values().forEach(ResourcePool::shutdown);
+        pools.clear();
         synchronized (workerTeardown) {
             while (!workerTeardown.isEmpty()) {
                 workerTeardown.pop().run();

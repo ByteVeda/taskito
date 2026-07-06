@@ -17,5 +17,12 @@ public enum ResourceScope {
      * Built fresh on every {@code use()} and disposed when the task ends —
      * never cached, so N uses inside one task yield N instances.
      */
-    REQUEST
+    REQUEST,
+    /**
+     * A bounded pool of instances shared across tasks: each task checks out one
+     * instance for its duration and returns it at task end. Capacity is bounded
+     * by the {@link PoolConfig} supplied at registration; instances are disposed
+     * at worker shutdown or when their {@link PoolConfig#maxLifetime()} expires.
+     */
+    POOLED
 }
