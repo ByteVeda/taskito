@@ -1,0 +1,89 @@
+---
+title: Cancellation
+description: "Cancel pending jobs, cooperatively stop running ones, report progress."
+---
+
+A **pending** job is cancelled outright; a **running** job is cancelled
+cooperatively — the producer sets a flag, the handler observes it and stops.
+
+## Cancel a pending job
+
+```java
+boolean cancelled = taskito.cancel(jobId); // true if it was still pending
+```
+
+## Cancel a running job
+
+`requestCancel(jobId)` flips the cancel flag; the handler polls it with
+`isCancelRequested(jobId)` and unwinds:
+
+```java
+taskito.requestCancel(jobId);              // caller side
+
+// handler side: poll between units of work
+for (Chunk chunk : chunks) {
+    if (taskito.isCancelRequested(jobId)) {
+        throw new InterruptedException("cancelled");
+    }
+    process(chunk);
+}
+```
+
+When a handler throws while cancellation was requested, the core records the
+job as `CANCELLED`, not failed — no retries, no dead-letter. A handler that
+ignores the flag runs to completion.
+
+<Seq
+  heads={["Caller", "Worker"]}
+  rows={[
+    { left: "requestCancel(jobId)" },
+    { self: "cancel flag set in storage" },
+    { self: "handler polls isCancelRequested, unwinds" },
+    { right: "job → CANCELLED", rev: true },
+  ]}
+/>
+
+## Getting the job id into a handler
+
+A `TaskFunction` receives only the payload. Middleware `before` runs on the
+same thread as the handler, so a `ThreadLocal` carries the id across:
+
+```java
+static final ThreadLocal<String> CURRENT_JOB = new ThreadLocal<>();
+
+taskito.use(new Middleware() {
+    @Override public void before(TaskContext ctx) { CURRENT_JOB.set(ctx.jobId); }
+    @Override public void after(TaskContext ctx, Object result) { CURRENT_JOB.remove(); }
+    @Override public void onError(TaskContext ctx, Throwable t) { CURRENT_JOB.remove(); }
+});
+```
+
+Inside the handler, `CURRENT_JOB.get()` now yields the id for
+`isCancelRequested`, `setProgress`, or `writeTaskLog`.
+
+## Progress
+
+Report progress 0–100 against a job; it surfaces as `Job.progress`, on the
+dashboard, and via inspection:
+
+```java
+taskito.setProgress(jobId, 40);
+```
+
+## React to cancellations
+
+Subscribe a worker listener to the `CANCELLED` outcome, or the `onCancel`
+middleware hook:
+
+```java
+taskito.worker()
+        .handle(export, p -> run(p))
+        .on(EventName.CANCELLED, e -> cleanup(e.jobId))
+        .start();
+```
+
+<Callout type="info">
+  Cancellation is cooperative by design: the core never kills a handler thread,
+  so resources held by the task (transactions, files) are always released by
+  your own unwind path.
+</Callout>

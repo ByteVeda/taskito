@@ -1,0 +1,91 @@
+---
+title: Installation
+description: "Install the Java SDK — Maven Central coordinates, bundled native binaries, three backends."
+---
+
+The Java SDK is a typed shell over the Taskito Rust core, bound through a
+hand-written JNI layer. Baseline: **Java 17**.
+
+<Tabs items={["Gradle", "Maven"]}>
+  <Tab value="Gradle">
+
+```kotlin
+implementation("org.byteveda:taskito:0.18.0")
+annotationProcessor("org.byteveda:taskito-processor:0.18.0") // compile-time TaskHandler bindings
+```
+
+  </Tab>
+  <Tab value="Maven">
+
+```xml
+<dependency>
+  <groupId>org.byteveda</groupId>
+  <artifactId>taskito</artifactId>
+  <version>0.18.0</version>
+</dependency>
+```
+
+```xml
+<!-- The processor is wired through the compiler plugin, not a dependency -->
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-compiler-plugin</artifactId>
+  <configuration>
+    <annotationProcessorPaths>
+      <path>
+        <groupId>org.byteveda</groupId>
+        <artifactId>taskito-processor</artifactId>
+        <version>0.18.0</version>
+      </path>
+    </annotationProcessorPaths>
+  </configuration>
+</plugin>
+```
+
+  </Tab>
+</Tabs>
+
+The `taskito-processor` artifact is optional but recommended: it turns
+`@TaskHandler`-annotated methods into typed `Task` constants at compile time —
+zero runtime reflection, GraalVM-native-image friendly. See
+[Tasks](/java/guides/core/tasks#typed-tasks-from-taskhandler).
+
+Companion artifacts: `org.byteveda:taskito-test` (in-memory backend for unit
+tests, no native library) and `org.byteveda:taskito-spring` (Spring Boot 3
+starter).
+
+## Bundled native library
+
+The Rust core ships inside the JAR as a prebuilt library per platform — no
+separate install:
+
+- linux x86_64 / aarch64
+- macOS x86_64 / aarch64
+- Windows x86_64
+
+At runtime the platform binary is extracted (content-addressed, safe under
+concurrent processes) and loaded. Two system properties tune this:
+`-Dtaskito.native.lib=/abs/path` loads an explicit library (local development
+against a fresh build), and `-Dtaskito.native.workdir=` relocates extraction on
+hardened `noexec /tmp` hosts.
+
+<Callout type="info">
+  On JDK 22+ hot byte operations automatically take a Project Panama (FFM) fast
+  path; older JDKs transparently use JNI. FFM calls a restricted native method,
+  so launch with `--enable-native-access=ALL-UNNAMED` to grant access and
+  silence the JDK warning.
+</Callout>
+
+## Pick a backend
+
+```java
+import org.byteveda.taskito.Taskito;
+
+Taskito.builder().sqlite("taskito.db").open();                   // SQLite (default)
+Taskito.builder().postgres(System.getenv("PG_URL")).open();
+Taskito.builder().redis("redis://localhost").open();
+```
+
+`Taskito.builder().open()` with no backend configured uses SQLite at
+`.taskito/taskito.db`. SQLite needs nothing else — the whole queue lives in one
+file. Next: the [quickstart](/java/getting-started/quickstart).

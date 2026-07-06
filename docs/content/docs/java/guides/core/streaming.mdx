@@ -1,0 +1,61 @@
+---
+title: Streaming partial results
+description: "Publish intermediate values from a task via task logs and consume them live."
+---
+
+A long-running task can publish intermediate results as it works; a consumer
+polls them as they arrive — useful for ETL, ML training steps, or batch
+progress. In Java, partials ride on **task logs**: durable, per-job log rows in
+shared storage.
+
+## Publish
+
+From inside the handler, write a log row against the job (get the id across
+with the [middleware pattern](/java/guides/core/cancellation#getting-the-job-id-into-a-handler)):
+
+```java
+for (int epoch = 1; epoch <= epochs; epoch++) {
+    double loss = trainEpoch(epoch);
+    taskito.writeTaskLog(jobId, "train", "result",
+            "{\"epoch\": " + epoch + ", \"loss\": " + loss + "}");
+}
+```
+
+`writeTaskLog(jobId, taskName, level, message)` takes any level string; an
+overload adds an `extra` payload. By the cross-SDK contract, published partials
+use level `"result"` — workers in other processes that publish partials store
+them the same way, so they are readable here.
+
+## Consume
+
+`getTaskLogs(jobId)` returns every row for the job, oldest first; poll it until
+the job is terminal:
+
+```java
+String id = taskito.enqueue(train, config);
+
+int seen = 0;
+while (taskito.getJob(id).map(j -> j.status == JobStatus.PENDING || j.status == JobStatus.RUNNING).orElse(false)) {
+    List<TaskLog> logs = taskito.getTaskLogs(id);
+    for (TaskLog log : logs.subList(seen, logs.size())) {
+        if ("result".equals(log.level)) {
+            render(log.message);
+        }
+    }
+    seen = logs.size();
+    Thread.sleep(200);
+}
+
+int result = taskito.getResult(id, Integer.class).orElseThrow();
+```
+
+It works from any process sharing the storage, and a late consumer still reads
+every value already published. Each `TaskLog` carries `jobId`, `taskName`,
+`level`, `message`, `extra`, and `loggedAt` (Unix ms).
+
+<Callout type="info">
+  Partials are stored as task-log rows, so they survive until the log is
+  purged. Pipe the poll loop straight to an SSE / WebSocket endpoint to push
+  progress to a browser. For a single scalar 0–100, prefer
+  [`setProgress`](/java/guides/core/cancellation#progress).
+</Callout>
