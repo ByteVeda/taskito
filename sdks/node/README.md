@@ -492,4 +492,4 @@ compiled in via `--features postgres,redis`.
 
 ## Not yet covered
 
-Resources / dependency-injection and Python⇄Node cross-language interop.
+End-to-end interop test coverage for the shared cross-SDK wire contract.
