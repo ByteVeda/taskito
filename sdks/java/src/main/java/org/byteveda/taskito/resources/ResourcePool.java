@@ -83,6 +83,12 @@ public final class ResourcePool {
             }
             lock.lock();
             try {
+                if (closed) {
+                    // A shutdown raced the prewarm — don't park instances on a
+                    // drained pool; dispose the fresh build and stop.
+                    disposeQuietly(instance);
+                    return;
+                }
                 idle.addLast(IdleInstance.of(instance));
             } finally {
                 lock.unlock();

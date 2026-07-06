@@ -291,6 +291,13 @@ class ResourceTest {
     }
 
     @Test
+    void pooledPoolMinCannotExceedPoolSize() {
+        IllegalArgumentException thrown = assertThrows(
+                IllegalArgumentException.class, () -> PoolConfig.of(2).withPoolMin(3));
+        assertTrue(thrown.getMessage().contains("poolMin must be <= poolSize"), thrown.getMessage());
+    }
+
+    @Test
     @Timeout(30)
     void pooledExhaustionTimesOut() {
         PoolConfig config = new PoolConfig(1, 0, Duration.ofMillis(50), null);

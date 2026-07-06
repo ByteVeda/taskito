@@ -7,7 +7,8 @@ import java.time.Duration;
  * cross-SDK contract for pooled resources).
  *
  * @param poolSize the maximum number of concurrently checked-out instances (must be &gt; 0)
- * @param poolMin how many instances to build eagerly at worker start (defaults to 0)
+ * @param poolMin how many instances to build eagerly at worker start (defaults to 0, at most
+ *     {@code poolSize})
  * @param acquireTimeout how long a checkout may wait for capacity (defaults to 10s)
  * @param maxLifetime an idle instance older than this is disposed instead of reused
  *     ({@code null} keeps instances forever)
@@ -22,6 +23,9 @@ public record PoolConfig(int poolSize, int poolMin, Duration acquireTimeout, Dur
         }
         if (poolMin < 0) {
             throw new IllegalArgumentException("poolMin must be >= 0");
+        }
+        if (poolMin > poolSize) {
+            throw new IllegalArgumentException("poolMin must be <= poolSize");
         }
         if (acquireTimeout == null) {
             acquireTimeout = DEFAULT_ACQUIRE_TIMEOUT;

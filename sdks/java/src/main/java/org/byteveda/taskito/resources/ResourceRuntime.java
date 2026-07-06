@@ -137,11 +137,18 @@ public final class ResourceRuntime {
     }
 
     /** Lease the worker resources (paired with {@link #teardownWorker}); the first lease prewarms pools. */
-    public synchronized void acquireWorker() {
-        if (leases == 0) {
+    public void acquireWorker() {
+        boolean firstLease;
+        synchronized (this) {
+            firstLease = leases == 0;
+            leases++;
+        }
+        // Outside the monitor: prewarm runs user factories, which may be slow —
+        // holding the lock would stall every concurrent lease/teardown. A racing
+        // shutdown is safe: the pool disposes prewarmed instances once closed.
+        if (firstLease) {
             prewarmPools();
         }
-        leases++;
     }
 
     /** Release a worker lease; when the last one drops, dispose worker resources LIFO. */
