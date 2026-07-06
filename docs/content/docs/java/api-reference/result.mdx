@@ -1,0 +1,52 @@
+---
+title: Result
+description: "Awaiting jobs and reading typed results."
+---
+
+```java
+String id = taskito.enqueue(add, payload);
+
+taskito.awaitJob(id, Duration.ofSeconds(30));         // block until terminal
+Optional<Integer> sum = taskito.getResult(id, Integer.class); // 5
+```
+
+## Awaiting
+
+`awaitJob(id, timeout)` polls the store until the job reaches a terminal state
+(`COMPLETE`, `DEAD`, or `CANCELLED`) and returns its `Optional<Job>` snapshot;
+it throws a `TaskitoException` if the timeout elapses first. Any process
+sharing the storage can await a job by id.
+
+## Reading the result
+
+| Method | Description |
+|---|---|
+| `getResult(id)` → `Optional<byte[]>` | The raw serialized result, if complete. |
+| `getResult(id, Class<R>)` → `Optional<R>` | The result deserialized with the queue's [serializer](/java/api-reference/serializers). |
+
+Both return `Optional.empty()` while the job is still pending or running — pair
+them with `awaitJob` (or an `EventName.SUCCESS` listener on the worker) when
+you need to block.
+
+## The `Job` snapshot
+
+`getJob(id)` returns the job's current state without waiting:
+
+```java
+taskito.getJob(id).ifPresent(job -> {
+    System.out.println(job.status);      // JobStatus.RUNNING
+    System.out.println(job.progress);    // 0–100, if reported
+    System.out.println(job.error);       // last error, if any
+});
+```
+
+`Job` carries `id`, `queue`, `taskName`, `status`, `priority`, `createdAt`,
+`scheduledAt`, `startedAt`, `completedAt`, `retryCount`, `maxRetries`,
+`timeoutMs`, `progress`, `error`, `uniqueKey`, `namespace`, and `metadata`.
+All timestamps are Unix milliseconds.
+
+<Callout type="info">
+  `awaitJob` is for waiting on one job (tests, request/response bridges). To
+  scan many jobs use `listJobs(JobFilter)`; for aggregate outcomes use
+  `metrics(taskName, sinceMs)`.
+</Callout>

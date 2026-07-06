@@ -1,0 +1,159 @@
+---
+title: DAG Workflow Examples
+description: "Fan-out/fan-in map-reduce, approval gates, error-handling conditions, sub-workflows, caching, and canvas shortcuts."
+---
+
+These are focused recipes for the `Workflow` builder. Each is independent —
+combine them as your orchestration needs grow. See the
+[Workflows reference](/java/api-reference/workflows) for the underlying model.
+
+## Map-reduce with fan-out / fan-in
+
+`fanOut` reads the list result of its predecessor and expands one child per
+item; `fanIn` collects those children's results into a single list for a
+combiner.
+
+<Mermaid
+  chart={`graph LR
+    split --> map_0["map[0]"]
+    split --> map_1["map[1]"]
+    split --> map_2["map[2]"]
+    map_0 --> reduce
+    map_1 --> reduce
+    map_2 --> reduce`}
+/>
+
+```java
+Task<String> split = Task.of("split", String.class);          // → List<String>
+Task<String> scoreChunk = Task.of("score_chunk", String.class); // per item
+Task<List<Double>> reduce =
+        Task.of("reduce", new TypeReference<List<Double>>() {}); // [childResult, …]
+
+Workflow scoreCorpus = Workflow.named("score-corpus")
+        .step("split", split, corpus)
+        .fanOut("map", scoreChunk, FanMode.EACH, "split")
+        .fanIn("reduce", reduce, FanMode.ALL, "map");
+
+WorkflowRun run = taskito.submitWorkflow(scoreCorpus);
+WorkflowStatus done = run.await(Duration.ofMinutes(5));
+System.out.println(done.state.wire());
+```
+
+## Approval gate
+
+A gate parks the run (`WAITING_APPROVAL`) until it is resolved — or until its
+timeout elapses, when `GateAction` decides the outcome. The worker running the
+flow must track it so the tracker holds the downstream payloads.
+
+```java
+Workflow publish = Workflow.named("publish")
+        .step("build", buildArtifact, releaseId)
+        .gate("review",
+                GateConfig.timeout(Duration.ofHours(24), GateAction.REJECT,
+                        "Approve production deploy?"),
+                "build")
+        .step("deploy", deployArtifact, releaseId, "review");
+
+WorkflowRun run = taskito.submitWorkflow(publish);
+
+// elsewhere, once a reviewer clicks "approve" (worker built with trackWorkflows(publish)):
+worker.approveGate(run.id(), "review");
+// or: worker.rejectGate(run.id(), "review", "failed QA");
+```
+
+## Error-handling with conditions
+
+A step's condition decides when it runs relative to its predecessors'
+outcomes. `onFailure()` builds an error path that fires only when an upstream
+step fails; `condition(Condition)` gates on the run's state in code.
+
+```java
+Workflow importBatch = Workflow.named("import")
+        .step("load", loadBatch, batchId)
+        .step(Step.of("notify_ok", notifySuccess, batchId).after("load").onSuccess().build())
+        .step(Step.of("quarantine", quarantineBatch, batchId).after("load").onFailure().build())
+        .step(Step.of("escalate", pageOncall, batchId)
+                .after("load")
+                .condition(ctx -> ctx.failureCount() > 3) // callable — worker must track this workflow
+                .build());
+```
+
+## Sub-workflows
+
+Compose a child workflow as a single step. The tracker submits it as a child
+run and resolves the parent node when the child finalizes.
+
+```java
+Workflow validate = Workflow.named("validate-region")
+        .step("schema", checkSchema, region)
+        .step("dupes", checkDuplicates, region, "schema");
+
+Workflow regionalEtl = Workflow.named("regional-etl")
+        .step("extract", extract, region)
+        .subWorkflow("validate", validate, "extract")
+        .step("load", load, region, "validate");
+```
+
+## Cacheable, incremental steps
+
+Mark an expensive step `cache(ttl)` to skip re-running it on a later run of
+the same workflow while its task + payload are unchanged and within the TTL.
+A cacheable step must have a predecessor, and a cache hit produces no forward
+result — so it can't feed a fan-out/fan-in.
+
+```java
+Workflow nightly = Workflow.named("nightly")
+        .step("fetch", fetchRaw, date)
+        .step(Step.of("featurize", buildFeatures, date)
+                .after("fetch")
+                .cache(Duration.ofHours(24))
+                .build())
+        .step("train", trainModel, date, "featurize");
+```
+
+## Canvas shortcuts
+
+`Canvas` builds common shapes from a few links — submit the result like any
+workflow.
+
+```java
+Workflow seq = Canvas.chain("nightly-chain",
+        Canvas.link("fetch", fetchRaw, date),
+        Canvas.link("train", trainModel, date));
+
+Workflow join = Canvas.chord("crawl",
+        Canvas.link("report", buildReport, date),   // callback after the group
+        Canvas.link("a", fetchSite, "https://a.example"),
+        Canvas.link("b", fetchSite, "https://b.example"));
+```
+
+## Pre-run analysis
+
+`WorkflowAnalysis` is pure graph computation over a definition — use it to
+validate and preview structure before submitting.
+
+```java
+WorkflowAnalysis.validate(nightly);                       // throws on a cycle
+System.out.println(WorkflowAnalysis.topologicalOrder(nightly));
+System.out.println(WorkflowAnalysis.levels(nightly));     // nodes by dependency depth
+System.out.println(WorkflowVisualization.mermaid(nightly)); // render the DAG
+```
+
+<Callout type="info">
+  `run.await(timeout)` returns once the run reaches a terminal state —
+  `COMPLETED`, `COMPLETED_WITH_FAILURES`, `FAILED`, `CANCELLED`,
+  `COMPENSATED`, or `COMPENSATION_FAILED`. Check `status.state` to branch on
+  the outcome.
+</Callout>
+
+## Key patterns
+
+| Pattern | Builder |
+| --- | --- |
+| Map-reduce | `fanOut(FanMode.EACH)` + `fanIn(FanMode.ALL)` |
+| Human approval | `gate(GateConfig...)` + `worker.approveGate` / `rejectGate` |
+| Error branch | `Step.of(...).onFailure()` / `condition(Condition)` |
+| Composition | `subWorkflow(...)` |
+| Incremental re-runs | `Step.of(...).cache(ttl)` |
+| Shape shortcuts | `Canvas.chain` / `group` / `chord` |
+| Inspection | `WorkflowAnalysis` + `WorkflowVisualization` |

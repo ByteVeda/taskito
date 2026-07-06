@@ -1,0 +1,114 @@
+---
+title: Bulk Emails
+description: "Fan a large recipient list out with enqueueMany or a Batcher, then bound the send parallelism with worker concurrency."
+---
+
+Sending to a large list is an enqueue-throughput problem: stage every message
+as its own job in as few round-trips as possible, then let the worker's
+bounded pool pace the actual sends so you stay within your provider's quota.
+
+## Tasks.java
+
+One job per recipient keeps retries and failures isolated — a bad address
+never blocks the rest. The retry policy spaces attempts against a flaky
+provider.
+
+```java
+import java.time.Duration;
+import org.byteveda.taskito.task.RetryPolicy;
+import org.byteveda.taskito.task.Task;
+
+public final class Tasks {
+    public record Email(String to, String subject, String body) {}
+
+    public static final Task<Email> SEND_EMAIL = Task.of("send_email", Email.class)
+            .maxRetries(5)
+            .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(2), Duration.ofMinutes(5)));
+
+    private Tasks() {}
+}
+```
+
+## Send.java
+
+`enqueueMany` stages a whole chunk in a single storage round-trip. Chunk a
+very large list so each call stays a reasonable size.
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+import org.byteveda.taskito.Taskito;
+
+public final class Send {
+    public static List<String> sendCampaign(Taskito taskito, List<String> recipients,
+            String subject, String body) {
+        List<String> ids = new ArrayList<>(recipients.size());
+        for (int i = 0; i < recipients.size(); i += 1_000) {
+            List<Tasks.Email> chunk = recipients.subList(i, Math.min(i + 1_000, recipients.size()))
+                    .stream()
+                    .map(to -> new Tasks.Email(to, subject, body))
+                    .toList();
+            ids.addAll(taskito.enqueueMany(Tasks.SEND_EMAIL, chunk));
+        }
+        return ids; // one job id per recipient
+    }
+
+    private Send() {}
+}
+```
+
+For a *trickle* of sends produced across many threads, a `Batcher` buffers
+payloads and flushes them as one `enqueueMany` call when it reaches `maxBatch`
+or `maxDelay` elapses:
+
+```java
+try (Batcher<Tasks.Email> batcher =
+        Batcher.of(taskito, Tasks.SEND_EMAIL, 500, Duration.ofSeconds(2))) {
+    events.forEach(event -> batcher.add(toEmail(event)));
+} // close() flushes what remains
+```
+
+<Callout type="warn">
+  `enqueueMany` does not apply `uniqueKey` dedup — the batch path trades
+  idempotency for throughput. If you must not double-send, dedup the recipient
+  list before enqueueing, or use single `enqueue` calls with a `uniqueKey`.
+</Callout>
+
+## WorkerMain.java
+
+The fixed pool is the pacing knob: at most 20 sends run at once. Swap
+`concurrency` for `autoscale(AutoscaleOptions.of(4, 20))` to shrink the pool
+when the backlog drains.
+
+```java
+try (Taskito taskito = Taskito.builder().sqlite("bulk-email.db").open();
+        Worker worker = taskito.worker()
+                .handle(Tasks.SEND_EMAIL, email -> provider.send(email))
+                .concurrency(20) // at most 20 in flight at once
+                .start()) {
+    worker.awaitShutdown();
+}
+```
+
+## Monitoring the send
+
+Watch the backlog drain and catch addresses that exhausted their retries.
+
+```java
+QueueStats stats = taskito.statsByQueue("default");
+System.out.printf("pending=%d running=%d dead=%d%n", stats.pending, stats.running, stats.dead);
+
+for (DeadJob dead : taskito.listDeadByTask("send_email", 50, 0)) {
+    System.err.printf("gave up on %s: %s%n", dead.taskName, dead.error);
+}
+```
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| One round-trip per chunk | `taskito.enqueueMany` |
+| Buffered trickle staging | `Batcher.of(taskito, task, maxBatch, maxDelay)` |
+| Concurrency cap | `worker().concurrency(20)` (or `autoscale`) |
+| Isolated failures | one job per recipient |
+| Drain + failure visibility | `statsByQueue` + `listDeadByTask` |

@@ -1,0 +1,182 @@
+---
+title: Spring Boot Image Service
+description: "A REST API on the Spring Boot 3 starter that enqueues image jobs, reports status, and cancels work in flight."
+---
+
+A thin Spring Boot front end accepts upload requests, enqueues a Taskito job,
+and hands back a job id immediately. The browser then polls the status
+endpoint (state, progress, error) and can cancel a job that hasn't started.
+
+## Project structure
+
+```
+image-service/
+  src/main/java/example/
+    ImageServiceApplication.java   # Spring Boot app + Taskito config
+    ImageTasks.java                # the processImage task + handler
+    ImageController.java           # the REST surface
+    WorkerRunner.java              # starts the worker with the app
+  src/main/resources/application.yaml
+```
+
+## Dependencies
+
+The starter auto-configures a single `Taskito` bean from `taskito.*`
+properties and closes it with the application context.
+
+```kotlin
+dependencies {
+    implementation("org.byteveda:taskito")
+    implementation("org.byteveda:taskito-spring")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+}
+```
+
+```yaml
+# application.yaml
+taskito:
+  url: image-service.db   # SQLite; or a postgres:// / redis:// URL
+```
+
+## ImageTasks.java
+
+The task descriptor and its handler live together. The handler is plain code —
+one payload in, one result out.
+
+```java
+package example;
+
+import java.util.ArrayList;
+import java.util.List;
+import org.byteveda.taskito.task.Task;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ImageTasks {
+
+    public record ProcessImage(String url, List<Integer> sizes) {}
+
+    public record Variant(int size, String key) {}
+
+    public static final Task<ProcessImage> PROCESS_IMAGE =
+            Task.of("process_image", ProcessImage.class)
+                    .maxRetries(2)
+                    .timeoutMs(120_000);
+
+    public List<Variant> process(ProcessImage payload) throws Exception {
+        List<Variant> variants = new ArrayList<>();
+        for (int size : payload.sizes()) {
+            resize(payload.url(), size); // your real work here
+            variants.add(new Variant(size, payload.url() + "@" + size + ".webp"));
+        }
+        return variants;
+    }
+
+    private void resize(String url, int size) throws Exception {
+        // ...
+    }
+}
+```
+
+## ImageController.java
+
+Enqueue and return the job id with `202 Accepted`; report status from the
+`Job` snapshot; cancel a job that hasn't started.
+
+```java
+package example;
+
+import java.util.Map;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.task.EnqueueOptions;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/images")
+public class ImageController {
+    private final Taskito taskito;
+
+    public ImageController(Taskito taskito) {
+        this.taskito = taskito;
+    }
+
+    @PostMapping
+    public ResponseEntity<Map<String, String>> submit(@RequestBody ImageTasks.ProcessImage request) {
+        String jobId = taskito.enqueue(
+                ImageTasks.PROCESS_IMAGE,
+                request,
+                EnqueueOptions.builder().priority(5).build());
+        return ResponseEntity.accepted().body(Map.of("jobId", jobId));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> status(@PathVariable String id) {
+        return taskito.getJob(id)
+                .map(job -> ResponseEntity.ok(Map.<String, Object>of(
+                        "status", job.status.wire(),
+                        "progress", job.progress == null ? 0 : job.progress,
+                        "error", job.error == null ? "" : job.error)))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/{id}/cancel")
+    public Map<String, Boolean> cancel(@PathVariable String id) {
+        // cancel() pulls a pending job; requestCancel() flags a running one.
+        boolean cancelled = taskito.cancel(id) || taskito.requestCancel(id);
+        return Map.of("cancelled", cancelled);
+    }
+}
+```
+
+## WorkerRunner.java
+
+The worker runs in-process here for a single-service deploy; split it into its
+own Spring profile (or process) when API latency matters. `Worker` is closed
+by the container on shutdown, draining in-flight jobs.
+
+```java
+package example;
+
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.worker.Worker;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class WorkerRunner {
+
+    @Bean(destroyMethod = "close")
+    public Worker worker(Taskito taskito, ImageTasks tasks) {
+        return taskito.worker()
+                .handle(ImageTasks.PROCESS_IMAGE, tasks::process)
+                .queues("default")
+                .concurrency(4)
+                .start();
+    }
+}
+```
+
+## Running it
+
+```bash
+./gradlew bootRun
+# POST http://localhost:8080/images  {"url": "...", "sizes": [256, 512, 1024]}
+# GET  http://localhost:8080/images/<jobId>
+```
+
+<Callout type="info">
+  The starter's `@ConditionalOnMissingBean` means you can define your own
+  `Taskito` bean (custom serializer, codecs, resources) and the
+  auto-configuration steps aside.
+</Callout>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Auto-configured client | `taskito.url` property + `org.byteveda:taskito-spring` |
+| Enqueue and return a job id (`202 Accepted`) | `POST /images` |
+| Status polling | `taskito.getJob` → status / progress / error |
+| Cancel pending or running work | `taskito.cancel` / `taskito.requestCancel` |
+| Graceful worker shutdown | `@Bean(destroyMethod = "close")` on the `Worker` |

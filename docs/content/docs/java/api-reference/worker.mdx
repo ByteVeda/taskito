@@ -1,0 +1,70 @@
+---
+title: Worker
+description: "The Worker.Builder and the running worker handle."
+---
+
+```java
+Worker worker = taskito.worker()
+        .handle(sendEmail, payload -> mailer.deliver(payload))
+        .queues("default", "emails")
+        .start();
+```
+
+`taskito.worker()` returns a `Worker.Builder`; `start()` launches the native
+scheduler and returns a running `Worker` (an `AutoCloseable`).
+
+## `Worker.Builder`
+
+### Handlers
+
+| Method | Description |
+|---|---|
+| `handle(Task<T>, TaskFunction<T, R>)` | Register a typed handler; the task's retry policy and codecs come with it. |
+| `handle(String taskName, Class<T>, TaskFunction<T, R>)` | Register by name + payload class. |
+| `register(Handler<?, ?>)` | A `Handler.of(task, function)` pair. |
+| `register(HandlerRegistry)` | Every handler in a bundle (e.g. a generated `FooTasks.handlers(impl)`). |
+| `apply(Consumer<Worker.Builder>)` | Apply a customizer (e.g. a generated `FooTasks.bind`). |
+
+`TaskFunction<T, R>` is `R apply(T payload) throws Exception` — the return
+value becomes the job result; a thrown exception fails the attempt.
+
+### Options
+
+| Method | Default | Description |
+|---|---|---|
+| `queues(String...)` | `default` | Queue names to serve. |
+| `concurrency(int)` | 0 (cached pool) | Fixed handler-thread count. |
+| `channelCapacity(int)` | 128 | In-flight dispatch channel capacity. |
+| `batchSize(int)` | 1 | Jobs claimed per scheduler poll. |
+| `autoscale(AutoscaleOptions)` | — | Resize the handler pool between `min..max` threads by queue depth. |
+| `mesh(MeshOptions)` | — | Join a scheduling mesh (gossip discovery + work stealing). |
+| `on(EventName, Consumer<OutcomeEvent>)` | — | Outcome listeners: `SUCCESS`, `RETRY`, `DEAD`, `CANCELLED`. |
+| `trackWorkflows()` / `trackWorkflows(Workflow...)` | off | Drive [workflow](/java/api-reference/workflows) state from this worker's outcomes; register workflows whose deferred nodes need payloads. |
+
+`AutoscaleOptions.of(min, max)` defaults to ~10 tasks per worker, re-evaluated
+every 2s. `MeshOptions.builder().port(7946).seed("10.0.0.2:7946").build()` is
+all most clusters set — the database stays the source of truth, so mesh is a
+pure throughput optimization.
+
+## `Worker`
+
+| Method | Description |
+|---|---|
+| `stop()` | Stop dispatching; in-flight jobs continue to drain. |
+| `close()` | Stop, drain in-flight handlers (30s grace), free the native worker, tear down worker resources. Idempotent. |
+| `awaitShutdown()` | Block until `close()` is called. |
+| `approveGate(runId, node)` / `rejectGate(runId, node, reason)` | Resolve a parked workflow gate (requires `trackWorkflows`). |
+| `meshClusterInfo()` | `Optional<MeshClusterInfo>` — peer count, capacity, load (mesh workers only). |
+
+```java
+try (Worker worker = taskito.worker()
+        .handle(sendEmail, mailer::deliver)
+        .concurrency(8)
+        .on(EventName.DEAD, event -> log.warn("dead: {}", event.jobId))
+        .start()) {
+    worker.awaitShutdown();
+}
+```
+
+The worker registers itself and heartbeats so it appears on the dashboard
+Workers panel; `close()` unregisters it.

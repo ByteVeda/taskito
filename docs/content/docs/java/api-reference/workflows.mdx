@@ -1,0 +1,100 @@
+---
+title: Workflows
+description: "The Workflow builder, WorkflowRun handle, gates, sagas, and analysis."
+---
+
+```java
+Workflow etl = Workflow.named("etl")
+        .step("extract", extract, source)
+        .step("transform", transform, null, "extract")
+        .step("load", load, null, "transform");
+
+WorkflowRun run = taskito.submitWorkflow(etl);
+WorkflowStatus done = run.await(Duration.ofMinutes(5));
+```
+
+Steps run in topological order; a step waits for every predecessor named in
+its `after` list. The running worker must be built with `trackWorkflows()`
+(and `trackWorkflows(workflow)` for gates, sub-workflows, callable conditions,
+and other deferred nodes).
+
+## `Workflow` builder
+
+| Method | Description |
+|---|---|
+| `Workflow.named(name)` / `version(int)` | Start a definition (version defaults to 1). |
+| `step(name, task, payload, after...)` | A task node with a baked-in payload. |
+| `stepAfter(name, task, deps...)` | A structural node — payload supplied at submit via `submitWorkflow(wf, payloads)`. |
+| `step(Step)` | A fully-configured `Step` (see below). |
+| `fanOut(name, task, FanMode.EACH, after)` | One child per item of the predecessor's list result. |
+| `fanIn(name, task, FanMode.ALL, after)` | Collect the fan-out children's results into one list. |
+| `gate(name, GateConfig, after...)` | Park for approval — a control node, never enqueued. |
+| `subWorkflow(name, child, after...)` | Submit `child` as a child run; completes when it finalizes. |
+
+`Canvas` adds shortcuts: `Canvas.chain(name, links...)` (sequential),
+`Canvas.group(name, links...)` (parallel), and `Canvas.chord(name, callback,
+group...)` (parallel group joined by a callback), where each link is
+`Canvas.link(name, task, payload)`.
+
+## `Step.of(...)` builder
+
+`Step.of(name, task, payload)` (or `(name, task)` for runtime-derived
+payloads) then: `after(String...)`, `queue`, `maxRetries`, `timeoutMs`,
+`priority`, `fanOut`/`fanIn(FanMode)`, `gate(GateConfig)`,
+`condition("on_success" | "on_failure" | "always")` — with `onSuccess()` /
+`onFailure()` / `always()` shorthands — `condition(Condition)` (a code
+predicate over the run's `WorkflowContext`), `compensate(task)` (saga
+rollback), and `cache(Duration ttl)` (skip re-running an unchanged step;
+requires a predecessor). `build()` validates the combination.
+
+## Gates
+
+`GateConfig.manual()` waits indefinitely; `GateConfig.timeout(duration,
+GateAction.APPROVE | GateAction.REJECT, message)` auto-resolves after the
+timeout. Resolve a parked gate from the tracking worker:
+
+```java
+worker.approveGate(run.id(), "review");
+worker.rejectGate(run.id(), "review", "failed QA");
+```
+
+## Sagas
+
+A step with `compensate(rollbackTask)` registers a rollback: when the run
+fails, completed compensable steps roll back in reverse-dependency order, each
+compensation job receiving the step's forward result as its payload. The run
+ends `COMPENSATED`, or `COMPENSATION_FAILED` if a rollback itself fails.
+
+## `WorkflowRun`
+
+| Member | Description |
+|---|---|
+| `id()` (alias `runId()`) / `name()` | The run's identity. |
+| `status()` | `Optional<WorkflowStatus>` — the current run + node snapshot. |
+| `await(timeout)` / `await(timeout, pollInterval)` | Block until terminal; throws `WorkflowException` on timeout. |
+| `cancel()` | Skip pending nodes and mark the run cancelled. |
+
+`WorkflowStatus` exposes `state` (a `WorkflowState`: `RUNNING`, `COMPLETED`,
+`COMPLETED_WITH_FAILURES`, `FAILED`, `CANCELLED`, `COMPENSATING`,
+`COMPENSATED`, `COMPENSATION_FAILED`, …), `nodes` (per-step `NodeSnapshot`
+with `status`, `jobId`, `fanOutCount`, timestamps), `isTerminal()`,
+`node(name)`, and `failedStep()`. `taskito.workflowStatus(runId)` and
+`taskito.cancelWorkflow(runId)` work from any process by run id.
+
+## Analysis & visualization
+
+`WorkflowAnalysis` is static graph computation over a *definition* — use it to
+validate or preview structure before submitting:
+
+```java
+WorkflowAnalysis.validate(etl);            // throws on cycles / unknown deps
+WorkflowAnalysis.topologicalOrder(etl);    // a valid run order
+WorkflowAnalysis.levels(etl);              // nodes grouped by dependency depth
+WorkflowAnalysis.roots(etl);               // entry nodes
+WorkflowAnalysis.leaves(etl);              // exit nodes
+WorkflowAnalysis.ancestors(etl, "load");   // transitive upstream deps
+WorkflowAnalysis.descendants(etl, "extract");
+```
+
+`WorkflowVisualization.mermaid(workflow)` and `.dot(workflow)` render the DAG
+for docs or dashboards.

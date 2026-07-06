@@ -1,0 +1,37 @@
+---
+title: CLI
+description: "The taskito command."
+---
+
+```bash
+taskito [--backend <b>] [--url <dsn>] <command> [args]
+```
+
+`org.byteveda.taskito.cli.Cli` is a picocli command (`Cli.main`) over a
+`Taskito` client. `--backend` defaults to `sqlite`; `--url` is the connection
+string (a SQLite path, defaulting to `.taskito/taskito.db`, or a
+Postgres/Redis URL — required for those backends). Read commands print JSON.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `stats` | Job counts by status. |
+| `enqueue <task> ['<jsonPayload>']` | Enqueue a job (payload defaults to null) → job id. |
+| `jobs [--status <s>] [--queue <q>] [--limit <n>]` | List jobs. |
+| `cancel <jobId>` | Cancel a pending job (exit 1 if it already started). |
+| `pause <queue>` / `resume <queue>` | Queue control. |
+| `dlq list [--limit <n>]` / `dlq retry <id>` / `dlq delete <id>` | Dead-letter ops. |
+| `dashboard [--port <n>] [--token <t>] [--static <dir>]` | Serve the dashboard until interrupted. |
+
+```bash
+taskito --url taskito.db enqueue add '{"a":2,"b":3}'
+taskito --url taskito.db jobs --status failed --limit 20
+taskito --backend postgres --url postgres://localhost/taskito stats
+```
+
+Run it from your application's classpath, e.g.:
+
+```bash
+java -cp app.jar org.byteveda.taskito.cli.Cli --url taskito.db stats
+```
