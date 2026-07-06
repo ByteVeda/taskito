@@ -1,0 +1,95 @@
+---
+title: Task
+description: "Task.of typed tasks, EnqueueOptions, RetryPolicy, and the annotations."
+---
+
+```java
+import org.byteveda.taskito.task.Task;
+
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class);
+```
+
+A `Task<T>` is an immutable descriptor: a name, the payload type, and default
+enqueue options. The fluent option methods each return a new descriptor.
+
+## Factories
+
+| Method | Description |
+|---|---|
+| `Task.of(name, Class<T>)` | Payload deserializes to `payloadType`. |
+| `Task.of(name, TypeReference<T>)` | Generic payloads a `Class` token can't express, e.g. `new TypeReference<List<Order>>(){}`. |
+
+## Fluent options
+
+| Method | Description |
+|---|---|
+| `queue(String)` | Target queue (default `default`). |
+| `priority(int)` | Higher runs first. |
+| `maxRetries(int)` (alias `retries`) | Attempts before dead-lettering. |
+| `timeoutMs(long)` / `timeout(Duration)` | Per-attempt timeout. |
+| `delayMs(long)` / `delay(Duration)` | Schedule after a delay. |
+| `retryPolicy(RetryPolicy)` | Backoff curve — registered with the worker on `start()`. |
+| `codecs(String...)` | Named [payload codecs](/java/api-reference/serializers) applied to this task. |
+| `withOptions(EnqueueOptions)` | Replace the default options wholesale. |
+
+```java
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class)
+        .queue("emails")
+        .maxRetries(5)
+        .timeout(Duration.ofSeconds(30))
+        .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(2), Duration.ofMinutes(5)));
+```
+
+## `EnqueueOptions`
+
+Per-enqueue overrides, built with `EnqueueOptions.builder()`; unset fields take
+core defaults. Fields: `queue`, `priority`, `maxRetries`, `timeoutMs` /
+`timeout(Duration)`, `delayMs` / `delay(Duration)`, `uniqueKey` (alias
+`jobId`) for idempotent enqueues, `metadata`, `namespace`.
+
+```java
+taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
+        .delay(Duration.ofHours(24))
+        .uniqueKey("welcome:" + userId)
+        .build());
+```
+
+## `RetryPolicy`
+
+| Factory | Description |
+|---|---|
+| `exponential(base, max)` | Retry N waits about `base · 2^N`, capped at `max`, plus jitter. |
+| `delays(Duration...)` | Explicit per-attempt delays, applied exactly (no jitter). |
+
+The retry *budget* comes from `maxRetries`; the policy only supplies the
+timing, which the core scheduler applies durably.
+
+## Annotations
+
+`@TaskHandler` marks a method as a task handler. A compile-time processor
+(`org.byteveda:taskito` ships it as the `processor` artifact) generates a
+`FooTasks` companion per enclosing class `Foo` — a typed `Task` constant per
+handler plus `bind(Worker.Builder, Foo)` and `handlers(Foo)` — no runtime
+reflection.
+
+```java
+class Mailer {
+    @TaskHandler("send_email")
+    Receipt send(EmailPayload payload, @Resource("smtp") SmtpClient smtp) {
+        return smtp.deliver(payload);
+    }
+}
+
+Worker worker = taskito.worker()
+        .register(MailerTasks.handlers(new Mailer()))
+        .start();
+```
+
+| Annotation | Description |
+|---|---|
+| `@TaskHandler(value, queue, maxRetries, timeoutMs, priority)` | Task name defaults to the method name; other fields default to the core defaults. |
+| `@Resource("name")` | Injects a worker [resource](/java/api-reference/resources) into a parameter after the payload. |
+| `@Compressed` | Records the `"compressed"` codec on the generated task. |
+| `@Encrypted` | Records the `"encrypted"` codec — register the actual codec (and key) at runtime. |
+
+All are source-retention: read at compile time, never at runtime.

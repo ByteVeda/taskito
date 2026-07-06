@@ -1,0 +1,22 @@
+---
+title: API Reference
+description: "The Java SDK public surface — the Taskito client, tasks, workers, workflows, and the CLI."
+---
+
+The public API lives under `org.byteveda.taskito` (Maven coordinates
+`org.byteveda:taskito`). Contrib helpers live under
+`org.byteveda.taskito.contrib`; the Spring Boot 3 starter ships separately as
+`org.byteveda:taskito-spring`.
+
+| Page | Covers |
+|---|---|
+| [Taskito](/java/api-reference/queue) | `Taskito.builder()`, enqueue, inspect, admin, locks, periodic. |
+| [Task](/java/api-reference/task) | `Task.of` typed tasks, `EnqueueOptions`, `RetryPolicy`, the annotations. |
+| [Worker](/java/api-reference/worker) | The `Worker.Builder` and the running worker handle. |
+| [Result](/java/api-reference/result) | Awaiting jobs and reading typed results. |
+| [Context](/java/api-reference/context) | `Resources.use` and the middleware `TaskContext`. |
+| [Resources](/java/api-reference/resources) | Worker dependency injection — scopes, pools, disposal. |
+| [Serializers](/java/api-reference/serializers) | `JsonSerializer`, `MsgpackSerializer`, payload codecs. |
+| [Workflows](/java/api-reference/workflows) | The `Workflow` builder, `WorkflowRun`, gates, sagas, analysis. |
+| [Errors](/java/api-reference/errors) | The `TaskitoException` hierarchy. |
+| [CLI](/java/api-reference/cli) | The `taskito` command. |

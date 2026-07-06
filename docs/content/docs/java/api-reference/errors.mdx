@@ -1,0 +1,40 @@
+---
+title: Errors
+description: "The TaskitoException hierarchy — catch by specific type or by the base."
+---
+
+Every error the SDK throws extends `TaskitoException` (an unchecked
+`RuntimeException`), so a single `catch` can scope all of them; the subclasses
+under `org.byteveda.taskito.errors` let you branch on what went wrong.
+
+```java
+try {
+    taskito.enqueue(sendPromo, audience);
+} catch (PredicateRejectedException rejected) {
+    respond(409, "blocked by policy");
+} catch (TaskitoException other) {
+    report(other);
+}
+```
+
+## Hierarchy
+
+| Class | Extends | Thrown when |
+|---|---|---|
+| `TaskitoException` | `RuntimeException` | Base; also carries native (JNI) errors directly. |
+| `ConfigurationException` | `TaskitoException` | The SDK is misconfigured — e.g. a missing connection URL. |
+| `SerializationException` | `TaskitoException` | A payload, options blob, or native response can't be (de)serialized. |
+| `CryptoException` | `SerializationException` | A signing/encrypting serializer or codec failed — bad signature, short payload, cipher error. |
+| `PredicateRejectedException` | `TaskitoException` | A registered predicate rejected an enqueue; no job was created. |
+| `EnqueueSkippedException` | `TaskitoException` | A gate returned `Skip` — `enqueue` throws; use `tryEnqueue` to get an empty `Optional` instead. |
+| `InterceptionException` | `TaskitoException` | An interceptor rejected an enqueue. |
+| `LockException` | `TaskitoException` | A distributed-lock operation failed or was interrupted. |
+| `ResourceException` | `TaskitoException` | A worker resource couldn't be built, resolved, or disposed — including `Resources.use` outside a task. |
+| `ProxyException` | `TaskitoException` | A proxy reference couldn't be created or reconstructed — no handler, signature mismatch, allowlist violation. |
+| `WebhookException` | `TaskitoException` | A webhook couldn't be stored, loaded, signed, or encoded. |
+| `WorkflowException` | `TaskitoException` | Workflow definition, submission, await-timeout, or query error. |
+
+Handler exceptions are different: an exception thrown *inside* a
+`TaskFunction` isn't rethrown to you — it fails that attempt, and the core
+retries with the task's backoff until the retry budget is spent, then
+dead-letters the job. Inspect those via `jobErrors(id)` and `listDead`.

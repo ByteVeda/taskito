@@ -1,0 +1,73 @@
+---
+title: Serializers
+description: "JsonSerializer, MsgpackSerializer, payload codecs, and the Serializer interface."
+---
+
+```java
+import org.byteveda.taskito.serialization.JsonSerializer;
+import org.byteveda.taskito.serialization.MsgpackSerializer;
+
+Taskito taskito = Taskito.builder()
+        .sqlite("taskito.db")
+        .serializer(new MsgpackSerializer())
+        .open();
+```
+
+## Built-in serializers
+
+| Class | Description |
+|---|---|
+| `JsonSerializer` | Default. JSON via Jackson; accepts a custom `ObjectMapper`. |
+| `MsgpackSerializer` | Compact binary (MessagePack via Jackson). Its `org.msgpack:jackson-dataformat-msgpack` dependency is `compileOnly` — add it to your build. |
+| `SignedSerializer(delegate, key)` | Prefixes each payload with an HMAC-SHA256 tag; verifies it (constant-time) on read — authentication, not encryption. |
+| `EncryptedSerializer(delegate, key)` | AES-GCM with a fresh 12-byte IV per payload — confidentiality **and** integrity. Key must be 16/24/32 bytes. |
+
+Producers and workers must configure a compatible serializer — the Rust core
+treats payloads as opaque bytes.
+
+## Payload codecs
+
+A `PayloadCodec` is a byte-to-byte transform (`encode`/`decode`) applied after
+serialization and reversed before deserialization — one implementation owns
+both directions so the inverse can't drift. Codecs follow the cross-SDK
+contract, so payloads survive producer/worker boundaries between SDKs.
+
+| Codec | Description |
+|---|---|
+| `GzipCodec` | Compression; decode is capped (default 64 MiB) against zip bombs. |
+| `AesGcmCodec(key)` | AES-GCM encryption, `[12-byte IV][ciphertext‖tag]`. |
+| `HmacCodec(key)` | HMAC-SHA256 signing, `[32-byte MAC][body]`, constant-time verify. |
+
+A chain applies in order on encode and in reverse on decode — order `GzipCodec`
+*before* a signing/encryption codec so integrity is verified before
+decompressing:
+
+```java
+Taskito taskito = Taskito.builder()
+        .sqlite("taskito.db")
+        .codec(new GzipCodec(), new HmacCodec(secret))   // global chain
+        .codec("encrypted", new AesGcmCodec(key))        // named, per-task
+        .open();
+
+Task<Report> buildReport = Task.of("build_report", Report.class)
+        .codecs("encrypted");                            // this task only
+```
+
+The global chain wraps the queue serializer (a `CodecSerializer` under the
+hood) and covers results too. Named codecs apply per task via `Task.codecs`
+or the `@Compressed`/`@Encrypted` annotations — the same names (and keys) must
+be registered on producers and workers.
+
+## The `Serializer` interface
+
+```java
+public interface Serializer {
+    byte[] serialize(Object value);
+    <T> T deserialize(byte[] bytes, Class<T> type);
+    default Object deserialize(byte[] bytes, Type type) { ... }
+}
+```
+
+The `Type` overload supports generic payloads from a `TypeReference`; the
+default implementation handles plain `Class` types and rejects generic ones —
+override it in a generics-aware implementation (as `JsonSerializer` does).
