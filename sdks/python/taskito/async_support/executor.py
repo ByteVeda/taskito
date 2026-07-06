@@ -9,8 +9,6 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
-import cloudpickle
-
 from taskito.async_support.context import clear_async_context, set_async_context
 from taskito.context import current_job
 from taskito.exceptions import TaskCancelledError
@@ -159,7 +157,9 @@ class AsyncTaskExecutor:
                 result = await fn(*args, **kwargs)
 
                 # Serialize and report success
-                result_bytes = cloudpickle.dumps(result) if result is not None else None
+                result_bytes = (
+                    queue._serialize_result(task_name, result) if result is not None else None
+                )
                 wall_ns = time.monotonic_ns() - start_ns
                 self._sender.report_success(job_id, task_name, result_bytes, wall_ns)
 

@@ -59,6 +59,7 @@ class QueuePredicateMixin:
     # Supplied by other mixins on the composed Queue.
     _emit_event: Callable[..., None]
     _get_serializer: Callable[[str], Serializer]
+    _encode_payload: Callable[..., bytes]
 
     def _init_predicate_state(self) -> None:
         """Initialise predicate-related instance state.
@@ -216,8 +217,7 @@ class QueuePredicateMixin:
         middleware or re-evaluating the predicate (which would create an
         infinite ping-pong).
         """
-        serializer = self._get_serializer(task_name)
-        payload = serializer.dumps((tuple(args), dict(kwargs)))
+        payload = self._encode_payload(task_name, tuple(args), dict(kwargs))
         self._inner.enqueue(
             task_name=task_name,
             payload=payload,

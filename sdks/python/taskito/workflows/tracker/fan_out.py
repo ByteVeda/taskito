@@ -61,7 +61,10 @@ def expand_fan_out(
     task_name = meta["task_name"]
     serializer = tracker._queue._get_serializer(task_name)
     child_names = [f"{fan_out_node}[{i}]" for i in range(len(items))]
-    child_payloads = [build_child_payload(item, serializer) for item in items]
+    child_payloads = [
+        tracker._queue._apply_task_codecs(task_name, build_child_payload(item, serializer))
+        for item in items
+    ]
 
     queue_name = meta.get("queue") or "default"
     max_retries = int_or(meta.get("max_retries"), 3)
@@ -164,7 +167,9 @@ def create_fan_in_job(
 
     task_name = meta["task_name"]
     serializer = tracker._queue._get_serializer(task_name)
-    payload = build_fan_in_payload(results, serializer)
+    payload = tracker._queue._apply_task_codecs(
+        task_name, build_fan_in_payload(results, serializer)
+    )
 
     queue_name = meta.get("queue") or "default"
     max_retries = int_or(meta.get("max_retries"), 3)

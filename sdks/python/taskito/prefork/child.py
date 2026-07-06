@@ -119,7 +119,7 @@ def _execute_job(
     try:
         args, kwargs = queue._deserialize_payload(task_name, payload)
         result = run_maybe_async(wrapper(*args, **kwargs))
-        result_bytes = queue._serializer.dumps(result) if result is not None else None
+        result_bytes = queue._serialize_result(task_name, result) if result is not None else None
         wall_time_ns = time.monotonic_ns() - start_ns
 
         return {
