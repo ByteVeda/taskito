@@ -1,6 +1,8 @@
 package org.byteveda.taskito;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -88,6 +90,123 @@ class ResourceTest {
                     .handle(TASK, p -> {
                         try {
                             Resources.use("self");
+                        } catch (RuntimeException e) {
+                            thrown.set(e.getClass());
+                        } finally {
+                            ran.countDown();
+                        }
+                        return p;
+                    })
+                    .start()) {
+                queue.enqueue(TASK, 1);
+                assertTrue(ran.await(20, TimeUnit.SECONDS));
+            }
+            assertEquals(ResourceException.class, thrown.get());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void threadResourceReusedAcrossSequentialTasks(@TempDir Path dir) throws Exception {
+        int jobs = 2;
+        AtomicInteger disposed = new AtomicInteger();
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rth.db").toString()).open()) {
+            queue.resource("perThread", ResourceScope.THREAD, ctx -> new Object(), value -> disposed.incrementAndGet());
+            AtomicReference<Object> first = new AtomicReference<>();
+            AtomicReference<Object> second = new AtomicReference<>();
+            CountDownLatch ran = new CountDownLatch(jobs);
+            try (Worker worker = queue.worker()
+                    .concurrency(1) // one thread → both jobs share its instance
+                    .handle(TASK, p -> {
+                        Object instance = Resources.use("perThread");
+                        if (!first.compareAndSet(null, instance)) {
+                            second.set(instance);
+                        }
+                        ran.countDown();
+                        return p;
+                    })
+                    .start()) {
+                for (int i = 0; i < jobs; i++) {
+                    queue.enqueue(TASK, i);
+                }
+                assertTrue(ran.await(20, TimeUnit.SECONDS));
+            } // worker close disposes thread-scoped instances
+
+            assertSame(first.get(), second.get(), "same thread reuses its instance");
+            assertEquals(1, queue.resourceMetrics().get("perThread").created());
+            assertEquals(1, disposed.get(), "disposed once at worker shutdown");
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void requestResourceFreshPerUse(@TempDir Path dir) throws Exception {
+        AtomicInteger disposed = new AtomicInteger();
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rrq.db").toString()).open()) {
+            queue.resource("perUse", ResourceScope.REQUEST, ctx -> new Object(), value -> disposed.incrementAndGet());
+            AtomicReference<Object> a = new AtomicReference<>();
+            AtomicReference<Object> b = new AtomicReference<>();
+            CountDownLatch ran = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .handle(TASK, p -> {
+                        a.set(Resources.use("perUse"));
+                        b.set(Resources.use("perUse"));
+                        ran.countDown();
+                        return p;
+                    })
+                    .start()) {
+                queue.enqueue(TASK, 1);
+                assertTrue(ran.await(20, TimeUnit.SECONDS));
+            }
+            assertNotSame(a.get(), b.get(), "every use builds a fresh instance");
+            assertEquals(2, queue.resourceMetrics().get("perUse").created());
+            assertEquals(2, disposed.get(), "both instances disposed at task end");
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void threadFactoryCannotUseTaskScopedResource(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rtg.db").toString()).open()) {
+            queue.resource("perTask", ResourceScope.TASK, ctx -> new Object());
+            queue.resource("perThread", ResourceScope.THREAD, ctx -> ctx.use("perTask"));
+            AtomicReference<Class<?>> thrown = new AtomicReference<>();
+            CountDownLatch ran = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .handle(TASK, p -> {
+                        try {
+                            Resources.use("perThread");
+                        } catch (RuntimeException e) {
+                            thrown.set(e.getClass());
+                        } finally {
+                            ran.countDown();
+                        }
+                        return p;
+                    })
+                    .start()) {
+                queue.enqueue(TASK, 1);
+                assertTrue(ran.await(20, TimeUnit.SECONDS));
+            }
+            assertEquals(ResourceException.class, thrown.get());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void workerFactoryCannotUseThreadResource(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("rwg.db").toString()).open()) {
+            queue.resource("perThread", ResourceScope.THREAD, ctx -> new Object());
+            queue.resource("shared", ctx -> ctx.use("perThread")); // WORKER factory
+            AtomicReference<Class<?>> thrown = new AtomicReference<>();
+            CountDownLatch ran = new CountDownLatch(1);
+            try (Worker worker = queue.worker()
+                    .handle(TASK, p -> {
+                        try {
+                            Resources.use("shared");
                         } catch (RuntimeException e) {
                             thrown.set(e.getClass());
                         } finally {

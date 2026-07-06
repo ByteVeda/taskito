@@ -6,6 +6,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,6 +35,13 @@ public final class ResourceRuntime {
     private final ConcurrentMap<String, Counter> counters;
     private final ConcurrentMap<String, Object> workerCache = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ReentrantLock> workerLocks = new ConcurrentHashMap<>();
+    /**
+     * Per-name, per-thread instances for {@code THREAD}-scoped resources. Only the
+     * owning thread reads or writes its own entry (so no per-name lock is needed);
+     * the concurrent maps exist for cross-thread visibility at worker teardown.
+     */
+    private final ConcurrentMap<String, ConcurrentMap<Thread, Object>> threadCache = new ConcurrentHashMap<>();
+
     private final Deque<Runnable> workerTeardown = new ArrayDeque<>();
     /** Names being resolved on the current thread, so a dependency cycle fails fast instead of recursing. */
     private final ThreadLocal<Set<String>> resolving = ThreadLocal.withInitial(LinkedHashSet::new);
@@ -50,6 +58,19 @@ public final class ResourceRuntime {
         @Override
         public <T> T use(String name) {
             return cast(resolveWorker(name));
+        }
+    };
+
+    /** Context handed to a thread factory: it may use worker or thread resources. */
+    private final ResourceContext threadContext = new ResourceContext() {
+        @Override
+        public ResourceScope scope() {
+            return ResourceScope.THREAD;
+        }
+
+        @Override
+        public <T> T use(String name) {
+            return cast(resolveThread(name));
         }
     };
 
@@ -122,7 +143,9 @@ public final class ResourceRuntime {
     Object resolveWorker(String name) {
         ResourceDefinition definition = definition(name);
         if (definition.scope() != ResourceScope.WORKER) {
-            throw new ResourceException("resource '" + name + "' is task-scoped; a worker resource cannot use it");
+            throw new ResourceException("resource '" + name + "' is "
+                    + scopeWord(definition.scope())
+                    + "-scoped; a worker resource may only use worker resources");
         }
         Object cached = workerCache.get(name);
         if (cached != null) {
@@ -149,11 +172,23 @@ public final class ResourceRuntime {
         }
     }
 
-    /** Resolve for a task: worker-scoped hits the shared cache; task-scoped builds once per invocation. */
+    /**
+     * Resolve for a task, dispatching by the resource's scope: worker hits the
+     * shared cache, thread hits the current thread's cache, request builds fresh
+     * on every use, task builds once per invocation.
+     */
     Object resolveForTask(TaskScope scope, String name) {
         ResourceDefinition definition = definition(name);
-        if (definition.scope() == ResourceScope.WORKER) {
-            return resolveWorker(name);
+        switch (definition.scope()) {
+            case WORKER:
+                return resolveWorker(name);
+            case THREAD:
+                return resolveThread(name);
+            case REQUEST:
+                return buildRequest(scope, name, definition);
+            case TASK:
+            default:
+                break;
         }
         Map<String, Object> cache = scope.cache();
         Object cached = cache.get(name);
@@ -167,6 +202,63 @@ public final class ResourceRuntime {
             scope.pushTeardown(() -> dispose(name, value, definition.dispose()));
         }
         return value;
+    }
+
+    /**
+     * Resolve a thread-scoped resource for the current worker thread, building it
+     * lazily. Only the owning thread touches its own map entry, so a plain
+     * get-build-put is race-free; the shared {@code workerTeardown} deque keeps
+     * disposal globally LIFO across worker and thread instances.
+     */
+    Object resolveThread(String name) {
+        ResourceDefinition definition = definition(name);
+        if (definition.scope() == ResourceScope.WORKER) {
+            return resolveWorker(name);
+        }
+        if (definition.scope() != ResourceScope.THREAD) {
+            throw new ResourceException("resource '" + name + "' is "
+                    + scopeWord(definition.scope())
+                    + "-scoped; a thread resource may only use worker or thread resources");
+        }
+        ConcurrentMap<Thread, Object> perThread = threadCache.computeIfAbsent(name, key -> new ConcurrentHashMap<>());
+        Object cached = perThread.get(Thread.currentThread());
+        if (cached != null) {
+            return unwrap(cached);
+        }
+        Object value = build(name, definition, threadContext);
+        perThread.put(Thread.currentThread(), value == null ? NULL : value);
+        counter(name).created.incrementAndGet();
+        if (definition.dispose() != null) {
+            synchronized (workerTeardown) {
+                workerTeardown.push(() -> dispose(name, value, definition.dispose()));
+            }
+        }
+        return value;
+    }
+
+    /** Build a request-scoped resource: fresh on every use, disposed with the task (LIFO). */
+    private Object buildRequest(TaskScope scope, String name, ResourceDefinition definition) {
+        Object value = build(name, definition, requestContext(scope));
+        counter(name).created.incrementAndGet();
+        if (definition.dispose() != null) {
+            scope.pushTeardown(() -> dispose(name, value, definition.dispose()));
+        }
+        return value;
+    }
+
+    /** Context handed to a request factory: dependencies resolve through the active task scope. */
+    private ResourceContext requestContext(TaskScope scope) {
+        return new ResourceContext() {
+            @Override
+            public ResourceScope scope() {
+                return ResourceScope.REQUEST;
+            }
+
+            @Override
+            public <T> T use(String name) {
+                return scope.use(name);
+            }
+        };
     }
 
     private Object build(String name, ResourceDefinition definition, ResourceContext context) {
@@ -192,6 +284,11 @@ public final class ResourceRuntime {
             }
         }
         workerCache.clear();
+        threadCache.clear();
+    }
+
+    private static String scopeWord(ResourceScope scope) {
+        return scope.name().toLowerCase(Locale.ROOT);
     }
 
     private void dispose(String name, Object value, Consumer<Object> disposer) {
