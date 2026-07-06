@@ -87,6 +87,11 @@ export function ArchitectureStack() {
                     <code>.task()</code>, <code>.enqueue()</code>
                   </>
                 }
+                java={
+                  <>
+                    <code>Task.of()</code>, <code>enqueue()</code>
+                  </>
+                }
               />
               , results, workflows, resources — the surface you write against.
             </>
@@ -167,6 +172,7 @@ export function ResourcePipeline() {
                     <code>inject:</code> or <code>useResource()</code>
                   </>
                 }
+                java={<code>Resources.use()</code>}
               />
               ). Task-scoped resources come from a semaphore pool.
             </>

@@ -126,18 +126,19 @@ SQLite database. Additionally:
 
 - taskito's scheduler runs in Rust (faster polling, lower overhead)
 - Worker threads are OS threads managed by Rust, not{" "}
-  <SdkSwap python="Python processes" node="separate Node processes" />
+  <SdkSwap python="Python processes" node="separate Node processes" java="separate JVM processes" />
 - No external dependencies beyond{" "}
-  <SdkSwap python={<><code>cloudpickle</code></>} node="the native addon" />
+  <SdkSwap python={<><code>cloudpickle</code></>} node="the native addon" java="the bundled native library" />
 
 ## Can I use async tasks?
 
 Yes. Define the task function with{" "}
-<SdkSwap python={<code>async def</code>} node={<code>async</code>} /> and the
+<SdkSwap python={<code>async def</code>} node={<code>async</code>} java="a handler that runs on the worker's executor" /> and the
 worker dispatches it natively —{" "}
 <SdkSwap
   python="no asyncio.run() wrapping, no thread-pool bridging"
   node="each runs on your Node event loop, no thread per job"
+  java="each job runs as its own executor task, sized by concurrency(n) or autoscale"
 />:
 
 <SdkOnly sdk="python">
@@ -180,16 +181,34 @@ const stats = queue.stats();
 
 </SdkOnly>
 
+<SdkOnly sdk="java">
+
+```java
+Task<List<String>> fetchUrls = Task.of("fetchUrls", new TypeReference<>() {});
+
+try (Worker worker = queue.worker()
+        .handle(fetchUrls, urls -> urls.stream().map(App::fetch).toList())
+        .concurrency(8)
+        .start()) {
+    String id = queue.enqueue(fetchUrls, urls);
+    List<String> result = queue.awaitJob(id, Duration.ofSeconds(30))
+        .flatMap(job -> queue.getResult(id, List.class))
+        .orElseThrow();
+}
+```
+
+</SdkOnly>
+
 Sync and async tasks can coexist in the same queue. The worker automatically
 routes each job to the correct pool based on the task type. See the{" "}
 <SdkLink to="guides/advanced-execution">Async Tasks guide</SdkLink> for details
 including concurrency tuning and{" "}
-<SdkSwap python={<code>current_job</code>} node={<code>currentJob()</code>} />{" "}
+<SdkSwap python={<code>current_job</code>} node={<code>currentJob()</code>} java="middleware-provided job context" />{" "}
 context in async tasks.
 
 ## What serialization format does taskito use?
 
-By default, <SdkSwap python={<code>CloudpickleSerializer</code>} node={<code>JsonSerializer</code>} /> — <SdkSwap python="which supports most Python objects including lambdas and closures; switch to JsonSerializer for simpler, cross-language payloads" node="human-readable JSON bytes; switch to MsgpackSerializer for compact, binary payloads" /> — or provide a custom serializer:
+By default, <SdkSwap python={<code>CloudpickleSerializer</code>} node={<code>JsonSerializer</code>} java={<code>JsonSerializer</code>} /> — <SdkSwap python="which supports most Python objects including lambdas and closures; switch to JsonSerializer for simpler, cross-language payloads" node="human-readable JSON bytes; switch to MsgpackSerializer for compact, binary payloads" java="human-readable JSON bytes via Jackson; switch to MsgpackSerializer for compact, binary payloads" /> — or provide a custom serializer:
 
 <SdkOnly sdk="python">
 
@@ -214,6 +233,20 @@ new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 
 Custom serializers implement the `Serializer` interface with
 `serialize(value) -> bytes` and `deserialize(bytes) -> value` methods.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+```java
+Taskito queue = Taskito.builder()
+    .sqlite("taskito.db")
+    .serializer(new MsgpackSerializer())
+    .open();
+```
+
+Custom serializers implement the `Serializer` interface with
+`serialize(value)` and `deserialize(bytes, type)` methods.
 
 </SdkOnly>
 
