@@ -1,0 +1,87 @@
+---
+title: Pluggable Serializers
+description: "Pluggable payload serialization — JSON, MessagePack, and codec chains."
+---
+
+Arguments and results are serialized with a pluggable `Serializer`. The native
+core treats payloads as opaque bytes, so serialization is purely a Java
+concern.
+
+- `JsonSerializer` — default; Jackson-backed, human-readable, debuggable.
+- `MsgpackSerializer` — compact binary via MessagePack. Optional: add
+  `org.msgpack:jackson-dataformat-msgpack` to your build.
+- `SignedSerializer(delegate, key)` — wraps another serializer with an
+  HMAC-SHA256 tag and rejects tampered payloads on read (authentication, not
+  encryption).
+- `EncryptedSerializer(delegate, key)` — wraps another serializer with
+  AES-GCM for confidentiality **and** integrity (16/24/32-byte key).
+
+```java
+Taskito taskito = Taskito.builder()
+        .url("taskito.db")
+        .serializer(new MsgpackSerializer())
+        .open();
+```
+
+## Custom serializer
+
+Implement the `Serializer` interface — `serialize` to bytes, `deserialize`
+back:
+
+```java
+public final class MySerializer implements Serializer {
+    @Override
+    public byte[] serialize(Object value) { /* ... */ }
+
+    @Override
+    public <T> T deserialize(byte[] bytes, Class<T> type) { /* ... */ }
+}
+```
+
+<Callout type="warning">
+  Producers and workers must agree on the serializer — they exchange bytes
+  through storage. A job enqueued with MessagePack can only be decoded by a
+  worker using a compatible serializer.
+</Callout>
+
+## Payload codecs
+
+A `PayloadCodec` is a byte-to-byte transform applied **after** serialization on
+the producer and reversed **before** deserialization on the worker — the
+cross-SDK contract for compression, encryption, and signing. Built-ins:
+
+- `GzipCodec` — gzip compression; decompression capped at 64 MiB (configurable)
+  to guard against zip bombs.
+- `AesGcmCodec(key)` — AES-GCM encryption, fresh 12-byte IV per payload.
+- `HmacCodec(key)` — HMAC-SHA256 signing with constant-time verification.
+
+Chain them globally — applied in order on the way out, reversed on the way in:
+
+```java
+Taskito taskito = Taskito.builder()
+        .url("taskito.db")
+        .codec(new GzipCodec(), new AesGcmCodec(key)) // compress, then encrypt
+        .open();
+```
+
+Or register **named** codecs and select them per task:
+
+```java
+Taskito taskito = Taskito.builder()
+        .url("taskito.db")
+        .codec("secret", new AesGcmCodec(key))
+        .open();
+
+Task<Report> export = Task.of("export", Report.class).codecs("secret");
+```
+
+Handlers annotated `@Compressed` / `@Encrypted` get the `"compressed"` /
+`"encrypted"` codec names recorded on their generated task constants — register
+codecs under those names on both producers and workers. The key is supplied at
+runtime, never in the annotation.
+
+<Callout type="info">
+  The same chain (or the same names) must be configured on producers and
+  workers. Put `GzipCodec` before a signing or encryption codec so integrity
+  is verified before decompressing.
+</Callout>

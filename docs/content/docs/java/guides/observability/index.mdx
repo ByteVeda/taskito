@@ -1,0 +1,19 @@
+---
+title: Observability
+description: "Monitor queue health and emit structured logs from the Java SDK."
+---
+
+See what the queue is doing — counts, per-execution metrics, live workers,
+per-job logs — and emit structured logs, all from the `Taskito` handle with no
+extra service.
+
+| Page | What it covers |
+|---|---|
+| [Monitoring](/java/guides/observability/monitoring) | Stats, per-execution metrics, worker heartbeats, Micrometer/Sentry pointers |
+| [Logging](/java/guides/observability/logging) | The built-in leveled logger and per-job task logs — levels, pluggable sink |
+
+<Callout type="info">
+  Lifecycle [events](/java/guides/extensibility/events) and
+  [middleware](/java/guides/extensibility/middleware) are the extension points
+  for pushing these signals to any external system.
+</Callout>
