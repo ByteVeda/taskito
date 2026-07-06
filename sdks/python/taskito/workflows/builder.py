@@ -473,8 +473,9 @@ class Workflow:
                 and step.fan_in is None
                 and step.sub_workflow is None
             ):
-                serializer = queue._get_serializer(step.task_name)
-                node_payloads[step.name] = serializer.dumps((step.args, step.kwargs))
+                node_payloads[step.name] = queue._encode_payload(
+                    step.task_name, step.args, step.kwargs
+                )
 
         dag_bytes, step_metadata_json = builder.serialize()
         return (

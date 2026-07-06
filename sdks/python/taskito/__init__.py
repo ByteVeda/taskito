@@ -7,11 +7,19 @@ from taskito.batching import (
     BatchResultTypeError,
 )
 from taskito.canvas import Signature, chain, chord, chunks, group, starmap
+from taskito.codecs import (
+    AesGcmCodec,
+    CodecSerializer,
+    GzipCodec,
+    HmacCodec,
+    PayloadCodec,
+)
 from taskito.context import LogLevel, current_job
 from taskito.events import EventType
 from taskito.exceptions import (
     CircuitBreakerOpenError,
     CircularDependencyError,
+    CryptoError,
     JobNotFoundError,
     MaxRetriesExceededError,
     NotesValidationError,
@@ -53,14 +61,19 @@ from taskito.testing import MockResource, TestMode, TestResult, TestResults
 
 __all__ = [
     "MAX_NOTE_FIELDS",
+    "AesGcmCodec",
     "BatchItemResult",
     "BatchPartialFailureError",
     "BatchResultTypeError",
     "CircuitBreakerOpenError",
     "CircularDependencyError",
     "CloudpickleSerializer",
+    "CodecSerializer",
+    "CryptoError",
     "EncryptedSerializer",
     "EventType",
+    "GzipCodec",
+    "HmacCodec",
     "Inject",
     "InterceptionError",
     "InterceptionReport",
@@ -74,6 +87,7 @@ __all__ = [
     "MsgPackSerializer",
     "NoProxy",
     "NotesValidationError",
+    "PayloadCodec",
     "PredicateRejectedError",
     "ProxyCleanupError",
     "ProxyReconstructionError",

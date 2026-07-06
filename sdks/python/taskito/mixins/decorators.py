@@ -21,6 +21,7 @@ from taskito.batching.item_result import (
     BatchResultTypeError,
     is_batch_item_result_list,
 )
+from taskito.codecs import CodecSerializer
 from taskito.context import _clear_context, current_job
 from taskito.dashboard.middleware_store import MiddlewareDisableStore
 from taskito.events import EventType
@@ -37,6 +38,7 @@ from taskito.workflows.saga.context import (
 )
 
 if TYPE_CHECKING:
+    from taskito.codecs import PayloadCodec
     from taskito.interception import ArgumentInterceptor
     from taskito.middleware import TaskMiddleware
     from taskito.predicates import Predicate
@@ -96,6 +98,9 @@ class QueueDecoratorMixin:
     _periodic_configs: list[dict[str, Any]]
     _hooks: dict[str, list[Callable]]
     _task_serializers: dict[str, Serializer]
+    _codec_chain: list[PayloadCodec]
+    _codecs: dict[str, PayloadCodec]
+    _task_codecs: dict[str, list[str]]
     _task_idempotent: dict[str, bool]
     _task_compensates: dict[str, str]
     _task_batch_configs: dict[str, Any]
@@ -369,6 +374,7 @@ class QueueDecoratorMixin:
         retry_delays: list[float] | None = None,
         inject: list[str] | None = None,
         serializer: Serializer | None = None,
+        codecs: list[str] | None = None,
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
         idempotent: bool = False,
@@ -402,6 +408,10 @@ class QueueDecoratorMixin:
                 ``max_retries``.
             inject: List of resource names to inject as keyword arguments.
             serializer: Per-task serializer. Falls back to the queue-level serializer.
+            codecs: Names of payload codecs (registered via ``Queue(codecs=...)``)
+                applied in order to this task's serialized payload on enqueue
+                and reversed on the worker. Payload only — results stay on the
+                queue-level serializer.
             max_retry_delay: Maximum backoff delay in seconds. Defaults to 300
                 (5 minutes) if not set.
             max_concurrent: Maximum number of concurrent running instances of
@@ -507,9 +517,19 @@ class QueueDecoratorMixin:
             if middleware:
                 self._task_middleware[task_name] = middleware
 
-            # Store per-task serializer
+            # Store per-task serializer, wrapped in the global codec chain so a
+            # per-task override can't silently bypass queue-wide codecs.
             if serializer is not None:
-                self._task_serializers[task_name] = serializer
+                self._task_serializers[task_name] = (
+                    CodecSerializer(serializer, self._codec_chain)
+                    if self._codec_chain
+                    else serializer
+                )
+
+            # Store per-task codec names (validated lazily against the
+            # registry at enqueue/decode time).
+            if codecs:
+                self._task_codecs[task_name] = list(codecs)
 
             # Store per-task idempotency flag (auto-derives unique_key on enqueue)
             if idempotent:
@@ -657,7 +677,7 @@ class QueueDecoratorMixin:
                     run = proxy.submit()
                     return f"submitted workflow run {run.id}"
 
-                payload = self._get_serializer(launcher_name).dumps(((), {}))  # type: ignore[attr-defined]
+                payload = self._encode_payload(launcher_name, (), {})  # type: ignore[attr-defined]
                 self._periodic_configs.append(
                     {
                         "name": launcher_name,
@@ -674,7 +694,7 @@ class QueueDecoratorMixin:
             wrapper = self.task(name=name, queue=queue)(fn)
 
             # Store periodic config for registration at worker startup
-            payload = self._get_serializer(wrapper.name).dumps((args, kwargs or {}))  # type: ignore[attr-defined]
+            payload = self._encode_payload(wrapper.name, args, kwargs or {})  # type: ignore[attr-defined]
             self._periodic_configs.append(
                 {
                     "name": name or f"{_resolve_module_name(fn.__module__)}.{fn.__qualname__}",

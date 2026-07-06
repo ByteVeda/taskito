@@ -21,14 +21,16 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from taskito._taskito import PyQueue
 from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.batching import BatchAccumulator, BatchConfig
+from taskito.codecs import CodecSerializer, PayloadCodec
 from taskito.events import EventBus, EventType
+from taskito.exceptions import SerializationError
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
 from taskito.interception.metrics import InterceptionMetrics
@@ -122,6 +124,8 @@ class Queue(
         default_priority: int = 0,
         result_ttl: int | None = None,
         serializer: Serializer | None = None,
+        codec: PayloadCodec | Sequence[PayloadCodec] | None = None,
+        codecs: dict[str, PayloadCodec] | None = None,
         middleware: list[TaskMiddleware] | None = None,
         backend: str = "sqlite",
         db_url: str | None = None,
@@ -159,6 +163,17 @@ class Queue(
                 seconds. None disables auto-cleanup.
             serializer: Serializer for task payloads. Defaults to SmartSerializer
                 (msgpack with cloudpickle fallback).
+            codec: Global payload codec chain — a single :class:`PayloadCodec`
+                or a sequence applied in order after serialization (and in
+                reverse before deserialization). Wraps the queue serializer,
+                so it covers every payload and result. Jobs persisted before
+                the chain was enabled cannot be decoded through it. Note:
+                nondeterministic codecs (e.g. ``AesGcmCodec``) make
+                ``idempotent=True`` auto-keys nondeterministic per call —
+                pass an explicit ``idempotency_key`` instead.
+            codecs: Named codec registry for per-task codecs. Tasks opt in
+                via ``@queue.task(codecs=["name", ...])``; applies to task
+                payloads only (results stay on the queue serializer).
             middleware: List of global middleware instances applied to all tasks.
             backend: Storage backend — ``"sqlite"`` (default) or ``"postgres"``.
             db_url: PostgreSQL connection URL (required when backend is ``"postgres"``).
@@ -245,8 +260,18 @@ class Queue(
             "on_success": [],
             "on_failure": [],
         }
-        self._serializer: Serializer = serializer or SmartSerializer()
+        base_serializer: Serializer = serializer or SmartSerializer()
+        self._codec_chain: list[PayloadCodec] = (
+            [codec] if isinstance(codec, PayloadCodec) else list(codec or [])
+        )
+        self._serializer: Serializer = (
+            CodecSerializer(base_serializer, self._codec_chain)
+            if self._codec_chain
+            else base_serializer
+        )
+        self._codecs: dict[str, PayloadCodec] = dict(codecs or {})
         self._task_serializers: dict[str, Serializer] = {}
+        self._task_codecs: dict[str, list[str]] = {}
         self._task_idempotent: dict[str, bool] = {}
         self._task_compensates: dict[str, str] = {}
         self._task_batch_configs: dict[str, BatchConfig] = {}
@@ -314,6 +339,20 @@ class Queue(
     def _get_serializer(self, task_name: str) -> Serializer:
         """Get the serializer for a task (per-task or queue-level fallback)."""
         return self._task_serializers.get(task_name, self._serializer)
+
+    def _apply_task_codecs(self, task_name: str, payload: bytes) -> bytes:
+        """Encode a serialized payload with the task's named codecs, in order."""
+        for name in self._task_codecs.get(task_name, ()):
+            codec = self._codecs.get(name)
+            if codec is None:
+                raise ValueError(f"no codec registered named {name!r}")
+            payload = codec.encode(payload)
+        return payload
+
+    def _encode_payload(self, task_name: str, args: tuple, kwargs: dict) -> bytes:
+        """Serialize ``(args, kwargs)`` and apply the task's named codecs."""
+        payload = self._get_serializer(task_name).dumps((args, kwargs))
+        return self._apply_task_codecs(task_name, payload)
 
     def _check_payload_size(self, task_name: str, size: int) -> None:
         """Reject a serialized payload that exceeds ``max_payload_bytes``."""
@@ -389,8 +428,7 @@ class Queue(
         handle (one per item that landed in this batch).
         """
         del config  # currently unused at dispatch time; reserved for telemetry
-        task_serializer = self._get_serializer(task_name)
-        payload = task_serializer.dumps(((items,), {}))
+        payload = self._encode_payload(task_name, (items,), {})
         self._check_payload_size(task_name, len(payload))
         py_job = self._inner.enqueue(
             task_name=task_name,
@@ -437,8 +475,25 @@ class Queue(
         ``args`` straight to PyO3, which requires a real tuple, so the shape is
         normalized back to ``(tuple, dict)`` here regardless of serializer.
         """
+        task_codecs = self._task_codecs.get(task_name)
+        if task_codecs:
+            for name in reversed(task_codecs):
+                codec = self._codecs.get(name)
+                if codec is None:
+                    raise SerializationError(f"no codec registered named {name!r}")
+                payload = codec.decode(payload)
         args, kwargs = self._get_serializer(task_name).loads(payload)
         return tuple(args), kwargs
+
+    def _serialize_result(self, task_name: str, result: Any) -> bytes:
+        """Serialize a task result with the queue-level serializer.
+
+        Results always use the queue serializer, never per-task serializers:
+        consumers (``JobResult.get``, workflow trackers) read results back
+        with only the queue-level configuration. ``task_name`` is part of the
+        contract with the Rust worker paths, which call this per job.
+        """
+        return self._serializer.dumps(result)
 
     def enqueue(
         self,
@@ -561,6 +616,18 @@ class Queue(
 
         task_serializer = self._get_serializer(task_name)
         payload = task_serializer.dumps((final_args, final_kwargs))
+
+        # Dedup keys hash the pre-codec bytes so nondeterministic codecs
+        # (AES-GCM's random nonce) can't break idempotency for codec tasks.
+        unique_key = self._resolve_unique_key(
+            task_name=task_name,
+            payload=payload,
+            unique_key=unique_key,
+            idempotency_key=idempotency_key,
+            idempotent=idempotent,
+        )
+
+        payload = self._apply_task_codecs(task_name, payload)
         self._check_payload_size(task_name, len(payload))
 
         # Evaluate enqueue-time predicate (if registered). Outcome may
@@ -578,14 +645,6 @@ class Queue(
                 payload_size=len(payload),
                 delay=delay,
             )
-
-        unique_key = self._resolve_unique_key(
-            task_name=task_name,
-            payload=payload,
-            unique_key=unique_key,
-            idempotency_key=idempotency_key,
-            idempotent=idempotent,
-        )
 
         dep_ids = None
         if depends_on is not None:
@@ -785,10 +844,10 @@ class Queue(
             payloads = [
                 task_serializer.dumps((a, kw)) for a, kw in zip(args_list, kw_list, strict=True)
             ]
-        for payload in payloads:
-            self._check_payload_size(task_name, len(payload))
         task_names = [task_name] * count
 
+        # Dedup keys hash the pre-codec bytes so nondeterministic codecs
+        # (AES-GCM's random nonce) can't break idempotency for codec tasks.
         per_job_unique_keys = [
             self._resolve_unique_key(
                 task_name=task_name,
@@ -799,6 +858,10 @@ class Queue(
             )
             for i in range(count)
         ]
+
+        payloads = [self._apply_task_codecs(task_name, payload) for payload in payloads]
+        for payload in payloads:
+            self._check_payload_size(task_name, len(payload))
 
         # Evaluate enqueue-time predicate per row. Cancel raises for the
         # whole batch — all-or-nothing semantics. Defer adjusts that row's

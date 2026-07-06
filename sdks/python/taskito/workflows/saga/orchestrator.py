@@ -764,7 +764,7 @@ class SagaOrchestrator:
         result_bytes = forward_job.result_bytes
         if result_bytes:
             try:
-                forward_result = self._queue._get_serializer(task_name).loads(result_bytes)
+                forward_result = self._queue._serializer.loads(result_bytes)
             except Exception:
                 logger.exception(
                     "saga: failed to deserialize forward result for %s/%s — "
