@@ -1,0 +1,141 @@
+---
+title: ETL Data Pipeline
+description: "A diamond-shaped extract → transform → load DAG with a failure branch, error inspection, and structural analysis."
+---
+
+A classic ETL job: pull rows from a source, run two independent transforms over
+the staged data, then load the merged result. Modeling it as a workflow gives
+you dependency ordering, per-step retries, and a queryable run you can monitor.
+
+<Mermaid
+  chart={`graph LR
+    extract:::source --> clean
+    extract --> enrich
+    clean --> load:::sink
+    enrich --> load`}
+/>
+
+## Project structure
+
+```
+pipeline/
+  Pipeline.java   # the four tasks + the DAG
+  Monitor.java    # analyze + inspect a run
+  WorkerMain.java # the worker process
+```
+
+## Pipeline.java
+
+Each step coordinates through a staging store (the DB, S3, a temp dir) rather
+than passing results down the graph — the standard ETL shape. `load` runs only
+after both transforms complete; a `quarantine` branch fires only when a step
+fails.
+
+```java
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.workflows.Step;
+import org.byteveda.taskito.workflows.Workflow;
+import org.byteveda.taskito.workflows.WorkflowRun;
+
+public final class Pipeline {
+    public static final Task<String> EXTRACT = Task.of("extract", String.class).maxRetries(3);
+    public static final Task<String> CLEAN = Task.of("clean", String.class);
+    public static final Task<String> ENRICH = Task.of("enrich", String.class).queue("io");
+    public static final Task<String> LOAD = Task.of("load", String.class);
+    public static final Task<String> QUARANTINE = Task.of("quarantine", String.class);
+
+    /** Every step receives the same runId payload and coordinates via staging. */
+    public static WorkflowRun run(Taskito taskito, String runId) {
+        Workflow etl = Workflow.named("etl")
+                .step("extract", EXTRACT, runId)
+                .step("clean", CLEAN, runId, "extract")
+                .step(Step.of("enrich", ENRICH, runId).after("extract").queue("io").build())
+                .step(Step.of("load", LOAD, runId).after("clean", "enrich").priority(10).build())
+                // Failure branch: fires only when an upstream step fails.
+                .step(Step.of("quarantine", QUARANTINE, runId).after("load").onFailure().build());
+        return taskito.submitWorkflow(etl);
+    }
+
+    private Pipeline() {}
+}
+```
+
+## Monitor.java
+
+`WorkflowAnalysis` gives you a structural view of the definition;
+`workflowStatus` + `jobErrors` surface the failure history of any step's
+underlying job.
+
+```java
+import java.util.List;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.model.JobError;
+import org.byteveda.taskito.workflows.WorkflowAnalysis;
+import org.byteveda.taskito.workflows.Workflow;
+
+public final class Monitor {
+
+    /** Validate + preview the DAG before ever submitting it. */
+    public static void preview(Workflow etl) {
+        WorkflowAnalysis.validate(etl); // throws on cycles / unknown deps
+        System.out.println("order:  " + WorkflowAnalysis.topologicalOrder(etl));
+        System.out.println("levels: " + WorkflowAnalysis.levels(etl));
+        System.out.println("roots:  " + WorkflowAnalysis.roots(etl));
+    }
+
+    /** Inspect a run: which step failed, and why, attempt by attempt. */
+    public static void report(Taskito taskito, String runId) {
+        taskito.workflowStatus(runId).ifPresent(status -> {
+            System.out.println("state: " + status.state.wire());
+            status.failedStep().ifPresent(step -> {
+                status.node(step).ifPresent(node -> {
+                    List<JobError> errors = taskito.jobErrors(node.jobId);
+                    errors.forEach(err ->
+                            System.out.printf("%s attempt %d: %s%n", step, err.attempt, err.error));
+                });
+            });
+        });
+    }
+
+    private Monitor() {}
+}
+```
+
+<Callout type="warn">
+  If a required step fails, its still-pending dependents are skipped and the
+  run ends `completed_with_failures` (or `failed`). The `onFailure()` step is
+  the recovery path — it runs cleanup or alerting exactly when the happy path
+  didn't.
+</Callout>
+
+## WorkerMain.java
+
+The worker consumes both queues and tracks workflows so conditional nodes
+(the `quarantine` branch) are evaluated.
+
+```java
+try (Taskito taskito = Taskito.builder().sqlite("pipeline.db").open();
+        Worker worker = taskito.worker()
+                .handle(Pipeline.EXTRACT, runId -> staging.write(runId, "raw", source.read()))
+                .handle(Pipeline.CLEAN, runId -> staging.transform(runId, "raw", "clean"))
+                .handle(Pipeline.ENRICH, runId -> staging.transform(runId, "raw", "enrich"))
+                .handle(Pipeline.LOAD, runId -> warehouse.load(staging.merge(runId)))
+                .handle(Pipeline.QUARANTINE, runId -> staging.quarantine(runId))
+                .queues("default", "io")
+                .trackWorkflows()
+                .start()) {
+    worker.awaitShutdown();
+}
+```
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Diamond dependency DAG | `Step.of(...).after("clean", "enrich")` |
+| Per-step queue / priority | the `Step` builder |
+| Failure branch | `Step.of(...).onFailure()` |
+| Pre-submit validation | `WorkflowAnalysis.validate` / `topologicalOrder` |
+| Per-attempt error history | `workflowStatus` → `failedStep` → `jobErrors` |
+| Skip-on-failure cascade | required step failure ⇒ pending dependents skipped |

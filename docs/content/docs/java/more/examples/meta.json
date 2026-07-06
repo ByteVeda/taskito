@@ -1,0 +1,14 @@
+{
+  "title": "Examples",
+  "pages": [
+    "spring-service",
+    "notifications",
+    "web-scraper",
+    "data-pipeline",
+    "workflows",
+    "saga-checkout",
+    "bulk-emails",
+    "predicate-gated-jobs",
+    "benchmark"
+  ]
+}

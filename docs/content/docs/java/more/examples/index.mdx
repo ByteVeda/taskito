@@ -1,0 +1,24 @@
+---
+title: Examples
+description: "End-to-end, runnable Java examples — each demonstrating a slice of Taskito's Java SDK in a realistic setting."
+---
+
+Each example is a self-contained project you can copy, run, and adapt. They
+lean on the [API reference](/java/api-reference) — read that for the surface,
+come here for working code.
+
+| Example | Demonstrates |
+| --- | --- |
+| [Spring Boot service](/java/more/examples/spring-service) | REST API on the Spring starter that enqueues jobs, reports status, and cancels in flight |
+| [Notification service](/java/more/examples/notifications) | Delayed scheduling, idempotency, priority, periodic tasks, batch enqueue |
+| [Web scraper](/java/more/examples/web-scraper) | Retry backoff, named queues, middleware hooks, fan-out workflows |
+| [ETL data pipeline](/java/more/examples/data-pipeline) | A multi-stage DAG with error history, failure branches, and structural analysis |
+| [DAG workflows](/java/more/examples/workflows) | Fan-out/fan-in, gates, conditions, sub-workflows, caching, canvas shortcuts |
+| [Saga — checkout](/java/more/examples/saga-checkout) | Compensating transactions with reverse-order rollback |
+| [Bulk emails](/java/more/examples/bulk-emails) | High-volume `enqueueMany` and `Batcher` with bounded worker concurrency |
+| [Predicate-gated jobs](/java/more/examples/predicate-gated-jobs) | Enqueue-time gates with `allOf` / `anyOf` / `not` and defer/skip decisions |
+| [Benchmark](/java/more/examples/benchmark) | Measuring enqueue, processing, and end-to-end latency and throughput |
+
+Every snippet targets the standalone Java SDK — `org.byteveda:taskito`, Java 17 —
+with the Rust core embedded in the artifact. Pick the one closest to your
+problem and start there.

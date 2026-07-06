@@ -1,0 +1,122 @@
+---
+title: Saga — e-commerce checkout
+description: "A multi-step checkout with compensating transactions: when a later step fails, completed steps roll back in reverse order."
+---
+
+A checkout touches several systems — inventory, payments, shipping — with no
+distributed transaction across them. The saga pattern models each forward step
+with a compensator; if a later step fails, Taskito runs the compensators for
+the already-completed steps in reverse-dependency order.
+
+## Tasks.java
+
+Declare each forward task and its rollback. A compensator receives the forward
+step's *result* as its payload, so it knows exactly what to undo.
+
+```java
+public final class Tasks {
+    public record Reservation(String reservationId) {}
+    public record Charge(String chargeId) {}
+    public record Shipment(String shipmentId) {}
+
+    public static final Task<Order> RESERVE = Task.of("reserve_inventory", Order.class);
+    public static final Task<Reservation> RELEASE = Task.of("release_inventory", Reservation.class);
+
+    public static final Task<Order> CHARGE = Task.of("charge_payment", Order.class);
+    public static final Task<Charge> REFUND = Task.of("refund_payment", Charge.class);
+
+    public static final Task<Order> SHIP = Task.of("create_shipment", Order.class);
+    public static final Task<Shipment> CANCEL_SHIPMENT = Task.of("cancel_shipment", Shipment.class);
+
+    private Tasks() {}
+}
+```
+
+## Checkout.java
+
+Each step names its `compensate` task. The steps run in dependency order; the
+compensators are wired automatically.
+
+```java
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.workflows.Step;
+import org.byteveda.taskito.workflows.Workflow;
+import org.byteveda.taskito.workflows.WorkflowRun;
+
+public final class Checkout {
+    public static WorkflowRun submit(Taskito taskito, Order order) {
+        Workflow checkout = Workflow.named("checkout")
+                .step(Step.of("reserve", Tasks.RESERVE, order)
+                        .compensate(Tasks.RELEASE)
+                        .build())
+                .step(Step.of("charge", Tasks.CHARGE, order)
+                        .after("reserve")
+                        .compensate(Tasks.REFUND)
+                        .build())
+                .step(Step.of("ship", Tasks.SHIP, order)
+                        .after("charge")
+                        .compensate(Tasks.CANCEL_SHIPMENT)
+                        .build());
+        return taskito.submitWorkflow(checkout);
+    }
+
+    private Checkout() {}
+}
+```
+
+## Running it
+
+The worker registers the forward *and* compensation handlers, and tracks
+workflows so the saga orchestrator can drive the rollback.
+
+```java
+WorkflowRun run = Checkout.submit(taskito, order);
+WorkflowStatus done = run.await(Duration.ofMinutes(1));
+
+switch (done.state) {
+    case COMPLETED -> System.out.println("order placed");
+    case COMPENSATED -> System.out.println("rolled back cleanly — customer charged nothing");
+    case COMPENSATION_FAILED -> System.err.println("manual intervention needed");
+    default -> System.out.println(done.state.wire());
+}
+```
+
+## What happens on failure
+
+If `create_shipment` throws, `reserve` and `charge` have already completed.
+Taskito runs their compensators in reverse order:
+
+```
+ship      ✗ failed
+charge    → refund_payment(Charge{chargeId})        (compensate)
+reserve   → release_inventory(Reservation{reservationId})  (compensate)
+```
+
+The run lands in `COMPENSATED` if every compensator succeeds, or
+`COMPENSATION_FAILED` if one of them throws. Independent rollbacks in the same
+wave run in parallel; each compensation job carries an idempotency key, so a
+tracker restart never double-dispatches one.
+
+<Callout type="warn">
+  Compensators should be idempotent. A refund or release may be retried, and a
+  partially-applied rollback that re-runs must not double-refund or release
+  twice.
+</Callout>
+
+## Run states
+
+| `WorkflowState` | Meaning |
+| --- | --- |
+| `COMPLETED` | every forward step succeeded |
+| `COMPENSATING` | a step failed; compensators are running |
+| `COMPENSATED` | rollback finished cleanly |
+| `COMPENSATION_FAILED` | a compensator threw — needs manual repair |
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Forward + rollback pair | `Step.of(...).compensate(task)` |
+| Reverse-order rollback | automatic on step failure |
+| Result-aware undo | compensator receives the forward result |
+| Outcome branching | `switch (done.state)` |
