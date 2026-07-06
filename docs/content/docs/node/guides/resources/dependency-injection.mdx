@@ -35,6 +35,7 @@ A resource's scope decides its lifetime:
 |---|---|---|---|
 | `worker` (default) | Lazily, on first use | The worker — a shared singleton | Connection pools, HTTP clients, SDK clients |
 | `task` | Once per job invocation | That job — disposed when it finishes | Per-job transactions, request-scoped clients |
+| `pooled` | Lazily, up to `poolSize` at once | Checked out per job, returned when it finishes | Expensive clients that must stay bounded but be reused |
 
 ```ts
 queue.resource("tx", async () => db.begin(), {
@@ -46,6 +47,34 @@ queue.resource("tx", async () => db.begin(), {
 Worker-scoped resources are built once even under concurrency — concurrent
 initialization is de-duplicated. A factory that throws is **not** cached, so the
 next job retries it.
+
+## Pooled resources
+
+A `pooled` resource sits between the other two scopes: instances are reused like
+worker resources but bound to a single job at a time like task resources, with a
+hard cap on how many exist at once. Each job checks out one instance — reusing
+an idle one, building a new one only when none is free — and returns it to the
+pool when the job finishes. A job that cannot get an instance within
+`acquireTimeoutMs` fails with `ResourceUnavailableError`:
+
+```ts
+queue.resource("ftp", () => connectFtp(), {
+  scope: "pooled",
+  dispose: (conn) => conn.close(),
+  pool: { poolSize: 4, poolMin: 1, acquireTimeoutMs: 10_000, maxLifetimeMs: 300_000 },
+});
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `poolSize` | `4` | Max instances checked out concurrently. Jobs wait when exhausted. |
+| `poolMin` | `0` | Instances pre-built when the worker starts. `0` means lazy. |
+| `acquireTimeoutMs` | `10000` | How long a checkout waits before failing the job. |
+| `maxLifetimeMs` | unlimited | Idle instances older than this are disposed and rebuilt. |
+
+Pooled instances outlive any single job, so a pooled factory may only depend on
+worker-scoped resources. `dispose` runs when an instance is evicted or when the
+worker stops — not when a job returns it to the pool.
 
 ## Injecting resources
 
@@ -104,9 +133,9 @@ queue.resource("db", async (ctx) => {
 });
 ```
 
-A worker-scoped factory may only depend on other worker-scoped resources;
-reaching for a task-scoped one throws (it has no job to bind to). Task-scoped
-factories may depend on either.
+Worker-scoped and pooled factories may only depend on worker-scoped resources;
+reaching for anything shorter-lived throws (it has no job to bind to).
+Task-scoped factories may depend on any scope.
 
 ## Teardown
 
