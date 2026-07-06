@@ -1,0 +1,115 @@
+---
+title: Tasks
+description: "Describe tasks with Task.of, attach per-task defaults, and bind handlers."
+---
+
+A task is a named unit of work. The name is the contract: producers enqueue by
+name, workers execute the bound handler. In Java a task is described by an
+immutable `Task<T>` — the name plus the type its payload deserializes to.
+
+```java
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class);
+```
+
+For generic payloads that a `Class` token can't express, use a Jackson
+`TypeReference`:
+
+```java
+Task<Map<String, Object>> sendEmail =
+        Task.of("send_email", new TypeReference<Map<String, Object>>() {});
+```
+
+## Per-task defaults
+
+Fluent methods attach default enqueue options; each returns a new descriptor
+(the type is immutable):
+
+```java
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class)
+        .queue("emails")
+        .priority(5)
+        .retries(3)
+        .timeout(Duration.ofSeconds(30))
+        .delay(Duration.ofSeconds(10));
+```
+
+| Method | Description |
+|---|---|
+| `queue(name)` | Route jobs to a named queue ([queues](/java/guides/core/queues)). |
+| `priority(n)` | Higher dequeues first within a queue. |
+| `retries(n)` / `maxRetries(n)` | Attempts before dead-lettering. |
+| `timeout(duration)` / `timeoutMs(ms)` | Per-attempt timeout. |
+| `delay(duration)` / `delayMs(ms)` | Delay first execution. |
+| `retryPolicy(policy)` | Retry-backoff curve (below). |
+| `codecs(names...)` | Named payload codecs applied to this task's payload. |
+| `withOptions(options)` | Replace the defaults with an `EnqueueOptions` wholesale. |
+
+`RetryPolicy` shapes the wait between attempts — the budget still comes from
+`retries`:
+
+```java
+Task<Order> settle = Task.of("settle", Order.class)
+        .retries(5)
+        .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(1), Duration.ofMinutes(1)));
+// or exact per-attempt delays, applied without jitter:
+Task<Order> poll = Task.of("poll", Order.class)
+        .retries(3)
+        .retryPolicy(RetryPolicy.delays(Duration.ofSeconds(5), Duration.ofSeconds(30), Duration.ofMinutes(2)));
+```
+
+The core scheduler owns retry execution, so retries stay durable and survive
+worker crashes. Retry policies are registered with the worker on `start()`.
+
+## Enqueue and bind
+
+Producers enqueue against the descriptor (or a bare name); workers bind the
+function:
+
+```java
+String id = taskito.enqueue(sendEmail, payload);        // typed
+String id2 = taskito.enqueue("send_email", payload);    // by name, default options
+
+try (Worker worker = taskito.worker()
+        .handle(sendEmail, p -> deliver(p))             // Task + TaskFunction
+        .handle("resize", ImageJob.class, p -> resize(p)) // name + payload type
+        .start()) { ... }
+```
+
+A handler is a `TaskFunction<T, R>`: it receives the deserialized payload and
+returns a result (or `null`). The result is serialized and stored as the job
+result. `Handler.of(task, fn)` pairs the two for registration via
+`register(handler)` or a `HandlerRegistry`.
+
+## Typed tasks from TaskHandler
+
+Annotate handler methods with `@TaskHandler`; the compile-time processor
+(`org.byteveda:taskito-processor`) generates a `<Class>Tasks` companion with a
+typed `Task` constant per method plus a `bind(...)` — name declared once, full
+generics, zero runtime reflection:
+
+```java
+class EmailTasks {
+    @TaskHandler("send_email")          // explicit name
+    String send(EmailPayload p) { ... }
+
+    @TaskHandler                        // name defaults to "report"
+    Report report(List<Metric> metrics) { ... }
+}
+
+// generated EmailTasksTasks:
+String id = taskito.enqueue(EmailTasksTasks.SEND, payload);
+
+taskito.worker()
+        .apply(b -> EmailTasksTasks.bind(b, new EmailTasks()))
+        .start();
+```
+
+The annotation also accepts `queue`, `maxRetries`, `timeoutMs`, and `priority`
+for per-task defaults. See
+[installation](/java/getting-started/installation) for the processor setup.
+
+<Callout type="info">
+  Register a handler for every task a worker's queues can carry — a job whose
+  task has no handler on the claiming worker fails with "no handler
+  registered". Re-registering a task name replaces the previous handler.
+</Callout>

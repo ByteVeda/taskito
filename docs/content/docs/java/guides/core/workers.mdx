@@ -1,0 +1,83 @@
+---
+title: Workers
+description: "Build, run, and stop workers; thread pools, events, graceful shutdown."
+---
+
+A worker polls storage, claims due jobs, dispatches them to bound handlers, and
+writes results back. Build one from the client:
+
+```java
+Worker worker = taskito.worker()
+        .handle(add, p -> p.get("a") + p.get("b"))
+        .queues("default")
+        .concurrency(4)
+        .start();
+// ... later
+worker.close(); // stop dispatch, drain in-flight jobs, free the native worker
+```
+
+`start()` returns immediately; scheduling runs in the background on the Rust
+core, and handlers execute on a Java thread pool. The worker registers itself
+and heartbeats, so it appears in `listWorkers()` and on the dashboard;
+`close()` unregisters it.
+
+## Builder options
+
+| Option | Description |
+|---|---|
+| `handle(task, fn)` | Bind a handler ([tasks](/java/guides/core/tasks)). |
+| `queues(names...)` | Queue names to serve (default `"default"`). |
+| `concurrency(n)` | Fixed handler-thread count; `0` (default) uses a cached pool. |
+| `channelCapacity(n)` | In-flight dispatch buffer (default 128). |
+| `batchSize(n)` | Jobs claimed per poll (default 1) — see [execution model](/java/guides/core/execution-model). |
+| `autoscale(options)` | Resize the pool between min/max threads by queue depth. |
+| `mesh(options)` | Join a work-stealing mesh. |
+| `on(event, listener)` | Subscribe to job outcomes (below). |
+| `trackWorkflows()` | Drive [workflow](/java/guides/workflows) bookkeeping from this worker's outcomes. |
+| `apply(customizer)` | Apply a builder customizer (e.g. a generated `XxxTasks.bind`). |
+
+## Events
+
+Outcome listeners fire when the core decides a job's result:
+
+```java
+taskito.worker()
+        .handle(add, p -> compute(p))
+        .on(EventName.SUCCESS, e -> log.info("done: " + e.jobId))
+        .on(EventName.DEAD, e -> alert(e.jobId, e.error))
+        .start();
+```
+
+`EventName` values: `SUCCESS`, `RETRY`, `DEAD`, `CANCELLED`. For richer hooks
+(before/after execution, enqueue-time), use
+[middleware](/java/guides/extensibility/middleware).
+
+## Graceful shutdown
+
+`Worker` is `AutoCloseable`. `close()` stops scheduling, lets in-flight
+handlers finish (30 s grace, then interrupt), then frees the native worker;
+`stop()` only stops dispatch. `awaitShutdown()` blocks until `close()` is
+called — the usual service `main` wires it to a shutdown hook:
+
+```java
+Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
+Worker worker = taskito.worker().handle(add, p -> compute(p)).start();
+
+Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+    worker.close();
+    taskito.close();
+}));
+worker.awaitShutdown();
+```
+
+<Callout type="warn">
+  Don't put the worker in try-with-resources *and* call `awaitShutdown()`
+  inside the block — the block can't exit to trigger `close()`, so it
+  deadlocks. Use try-with-resources for bounded work (tests), the shutdown-hook
+  pattern for services.
+</Callout>
+
+<Callout type="info">
+  Producers and workers only share storage. Enqueue from a web process and run
+  workers from a separate process pointed at the same file / DSN.
+</Callout>

@@ -1,0 +1,59 @@
+---
+title: Enqueue options
+description: "Priority, delay, idempotency, metadata, and queue at enqueue time."
+---
+
+`EnqueueOptions` sets per-job options; pass it as the third argument to
+`enqueue`. Unset fields fall back to the task's defaults, then to the core's.
+
+```java
+taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
+        .queue("emails")
+        .priority(5)
+        .delay(Duration.ofSeconds(30))
+        .uniqueKey("welcome:" + user.id())
+        .metadata("source=signup")
+        .build());
+```
+
+| Option | Description |
+|---|---|
+| `queue` | The queue name to route to. |
+| `priority` | Higher dequeues first within a queue. |
+| `maxRetries` | Override the task's retry budget for this job. |
+| `timeout(duration)` / `timeoutMs` | Override the per-attempt timeout for this job. |
+| `delay(duration)` / `delayMs` | Delay first execution (scheduled run). |
+| `uniqueKey` | Idempotency key — a duplicate enqueue is a no-op while the first job is pending/running. |
+| `metadata` | Free-form string stored with the job (surfaces on the dashboard / inspection). |
+| `namespace` | Partition the store — jobs are only visible to clients/workers in the same namespace. |
+
+`toBuilder()` derives a modified copy from an existing instance, and the fluent
+`Task` methods ([tasks](/java/guides/core/tasks#per-task-defaults)) cover the
+common cases without touching the builder.
+
+## Idempotency
+
+`uniqueKey` dedupes concurrent producers — only one job runs for a given key
+while an earlier one is still pending or running. `jobId(key)` is an alias in
+the guide's vocabulary. See
+[idempotency](/java/guides/reliability/idempotency).
+
+## Delayed jobs
+
+`delay` schedules the first attempt in the future; the scheduler picks it up
+when due. For recurring schedules use
+[periodic tasks](/java/guides/core/scheduling).
+
+## Batch enqueue
+
+`enqueueMany` inserts many jobs of one task in a single storage call. Payloads
+share one `EnqueueOptions`; it returns the new ids in input order.
+
+```java
+List<String> ids = taskito.enqueueMany(resize, List.of(a, b, c),
+        EnqueueOptions.builder().priority(5).build());
+```
+
+A `uniqueKey` on the batch dedupes there too: a payload whose key already has
+an active job resolves to the existing job's id instead of failing the batch.
+`enqueueAll` is an alias of `enqueueMany`.
