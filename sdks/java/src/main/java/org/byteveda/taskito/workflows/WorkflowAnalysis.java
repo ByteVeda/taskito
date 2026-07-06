@@ -55,7 +55,7 @@ public final class WorkflowAnalysis {
             String node = ready.poll();
             order.add(node);
             for (String next : successors.getOrDefault(node, List.of())) {
-                indegree.merge(next, -1, Integer::sum);
+                indegree.merge(next, -1, (count, delta) -> count + delta);
                 if (indegree.get(next) == 0) {
                     ready.add(next);
                 }
