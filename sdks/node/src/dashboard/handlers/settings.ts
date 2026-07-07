@@ -2,8 +2,8 @@
 // strings to the storage layer; the SPA stores JSON blobs (branding,
 // integrations, external links).
 
-import type { Queue } from "../index";
-import { badRequest, notFound } from "./errors";
+import type { Queue } from "../../index";
+import { BadRequestError, NotFoundError } from "../errors";
 
 const MAX_KEY_LENGTH = 256;
 const MAX_VALUE_LENGTH = 64 * 1024; // 64 KiB — enough for any dashboard config blob
@@ -19,16 +19,16 @@ const isProtected = (key: string): boolean => PROTECTED_PREFIXES.some((p) => key
 
 function validateKey(key: string): void {
   if (!key) {
-    throw badRequest("setting key must not be empty");
+    throw new BadRequestError("setting key must not be empty");
   }
   if (key.length > MAX_KEY_LENGTH) {
-    throw badRequest(`setting key exceeds ${MAX_KEY_LENGTH} characters`);
+    throw new BadRequestError(`setting key exceeds ${MAX_KEY_LENGTH} characters`);
   }
   if ([...key].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) {
-    throw badRequest("setting key must not contain control characters");
+    throw new BadRequestError("setting key must not contain control characters");
   }
   if (isProtected(key)) {
-    throw badRequest("setting key is reserved");
+    throw new BadRequestError("setting key is reserved");
   }
 }
 
@@ -42,11 +42,11 @@ export function listSettings(queue: Queue): Record<string, string> {
 /** A single setting, or 404. Protected keys read as absent. */
 export function getSetting(queue: Queue, key: string) {
   if (isProtected(key)) {
-    throw notFound(`setting '${key}' not found`);
+    throw new NotFoundError(`setting '${key}' not found`);
   }
   const value = queue.getSetting(key);
   if (value === null) {
-    throw notFound(`setting '${key}' not found`);
+    throw new NotFoundError(`setting '${key}' not found`);
   }
   return { key, value };
 }
@@ -55,14 +55,14 @@ export function getSetting(queue: Queue, key: string) {
 export function putSetting(queue: Queue, key: string, body: unknown) {
   validateKey(key);
   if (!body || typeof body !== "object" || !("value" in body)) {
-    throw badRequest("body must be a JSON object with a 'value' field");
+    throw new BadRequestError("body must be a JSON object with a 'value' field");
   }
   const raw = (body as { value: unknown }).value;
   // Accept any JSON-serialisable type — re-encode for storage so callers
   // don't need to stringify themselves.
   const value = typeof raw === "string" ? raw : JSON.stringify(raw);
   if (value.length > MAX_VALUE_LENGTH) {
-    throw badRequest(`setting value exceeds ${MAX_VALUE_LENGTH} bytes`);
+    throw new BadRequestError(`setting value exceeds ${MAX_VALUE_LENGTH} bytes`);
   }
   queue.setSetting(key, value);
   return { key, value };
@@ -71,7 +71,7 @@ export function putSetting(queue: Queue, key: string, body: unknown) {
 /** Delete a setting. Returns `{deleted: bool}`. Protected keys read as absent. */
 export function deleteSetting(queue: Queue, key: string) {
   if (isProtected(key)) {
-    throw notFound(`setting '${key}' not found`);
+    throw new NotFoundError(`setting '${key}' not found`);
   }
   return { deleted: queue.deleteSetting(key) };
 }

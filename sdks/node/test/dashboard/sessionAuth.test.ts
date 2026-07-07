@@ -12,7 +12,7 @@ import {
   bootstrapAdminFromEnv,
   hashPassword,
   verifyPassword,
-} from "../../src/dashboard/authStore";
+} from "../../src/dashboard/auth";
 import { authedHeaders, seedAdminAndSession } from "../../src/dashboard/testing";
 import { Queue, serveDashboard } from "../../src/index";
 

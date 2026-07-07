@@ -1,9 +1,9 @@
 // Map the SDK's camelCase shapes to the snake_case JSON contract the React SPA
 // (`dashboard/`) expects. Timestamps are Unix milliseconds throughout.
 
-import type { DeadJob, Job, WorkerInfo } from "../types";
-import type { Delivery, Webhook } from "../webhooks";
-import type { WorkflowNode, WorkflowRun } from "../workflows";
+import type { DeadJob, Job, WorkerInfo } from "../../types";
+import type { Delivery, Webhook } from "../../webhooks";
+import type { WorkflowNode, WorkflowRun } from "../../workflows";
 
 /** Replace header values with a mask so outbound credentials aren't exposed. */
 function maskHeaderValues(headers: Record<string, string>): Record<string, string> {

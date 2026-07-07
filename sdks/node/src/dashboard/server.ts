@@ -12,24 +12,22 @@ import type { Queue } from "../index";
 import { createLogger } from "../utils";
 import { WebhookValidationError } from "../webhooks";
 import {
-  type DashboardAuth,
-  isPublicApiPath,
-  presentedToken,
-  setTokenCookie,
-  tokenMatches,
-} from "./auth";
-import { AuthStore } from "./authStore";
-import { DashboardError } from "./errors";
-import { openAuthStatus, openWhoami } from "./handlers";
-import { health, readiness } from "./opsHandlers";
-import {
+  AuthStore,
   buildContext,
   CSRF_COOKIE,
   csrfValid,
+  type DashboardAuth,
+  isPublicApiPath,
+  presentedToken,
   type RequestContext,
   SESSION_COOKIE,
-} from "./requestContext";
-import { isCsrfExempt, isPublicPath, isStateChangingMethod, requiresAdmin, routes } from "./routes";
+  setTokenCookie,
+  tokenMatches,
+} from "./auth";
+import { DashboardError, ValidationError } from "./errors";
+import { health, openAuthStatus, openWhoami, readiness } from "./handlers";
+import { isCsrfExempt, isPublicPath, isStateChangingMethod, requiresAdmin } from "./policy";
+import { routes } from "./routes";
 import { StaticAssets } from "./static";
 
 const log = createLogger("dashboard");
@@ -188,7 +186,7 @@ async function runRoute(
         sendJson(res, error.status, { error: error.message });
         return;
       }
-      if (error instanceof WebhookValidationError) {
+      if (error instanceof ValidationError || error instanceof WebhookValidationError) {
         sendJson(res, 400, { error: error.message });
         return;
       }

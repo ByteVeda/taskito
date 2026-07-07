@@ -2,7 +2,7 @@
 // the SDK's own tests; not exported from the package barrel.
 
 import type { Queue } from "../index";
-import { AuthStore, type DashboardSession } from "./authStore";
+import { AuthStore, type DashboardSession } from "./auth";
 
 export interface SeededAuth {
   session: DashboardSession;

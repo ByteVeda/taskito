@@ -13,8 +13,9 @@
 
 import { pbkdf2 as pbkdf2Cb, randomBytes, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import type { Queue } from "../index";
-import { createLogger } from "../utils";
+import type { Queue } from "../../index";
+import { createLogger } from "../../utils";
+import { ValidationError } from "../errors";
 
 const log = createLogger("dashboard");
 const pbkdf2 = promisify(pbkdf2Cb);
@@ -128,28 +129,28 @@ const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 function validateUsername(username: string): void {
   if (!username) {
-    throw new Error("username must not be empty");
+    throw new ValidationError("username must not be empty");
   }
   if (username.length > USERNAME_MAX_LEN) {
-    throw new Error(`username must be <= ${USERNAME_MAX_LEN} chars`);
+    throw new ValidationError(`username must be <= ${USERNAME_MAX_LEN} chars`);
   }
   if (!USERNAME_RE.test(username)) {
-    throw new Error("username may only contain letters, digits, '.', '_', or '-'");
+    throw new ValidationError("username may only contain letters, digits, '.', '_', or '-'");
   }
 }
 
 function validatePassword(password: string): void {
   if (password.length < PASSWORD_MIN_LEN) {
-    throw new Error(`password must be >= ${PASSWORD_MIN_LEN} chars`);
+    throw new ValidationError(`password must be >= ${PASSWORD_MIN_LEN} chars`);
   }
   if (password.length > PASSWORD_MAX_LEN) {
-    throw new Error(`password must be <= ${PASSWORD_MAX_LEN} chars`);
+    throw new ValidationError(`password must be <= ${PASSWORD_MAX_LEN} chars`);
   }
 }
 
 function validateRole(role: string): void {
   if (!VALID_ROLES.has(role)) {
-    throw new Error(`role must be one of ${[...VALID_ROLES].sort().join(", ")}`);
+    throw new ValidationError(`role must be one of ${[...VALID_ROLES].sort().join(", ")}`);
   }
 }
 
@@ -238,7 +239,7 @@ export class AuthStore {
     validateRole(role);
     const users = this.loadUsers();
     if (users[username]) {
-      throw new Error(`user '${username}' already exists`);
+      throw new ValidationError(`user '${username}' already exists`);
     }
     users[username] = {
       password_hash: await hashPassword(password),
@@ -255,7 +256,7 @@ export class AuthStore {
     const users = this.loadUsers();
     const row = users[username];
     if (!row) {
-      throw new Error(`user '${username}' does not exist`);
+      throw new ValidationError(`user '${username}' does not exist`);
     }
     row.password_hash = await hashPassword(newPassword);
     this.saveUsers(users);

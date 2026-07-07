@@ -1,11 +1,7 @@
 import type { Queue } from "../index";
-import * as auth from "./authHandlers";
+import type { RequestContext } from "./auth";
+import * as auth from "./auth";
 import * as h from "./handlers";
-import * as middleware from "./middlewareHandlers";
-import * as ops from "./opsHandlers";
-import * as overrides from "./overridesHandlers";
-import type { RequestContext } from "./requestContext";
-import * as settings from "./settingsHandlers";
 
 export interface Route {
   method: string;
@@ -17,44 +13,6 @@ export interface Route {
     body: unknown,
     ctx: RequestContext,
   ) => unknown | Promise<unknown>;
-}
-
-// ── Auth policy ─────────────────────────────────────────────────────────
-
-/** Exact paths that bypass the session/CSRF gate. */
-export const PUBLIC_PATHS = new Set([
-  "/api/auth/status",
-  "/api/auth/login",
-  "/api/auth/setup",
-  "/api/auth/providers",
-  "/health",
-  "/readiness",
-  "/metrics",
-]);
-
-/** Prefixes that bypass auth — OAuth paths carry a provider slot in the URL. */
-export const PUBLIC_PATH_PREFIXES = ["/api/auth/oauth/start/", "/api/auth/oauth/callback/"];
-
-/** State-changing paths a non-admin may call on their own session. */
-const SELF_SERVICE_PATHS = new Set(["/api/auth/logout", "/api/auth/change-password"]);
-
-/** Paths exempt from CSRF because no session exists yet. */
-const CSRF_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/setup"]);
-
-export function isPublicPath(path: string): boolean {
-  return PUBLIC_PATHS.has(path) || PUBLIC_PATH_PREFIXES.some((p) => path.startsWith(p));
-}
-
-export function isStateChangingMethod(method: string): boolean {
-  return method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH";
-}
-
-export function isCsrfExempt(path: string): boolean {
-  return CSRF_EXEMPT_PATHS.has(path);
-}
-
-export function requiresAdmin(path: string, method: string): boolean {
-  return isStateChangingMethod(method) && !SELF_SERVICE_PATHS.has(path);
 }
 
 const id = (params: string[]): string => params[0] ?? "";
@@ -109,71 +67,71 @@ export const routes: Route[] = [
     pattern: /^\/api\/dead-letters\/purge$/,
     handle: (q) => h.purgeDeadLetters(q),
   },
-  { method: "GET", pattern: /^\/api\/settings$/, handle: (q) => settings.listSettings(q) },
+  { method: "GET", pattern: /^\/api\/settings$/, handle: (q) => h.listSettings(q) },
   {
     method: "GET",
     pattern: /^\/api\/settings\/(.+)$/,
-    handle: (q, _url, p) => settings.getSetting(q, id(p)),
+    handle: (q, _url, p) => h.getSetting(q, id(p)),
   },
   {
     method: "PUT",
     pattern: /^\/api\/settings\/(.+)$/,
-    handle: (q, _url, p, body) => settings.putSetting(q, id(p), body),
+    handle: (q, _url, p, body) => h.putSetting(q, id(p), body),
   },
   {
     method: "DELETE",
     pattern: /^\/api\/settings\/(.+)$/,
-    handle: (q, _url, p) => settings.deleteSetting(q, id(p)),
+    handle: (q, _url, p) => h.deleteSetting(q, id(p)),
   },
-  { method: "GET", pattern: /^\/api\/scaler$/, handle: (q, url) => ops.scaler(q, url) },
-  { method: "GET", pattern: /^\/api\/resources$/, handle: (q) => ops.resourceStatus(q) },
-  { method: "GET", pattern: /^\/api\/tasks$/, handle: (q) => overrides.listTasks(q) },
-  { method: "GET", pattern: /^\/api\/queues$/, handle: (q) => overrides.listQueues(q) },
+  { method: "GET", pattern: /^\/api\/scaler$/, handle: (q, url) => h.scaler(q, url) },
+  { method: "GET", pattern: /^\/api\/resources$/, handle: (q) => h.resourceStatus(q) },
+  { method: "GET", pattern: /^\/api\/tasks$/, handle: (q) => h.listTasks(q) },
+  { method: "GET", pattern: /^\/api\/queues$/, handle: (q) => h.listQueues(q) },
   {
     method: "GET",
     pattern: /^\/api\/tasks\/([^/]+)\/override$/,
-    handle: (q, _url, p) => overrides.getTaskOverride(q, id(p)),
+    handle: (q, _url, p) => h.getTaskOverride(q, id(p)),
   },
   {
     method: "PUT",
     pattern: /^\/api\/tasks\/([^/]+)\/override$/,
-    handle: (q, _url, p, body) => overrides.putTaskOverride(q, id(p), body),
+    handle: (q, _url, p, body) => h.putTaskOverride(q, id(p), body),
   },
   {
     method: "DELETE",
     pattern: /^\/api\/tasks\/([^/]+)\/override$/,
-    handle: (q, _url, p) => overrides.deleteTaskOverride(q, id(p)),
+    handle: (q, _url, p) => h.deleteTaskOverride(q, id(p)),
   },
   {
     method: "GET",
     pattern: /^\/api\/queues\/([^/]+)\/override$/,
-    handle: (q, _url, p) => overrides.getQueueOverride(q, id(p)),
+    handle: (q, _url, p) => h.getQueueOverride(q, id(p)),
   },
   {
     method: "PUT",
     pattern: /^\/api\/queues\/([^/]+)\/override$/,
-    handle: (q, _url, p, body) => overrides.putQueueOverride(q, id(p), body),
+    handle: (q, _url, p, body) => h.putQueueOverride(q, id(p), body),
   },
   {
     method: "DELETE",
     pattern: /^\/api\/queues\/([^/]+)\/override$/,
-    handle: (q, _url, p) => overrides.deleteQueueOverride(q, id(p)),
+    handle: (q, _url, p) => h.deleteQueueOverride(q, id(p)),
   },
-  { method: "GET", pattern: /^\/api\/middleware$/, handle: (q) => middleware.listMiddleware(q) },
+  { method: "GET", pattern: /^\/api\/middleware$/, handle: (q) => h.listMiddleware(q) },
   {
     method: "GET",
     pattern: /^\/api\/tasks\/([^/]+)\/middleware$/,
-    handle: (q, _url, p) => middleware.getTaskMiddleware(q, id(p)),
+    handle: (q, _url, p) => h.getTaskMiddleware(q, id(p)),
   },
   {
     method: "PUT",
     pattern: /^\/api\/tasks\/([^/]+)\/middleware\/([^/]+)$/,
-    handle: (q, _url, p, body) => middleware.putTaskMiddleware(q, id(p), p[1] ?? "", body),
+    handle: (q, _url, p, body) => h.putTaskMiddleware(q, id(p), p[1] ?? "", body),
   },
   {
     method: "DELETE",
     pattern: /^\/api\/tasks\/([^/]+)\/middleware$/,
-    handle: (q, _url, p) => middleware.deleteTaskMiddleware(q, id(p)),
+    handle: (q, _url, p) => h.deleteTaskMiddleware(q, id(p)),
   },
   { method: "GET", pattern: /^\/api\/metrics$/, handle: (q, url) => h.metrics(q, url) },
   {

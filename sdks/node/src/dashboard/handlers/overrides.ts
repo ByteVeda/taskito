@@ -1,7 +1,7 @@
 // Task & queue override endpoints.
 
-import type { Queue } from "../index";
-import { badRequest, notFound } from "./errors";
+import type { Queue } from "../../index";
+import { BadRequestError, NotFoundError } from "../errors";
 
 /** Every registered task with registration defaults + active override. */
 export function listTasks(queue: Queue) {
@@ -14,7 +14,7 @@ export function listQueues(queue: Queue) {
 
 function requireObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw badRequest("body must be a JSON object");
+    throw new BadRequestError("body must be a JSON object");
   }
   return body as Record<string, unknown>;
 }
@@ -24,19 +24,14 @@ function requireObject(body: unknown): Record<string, unknown> {
 export function getTaskOverride(queue: Queue, taskName: string) {
   const override = queue.getTaskOverride(taskName);
   if (!override) {
-    throw notFound(`no override set for task '${taskName}'`);
+    throw new NotFoundError(`no override set for task '${taskName}'`);
   }
   return override;
 }
 
+// Store-level ValidationError propagates to the server, which maps it to 400.
 export function putTaskOverride(queue: Queue, taskName: string, body: unknown) {
-  try {
-    return queue.setTaskOverride(taskName, requireObject(body));
-  } catch (error) {
-    throw error instanceof Error && error.name !== "DashboardError"
-      ? badRequest(error.message)
-      : error;
-  }
+  return queue.setTaskOverride(taskName, requireObject(body));
 }
 
 export function deleteTaskOverride(queue: Queue, taskName: string) {
@@ -48,21 +43,14 @@ export function deleteTaskOverride(queue: Queue, taskName: string) {
 export function getQueueOverride(queue: Queue, queueName: string) {
   const override = queue.getQueueOverride(queueName);
   if (!override) {
-    throw notFound(`no override set for queue '${queueName}'`);
+    throw new NotFoundError(`no override set for queue '${queueName}'`);
   }
   return override;
 }
 
 export function putQueueOverride(queue: Queue, queueName: string, body: unknown) {
   const fields = requireObject(body);
-  let override: ReturnType<Queue["setQueueOverride"]>;
-  try {
-    override = queue.setQueueOverride(queueName, fields);
-  } catch (error) {
-    throw error instanceof Error && error.name !== "DashboardError"
-      ? badRequest(error.message)
-      : error;
-  }
+  const override = queue.setQueueOverride(queueName, fields);
   // "paused" propagates to running workers immediately via the paused-queues
   // store, independent of the static override consumed at worker startup.
   if ("paused" in fields) {

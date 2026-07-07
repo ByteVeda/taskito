@@ -2,10 +2,11 @@
 // `undefined` from a handler means 404.
 
 import { randomBytes } from "node:crypto";
-import type { EventName } from "../events";
-import type { Queue } from "../index";
-import type { WebhookInput } from "../webhooks";
-import type { WorkflowNode } from "../workflows";
+import type { EventName } from "../../events";
+import type { Queue } from "../../index";
+import type { WebhookInput } from "../../webhooks";
+import type { WorkflowNode } from "../../workflows";
+import { BadRequestError } from "../errors";
 import {
   deadToContract,
   deliveryToContract,
@@ -15,7 +16,6 @@ import {
   workflowNodeToContract,
   workflowRunToContract,
 } from "./contract";
-import { badRequest } from "./errors";
 import { aggregateByTask, bucketTimeseries } from "./metrics";
 
 /** Finite, non-negative number from a query string, or `undefined`. */
@@ -204,7 +204,7 @@ export function webhookDeliveries(queue: Queue, id: string, url: URL) {
   }
   const status = url.searchParams.get("status") ?? undefined;
   if (status && !DELIVERY_STATUSES.has(status)) {
-    throw badRequest("status must be one of: delivered, failed, dead, pending");
+    throw new BadRequestError("status must be one of: delivered, failed, dead, pending");
   }
   const event = url.searchParams.get("event") ?? undefined;
   const limit = Math.min(num(url, "limit") ?? 50, MAX_DELIVERY_PAGE);

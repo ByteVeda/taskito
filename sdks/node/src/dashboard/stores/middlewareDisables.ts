@@ -3,9 +3,10 @@
 // read at every invocation, so toggles take effect on the next job without
 // a worker restart.
 
-import type { Middleware } from "../middleware";
-import { createLogger } from "../utils";
-import type { SettingsAccess } from "./overridesStore";
+import type { Middleware } from "../../middleware";
+import { createLogger } from "../../utils";
+import { ValidationError } from "../errors";
+import type { SettingsAccess } from "./overrides";
 
 const DISABLE_PREFIX = "middleware:disabled:";
 
@@ -67,10 +68,10 @@ export class MiddlewareDisableStore {
   /** Flip a middleware on/off for a task; returns the new disable list. */
   setDisabled(taskName: string, middlewareName: string, disabled: boolean): string[] {
     if (!taskName) {
-      throw new Error("task_name must not be empty");
+      throw new ValidationError("task_name must not be empty");
     }
     if (!middlewareName) {
-      throw new Error("middleware name must not be empty");
+      throw new ValidationError("middleware name must not be empty");
     }
     let current = this.getFor(taskName);
     if (disabled) {

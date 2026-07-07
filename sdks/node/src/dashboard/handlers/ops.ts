@@ -1,7 +1,7 @@
 // Operational endpoints: liveness/readiness probes, the KEDA scaler payload,
 // and worker-resource health aggregated from heartbeats.
 
-import type { Queue } from "../index";
+import type { Queue } from "../../index";
 
 /** Basic liveness check — always ok. */
 export function health() {

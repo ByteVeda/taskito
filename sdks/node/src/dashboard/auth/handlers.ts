@@ -2,15 +2,15 @@
 // Cookie side effects (set/clear) are applied by the server, which reads the
 // session off login results and redacts the raw token from the JSON body.
 
-import type { Queue } from "../index";
-import { AuthStore, type DashboardSession, type DashboardUser } from "./authStore";
-import { badRequest, notFound } from "./errors";
-import type { RequestContext } from "./requestContext";
+import type { Queue } from "../../index";
+import { BadRequestError, NotFoundError } from "../errors";
+import type { RequestContext } from "./context";
+import { AuthStore, type DashboardSession, type DashboardUser } from "./store";
 
 function requireField(body: unknown, key: string): string {
   const value = (body as Record<string, unknown> | undefined)?.[key];
   if (typeof value !== "string" || !value) {
-    throw badRequest(`missing or empty field '${key}'`);
+    throw new BadRequestError(`missing or empty field '${key}'`);
   }
   return value;
 }
@@ -42,16 +42,12 @@ export function authStatus(queue: Queue) {
 export async function setup(queue: Queue, body: unknown) {
   const store = new AuthStore(queue);
   if (store.countUsers() > 0) {
-    throw badRequest("setup already complete");
+    throw new BadRequestError("setup already complete");
   }
   const username = requireField(body, "username");
   const password = requireField(body, "password");
-  let user: DashboardUser;
-  try {
-    user = await store.createUser(username, password, "admin");
-  } catch (error) {
-    throw badRequest(error instanceof Error ? error.message : "invalid input");
-  }
+  // Store-level ValidationError propagates to the server, which maps it to 400.
+  const user = await store.createUser(username, password, "admin");
   return { user: serializeUser(user) };
 }
 
@@ -63,13 +59,13 @@ export async function setup(queue: Queue, body: unknown) {
 export async function login(queue: Queue, body: unknown) {
   const store = new AuthStore(queue);
   if (store.countUsers() === 0) {
-    throw badRequest("setup_required");
+    throw new BadRequestError("setup_required");
   }
   const username = requireField(body, "username");
   const password = requireField(body, "password");
   const user = await store.authenticate(username, password);
   if (!user) {
-    throw badRequest("invalid_credentials");
+    throw new BadRequestError("invalid_credentials");
   }
   const session = store.createSession(user);
   return {
@@ -89,14 +85,14 @@ export function logout(queue: Queue, ctx: RequestContext) {
 /** The current user, or 404 `not_authenticated` without a valid session. */
 export function whoami(queue: Queue, ctx: RequestContext) {
   if (!ctx.session) {
-    throw notFound("not_authenticated");
+    throw new NotFoundError("not_authenticated");
   }
   const store = new AuthStore(queue);
   const user = store.getUser(ctx.session.username);
   if (!user) {
     // Session valid but user deleted — invalidate and treat as logged out.
     store.deleteSession(ctx.session.token);
-    throw notFound("not_authenticated");
+    throw new NotFoundError("not_authenticated");
   }
   return {
     user: serializeUser(user),
@@ -108,19 +104,15 @@ export function whoami(queue: Queue, ctx: RequestContext) {
 /** Change the current user's password. Requires the old password. */
 export async function changePassword(queue: Queue, body: unknown, ctx: RequestContext) {
   if (!ctx.session) {
-    throw badRequest("not_authenticated");
+    throw new BadRequestError("not_authenticated");
   }
   const oldPassword = requireField(body, "old_password");
   const newPassword = requireField(body, "new_password");
   const store = new AuthStore(queue);
   const user = await store.authenticate(ctx.session.username, oldPassword);
   if (!user) {
-    throw badRequest("invalid_credentials");
+    throw new BadRequestError("invalid_credentials");
   }
-  try {
-    await store.updatePassword(user.username, newPassword);
-  } catch (error) {
-    throw badRequest(error instanceof Error ? error.message : "invalid input");
-  }
+  await store.updatePassword(user.username, newPassword);
   return { ok: true };
 }

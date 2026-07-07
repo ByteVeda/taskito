@@ -9,8 +9,9 @@
 // Overrides are applied at worker startup; changes do not affect a running
 // worker until it restarts (queue `paused` propagates live via pause/resume).
 
-import type { TaskConfigInput } from "../native";
-import { createLogger } from "../utils";
+import type { TaskConfigInput } from "../../native";
+import { createLogger } from "../../utils";
+import { ValidationError } from "../errors";
 
 const TASK_PREFIX = "overrides:task:";
 const QUEUE_PREFIX = "overrides:queue:";
@@ -67,11 +68,11 @@ function validateCommon(fields: Record<string, unknown>): void {
   const rateLimit = fields.rate_limit;
   if (rateLimit !== undefined && rateLimit !== null) {
     if (typeof rateLimit !== "string" || !rateLimit) {
-      throw new Error("rate_limit must be a non-empty string like '100/m'");
+      throw new ValidationError("rate_limit must be a non-empty string like '100/m'");
     }
     // Cheap shape check; rate-limit parsing happens in the core.
     if (!rateLimit.includes("/")) {
-      throw new Error("rate_limit must contain a unit, e.g. '10/s', '100/m', '3600/h'");
+      throw new ValidationError("rate_limit must contain a unit, e.g. '10/s', '100/m', '3600/h'");
     }
   }
   validateInt(fields, "max_concurrent", 0);
@@ -81,7 +82,7 @@ function validateCommon(fields: Record<string, unknown>): void {
 function validateTaskFields(fields: Record<string, unknown>): void {
   const unknown = Object.keys(fields).filter((k) => !TASK_OVERRIDE_FIELDS.has(k));
   if (unknown.length > 0) {
-    throw new Error(`unknown task override fields: ${unknown.sort().join(", ")}`);
+    throw new ValidationError(`unknown task override fields: ${unknown.sort().join(", ")}`);
   }
   validateCommon(fields);
   validateInt(fields, "max_retries", 0);
@@ -93,7 +94,7 @@ function validateTaskFields(fields: Record<string, unknown>): void {
 function validateQueueFields(fields: Record<string, unknown>): void {
   const unknown = Object.keys(fields).filter((k) => !QUEUE_OVERRIDE_FIELDS.has(k));
   if (unknown.length > 0) {
-    throw new Error(`unknown queue override fields: ${unknown.sort().join(", ")}`);
+    throw new ValidationError(`unknown queue override fields: ${unknown.sort().join(", ")}`);
   }
   validateCommon(fields);
 }
@@ -104,10 +105,10 @@ function validateInt(fields: Record<string, unknown>, name: string, minimum?: nu
     return;
   }
   if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw new Error(`${name} must be an integer`);
+    throw new ValidationError(`${name} must be an integer`);
   }
   if (minimum !== undefined && value < minimum) {
-    throw new Error(`${name} must be >= ${minimum}`);
+    throw new ValidationError(`${name} must be >= ${minimum}`);
   }
 }
 
@@ -117,17 +118,17 @@ function validateNumber(fields: Record<string, unknown>, name: string, minimum?:
     return;
   }
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${name} must be a number`);
+    throw new ValidationError(`${name} must be a number`);
   }
   if (minimum !== undefined && value < minimum) {
-    throw new Error(`${name} must be >= ${minimum}`);
+    throw new ValidationError(`${name} must be >= ${minimum}`);
   }
 }
 
 function validateBool(fields: Record<string, unknown>, name: string): void {
   const value = fields[name];
   if (value !== undefined && value !== null && typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean`);
+    throw new ValidationError(`${name} must be a boolean`);
   }
 }
 
@@ -172,7 +173,7 @@ export class OverridesStore {
   setTask(taskName: string, fields: Record<string, unknown>): TaskOverride {
     validateTaskFields(fields);
     if (!taskName) {
-      throw new Error("task_name must not be empty");
+      throw new ValidationError("task_name must not be empty");
     }
     const merged = this.mergeRow(this.settings.getSetting(TASK_PREFIX + taskName), fields);
     this.settings.setSetting(TASK_PREFIX + taskName, JSON.stringify(merged));
@@ -204,7 +205,7 @@ export class OverridesStore {
   setQueue(queueName: string, fields: Record<string, unknown>): QueueOverride {
     validateQueueFields(fields);
     if (!queueName) {
-      throw new Error("queue_name must not be empty");
+      throw new ValidationError("queue_name must not be empty");
     }
     const merged = this.mergeRow(this.settings.getSetting(QUEUE_PREFIX + queueName), fields);
     this.settings.setSetting(QUEUE_PREFIX + queueName, JSON.stringify(merged));

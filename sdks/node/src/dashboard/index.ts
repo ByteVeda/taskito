@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { Queue } from "../index";
 import { createLogger } from "../utils";
 import type { DashboardAuth } from "./auth";
-import { bootstrapAdminFromEnv } from "./authStore";
+import { bootstrapAdminFromEnv } from "./auth";
 import { createDashboardServer } from "./server";
 
 const log = createLogger("dashboard");
@@ -65,7 +65,7 @@ export {
   bootstrapAdminFromEnv,
   type DashboardSession,
   type DashboardUser,
-} from "./authStore";
+} from "./auth";
 export {
   createDashboardHandler,
   createDashboardServer,

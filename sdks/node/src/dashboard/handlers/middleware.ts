@@ -1,7 +1,7 @@
 // Middleware discovery + per-task enable/disable endpoints.
 
-import type { Queue } from "../index";
-import { badRequest, notFound } from "./errors";
+import type { Queue } from "../../index";
+import { BadRequestError, NotFoundError } from "../errors";
 
 export function listMiddleware(queue: Queue) {
   return queue.listMiddleware();
@@ -27,12 +27,14 @@ export function putTaskMiddleware(
 ) {
   const enabled = (body as { enabled?: unknown } | undefined)?.enabled;
   if (typeof enabled !== "boolean") {
-    throw badRequest('body must include {"enabled": bool}');
+    throw new BadRequestError('body must include {"enabled": bool}');
   }
   // Confirm the middleware exists so a typo can't write a no-op disable entry.
   const names = new Set(queue.listMiddleware().map((mw) => String(mw.name)));
   if (!names.has(middlewareName)) {
-    throw notFound(`middleware '${middlewareName}' is not registered on task '${taskName}'`);
+    throw new NotFoundError(
+      `middleware '${middlewareName}' is not registered on task '${taskName}'`,
+    );
   }
   const disabled = enabled
     ? queue.enableMiddlewareForTask(taskName, middlewareName)

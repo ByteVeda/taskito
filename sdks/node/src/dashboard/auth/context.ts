@@ -2,7 +2,7 @@
 // the incoming request, handed to handlers that need the calling user.
 
 import type { IncomingMessage } from "node:http";
-import type { DashboardSession } from "./authStore";
+import type { DashboardSession } from "./store";
 
 // Session cookie: HttpOnly + SameSite=Strict — never readable from JS.
 export const SESSION_COOKIE = "taskito_session";

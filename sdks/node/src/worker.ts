@@ -1,10 +1,11 @@
 import { type JobContext, runInContext } from "./context";
-import { MiddlewareDisableStore, middlewareKey } from "./dashboard/middlewareStore";
 import {
   applyQueueOverrides,
   applyTaskOverrides,
+  MiddlewareDisableStore,
+  middlewareKey,
   OverridesStore,
-} from "./dashboard/overridesStore";
+} from "./dashboard/stores";
 import { SerializationError, TaskNotRegisteredError } from "./errors";
 import type { Emitter, EventName, OutcomeEvent } from "./events";
 import type { Middleware, TaskContext } from "./middleware";

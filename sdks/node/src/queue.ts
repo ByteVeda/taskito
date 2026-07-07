@@ -1,7 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { MiddlewareDisableStore, middlewareKey } from "./dashboard/middlewareStore";
-import { OverridesStore, type QueueOverride, type TaskOverride } from "./dashboard/overridesStore";
+import {
+  MiddlewareDisableStore,
+  middlewareKey,
+  OverridesStore,
+  type QueueOverride,
+  type TaskOverride,
+} from "./dashboard/stores";
 import {
   InterceptionError,
   JobCancelledError,
