@@ -47,13 +47,13 @@ class DashboardTest {
                     Collections.singletonMap("a", 1),
                     EnqueueOptions.builder().queue("emails").build());
             try (DashboardServer server = DashboardServer.start(queue, 0)) {
-                int port = server.port();
+                DashboardClient client = new DashboardClient(server.port()).as(DashboardClient.seedAdmin(queue));
 
-                HttpResponse<String> stats = get(port, "/api/stats");
+                HttpResponse<String> stats = client.get("/api/stats");
                 assertEquals(200, stats.statusCode());
                 assertTrue(stats.body().contains("\"pending\":1"));
 
-                HttpResponse<String> jobs = get(port, "/api/jobs?queue=emails");
+                HttpResponse<String> jobs = client.get("/api/jobs?queue=emails");
                 assertTrue(jobs.body().contains("\"task_name\":\"add\""));
                 assertTrue(jobs.body().contains("\"status\":\"pending\""));
             }

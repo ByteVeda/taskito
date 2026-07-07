@@ -261,10 +261,15 @@ public final class Cli {
         @Option(names = "--static", description = "Directory of the prebuilt SPA.")
         String staticDir;
 
+        @Option(
+                names = "--insecure-cookies",
+                description = "Drop the Secure cookie attribute (for local HTTP development).")
+        boolean insecureCookies;
+
         @Override
         public Integer call() throws Exception {
             try (Taskito queue = parent.open();
-                    DashboardServer server = DashboardServer.start(queue, port, token, staticDir)) {
+                    DashboardServer server = DashboardServer.start(queue, port, token, staticDir, !insecureCookies)) {
                 System.out.println("dashboard on http://localhost:" + server.port());
                 new CountDownLatch(1).await();
             }

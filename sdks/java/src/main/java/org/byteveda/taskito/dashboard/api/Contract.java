@@ -1,4 +1,4 @@
-package org.byteveda.taskito.dashboard;
+package org.byteveda.taskito.dashboard.api;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
