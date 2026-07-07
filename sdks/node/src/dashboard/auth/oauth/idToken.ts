@@ -156,11 +156,19 @@ export function validateIdToken(options: {
   if (!audienceOk) {
     throw new IdentityFetchError(`id_token audience mismatch: ${JSON.stringify(aud)}`);
   }
+  // Multi-audience tokens must name this client as the authorized party,
+  // or a token minted for another party in `aud` would be accepted.
+  if (Array.isArray(aud) && aud.length > 1 && claims.azp !== options.clientId) {
+    throw new IdentityFetchError("id_token azp mismatch for multi-audience token");
+  }
   if (options.expectedNonce !== null && claims.nonce !== options.expectedNonce) {
     throw new IdentityFetchError("id_token nonce mismatch");
   }
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000);
-  if (typeof claims.exp === "number" && claims.exp < now - CLOCK_SKEW_SECONDS) {
+  if (typeof claims.exp !== "number") {
+    throw new IdentityFetchError("id_token missing valid 'exp' claim");
+  }
+  if (claims.exp < now - CLOCK_SKEW_SECONDS) {
     throw new IdentityFetchError("id_token expired");
   }
   if (!claims.sub) {
