@@ -525,12 +525,26 @@ body {
   flex: none;
   width: 22px;
   height: 22px;
+  /* Optically center the icon on the first text line. */
+  margin-top: 1px;
   color: var(--indigo-br);
 }
 .callout .cc {
   font-size: 14.5px;
   line-height: 1.6;
   color: var(--txt2);
+}
+/* MDX wraps callout text in <p>; prose margins/size would push it off the
+   icon line and override the callout's tighter type scale. */
+.callout .cc p {
+  font-size: inherit;
+  line-height: inherit;
+}
+.callout .cc > p:first-child {
+  margin-top: 0;
+}
+.callout .cc > p:last-child {
+  margin-bottom: 0;
 }
 .callout .cc strong {
   color: var(--txt);
