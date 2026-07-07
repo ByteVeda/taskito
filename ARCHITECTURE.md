@@ -21,31 +21,33 @@ It is deliberately *not* a tutorial on running Taskito (see the
 
 Taskito is a polyglot system: **one Rust engine underneath, a thin language SDK shell
 on top per host language** — Python via [PyO3](https://pyo3.rs), Node via
-[napi-rs](https://napi.rs). Each shell owns ergonomics and extensibility for its
+[napi-rs](https://napi.rs), Java via [JNI](https://github.com/jni-rs/jni-rs) (with an
+FFM fast-path on JDK 22+). Each shell owns ergonomics and extensibility for its
 language; Rust owns storage, scheduling, dispatch, rate limiting, and worker
 management. A shell talks to the core only through its compiled binding crate
-(`taskito._taskito` for Python, the `.node` addon for Node) — **a shell never reaches
-into core internals, and the core never imports a host-language type except at the
-binding edge.** The `WorkerDispatcher` trait in `taskito-core` is binding-free, so a
-new shell implements one trait against
+(`taskito._taskito` for Python, the `.node` addon for Node, the JNI `.so`/FFM for
+Java) — **a shell never reaches into core internals, and the core never imports a
+host-language type except at the binding edge.** The `WorkerDispatcher` trait in
+`taskito-core` is binding-free, so a new shell implements one trait against
 [`BINDING_CONTRACT.md`](crates/taskito-core/BINDING_CONTRACT.md).
 
 ```text
-┌───────────────────────────────────┐   ┌───────────────────────────────────┐
-│ PYTHON SDK    sdks/python/taskito/│   │ NODE SDK             sdks/node/   │
-│ Queue (app.py) = 15 mixins ·      │   │ Queue/Worker · CLI · dashboard    │
-│ async_support · serializers       │   │ events/middleware · webhooks      │
-│ FEATURE SUBSYSTEMS (pure-Python): │   │ resources · serializers           │
-│ interception resources proxies    │   │ (Node-native equivalents, not     │
-│ workflows contrib batching …      │   │  1:1 ports of Python idioms)      │
-└─────────────────┬─────────────────┘   └─────────────────┬─────────────────┘
-                  │ PyO3 (taskito._taskito)               │ napi-rs (.node addon)
-┌───────────────────────────────────┐   ┌───────────────────────────────────┐
-│ crates/taskito-python/   (PyO3)   │   │ crates/taskito-node/   (napi-rs)  │
-│ py_queue/ · async_worker ·        │   │ JsQueue/JsWorker · dispatcher ·   │
-│ prefork bridge                    │   │ convert/                          │
-└─────────────────┬─────────────────┘   └─────────────────┬─────────────────┘
-                  └───both implement ─┬─ WorkerDispatcher─┘
+┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
+│ PYTHON  sdks/python   │ │ NODE      sdks/node   │ │ JAVA      sdks/java   │
+│ Queue = 15 mixins ·   │ │ Queue/Worker · CLI ·  │ │ Queue→DefaultTaskito  │
+│ async · serializers   │ │ dashboard · events ·  │ │ workflows · DI ·      │
+│ interception ·        │ │ middleware · webhooks │ │ proxies · interception│
+│ resources · proxies   │ │ resources ·           │ │ codecs · spring ·     │
+│ workflows · contrib   │ │ serializers           │ │ processor (@Task)     │
+└───────────────────────┘ └───────────────────────┘ └───────────────────────┘
+    PyO3 (._taskito)           napi-rs (.node)           JNI + FFM (.so)
+┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
+│ taskito-python        │ │ taskito-node          │ │ taskito-java          │
+│ py_queue/ ·           │ │ JsQueue/JsWorker ·    │ │ backend · dispatcher  │
+│ async_worker ·        │ │ dispatcher · convert  │ │ convert · ffi · jvm   │
+│ prefork bridge        │ │                       │ │ worker · mesh         │
+└───────────┬───────────┘ └───────────┬───────────┘ └───────────┬───────────┘
+            └─ all three implement ───┬─ WorkerDispatcher ──────┘
 ┌─────────────────────────────────────┴─────────────────────────────────────┐
 │ RUST CORE        crates/taskito-core/   (no host language)                │
 │ scheduler/ (poll · dispatch · retry · reap · wake)                        │
@@ -60,7 +62,7 @@ new shell implements one trait against
 
   WORKFLOWS    crates/taskito-workflows/ — separate crate, own schema & stores
                (SQLite · Postgres · Redis), surfaced per shell (Python:
-               py_queue/workflow_ops/ · Node: bound in taskito-node)
+               py_queue/workflow_ops/ · Node & Java: bound in their crates)
   MESH         crates/taskito-mesh/ — optional decentralized work-stealing
                overlay (SWIM gossip · hash ring · TCP steal); `mesh` feature
   NATIVE ASYNC taskito-python/src/native_async/ — optional native-async pool
@@ -68,16 +70,17 @@ new shell implements one trait against
 ```
 
 The dependency arrows point **downward only**. `taskito-core` knows nothing about
-Python, Node, PyO3, or napi; each binding crate (`taskito-python`, `taskito-node`)
-depends on `taskito-core`; each SDK package depends on its compiled addon. This
-acyclic shape is the property that keeps the codebase changeable — guard it.
+Python, Node, Java, PyO3, napi, or JNI; each binding crate (`taskito-python`,
+`taskito-node`, `taskito-java`) depends on `taskito-core`; each SDK package depends
+on its compiled addon. This acyclic shape is the property that keeps the codebase
+changeable — guard it.
 
 ---
 
 ## Layers & responsibilities
 
 > Sections 1–2 describe the **Python SDK** (the original, most complete shell).
-> Sections 6–9 cover the shared crates and the **Node SDK**, the second shell.
+> Sections 6–10 cover the shared crates and the **Node** and **Java** SDKs.
 
 ### 1. Python API surface — `sdks/python/taskito/`
 
@@ -136,7 +139,7 @@ feature): `mod.rs`, `inspection.rs`, `worker.rs`, and `workflow_ops/` (lifecycle
 nodes, fan_out, gates, queries, saga). `async_worker.rs` drives the
 `AsyncWorkerPool` with `spawn_blocking` + GIL management. This layer converts
 Python values to Rust and back; it holds **no business logic**. It implements the
-core's `WorkerDispatcher` trait — the same contract the Node binding implements.
+core's `WorkerDispatcher` trait — the same contract the Node and Java bindings implement.
 
 ### 4. Rust core — `crates/taskito-core/`
 
@@ -194,7 +197,24 @@ webhooks, and resource DI. Python-idiom features (proxies, interception) get Nod
 **equivalents**, not 1:1 ports. The DB stays the source of truth, so a Python and a
 Node worker can share one queue.
 
-### 9. Mesh — `crates/taskito-mesh/`
+### 9. Java SDK — `sdks/java/` + `crates/taskito-java/`
+
+The third language shell, peer to Python and Node. `crates/taskito-java/` is a
+[JNI](https://github.com/jni-rs/jni-rs) binding crate (`backend.rs`, `dispatcher.rs`,
+`convert.rs`, `queue/`, `workflows/`, `worker.rs`, `mesh.rs`) that implements the same
+core `WorkerDispatcher` trait, with an FFM fast-path (`ffi.rs`, `ffi_c.rs`) that
+bypasses JNI on JDK 22+. `sdks/java/` is the Gradle project (package
+`org.byteveda.taskito`, baseline JDK 17): a call on `Queue`/`Taskito` routes
+`DefaultTaskito → core.CoreFacade → spi.QueueBackend → internal.JniQueueBackend →
+JNI`, so the JNI seam is the shell's single point of contact with Rust. Feature
+packages mirror the other shells — `workflows/`, `resources/` (DI), `proxies/`,
+`interception/`, `serialization/` (payload codecs), `middleware/`, `webhooks/`,
+`autoscale/`, `contrib/`. Extra Gradle subprojects: `:processor` (compile-time
+`@TaskHandler` processing, GraalVM-clean), `:test-support` (JNI-free
+`InMemoryQueueBackend`), `:spring`, `:graalvm-smoke`. Python-idiom features get Java
+**equivalents**, not 1:1 ports; the DB stays the shared source of truth.
+
+### 10. Mesh — `crates/taskito-mesh/`
 
 Optional (`mesh` feature). A decentralized work-stealing overlay — SWIM gossip
 (UDP), a consistent-hash ring, a local deque, and TCP work-stealing — composed
@@ -211,11 +231,12 @@ violates one as a design regression, not a style nit.
 
 1. **Dependencies point downward only.** SDK → its binding crate → core → storage.
    `taskito-core` must not depend on any binding crate (`taskito-python`,
-   `taskito-node`) or host-language type.
+   `taskito-node`, `taskito-java`) or host-language type.
 2. **Each binding crate is its language's only seam.** A shell touches Rust solely
    via its compiled addon's public surface — no reaching into struct internals. Keep
    the surface contract in sync: `_taskito.pyi` for Python, the generated `.d.ts` for
-   Node. A new language implements `WorkerDispatcher` against `BINDING_CONTRACT.md`.
+   Node, the `spi.QueueBackend` interface for Java. A new language implements
+   `WorkerDispatcher` against `BINDING_CONTRACT.md`.
 3. **Asyncio is confined to `async_support/`** (plus the narrow, documented
    exceptions: `app.py` uses only `iscoroutinefunction`; `contrib/fastapi.py`).
    No inline `import asyncio` to dodge a boundary — split the module instead.
@@ -242,8 +263,8 @@ detailed versions.
 4. Implement it for Redis in `redis_backend/`.
 5. Wire it through the `delegate!` macro in `storage/mod.rs`.
 6. Expose it on each shell that needs it: PyO3 in `crates/taskito-python/src/py_queue/`
-   (then add the signature to `sdks/python/taskito/_taskito.pyi`) and/or napi in
-   `crates/taskito-node/src/queue/`.
+   (then add the signature to `sdks/python/taskito/_taskito.pyi`), napi in
+   `crates/taskito-node/src/queue/`, and/or JNI in `crates/taskito-java/src/queue/`.
 7. Test: a Rust test in `storage/sqlite/tests.rs` + the contract suite (runs against
    all three backends in CI).
 
@@ -268,9 +289,9 @@ detailed versions.
 
 ## Why this scales
 
-The codebase is large (≈25k LOC Python, ≈29k LOC Rust across 5 crates, ≈7k LOC
-Node/TS) but not heavy: no god-objects, an acyclic dependency graph, one binding seam
-per language, and duplication erased by macros. The biggest files are deduplicating
+The codebase is large (≈25k LOC Python, ≈37k LOC Rust across 6 crates, ≈12k LOC Java,
+≈7k LOC Node/TS) but not heavy: no god-objects, an acyclic dependency graph, one
+binding seam per language, and duplication erased by macros. The biggest files are deduplicating
 macros (`diesel_common/jobs.rs`) or inherently complex state machines (saga, scheduler)
 — large because the *problem* is, not because concerns are tangled. Drift comes from
 eroding the six boundary rules above; hold them and the design scales with the
