@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import org.byteveda.taskito.dashboard.DashboardServer;
 import org.byteveda.taskito.errors.ConfigurationException;
 import org.byteveda.taskito.interception.Interceptor;
 import org.byteveda.taskito.internal.JniQueueBackend;
@@ -309,6 +310,18 @@ public interface Taskito extends AutoCloseable {
 
     /** Begin building a worker over this client. */
     Worker.Builder worker();
+
+    // ── Dashboard ───────────────────────────────────────────────────
+
+    /** Start the dashboard HTTP server over this client on {@code port} (0 = ephemeral). */
+    default DashboardServer dashboard(int port) throws IOException {
+        return DashboardServer.start(this, port);
+    }
+
+    /** As {@link #dashboard(int)} but gating {@code /api/*} behind a shared {@code token}. */
+    default DashboardServer dashboard(int port, String token) throws IOException {
+        return DashboardServer.start(this, port, token);
+    }
 
     @Override
     void close();

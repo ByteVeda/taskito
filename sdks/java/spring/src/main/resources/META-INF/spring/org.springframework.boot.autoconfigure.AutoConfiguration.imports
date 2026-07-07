@@ -1,1 +1,2 @@
 org.byteveda.taskito.spring.TaskitoAutoConfiguration
+org.byteveda.taskito.spring.TaskitoDashboardAutoConfiguration
