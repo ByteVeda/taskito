@@ -31,8 +31,9 @@ public final class Notes {
     public static final int MAX_BYTES = 4096;
 
     // Canonical form: keys sorted, compact separators (Jackson's default), non-ASCII emitted raw.
-    private static final ObjectWriter CANONICAL =
-            new ObjectMapper().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true).writer();
+    private static final ObjectWriter CANONICAL = new ObjectMapper()
+            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+            .writer();
 
     private Notes() {}
 

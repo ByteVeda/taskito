@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
-import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.scheduling.PeriodicTask;
 import org.junit.jupiter.api.Test;

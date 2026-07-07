@@ -445,7 +445,8 @@ public final class Worker implements AutoCloseable {
                         config.put("maxDelayMs", policy.maxDelay().toMillis());
                     }
                     if (!policy.customDelays().isEmpty()) {
-                        List<Long> delaysMs = new ArrayList<>(policy.customDelays().size());
+                        List<Long> delaysMs =
+                                new ArrayList<>(policy.customDelays().size());
                         policy.customDelays().forEach(delay -> delaysMs.add(delay.toMillis()));
                         config.put("customDelaysMs", delaysMs);
                     }

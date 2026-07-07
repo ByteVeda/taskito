@@ -21,13 +21,12 @@ class CircuitBreakerTest {
     @Test
     void builderValidatesInputs() {
         assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.of(0));
-        assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder(1).halfOpenProbes(0));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> CircuitBreakerConfig.builder(1).halfOpenSuccessRate(1.5));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> CircuitBreakerConfig.builder(1).window(Duration.ZERO));
+        assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder(1)
+                .halfOpenProbes(0));
+        assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder(1)
+                .halfOpenSuccessRate(1.5));
+        assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder(1)
+                .window(Duration.ZERO));
     }
 
     @Test
@@ -45,9 +44,8 @@ class CircuitBreakerTest {
     void breakerOpensAfterThresholdFailures(@TempDir Path dir) throws Exception {
         try (Taskito queue =
                 Taskito.builder().url(dir.resolve("cb.db").toString()).open()) {
-            Task<String> failing = Task.of("cb.fail", String.class)
-                    .maxRetries(0)
-                    .circuitBreaker(CircuitBreakerConfig.of(2));
+            Task<String> failing =
+                    Task.of("cb.fail", String.class).maxRetries(0).circuitBreaker(CircuitBreakerConfig.of(2));
 
             // Enqueue more jobs than the threshold; once two fail, the breaker opens and gates the rest.
             for (int i = 0; i < 5; i++) {

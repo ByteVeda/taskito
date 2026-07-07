@@ -62,7 +62,8 @@ class DependsOnTest {
             AtomicBoolean bRan = new AtomicBoolean(false);
 
             String idA = queue.enqueue(a, "boom");
-            String idB = queue.enqueue(b, "b", EnqueueOptions.builder().dependsOn(idA).build());
+            String idB = queue.enqueue(
+                    b, "b", EnqueueOptions.builder().dependsOn(idA).build());
 
             try (Worker worker = queue.worker()
                     .handle(a, p -> {

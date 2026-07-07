@@ -59,7 +59,8 @@ class NotesTest {
         // depth 3 leaf is allowed; depth 4 is not.
         Notes.encode(Map.of("a", Map.of("b", Map.of("c", 1))));
         assertThrows(
-                NotesValidationException.class, () -> Notes.encode(Map.of("a", Map.of("b", Map.of("c", Map.of("d", 1))))));
+                NotesValidationException.class,
+                () -> Notes.encode(Map.of("a", Map.of("b", Map.of("c", Map.of("d", 1))))));
     }
 
     @Test
@@ -92,7 +93,8 @@ class NotesTest {
             Map<String, Object> notes = new LinkedHashMap<>();
             notes.put("env", "prod");
             notes.put("attempt", 3);
-            String id = queue.enqueue(task, "hi", EnqueueOptions.builder().notes(notes).build());
+            String id = queue.enqueue(
+                    task, "hi", EnqueueOptions.builder().notes(notes).build());
 
             Job job = queue.getJob(id).orElseThrow();
             assertEquals(notes, job.notesMap().orElseThrow());
