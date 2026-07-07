@@ -109,6 +109,10 @@ export class Worker {
       }
       const args = serializer.deserialize(payload) as unknown[];
       const ctx: TaskContext = { jobId: invocation.id, taskName: invocation.taskName, args };
+      // Resolve the middleware chain BEFORE allocating the cancel poller and
+      // task scope — it reads storage and may throw, and nothing would clean
+      // those up yet.
+      const chain = middlewareFor(invocation.taskName);
 
       // Cooperative cancel signal + job context exposed to the handler.
       const controller = new AbortController();
@@ -151,7 +155,6 @@ export class Worker {
         return task.handler(...args);
       };
 
-      const chain = middlewareFor(invocation.taskName);
       try {
         for (const mw of chain) {
           await mw.before?.(ctx);
