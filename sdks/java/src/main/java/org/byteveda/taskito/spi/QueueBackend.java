@@ -190,6 +190,22 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
     }
 
+    default String listWorkflowRunsJson(String definitionNameOrNull, String stateOrNull, long limit, long offset) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default Optional<String> getWorkflowRunJson(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default String getWorkflowChildrenJson(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
+    default Optional<String> getWorkflowDagJson(String runId) {
+        throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
+    }
+
     default void cancelWorkflowRun(String runId) {
         throw new UnsupportedOperationException(WORKFLOWS_UNSUPPORTED);
     }

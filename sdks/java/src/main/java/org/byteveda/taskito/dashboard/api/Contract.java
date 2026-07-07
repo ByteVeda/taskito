@@ -12,6 +12,8 @@ import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.model.WorkflowRunInfo;
+import org.byteveda.taskito.workflows.NodeSnapshot;
 
 /**
  * Maps the SDK's camelCase types to the snake_case JSON contract the React SPA
@@ -137,6 +139,38 @@ final class Contract {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("from", e.from);
         m.put("to", e.to);
+        return m;
+    }
+
+    static Map<String, Object> workflowRun(WorkflowRunInfo r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", r.id);
+        m.put("definition_id", r.definitionId);
+        m.put("state", r.state);
+        m.put("params", r.params);
+        m.put("started_at", r.startedAt);
+        m.put("completed_at", r.completedAt);
+        m.put("error", r.error);
+        m.put("parent_run_id", r.parentRunId);
+        m.put("parent_node_name", r.parentNodeName);
+        m.put("created_at", r.createdAt);
+        return m;
+    }
+
+    static Map<String, Object> workflowNode(NodeSnapshot n) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("node_name", n.nodeName);
+        m.put("status", n.status);
+        m.put("job_id", n.jobId);
+        m.put("result_hash", n.resultHash);
+        m.put("fan_out_count", n.fanOutCount);
+        m.put("started_at", n.startedAt);
+        m.put("completed_at", n.completedAt);
+        m.put("error", n.error);
+        m.put("compensation_job_id", n.compensationJobId);
+        m.put("compensation_started_at", n.compensationStartedAt);
+        m.put("compensation_completed_at", n.compensationCompletedAt);
+        m.put("compensation_error", n.compensationError);
         return m;
     }
 }

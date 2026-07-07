@@ -19,6 +19,7 @@ import org.byteveda.taskito.dashboard.api.MetricsHandlers;
 import org.byteveda.taskito.dashboard.api.OpsHandlers;
 import org.byteveda.taskito.dashboard.api.OverridesHandlers;
 import org.byteveda.taskito.dashboard.api.SettingsHandlers;
+import org.byteveda.taskito.dashboard.api.WorkflowsHandlers;
 import org.byteveda.taskito.dashboard.auth.AuthHandlers;
 import org.byteveda.taskito.dashboard.auth.AuthStore;
 import org.byteveda.taskito.dashboard.auth.Cookies;
@@ -202,6 +203,7 @@ public final class DashboardServer implements AutoCloseable {
         SettingsHandlers settingsApi = new SettingsHandlers(settings);
         OverridesHandlers overrides = new OverridesHandlers(queue, new OverridesStore(settings));
         MetricsHandlers metrics = new MetricsHandlers(queue);
+        WorkflowsHandlers workflows = new WorkflowsHandlers(queue);
         long ttl = AuthStore.DEFAULT_SESSION_TTL_SECONDS;
         Router r = new Router();
 
@@ -242,6 +244,12 @@ public final class DashboardServer implements AutoCloseable {
         r.get("/api/event-types", req -> ops.eventTypes());
         r.get("/api/scaler", req -> ops.scaler(req.query()));
         r.get("/api/resources", req -> ops.resources());
+
+        // Workflows (read)
+        r.get("/api/workflows/runs", req -> workflows.runs(req.query()));
+        r.get("/api/workflows/runs/([^/]+)/dag", req -> workflows.dag(req.param(0)));
+        r.get("/api/workflows/runs/([^/]+)/children", req -> workflows.children(req.param(0)));
+        r.get("/api/workflows/runs/([^/]+)", req -> workflows.run(req.param(0)));
 
         // Settings KV
         r.get("/api/settings", req -> settingsApi.list());

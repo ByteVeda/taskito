@@ -41,6 +41,7 @@ import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueDecision;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
@@ -772,6 +773,26 @@ final class DefaultTaskito implements Taskito {
     @Override
     public void cancelWorkflow(String runId) {
         backend.cancelWorkflowRun(runId);
+    }
+
+    @Override
+    public List<WorkflowRunInfo> listWorkflowRuns(String definitionName, String state, long limit, long offset) {
+        return decodeList(backend.listWorkflowRunsJson(definitionName, state, limit, offset), WorkflowRunInfo.class);
+    }
+
+    @Override
+    public Optional<WorkflowRunInfo> getWorkflowRun(String runId) {
+        return backend.getWorkflowRunJson(runId).map(json -> decode(json, WorkflowRunInfo.class));
+    }
+
+    @Override
+    public List<WorkflowRunInfo> getWorkflowChildren(String runId) {
+        return decodeList(backend.getWorkflowChildrenJson(runId), WorkflowRunInfo.class);
+    }
+
+    @Override
+    public Optional<String> getWorkflowDag(String runId) {
+        return backend.getWorkflowDagJson(runId);
     }
 
     /** Encode a step's structure + per-step overrides for the native submit call. */
