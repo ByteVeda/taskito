@@ -15,6 +15,7 @@ import {
   workflowNodeToContract,
   workflowRunToContract,
 } from "./contract";
+import { badRequest } from "./errors";
 import { aggregateByTask, bucketTimeseries } from "./metrics";
 
 /** Finite, non-negative number from a query string, or `undefined`. */
@@ -194,20 +195,45 @@ export async function testWebhook(queue: Queue, id: string) {
   return delivery ? { status: delivery.responseCode, delivered: delivery.ok } : undefined;
 }
 
+const DELIVERY_STATUSES = new Set(["delivered", "failed", "dead", "pending"]);
+const MAX_DELIVERY_PAGE = 200;
+
 export function webhookDeliveries(queue: Queue, id: string, url: URL) {
-  const limit = num(url, "limit") ?? 50;
+  if (!queue.webhooks.get(id)) {
+    return undefined;
+  }
+  const status = url.searchParams.get("status") ?? undefined;
+  if (status && !DELIVERY_STATUSES.has(status)) {
+    throw badRequest("status must be one of: delivered, failed, dead, pending");
+  }
+  const event = url.searchParams.get("event") ?? undefined;
+  const limit = Math.min(num(url, "limit") ?? 50, MAX_DELIVERY_PAGE);
   const offset = num(url, "offset") ?? 0;
-  const statusFilter = url.searchParams.get("status");
-  const all = queue.webhooks
-    .deliveries(id)
-    .filter((delivery) => !statusFilter || delivery.status === statusFilter)
-    .reverse(); // newest first, matching the Python delivery store
+  const items = queue.webhooks.deliveries(id, { status, event, limit, offset });
   return {
-    items: all.slice(offset, offset + limit).map(deliveryToContract),
-    total: all.length,
+    items: items.map(deliveryToContract),
+    total: queue.webhooks.deliveryCount(id),
     limit,
     offset,
   };
+}
+
+export function webhookDelivery(queue: Queue, id: string, deliveryId: string) {
+  const delivery = queue.webhooks.delivery(id, deliveryId);
+  return delivery ? deliveryToContract(delivery) : undefined;
+}
+
+export async function replayWebhookDelivery(queue: Queue, id: string, deliveryId: string) {
+  const delivery = await queue.webhooks.replayDelivery(id, deliveryId);
+  return delivery
+    ? { replayed_of: deliveryId, status: delivery.responseCode, delivered: delivery.ok }
+    : undefined;
+}
+
+export function rotateWebhookSecret(queue: Queue, id: string) {
+  const secret = queue.webhooks.rotateSecret(id);
+  // The new secret is returned exactly once, on rotation.
+  return secret === undefined ? undefined : { id, secret };
 }
 
 /** Parse a snake_case webhook request body into a {@link WebhookInput}. */

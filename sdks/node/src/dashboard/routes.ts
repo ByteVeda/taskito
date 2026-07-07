@@ -191,6 +191,21 @@ export const routes: Route[] = [
   },
   {
     method: "GET",
+    pattern: /^\/api\/webhooks\/([^/]+)\/deliveries\/([^/]+)$/,
+    handle: (q, _url, p) => h.webhookDelivery(q, id(p), p[1] ?? ""),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/webhooks\/([^/]+)\/deliveries\/([^/]+)\/replay$/,
+    handle: (q, _url, p) => h.replayWebhookDelivery(q, id(p), p[1] ?? ""),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/webhooks\/([^/]+)\/rotate-secret$/,
+    handle: (q, _url, p) => h.rotateWebhookSecret(q, id(p)),
+  },
+  {
+    method: "GET",
     pattern: /^\/api\/webhooks\/([^/]+)$/,
     handle: (q, _url, p) => h.webhook(q, id(p)),
   },
