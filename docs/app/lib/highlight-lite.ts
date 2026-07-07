@@ -96,3 +96,37 @@ export function highlightPython(code: string): string {
 export function highlightTs(code: string): string {
   return tokenize(code, TS_KW, /\/\/[^\n]*/);
 }
+
+const JAVA_KW = new Set([
+  "import",
+  "package",
+  "public",
+  "private",
+  "final",
+  "static",
+  "class",
+  "interface",
+  "record",
+  "return",
+  "new",
+  "try",
+  "catch",
+  "throw",
+  "throws",
+  "if",
+  "else",
+  "for",
+  "var",
+  "int",
+  "long",
+  "double",
+  "boolean",
+  "void",
+  "null",
+  "true",
+  "false",
+]);
+
+export function highlightJava(code: string): string {
+  return tokenize(code, JAVA_KW, /\/\/[^\n]*/);
+}

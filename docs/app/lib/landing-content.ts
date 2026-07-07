@@ -15,7 +15,7 @@ export interface LangPane {
   /** Which SDK this snippet is for — selecting it sets the global SDK. */
   sdk: Sdk;
   /** Highlighter dialect for the snippet. */
-  lang: "py" | "ts";
+  lang: "py" | "ts" | "java";
   filename: string;
   install: string;
   code: string;
@@ -25,7 +25,7 @@ export interface LangPane {
 }
 
 /** SDKs shown in the hero tab strip as "Soon" (no pane yet). */
-export const HERO_COMING_SOON: string[] = ["Java"];
+export const HERO_COMING_SOON: string[] = [];
 
 export const HERO_PANES: LangPane[] = [
   {
@@ -91,6 +91,43 @@ console.log(await queue.result(id)); // → 5`,
     ],
     docHref: "/node/getting-started/quickstart",
     docLabel: "Read the Node.js quickstart",
+  },
+  {
+    sdk: "java",
+    lang: "java",
+    filename: "Tasks.java",
+    install: 'implementation("org.byteveda:taskito")',
+    code: `import org.byteveda.taskito.*;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+
+Task<int[]> add = Task.of("add", int[].class).retries(3);
+
+try (Taskito queue = Taskito.builder().sqlite("tasks.db").open();
+     Worker worker = queue.worker()
+         .handle(add, p -> p[0] + p[1])
+         .start()) {
+  String id = queue.enqueue(add, new int[] {2, 3});
+  queue.awaitJob(id, java.time.Duration.ofSeconds(10));
+  System.out.println(queue.getResult(id, Integer.class).orElseThrow()); // → 5
+}`,
+    output: [
+      { glyph: "$", glyphKind: "p", text: "java -cp app.jar Tasks" },
+      {
+        glyph: "→",
+        glyphKind: "p",
+        text: "worker started · Rust core attached",
+      },
+      {
+        glyph: "✓",
+        glyphKind: "g",
+        text: "add(2, 3) =",
+        value: "5",
+        timing: "10 ms",
+      },
+    ],
+    docHref: "/java/getting-started/quickstart",
+    docLabel: "Read the Java quickstart",
   },
 ];
 
