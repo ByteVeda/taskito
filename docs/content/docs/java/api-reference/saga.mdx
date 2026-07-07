@@ -1,0 +1,103 @@
+---
+title: Saga
+description: "Step.Builder.compensate, the saga run/node states, and the rollback contract."
+---
+
+Saga compensation is declared per step, at build time — there is no
+separate saga type or task-level default compensator. For the conceptual
+walkthrough and a full example, see the [Sagas guide](/java/guides/workflows/saga).
+
+## `Step.Builder.compensate`
+
+```java
+Step.Builder compensate(String compensateTask)
+Step.Builder compensate(Task<?> compensateTask)
+```
+
+Registers a rollback task for the step. If the run later fails, completed
+compensable steps roll back in reverse-dependency order, each compensation
+job receiving the step's own forward result as its payload.
+
+```java
+Workflow checkout = Workflow.named("checkout")
+        .step(Step.of("reserve", reserve, orderId).compensate(unreserve).build())
+        .step(Step.of("charge", charge, orderId).after("reserve").compensate(refund).build())
+        .step(Step.of("ship", ship, orderId).after("charge").build());
+```
+
+## Validation
+
+`Step.build()` rejects a compensator on nodes that have no forward result to
+replay:
+
+| Step kind | `compensate` allowed |
+|---|---|
+| Plain task step | Yes |
+| Fan-in step | Yes — the collected list is a real forward result |
+| Fan-out step | No — `IllegalArgumentException` at `build()` |
+| Gate | No — `IllegalArgumentException` at `build()` |
+| Sub-workflow | No — `IllegalArgumentException` at `build()` |
+
+## Compensator functions
+
+A compensator is a plain task handler — no special interface. Register it
+like any other task and give its payload type the forward task's result type:
+
+```java
+record Charge(String chargeId, String orderId) {}
+
+Task<String> charge = Task.of("chargePayment", String.class);
+Task<Charge> refund = Task.of("refundPayment", Charge.class);
+
+worker.handle(charge, orderId -> new Charge(stripe.charge(orderId).id(), orderId));
+worker.handle(refund, result -> { stripe.refund(result.chargeId()); return null; });
+```
+
+Each compensation job inherits the forward step's `queue`, `maxRetries`,
+`timeoutMs`, and `priority` — it retries and dead-letters like any other job.
+
+## Run states
+
+`WorkflowState` gains three saga states, all counted by `isTerminal()` except
+`COMPENSATING`:
+
+| State | Terminal | Meaning |
+|---|:---:|---|
+| `COMPENSATING` | No | The run failed and rollback jobs are in flight. |
+| `COMPENSATED` | Yes | All compensators for the run completed successfully. |
+| `COMPENSATION_FAILED` | Yes | At least one compensator itself failed; remaining un-rolled-back steps are left as-is. |
+
+`WorkflowRun.await(...)` unblocks on any terminal state, including these two.
+
+## Node states
+
+`NodeStatus` gains the parallel per-node states:
+
+| Status | Meaning |
+|---|---|
+| `COMPENSATING` | A compensation job has been enqueued for this node. |
+| `COMPENSATED` | The node's compensation job succeeded. |
+| `COMPENSATION_FAILED` | The node's compensation job exhausted its retries. |
+
+Only nodes that actually ran their forward task this run (`COMPLETED`) are
+compensable — `CACHE_HIT`, `FAILED`, `SKIPPED`, and pending nodes never had a
+side effect here to undo, so they're left alone.
+
+## Rollback mechanics
+
+When a run with compensable steps fails:
+
+1. Completed compensable steps are grouped into reverse-dependency waves —
+   deepest (most downstream) nodes first.
+2. Each wave's compensation jobs are enqueued in parallel; the next wave only
+   dispatches once the current one fully drains.
+3. If every wave drains without a failure, the run ends `COMPENSATED`. If any
+   compensation job fails, rollback stops there (fail-stop) and the run ends
+   `COMPENSATION_FAILED` — later waves are never dispatched.
+
+Every compensation job is enqueued with a deterministic unique key,
+`compensation:{runId}:{nodeName}`, and `compensation: true` metadata
+alongside `workflow_run_id` / `workflow_node_name` — so a tracker restart
+mid-rollback re-enqueues idempotently instead of duplicating the job, and a
+compensation job's own outcome is routed back into the saga rather than the
+forward run.

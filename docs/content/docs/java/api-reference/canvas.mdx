@@ -1,0 +1,84 @@
+---
+title: Canvas
+description: "Compact signature reference for Canvas.link, chain, group, and chord."
+---
+
+```java
+import org.byteveda.taskito.workflows.Canvas;
+```
+
+Shortcuts that build a [`Workflow`](/java/api-reference/workflows) from a few
+`Canvas.link` building blocks — sequential, parallel, or a parallel group
+joined by a callback. For worked examples and diagrams, see the
+[Canvas guide](/java/guides/workflows/canvas).
+
+## `Canvas.link`
+
+```java
+static <T> Link link(String name, Task<T> task, T payload)
+```
+
+A named step bound to a task and payload. `Link` is otherwise opaque — pass
+it straight into `chain`, `group`, or `chord`.
+
+## `Canvas.chain`
+
+```java
+static Workflow chain(String name, Link... links)
+```
+
+Runs `links` one after another — each link's step depends on the previous
+one.
+
+```java
+Workflow etl = Canvas.chain("etl",
+        Canvas.link("extract", extractTask, source),
+        Canvas.link("transform", transformTask, null),
+        Canvas.link("load", loadTask, null));
+
+taskito.submitWorkflow(etl);
+```
+
+## `Canvas.group`
+
+```java
+static Workflow group(String name, Link... links)
+```
+
+Runs `links` in parallel — no dependencies between them.
+
+```java
+Workflow notify = Canvas.group("notify",
+        Canvas.link("email", sendEmail, message),
+        Canvas.link("sms", sendSms, message));
+
+taskito.submitWorkflow(notify);
+```
+
+## `Canvas.chord`
+
+```java
+static Workflow chord(String name, Link callback, Link... group)
+```
+
+Runs `group` in parallel, then `callback` once every member of `group`
+completes. The callback depends on every group link's step; it runs with its
+own configured payload, not the group's aggregated results.
+
+```java
+Workflow report = Canvas.chord("report",
+        Canvas.link("merge", mergeTask, null),      // callback
+        Canvas.link("q1", queryRegion, "east"),
+        Canvas.link("q2", queryRegion, "west"));
+
+taskito.submitWorkflow(report);
+```
+
+## Submitting
+
+Every `Canvas` constructor returns a full `Workflow` — there's no separate
+canvas-specific submit path. Submit it like any other workflow via
+[`Taskito.submitWorkflow`](/java/api-reference/queue), and build the worker
+with `.trackWorkflows()` so the run's state and node statuses are tracked.
+`chain`/`group`/`chord` steps are plain task nodes, so no deferred-node
+registration (`trackWorkflows(workflow)`) is required for them.

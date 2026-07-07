@@ -1,1 +1,22 @@
-{ "title": "API Reference", "root": true, "pages": ["index", "queue", "task", "worker", "result", "context", "resources", "serializers", "workflows", "errors", "cli"] }
+{
+    "title": "API Reference",
+    "root": true,
+    "pages": [
+        "index",
+        "overview",
+        "queue",
+        "task",
+        "worker",
+        "result",
+        "context",
+        "resources",
+        "serializers",
+        "workflows",
+        "canvas",
+        "saga",
+        "batching",
+        "testing",
+        "errors",
+        "cli"
+    ]
+}
