@@ -21,7 +21,7 @@ import {
   TaskitoError,
 } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
-import type { Interceptor } from "./interception";
+import { type Interception, InterceptionMetrics, type Interceptor } from "./interception";
 import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
 import {
@@ -32,6 +32,7 @@ import {
 } from "./native";
 import { encodeNotes } from "./notes";
 import type { Predicate } from "./predicates";
+import { type ProxyHandlerStats, proxyMetrics } from "./proxies";
 import {
   type PoolOptions,
   type ResourceContext,
@@ -115,6 +116,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
   private readonly interceptors: Interceptor[] = [];
+  private readonly interceptionMetrics = new InterceptionMetrics();
   private readonly gates = new Map<string, Predicate[]>();
   private readonly emitter = new Emitter();
   private readonly resources = new ResourceRuntime();
@@ -439,6 +441,23 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     args: unknown[],
     mode?: { batch: boolean },
   ): { taskName: string; args: unknown[] } {
+    const outcomes: Interception[] = [];
+    const startedAt = this.interceptors.length > 0 ? performance.now() : 0;
+    try {
+      return this.applyInterceptors(name, args, mode, outcomes);
+    } finally {
+      if (this.interceptors.length > 0) {
+        this.interceptionMetrics.record(outcomes, performance.now() - startedAt);
+      }
+    }
+  }
+
+  private applyInterceptors(
+    name: string,
+    args: unknown[],
+    mode: { batch: boolean } | undefined,
+    outcomes: Interception[],
+  ): { taskName: string; args: unknown[] } {
     let taskName = name;
     let currentArgs = args;
     for (const interceptor of this.interceptors) {
@@ -446,6 +465,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       if (!outcome) {
         throw new InterceptionError(`interceptor returned null for task "${taskName}"`);
       }
+      outcomes.push(outcome);
       switch (outcome.type) {
         case "pass":
           break;
@@ -861,6 +881,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Clear ALL disables for a task — every middleware fires again. */
   clearMiddlewareDisables(taskName: string): boolean {
     return new MiddlewareDisableStore(this.native).clearFor(taskName);
+  }
+
+  /** Per-handler proxy reconstruction metrics for this process. */
+  proxyStats(): ProxyHandlerStats[] {
+    return proxyMetrics.toList();
+  }
+
+  /** Enqueue-interception metrics for this process. */
+  interceptionStats() {
+    return this.interceptionMetrics.toDict();
   }
 
   /** Registered workers (heartbeat + identity). */

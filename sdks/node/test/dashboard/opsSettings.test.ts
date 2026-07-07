@@ -160,3 +160,21 @@ describe("ops endpoints", () => {
     expect(((await res.json()) as { purged: number }).purged).toBe(0);
   });
 });
+
+describe("proxy and interception stats", () => {
+  it("serves interception stats after interceptors run", async () => {
+    queue.intercept((_task, _args) => ({ type: "pass" }));
+    queue.enqueue("add", [1, 2]);
+    const stats = (await (await fetch(`${base}/api/interception-stats`, { headers })).json()) as {
+      total_intercepts: number;
+      strategy_counts: Record<string, number>;
+    };
+    expect(stats.total_intercepts).toBe(1);
+    expect(stats.strategy_counts.pass).toBe(1);
+  });
+
+  it("serves proxy stats as a list", async () => {
+    const stats = await (await fetch(`${base}/api/proxy-stats`, { headers })).json();
+    expect(Array.isArray(stats)).toBe(true);
+  });
+});

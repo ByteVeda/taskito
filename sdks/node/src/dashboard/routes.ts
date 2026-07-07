@@ -105,6 +105,12 @@ export const routes: Route[] = [
     handle: (q, _url, p) => h.deleteSetting(q, id(p)),
   },
   { method: "GET", pattern: /^\/api\/scaler$/, handle: (q, url) => h.scaler(q, url) },
+  { method: "GET", pattern: /^\/api\/proxy-stats$/, handle: (q) => q.proxyStats() },
+  {
+    method: "GET",
+    pattern: /^\/api\/interception-stats$/,
+    handle: (q) => q.interceptionStats(),
+  },
   { method: "GET", pattern: /^\/api\/resources$/, handle: (q) => h.resourceStatus(q) },
   { method: "GET", pattern: /^\/api\/tasks$/, handle: (q) => h.listTasks(q) },
   { method: "GET", pattern: /^\/api\/queues$/, handle: (q) => h.listQueues(q) },
