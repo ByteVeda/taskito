@@ -237,12 +237,20 @@ export class AuthStore {
     validateUsername(username);
     validatePassword(password);
     validateRole(role);
+    if (this.loadUsers()[username]) {
+      throw new ValidationError(`user '${username}' already exists`);
+    }
+    // Hash BEFORE the load-check-save so no await sits between reading the
+    // user table and writing it back — a concurrent create (e.g. racing
+    // first-run setup requests) can no longer be clobbered by a stale
+    // snapshot taken before the slow PBKDF2 step.
+    const passwordHash = await hashPassword(password);
     const users = this.loadUsers();
     if (users[username]) {
       throw new ValidationError(`user '${username}' already exists`);
     }
     users[username] = {
-      password_hash: await hashPassword(password),
+      password_hash: passwordHash,
       role,
       created_at: Date.now(),
       last_login_at: null,
@@ -269,7 +277,25 @@ export class AuthStore {
     }
     delete users[username];
     this.saveUsers(users);
+    // Revoke live sessions so a deleted account stops authorizing now,
+    // not at session expiry.
+    this.deleteSessionsForUser(username);
     return true;
+  }
+
+  private deleteSessionsForUser(username: string): void {
+    for (const [key, value] of Object.entries(this.queue.listSettings())) {
+      if (!key.startsWith(SESSION_PREFIX)) {
+        continue;
+      }
+      try {
+        if (JSON.parse(value)?.username === username) {
+          this.queue.deleteSetting(key);
+        }
+      } catch {
+        // Malformed rows are ignored here; pruning handles them.
+      }
+    }
   }
 
   /** The user iff username+password match; updates `last_login_at`. */

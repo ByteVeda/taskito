@@ -139,10 +139,12 @@ describe("login and sessions", () => {
     expect(new AuthStore(queue).getSession(session.token)).toBeUndefined();
   });
 
-  it("whoami self-heals a session whose user was deleted", async () => {
-    const { headers } = await seedAdminAndSession(queue, { username: "doomed" });
+  it("deleting a user revokes its live sessions immediately", async () => {
+    const { session, headers } = await seedAdminAndSession(queue, { username: "doomed" });
     new AuthStore(queue).deleteUser("doomed");
-    expect((await fetch(`${base}/api/auth/whoami`, { headers })).status).toBe(404);
+    // The session row is gone, so the gate rejects before whoami runs.
+    expect(new AuthStore(queue).getSession(session.token)).toBeUndefined();
+    expect((await fetch(`${base}/api/auth/whoami`, { headers })).status).toBe(401);
   });
 });
 
