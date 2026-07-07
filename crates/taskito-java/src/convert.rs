@@ -44,6 +44,8 @@ pub struct EnqueueOptions {
     pub metadata: Option<String>,
     pub namespace: Option<String>,
     pub depends_on: Option<Vec<String>>,
+    /// Pre-encoded canonical JSON produced by the SDK; stored verbatim.
+    pub notes: Option<String>,
 }
 
 /// Parse a JSON argument, attributing any failure to the named field.
@@ -71,7 +73,7 @@ pub fn build_new_job(
         timeout_ms: options.timeout_ms.unwrap_or(0),
         unique_key: options.unique_key,
         metadata: options.metadata,
-        notes: None,
+        notes: options.notes,
         depends_on: options.depends_on.unwrap_or_default(),
         expires_at: None,
         result_ttl_ms: None,
@@ -130,6 +132,8 @@ pub struct JobView<'a> {
     pub namespace: Option<&'a str>,
     /// Opaque metadata blob (JSON the SDK sets, e.g. middleware-injected trace ids).
     pub metadata: Option<&'a str>,
+    /// Structured notes as canonical JSON; the SDK parses it back into a map.
+    pub notes: Option<&'a str>,
 }
 
 impl<'a> From<&'a Job> for JobView<'a> {
@@ -152,6 +156,7 @@ impl<'a> From<&'a Job> for JobView<'a> {
             unique_key: j.unique_key.as_deref(),
             namespace: j.namespace.as_deref(),
             metadata: j.metadata.as_deref(),
+            notes: j.notes.as_deref(),
         }
     }
 }

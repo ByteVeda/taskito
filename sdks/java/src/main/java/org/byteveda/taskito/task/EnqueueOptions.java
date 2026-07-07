@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import org.byteveda.taskito.serialization.Notes;
 
 /** Immutable per-enqueue options. Unset fields take core defaults. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -35,6 +37,10 @@ public final class EnqueueOptions {
     @JsonProperty("dependsOn")
     private final List<String> dependsOn;
 
+    // Canonical JSON encoding of the structured notes (validated at build time), or null.
+    @JsonProperty("notes")
+    private final String notes;
+
     // Idempotency inputs resolve to uniqueKey locally (see DefaultTaskito) and never cross
     // the wire, so they carry no @JsonProperty and are not serialized into the options JSON.
     private final Boolean idempotent;
@@ -51,6 +57,7 @@ public final class EnqueueOptions {
         this.metadata = b.metadata;
         this.namespace = b.namespace;
         this.dependsOn = b.dependsOn;
+        this.notes = b.notes;
         this.idempotent = b.idempotent;
         this.idempotencyKey = b.idempotencyKey;
     }
@@ -75,6 +82,7 @@ public final class EnqueueOptions {
         b.metadata = metadata;
         b.namespace = namespace;
         b.dependsOn = dependsOn;
+        b.notes = notes;
         b.idempotent = idempotent;
         b.idempotencyKey = idempotencyKey;
         return b;
@@ -113,6 +121,7 @@ public final class EnqueueOptions {
         private String metadata;
         private String namespace;
         private List<String> dependsOn;
+        private String notes;
         private Boolean idempotent;
         private String idempotencyKey;
 
@@ -196,6 +205,19 @@ public final class EnqueueOptions {
         /** List form of {@link #dependsOn(String...)}. */
         public Builder dependsOn(List<String> jobIds) {
             this.dependsOn = List.copyOf(jobIds);
+            return this;
+        }
+
+        /**
+         * Attach a bounded, user-readable annotation map to the job (validated and canonically
+         * encoded now, so a contract violation fails fast). Distinct from the opaque
+         * {@link #metadata} blob. Passing {@code null} clears any previously set notes.
+         *
+         * @throws org.byteveda.taskito.errors.NotesValidationException if the map breaks the
+         *     {@link Notes} contract (field/key/value/depth/size limits)
+         */
+        public Builder notes(Map<String, ?> notes) {
+            this.notes = Notes.encode(notes);
             return this;
         }
 
