@@ -71,7 +71,13 @@ export function configuredProviders(config: OAuthConfig): ProviderConfig[] {
 }
 
 export function callbackUrl(config: OAuthConfig, slot: string): string {
-  return `${config.redirectBaseUrl.replace(/\/+$/, "")}/api/auth/oauth/callback/${slot}`;
+  let base = config.redirectBaseUrl;
+  // Strip trailing slashes without a regex — the base URL is operator
+  // input, and `/\/+$/` backtracks polynomially on long slash runs.
+  while (base.endsWith("/")) {
+    base = base.slice(0, -1);
+  }
+  return `${base}/api/auth/oauth/callback/${slot}`;
 }
 
 function validateRedirectBaseUrl(url: string): void {
