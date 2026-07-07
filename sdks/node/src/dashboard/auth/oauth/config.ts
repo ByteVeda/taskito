@@ -202,6 +202,10 @@ function parseGithub(env: Record<string, string | undefined>): GitHubConfig {
 function parseOidcSlots(env: Record<string, string | undefined>, slotsRaw: string): OidcConfig[] {
   const slots = splitCsv(slotsRaw);
   const seen = new Set<string>();
+  // `foo-bar` and `foo_bar` are distinct slots but read the same
+  // `..._FOO_BAR_*` env vars — reject the collision instead of silently
+  // sharing one credential set.
+  const seenPrefixes = new Map<string, string>();
   const out: OidcConfig[] = [];
   for (const rawSlot of slots) {
     const slot = rawSlot.toLowerCase();
@@ -211,9 +215,21 @@ function parseOidcSlots(env: Record<string, string | undefined>, slotsRaw: strin
       );
     }
     seen.add(slot);
+    const prefix = envPrefix(slot);
+    const collidesWith = seenPrefixes.get(prefix);
+    if (collidesWith !== undefined) {
+      throw new OAuthConfigError(
+        `OIDC slots '${collidesWith}' and '${slot}' share the env prefix ${prefix}_*`,
+      );
+    }
+    seenPrefixes.set(prefix, slot);
     out.push(parseOidcSlot(env, slot));
   }
   return out;
+}
+
+function envPrefix(slot: string): string {
+  return `TASKITO_DASHBOARD_OAUTH_OIDC_${slot.toUpperCase().replace(/-/g, "_")}`;
 }
 
 function parseOidcSlot(env: Record<string, string | undefined>, slot: string): OidcConfig {
@@ -223,7 +239,7 @@ function parseOidcSlot(env: Record<string, string | undefined>, slot: string): O
   if (RESERVED_SLOTS.has(slot)) {
     throw new OAuthConfigError(`OIDC slot '${slot}' collides with built-in provider`);
   }
-  const prefix = `TASKITO_DASHBOARD_OAUTH_OIDC_${slot.toUpperCase().replace(/-/g, "_")}`;
+  const prefix = envPrefix(slot);
   const clientId = (env[`${prefix}_CLIENT_ID`] ?? "").trim();
   const clientSecret = (env[`${prefix}_CLIENT_SECRET`] ?? "").trim();
   const discoveryUrl = (env[`${prefix}_DISCOVERY_URL`] ?? "").trim();
