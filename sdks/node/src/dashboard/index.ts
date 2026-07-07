@@ -47,11 +47,13 @@ const defaultStaticDir = (): string => fileURLToPath(new URL(STATIC_REL, import.
  * Returns the listening HTTP server; call `.close()` to stop it.
  */
 export function serveDashboard(queue: Queue, options: DashboardOptions = {}): Server {
-  if (!options.auth) {
-    void bootstrapAdminFromEnv(queue).catch((error) => {
-      log.warn(() => `admin bootstrap failed: ${String(error)}`);
-    });
-  }
+  const bootstrap = options.auth
+    ? Promise.resolve()
+    : bootstrapAdminFromEnv(queue)
+        .then(() => undefined)
+        .catch((error) => {
+          log.warn(() => `admin bootstrap failed: ${String(error)}`);
+        });
   const server = createDashboardServer(queue, options.staticDir ?? defaultStaticDir(), {
     auth: options.auth,
     secureCookies: options.secureCookies,
@@ -61,7 +63,11 @@ export function serveDashboard(queue: Queue, options: DashboardOptions = {}): Se
   server.on("error", (error) => {
     log.error(() => "dashboard server error", error);
   });
-  server.listen(options.port ?? 8787, options.host ?? "127.0.0.1");
+  // Bind only after the env admin exists, so a first request can't race
+  // the intended bootstrap admin through the open setup endpoint.
+  void bootstrap.then(() => {
+    server.listen(options.port ?? 8787, options.host ?? "127.0.0.1");
+  });
   return server;
 }
 
