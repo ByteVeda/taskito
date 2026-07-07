@@ -123,6 +123,11 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String listCircuitBreakersJson() {
+        return withOpenHandle(() -> NativeQueue.listCircuitBreakers(handle));
+    }
+
+    @Override
     public String listDeadJson(long limit, long offset) {
         return withOpenHandle(() -> NativeQueue.listDead(handle, limit, offset));
     }

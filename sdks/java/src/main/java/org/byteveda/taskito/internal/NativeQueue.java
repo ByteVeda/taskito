@@ -53,6 +53,8 @@ public final class NativeQueue {
 
     public static native String listWorkers(long handle);
 
+    public static native String listCircuitBreakers(long handle);
+
     // ── Admin ───────────────────────────────────────────────────────
     public static native String listDead(long handle, long limit, long offset);
 

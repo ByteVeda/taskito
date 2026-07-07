@@ -29,6 +29,7 @@ import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
 import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobError;
@@ -461,6 +462,11 @@ final class DefaultTaskito implements Taskito {
     @Override
     public List<WorkerInfo> listWorkers() {
         return decodeList(backend.listWorkersJson(), WorkerInfo.class);
+    }
+
+    @Override
+    public List<CircuitBreakerState> listCircuitBreakers() {
+        return decodeList(backend.listCircuitBreakersJson(), CircuitBreakerState.class);
     }
 
     // ── Admin ───────────────────────────────────────────────────────

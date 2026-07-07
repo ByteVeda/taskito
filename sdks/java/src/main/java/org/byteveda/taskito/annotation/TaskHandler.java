@@ -35,4 +35,19 @@ public @interface TaskHandler {
 
     /** Auto-derive an idempotency {@code uniqueKey} from the payload on every enqueue. */
     boolean idempotent() default false;
+
+    /** Circuit-breaker failure threshold; 0 (default) leaves the breaker off. */
+    int circuitBreakerThreshold() default 0;
+
+    /** Rolling window, in seconds, over which failures count toward the threshold. */
+    long circuitBreakerWindowSeconds() default 60;
+
+    /** How long, in seconds, the breaker stays open before admitting half-open probes. */
+    long circuitBreakerCooldownSeconds() default 300;
+
+    /** Probe runs admitted while half-open. */
+    int circuitBreakerHalfOpenProbes() default 5;
+
+    /** Probe success rate (0.0–1.0) required to re-close the breaker. */
+    double circuitBreakerHalfOpenSuccessRate() default 0.8;
 }

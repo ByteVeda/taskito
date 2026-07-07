@@ -21,6 +21,7 @@ public final class Task<T> {
     private final RetryPolicy retryPolicy;
     private final List<String> codecs;
     private final boolean idempotent;
+    private final CircuitBreakerConfig circuitBreaker;
 
     private Task(
             String name,
@@ -28,7 +29,8 @@ public final class Task<T> {
             EnqueueOptions options,
             RetryPolicy retryPolicy,
             List<String> codecs,
-            boolean idempotent) {
+            boolean idempotent,
+            CircuitBreakerConfig circuitBreaker) {
         this.name = Objects.requireNonNull(name, "task name must not be null");
         if (name.trim().isEmpty()) {
             throw new IllegalArgumentException("task name must not be blank");
@@ -38,21 +40,22 @@ public final class Task<T> {
         this.retryPolicy = retryPolicy;
         this.codecs = List.copyOf(codecs);
         this.idempotent = idempotent;
+        this.circuitBreaker = circuitBreaker;
     }
 
     /** A task whose payload deserializes to {@code payloadType}. */
     public static <T> Task<T> of(String name, Class<T> payloadType) {
-        return new Task<>(name, payloadType, EnqueueOptions.none(), null, List.of(), false);
+        return new Task<>(name, payloadType, EnqueueOptions.none(), null, List.of(), false, null);
     }
 
     /** A task whose payload deserializes to a generic type, e.g. {@code new TypeReference<List<Foo>>(){}}. */
     public static <T> Task<T> of(String name, TypeReference<T> payloadType) {
-        return new Task<>(name, payloadType.getType(), EnqueueOptions.none(), null, List.of(), false);
+        return new Task<>(name, payloadType.getType(), EnqueueOptions.none(), null, List.of(), false, null);
     }
 
     /** A copy of this task with the given default options. */
     public Task<T> withOptions(EnqueueOptions options) {
-        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent);
+        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
     }
 
     /**
@@ -61,7 +64,7 @@ public final class Task<T> {
      * from {@link #maxRetries}.
      */
     public Task<T> retryPolicy(RetryPolicy retryPolicy) {
-        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent);
+        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
     }
 
     /**
@@ -71,7 +74,7 @@ public final class Task<T> {
      * {@code Taskito.builder().codec(name, codec)} on producers and workers.
      */
     public Task<T> codecs(String... codecs) {
-        return new Task<>(name, payloadType, options, retryPolicy, Arrays.asList(codecs), idempotent);
+        return new Task<>(name, payloadType, options, retryPolicy, Arrays.asList(codecs), idempotent, circuitBreaker);
     }
 
     /**
@@ -80,7 +83,16 @@ public final class Task<T> {
      * A per-enqueue {@link EnqueueOptions#idempotent(boolean)} overrides this default.
      */
     public Task<T> idempotent(boolean idempotent) {
-        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent);
+        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
+    }
+
+    /**
+     * A copy of this task guarded by {@code circuitBreaker}. The worker registers it on
+     * {@code start()}; once the breaker opens, the scheduler stops dispatching this task until
+     * it recovers.
+     */
+    public Task<T> circuitBreaker(CircuitBreakerConfig circuitBreaker) {
+        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
     }
 
     public Task<T> queue(String queue) {
@@ -142,5 +154,10 @@ public final class Task<T> {
     /** Whether this task auto-derives an idempotency {@code uniqueKey} by default. */
     public boolean idempotent() {
         return idempotent;
+    }
+
+    /** This task's circuit-breaker configuration, or {@code null} when none is set. */
+    public CircuitBreakerConfig circuitBreaker() {
+        return circuitBreaker;
     }
 }
