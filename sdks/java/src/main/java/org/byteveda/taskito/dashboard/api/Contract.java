@@ -13,6 +13,8 @@ import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.model.WorkflowRunInfo;
+import org.byteveda.taskito.webhooks.Delivery;
+import org.byteveda.taskito.webhooks.Webhook;
 import org.byteveda.taskito.workflows.NodeSnapshot;
 
 /**
@@ -155,6 +157,62 @@ final class Contract {
         m.put("parent_node_name", r.parentNodeName);
         m.put("created_at", r.createdAt);
         return m;
+    }
+
+    /**
+     * Map a webhook to the SPA contract. The raw secret is NEVER emitted — only a
+     * {@code has_secret} flag — and every header VALUE is masked, since headers
+     * routinely carry outbound credentials. Use {@link #webhookWithSecret} for the
+     * create/rotate responses that surface the secret exactly once.
+     */
+    static Map<String, Object> webhook(Webhook w) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", w.id);
+        m.put("url", w.url);
+        m.put("events", w.events);
+        m.put("task_filter", w.taskFilter);
+        m.put("headers", maskHeaderValues(w.headers));
+        m.put("has_secret", w.secret != null);
+        m.put("max_retries", w.maxRetries);
+        m.put("timeout_seconds", w.timeoutMs / 1000.0);
+        m.put("retry_backoff", 2.0);
+        m.put("enabled", w.enabled);
+        m.put("description", w.description);
+        m.put("created_at", w.createdAt);
+        m.put("updated_at", w.updatedAt);
+        return m;
+    }
+
+    /** As {@link #webhook} but with the raw secret surfaced once (create/rotate only). */
+    static Map<String, Object> webhookWithSecret(Webhook w) {
+        Map<String, Object> m = webhook(w);
+        m.put("secret", w.secret);
+        return m;
+    }
+
+    static Map<String, Object> delivery(Delivery d) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", d.id());
+        m.put("subscription_id", d.subscriptionId());
+        m.put("event", d.event());
+        m.put("task_name", d.taskName());
+        m.put("job_id", d.jobId());
+        m.put("status", d.status());
+        m.put("attempts", d.attempts());
+        m.put("response_code", d.responseCode());
+        m.put("response_body", d.responseBody());
+        m.put("latency_ms", d.latencyMs());
+        m.put("error", d.error());
+        m.put("created_at", d.createdAt());
+        m.put("completed_at", d.completedAt());
+        return m;
+    }
+
+    /** Replace every header value with a mask so outbound credentials aren't exposed. */
+    private static Map<String, Object> maskHeaderValues(Map<String, String> headers) {
+        Map<String, Object> masked = new LinkedHashMap<>();
+        headers.forEach((name, value) -> masked.put(name, "***"));
+        return masked;
     }
 
     static Map<String, Object> workflowNode(NodeSnapshot n) {

@@ -20,6 +20,7 @@ import org.byteveda.taskito.dashboard.api.MetricsHandlers;
 import org.byteveda.taskito.dashboard.api.OpsHandlers;
 import org.byteveda.taskito.dashboard.api.OverridesHandlers;
 import org.byteveda.taskito.dashboard.api.SettingsHandlers;
+import org.byteveda.taskito.dashboard.api.WebhooksHandlers;
 import org.byteveda.taskito.dashboard.api.WorkflowsHandlers;
 import org.byteveda.taskito.dashboard.auth.AuthHandlers;
 import org.byteveda.taskito.dashboard.auth.AuthStore;
@@ -264,6 +265,7 @@ public final class DashboardServer implements AutoCloseable {
         OverridesHandlers overrides = new OverridesHandlers(queue, new OverridesStore(settings));
         MetricsHandlers metrics = new MetricsHandlers(queue);
         WorkflowsHandlers workflows = new WorkflowsHandlers(queue);
+        WebhooksHandlers webhooks = new WebhooksHandlers(queue);
         long ttl = AuthStore.DEFAULT_SESSION_TTL_SECONDS;
         Router r = new Router();
 
@@ -321,6 +323,21 @@ public final class DashboardServer implements AutoCloseable {
         r.get("/api/queues/([^/]+)/override", req -> overrides.getQueueOverride(req.param(0)));
         r.put("/api/queues/([^/]+)/override", req -> overrides.putQueueOverride(req.param(0), req.jsonBody()));
         r.delete("/api/queues/([^/]+)/override", req -> overrides.deleteQueueOverride(req.param(0)));
+
+        // Webhooks (CRUD + test/replay + delivery history). Specific paths first
+        // so the single-segment catch-alls don't shadow the sub-resources.
+        r.get("/api/webhooks", req -> webhooks.list());
+        r.post("/api/webhooks", req -> webhooks.create(req.jsonBody()));
+        r.post("/api/webhooks/([^/]+)/test", req -> webhooks.test(req.param(0)));
+        r.post("/api/webhooks/([^/]+)/rotate-secret", req -> webhooks.rotateSecret(req.param(0)));
+        r.get("/api/webhooks/([^/]+)/deliveries", req -> webhooks.deliveries(req.param(0), req.query()));
+        r.get("/api/webhooks/([^/]+)/deliveries/([^/]+)", req -> webhooks.delivery(req.param(0), req.param(1)));
+        r.post(
+                "/api/webhooks/([^/]+)/deliveries/([^/]+)/replay",
+                req -> webhooks.replayDelivery(req.param(0), req.param(1)));
+        r.get("/api/webhooks/([^/]+)", req -> webhooks.get(req.param(0)));
+        r.put("/api/webhooks/([^/]+)", req -> webhooks.update(req.param(0), req.jsonBody()));
+        r.delete("/api/webhooks/([^/]+)", req -> webhooks.delete(req.param(0)));
 
         // Action
         r.post("/api/jobs/([^/]+)/replay", req -> core.replayJob(req.param(0)));

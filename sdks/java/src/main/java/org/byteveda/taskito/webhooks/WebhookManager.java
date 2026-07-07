@@ -1,7 +1,9 @@
 package org.byteveda.taskito.webhooks;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -16,12 +18,18 @@ import org.byteveda.taskito.middleware.Middleware;
 
 /**
  * Manages webhook subscriptions and dispatches matching job outcomes to them.
- * {@link #attach} registers the manager as queue middleware so outcomes are
- * delivered automatically. Persisted via the queue's settings store.
+ *
+ * <p>{@link #attach} registers the manager as queue middleware so outcomes are
+ * delivered automatically. {@link #forQueue} builds a standalone manager (no
+ * middleware) for CRUD, test, and delivery-history reads — all durable state
+ * lives in the shared settings store, so it works without a running worker.
+ * Persisted via the queue's settings store.
  */
 public final class WebhookManager implements Middleware {
     private static final TaskitoLogger LOG = TaskitoLogger.create("webhooks");
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private static final int SECRET_BYTES = 32;
     // Dispatch runs on the worker's single outcome-drain thread for every job, so
     // it must not re-read + re-parse the settings blob per outcome. Local
     // create/delete invalidate immediately; the TTL bounds staleness from writers
@@ -29,11 +37,13 @@ public final class WebhookManager implements Middleware {
     private static final long CACHE_TTL_MS = 30_000;
 
     private final WebhookStore store;
+    private final DeliveryStore deliveryStore;
     private final Deliverer deliverer = new Deliverer();
     private volatile CachedHooks cached;
 
     private WebhookManager(Taskito queue) {
         this.store = new WebhookStore(queue);
+        this.deliveryStore = new DeliveryStore(queue);
     }
 
     /** Create a manager and register it on {@code queue} for automatic dispatch. */
@@ -43,7 +53,26 @@ public final class WebhookManager implements Middleware {
         return manager;
     }
 
+    /**
+     * Build a manager WITHOUT registering middleware. The dashboard uses this for
+     * CRUD, test-ping, replay, and delivery history — none of which need the
+     * worker-side dispatch hook, and all of which read/write the shared KV store.
+     */
+    public static WebhookManager forQueue(Taskito queue) {
+        return new WebhookManager(queue);
+    }
+
+    /** Mint a fresh URL-safe signing secret (32 random bytes, base64url, no padding). */
+    public static String generateSecret() {
+        byte[] bytes = new byte[SECRET_BYTES];
+        SECURE_RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
     public synchronized Webhook create(Webhook.Builder spec) {
+        // The programmatic API is trusted developer code (it may target internal
+        // services). The SSRF guard runs on untrusted dashboard input (see
+        // WebhooksHandlers) and again at delivery time.
         long now = System.currentTimeMillis();
         Webhook hook = new Webhook(
                 UUID.randomUUID().toString(),
@@ -73,14 +102,82 @@ public final class WebhookManager implements Middleware {
         return store.load().stream().filter(hook -> hook.id.equals(id)).findFirst();
     }
 
+    /**
+     * Apply {@code updates} to the webhook with {@code id} (null fields left
+     * unchanged), re-stamp {@code updatedAt}, and persist. Re-validates the
+     * (possibly new) URL. Empty if no such webhook exists.
+     */
+    public synchronized Optional<Webhook> update(String id, WebhookUpdate updates) {
+        List<Webhook> all = store.load();
+        for (int i = 0; i < all.size(); i++) {
+            Webhook current = all.get(i);
+            if (!current.id.equals(id)) {
+                continue;
+            }
+            Webhook merged = applyUpdate(current, updates);
+            all.set(i, merged);
+            store.save(all);
+            cached = null;
+            return Optional.of(merged);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Replace the webhook's secret with a freshly minted one. Returns the updated
+     * hook WITH the new secret so the caller can surface it exactly once.
+     */
+    public synchronized Optional<Webhook> rotateSecret(String id) {
+        return update(id, WebhookUpdate.builder().secret(generateSecret()).build());
+    }
+
     public synchronized boolean delete(String id) {
         List<Webhook> all = store.load();
         boolean removed = all.removeIf(hook -> hook.id.equals(id));
         if (removed) {
             store.save(all);
+            deliveryStore.deleteFor(id);
             cached = null;
         }
         return removed;
+    }
+
+    /**
+     * Synchronously POST a synthetic {@code test} event to the hook and record
+     * the delivery. Returns whether the endpoint accepted it (2xx). {@code false}
+     * if the webhook is missing or its URL fails the SSRF guard.
+     */
+    public boolean test(String id) {
+        Optional<Webhook> hook = get(id);
+        if (hook.isEmpty()) {
+            return false;
+        }
+        DeliveryContext ctx = new DeliveryContext("test", null, null);
+        return sendSynthetic(hook.get(), ctx, testPayload(id));
+    }
+
+    /**
+     * Re-send a recorded delivery's payload as a fresh attempt, preserving the
+     * original in the log. Returns whether the resend was accepted (2xx).
+     * {@code false} if the webhook or delivery is missing, or the URL is unsafe.
+     */
+    public boolean replay(String id, String deliveryId) {
+        Optional<Webhook> hook = get(id);
+        Optional<Delivery> original = deliveryStore.get(id, deliveryId);
+        if (hook.isEmpty() || original.isEmpty()) {
+            return false;
+        }
+        Delivery source = original.get();
+        DeliveryContext ctx = new DeliveryContext(source.event(), source.taskName(), source.jobId());
+        return sendSynthetic(hook.get(), ctx, replayPayload(source));
+    }
+
+    public List<Delivery> deliveries(String id, String statusFilter, String eventFilter, int limit, int offset) {
+        return deliveryStore.listFor(id, statusFilter, eventFilter, limit, offset);
+    }
+
+    public Optional<Delivery> delivery(String id, String deliveryId) {
+        return deliveryStore.get(id, deliveryId);
     }
 
     @Override
@@ -110,18 +207,58 @@ public final class WebhookManager implements Middleware {
         }
         String wire = event.name.name().toLowerCase(Locale.ROOT);
         byte[] body = payload(event, wire);
+        DeliveryContext ctx = new DeliveryContext(wire, event.taskName, event.jobId);
         for (Webhook hook : hooks) {
             if (hook.enabled && hook.events.contains(wire) && matches(hook.taskFilter, event.taskName)) {
-                try {
-                    deliverer.deliver(hook, body);
-                } catch (RuntimeException e) {
-                    // A bad hook (e.g. malformed URL) must not block the rest. Log the
-                    // class only — URI parse messages can echo the URL's tokens.
-                    LOG.warn("webhook " + hook.id + " delivery failed: "
-                            + e.getClass().getSimpleName());
-                }
+                deliverOne(hook, body, ctx);
             }
         }
+    }
+
+    private void deliverOne(Webhook hook, byte[] body, DeliveryContext ctx) {
+        // Re-validate on every attempt (DNS-rebinding defense): a name that was
+        // safe at create time could now resolve to a private address. A failure
+        // is recorded and skipped so one bad hook never blocks the rest.
+        try {
+            WebhookUrlValidator.validate(hook.url);
+        } catch (WebhookException e) {
+            deliveryStore.record(Delivery.of(hook.id, ctx, Delivery.FAILED, 0, null, null, null, e.getMessage()));
+            return;
+        }
+        try {
+            deliverer.deliver(hook, body, ctx, deliveryStore);
+        } catch (RuntimeException e) {
+            // A bad hook (e.g. malformed URL) must not block the rest. Log the
+            // class only — URI parse messages can echo the URL's tokens.
+            LOG.warn("webhook " + hook.id + " delivery failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private boolean sendSynthetic(Webhook hook, DeliveryContext ctx, byte[] body) {
+        try {
+            WebhookUrlValidator.validate(hook.url);
+        } catch (WebhookException e) {
+            deliveryStore.record(Delivery.of(hook.id, ctx, Delivery.FAILED, 0, null, null, null, e.getMessage()));
+            return false;
+        }
+        int status = deliverer.deliverSync(hook, body, ctx, deliveryStore);
+        return status >= 200 && status < 300;
+    }
+
+    private static Webhook applyUpdate(Webhook current, WebhookUpdate updates) {
+        return new Webhook(
+                current.id,
+                updates.url() != null ? updates.url() : current.url,
+                updates.events() != null ? new ArrayList<>(updates.events()) : current.events,
+                updates.taskFilter() != null ? updates.taskFilter() : current.taskFilter,
+                updates.headers() != null ? new LinkedHashMap<>(updates.headers()) : current.headers,
+                updates.secret() != null ? updates.secret() : current.secret,
+                updates.maxRetries() != null ? updates.maxRetries() : current.maxRetries,
+                updates.timeoutMs() != null ? updates.timeoutMs() : current.timeoutMs,
+                updates.enabled() != null ? updates.enabled() : current.enabled,
+                updates.description() != null ? updates.description() : current.description,
+                current.createdAt,
+                System.currentTimeMillis());
     }
 
     private List<Webhook> activeHooks() {
@@ -149,6 +286,26 @@ public final class WebhookManager implements Middleware {
         body.put("error", event.error);
         body.put("retry_count", event.retryCount);
         body.put("timed_out", event.timedOut);
+        return encode(body);
+    }
+
+    private static byte[] testPayload(String webhookId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("event", "test");
+        body.put("webhook_id", webhookId);
+        return encode(body);
+    }
+
+    private static byte[] replayPayload(Delivery source) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("event", source.event());
+        body.put("task_name", source.taskName());
+        body.put("job_id", source.jobId());
+        body.put("replay_of", source.id());
+        return encode(body);
+    }
+
+    private static byte[] encode(Map<String, Object> body) {
         try {
             return JSON.writeValueAsBytes(body);
         } catch (Exception e) {
