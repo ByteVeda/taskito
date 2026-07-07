@@ -308,8 +308,8 @@ export async function circuitBreakers(queue: Queue) {
 }
 
 /** Re-enqueue a copy of a job. */
-export function replayJob(queue: Queue, id: string) {
-  return { replay_job_id: queue.replay(id) };
+export async function replayJob(queue: Queue, id: string) {
+  return { replay_job_id: await queue.replay(id) };
 }
 
 /** Replays recorded for a job, newest first. */

@@ -73,39 +73,43 @@ impl JsQueue {
     /// Re-enqueue a copy of an existing job and record it in the replay
     /// history. Returns the new job id.
     #[napi]
-    pub fn replay_job(&self, job_id: String) -> Result<String> {
-        let original = self
-            .storage
-            .get_job(&job_id)
-            .map_err(to_napi_err)?
-            .ok_or_else(|| invalid_arg(format!("Job not found: {job_id}")))?;
-        let new_job = NewJob {
-            queue: original.queue.clone(),
-            task_name: original.task_name.clone(),
-            payload: original.payload.clone(),
-            priority: original.priority,
-            scheduled_at: now_millis(),
-            max_retries: original.max_retries,
-            timeout_ms: original.timeout_ms,
-            unique_key: None,
-            metadata: Some(format!("{{\"replayed_from\":\"{job_id}\"}}")),
-            notes: original.notes.clone(),
-            depends_on: Vec::new(),
-            expires_at: None,
-            result_ttl_ms: original.result_ttl_ms,
-            namespace: original.namespace.clone(),
-        };
-        let job = self.storage.enqueue(new_job).map_err(to_napi_err)?;
-        // Best-effort audit row — a history write must not fail the replay.
-        let _ = self.storage.record_replay(
-            &job_id,
-            &job.id,
-            original.result.as_deref(),
-            None,
-            original.error.as_deref(),
-            None,
-        );
-        Ok(job.id)
+    pub async fn replay_job(&self, job_id: String) -> Result<String> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let original = storage
+                .get_job(&job_id)
+                .map_err(to_napi_err)?
+                .ok_or_else(|| invalid_arg(format!("Job not found: {job_id}")))?;
+            let new_job = NewJob {
+                queue: original.queue.clone(),
+                task_name: original.task_name.clone(),
+                payload: original.payload.clone(),
+                priority: original.priority,
+                scheduled_at: now_millis(),
+                max_retries: original.max_retries,
+                timeout_ms: original.timeout_ms,
+                unique_key: None,
+                metadata: Some(format!("{{\"replayed_from\":\"{job_id}\"}}")),
+                notes: original.notes.clone(),
+                depends_on: Vec::new(),
+                expires_at: None,
+                result_ttl_ms: original.result_ttl_ms,
+                namespace: original.namespace.clone(),
+            };
+            let job = storage.enqueue(new_job).map_err(to_napi_err)?;
+            // Best-effort audit row — a history write must not fail the replay.
+            let _ = storage.record_replay(
+                &job_id,
+                &job.id,
+                original.result.as_deref(),
+                None,
+                original.error.as_deref(),
+                None,
+            );
+            Ok(job.id)
+        })
+        .await
+        .map_err(join_to_napi_err)?
     }
 
     /// Re-enqueue a dead-letter entry. Returns the new job id.

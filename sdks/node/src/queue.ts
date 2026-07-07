@@ -615,7 +615,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /** Re-enqueue a copy of a job and record it in the replay history. Returns the new job id. */
-  replay(id: string): string {
+  replay(id: string): Promise<string> {
     return this.native.replayJob(id);
   }
 
