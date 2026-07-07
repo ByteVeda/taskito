@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Emitter, EventName, OutcomeEvent } from "../events";
 import type { NativeQueue } from "../native";
+import { createLogger } from "../utils";
 import { Deliverer } from "./deliverer";
 import { type DeliveryFilters, DeliveryLog } from "./deliveryLog";
 import { WebhookValidationError } from "./errors";
@@ -8,6 +9,8 @@ import { WebhookStore } from "./store";
 import type { Delivery, Webhook, WebhookInput } from "./types";
 
 const ALL_EVENTS: EventName[] = ["job.completed", "job.retrying", "job.dead", "job.cancelled"];
+
+const log = createLogger("webhooks");
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -174,7 +177,11 @@ export class WebhookManager {
       }
       void this.deliverer
         .deliver(webhook, event, payload)
-        .then((delivery) => this.deliveryLog.record(delivery));
+        .then((delivery) => this.deliveryLog.record(delivery))
+        .catch((error) => {
+          // A logging failure must never surface as an unhandled rejection.
+          log.warn(() => `webhook delivery log write failed for ${webhook.id}`, error);
+        });
     }
   }
 }
