@@ -48,6 +48,28 @@ function domainAllowlistCheck(identity: ProviderIdentity, allowedDomains: string
   }
 }
 
+/**
+ * Discovered endpoints are attacker-influenceable via a misconfigured or
+ * compromised discovery document; require https (plain http only for
+ * local development hosts) before sending codes or the client secret.
+ */
+function requireSecureEndpoint(raw: string | undefined, field: string): string {
+  if (!raw) {
+    throw new IdentityFetchError(`OIDC discovery document has no ${field}`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new IdentityFetchError(`OIDC discovery ${field} is not a valid URL`);
+  }
+  const isLocal = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLocal)) {
+    throw new IdentityFetchError(`OIDC discovery ${field} must use https: ${raw}`);
+  }
+  return raw;
+}
+
 async function fetchJson(http: FetchLike, url: string, what: string): Promise<unknown> {
   let response: Response;
   try {
@@ -143,10 +165,8 @@ abstract class OidcProviderBase implements OAuthProvider {
   private async getJwks(): Promise<{ keys?: Array<Record<string, unknown>> }> {
     if (!this.jwks) {
       const discovery = await this.getDiscovery();
-      if (!discovery.jwks_uri) {
-        throw new IdentityFetchError("OIDC discovery document has no jwks_uri");
-      }
-      this.jwks = (await fetchJson(this.http, discovery.jwks_uri, "JWKS fetch")) as {
+      const jwksUri = requireSecureEndpoint(discovery.jwks_uri, "jwks_uri");
+      this.jwks = (await fetchJson(this.http, jwksUri, "JWKS fetch")) as {
         keys?: Array<Record<string, unknown>>;
       };
     }
@@ -160,9 +180,10 @@ abstract class OidcProviderBase implements OAuthProvider {
     redirectUri: string;
   }): Promise<string> {
     const discovery = await this.getDiscovery();
-    if (!discovery.authorization_endpoint) {
-      throw new IdentityFetchError("OIDC discovery document has no authorization_endpoint");
-    }
+    const authorizationEndpoint = requireSecureEndpoint(
+      discovery.authorization_endpoint,
+      "authorization_endpoint",
+    );
     const query = new URLSearchParams({
       response_type: "code",
       client_id: this.clientId,
@@ -174,7 +195,7 @@ abstract class OidcProviderBase implements OAuthProvider {
       code_challenge_method: "S256",
       ...this.extraAuthParams(),
     });
-    return `${discovery.authorization_endpoint}?${query.toString()}`;
+    return `${authorizationEndpoint}?${query.toString()}`;
   }
 
   async exchangeCode(params: {
@@ -184,10 +205,8 @@ abstract class OidcProviderBase implements OAuthProvider {
     expectedNonce: string | null;
   }): Promise<ProviderIdentity> {
     const discovery = await this.getDiscovery();
-    if (!discovery.token_endpoint) {
-      throw new IdentityFetchError("OIDC discovery document has no token_endpoint");
-    }
-    const token = await fetchToken(this.http, discovery.token_endpoint, {
+    const tokenEndpoint = requireSecureEndpoint(discovery.token_endpoint, "token_endpoint");
+    const token = await fetchToken(this.http, tokenEndpoint, {
       clientId: this.clientId,
       clientSecret: this.clientSecret,
       code: params.code,
