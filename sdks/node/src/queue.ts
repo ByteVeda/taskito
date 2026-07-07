@@ -1,5 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { MiddlewareDisableStore, middlewareKey } from "./dashboard/middlewareStore";
+import { OverridesStore, type QueueOverride, type TaskOverride } from "./dashboard/overridesStore";
 import {
   InterceptionError,
   JobCancelledError,
@@ -679,6 +681,149 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.listSettings();
   }
 
+  // ── Task & queue overrides (dashboard-tunable runtime config) ─────
+
+  /** Every persisted task override keyed by task name. */
+  listTaskOverrides(): Map<string, TaskOverride> {
+    return new OverridesStore(this.native).listTasks();
+  }
+
+  getTaskOverride(taskName: string): TaskOverride | undefined {
+    return new OverridesStore(this.native).getTask(taskName);
+  }
+
+  /**
+   * Set or update a task override; `null` clears a field. Allowed fields:
+   * `rate_limit`, `max_concurrent`, `max_retries`, `retry_backoff`,
+   * `timeout`, `priority`, `paused`. Applied on the next worker start.
+   */
+  setTaskOverride(taskName: string, fields: Record<string, unknown>): TaskOverride {
+    return new OverridesStore(this.native).setTask(taskName, fields);
+  }
+
+  clearTaskOverride(taskName: string): boolean {
+    return new OverridesStore(this.native).clearTask(taskName);
+  }
+
+  listQueueOverrides(): Map<string, QueueOverride> {
+    return new OverridesStore(this.native).listQueues();
+  }
+
+  getQueueOverride(queueName: string): QueueOverride | undefined {
+    return new OverridesStore(this.native).getQueue(queueName);
+  }
+
+  /** Allowed fields: `rate_limit`, `max_concurrent`, `paused`. */
+  setQueueOverride(queueName: string, fields: Record<string, unknown>): QueueOverride {
+    return new OverridesStore(this.native).setQueue(queueName, fields);
+  }
+
+  clearQueueOverride(queueName: string): boolean {
+    return new OverridesStore(this.native).clearQueue(queueName);
+  }
+
+  /**
+   * Every registered task with its registration defaults, any active
+   * override, and the effective values for the next worker start
+   * (snake_case, dashboard contract; durations in seconds).
+   */
+  registeredTasks(): Array<Record<string, unknown>> {
+    const overrides = this.listTaskOverrides();
+    const out: Array<Record<string, unknown>> = [];
+    for (const [name, task] of this.tasks) {
+      const options = task.options ?? {};
+      const defaults: Record<string, unknown> = {
+        max_retries: options.maxRetries ?? null,
+        retry_backoff:
+          options.retryBackoff?.baseMs !== undefined ? options.retryBackoff.baseMs / 1000 : null,
+        timeout: options.timeoutMs !== undefined ? options.timeoutMs / 1000 : null,
+        priority: null,
+        rate_limit: options.rateLimit ?? null,
+        max_concurrent: options.maxConcurrent ?? null,
+      };
+      const override = overrides.get(name);
+      const patch = overridePatch(override);
+      out.push({
+        name,
+        queue: "default",
+        defaults,
+        override: override ? { ...patch, ...(override.paused ? { paused: true } : {}) } : null,
+        effective: { ...defaults, ...patch },
+        paused: override?.paused ?? false,
+      });
+    }
+    return out;
+  }
+
+  /** Every known queue with its limits, override, and paused state. */
+  registeredQueues(): Array<Record<string, unknown>> {
+    const overrides = this.listQueueOverrides();
+    const pausedSet = new Set(this.listPausedQueues());
+    const names = new Set<string>(["default", ...this.queueLimits.keys(), ...overrides.keys()]);
+    const out: Array<Record<string, unknown>> = [];
+    for (const name of [...names].sort()) {
+      const limits = this.queueLimits.get(name);
+      const defaults: Record<string, unknown> = {};
+      if (limits?.rateLimit !== undefined) {
+        defaults.rate_limit = limits.rateLimit;
+      }
+      if (limits?.maxConcurrent !== undefined) {
+        defaults.max_concurrent = limits.maxConcurrent;
+      }
+      const override = overrides.get(name);
+      const patch = overridePatch(override);
+      out.push({
+        name,
+        defaults,
+        override: override ? { ...patch, ...(override.paused ? { paused: true } : {}) } : null,
+        effective: { ...defaults, ...patch },
+        paused: pausedSet.has(name) || (override?.paused ?? false),
+      });
+    }
+    return out;
+  }
+
+  // ── Middleware admin (dashboard toggles) ──────────────────────────
+
+  /** Every registered middleware with its name, class path, and scopes. */
+  listMiddleware(): Array<Record<string, unknown>> {
+    const seen = new Map<string, Record<string, unknown>>();
+    this.middleware.forEach((mw, index) => {
+      const name = middlewareKey(mw, index);
+      if (!seen.has(name)) {
+        seen.set(name, {
+          name,
+          class_path: mw.constructor?.name ?? "Object",
+          scopes: [{ kind: "global" }],
+        });
+      }
+    });
+    return [...seen.values()];
+  }
+
+  /** Every task with at least one disabled middleware. */
+  listMiddlewareDisables(): Record<string, string[]> {
+    return new MiddlewareDisableStore(this.native).listAll();
+  }
+
+  getDisabledMiddlewareFor(taskName: string): string[] {
+    return new MiddlewareDisableStore(this.native).getFor(taskName);
+  }
+
+  /** Disable one middleware for one task (takes effect on the next job). */
+  disableMiddlewareForTask(taskName: string, middlewareName: string): string[] {
+    return new MiddlewareDisableStore(this.native).setDisabled(taskName, middlewareName, true);
+  }
+
+  enableMiddlewareForTask(taskName: string, middlewareName: string): string[] {
+    return new MiddlewareDisableStore(this.native).setDisabled(taskName, middlewareName, false);
+  }
+
+  /** Clear ALL disables for a task — every middleware fires again. */
+  clearMiddlewareDisables(taskName: string): boolean {
+    return new MiddlewareDisableStore(this.native).clearFor(taskName);
+  }
+
   /** Registered workers (heartbeat + identity). */
   listWorkers(): Promise<WorkerInfo[]> {
     return this.native.listWorkers();
@@ -753,6 +898,25 @@ function toOpenOptions(options: QueueOptions): OpenOptions {
     prefix: options.prefix,
     namespace: options.namespace,
   };
+}
+
+/** Non-null override fields, minus identity/bookkeeping ones (contract patch shape). */
+function overridePatch(
+  override: TaskOverride | QueueOverride | undefined,
+): Record<string, unknown> {
+  if (!override) {
+    return {};
+  }
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(override)) {
+    if (key === "task_name" || key === "queue_name" || key === "updated_at" || key === "paused") {
+      continue;
+    }
+    if (value !== null) {
+      patch[key] = value;
+    }
+  }
+  return patch;
 }
 
 /**

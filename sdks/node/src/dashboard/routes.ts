@@ -1,7 +1,9 @@
 import type { Queue } from "../index";
 import * as auth from "./authHandlers";
 import * as h from "./handlers";
+import * as middleware from "./middlewareHandlers";
 import * as ops from "./opsHandlers";
+import * as overrides from "./overridesHandlers";
 import type { RequestContext } from "./requestContext";
 import * as settings from "./settingsHandlers";
 
@@ -125,6 +127,54 @@ export const routes: Route[] = [
   },
   { method: "GET", pattern: /^\/api\/scaler$/, handle: (q, url) => ops.scaler(q, url) },
   { method: "GET", pattern: /^\/api\/resources$/, handle: (q) => ops.resourceStatus(q) },
+  { method: "GET", pattern: /^\/api\/tasks$/, handle: (q) => overrides.listTasks(q) },
+  { method: "GET", pattern: /^\/api\/queues$/, handle: (q) => overrides.listQueues(q) },
+  {
+    method: "GET",
+    pattern: /^\/api\/tasks\/([^/]+)\/override$/,
+    handle: (q, _url, p) => overrides.getTaskOverride(q, id(p)),
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/tasks\/([^/]+)\/override$/,
+    handle: (q, _url, p, body) => overrides.putTaskOverride(q, id(p), body),
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/tasks\/([^/]+)\/override$/,
+    handle: (q, _url, p) => overrides.deleteTaskOverride(q, id(p)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/queues\/([^/]+)\/override$/,
+    handle: (q, _url, p) => overrides.getQueueOverride(q, id(p)),
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/queues\/([^/]+)\/override$/,
+    handle: (q, _url, p, body) => overrides.putQueueOverride(q, id(p), body),
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/queues\/([^/]+)\/override$/,
+    handle: (q, _url, p) => overrides.deleteQueueOverride(q, id(p)),
+  },
+  { method: "GET", pattern: /^\/api\/middleware$/, handle: (q) => middleware.listMiddleware(q) },
+  {
+    method: "GET",
+    pattern: /^\/api\/tasks\/([^/]+)\/middleware$/,
+    handle: (q, _url, p) => middleware.getTaskMiddleware(q, id(p)),
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/tasks\/([^/]+)\/middleware\/([^/]+)$/,
+    handle: (q, _url, p, body) => middleware.putTaskMiddleware(q, id(p), p[1] ?? "", body),
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/tasks\/([^/]+)\/middleware$/,
+    handle: (q, _url, p) => middleware.deleteTaskMiddleware(q, id(p)),
+  },
   { method: "GET", pattern: /^\/api\/metrics$/, handle: (q, url) => h.metrics(q, url) },
   {
     method: "GET",
