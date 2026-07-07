@@ -2,10 +2,15 @@ package org.byteveda.taskito.dashboard.api;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.byteveda.taskito.model.CircuitBreakerState;
+import org.byteveda.taskito.model.DagEdge;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.model.ReplayEntry;
+import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.WorkerInfo;
 
 /**
@@ -89,6 +94,49 @@ final class Contract {
         m.put("failed_at", d.failedAt);
         m.put("metadata", d.metadata);
         m.put("dlq_retry_count", d.dlqRetryCount);
+        return m;
+    }
+
+    static Map<String, Object> taskLog(TaskLog l) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", l.id);
+        m.put("job_id", l.jobId);
+        m.put("task_name", l.taskName);
+        m.put("level", l.level);
+        m.put("message", l.message);
+        m.put("extra", l.extra);
+        m.put("logged_at", l.loggedAt);
+        return m;
+    }
+
+    static Map<String, Object> replayEntry(ReplayEntry r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("replay_job_id", r.replayJobId);
+        m.put("replayed_at", r.replayedAt);
+        m.put("original_error", r.originalError);
+        m.put("replay_error", r.replayError);
+        return m;
+    }
+
+    static Map<String, Object> jobDag(JobDag dag) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("nodes", dag.nodes.stream().map(Contract::dagNode).collect(Collectors.toList()));
+        m.put("edges", dag.edges.stream().map(Contract::dagEdge).collect(Collectors.toList()));
+        return m;
+    }
+
+    private static Map<String, Object> dagNode(Job j) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", j.id);
+        m.put("task_name", j.taskName);
+        m.put("status", j.status.wire());
+        return m;
+    }
+
+    private static Map<String, Object> dagEdge(DagEdge e) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("from", e.from);
+        m.put("to", e.to);
         return m;
     }
 }

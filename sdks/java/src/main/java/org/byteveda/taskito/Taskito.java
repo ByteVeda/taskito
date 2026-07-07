@@ -24,10 +24,12 @@ import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.JobError;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
@@ -198,6 +200,15 @@ public interface Taskito extends AutoCloseable {
     /** Alias of {@link #retryDead(String)} in the guide's vocabulary. */
     String retry(String deadId);
 
+    /** Re-enqueue a copy of a job (recording it in the replay history); returns the new job id. */
+    String replayJob(String jobId);
+
+    /** A job's replay history. */
+    List<ReplayEntry> getReplayHistory(String jobId);
+
+    /** The dependency DAG reachable from a job (nodes plus {@code from → to} edges). */
+    JobDag jobDag(String jobId);
+
     boolean deleteDead(String deadId);
 
     long purgeDead(long olderThanMs);
@@ -222,6 +233,12 @@ public interface Taskito extends AutoCloseable {
     void writeTaskLog(String jobId, String taskName, String level, String message, String extra);
 
     List<TaskLog> getTaskLogs(String jobId);
+
+    /** Logs for a job with id after {@code afterId} (UUIDv7-ordered cursor); null = all. */
+    List<TaskLog> getTaskLogsAfter(String jobId, String afterId);
+
+    /** Logs across jobs filtered by task/level, at or after {@code sinceMs}, capped at {@code limit}. */
+    List<TaskLog> queryTaskLogs(String taskName, String level, long sinceMs, long limit);
 
     // ── Locks ───────────────────────────────────────────────────────
 

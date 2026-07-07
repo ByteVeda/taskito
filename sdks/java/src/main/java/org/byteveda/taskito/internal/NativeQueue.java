@@ -55,6 +55,12 @@ public final class NativeQueue {
 
     public static native String listCircuitBreakers(long handle);
 
+    public static native String replayJob(long handle, String jobId);
+
+    public static native String getReplayHistory(long handle, String jobId);
+
+    public static native String jobDag(long handle, String jobId);
+
     // ── Admin ───────────────────────────────────────────────────────
     public static native String listDead(long handle, long limit, long offset);
 
@@ -92,6 +98,11 @@ public final class NativeQueue {
             long handle, String jobId, String taskName, String level, String message, String extraOrNull);
 
     public static native String getTaskLogs(long handle, String jobId);
+
+    public static native String getTaskLogsAfter(long handle, String jobId, String afterIdOrNull);
+
+    public static native String queryTaskLogs(
+            long handle, String taskNameOrNull, String levelOrNull, long sinceMs, long limit);
 
     // ── Locks ───────────────────────────────────────────────────────
     public static native boolean acquireLock(long handle, String name, String ownerId, long ttlMs);

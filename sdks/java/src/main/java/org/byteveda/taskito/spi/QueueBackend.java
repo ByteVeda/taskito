@@ -62,6 +62,21 @@ public interface QueueBackend extends AutoCloseable {
 
     String retryDead(String deadId);
 
+    /** Re-enqueue a copy of a job and return the new id. */
+    default String replayJob(String jobId) {
+        throw new UnsupportedOperationException("replay not supported by this backend");
+    }
+
+    /** A job's replay history; defaults to none. */
+    default String getReplayHistoryJson(String jobId) {
+        return "[]";
+    }
+
+    /** A job's dependency DAG; defaults to just the empty graph. */
+    default String jobDagJson(String jobId) {
+        return "{\"nodes\":[],\"edges\":[]}";
+    }
+
     boolean deleteDead(String deadId);
 
     long purgeDead(long olderThanMs);
@@ -96,6 +111,16 @@ public interface QueueBackend extends AutoCloseable {
     void writeTaskLog(String jobId, String taskName, String level, String message, String extraOrNull);
 
     String getTaskLogsJson(String jobId);
+
+    /** Logs for a job after a cursor id; defaults to none for backends without cursor support. */
+    default String getTaskLogsAfterJson(String jobId, String afterIdOrNull) {
+        return "[]";
+    }
+
+    /** Logs across jobs filtered by task/level/since; defaults to none. */
+    default String queryTaskLogsJson(String taskNameOrNull, String levelOrNull, long sinceMs, long limit) {
+        return "[]";
+    }
 
     // ── Locks ───────────────────────────────────────────────────────
     // Optional capability: default to throwing so existing custom backends keep

@@ -138,6 +138,21 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String replayJob(String jobId) {
+        return withOpenHandle(() -> NativeQueue.replayJob(handle, jobId));
+    }
+
+    @Override
+    public String getReplayHistoryJson(String jobId) {
+        return withOpenHandle(() -> NativeQueue.getReplayHistory(handle, jobId));
+    }
+
+    @Override
+    public String jobDagJson(String jobId) {
+        return withOpenHandle(() -> NativeQueue.jobDag(handle, jobId));
+    }
+
+    @Override
     public boolean deleteDead(String deadId) {
         return withOpenHandle(() -> NativeQueue.deleteDead(handle, deadId));
     }
@@ -217,6 +232,16 @@ public final class JniQueueBackend implements QueueBackend {
     @Override
     public String getTaskLogsJson(String jobId) {
         return withOpenHandle(() -> NativeQueue.getTaskLogs(handle, jobId));
+    }
+
+    @Override
+    public String getTaskLogsAfterJson(String jobId, String afterIdOrNull) {
+        return withOpenHandle(() -> NativeQueue.getTaskLogsAfter(handle, jobId, afterIdOrNull));
+    }
+
+    @Override
+    public String queryTaskLogsJson(String taskNameOrNull, String levelOrNull, long sinceMs, long limit) {
+        return withOpenHandle(() -> NativeQueue.queryTaskLogs(handle, taskNameOrNull, levelOrNull, sinceMs, limit));
     }
 
     @Override

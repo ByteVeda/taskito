@@ -32,10 +32,12 @@ import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.JobError;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
+import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
@@ -507,6 +509,21 @@ final class DefaultTaskito implements Taskito {
     }
 
     @Override
+    public String replayJob(String jobId) {
+        return backend.replayJob(jobId);
+    }
+
+    @Override
+    public List<ReplayEntry> getReplayHistory(String jobId) {
+        return decodeList(backend.getReplayHistoryJson(jobId), ReplayEntry.class);
+    }
+
+    @Override
+    public JobDag jobDag(String jobId) {
+        return decode(backend.jobDagJson(jobId), JobDag.class);
+    }
+
+    @Override
     public boolean deleteDead(String deadId) {
         return backend.deleteDead(deadId);
     }
@@ -571,6 +588,16 @@ final class DefaultTaskito implements Taskito {
     @Override
     public List<TaskLog> getTaskLogs(String jobId) {
         return decodeList(backend.getTaskLogsJson(jobId), TaskLog.class);
+    }
+
+    @Override
+    public List<TaskLog> getTaskLogsAfter(String jobId, String afterId) {
+        return decodeList(backend.getTaskLogsAfterJson(jobId, afterId), TaskLog.class);
+    }
+
+    @Override
+    public List<TaskLog> queryTaskLogs(String taskName, String level, long sinceMs, long limit) {
+        return decodeList(backend.queryTaskLogsJson(taskName, level, sinceMs, limit), TaskLog.class);
     }
 
     @Override

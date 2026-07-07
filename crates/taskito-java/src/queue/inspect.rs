@@ -1,10 +1,12 @@
 //! Read-only inspection entry points for `NativeQueue`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use jni::objects::{JClass, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
+use serde::Serialize;
+use taskito_core::job::Job;
 use taskito_core::Storage;
 
 use super::borrow_queue;
@@ -14,6 +16,22 @@ use crate::convert::{
 };
 use crate::error::BindingError;
 use crate::ffi::{guard, new_string, read_optional_string, read_string};
+
+/// One `dependency -> dependent` edge in a job DAG.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DagEdgeView {
+    from: String,
+    to: String,
+}
+
+/// The dependency DAG reachable from a job: full job rows plus edges.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobDagView<'a> {
+    nodes: Vec<JobView<'a>>,
+    edges: Vec<DagEdgeView>,
+}
 
 const DEFAULT_LIMIT: i64 = 50;
 
@@ -163,5 +181,58 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listCircui
         let views: Vec<CircuitBreakerView> =
             breakers.iter().map(CircuitBreakerView::from).collect();
         new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String jobDag(long handle, String jobId)` — the dependency DAG reachable
+/// from a job as a JSON `{nodes, edges}` object. Walks dependencies and
+/// dependents in both directions, deduping nodes and edges.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_jobDag<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    job_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let start = read_string(env, &job_id)?;
+
+        let mut visited: HashSet<String> = HashSet::new();
+        // Both endpoints of an edge report it; dedupe by (from, to).
+        let mut seen_edges: HashSet<(String, String)> = HashSet::new();
+        // Keep the jobs alive so the borrowing `JobView`s can be built at the end.
+        let mut jobs: Vec<Job> = Vec::new();
+        let mut edges: Vec<DagEdgeView> = Vec::new();
+        let mut pending = vec![start];
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            let Some(job) = queue.storage.get_job(&current)? else {
+                continue;
+            };
+            jobs.push(job);
+            for dep_id in queue.storage.get_dependencies(&current)? {
+                if seen_edges.insert((dep_id.clone(), current.clone())) {
+                    edges.push(DagEdgeView {
+                        from: dep_id.clone(),
+                        to: current.clone(),
+                    });
+                }
+                pending.push(dep_id);
+            }
+            for dep_id in queue.storage.get_dependents(&current)? {
+                if seen_edges.insert((current.clone(), dep_id.clone())) {
+                    edges.push(DagEdgeView {
+                        from: current.clone(),
+                        to: dep_id.clone(),
+                    });
+                }
+                pending.push(dep_id);
+            }
+        }
+        let nodes: Vec<JobView> = jobs.iter().map(JobView::from).collect();
+        new_string(env, to_json(&JobDagView { nodes, edges })?)
     })
 }

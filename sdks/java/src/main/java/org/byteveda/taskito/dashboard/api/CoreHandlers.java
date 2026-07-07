@@ -87,4 +87,30 @@ public final class CoreHandlers {
         queue.queue(name).resume();
         return Map.of("ok", true);
     }
+
+    /** Logs across jobs filtered by task/level; {@code since} is a lookback in seconds. */
+    public Object logs(Map<String, String> query) {
+        long sinceSeconds = Http.longParam(query, "since", 3600);
+        long sinceMs = System.currentTimeMillis() - sinceSeconds * 1000;
+        long limit = Http.longParam(query, "limit", 100);
+        return queue.queryTaskLogs(query.get("task"), query.get("level"), sinceMs, limit).stream()
+                .map(Contract::taskLog)
+                .collect(Collectors.toList());
+    }
+
+    public Object jobLogs(String id) {
+        return queue.getTaskLogs(id).stream().map(Contract::taskLog).collect(Collectors.toList());
+    }
+
+    public Object replayJob(String id) {
+        return Map.of("replay_job_id", queue.replayJob(id));
+    }
+
+    public Object replayHistory(String id) {
+        return queue.getReplayHistory(id).stream().map(Contract::replayEntry).collect(Collectors.toList());
+    }
+
+    public Object jobDag(String id) {
+        return Contract.jobDag(queue.jobDag(id));
+    }
 }

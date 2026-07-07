@@ -5,9 +5,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.dashboard.support.Http;
+import org.byteveda.taskito.dashboard.support.Json;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.WorkerInfo;
@@ -60,6 +64,54 @@ public final class OpsHandlers {
             out.put("per_queue", perQueue);
         }
         return out;
+    }
+
+    /**
+     * Per-resource status aggregated across workers, derived from each worker's
+     * advertised {@code resources} + reported {@code resourceHealth}. A resource
+     * a worker advertises but never reports on is {@code not_initialized}; when
+     * workers disagree, the worst health wins.
+     */
+    public Object resources() {
+        Map<String, Integer> reported = new TreeMap<>();
+        Set<String> advertised = new TreeSet<>();
+        for (WorkerInfo worker : queue.listWorkers()) {
+            advertised.addAll(Json.parseStringList(worker.resources));
+            Map<String, Object> health = Json.parseMap(worker.resourceHealth);
+            if (health != null) {
+                health.forEach((name, value) -> reported.merge(name, severity(String.valueOf(value)), Math::max));
+            }
+        }
+        Set<String> all = new TreeSet<>(advertised);
+        all.addAll(reported.keySet());
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String name : all) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("name", name);
+            entry.put("scope", "worker");
+            entry.put("health", reported.containsKey(name) ? healthName(reported.get(name)) : "not_initialized");
+            entry.put("init_duration_ms", 0);
+            entry.put("recreations", 0);
+            entry.put("depends_on", List.of());
+            out.add(entry);
+        }
+        return out;
+    }
+
+    private static int severity(String health) {
+        return switch (health) {
+            case "unhealthy" -> 2;
+            case "degraded" -> 1;
+            default -> 0;
+        };
+    }
+
+    private static String healthName(int severity) {
+        return switch (severity) {
+            case 2 -> "unhealthy";
+            case 1 -> "degraded";
+            default -> "healthy";
+        };
     }
 
     public Object readiness() {

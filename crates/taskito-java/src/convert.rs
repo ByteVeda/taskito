@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
 use taskito_core::resilience::circuit_breaker::CircuitState;
 use taskito_core::storage::models::{
-    CircuitBreakerRow, JobErrorRow, LockInfoRow, PeriodicTaskRow, TaskLogRow, TaskMetricRow,
-    WorkerRow,
+    CircuitBreakerRow, JobErrorRow, LockInfoRow, PeriodicTaskRow, ReplayHistoryRow, TaskLogRow,
+    TaskMetricRow, WorkerRow,
 };
 use taskito_core::storage::{DeadJob, QueueStats};
 
@@ -379,6 +379,10 @@ pub struct WorkerView<'a> {
     pub pool_type: Option<&'a str>,
     pub threads: i32,
     pub tags: Option<&'a str>,
+    /// JSON array of resource names the worker advertised at registration.
+    pub resources: Option<&'a str>,
+    /// JSON object of per-resource health, written by the worker's heartbeat.
+    pub resource_health: Option<&'a str>,
 }
 
 impl<'a> From<&'a WorkerRow> for WorkerView<'a> {
@@ -394,6 +398,33 @@ impl<'a> From<&'a WorkerRow> for WorkerView<'a> {
             pool_type: w.pool_type.as_deref(),
             threads: w.threads,
             tags: w.tags.as_deref(),
+            resources: w.resources.as_deref(),
+            resource_health: w.resource_health.as_deref(),
+        }
+    }
+}
+
+/// One replay of a job (result blobs are omitted; ids + errors suffice).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayEntryView<'a> {
+    pub id: &'a str,
+    pub original_job_id: &'a str,
+    pub replay_job_id: &'a str,
+    pub replayed_at: i64,
+    pub original_error: Option<&'a str>,
+    pub replay_error: Option<&'a str>,
+}
+
+impl<'a> From<&'a ReplayHistoryRow> for ReplayEntryView<'a> {
+    fn from(r: &'a ReplayHistoryRow) -> Self {
+        Self {
+            id: &r.id,
+            original_job_id: &r.original_job_id,
+            replay_job_id: &r.replay_job_id,
+            replayed_at: r.replayed_at,
+            original_error: r.original_error.as_deref(),
+            replay_error: r.replay_error.as_deref(),
         }
     }
 }
