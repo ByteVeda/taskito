@@ -1,18 +1,89 @@
 import type { Queue } from "../index";
+import * as auth from "./authHandlers";
 import * as h from "./handlers";
+import type { RequestContext } from "./requestContext";
 
 export interface Route {
   method: string;
   pattern: RegExp;
-  handle: (queue: Queue, url: URL, params: string[], body: unknown) => unknown | Promise<unknown>;
+  handle: (
+    queue: Queue,
+    url: URL,
+    params: string[],
+    body: unknown,
+    ctx: RequestContext,
+  ) => unknown | Promise<unknown>;
+}
+
+// ── Auth policy ─────────────────────────────────────────────────────────
+
+/** Exact paths that bypass the session/CSRF gate. */
+export const PUBLIC_PATHS = new Set([
+  "/api/auth/status",
+  "/api/auth/login",
+  "/api/auth/setup",
+  "/api/auth/providers",
+  "/health",
+  "/readiness",
+  "/metrics",
+]);
+
+/** Prefixes that bypass auth — OAuth paths carry a provider slot in the URL. */
+export const PUBLIC_PATH_PREFIXES = ["/api/auth/oauth/start/", "/api/auth/oauth/callback/"];
+
+/** State-changing paths a non-admin may call on their own session. */
+const SELF_SERVICE_PATHS = new Set(["/api/auth/logout", "/api/auth/change-password"]);
+
+/** Paths exempt from CSRF because no session exists yet. */
+const CSRF_EXEMPT_PATHS = new Set(["/api/auth/login", "/api/auth/setup"]);
+
+export function isPublicPath(path: string): boolean {
+  return PUBLIC_PATHS.has(path) || PUBLIC_PATH_PREFIXES.some((p) => path.startsWith(p));
+}
+
+export function isStateChangingMethod(method: string): boolean {
+  return method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH";
+}
+
+export function isCsrfExempt(path: string): boolean {
+  return CSRF_EXEMPT_PATHS.has(path);
+}
+
+export function requiresAdmin(path: string, method: string): boolean {
+  return isStateChangingMethod(method) && !SELF_SERVICE_PATHS.has(path);
 }
 
 const id = (params: string[]): string => params[0] ?? "";
 
 /** Route table, walked in order: exact paths first, then parameterized ones. */
 export const routes: Route[] = [
-  { method: "GET", pattern: /^\/api\/auth\/status$/, handle: () => h.authStatus() },
-  { method: "GET", pattern: /^\/api\/auth\/whoami$/, handle: () => h.whoami() },
+  { method: "GET", pattern: /^\/api\/auth\/status$/, handle: (q) => auth.authStatus(q) },
+  {
+    method: "GET",
+    pattern: /^\/api\/auth\/whoami$/,
+    handle: (q, _u, _p, _b, c) => auth.whoami(q, c),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/auth\/setup$/,
+    handle: (q, _u, _p, body) => auth.setup(q, body),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/auth\/login$/,
+    handle: (q, _u, _p, body) => auth.login(q, body),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/auth\/logout$/,
+    handle: (q, _u, _p, _b, c) => auth.logout(q, c),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/auth\/change-password$/,
+    handle: (q, _u, _p, body, c) => auth.changePassword(q, body, c),
+  },
+  { method: "GET", pattern: /^\/api\/auth\/providers$/, handle: () => h.authProviders() },
   { method: "GET", pattern: /^\/api\/stats$/, handle: (q) => h.stats(q) },
   { method: "GET", pattern: /^\/api\/stats\/queues$/, handle: (q, url) => h.statsQueues(q, url) },
   { method: "GET", pattern: /^\/api\/queues\/paused$/, handle: (q) => h.queuesPaused(q) },

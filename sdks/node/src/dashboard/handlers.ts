@@ -229,16 +229,22 @@ function parseWebhookInput(body: unknown): Partial<WebhookInput> {
   return input;
 }
 
-// Open-mode auth (no login): the minimal boot responses the SPA needs.
-export function authStatus() {
+// Token-mode auth boot responses: with a shared-token gate there is no user
+// store, so the SPA gets a fixed identity once past the token check.
+export function openAuthStatus() {
   return { setup_required: false };
 }
-export function whoami() {
+export function openWhoami() {
   return {
     user: { username: "viewer", role: "admin", created_at: 0, last_login_at: 0 },
     csrf_token: "open",
     expires_at: 9_999_999_999_999,
   };
+}
+
+/** Available login providers. OAuth providers are added when configured. */
+export function authProviders() {
+  return { password_enabled: true, providers: [] };
 }
 
 export function cancel(queue: Queue, id: string) {

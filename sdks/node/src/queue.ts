@@ -659,6 +659,26 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.listPausedQueues();
   }
 
+  /** Read a dashboard settings key, or `null` when unset. */
+  getSetting(key: string): string | null {
+    return this.native.getSetting(key);
+  }
+
+  /** Write a dashboard settings key. */
+  setSetting(key: string, value: string): void {
+    this.native.setSetting(key, value);
+  }
+
+  /** Delete a dashboard settings key. Returns false if it didn't exist. */
+  deleteSetting(key: string): boolean {
+    return this.native.deleteSetting(key);
+  }
+
+  /** All dashboard settings as a key → value record. */
+  listSettings(): Record<string, string> {
+    return this.native.listSettings();
+  }
+
   /** Registered workers (heartbeat + identity). */
   listWorkers(): Promise<WorkerInfo[]> {
     return this.native.listWorkers();
