@@ -1,10 +1,13 @@
 /* SDK-variant show/hide, driven by `<html data-sdk>` (set before paint by the
    bootstrap in root.tsx). Every SDK's variant ships in the static HTML; only the
    active SDK's blocks are visible — no flash, no hydration mismatch, all variants
-   stay indexable. Components mark variants with `data-sdk-variant="python|node"`. */
+   stay indexable. Components mark variants with `data-sdk-variant="<sdk id>"`.
+   The :not() form hides every inactive variant, so adding an SDK only needs one
+   new selector here instead of a full pairwise enumeration. */
 
-[data-sdk="python"] [data-sdk-variant="node"],
-[data-sdk="node"] [data-sdk-variant="python"] {
+[data-sdk="python"] [data-sdk-variant]:not([data-sdk-variant="python"]),
+[data-sdk="node"] [data-sdk-variant]:not([data-sdk-variant="node"]),
+[data-sdk="java"] [data-sdk-variant]:not([data-sdk-variant="java"]) {
   display: none;
 }
 
@@ -15,7 +18,8 @@
   margin-top: 14px;
 }
 [data-sdk="python"] .sdk-tab[data-sdk-variant="python"],
-[data-sdk="node"] .sdk-tab[data-sdk-variant="node"] {
+[data-sdk="node"] .sdk-tab[data-sdk-variant="node"],
+[data-sdk="java"] .sdk-tab[data-sdk-variant="java"] {
   color: var(--indigo-br);
   border-bottom-color: var(--indigo);
 }
