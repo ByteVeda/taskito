@@ -221,7 +221,13 @@ function matchSlot(path: string, prefix: string): string | undefined {
   if (!path.startsWith(prefix)) {
     return undefined;
   }
-  const slot = decodeURIComponent(path.slice(prefix.length));
+  let slot: string;
+  try {
+    slot = decodeURIComponent(path.slice(prefix.length));
+  } catch {
+    // Malformed percent-encoding on a public path is a 404, not a 500.
+    return undefined;
+  }
   return slot && !slot.includes("/") ? slot : undefined;
 }
 
@@ -433,7 +439,9 @@ async function serveProbe(
     return;
   }
   if (path === "/readiness") {
-    sendJson(res, 200, await readiness(queue));
+    const payload = await readiness(queue);
+    // Non-2xx on degraded so orchestrators stop routing to this instance.
+    sendJson(res, payload.status === "ready" ? 200 : 503, payload);
     return;
   }
   try {
