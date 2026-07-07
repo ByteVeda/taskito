@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { Queue } from "../index";
 import { createLogger } from "../utils";
 import type { DashboardAuth } from "./auth";
-import { bootstrapAdminFromEnv } from "./auth";
+import { bootstrapAdminFromEnv, OAuthFlow, oauthConfigFromEnv } from "./auth";
 import { createDashboardServer } from "./server";
 
 const log = createLogger("dashboard");
@@ -26,6 +26,11 @@ export interface DashboardOptions {
    * (default true). Disable only for plain-HTTP development.
    */
   secureCookies?: boolean;
+  /**
+   * OAuth login flow. When omitted, one is built from the
+   * `TASKITO_DASHBOARD_OAUTH_*` environment variables if they are set.
+   */
+  oauth?: OAuthFlow;
 }
 
 // Built relative to dist/ at runtime. The path is assembled dynamically so the
@@ -50,6 +55,7 @@ export function serveDashboard(queue: Queue, options: DashboardOptions = {}): Se
   const server = createDashboardServer(queue, options.staticDir ?? defaultStaticDir(), {
     auth: options.auth,
     secureCookies: options.secureCookies,
+    oauth: options.oauth ?? (options.auth ? undefined : buildOauthFlowFromEnv(queue)),
   });
   // A bind failure (e.g. EADDRINUSE) without an 'error' listener crashes the process.
   server.on("error", (error) => {
@@ -65,9 +71,29 @@ export {
   bootstrapAdminFromEnv,
   type DashboardSession,
   type DashboardUser,
+  type OAuthConfig,
+  OAuthConfigError,
+  OAuthFlow,
+  type OAuthProvider,
+  oauthConfigFromEnv,
+  type ProviderIdentity,
 } from "./auth";
 export {
   createDashboardHandler,
   createDashboardServer,
   type DashboardHandlerOptions,
 } from "./server";
+
+/** Build the OAuth flow from env; invalid config logs and disables OAuth. */
+function buildOauthFlowFromEnv(queue: Queue): OAuthFlow | undefined {
+  try {
+    const config = oauthConfigFromEnv();
+    if (!config || !(config.google || config.github || config.oidc.length > 0)) {
+      return undefined;
+    }
+    return new OAuthFlow(queue, config);
+  } catch (error) {
+    log.warn(() => `OAuth disabled — invalid configuration: ${String(error)}`);
+    return undefined;
+  }
+}

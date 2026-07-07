@@ -6,6 +6,12 @@ export {
   type DashboardOptions,
   type DashboardSession,
   type DashboardUser,
+  type OAuthConfig,
+  OAuthConfigError,
+  OAuthFlow,
+  type OAuthProvider,
+  oauthConfigFromEnv,
+  type ProviderIdentity,
   serveDashboard,
 } from "./dashboard";
 export {

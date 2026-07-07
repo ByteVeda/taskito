@@ -12,15 +12,19 @@ import type { Queue } from "../index";
 import { createLogger } from "../utils";
 import { WebhookValidationError } from "../webhooks";
 import {
+  AllowlistDenied,
   AuthStore,
   buildContext,
   CSRF_COOKIE,
   csrfValid,
   type DashboardAuth,
   isPublicApiPath,
+  type OAuthFlow,
+  ProviderNotConfigured,
   presentedToken,
   type RequestContext,
   SESSION_COOKIE,
+  StateValidationError,
   setTokenCookie,
   tokenMatches,
 } from "./auth";
@@ -40,7 +44,8 @@ export interface DashboardHandlerOptions {
   /** Legacy shared-token gate. When set, the session-auth flow is disabled. */
   auth?: DashboardAuth;
   /** Mark session cookies `Secure` (default true). Disable only for plain-HTTP dev. */
-  secureCookies?: boolean;
+  secureCookies?: boolean /** OAuth login flow (built from env by `serveDashboard` when omitted). */;
+  oauth?: OAuthFlow;
 }
 
 /** Accept the pre-options `DashboardAuth` third argument for compatibility. */
@@ -127,7 +132,102 @@ async function dispatch(
     sendJson(res, denied.status, { error: denied.code });
     return;
   }
-  await runRoute(queue, req, res, url, path, ctx, options.secureCookies !== false);
+  const secure = options.secureCookies !== false;
+  if (req.method === "GET" && (await serveOauth(options.oauth, res, url, path, secure))) {
+    return;
+  }
+  await runRoute(queue, req, res, url, path, ctx, secure);
+}
+
+/**
+ * OAuth endpoints (redirect-emitting, so they live outside the JSON route
+ * table): provider listing, `/start/<slot>` 302s to the provider, and
+ * `/callback/<slot>` lands the session. Returns false when `path` is not
+ * an OAuth path so normal dispatch continues.
+ */
+async function serveOauth(
+  flow: OAuthFlow | undefined,
+  res: ServerResponse,
+  url: URL,
+  path: string,
+  secure: boolean,
+): Promise<boolean> {
+  if (path === "/api/auth/providers") {
+    if (!flow) {
+      return false; // fall through to the password-only route handler
+    }
+    sendJson(res, 200, {
+      password_enabled: flow.passwordAuthEnabled,
+      providers: flow.providersListing(),
+    });
+    return true;
+  }
+
+  const start = matchSlot(path, "/api/auth/oauth/start/");
+  if (start !== undefined) {
+    if (!flow) {
+      sendJson(res, 404, { error: "oauth_not_configured" });
+      return true;
+    }
+    try {
+      redirect(res, await flow.start(start, url.searchParams.get("next")));
+    } catch (error) {
+      if (error instanceof ProviderNotConfigured) {
+        sendJson(res, 404, { error: error.message });
+      } else {
+        log.error(() => `oauth start for '${start}' failed`, error);
+        sendJson(res, 500, { error: "internal server error" });
+      }
+    }
+    return true;
+  }
+
+  const callback = matchSlot(path, "/api/auth/oauth/callback/");
+  if (callback !== undefined) {
+    if (!flow) {
+      sendJson(res, 404, { error: "oauth_not_configured" });
+      return true;
+    }
+    try {
+      const { session, nextUrl } = await flow.handleCallback(callback, {
+        code: url.searchParams.get("code"),
+        stateToken: url.searchParams.get("state"),
+        error: url.searchParams.get("error"),
+      });
+      flow.pruneState();
+      const ttl = Math.max(0, session.expiresAt - Math.floor(Date.now() / 1000));
+      res.setHeader("set-cookie", sessionCookies(session.token, session.csrfToken, ttl, secure));
+      redirect(res, nextUrl);
+    } catch (error) {
+      if (error instanceof ProviderNotConfigured) {
+        sendJson(res, 404, { error: error.message });
+      } else if (error instanceof StateValidationError) {
+        redirect(res, "/login?error=oauth_state_invalid");
+      } else if (error instanceof AllowlistDenied) {
+        redirect(res, "/login?error=oauth_denied");
+      } else {
+        // Covers IdentityFetchError and anything unexpected — never leak details.
+        log.error(() => `oauth callback for '${callback}' failed`, error);
+        redirect(res, "/login?error=oauth_failed");
+      }
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function matchSlot(path: string, prefix: string): string | undefined {
+  if (!path.startsWith(prefix)) {
+    return undefined;
+  }
+  const slot = decodeURIComponent(path.slice(prefix.length));
+  return slot && !slot.includes("/") ? slot : undefined;
+}
+
+function redirect(res: ServerResponse, location: string): void {
+  res.writeHead(302, { location });
+  res.end();
 }
 
 /** The session/CSRF/role gate. Returns the denial, or undefined to proceed. */
