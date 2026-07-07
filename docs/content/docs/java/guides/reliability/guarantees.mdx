@@ -1,0 +1,45 @@
+---
+title: Delivery Guarantees
+description: "At-least-once execution, job claiming, and staying correct under retries."
+---
+
+Taskito gives **at-least-once** execution: every enqueued job is attempted at
+least once. A job can also run *more* than once — a worker that crashes
+mid-task (after claiming it, before recording the result) leaves the job to be
+picked up again. Design handlers to tolerate that.
+
+## How a job is claimed
+
+A worker atomically claims a pending job — marking it running in a single
+guarded update — before executing, so two workers never run the same job
+concurrently. If that worker dies, the claim lapses and the scheduler dispatches
+the job again.
+
+## Staying correct: idempotency
+
+Because a job may run more than once, make side effects idempotent:
+
+- Upsert / conditional-write keyed by a stable id rather than blind inserts.
+- Dedupe external calls with a stable business id carried in the payload.
+- Collapse duplicate *enqueues* into one job with
+  [`uniqueKey`](/java/guides/reliability/idempotency).
+
+```java
+Worker worker = queue.worker()
+        .handle(CHARGE, order -> payments.charge(order.total(), order.id()))
+        .start();
+```
+
+## Not guaranteed
+
+- **Exactly-once** — not offered anywhere in the system; pair at-least-once with
+  idempotent handlers instead.
+- **Strict ordering** — within a queue, jobs dequeue by priority then age, but
+  concurrent workers run them in parallel; don't rely on one finishing before
+  another. Use a [workflow](/java/guides/workflows) when order matters.
+
+<Callout type="info">
+  A completed job's result is stored and can be read by id from any process
+  sharing the storage — `queue.getResult(jobId, Receipt.class)`. In tests,
+  `queue.awaitJob(jobId, timeout)` blocks until the job settles.
+</Callout>

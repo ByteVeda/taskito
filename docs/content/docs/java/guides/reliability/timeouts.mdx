@@ -1,0 +1,32 @@
+---
+title: Timeouts
+description: "Bound each execution attempt; timed-out jobs fail and may retry."
+---
+
+`timeoutMs` bounds a single execution attempt. The dispatcher races the handler
+against the timeout; if it elapses, the attempt is marked failed and timed-out.
+Unset (or `0`) means no limit.
+
+```java
+Task<String> SCRAPE = Task.of("scrape", String.class)
+        .timeout(Duration.ofSeconds(30));
+
+// Per-job override
+queue.enqueue(SCRAPE, url, EnqueueOptions.builder().timeoutMs(10_000).build());
+```
+
+A timeout counts as a failure: it consumes a retry and, if retries remain, the
+job is re-enqueued. When the budget is exhausted the job dead-letters with its
+timed-out flag set — surfaced as `OutcomeEvent.timedOut` to event listeners and
+middleware outcome hooks, so they can tell timeouts apart from other errors.
+
+<Callout type="warning">
+  A timeout releases the job's bookkeeping, not its thread — the handler is not
+  interrupted and keeps running until it returns (its late result is discarded).
+  Make long-running handlers cooperative: poll
+  `queue.isCancelRequested(jobId)` or bound their own blocking calls, so the
+  underlying work actually stops.
+</Callout>
+
+Always set a timeout on production tasks — without one, a wedged handler can
+hold a worker thread indefinitely.

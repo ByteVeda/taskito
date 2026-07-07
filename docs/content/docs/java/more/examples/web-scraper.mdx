@@ -1,0 +1,181 @@
+---
+title: Web Scraper Pipeline
+description: "A polite scraper: retry backoff, a dedicated network queue with bounded concurrency, middleware logging, and a fan-in workflow that aggregates results."
+---
+
+Scraping is bursty, failure-prone, and must respect the target's limits. This
+example fetches a set of pages with exponential-backoff retries, isolates
+network work on its own queue served by a small worker pool, and joins the
+results with a fan-out / fan-in workflow.
+
+## Project structure
+
+```
+scraper/
+  Tasks.java      # fetch / list / aggregate + logging middleware
+  Run.java        # submit the workflow: list → fetch (fan-out) → aggregate
+  WorkerMain.java # two workers + periodic cleanup
+```
+
+## Tasks.java
+
+`fetch_page` retries with exponential backoff and lives on a dedicated
+`network` queue so a backlog there never starves the default queue. Politeness
+comes from the network worker's small fixed pool — at most two fetches run at
+once.
+
+```java
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.middleware.TaskContext;
+import org.byteveda.taskito.task.RetryPolicy;
+import org.byteveda.taskito.task.Task;
+
+public final class Tasks {
+    public static final Task<String> FETCH_PAGE = Task.of("fetch_page", String.class)
+            .queue("network")
+            .maxRetries(4)
+            .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(1), Duration.ofMinutes(1)));
+
+    // Source step: supplies the URL list the fan-out expands over.
+    public static final Task<List<String>> LIST_URLS =
+            Task.of("list_urls", new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+
+    // Fan-in combiner: receives one entry per fetched page (each child's result).
+    public static final Task<List<String>> AGGREGATE =
+            Task.of("aggregate", new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+
+    private static final HttpClient HTTP = HttpClient.newHttpClient();
+
+    public static String fetch(String url) throws Exception {
+        HttpResponse<String> res = HTTP.send(
+                HttpRequest.newBuilder(URI.create(url)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() >= 400) {
+            throw new IllegalStateException("HTTP " + res.statusCode() + " for " + url);
+        }
+        return res.body();
+    }
+
+    public static Map<String, Integer> aggregate(List<String> pages) {
+        long links = pages.stream()
+                .flatMap(html -> html.lines().filter(line -> line.contains("href=")))
+                .count();
+        return Map.of("pages", pages.size(), "links", (int) links);
+    }
+
+    /** Middleware: one log line per execution and per failure. */
+    public static Middleware logging() {
+        return new Middleware() {
+            @Override
+            public void before(TaskContext ctx) {
+                System.out.printf("→ %s %s%n", ctx.taskName, ctx.jobId);
+            }
+
+            @Override
+            public void after(TaskContext ctx, Object result) {
+                System.out.printf("✓ %s %s%n", ctx.taskName, ctx.jobId);
+            }
+
+            @Override
+            public void onError(TaskContext ctx, Throwable error) {
+                System.out.printf("✗ %s %s: %s%n", ctx.taskName, ctx.jobId, error);
+            }
+        };
+    }
+
+    private Tasks() {}
+}
+```
+
+## Run.java
+
+A fan-out / fan-in expands the URL list into one `fetch_page` child per URL,
+then `aggregate` receives every fetched page as one list.
+
+```java
+import java.time.Duration;
+import java.util.List;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.workflows.FanMode;
+import org.byteveda.taskito.workflows.Workflow;
+import org.byteveda.taskito.workflows.WorkflowRun;
+
+public final class Run {
+    public static void main(String[] args) {
+        List<String> urls = List.of("https://a.example", "https://b.example", "https://c.example");
+
+        try (Taskito taskito = Taskito.builder().sqlite("scraper.db").open()) {
+            Workflow scrape = Workflow.named("scrape")
+                    .step("list", Tasks.LIST_URLS, urls)
+                    .fanOut("fetch", Tasks.FETCH_PAGE, FanMode.EACH, "list")
+                    .fanIn("aggregate", Tasks.AGGREGATE, FanMode.ALL, "fetch");
+
+            WorkflowRun run = taskito.submitWorkflow(scrape);
+            var status = run.await(Duration.ofMinutes(2));
+            System.out.println(run.id() + " " + status.state.wire());
+        }
+    }
+}
+```
+
+<Callout type="info">
+  Fan-in passes the children's results to its task as one list, so `aggregate`
+  sees every fetched page. A `Canvas.chord` would instead join on *completion*
+  and call the callback with its own payload — use it when the join doesn't
+  need the children's results.
+</Callout>
+
+## WorkerMain.java
+
+Two workers over the same store: a small fixed pool for the polite network
+queue and a wider one for everything else. A periodic sweep drops completed
+jobs older than a day.
+
+```java
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.scheduling.PeriodicTask;
+import org.byteveda.taskito.worker.Worker;
+
+public final class WorkerMain {
+    public static void main(String[] args) throws InterruptedException {
+        try (Taskito taskito = Taskito.builder().sqlite("scraper.db").open()) {
+            taskito.use(Tasks.logging());
+            taskito.registerPeriodic(PeriodicTask.builder("cache-sweep", "cleanup_cache", "0 * * * *").build());
+
+            try (Worker network = taskito.worker()
+                            .handle(Tasks.FETCH_PAGE, Tasks::fetch)
+                            .queues("network")
+                            .concurrency(2) // politeness: at most 2 fetches in flight
+                            .start();
+                    Worker main = taskito.worker()
+                            .handle(Tasks.LIST_URLS, list -> list)
+                            .handle(Tasks.AGGREGATE, Tasks::aggregate)
+                            .handle("cleanup_cache", Long.class,
+                                    olderThanMs -> taskito.purgeCompleted(86_400_000L))
+                            .queues("default")
+                            .trackWorkflows()
+                            .start()) {
+                main.awaitShutdown();
+            }
+        }
+    }
+}
+```
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Transient-failure retries | `RetryPolicy.exponential` |
+| Workload isolation | `Task.queue("network")` + a dedicated worker |
+| Politeness via bounded parallelism | `worker().concurrency(2)` on the network worker |
+| Cross-cutting logging | `taskito.use(Middleware)` |
+| Expand-then-join | `fanOut(FanMode.EACH)` + `fanIn(FanMode.ALL)` |
+| Scheduled maintenance | `registerPeriodic` + `purgeCompleted` |

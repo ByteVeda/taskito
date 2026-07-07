@@ -52,6 +52,8 @@ jobs:
       - name: Build
         env:
           DOCS_BASE_PATH: /taskito
+          # Three SDK trees prerender in one pass — the default heap OOMs.
+          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm build
 
       - name: SPA fallback for client-side routes

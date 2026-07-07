@@ -1,0 +1,69 @@
+---
+title: Capabilities at a glance
+description: "Everything the Java SDK can do, with a link to each guide."
+---
+
+A map of the Java SDK's features. Everything here runs over the shared Rust
+core — pick a backend, describe tasks, run workers.
+
+## Core
+
+| Feature | Guide |
+|---|---|
+| Typed task descriptors, enqueue, read results | [Tasks](/java/guides/core/tasks) |
+| SQLite / Postgres / Redis backends | [Installation](/java/getting-started/installation#pick-a-backend) |
+| Named queues, priority, pause/resume | [Queues](/java/guides/core/queues) |
+| Cron-scheduled & delayed jobs | [Scheduling](/java/guides/core/scheduling) |
+| Cooperative cancellation & progress | [Cancellation](/java/guides/core/cancellation) |
+| Partial results via task logs | [Streaming](/java/guides/core/streaming) |
+| Execution model (thread pools, autoscaling) | [Execution model](/java/guides/core/execution-model) |
+| Compile-time `TaskHandler` bindings (no reflection) | [Tasks](/java/guides/core/tasks#typed-tasks-from-taskhandler) |
+
+## Reliability
+
+| Feature | Guide |
+|---|---|
+| Retries with backoff curves (`RetryPolicy`), dead-letter queue | [Retries](/java/guides/reliability/retries) · [Dead-letter](/java/guides/reliability/dead-letter) |
+| Per-attempt timeouts | [Timeouts](/java/guides/reliability/timeouts) |
+| Idempotent enqueue (`uniqueKey`) | [Idempotency](/java/guides/reliability/idempotency) |
+| Distributed locks | [Locks](/java/guides/reliability/locks) |
+| At-least-once delivery | [Guarantees](/java/guides/reliability/guarantees) |
+
+## Orchestration
+
+| Feature | Guide |
+|---|---|
+| DAG workflows: fan-out/in, conditions, gates, sub-workflows, sagas, visualization | [Workflows](/java/guides/workflows) |
+| Decentralized work-stealing mesh | [Mesh](/java/guides/operations/mesh) |
+
+## Extensibility
+
+| Feature | Guide |
+|---|---|
+| Lifecycle events & middleware | [Events](/java/guides/extensibility/events) · [Middleware](/java/guides/extensibility/middleware) |
+| Signed webhook delivery | [Webhooks](/java/guides/extensibility/webhooks) |
+| Resource injection, enqueue predicates & interception | [Resources](/java/guides/resources) · [Predicates](/java/guides/core/predicates) |
+| Signed cross-process references (proxies) | [Resources](/java/guides/resources) |
+| Pluggable serializers (JSON / MessagePack / signed / encrypted) & payload codecs | [Serializers](/java/guides/extensibility/serializers) |
+| Producer-side batching (`Batcher`) | [Extensibility](/java/guides/extensibility) |
+
+## Observability & ops
+
+| Feature | Guide |
+|---|---|
+| Stats, metrics, progress, worker heartbeats | [Monitoring](/java/guides/observability/monitoring) |
+| Micrometer Observation / Sentry middleware | [Integrations](/java/guides/integrations) |
+| React dashboard + REST API | [Dashboard](/java/guides/operations/dashboard) |
+| In-process autoscaling + KEDA scaler endpoint | [Autoscaling](/java/guides/operations/autoscaling) |
+| Standalone CLI | [CLI](/java/guides/operations/cli) |
+
+## Framework integrations
+
+[Spring Boot 3 starter](/java/guides/integrations/spring) — auto-configures a
+`Taskito` bean from `taskito.url` / `taskito.pool-size` / `taskito.namespace`.
+
+<Callout type="info">
+  Observability and MessagePack dependencies are `compileOnly` — add
+  `io.micrometer:micrometer-observation`, `io.sentry:sentry`, or
+  `org.msgpack:jackson-dataformat-msgpack` only if you use them.
+</Callout>

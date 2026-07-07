@@ -3,7 +3,7 @@
 // SDK-aware docs all derive from here. Don't hardcode "python"/"node" elsewhere.
 
 /** Supported SDK ids in display order; also the URL prefix + `data-sdk` value. */
-export const SDK_IDS = ["python", "node"] as const;
+export const SDK_IDS = ["python", "node", "java"] as const;
 
 export type Sdk = (typeof SDK_IDS)[number];
 
@@ -50,6 +50,20 @@ export const SDK_PROFILES: Record<Sdk, SdkProfile> = {
       "architecture",
       "node/api-reference",
       "node/more/examples",
+      "resources",
+    ],
+  },
+  java: {
+    id: "java",
+    label: "Java",
+    language: "Java",
+    binding: "JNI",
+    navSections: [
+      "java/getting-started",
+      "java/guides",
+      "architecture",
+      "java/api-reference",
+      "java/more/examples",
       "resources",
     ],
   },

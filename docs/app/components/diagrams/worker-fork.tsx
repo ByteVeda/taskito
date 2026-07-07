@@ -16,6 +16,7 @@ export function WorkerDispatch() {
             <SdkSwap
               python={<code>async def</code>}
               node={<code>async</code>}
+              java="handler"
             />{" "}
             functions to the async runtime.
           </div>
@@ -23,7 +24,11 @@ export function WorkerDispatch() {
         <span className="lrole">routes by task type</span>
       </div>
       <div className="fork-route">
-        <SdkSwap python="sync def · async def" node="sync · async" />
+        <SdkSwap
+          python="sync def · async def"
+          node="sync · async"
+          java="handlers"
+        />
       </div>
       <div className="archfork">
         <div className="forkcol">
@@ -49,6 +54,14 @@ export function WorkerDispatch() {
                       block.
                     </>
                   }
+                  java={
+                    <>
+                      Handlers run on a JVM <code>ExecutorService</code> — a
+                      cached pool by default, fixed with{" "}
+                      <code>concurrency(n)</code> — fed by the JNI dispatch
+                      bridge.
+                    </>
+                  }
                 />
               </div>
             </div>
@@ -60,7 +73,11 @@ export function WorkerDispatch() {
             <span className="ltag t-py">Async pool</span>
             <div className="lbody">
               <div className="lt">
-                <SdkSwap python="NativeAsyncPool" node="Native async pool" />
+                <SdkSwap
+                  python="NativeAsyncPool"
+                  node="Native async pool"
+                  java="Executor dispatch"
+                />
               </div>
               <div className="ld">
                 <SdkSwap
@@ -76,6 +93,13 @@ export function WorkerDispatch() {
                       <code>async</code> handlers run on a native async pool —
                       no thread per job; each runs on your Node event loop and
                       its promise is awaited back into the core.
+                    </>
+                  }
+                  java={
+                    <>
+                      Every job is an executor task; the handler's return value
+                      (or exception) is bridged back into the Rust scheduler as
+                      the job outcome.
                     </>
                   }
                 />

@@ -1,0 +1,67 @@
+---
+title: Resources
+description: "Worker dependency injection — scopes, pools, and disposal."
+---
+
+Resources are worker-side dependencies (clients, connections, caches) built by
+a factory and handed to handlers by name — via `Resources.use("name")` or an
+`@Resource("name")` parameter.
+
+## Registration
+
+```java
+Taskito taskito = Taskito.builder().sqlite("app.db").open();
+
+taskito.resource("smtp", context -> SmtpClient.connect(config));
+taskito.resource("tx", ResourceScope.TASK,
+        context -> context.<Database>use("db").begin(),
+        tx -> tx.rollbackIfOpen());
+taskito.resource("db", PoolConfig.of(10).withMaxLifetime(Duration.ofMinutes(30)),
+        context -> Database.connect(dsn),
+        Database::close);
+```
+
+| Overload | Description |
+|---|---|
+| `resource(name, factory)` | Worker-scoped (the default). |
+| `resource(name, scope, factory)` | Explicit `ResourceScope`. |
+| `resource(name, scope, factory, dispose)` | With a disposer run when the scope ends. |
+| `resource(name, PoolConfig, factory, dispose)` | A `POOLED` resource: a bounded pool checked out per task. |
+
+The factory receives a `ResourceContext` — `scope()` plus `use(name)` to depend
+on other resources. A factory may only depend on same-or-longer-lived
+resources (a `WORKER` factory can't use a `TASK` resource), and a `POOLED`
+factory may only use `WORKER` resources — pooled instances outlive any one
+task, so a shorter-lived dependency would dangle after its scope ends.
+
+## Scopes
+
+| `ResourceScope` | Lifetime |
+|---|---|
+| `WORKER` | Built once, lazily; shared across every task; disposed at worker teardown. |
+| `THREAD` | Built lazily once per worker thread; disposed at worker shutdown. |
+| `TASK` | Built lazily per task invocation; disposed when the task ends. |
+| `REQUEST` | Built fresh on every `use()`; disposed when the task ends — never cached. |
+| `POOLED` | A bounded pool; each task checks out one instance and returns it at task end. |
+
+Task-scoped disposal runs in reverse build order (LIFO), so dependents tear
+down before their dependencies.
+
+## `PoolConfig`
+
+`PoolConfig.of(poolSize)` plus `withPoolMin(n)` (eager prewarm at worker
+start), `withAcquireTimeout(Duration)` (checkout wait limit, default 10s), and
+`withMaxLifetime(Duration)` (idle instances older than this are disposed
+instead of reused). Part of the cross-SDK contract for pooled resources.
+
+## Metrics
+
+`taskito.resourceMetrics()` returns a `Map<String, ResourceStat>` of per-resource
+counters — `created`, `disposed`, and `active` (`created − disposed`).
+
+<Callout type="info">
+  Registration happens on the `Taskito` client, but resources are built lazily
+  on the worker — a producer-only process never constructs them. See
+  [Context](/java/api-reference/context) for resolving resources inside a
+  handler.
+</Callout>

@@ -43,3 +43,17 @@ functions.
   between concurrently dispatched jobs.
 
 </SdkOnly>
+
+<SdkOnly sdk="java">
+
+- **JVM executor threads**: handlers run on a `java.util.concurrent`
+  `ExecutorService` owned by the worker — a cached pool by default, a fixed pool
+  with `concurrency(n)`, or a resizable pool under `autoscale(...)`.
+- **Native dispatch bridge**: the Rust core hands each claimed job to the JVM
+  through a JNI dispatch bridge; the handler's return value (or exception) is
+  bridged back into the Rust scheduler as the job outcome.
+- **Context isolation**: each invocation gets its own `TaskScope` for resource
+  resolution, entered and exited around the handler on its executor thread —
+  thread-confined, so concurrent jobs never share per-task state.
+
+</SdkOnly>

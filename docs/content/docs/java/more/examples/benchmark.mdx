@@ -1,0 +1,117 @@
+---
+title: Benchmark
+description: "A self-contained throughput program: measure enqueue rate, processing rate, and end-to-end latency on your own hardware."
+---
+
+Numbers depend heavily on your machine, backend, and task body, so the only
+number that matters is the one you measure. This program stages a batch of
+no-op jobs, drains them with a worker, and reports the three rates that bound
+a queue.
+
+## Benchmark.java
+
+```java
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.JobStatus;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+
+public final class Benchmark {
+    private static final int N = 50_000;
+    private static final Task<Integer> NOOP = Task.of("noop", Integer.class);
+
+    public static void main(String[] args) throws Exception {
+        // Fresh database per run — a reused file skews stats with old rows.
+        Path dir = Files.createTempDirectory("taskito-bench");
+        try (Taskito taskito = Taskito.builder().sqlite(dir.resolve("bench.db").toString()).open()) {
+
+            // 1. Enqueue throughput — stage N jobs in batches of 1,000.
+            long t0 = System.currentTimeMillis();
+            for (int i = 0; i < N; i += 1_000) {
+                List<Integer> batch = new ArrayList<>(1_000);
+                for (int k = 0; k < 1_000; k++) {
+                    batch.add(i + k);
+                }
+                taskito.enqueueMany(NOOP, batch);
+            }
+            long enqueueMs = System.currentTimeMillis() - t0;
+
+            // 2. Processing throughput — drain the backlog, polling stats until empty.
+            long t1 = System.currentTimeMillis();
+            long processMs;
+            try (Worker worker = taskito.worker()
+                    .handle(NOOP, n -> null)
+                    .concurrency(8)
+                    .batchSize(64)
+                    .channelCapacity(512)
+                    .start()) {
+                while (taskito.stats().completed < N) {
+                    Thread.sleep(20);
+                }
+                processMs = System.currentTimeMillis() - t1;
+            }
+
+            // 3. End-to-end latency — created → completed across a sample of jobs.
+            List<Long> latencies = taskito
+                    .listJobs(JobFilter.builder().status(JobStatus.COMPLETE).limit(1_000).build())
+                    .stream()
+                    .filter(job -> job.completedAt != null)
+                    .map(job -> job.completedAt - job.createdAt)
+                    .sorted()
+                    .toList();
+            long p50 = latencies.get((int) (latencies.size() * 0.5));
+            long p99 = latencies.get((int) (latencies.size() * 0.99));
+
+            System.out.printf("enqueue:  %d jobs/s%n", Math.round(N / (enqueueMs / 1000.0)));
+            System.out.printf("process:  %d jobs/s%n", Math.round(N / (processMs / 1000.0)));
+            System.out.printf("latency:  p50 %dms  p99 %dms%n", p50, p99);
+        }
+    }
+}
+```
+
+## Running it
+
+```bash
+java -cp app.jar Benchmark
+```
+
+Sample output (illustrative — measure your own):
+
+```
+enqueue:  110000 jobs/s
+process:  30000 jobs/s
+latency:  p50 9ms  p99 45ms
+```
+
+## What drives the numbers
+
+| Lever | Effect |
+| --- | --- |
+| `enqueueMany` | one storage round-trip per batch instead of per job |
+| `batchSize` | jobs claimed per scheduler poll — fewer polls under load |
+| `channelCapacity` | in-flight buffer between the scheduler and the handler pool |
+| `concurrency` | handler threads draining the channel |
+| Backend | SQLite (WAL) for a single node; Postgres/Redis to scale out workers |
+| Task body | a real handler's I/O usually dominates — benchmark *your* task too |
+
+<Callout type="info">
+  The hot path is the Rust core — enqueue, dequeue, and result handling happen
+  natively; your JVM only runs the handler body. Raise `batchSize` and
+  `channelCapacity` together to keep a busy worker saturated.
+</Callout>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Batched staging | `taskito.enqueueMany` |
+| Drain to a target | poll `taskito.stats().completed` |
+| Worker throughput knobs | `batchSize` + `channelCapacity` + `concurrency` |
+| Latency percentiles | `listJobs` + `completedAt − createdAt` |

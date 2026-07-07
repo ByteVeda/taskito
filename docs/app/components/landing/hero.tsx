@@ -3,7 +3,11 @@ import { Link } from "react-router";
 import { RawHtml } from "@/components/ui";
 import { useSdk } from "@/hooks";
 import { sdkProfile } from "@/lib";
-import { highlightPython, highlightTs } from "@/lib/highlight-lite";
+import {
+  highlightJava,
+  highlightPython,
+  highlightTs,
+} from "@/lib/highlight-lite";
 import { HERO_COMING_SOON, HERO_PANES } from "@/lib/landing-content";
 
 function CopyButton({ text }: { text: string }) {
@@ -32,7 +36,9 @@ export function Hero() {
   const codeHtml =
     active.lang === "ts"
       ? highlightTs(active.code)
-      : highlightPython(active.code);
+      : active.lang === "java"
+        ? highlightJava(active.code)
+        : highlightPython(active.code);
 
   return (
     <section className="hero">

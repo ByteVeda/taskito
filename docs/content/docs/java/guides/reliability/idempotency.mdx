@@ -1,0 +1,52 @@
+---
+title: Idempotency
+description: "Dedupe concurrent enqueues with a uniqueKey; design tasks to re-run safely."
+---
+
+## Deduping enqueues
+
+A `uniqueKey` makes a duplicate enqueue resolve to the **existing job** while
+the first job for that key is still pending or running:
+
+```java
+EnqueueOptions once = EnqueueOptions.builder()
+        .uniqueKey("welcome:" + user.id())
+        .build();
+
+String first = queue.enqueue(WELCOME, user.id(), once);
+String second = queue.enqueue(WELCOME, user.id(), once); // same id — no new job
+```
+
+Backed by a partial unique index in the store, so the dedup is atomic across
+producers and processes. Once the first job finishes, the key frees up.
+`EnqueueOptions.Builder.jobId(...)` is an alias for `uniqueKey` when the key
+you have in hand *is* the business id.
+
+Batch enqueues participate too — a duplicate key inside `enqueueMany` resolves
+to the existing job instead of failing the batch:
+
+```java
+List<String> ids = queue.enqueueMany(WELCOME, payloads, once);
+// duplicates map to the already-enqueued job's id, in input order
+```
+
+## Idempotent tasks
+
+Separately from enqueue dedup, **handlers should be safe to run more than
+once**. At-least-once delivery means a crash after a side effect but before the
+result write will re-execute the task on recovery.
+
+```java
+Worker worker = queue.worker()
+        .handle(CHARGE, order -> {
+            // key the external effect on a stable id so a re-run is a no-op
+            return payments.charge(order.total(), order.customer(), order.id());
+        })
+        .start();
+```
+
+<Callout type="info">
+  Use the provider's idempotency key (payment APIs and the like), an upsert, or
+  an "already done?" check at the top of the handler. See the
+  [failure model](/architecture/failure-model) for the exact re-run windows.
+</Callout>

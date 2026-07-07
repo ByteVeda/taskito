@@ -1,0 +1,136 @@
+---
+title: Predicate-Gated Jobs
+description: "Reject, skip, or defer enqueues that don't meet a policy at submit time, composing business-hours, feature-flag, and quota gates."
+---
+
+A predicate is a function evaluated when a job is enqueued. If it returns
+`false`, the enqueue is rejected with a `PredicateRejectedException` and no job
+is created — backpressure at the front door, before any work is staged. The
+richer `EnqueueGate` can also *skip* silently or *defer* to a later time.
+
+## What this gates
+
+- promotional sends only during business hours,
+- an expensive re-index only when its feature flag is on,
+- a tenant's exports only while under quota.
+
+## Policies.java
+
+A `Predicate` receives a `PredicateContext(taskName, payload)`. Compose them
+with `Predicates.allOf` / `anyOf` / `not`; `Recipes` ships the ready-made
+time-window and feature-flag gates.
+
+```java
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import org.byteveda.taskito.predicates.Predicate;
+
+public final class Policies {
+    // Stand-ins — replace with your usage store and feature-flag client.
+    private static final Map<String, Integer> EXPORTS_USED = new ConcurrentHashMap<>();
+    private static final int EXPORT_LIMIT = 100;
+    private static final Set<String> ENABLED_FLAGS = Set.of("expensive-reindex");
+
+    public static final Predicate UNDER_QUOTA = context -> {
+        String tenantId = (String) context.payload();
+        return EXPORTS_USED.getOrDefault(tenantId, 0) < EXPORT_LIMIT;
+    };
+
+    public static final Predicate FLAG_ON =
+            context -> ENABLED_FLAGS.contains("expensive-reindex");
+
+    private Policies() {}
+}
+```
+
+## App.java
+
+`taskito.predicate` attaches a boolean gate; `taskito.gate` attaches a
+decision gate (allow / skip / defer / reject). Multiple gates on one task run
+in registration order and the first non-allow decision wins.
+
+```java
+import java.time.LocalTime;
+import java.time.ZoneId;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.predicates.Predicate;
+import org.byteveda.taskito.predicates.Predicates;
+import org.byteveda.taskito.predicates.Recipes;
+
+Taskito taskito = Taskito.builder().sqlite("gated.db").open();
+ZoneId newYork = ZoneId.of("America/New_York");
+
+// Out-of-hours promos are *deferred* to the next opening, not dropped.
+taskito.gate("send_promo", Recipes.businessHours(newYork));
+
+// Re-index only while its flag is on; otherwise skip silently.
+taskito.predicate("reindex", Policies.FLAG_ON);
+
+// Stand-in for your own calendar logic.
+Predicate businessHours = context -> {
+    int hour = LocalTime.now(newYork).getHour();
+    return hour >= 9 && hour < 17;
+};
+
+// Exports: under quota AND outside business hours (off-peak only).
+taskito.predicate("export_data", Predicates.allOf(
+        Policies.UNDER_QUOTA,
+        Predicates.not(businessHours)));
+```
+
+## Enqueuing against a gate
+
+A rejected enqueue throws synchronously — handle it where you submit. When a
+skip is an expected outcome, `tryEnqueue` returns an empty `Optional` instead
+of throwing.
+
+```java
+import java.util.Optional;
+import org.byteveda.taskito.errors.PredicateRejectedException;
+
+try {
+    taskito.enqueue(SEND_PROMO, "newsletter-subscribers");
+} catch (PredicateRejectedException rejected) {
+    respond(409, "blocked by policy");
+}
+
+// Skip-tolerant: empty means a gate decided this enqueue shouldn't happen.
+Optional<String> id = taskito.tryEnqueue(REINDEX, "catalog");
+id.ifPresentOrElse(
+        jobId -> log.info("reindex staged as {}", jobId),
+        () -> log.info("reindex flag is off — skipped"));
+```
+
+## Custom defer decisions
+
+An `EnqueueGate` maps a `PredicateContext` to an `EnqueueDecision` — build
+your own windows on top of `defer`/`deferUntil`:
+
+```java
+import java.time.Duration;
+import org.byteveda.taskito.predicates.EnqueueDecision;
+
+taskito.gate("send_promo", context ->
+        marketingPaused()
+                ? EnqueueDecision.defer(Duration.ofHours(1))
+                : EnqueueDecision.allow());
+```
+
+<Callout type="info">
+  Predicates and gates run at **enqueue time** in the producer process,
+  synchronously. Keep them cheap and side-effect-free — a slow gate slows
+  every enqueue. For checks that need the worker (resource state, external
+  I/O), gate inside the task and fail it instead.
+</Callout>
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Attach a boolean gate | `taskito.predicate(task, predicate)` |
+| Allow / skip / defer / reject | `taskito.gate(task, enqueueGate)` |
+| Compose policies | `Predicates.allOf` / `anyOf` / `not` |
+| Ready-made windows | `Recipes.businessHours` / `timeWindow` / `dayOfWeek` / `featureFlag` |
+| Handle rejection | `catch (PredicateRejectedException)` |
+| Tolerate skips | `taskito.tryEnqueue` → `Optional` |

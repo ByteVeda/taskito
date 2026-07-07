@@ -1,0 +1,91 @@
+---
+title: Batching
+description: "Batcher — buffer payloads and flush them as one enqueueMany call."
+---
+
+```java
+import org.byteveda.taskito.batch.Batcher;
+```
+
+`Batcher<T>` buffers payloads for one task and enqueues them in a single
+`enqueueMany` call once the buffer reaches a size limit or a delay elapses —
+producer-side batching, to cut round-trips when many small jobs share a task.
+
+<Callout type="warning">
+  This is a different concept from `Worker.Builder.batchSize(int)`. `Batcher`
+  batches *what a producer enqueues*; `Worker.Builder.batchSize` controls *how
+  many jobs a worker claims per scheduler poll* (dequeue batching). They share
+  a name only — see [Worker](/java/api-reference/worker#options).
+</Callout>
+
+## Constructor
+
+```java
+Batcher(Taskito queue, Task<T> task, int maxBatch, Duration maxDelay)
+static <T> Batcher<T> of(Taskito queue, Task<T> task, int maxBatch, Duration maxDelay)
+```
+
+| Parameter | Description |
+|---|---|
+| `queue` | The client to enqueue through. |
+| `task` | The task every buffered payload is enqueued against. |
+| `maxBatch` | Flush once the buffer reaches this many payloads. Must be > 0. |
+| `maxDelay` | Flush this long after the first buffered payload arrived, even if `maxBatch` isn't reached. Must be positive. |
+
+```java
+try (Batcher<Email> batcher = Batcher.of(taskito, sendEmail, 100, Duration.ofMillis(500))) {
+    for (Email email : emails) {
+        batcher.add(email);
+    }
+}
+```
+
+## `add`
+
+```java
+List<String> add(T payload)
+```
+
+Buffers `payload`. Returns the flushed job ids if this call pushed the buffer
+to `maxBatch` (triggering an immediate flush), otherwise an empty list — the
+delayed flush is still pending.
+
+## `flush`
+
+```java
+List<String> flush()
+```
+
+Enqueues whatever is currently buffered right now, cancelling any pending
+delayed flush. Returns the new job ids, or an empty list if the buffer was
+empty.
+
+## `close`
+
+```java
+void close()
+```
+
+`AutoCloseable`. Flushes any remaining buffered payloads, then stops the
+batcher's background scheduler. Use try-with-resources so nothing buffered is
+lost when the producer shuts down.
+
+`Batcher` is backed by a single-thread daemon `ScheduledExecutorService` and
+guards its buffer with an internal lock — `add`/`flush`/`close` are safe to
+call from multiple threads.
+
+## Underlying producer calls
+
+`Batcher` is a thin wrapper over the batch producer methods on
+[`Taskito`](/java/api-reference/queue):
+
+```java
+<T> List<String> enqueueMany(Task<T> task, List<T> payloads)
+<T> List<String> enqueueMany(Task<T> task, List<T> payloads, EnqueueOptions options)
+<T> List<String> enqueueAll(Task<T> task, List<T> payloads)   // alias of enqueueMany
+```
+
+All three enqueue the full list in one storage call and return job ids in
+input order (no dedup). A single `EnqueueOptions` applies to every job in the
+batch — there is no per-job options list, so a batch can't mix, say,
+different priorities or delays across its items in one call.

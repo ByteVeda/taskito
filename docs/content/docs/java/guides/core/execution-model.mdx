@@ -1,0 +1,60 @@
+---
+title: Execution Models
+description: "How the Java worker runs jobs — thread pools, concurrency, and scaling out."
+---
+
+The Rust core owns scheduling — it claims due jobs from storage and dispatches
+them. Execution happens back in **your JVM**: the core hands each job to the
+bound handler, which runs on the worker's `ExecutorService`. Payload
+deserialization, middleware hooks, and result serialization all happen on that
+handler thread.
+
+## Concurrency
+
+Jobs run **concurrently** on real threads — there is no event loop to block and
+no interpreter lock. The pool is chosen at `start()`:
+
+- **Default** — a cached pool: threads are created on demand and reused.
+- **`concurrency(n)`** — a fixed pool of `n` handler threads; jobs queue behind
+  them.
+- **`autoscale(AutoscaleOptions.of(min, max))`** — a resizable pool an
+  `Autoscaler` grows and shrinks with queue depth (scoped to the worker's
+  `queues`, so foreign backlog can't inflate it).
+
+In-flight work is additionally bounded by `channelCapacity` (default 128), the
+worker's dispatch buffer between the core and the pool.
+
+`batchSize` (default 1) controls how many jobs the scheduler claims per poll —
+raise it to amortize polling under high throughput.
+
+```java
+taskito.worker()
+        .handle(resize, p -> resizeImage(p))
+        .concurrency(8)
+        .channelCapacity(256)
+        .batchSize(16)
+        .start();
+```
+
+## CPU-bound work
+
+Handlers run on plain JVM threads, so CPU-heavy tasks are first-class — a long
+computation only occupies its own thread. Size `concurrency` near the core
+count for CPU-bound workloads; let the cached or autoscaled pool breathe for
+I/O-bound ones, where threads mostly wait.
+
+## Scaling out
+
+Horizontal scaling is just more worker processes (or machines) pointed at
+shared Postgres or Redis storage. The core claims each job for a single worker,
+so adding workers adds throughput without duplicate execution. Within one
+process, `autoscale` handles bursts; across processes, a queue-depth scaler
+endpoint feeds KEDA — see [Autoscaling](/java/guides/operations/autoscaling). Workers can
+also join a work-stealing [mesh](/java/guides/operations/mesh) with
+`mesh(options)`.
+
+<Callout type="info">
+  Handler exceptions are caught, reported to middleware `onError`, and fail the
+  attempt — the core then retries or dead-letters per the task's retry config.
+  A worker thread is never killed by a failing job.
+</Callout>

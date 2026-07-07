@@ -1,0 +1,43 @@
+---
+title: Events
+description: "Subscribe to job outcome events on the worker builder."
+---
+
+Subscribe to job outcome events with `Worker.Builder.on(...)`. Events fire in
+the worker process after the core decides a job's outcome.
+
+```java
+try (Worker worker = taskito.worker()
+        .handle(add, payload -> payload.a() + payload.b())
+        .on(EventName.SUCCESS, event -> log.info("done " + event.jobId))
+        .on(EventName.DEAD, event -> alertOps(event))
+        .start()) {
+    worker.awaitShutdown();
+}
+```
+
+## Events
+
+| `EventName` | When |
+|---|---|
+| `SUCCESS` | A job finished successfully. |
+| `RETRY` | A failed job is being retried. |
+| `DEAD` | A job exhausted its retries and dead-lettered. |
+| `CANCELLED` | A job was cancelled. |
+
+Each listener receives an `OutcomeEvent` carrying `jobId`, `taskName`, and
+outcome details: `error` (null on success/cancel), `retryCount` (-1 when not
+applicable), and `timedOut` (which separates a timeout from other failures). A
+listener that throws is caught and logged — it never blocks other listeners.
+
+Listeners are add-only and live for the worker's lifetime; there is no
+unsubscribe. Register them before `start()` and let them go away when the
+worker closes.
+
+<Callout type="info">
+  Events are fire-and-forget notifications. To *wrap* execution (timing,
+  context, error transformation) use
+  [middleware](/java/guides/extensibility/middleware); to deliver events to
+  external HTTP endpoints use
+  [webhooks](/java/guides/extensibility/webhooks).
+</Callout>

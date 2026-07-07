@@ -4,17 +4,25 @@ import { RawHtml } from "@/components/ui";
 import { type Sdk, useActiveSdk } from "@/hooks";
 import { DemoModal, type DemoTarget } from "./demo-modal";
 
-// Scenario guides are authored as Python paths; most map to Node by swapping the
-// SDK segment, but a few pages live under a different slug in the Node tree.
-const NODE_GUIDE_OVERRIDES: Record<string, string> = {
-  "/python/guides/advanced-execution/streaming": "/node/guides/core/streaming",
-  "/python/guides/workflows/sagas": "/node/guides/workflows/saga",
+// Scenario guides are authored as Python paths; most map to another SDK by
+// swapping the SDK segment, but a few pages live under a different slug there.
+const GUIDE_OVERRIDES: Record<string, Record<string, string>> = {
+  "/python/guides/advanced-execution/streaming": {
+    node: "/node/guides/core/streaming",
+    java: "/java/guides/core/streaming",
+  },
+  "/python/guides/workflows/sagas": {
+    node: "/node/guides/workflows/saga",
+    java: "/java/guides/workflows/saga",
+  },
 };
 
 /** Resolve a scenario's Python guide path to the active SDK's docs. */
 function guideHref(pyPath: string, sdk: Sdk): string {
-  if (sdk !== "node") return pyPath;
-  return NODE_GUIDE_OVERRIDES[pyPath] ?? pyPath.replace("/python/", "/node/");
+  if (sdk === "python") return pyPath;
+  return (
+    GUIDE_OVERRIDES[pyPath]?.[sdk] ?? pyPath.replace("/python/", `/${sdk}/`)
+  );
 }
 
 interface Bullet {

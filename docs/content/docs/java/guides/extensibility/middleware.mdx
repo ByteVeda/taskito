@@ -1,0 +1,76 @@
+---
+title: Middleware
+description: "Wrap task execution with before/after/error and outcome hooks."
+---
+
+Register middleware with `Taskito.use(...)` to wrap execution and react to
+outcomes. `Middleware` is an interface whose hooks are all no-op `default`
+methods — override only what you need. The `before`/`after`/`onError` hooks
+wrap each attempt; the outcome hooks fire after the core decides the result.
+
+```java
+taskito.use(new Middleware() {
+    @Override
+    public void before(TaskContext context) {
+        log.info("start " + context.taskName);
+    }
+
+    @Override
+    public void onError(TaskContext context, Throwable error) {
+        log.error("threw " + context.taskName, error);
+    }
+
+    @Override
+    public void onDeadLetter(OutcomeEvent event) {
+        alertOps(event);
+    }
+});
+```
+
+## Hooks
+
+| Hook | When |
+|---|---|
+| `onEnqueue(context)` | Producer-side, inside `enqueue`, before serialization. |
+| `before(context)` | Before each execution attempt. |
+| `after(context, result)` | After a successful attempt. |
+| `onError(context, error)` | When an attempt throws (before the retry/dead decision). |
+| `onCompleted(event)` | After a job completes successfully. |
+| `onRetry(event)` | After the core schedules a retry. |
+| `onDeadLetter(event)` | After a job dead-letters. |
+| `onCancel(event)` | After a job is cancelled. |
+
+The execution hooks receive a `TaskContext` with `taskName`, `jobId`, a
+mutable per-execution `attributes()` map shared across a job's hooks, and
+`job()` with lazily-loaded metadata. The outcome hooks receive an
+`OutcomeEvent` with `taskName`, `jobId`, `error`, `retryCount`, and `timedOut`
+(which separates a timeout from other failures). Multiple middlewares run in
+registration order for every phase. Execution hooks run inside the attempt —
+a `before` or `after` that throws fails the attempt like a handler error;
+outcome hooks are isolated — one that throws is caught and logged so it never
+starves the others.
+
+## Rewriting an enqueue
+
+`onEnqueue` receives a **mutable** `EnqueueContext`: replace `payload(...)` or
+`options(...)` to rewrite the job, add to `metadata()` to attach data that
+travels with it (readable at execution via `context.job().metadata()`), or
+throw to abort the enqueue.
+
+```java
+taskito.use(new Middleware() {
+    @Override
+    public void onEnqueue(EnqueueContext context) {
+        context.metadata().put("tenant", currentTenant());
+    }
+});
+```
+
+<Callout type="info">
+  Middleware runs in the hot path — keep hooks light. The contrib
+  [Micrometer](/java/guides/integrations/micrometer) and
+  [Sentry](/java/guides/integrations/sentry) integrations are built as
+  middleware. For typed convert/redirect/reject decisions on the producer, use
+  an `Interceptor` (`Taskito.intercept(...)`) — interceptors run before
+  middleware `onEnqueue`.
+</Callout>

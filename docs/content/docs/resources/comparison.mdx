@@ -3,7 +3,7 @@ title: Comparison
 description: "Taskito vs Celery, RQ, Dramatiq, Huey, TaskIQ — feature matrix and decision guide."
 ---
 
-**TL;DR**: Taskito is <SdkSwap python="Celery" node="BullMQ" /> without the
+**TL;DR**: Taskito is <SdkSwap python="Celery" node="BullMQ" java="a task queue" /> without the
 broker. Rust scheduler, no Redis/RabbitMQ, lower latency, better concurrency.
 Start with SQLite, scale to Postgres when needed.
 
@@ -12,7 +12,7 @@ Start with SQLite, scale to Postgres when needed.
 | Feature | taskito | Celery | RQ | Dramatiq | Huey | TaskIQ |
 |---|---|---|---|---|---|---|
 | Broker required | **No** | Redis / RabbitMQ | Redis | Redis / RabbitMQ | Redis | Redis / RabbitMQ / Nats |
-| Core language | **Rust + <SdkSwap python="Python" node="Node.js" />** | Python | Python | Python | Python | Python |
+| Core language | **Rust + <SdkSwap python="Python" node="Node.js" java="Java" />** | Python | Python | Python | Python | Python |
 | Priority queues | **Yes** | Yes | No | No | Yes | Yes |
 | Rate limiting | **Yes** | Yes | No | Yes | No | No |
 | Dead letter queue | **Yes** | No | Yes | No | No | No |
@@ -79,7 +79,7 @@ widely adopted.
 
 Looking to switch? See the{" "}
 <SdkLink to="guides/operations">
-  Migrating from <SdkSwap python="Celery" node="BullMQ" />
+  Migrating from <SdkSwap python="Celery" node="BullMQ" java="a brokered queue" />
 </SdkLink>{" "}
 guide for a step-by-step walkthrough with side-by-side code examples.
 

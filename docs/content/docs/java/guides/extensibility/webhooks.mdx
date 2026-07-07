@@ -1,0 +1,73 @@
+---
+title: Webhooks
+description: "Deliver job events to HTTP endpoints — signed, retried, persisted."
+---
+
+Deliver job outcomes to HTTP endpoints. Deliveries are HMAC-SHA256 signed,
+retried with exponential backoff, and subscriptions are persisted in storage —
+they survive restarts.
+
+<Seq
+  heads={["Worker", "Endpoint"]}
+  rows={[
+    { self: "job outcome fires (e.g. DEAD)" },
+    { left: "POST + X-Taskito-Signature: sha256=…" },
+    { right: "2xx / 4xx → done", rev: true },
+    { self: "5xx or network error → retry with backoff" },
+  ]}
+/>
+
+`WebhookManager.attach(taskito)` registers the manager as middleware on the
+client; create subscriptions with the `Webhook` builder:
+
+```java
+WebhookManager webhooks = WebhookManager.attach(taskito);
+
+Webhook hook = webhooks.create(Webhook.builder("https://hooks.example.com/jobs")
+        .on(EventName.DEAD, EventName.SUCCESS) // required — no events, no deliveries
+        .secret(System.getenv("WEBHOOK_SECRET"))
+        .taskFilter("send_email"));            // optional, exact task name
+
+webhooks.list();
+webhooks.get(hook.id);
+webhooks.delete(hook.id);
+```
+
+| Builder method | Default | Description |
+|---|---|---|
+| `on(EventName...)` | — | Outcomes to deliver. |
+| `secret(String)` | none | Signs each delivery as `X-Taskito-Signature: sha256=<hex>`. |
+| `taskFilter(String)` | all tasks | Only deliver for this exact task name. |
+| `header(String, String)` | — | Extra headers added to every delivery. |
+| `maxRetries(int)` | `3` | Retry budget per delivery. |
+| `timeoutMs(long)` | `10000` | Per-request HTTP timeout. |
+| `enabled(boolean)` | `true` | Disable without deleting. |
+| `description(String)` | — | Free-form note. |
+
+Deliveries fire from the **worker process** (where outcomes originate), as an
+async `POST` with a JSON body in snake_case:
+
+```json
+{
+  "event": "dead",
+  "job_id": "…",
+  "task_name": "send_email",
+  "error": "…",
+  "retry_count": 3,
+  "timed_out": false
+}
+```
+
+A send error or a `5xx` response is retried with exponential backoff (500 ms
+base, doubling, capped at 30 s) up to `maxRetries`; `4xx` responses are not
+retried. Verify the signature on your endpoint by HMAC-SHA256-ing the raw body
+with the shared secret and comparing against the `X-Taskito-Signature` header
+in constant time.
+
+<Callout type="info">
+  Delivery is fire-and-forget: there is no persisted per-delivery log to query
+  — final failures are logged (with the URL's path redacted). Subscriptions
+  themselves are persisted in the queue's settings store, so every process
+  sharing the backend sees the same hooks; changes propagate to running
+  workers within 30 seconds.
+</Callout>

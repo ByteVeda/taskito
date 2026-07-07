@@ -48,3 +48,23 @@ the worker before the handler runs. Recipes are optionally HMAC-signed for
 tamper detection.
 
 </SdkOnly>
+
+<SdkOnly sdk="java">
+
+**Layer 1 — Registration**: resources are registered once with
+`queue.resource(name, factory)` (plus scope and pool-config overloads). A
+factory may depend on another resource through the context it receives
+(`ctx.use("other")`), and a cycle fails fast instead of recursing.
+
+**Layer 2 — Worker Resource Runtime**: each worker leases a `ResourceRuntime`
+that builds resources on first use and disposes them LIFO at shutdown. Handlers
+reach them with `Resources.use("name")` (or generated `@Resource` bindings); the
+scope — worker / thread / task / request / pooled — decides each resource's
+lifetime, with pooled instances checked out per task and returned at task end.
+
+**Layer 3 — Resource Proxies**: `ProxyHandler` implementations deconstruct live
+objects (file handles and similar) into a serializable reference and
+reconstruct them before use. References are HMAC-SHA256-signed, with optional
+expiry and purpose binding folded into the signature.
+
+</SdkOnly>

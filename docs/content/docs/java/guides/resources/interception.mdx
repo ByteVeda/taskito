@@ -1,0 +1,91 @@
+---
+title: Enqueue Interception
+description: "Validate, rewrite, redirect, or reject jobs before they are serialized."
+---
+
+Interceptors run on the **producer side**, inside every `enqueue`, before the
+payload is serialized. Use them to validate inputs, redact secrets, or reroute
+jobs across every task — in one place instead of at every call site.
+
+An `Interceptor` sees the task name and payload and returns one of four
+`Interception` strategies:
+
+| Strategy | Effect |
+|---|---|
+| `Interception.pass()` | Enqueue the payload unchanged. |
+| `Interception.convert(payload)` | Replace the payload (e.g. with a [proxy ref](/java/guides/resources/proxies)). |
+| `Interception.redirect(taskName, payload)` | Enqueue a different task (and payload) instead. |
+| `Interception.reject(reason)` | Block the enqueue — `InterceptionException` is thrown and no job is created. |
+
+```java
+queue.intercept((taskName, payload) -> {
+    if (payload instanceof String s && s.startsWith("pw:")) {
+        return Interception.convert("***"); // redact before it reaches storage
+    }
+    return Interception.pass();
+});
+```
+
+Interceptors run synchronously in registration order; each sees the previous
+one's result. A `Redirect` retargets the rest of the pipeline — later
+interceptors, middleware, and gates all see the new task name and payload.
+
+## Validation
+
+Rejecting from an interceptor aborts the enqueue — the job is never created and
+the error propagates to the caller:
+
+```java
+queue.intercept((taskName, payload) -> {
+    if (taskName.equals("charge") && ((Order) payload).total() < 0) {
+        return Interception.reject("charge amount must be non-negative");
+    }
+    return Interception.pass();
+});
+
+queue.enqueue(CHARGE, invalidOrder); // throws InterceptionException — nothing enqueued
+```
+
+## Rewriting options — the `onEnqueue` hook
+
+Interceptors decide the payload's fate; to rewrite enqueue *options* or attach
+metadata, use [middleware](/java/guides/extensibility/middleware) `onEnqueue`.
+It receives a mutable `EnqueueContext` after interceptors have run:
+
+```java
+queue.use(new Middleware() {
+    @Override
+    public void onEnqueue(EnqueueContext context) {
+        context.metadata().put("enqueuedBy", currentUser()); // travels with the job
+        context.options(context.options().toBuilder().priority(5).build());
+    }
+});
+```
+
+Mutations take effect: the context's payload is what gets serialized, its
+options are what reach the core, and a non-empty metadata map becomes the job's
+metadata blob. Throwing from `onEnqueue` aborts the enqueue.
+
+## Pipeline order
+
+Every enqueue runs **interceptors → `onEnqueue` middleware → enqueue gates**,
+then serializes, codec-encodes, and submits. Gates see the payload that will
+actually be stored, after any rewrites.
+
+## Edge cases
+
+- **Batches** — `enqueueMany` runs each payload through the interceptors, so a
+  batch can't bypass the contract. `Convert` rewrites the item; `Reject` fails
+  the whole batch; `Redirect` is unsupported in a batch (it would move an item
+  out of the single-task batch) and throws.
+- **Redirect + payload codecs** — redirecting a task that has
+  [payload codecs](/java/guides/core/serialization) throws: the source task's
+  codec chain can't be applied to the target task without corrupting the
+  payload.
+- **Null result** — an interceptor returning `null` is a bug and throws
+  `InterceptionException`.
+
+<Callout type="info">
+  Keep interceptors fast and side-effect-free — they run on the producer thread
+  inside every `enqueue` call.
+</Callout>

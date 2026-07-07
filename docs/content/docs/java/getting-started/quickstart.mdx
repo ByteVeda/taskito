@@ -1,0 +1,56 @@
+---
+title: Quickstart
+description: "Define a task, enqueue a job, run a worker, read the result — in Java."
+---
+
+Four steps: open a client, describe a task, enqueue a job, run a worker.
+
+```java
+import com.fasterxml.jackson.core.type.TypeReference;
+import java.time.Duration;
+import java.util.Map;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+
+// 1. Describe the task: a name plus its payload type.
+Task<Map<String, Integer>> add =
+        Task.of("add", new TypeReference<Map<String, Integer>>() {})
+                .retries(3)
+                .timeout(Duration.ofSeconds(30));
+
+try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open()) {
+    // 2. Enqueue a job (producer).
+    String id = taskito.enqueue(add, Map.of("a", 2, "b", 3));
+
+    // 3. Start a worker — same process or a separate one that shares the DB.
+    try (Worker worker = taskito.worker()
+            .handle(add, p -> p.get("a") + p.get("b"))
+            .start()) {
+
+        // 4. Read the result once the job is terminal.
+        taskito.awaitJob(id, Duration.ofSeconds(20));
+        int result = taskito.getResult(id, Integer.class).orElseThrow(); // 5
+    }
+}
+```
+
+The producer and the worker only need to share storage — `enqueue` from your web
+app, run the worker from a separate process pointed at the same file / DSN.
+`awaitJob` blocks by polling, which keeps demos and tests simple; long-lived
+services react to completion through
+[worker events](/java/guides/core/workers#events) instead.
+
+<Callout type="info">
+  `Task.of(name, type)` is a descriptor, not a function — the producer never
+  needs the handler body. The worker binds the function with
+  `.handle(task, fn)`, and payloads/results round-trip through the queue's
+  serializer (JSON by default).
+</Callout>
+
+## Where to next
+
+- [Concepts](/java/getting-started/concepts) — the mental model.
+- [Tasks](/java/guides/core/tasks) — typed descriptors and per-task config.
+- [Workers](/java/guides/core/workers) — running and stopping workers.
+- [Workflows](/java/guides/workflows) — multi-step DAGs.

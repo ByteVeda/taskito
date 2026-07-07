@@ -4,8 +4,8 @@ description: "Pluggable serializers for task arguments and results, with a per-S
 ---
 
 taskito uses a pluggable serializer for task arguments and results. The default
-is <SdkSwap python={<code>CloudpickleSerializer</code>} node={<code>JsonSerializer</code>} />,
-which <SdkSwap python="supports lambdas, closures, and complex Python objects" node="emits human-readable JSON bytes" />.
+is <SdkSwap python={<code>CloudpickleSerializer</code>} node={<code>JsonSerializer</code>} java={<code>JsonSerializer</code>} />,
+which <SdkSwap python="supports lambdas, closures, and complex Python objects" node="emits human-readable JSON bytes" java="emits human-readable JSON bytes via Jackson" />.
 
 <SdkOnly sdk="python">
 
@@ -25,6 +25,21 @@ import { Queue, MsgpackSerializer } from "@byteveda/taskito";
 
 // Use msgpack for compact, binary payloads
 new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+```java
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.serialization.MsgpackSerializer;
+
+// Use msgpack for compact, binary payloads
+Taskito queue = Taskito.builder()
+    .sqlite("taskito.db")
+    .serializer(new MsgpackSerializer())
+    .open();
 ```
 
 </SdkOnly>
@@ -51,9 +66,20 @@ new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
 
 </SdkOnly>
 
+<SdkOnly sdk="java">
+
+| Serializer | Format | Best for |
+|---|---|---|
+| `JsonSerializer` (default) | JSON (Jackson) | Simple types, cross-language interop, debugging |
+| `MsgpackSerializer` | Binary (msgpack) | Compact payloads, smaller storage |
+| `SignedSerializer` | Wraps a serializer + HMAC-SHA256 | Tamper detection |
+| `EncryptedSerializer` | Wraps a serializer + AES-GCM | Encrypted, authenticated payloads |
+
+</SdkOnly>
+
 ## Custom serializers
 
-Implement the `Serializer` interface with <SdkSwap python={<><code>dumps(obj)</code> / <code>loads(data)</code></>} node={<><code>serialize(value)</code> / <code>deserialize(bytes)</code></>} /> methods.
+Implement the `Serializer` interface with <SdkSwap python={<><code>dumps(obj)</code> / <code>loads(data)</code></>} node={<><code>serialize(value)</code> / <code>deserialize(bytes)</code></>} java={<><code>serialize(value)</code> / <code>deserialize(bytes, type)</code></>} /> methods.
 
 ## What gets serialized
 

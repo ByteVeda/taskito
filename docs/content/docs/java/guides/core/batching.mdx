@@ -1,0 +1,127 @@
+---
+title: Batching
+description: "Two unrelated batching mechanisms: producer-side Batcher/enqueueMany and worker-side batchSize."
+---
+
+"Batch" means two different things in the Java SDK, and they don't compose
+with each other:
+
+- **Producer batching** — `Batcher<T>` and `enqueueMany` group many payloads
+  into fewer storage writes, before any job exists.
+- **Dequeue batching** — `Worker.Builder.batchSize(n)` controls how many
+  already-enqueued jobs the scheduler claims per poll.
+
+This guide covers both and where each one applies.
+
+## Producer batching with `Batcher`
+
+`Batcher<T>` buffers payloads in memory for one task and flushes them as a
+single `enqueueMany` call when either threshold fires — whichever comes
+first:
+
+```java
+Task<LogLine> ingest = Task.of("ingest_log", LogLine.class);
+
+try (Batcher<LogLine> batcher = Batcher.of(taskito, ingest, 100, Duration.ofMillis(500))) {
+    for (LogLine line : incoming()) {
+        List<String> ids = batcher.add(line);
+        // ids is empty unless this call crossed maxBatch (100 lines) —
+        // in that case it holds the new jobs' ids in input order.
+    }
+} // close() flushes whatever remains in the buffer
+```
+
+`add(T)` returns the flushed job ids only when *that call* triggered a flush
+(the buffer reached `maxBatch`); otherwise it returns an empty list — the
+payload just joined the buffer. Call `flush()` to force a flush on demand, for
+example at the end of a batch job:
+
+```java
+List<String> ids = batcher.flush(); // whatever's buffered right now, or []
+```
+
+`Batcher` is thread-safe (`add`/`flush`/`close` are synchronized) and runs its
+delay timer on a daemon `ScheduledExecutorService` — it never blocks process
+exit. `close()` is idempotent and flushes remaining items before shutting the
+timer down, so always use try-with-resources or close it in a `finally`.
+
+<Callout type="info">
+  A `Batcher`-triggered flush always calls the plain `enqueueMany(task,
+  payloads)` overload — the task's own defaults apply to every flushed job.
+  There's no way to attach an `EnqueueOptions` to a specific flush; if jobs
+  need per-batch options, call `enqueueMany` yourself instead of going through
+  a `Batcher`.
+</Callout>
+
+## Bulk enqueue with `enqueueMany` / `enqueueAll`
+
+`enqueueMany` inserts many jobs for one task in a single storage call and
+returns their ids in input order:
+
+```java
+List<String> ids = taskito.enqueueMany(resize, List.of(imageA, imageB, imageC));
+
+// One EnqueueOptions applies to the whole batch — not a list of per-job options.
+List<String> ids2 = taskito.enqueueMany(resize, List.of(imageA, imageB, imageC),
+        EnqueueOptions.builder().priority(5).queue("bulk").build());
+```
+
+`enqueueAll` is an alias of `enqueueMany` — same overloads, same behavior.
+
+A `uniqueKey` set on the shared `EnqueueOptions` dedupes *within* the batch,
+the same way it dedupes across separate `enqueue()` calls: a payload whose key
+already has an active job resolves to that job's existing id instead of
+inserting a duplicate.
+
+`Batcher` is built on top of this call — every flush is one `enqueueMany`, so
+the storage cost of buffering 100 payloads and flushing them is the same as
+one direct `enqueueMany(task, List.of(...))` call.
+
+## Worker dequeue batching (`batchSize`)
+
+`Worker.Builder.batchSize(n)` controls how many **already-enqueued** jobs the
+scheduler claims from storage in one poll — it's a throughput knob for the
+claim query, not a payload grouping mechanism:
+
+```java
+taskito.worker()
+        .handle(resize, p -> resizeImage(p))
+        .batchSize(16) // claim up to 16 due jobs per poll (default 1)
+        .start();
+```
+
+Each claimed job is still dispatched to the handler individually, one job in,
+one result out — raising `batchSize` amortizes the polling round-trip under
+high throughput, it does not turn several jobs into one handler call. See
+[Execution Models](/java/guides/core/execution-model#concurrency) for how
+claimed jobs move through the handler pool.
+
+<Callout type="warn">
+  `Batcher`/`enqueueMany` batching and `batchSize` are unrelated despite the
+  shared name: one is a producer-side accumulator that runs *before* jobs are
+  created, the other is a scheduler-side claim size that applies *after* jobs
+  already exist in storage. Using one has no effect on the other.
+</Callout>
+
+<Cards>
+  <Card
+    title="Enqueue options"
+    href="/java/guides/core/enqueue-options"
+    description="EnqueueOptions fields, idempotency, and delayed jobs."
+  />
+  <Card
+    title="Workers"
+    href="/java/guides/core/workers"
+    description="Worker.Builder options, events, and graceful shutdown."
+  />
+  <Card
+    title="Execution Models"
+    href="/java/guides/core/execution-model"
+    description="How claimed jobs move through the handler thread pool."
+  />
+  <Card
+    title="Queue API reference"
+    href="/java/api-reference/queue"
+    description="Full enqueue / enqueueMany / enqueueAll signatures."
+  />
+</Cards>
