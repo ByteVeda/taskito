@@ -1,0 +1,67 @@
+package org.byteveda.taskito.dashboard.support;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.util.Map;
+import org.byteveda.taskito.errors.SerializationException;
+
+/**
+ * Shared JSON codec for the dashboard. Output is compact (no spaces) so that
+ * records written to the settings KV are byte-compatible with the other SDKs,
+ * which persist with the equivalent of {@code json.dumps(separators=(",", ":"))}.
+ */
+public final class Json {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+
+    private Json() {}
+
+    public static byte[] toBytes(Object value) {
+        try {
+            return MAPPER.writeValueAsBytes(value);
+        } catch (IOException e) {
+            throw new SerializationException("failed to encode response", e);
+        }
+    }
+
+    public static String toString(Object value) {
+        try {
+            return MAPPER.writeValueAsString(value);
+        } catch (IOException e) {
+            throw new SerializationException("failed to encode value", e);
+        }
+    }
+
+    /** Parse an object body; returns {@code null} for non-object or malformed input. */
+    public static Map<String, Object> readObject(byte[] body) {
+        if (body == null || body.length == 0) {
+            return null;
+        }
+        try {
+            return asMap(MAPPER.readTree(body));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** Parse a stored JSON string into a mutable map; {@code null} if malformed/non-object. */
+    public static Map<String, Object> parseMap(String json) {
+        if (json == null || json.isEmpty()) {
+            return null;
+        }
+        try {
+            return asMap(MAPPER.readTree(json));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static Map<String, Object> asMap(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        return MAPPER.convertValue(node, MAP_TYPE);
+    }
+}

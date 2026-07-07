@@ -1,83 +1,96 @@
 package org.byteveda.taskito.dashboard;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.Executors;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
-import org.byteveda.taskito.errors.SerializationException;
-import org.byteveda.taskito.model.Job;
-import org.byteveda.taskito.model.JobFilter;
-import org.byteveda.taskito.model.JobStatus;
+import org.byteveda.taskito.dashboard.api.CoreHandlers;
+import org.byteveda.taskito.dashboard.auth.AuthHandlers;
+import org.byteveda.taskito.dashboard.auth.AuthStore;
+import org.byteveda.taskito.dashboard.auth.Cookies;
+import org.byteveda.taskito.dashboard.auth.Policy;
+import org.byteveda.taskito.dashboard.auth.RequestContext;
+import org.byteveda.taskito.dashboard.auth.TokenAuth;
+import org.byteveda.taskito.dashboard.routing.Req;
+import org.byteveda.taskito.dashboard.routing.Router;
+import org.byteveda.taskito.dashboard.store.SettingsAccess;
+import org.byteveda.taskito.dashboard.support.DashboardError;
+import org.byteveda.taskito.dashboard.support.Http;
 
 /**
  * A read/action dashboard API + static-SPA server backed by a {@link Taskito},
  * built on the JDK's {@code com.sun.net.httpserver}. The JSON contract is
- * snake_case with Unix-millisecond timestamps (see {@link Contract}).
+ * snake_case with Unix-millisecond timestamps.
  *
- * <p>When a {@code token} is configured, {@code /api/*} (except
- * {@code /api/auth/status}) requires it via {@code ?token=} or a cookie.
+ * <p>Two auth modes:
+ * <ul>
+ *   <li><b>Session</b> (default): password users + sessions in the settings KV,
+ *       CSRF double-submit, admin/viewer RBAC, first-run setup. Bootstrap an
+ *       admin with {@code TASKITO_DASHBOARD_ADMIN_USER}/{@code _PASSWORD}.
+ *   <li><b>Legacy token</b>: pass a shared {@code token} to gate {@code /api/*}
+ *       as a fixed admin identity (no users/sessions). Kept for back-compat.
+ * </ul>
  */
 public final class DashboardServer implements AutoCloseable {
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final String COOKIE = "taskito_token";
-    private static final long DEFAULT_LIMIT = 50;
-
-    private static final Pattern JOB = Pattern.compile("^/api/jobs/([^/]+)$");
-    private static final Pattern CANCEL = Pattern.compile("^/api/jobs/([^/]+)/cancel$");
-    private static final Pattern RETRY = Pattern.compile("^/api/dead-letters/([^/]+)/retry$");
-    private static final Pattern PAUSE = Pattern.compile("^/api/queues/([^/]+)/pause$");
-    private static final Pattern RESUME = Pattern.compile("^/api/queues/([^/]+)/resume$");
-
     private final HttpServer server;
     private final Taskito queue;
-    private final String token;
     private final Path staticDir;
+    private final boolean secureCookies;
+    private final AuthStore authStore;
+    private final TokenAuth tokenAuth;
+    private final AuthHandlers authHandlers;
+    private final Router router;
 
-    private DashboardServer(HttpServer server, Taskito queue, String token, Path staticDir) {
+    private DashboardServer(HttpServer server, Taskito queue, Path staticDir, boolean secureCookies, String token) {
         this.server = server;
         this.queue = queue;
-        this.token = token;
         this.staticDir = staticDir;
+        this.secureCookies = secureCookies;
+        this.authStore = new AuthStore(SettingsAccess.of(queue));
+        this.tokenAuth = token != null ? new TokenAuth(token) : null;
+        this.authHandlers = new AuthHandlers(authStore);
+        this.router = buildRouter();
     }
 
-    /** Start on {@code port} (0 = ephemeral), serving the SPA bundled in the jar. */
+    /** Start on {@code port} (0 = ephemeral) in session-auth mode. */
     public static DashboardServer start(Taskito queue, int port) throws IOException {
-        return start(queue, port, null, null);
+        return start(queue, port, null, null, true);
     }
 
-    /** As {@link #start(Taskito, int)} but requiring {@code token} for {@code /api/*}. */
+    /** Start in legacy shared-token mode; the session flow is disabled. */
     public static DashboardServer start(Taskito queue, int port, String token) throws IOException {
-        return start(queue, port, token, null);
+        return start(queue, port, token, null, true);
+    }
+
+    /** As {@link #start(Taskito, int, String)} but with an unpacked SPA directory. */
+    public static DashboardServer start(Taskito queue, int port, String token, String staticDir) throws IOException {
+        return start(queue, port, token, staticDir, true);
     }
 
     /**
-     * Start on {@code port} (0 = ephemeral). {@code token} may be null. A null
-     * {@code staticDir} auto-discovers the SPA bundled in the jar; pass one only
-     * to override it with an unpacked build.
+     * Start on {@code port} (0 = ephemeral). A null {@code token} enables the
+     * session flow; a null {@code staticDir} auto-discovers the bundled SPA.
+     * {@code secureCookies=false} drops the {@code Secure} cookie attribute for
+     * local HTTP development.
      */
-    public static DashboardServer start(Taskito queue, int port, String token, String staticDir) throws IOException {
+    public static DashboardServer start(Taskito queue, int port, String token, String staticDir, boolean secureCookies)
+            throws IOException {
         // Resolve assets before binding so a discovery failure can't leak a bound port.
         Path dir = staticDir != null ? Paths.get(staticDir).normalize() : DashboardAssets.resolveOrNull();
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        DashboardServer dashboard = new DashboardServer(server, queue, token, dir);
+        DashboardServer dashboard = new DashboardServer(server, queue, dir, secureCookies, token);
+        // Seed an env admin before serving so no request races the open setup endpoint.
+        if (token == null) {
+            dashboard.authStore.bootstrapAdminFromEnv();
+        }
         server.createContext("/", dashboard::dispatch);
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
@@ -93,156 +106,137 @@ public final class DashboardServer implements AutoCloseable {
         server.stop(0);
     }
 
+    // ---- dispatch ----------------------------------------------------------
+
     private void dispatch(HttpExchange exchange) throws IOException {
         try {
             String path = exchange.getRequestURI().getPath();
-            if (path.startsWith("/api/")) {
+            if (path.equals("/health")) {
+                Http.respondJson(exchange, 200, Map.of("status", "ok"));
+            } else if (path.startsWith("/api/")) {
                 handleApi(exchange, path);
             } else {
                 serveStatic(exchange, path);
             }
-        } catch (RuntimeException e) {
-            respond(exchange, 500, error(e.getMessage() == null ? e.toString() : e.getMessage()));
+        } catch (DashboardError e) {
+            safeRespond(exchange, e.status(), Http.errorBody(e.code()));
+        } catch (RuntimeException | IOException e) {
+            safeRespond(exchange, 500, Http.errorBody(e.getMessage() == null ? e.toString() : e.getMessage()));
         } finally {
             exchange.close();
         }
     }
 
     private void handleApi(HttpExchange exchange, String path) throws IOException {
-        Map<String, String> query = query(exchange);
-        if (path.equals("/api/auth/status")) {
-            respond(exchange, 200, Collections.singletonMap("auth_required", token != null));
-            return;
-        }
-        if (!authorized(exchange, query)) {
-            respond(exchange, 401, error("unauthorized"));
-            return;
-        }
-
+        Map<String, String> query = Http.query(exchange);
         String method = exchange.getRequestMethod();
-        if ("GET".equals(method) && handleGet(exchange, path, query)) {
+        if (tokenAuth != null) {
+            handleTokenMode(exchange, path, method, query);
             return;
         }
-        if ("POST".equals(method) && handlePost(exchange, path)) {
+        RequestContext ctx = RequestContext.build(exchange, authStore);
+        Policy.authorize(path, method, ctx, authStore);
+        if (!router.dispatch(exchange, method, path, query, ctx)) {
+            Http.respondError(exchange, 404, "not found");
+        }
+    }
+
+    private void handleTokenMode(HttpExchange exchange, String path, String method, Map<String, String> query)
+            throws IOException {
+        String queryToken = query.get("token");
+        if (queryToken != null && tokenAuth.matches(queryToken)) {
+            exchange.getResponseHeaders().add("Set-Cookie", TokenAuth.openCookie(queryToken));
+        }
+        if (path.equals("/api/auth/status")) {
+            Http.respondJson(exchange, 200, TokenAuth.openStatus());
             return;
         }
-        respond(exchange, 404, error("not found"));
-    }
-
-    private boolean handleGet(HttpExchange exchange, String path, Map<String, String> query) throws IOException {
-        switch (path) {
-            case "/api/stats":
-                respond(exchange, 200, Contract.stats(queue.stats()));
-                return true;
-            case "/api/stats/queues":
-                respond(exchange, 200, statsByQueue());
-                return true;
-            case "/api/queues/paused":
-                respond(exchange, 200, queue.listPausedQueues());
-                return true;
-            case "/api/jobs":
-                respond(exchange, 200, listJobs(query));
-                return true;
-            case "/api/dead-letters":
-                respond(exchange, 200, listDead(query));
-                return true;
-            case "/api/metrics":
-                respond(exchange, 200, listMetrics(query));
-                return true;
-            case "/api/workers":
-                respond(exchange, 200, listWorkers());
-                return true;
-            default:
-                return getJob(exchange, path);
+        if (!tokenAuth.matches(tokenAuth.presented(exchange, query))) {
+            Http.respondError(exchange, 401, "unauthorized");
+            return;
+        }
+        if (path.equals("/api/auth/whoami")) {
+            long ttl = AuthStore.DEFAULT_SESSION_TTL_SECONDS;
+            exchange.getResponseHeaders().add("Set-Cookie", Cookies.sessionCookie("open", secureCookies, ttl));
+            exchange.getResponseHeaders().add("Set-Cookie", Cookies.csrfCookie("open", secureCookies, ttl));
+            Http.respondJson(exchange, 200, TokenAuth.openWhoami());
+            return;
+        }
+        if (path.startsWith("/api/auth/")) {
+            Http.respondError(exchange, 404, "not found");
+            return;
+        }
+        if (!router.dispatch(exchange, method, path, query, RequestContext.open())) {
+            Http.respondError(exchange, 404, "not found");
         }
     }
 
-    private boolean getJob(HttpExchange exchange, String path) throws IOException {
-        Matcher m = JOB.matcher(path);
-        if (!m.matches()) {
-            return false;
-        }
-        Optional<Job> job = queue.getJob(m.group(1));
-        if (job.isPresent()) {
-            respond(exchange, 200, Contract.job(job.get()));
-        } else {
-            respond(exchange, 404, error("no such job"));
-        }
-        return true;
+    // ---- routes ------------------------------------------------------------
+
+    private Router buildRouter() {
+        CoreHandlers core = new CoreHandlers(queue);
+        long ttl = AuthStore.DEFAULT_SESSION_TTL_SECONDS;
+        Router r = new Router();
+
+        // Auth
+        r.get("/api/auth/status", req -> authHandlers.status());
+        r.post("/api/auth/setup", req -> authHandlers.setup(req.jsonBody()));
+        r.post("/api/auth/login", req -> login(req, ttl));
+        r.post("/api/auth/logout", this::logout);
+        r.get("/api/auth/whoami", req -> authHandlers.whoami(req.ctx()));
+        r.post("/api/auth/change-password", req -> authHandlers.changePassword(req.ctx(), req.jsonBody()));
+        r.get("/api/auth/providers", req -> Map.of("password_enabled", true, "providers", List.of()));
+        r.get("/api/auth/oauth/start/(.+)", req -> {
+            throw DashboardError.notFound("oauth_not_configured");
+        });
+        r.get("/api/auth/oauth/callback/(.+)", req -> {
+            throw DashboardError.notFound("oauth_not_configured");
+        });
+
+        // Read
+        r.get("/api/stats", req -> core.stats());
+        r.get("/api/stats/queues", req -> core.statsByQueue());
+        r.get("/api/queues/paused", req -> core.queuesPaused());
+        r.get("/api/jobs", req -> core.listJobs(req.query()));
+        r.get("/api/jobs/([^/]+)", req -> core.job(req.param(0)));
+        r.get("/api/dead-letters", req -> core.listDead(req.query()));
+        r.get("/api/metrics", req -> core.listMetrics(req.query()));
+        r.get("/api/workers", req -> core.listWorkers());
+
+        // Action
+        r.post("/api/jobs/([^/]+)/cancel", req -> core.cancel(req.param(0)));
+        r.post("/api/dead-letters/([^/]+)/retry", req -> core.retryDead(req.param(0)));
+        r.post("/api/queues/([^/]+)/pause", req -> core.pause(req.param(0)));
+        r.post("/api/queues/([^/]+)/resume", req -> core.resume(req.param(0)));
+
+        return r;
     }
 
-    private boolean handlePost(HttpExchange exchange, String path) throws IOException {
-        Matcher cancel = CANCEL.matcher(path);
-        if (cancel.matches()) {
-            respond(exchange, 200, Collections.singletonMap("cancelled", queue.cancel(cancel.group(1))));
-            return true;
-        }
-        Matcher retry = RETRY.matcher(path);
-        if (retry.matches()) {
-            respond(exchange, 200, Collections.singletonMap("id", queue.retryDead(retry.group(1))));
-            return true;
-        }
-        Matcher pause = PAUSE.matcher(path);
-        if (pause.matches()) {
-            queue.queue(pause.group(1)).pause();
-            respond(exchange, 200, Collections.singletonMap("ok", true));
-            return true;
-        }
-        Matcher resume = RESUME.matcher(path);
-        if (resume.matches()) {
-            queue.queue(resume.group(1)).resume();
-            respond(exchange, 200, Collections.singletonMap("ok", true));
-            return true;
-        }
-        return false;
-    }
-
-    private Map<String, Object> statsByQueue() {
-        Map<String, Object> out = new LinkedHashMap<>();
-        queue.statsAllQueues().forEach((name, stats) -> out.put(name, Contract.stats(stats)));
+    private Object login(Req req, long ttl) {
+        Map<String, Object> out = authHandlers.login(req.jsonBody());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> session = (Map<String, Object>) out.get("session");
+        String token = (String) session.remove("token");
+        String csrf = (String) session.get("csrf_token");
+        var headers = req.exchange().getResponseHeaders();
+        headers.add("Set-Cookie", Cookies.sessionCookie(token, secureCookies, ttl));
+        headers.add("Set-Cookie", Cookies.csrfCookie(csrf, secureCookies, ttl));
         return out;
     }
 
-    private List<Map<String, Object>> listJobs(Map<String, String> query) {
-        JobFilter.Builder filter = JobFilter.builder();
-        if (query.containsKey("status")) {
-            filter.status(JobStatus.fromWire(query.get("status")));
-        }
-        if (query.containsKey("queue")) {
-            filter.queue(query.get("queue"));
-        }
-        if (query.containsKey("task")) {
-            filter.task(query.get("task"));
-        }
-        if (query.containsKey("limit")) {
-            filter.limit(Integer.parseInt(query.get("limit")));
-        }
-        if (query.containsKey("offset")) {
-            filter.offset(Integer.parseInt(query.get("offset")));
-        }
-        return queue.listJobs(filter.build()).stream().map(Contract::job).collect(Collectors.toList());
+    private Object logout(Req req) {
+        Map<String, Object> out = authHandlers.logout(req.ctx());
+        var headers = req.exchange().getResponseHeaders();
+        headers.add("Set-Cookie", Cookies.clearSession(secureCookies));
+        headers.add("Set-Cookie", Cookies.clearCsrf(secureCookies));
+        return out;
     }
 
-    private List<Map<String, Object>> listDead(Map<String, String> query) {
-        long limit = longParam(query, "limit", DEFAULT_LIMIT);
-        long offset = longParam(query, "offset", 0);
-        return queue.listDead(limit, offset).stream().map(Contract::dead).collect(Collectors.toList());
-    }
-
-    private List<Map<String, Object>> listMetrics(Map<String, String> query) {
-        long since = longParam(query, "since", 0);
-        return queue.metrics(query.get("task"), since).stream()
-                .map(Contract::metric)
-                .collect(Collectors.toList());
-    }
-
-    private List<Map<String, Object>> listWorkers() {
-        return queue.listWorkers().stream().map(Contract::worker).collect(Collectors.toList());
-    }
+    // ---- static + helpers --------------------------------------------------
 
     private void serveStatic(HttpExchange exchange, String path) throws IOException {
         if (staticDir == null) {
-            respond(exchange, 404, error("not found"));
+            Http.respondError(exchange, 404, "not found");
             return;
         }
         Path target = staticDir.resolve(path.substring(1)).normalize();
@@ -250,7 +244,7 @@ public final class DashboardServer implements AutoCloseable {
             target = staticDir.resolve("index.html");
         }
         if (!Files.isRegularFile(target)) {
-            respond(exchange, 404, error("not found"));
+            Http.respondError(exchange, 404, "not found");
             return;
         }
         byte[] body = Files.readAllBytes(target);
@@ -261,68 +255,11 @@ public final class DashboardServer implements AutoCloseable {
         }
     }
 
-    private boolean authorized(HttpExchange exchange, Map<String, String> query) {
-        if (token == null) {
-            return true;
-        }
-        if (token.equals(query.get("token"))) {
-            exchange.getResponseHeaders().add("Set-Cookie", COOKIE + "=" + token + "; HttpOnly; Path=/");
-            return true;
-        }
-        return token.equals(cookieToken(exchange));
-    }
-
-    private static String cookieToken(HttpExchange exchange) {
-        List<String> cookies = exchange.getRequestHeaders().getOrDefault("Cookie", Collections.emptyList());
-        for (String header : cookies) {
-            for (String pair : header.split(";")) {
-                String trimmed = pair.trim();
-                if (trimmed.startsWith(COOKIE + "=")) {
-                    return trimmed.substring(COOKIE.length() + 1);
-                }
-            }
-        }
-        return null;
-    }
-
-    private static long longParam(Map<String, String> query, String key, long fallback) {
-        String value = query.get(key);
-        return value == null ? fallback : Long.parseLong(value);
-    }
-
-    private static Map<String, String> query(HttpExchange exchange) {
-        Map<String, String> out = new HashMap<>();
-        String raw = exchange.getRequestURI().getRawQuery();
-        if (raw == null) {
-            return out;
-        }
-        for (String pair : raw.split("&")) {
-            int eq = pair.indexOf('=');
-            if (eq < 0) {
-                continue;
-            }
-            String key = URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8);
-            String value = URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
-            out.put(key, value);
-        }
-        return out;
-    }
-
-    private static Map<String, Object> error(String message) {
-        return Collections.singletonMap("error", message);
-    }
-
-    private static void respond(HttpExchange exchange, int status, Object body) throws IOException {
-        byte[] out;
+    private static void safeRespond(HttpExchange exchange, int status, Object body) {
         try {
-            out = JSON.writeValueAsBytes(body);
-        } catch (Exception e) {
-            throw new SerializationException("failed to encode response", e);
-        }
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, out.length);
-        try (OutputStream stream = exchange.getResponseBody()) {
-            stream.write(out);
+            Http.respondJson(exchange, status, body);
+        } catch (IOException | RuntimeException ignored) {
+            // Response already partially written or the client disconnected.
         }
     }
 
