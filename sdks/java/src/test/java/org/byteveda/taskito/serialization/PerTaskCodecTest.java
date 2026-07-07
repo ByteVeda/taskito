@@ -12,7 +12,6 @@ import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.errors.InterceptionException;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.interception.Interception;
-import org.byteveda.taskito.serialization.AesGcmCodec;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;

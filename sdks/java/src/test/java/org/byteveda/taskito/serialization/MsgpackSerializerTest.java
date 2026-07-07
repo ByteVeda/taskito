@@ -4,8 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.byteveda.taskito.serialization.MsgpackSerializer;
-import org.byteveda.taskito.serialization.Serializer;
 import org.junit.jupiter.api.Test;
 
 class MsgpackSerializerTest {

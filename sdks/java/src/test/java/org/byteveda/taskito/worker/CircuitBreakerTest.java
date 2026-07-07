@@ -12,7 +12,6 @@ import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.task.CircuitBreakerConfig;
 import org.byteveda.taskito.task.Task;
-import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;

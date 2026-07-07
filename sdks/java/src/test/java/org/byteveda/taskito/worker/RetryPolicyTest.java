@@ -14,7 +14,6 @@ import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.task.RetryPolicy;
 import org.byteveda.taskito.task.Task;
-import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;

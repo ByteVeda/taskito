@@ -15,7 +15,6 @@ import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.task.Task;
-import org.byteveda.taskito.worker.Worker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;

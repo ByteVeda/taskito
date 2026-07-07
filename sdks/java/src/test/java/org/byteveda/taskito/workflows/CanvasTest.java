@@ -6,9 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import java.util.Set;
 import org.byteveda.taskito.task.Task;
-import org.byteveda.taskito.workflows.Canvas;
-import org.byteveda.taskito.workflows.Workflow;
-import org.byteveda.taskito.workflows.WorkflowAnalysis;
 import org.junit.jupiter.api.Test;
 
 class CanvasTest {

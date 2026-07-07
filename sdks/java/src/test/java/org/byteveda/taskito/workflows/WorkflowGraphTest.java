@@ -8,10 +8,6 @@ import java.util.List;
 import java.util.Set;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.task.Task;
-import org.byteveda.taskito.workflows.GateConfig;
-import org.byteveda.taskito.workflows.Workflow;
-import org.byteveda.taskito.workflows.WorkflowAnalysis;
-import org.byteveda.taskito.workflows.WorkflowVisualization;
 import org.junit.jupiter.api.Test;
 
 class WorkflowGraphTest {

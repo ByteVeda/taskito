@@ -12,7 +12,6 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Map;
 import org.byteveda.taskito.Taskito;
-import org.byteveda.taskito.dashboard.DashboardServer;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
 import org.junit.jupiter.api.Test;
