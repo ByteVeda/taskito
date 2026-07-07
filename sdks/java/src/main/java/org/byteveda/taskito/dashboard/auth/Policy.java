@@ -12,14 +12,8 @@ import org.byteveda.taskito.dashboard.support.DashboardError;
  * allowed for any authenticated user. So admin vs viewer is purely write access.
  */
 public final class Policy {
-    private static final Set<String> PUBLIC_PATHS = Set.of(
-            "/api/auth/status",
-            "/api/auth/login",
-            "/api/auth/setup",
-            "/api/auth/providers",
-            "/health",
-            "/readiness",
-            "/metrics");
+    private static final Set<String> PUBLIC_PATHS =
+            Set.of("/api/auth/status", "/api/auth/login", "/api/auth/setup", "/api/auth/providers", "/health");
 
     private static final List<String> PUBLIC_PREFIXES = List.of("/api/auth/oauth/start/", "/api/auth/oauth/callback/");
 

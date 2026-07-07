@@ -155,9 +155,12 @@ class AuthStoreTest {
     void changePasswordInvalidatesOldCredential() {
         AuthStore store = store();
         store.createUser("alice", "password123", "admin");
+        Session existing = store.createSession("alice", "admin");
         store.updatePassword("alice", "new-password!");
         assertNull(store.authenticate("alice", "password123"));
         assertNotNull(store.authenticate("alice", "new-password!"));
+        // Sessions from before the change are revoked.
+        assertTrue(store.getSession(existing.token()).isEmpty());
         assertFalse(store.getSession("missing").isPresent());
     }
 }

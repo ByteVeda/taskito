@@ -60,8 +60,8 @@ public final class Cookies {
         return format(CSRF, "", false, secure, 0);
     }
 
-    public static String legacyTokenCookie(String token, long maxAgeSeconds) {
-        return format(LEGACY_TOKEN, token, true, false, maxAgeSeconds);
+    public static String legacyTokenCookie(String token, boolean secure, long maxAgeSeconds) {
+        return format(LEGACY_TOKEN, token, true, secure, maxAgeSeconds);
     }
 
     private static String format(String name, String value, boolean httpOnly, boolean secure, long maxAgeSeconds) {

@@ -24,6 +24,7 @@ import org.byteveda.taskito.dashboard.routing.Router;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
 import org.byteveda.taskito.dashboard.support.DashboardError;
 import org.byteveda.taskito.dashboard.support.Http;
+import org.byteveda.taskito.logging.TaskitoLogger;
 
 /**
  * A read/action dashboard API + static-SPA server backed by a {@link Taskito},
@@ -40,6 +41,8 @@ import org.byteveda.taskito.dashboard.support.Http;
  * </ul>
  */
 public final class DashboardServer implements AutoCloseable {
+    private static final TaskitoLogger LOG = TaskitoLogger.create("dashboard");
+
     private final HttpServer server;
     private final Taskito queue;
     private final Path staticDir;
@@ -121,7 +124,10 @@ public final class DashboardServer implements AutoCloseable {
         } catch (DashboardError e) {
             safeRespond(exchange, e.status(), Http.errorBody(e.code()));
         } catch (RuntimeException | IOException e) {
-            safeRespond(exchange, 500, Http.errorBody(e.getMessage() == null ? e.toString() : e.getMessage()));
+            // Log the detail server-side; return a generic code so an unauthenticated
+            // caller can't harvest internal exception text (e.g. from a malformed cookie).
+            LOG.warn("dashboard request failed: " + exchange.getRequestMethod() + " " + exchange.getRequestURI(), e);
+            safeRespond(exchange, 500, Http.errorBody("internal_error"));
         } finally {
             exchange.close();
         }
@@ -145,7 +151,7 @@ public final class DashboardServer implements AutoCloseable {
             throws IOException {
         String queryToken = query.get("token");
         if (queryToken != null && tokenAuth.matches(queryToken)) {
-            exchange.getResponseHeaders().add("Set-Cookie", TokenAuth.openCookie(queryToken));
+            exchange.getResponseHeaders().add("Set-Cookie", TokenAuth.openCookie(queryToken, secureCookies));
         }
         if (path.equals("/api/auth/status")) {
             Http.respondJson(exchange, 200, TokenAuth.openStatus());

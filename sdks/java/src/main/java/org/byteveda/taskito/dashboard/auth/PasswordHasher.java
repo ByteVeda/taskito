@@ -44,6 +44,9 @@ final class PasswordHasher {
 
     static boolean verify(String password, String encoded) {
         if (encoded == null || encoded.startsWith(OAUTH_PREFIX)) {
+            // Still pay a derivation so an OAuth-only or unknown user can't be
+            // distinguished from a password user by response timing.
+            dummyVerify(password);
             return false;
         }
         String[] parts = encoded.split("\\$", -1);

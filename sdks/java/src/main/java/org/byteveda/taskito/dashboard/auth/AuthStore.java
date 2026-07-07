@@ -57,11 +57,13 @@ public final class AuthStore {
     }
 
     /**
-     * Create a password user (default role {@code admin}). Hashing happens
-     * before the second load to narrow the read-modify-write window on the
-     * shared {@code auth:users} row.
+     * Create a password user (default role {@code admin}). Mutations of the
+     * shared {@code auth:users} blob are {@code synchronized} so concurrent
+     * requests in this process can't lose an update; the KV store has no
+     * cross-process CAS, so a second writer in another process is still a
+     * theoretical race (bounded to first-run setup, which is single-shot).
      */
-    public User createUser(String username, String password, String role) {
+    public synchronized User createUser(String username, String password, String role) {
         validateUsername(username);
         validatePassword(password);
         validateRole(role);
@@ -103,7 +105,8 @@ public final class AuthStore {
         return PasswordHasher.verify(password, user.passwordHash());
     }
 
-    public void updatePassword(String username, String newPassword) {
+    /** Change a user's password and revoke their existing sessions. */
+    public synchronized void updatePassword(String username, String newPassword) {
         validatePassword(newPassword);
         Map<String, Object> users = rawUsers();
         Object rowObj = users.get(username);
@@ -114,9 +117,11 @@ public final class AuthStore {
         Map<String, Object> row = (Map<String, Object>) rowObj;
         row.put("password_hash", PasswordHasher.hash(newPassword));
         saveUsers(users);
+        // A password change must not leave stolen/older sessions valid.
+        deleteSessionsForUser(username);
     }
 
-    public void deleteUser(String username) {
+    public synchronized void deleteUser(String username) {
         Map<String, Object> users = rawUsers();
         if (users.remove(username) != null) {
             saveUsers(users);
@@ -124,7 +129,7 @@ public final class AuthStore {
         deleteSessionsForUser(username);
     }
 
-    private User touchLastLogin(User user) {
+    private synchronized User touchLastLogin(User user) {
         long now = nowMillis();
         Map<String, Object> users = rawUsers();
         Object rowObj = users.get(user.username());
@@ -152,7 +157,7 @@ public final class AuthStore {
      * {@link #oauthBootstrapRole}; existing users keep their role but refresh
      * email/display-name and last-login.
      */
-    public User getOrCreateOauthUser(
+    public synchronized User getOrCreateOauthUser(
             String slot, String subject, String email, String name, boolean emailVerified, List<String> adminEmails) {
         String username = slot + ":" + subject;
         Map<String, Object> users = rawUsers();

@@ -47,8 +47,8 @@ public final class TokenAuth {
                 token.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8));
     }
 
-    public static String openCookie(String token) {
-        return Cookies.legacyTokenCookie(token, OPEN_COOKIE_MAX_AGE);
+    public static String openCookie(String token, boolean secure) {
+        return Cookies.legacyTokenCookie(token, secure, OPEN_COOKIE_MAX_AGE);
     }
 
     public static Map<String, Object> openStatus() {
