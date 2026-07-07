@@ -3,6 +3,7 @@ package org.byteveda.taskito.task;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Duration;
+import java.util.List;
 
 /** Immutable per-enqueue options. Unset fields take core defaults. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -31,6 +32,9 @@ public final class EnqueueOptions {
     @JsonProperty("namespace")
     private final String namespace;
 
+    @JsonProperty("dependsOn")
+    private final List<String> dependsOn;
+
     // Idempotency inputs resolve to uniqueKey locally (see DefaultTaskito) and never cross
     // the wire, so they carry no @JsonProperty and are not serialized into the options JSON.
     private final Boolean idempotent;
@@ -46,6 +50,7 @@ public final class EnqueueOptions {
         this.uniqueKey = b.uniqueKey;
         this.metadata = b.metadata;
         this.namespace = b.namespace;
+        this.dependsOn = b.dependsOn;
         this.idempotent = b.idempotent;
         this.idempotencyKey = b.idempotencyKey;
     }
@@ -69,9 +74,15 @@ public final class EnqueueOptions {
         b.uniqueKey = uniqueKey;
         b.metadata = metadata;
         b.namespace = namespace;
+        b.dependsOn = dependsOn;
         b.idempotent = idempotent;
         b.idempotencyKey = idempotencyKey;
         return b;
+    }
+
+    /** Job ids this enqueue waits on before it can be dequeued, or {@code null} when none. */
+    public List<String> dependsOn() {
+        return dependsOn;
     }
 
     /** The explicit dedup key, or {@code null} when none was set. */
@@ -101,6 +112,7 @@ public final class EnqueueOptions {
         private String uniqueKey;
         private String metadata;
         private String namespace;
+        private List<String> dependsOn;
         private Boolean idempotent;
         private String idempotencyKey;
 
@@ -168,6 +180,22 @@ public final class EnqueueOptions {
 
         public Builder namespace(String namespace) {
             this.namespace = namespace;
+            return this;
+        }
+
+        /**
+         * Gate this job on the completion of the given job ids: it stays pending (not dequeued)
+         * until every dependency completes, and is cancelled if any dependency fails. Each id
+         * must reference a job that is still live or already complete.
+         */
+        public Builder dependsOn(String... jobIds) {
+            this.dependsOn = List.of(jobIds);
+            return this;
+        }
+
+        /** List form of {@link #dependsOn(String...)}. */
+        public Builder dependsOn(List<String> jobIds) {
+            this.dependsOn = List.copyOf(jobIds);
             return this;
         }
 

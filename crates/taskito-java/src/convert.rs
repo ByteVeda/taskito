@@ -43,6 +43,7 @@ pub struct EnqueueOptions {
     pub unique_key: Option<String>,
     pub metadata: Option<String>,
     pub namespace: Option<String>,
+    pub depends_on: Option<Vec<String>>,
 }
 
 /// Parse a JSON argument, attributing any failure to the named field.
@@ -71,7 +72,7 @@ pub fn build_new_job(
         unique_key: options.unique_key,
         metadata: options.metadata,
         notes: None,
-        depends_on: Vec::new(),
+        depends_on: options.depends_on.unwrap_or_default(),
         expires_at: None,
         result_ttl_ms: None,
         namespace: options
