@@ -3,6 +3,9 @@ package org.byteveda.taskito.task;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import org.byteveda.taskito.serialization.Notes;
 
 /** Immutable per-enqueue options. Unset fields take core defaults. */
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -31,6 +34,19 @@ public final class EnqueueOptions {
     @JsonProperty("namespace")
     private final String namespace;
 
+    @JsonProperty("dependsOn")
+    private final List<String> dependsOn;
+
+    // Canonical JSON encoding of the structured notes (validated at build time), or null.
+    @JsonProperty("notes")
+    private final String notes;
+
+    // Idempotency inputs resolve to uniqueKey locally (see DefaultTaskito) and never cross
+    // the wire, so they carry no @JsonProperty and are not serialized into the options JSON.
+    private final Boolean idempotent;
+
+    private final String idempotencyKey;
+
     private EnqueueOptions(Builder b) {
         this.queue = b.queue;
         this.priority = b.priority;
@@ -40,6 +56,10 @@ public final class EnqueueOptions {
         this.uniqueKey = b.uniqueKey;
         this.metadata = b.metadata;
         this.namespace = b.namespace;
+        this.dependsOn = b.dependsOn;
+        this.notes = b.notes;
+        this.idempotent = b.idempotent;
+        this.idempotencyKey = b.idempotencyKey;
     }
 
     public static EnqueueOptions none() {
@@ -61,7 +81,34 @@ public final class EnqueueOptions {
         b.uniqueKey = uniqueKey;
         b.metadata = metadata;
         b.namespace = namespace;
+        b.dependsOn = dependsOn;
+        b.notes = notes;
+        b.idempotent = idempotent;
+        b.idempotencyKey = idempotencyKey;
         return b;
+    }
+
+    /** Job ids this enqueue waits on before it can be dequeued, or {@code null} when none. */
+    public List<String> dependsOn() {
+        return dependsOn;
+    }
+
+    /** The explicit dedup key, or {@code null} when none was set. */
+    public String uniqueKey() {
+        return uniqueKey;
+    }
+
+    /**
+     * Tri-state idempotency toggle: {@code TRUE} forces auto-derivation of a {@code uniqueKey},
+     * {@code FALSE} opts this enqueue out of a task-level default, {@code null} defers to the task.
+     */
+    public Boolean idempotent() {
+        return idempotent;
+    }
+
+    /** An explicit idempotency key (used as the {@code uniqueKey} when set), or {@code null}. */
+    public String idempotencyKey() {
+        return idempotencyKey;
     }
 
     public static final class Builder {
@@ -73,6 +120,10 @@ public final class EnqueueOptions {
         private String uniqueKey;
         private String metadata;
         private String namespace;
+        private List<String> dependsOn;
+        private String notes;
+        private Boolean idempotent;
+        private String idempotencyKey;
 
         public Builder queue(String queue) {
             this.queue = queue;
@@ -138,6 +189,52 @@ public final class EnqueueOptions {
 
         public Builder namespace(String namespace) {
             this.namespace = namespace;
+            return this;
+        }
+
+        /**
+         * Gate this job on the completion of the given job ids: it stays pending (not dequeued)
+         * until every dependency completes, and is cancelled if any dependency fails. Each id
+         * must reference a job that is still live or already complete.
+         */
+        public Builder dependsOn(String... jobIds) {
+            this.dependsOn = List.of(jobIds);
+            return this;
+        }
+
+        /** List form of {@link #dependsOn(String...)}. */
+        public Builder dependsOn(List<String> jobIds) {
+            this.dependsOn = List.copyOf(jobIds);
+            return this;
+        }
+
+        /**
+         * Attach a bounded, user-readable annotation map to the job (validated and canonically
+         * encoded now, so a contract violation fails fast). Distinct from the opaque
+         * {@link #metadata} blob. Passing {@code null} clears any previously set notes.
+         *
+         * @throws org.byteveda.taskito.errors.NotesValidationException if the map breaks the
+         *     {@link Notes} contract (field/key/value/depth/size limits)
+         */
+        public Builder notes(Map<String, ?> notes) {
+            this.notes = Notes.encode(notes);
+            return this;
+        }
+
+        /**
+         * Dedupe this enqueue by auto-deriving a {@code uniqueKey} from the task name and
+         * payload. A duplicate enqueue is a no-op while the first job is pending or running.
+         * An explicit {@link #uniqueKey}/{@link #idempotencyKey} takes precedence; passing
+         * {@code false} opts out of a task-level default.
+         */
+        public Builder idempotent(boolean idempotent) {
+            this.idempotent = idempotent;
+            return this;
+        }
+
+        /** Dedupe this enqueue under an explicit key (equivalent to a caller-supplied {@code uniqueKey}). */
+        public Builder idempotencyKey(String idempotencyKey) {
+            this.idempotencyKey = idempotencyKey;
             return this;
         }
 

@@ -9,7 +9,8 @@ use taskito_core::Storage;
 
 use super::borrow_queue;
 use crate::convert::{
-    status_code, to_json, JobErrorView, JobFilter, JobView, MetricView, StatsView, WorkerView,
+    status_code, to_json, CircuitBreakerView, JobErrorView, JobFilter, JobView, MetricView,
+    StatsView, WorkerView,
 };
 use crate::error::BindingError;
 use crate::ffi::{guard, new_string, read_optional_string, read_string};
@@ -143,6 +144,24 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listWorker
         let queue = unsafe { borrow_queue(handle) };
         let workers = queue.storage.list_workers()?;
         let views: Vec<WorkerView> = workers.iter().map(WorkerView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String listCircuitBreakers(long handle)` — every configured task's breaker state.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listCircuitBreakers<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let breakers = queue.storage.list_circuit_breakers()?;
+        let views: Vec<CircuitBreakerView> =
+            breakers.iter().map(CircuitBreakerView::from).collect();
         new_string(env, to_json(&views)?)
     })
 }

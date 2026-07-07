@@ -190,7 +190,32 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         if (priority != 0) {
             chain.append(".priority(").append(priority).append(")");
         }
+        if (boolValue(mirror, "idempotent", false)) {
+            chain.append(".idempotent(true)");
+        }
+        appendCircuitBreaker(chain, mirror);
         return chain.toString();
+    }
+
+    /** Emit a {@code .circuitBreaker(...)} call when the annotation configures a threshold. */
+    private void appendCircuitBreaker(StringBuilder chain, AnnotationMirror mirror) {
+        long threshold = longValue(mirror, "circuitBreakerThreshold", 0);
+        if (threshold <= 0) {
+            return;
+        }
+        // Fully qualified so the generated companion needs no extra import.
+        chain.append(".circuitBreaker(org.byteveda.taskito.task.CircuitBreakerConfig.builder(")
+                .append(threshold)
+                .append(")")
+                .append(".windowSeconds(")
+                .append(longValue(mirror, "circuitBreakerWindowSeconds", 60))
+                .append("L).cooldownSeconds(")
+                .append(longValue(mirror, "circuitBreakerCooldownSeconds", 300))
+                .append("L).halfOpenProbes(")
+                .append(longValue(mirror, "circuitBreakerHalfOpenProbes", 5))
+                .append(").halfOpenSuccessRate(")
+                .append(doubleValue(mirror, "circuitBreakerHalfOpenSuccessRate", 0.8))
+                .append(").build())");
     }
 
     /**
@@ -283,6 +308,16 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
     private long longValue(AnnotationMirror mirror, String key, long fallback) {
         Object value = rawValue(mirror, key);
         return value instanceof Number ? ((Number) value).longValue() : fallback;
+    }
+
+    private boolean boolValue(AnnotationMirror mirror, String key, boolean fallback) {
+        Object value = rawValue(mirror, key);
+        return value instanceof Boolean ? (Boolean) value : fallback;
+    }
+
+    private double doubleValue(AnnotationMirror mirror, String key, double fallback) {
+        Object value = rawValue(mirror, key);
+        return value instanceof Number ? ((Number) value).doubleValue() : fallback;
     }
 
     private Object rawValue(AnnotationMirror mirror, String key) {

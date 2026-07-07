@@ -52,6 +52,11 @@ public interface QueueBackend extends AutoCloseable {
 
     String listWorkersJson();
 
+    /** Circuit-breaker states as a JSON array; defaults to none for backends without breakers. */
+    default String listCircuitBreakersJson() {
+        return "[]";
+    }
+
     // ── Admin ───────────────────────────────────────────────────────
     String listDeadJson(long limit, long offset);
 

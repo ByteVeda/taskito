@@ -12,6 +12,7 @@ use std::time::Duration;
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::jlong;
 use jni::JNIEnv;
+use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{ResultOutcome, TaskConfig};
 use taskito_core::worker::WorkerDispatcher;
@@ -181,12 +182,26 @@ fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRet
                 retry_policy.max_delay_ms = max;
             }
         }
+        // A present threshold enables the breaker; window/cooldown already arrive in ms
+        // from the SDK, so they pass through unscaled (defaults mirror the core's).
+        let circuit_breaker =
+            config
+                .circuit_breaker_threshold
+                .map(|threshold| CircuitBreakerConfig {
+                    threshold,
+                    window_ms: config.circuit_breaker_window_ms.unwrap_or(60_000),
+                    cooldown_ms: config.circuit_breaker_cooldown_ms.unwrap_or(300_000),
+                    half_open_max_probes: config.circuit_breaker_half_open_probes.unwrap_or(5),
+                    half_open_success_rate: config
+                        .circuit_breaker_half_open_success_rate
+                        .unwrap_or(0.8),
+                });
         scheduler.register_task(
             config.name,
             TaskConfig {
                 retry_policy,
                 rate_limit: None,
-                circuit_breaker: None,
+                circuit_breaker,
                 max_concurrent: None,
             },
         );

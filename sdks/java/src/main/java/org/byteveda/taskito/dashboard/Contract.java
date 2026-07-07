@@ -44,6 +44,7 @@ final class Contract {
         m.put("error", j.error);
         m.put("unique_key", j.uniqueKey);
         m.put("namespace", j.namespace);
+        m.put("notes", j.notes);
         return m;
     }
 

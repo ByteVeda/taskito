@@ -21,6 +21,7 @@ import org.byteveda.taskito.internal.JniQueueBackend;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobError;
@@ -177,6 +178,9 @@ public interface Taskito extends AutoCloseable {
     List<TaskMetric> metrics(String taskName, long sinceMs);
 
     List<WorkerInfo> listWorkers();
+
+    /** Every configured task's circuit-breaker state. */
+    List<CircuitBreakerState> listCircuitBreakers();
 
     // ── Admin ───────────────────────────────────────────────────────
 

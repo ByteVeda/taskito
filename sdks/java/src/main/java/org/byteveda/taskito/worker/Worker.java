@@ -8,9 +8,11 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -32,6 +34,7 @@ import org.byteveda.taskito.serialization.PayloadCodec;
 import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.spi.WorkerControl;
+import org.byteveda.taskito.task.CircuitBreakerConfig;
 import org.byteveda.taskito.task.RetryPolicy;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.task.TaskFunction;
@@ -179,6 +182,7 @@ public final class Worker implements AutoCloseable {
         private final Map<String, PayloadCodec> codecs;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
         private final Map<String, RetryPolicy> taskPolicies = new HashMap<>();
+        private final Map<String, CircuitBreakerConfig> taskCircuitBreakers = new HashMap<>();
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
         private List<String> queues;
         private int concurrency;
@@ -230,11 +234,15 @@ public final class Worker implements AutoCloseable {
             return this;
         }
 
-        /** Remember a task's retry-backoff curve so {@code start()} registers it. */
+        /** Remember a task's retry-backoff curve and circuit breaker so {@code start()} registers them. */
         private void capturePolicy(Task<?> task) {
             RetryPolicy policy = task.retryPolicy();
             if (policy != null) {
                 taskPolicies.put(task.name(), policy);
+            }
+            CircuitBreakerConfig breaker = task.circuitBreaker();
+            if (breaker != null) {
+                taskCircuitBreakers.put(task.name(), breaker);
             }
         }
 
@@ -404,7 +412,7 @@ public final class Worker implements AutoCloseable {
             if (batchSize != null) {
                 options.put("batchSize", batchSize);
             }
-            if (!taskPolicies.isEmpty()) {
+            if (!taskPolicies.isEmpty() || !taskCircuitBreakers.isEmpty()) {
                 options.put("taskConfigs", encodeTaskConfigs());
             }
             if (mesh != null) {
@@ -417,25 +425,42 @@ public final class Worker implements AutoCloseable {
             }
         }
 
-        /** Serialize each captured retry policy into the wire shape the binding reads. */
+        /**
+         * Serialize each task's per-task config (retry curve and/or circuit breaker) into the
+         * wire shape the binding reads — one entry per task, merging both sources by name.
+         */
         private List<Map<String, Object>> encodeTaskConfigs() {
-            List<Map<String, Object>> configs = new ArrayList<>(taskPolicies.size());
-            taskPolicies.forEach((name, policy) -> {
+            Set<String> names = new LinkedHashSet<>(taskPolicies.keySet());
+            names.addAll(taskCircuitBreakers.keySet());
+            List<Map<String, Object>> configs = new ArrayList<>(names.size());
+            for (String name : names) {
                 Map<String, Object> config = new LinkedHashMap<>();
                 config.put("name", name);
-                if (policy.baseDelay() != null) {
-                    config.put("baseDelayMs", policy.baseDelay().toMillis());
+                RetryPolicy policy = taskPolicies.get(name);
+                if (policy != null) {
+                    if (policy.baseDelay() != null) {
+                        config.put("baseDelayMs", policy.baseDelay().toMillis());
+                    }
+                    if (policy.maxDelay() != null) {
+                        config.put("maxDelayMs", policy.maxDelay().toMillis());
+                    }
+                    if (!policy.customDelays().isEmpty()) {
+                        List<Long> delaysMs =
+                                new ArrayList<>(policy.customDelays().size());
+                        policy.customDelays().forEach(delay -> delaysMs.add(delay.toMillis()));
+                        config.put("customDelaysMs", delaysMs);
+                    }
                 }
-                if (policy.maxDelay() != null) {
-                    config.put("maxDelayMs", policy.maxDelay().toMillis());
-                }
-                if (!policy.customDelays().isEmpty()) {
-                    List<Long> delaysMs = new ArrayList<>(policy.customDelays().size());
-                    policy.customDelays().forEach(delay -> delaysMs.add(delay.toMillis()));
-                    config.put("customDelaysMs", delaysMs);
+                CircuitBreakerConfig breaker = taskCircuitBreakers.get(name);
+                if (breaker != null) {
+                    config.put("circuitBreakerThreshold", breaker.threshold());
+                    config.put("circuitBreakerWindowMs", breaker.window().toMillis());
+                    config.put("circuitBreakerCooldownMs", breaker.cooldown().toMillis());
+                    config.put("circuitBreakerHalfOpenProbes", breaker.halfOpenProbes());
+                    config.put("circuitBreakerHalfOpenSuccessRate", breaker.halfOpenSuccessRate());
                 }
                 configs.add(config);
-            });
+            }
             return configs;
         }
 

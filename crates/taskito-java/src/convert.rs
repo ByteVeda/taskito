@@ -5,8 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
+use taskito_core::resilience::circuit_breaker::CircuitState;
 use taskito_core::storage::models::{
-    JobErrorRow, LockInfoRow, PeriodicTaskRow, TaskLogRow, TaskMetricRow, WorkerRow,
+    CircuitBreakerRow, JobErrorRow, LockInfoRow, PeriodicTaskRow, TaskLogRow, TaskMetricRow,
+    WorkerRow,
 };
 use taskito_core::storage::{DeadJob, QueueStats};
 
@@ -43,6 +45,9 @@ pub struct EnqueueOptions {
     pub unique_key: Option<String>,
     pub metadata: Option<String>,
     pub namespace: Option<String>,
+    pub depends_on: Option<Vec<String>>,
+    /// Pre-encoded canonical JSON produced by the SDK; stored verbatim.
+    pub notes: Option<String>,
 }
 
 /// Parse a JSON argument, attributing any failure to the named field.
@@ -70,8 +75,8 @@ pub fn build_new_job(
         timeout_ms: options.timeout_ms.unwrap_or(0),
         unique_key: options.unique_key,
         metadata: options.metadata,
-        notes: None,
-        depends_on: Vec::new(),
+        notes: options.notes,
+        depends_on: options.depends_on.unwrap_or_default(),
         expires_at: None,
         result_ttl_ms: None,
         namespace: options
@@ -129,6 +134,8 @@ pub struct JobView<'a> {
     pub namespace: Option<&'a str>,
     /// Opaque metadata blob (JSON the SDK sets, e.g. middleware-injected trace ids).
     pub metadata: Option<&'a str>,
+    /// Structured notes as canonical JSON; the SDK parses it back into a map.
+    pub notes: Option<&'a str>,
 }
 
 impl<'a> From<&'a Job> for JobView<'a> {
@@ -151,6 +158,41 @@ impl<'a> From<&'a Job> for JobView<'a> {
             unique_key: j.unique_key.as_deref(),
             namespace: j.namespace.as_deref(),
             metadata: j.metadata.as_deref(),
+            notes: j.notes.as_deref(),
+        }
+    }
+}
+
+/// Java-facing view of a task's circuit-breaker state. `state` is the lowercase wire
+/// string (`closed`/`open`/`half_open`); timestamps are Unix milliseconds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CircuitBreakerView<'a> {
+    pub task_name: &'a str,
+    pub state: &'static str,
+    pub failure_count: i32,
+    pub threshold: i32,
+    pub window_ms: i64,
+    pub cooldown_ms: i64,
+    pub opened_at: Option<i64>,
+    pub last_failure_at: Option<i64>,
+    pub half_open_max_probes: i32,
+    pub half_open_success_rate: f64,
+}
+
+impl<'a> From<&'a CircuitBreakerRow> for CircuitBreakerView<'a> {
+    fn from(r: &'a CircuitBreakerRow) -> Self {
+        Self {
+            task_name: &r.task_name,
+            state: CircuitState::from_i32(r.state).as_str(),
+            failure_count: r.failure_count,
+            threshold: r.threshold,
+            window_ms: r.window_ms,
+            cooldown_ms: r.cooldown_ms,
+            opened_at: r.opened_at,
+            last_failure_at: r.last_failure_at,
+            half_open_max_probes: r.half_open_max_probes,
+            half_open_success_rate: r.half_open_success_rate,
         }
     }
 }
@@ -182,6 +224,13 @@ pub struct TaskRetryConfig {
     pub base_delay_ms: Option<i64>,
     pub max_delay_ms: Option<i64>,
     pub custom_delays_ms: Option<Vec<i64>>,
+    /// Circuit-breaker knobs. `threshold` present ⇒ the breaker is enabled; the SDK
+    /// already converts window/cooldown to milliseconds, so these are stored as-is.
+    pub circuit_breaker_threshold: Option<i32>,
+    pub circuit_breaker_window_ms: Option<i64>,
+    pub circuit_breaker_cooldown_ms: Option<i64>,
+    pub circuit_breaker_half_open_probes: Option<i32>,
+    pub circuit_breaker_half_open_success_rate: Option<f64>,
 }
 
 /// Filter accepted by `NativeQueue.listJobs`.

@@ -3,10 +3,17 @@ package org.byteveda.taskito.model;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Map;
+import java.util.Optional;
+import org.byteveda.taskito.errors.SerializationException;
 
 /** Immutable view of a job. Timestamps are Unix milliseconds. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class Job {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     public final String id;
     public final String queue;
     public final String taskName;
@@ -24,6 +31,9 @@ public final class Job {
     public final String uniqueKey;
     public final String namespace;
     public final String metadata;
+
+    /** Structured notes as canonical JSON, or {@code null}. Use {@link #notesMap()} for a parsed view. */
+    public final String notes;
 
     @JsonCreator
     public Job(
@@ -43,7 +53,8 @@ public final class Job {
             @JsonProperty("error") String error,
             @JsonProperty("uniqueKey") String uniqueKey,
             @JsonProperty("namespace") String namespace,
-            @JsonProperty("metadata") String metadata) {
+            @JsonProperty("metadata") String metadata,
+            @JsonProperty("notes") String notes) {
         this.id = id;
         this.queue = queue;
         this.taskName = taskName;
@@ -61,5 +72,18 @@ public final class Job {
         this.uniqueKey = uniqueKey;
         this.namespace = namespace;
         this.metadata = metadata;
+        this.notes = notes;
+    }
+
+    /** The structured notes parsed into a map, or empty when the job carries none. */
+    public Optional<Map<String, Object>> notesMap() {
+        if (notes == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(MAPPER.readValue(notes, new TypeReference<Map<String, Object>>() {}));
+        } catch (Exception e) {
+            throw new SerializationException("failed to parse job notes", e);
+        }
     }
 }
