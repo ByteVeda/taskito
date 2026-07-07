@@ -5,14 +5,20 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.dashboard.api.CoreHandlers;
+import org.byteveda.taskito.dashboard.api.MetricsHandlers;
+import org.byteveda.taskito.dashboard.api.OpsHandlers;
+import org.byteveda.taskito.dashboard.api.OverridesHandlers;
+import org.byteveda.taskito.dashboard.api.SettingsHandlers;
 import org.byteveda.taskito.dashboard.auth.AuthHandlers;
 import org.byteveda.taskito.dashboard.auth.AuthStore;
 import org.byteveda.taskito.dashboard.auth.Cookies;
@@ -21,6 +27,7 @@ import org.byteveda.taskito.dashboard.auth.RequestContext;
 import org.byteveda.taskito.dashboard.auth.TokenAuth;
 import org.byteveda.taskito.dashboard.routing.Req;
 import org.byteveda.taskito.dashboard.routing.Router;
+import org.byteveda.taskito.dashboard.store.OverridesStore;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
 import org.byteveda.taskito.dashboard.support.DashboardError;
 import org.byteveda.taskito.dashboard.support.Http;
@@ -47,9 +54,13 @@ public final class DashboardServer implements AutoCloseable {
     private final Taskito queue;
     private final Path staticDir;
     private final boolean secureCookies;
+    private static final String METRICS_TOKEN_ENV = "TASKITO_DASHBOARD_METRICS_TOKEN";
+
     private final AuthStore authStore;
     private final TokenAuth tokenAuth;
     private final AuthHandlers authHandlers;
+    private final OpsHandlers ops;
+    private final String metricsToken;
     private final Router router;
 
     private DashboardServer(HttpServer server, Taskito queue, Path staticDir, boolean secureCookies, String token) {
@@ -60,6 +71,8 @@ public final class DashboardServer implements AutoCloseable {
         this.authStore = new AuthStore(SettingsAccess.of(queue));
         this.tokenAuth = token != null ? new TokenAuth(token) : null;
         this.authHandlers = new AuthHandlers(authStore);
+        this.ops = new OpsHandlers(queue);
+        this.metricsToken = System.getenv(METRICS_TOKEN_ENV);
         this.router = buildRouter();
     }
 
@@ -116,6 +129,10 @@ public final class DashboardServer implements AutoCloseable {
             String path = exchange.getRequestURI().getPath();
             if (path.equals("/health")) {
                 Http.respondJson(exchange, 200, Map.of("status", "ok"));
+            } else if (path.equals("/readiness")) {
+                serveReadiness(exchange);
+            } else if (path.equals("/metrics")) {
+                serveMetrics(exchange);
             } else if (path.startsWith("/api/")) {
                 handleApi(exchange, path);
             } else {
@@ -181,6 +198,10 @@ public final class DashboardServer implements AutoCloseable {
 
     private Router buildRouter() {
         CoreHandlers core = new CoreHandlers(queue);
+        SettingsAccess settings = SettingsAccess.of(queue);
+        SettingsHandlers settingsApi = new SettingsHandlers(settings);
+        OverridesHandlers overrides = new OverridesHandlers(queue, new OverridesStore(settings));
+        MetricsHandlers metrics = new MetricsHandlers(queue);
         long ttl = AuthStore.DEFAULT_SESSION_TTL_SECONDS;
         Router r = new Router();
 
@@ -206,8 +227,32 @@ public final class DashboardServer implements AutoCloseable {
         r.get("/api/jobs", req -> core.listJobs(req.query()));
         r.get("/api/jobs/([^/]+)", req -> core.job(req.param(0)));
         r.get("/api/dead-letters", req -> core.listDead(req.query()));
-        r.get("/api/metrics", req -> core.listMetrics(req.query()));
         r.get("/api/workers", req -> core.listWorkers());
+
+        // Metrics (aggregated — the SPA contract, not raw rows)
+        r.get("/api/metrics", req -> metrics.aggregated(req.query()));
+        r.get("/api/metrics/timeseries", req -> metrics.timeseries(req.query()));
+
+        // Ops
+        r.get("/api/circuit-breakers", req -> ops.circuitBreakers());
+        r.get("/api/event-types", req -> ops.eventTypes());
+        r.get("/api/scaler", req -> ops.scaler(req.query()));
+
+        // Settings KV
+        r.get("/api/settings", req -> settingsApi.list());
+        r.get("/api/settings/(.+)", req -> settingsApi.get(req.param(0)));
+        r.put("/api/settings/(.+)", req -> settingsApi.put(req.param(0), req.jsonBody()));
+        r.delete("/api/settings/(.+)", req -> settingsApi.delete(req.param(0)));
+
+        // Tasks / queues + overrides
+        r.get("/api/tasks", req -> overrides.listTasks());
+        r.get("/api/queues", req -> overrides.listQueues());
+        r.get("/api/tasks/([^/]+)/override", req -> overrides.getTaskOverride(req.param(0)));
+        r.put("/api/tasks/([^/]+)/override", req -> overrides.putTaskOverride(req.param(0), req.jsonBody()));
+        r.delete("/api/tasks/([^/]+)/override", req -> overrides.deleteTaskOverride(req.param(0)));
+        r.get("/api/queues/([^/]+)/override", req -> overrides.getQueueOverride(req.param(0)));
+        r.put("/api/queues/([^/]+)/override", req -> overrides.putQueueOverride(req.param(0), req.jsonBody()));
+        r.delete("/api/queues/([^/]+)/override", req -> overrides.deleteQueueOverride(req.param(0)));
 
         // Action
         r.post("/api/jobs/([^/]+)/cancel", req -> core.cancel(req.param(0)));
@@ -236,6 +281,43 @@ public final class DashboardServer implements AutoCloseable {
         headers.add("Set-Cookie", Cookies.clearSession(secureCookies));
         headers.add("Set-Cookie", Cookies.clearCsrf(secureCookies));
         return out;
+    }
+
+    // ---- probes ------------------------------------------------------------
+
+    private void serveReadiness(HttpExchange exchange) throws IOException {
+        if (!metricsTokenOk(exchange)) {
+            Http.respondError(exchange, 401, "unauthorized");
+            return;
+        }
+        Http.respondJson(exchange, 200, ops.readiness());
+    }
+
+    private void serveMetrics(HttpExchange exchange) throws IOException {
+        if (!metricsTokenOk(exchange)) {
+            Http.respondError(exchange, 401, "unauthorized");
+            return;
+        }
+        byte[] out = ops.prometheus().getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+        exchange.sendResponseHeaders(200, out.length);
+        try (OutputStream stream = exchange.getResponseBody()) {
+            stream.write(out);
+        }
+    }
+
+    /** Open when no metrics token is configured; otherwise require a bearer match. */
+    private boolean metricsTokenOk(HttpExchange exchange) {
+        if (metricsToken == null || metricsToken.isEmpty()) {
+            return true;
+        }
+        String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            return false;
+        }
+        String presented = authorization.substring("Bearer ".length()).trim();
+        return MessageDigest.isEqual(
+                metricsToken.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8));
     }
 
     // ---- static + helpers --------------------------------------------------

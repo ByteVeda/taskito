@@ -65,13 +65,6 @@ public final class CoreHandlers {
         return queue.listDead(limit, offset).stream().map(Contract::dead).collect(Collectors.toList());
     }
 
-    public Object listMetrics(Map<String, String> query) {
-        long since = longParam(query, "since", 0);
-        return queue.metrics(query.get("task"), since).stream()
-                .map(Contract::metric)
-                .collect(Collectors.toList());
-    }
-
     public Object listWorkers() {
         return queue.listWorkers().stream().map(Contract::worker).collect(Collectors.toList());
     }
