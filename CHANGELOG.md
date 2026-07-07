@@ -466,6 +466,9 @@ migration steps, rolling-upgrade notes, and the downgrade floor.
 
 ---
 
+<details>
+<summary>Older releases (0.1.0 – 0.12.0)</summary>
+
 ## 0.12.0
 
 ### Added
@@ -589,9 +592,6 @@ migration steps, rolling-upgrade notes, and the downgrade floor.
 - All internal links updated from `pratyush618/taskito` to `ByteVeda/taskito`
 
 ---
-
-<details>
-<summary>Older releases (0.1.0 – 0.10.0)</summary>
 
 ## 0.10.0
 
