@@ -352,8 +352,18 @@ final class DefaultTaskito implements Taskito {
                 throw new EnqueueSkippedException("enqueue of '" + task.name()
                         + "' was skipped or deferred by a gate; batch enqueue needs Allow");
             }
-            bytes[i] = encodeCodecs(serializer.serialize(payload), task.codecNames());
-            perJob.add(options);
+            // Resolve the dedup key per payload so bulk enqueue honors idempotent
+            // auto-derive, mirroring the single-enqueue path (explicit
+            // uniqueKey/idempotencyKey precedence preserved). Key hashes the
+            // deterministic pre-codec bytes.
+            byte[] payloadBytes = serializer.serialize(payload);
+            EnqueueOptions jobOptions = options;
+            String uniqueKey = resolveUniqueKey(task.name(), payloadBytes, jobOptions, task.idempotent());
+            if (uniqueKey != null && !uniqueKey.equals(jobOptions.uniqueKey())) {
+                jobOptions = jobOptions.toBuilder().uniqueKey(uniqueKey).build();
+            }
+            bytes[i] = encodeCodecs(payloadBytes, task.codecNames());
+            perJob.add(jobOptions);
         }
         return Arrays.asList(backend.enqueueMany(task.name(), bytes, encode(perJob)));
     }

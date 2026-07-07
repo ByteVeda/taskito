@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.internal.IdempotencyKeys;
 import org.byteveda.taskito.task.EnqueueOptions;
@@ -61,6 +62,22 @@ class IdempotencyTest {
             String first = queue.enqueue(task, "a", opts);
             String second = queue.enqueue(task, "b", opts);
             assertEquals(first, second);
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void enqueueManyHonorsIdempotentAutoDerive(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("idembatch.db").toString()).open()) {
+            Task<String> task = Task.of("idem.batch", String.class).idempotent(true);
+            // No worker: jobs stay pending. The batch-enqueued payload must carry the
+            // auto-derived key so a later single enqueue of the same payload dedups —
+            // regressing when enqueueMany skipped resolveUniqueKey.
+            List<String> ids = queue.enqueueMany(task, List.of("hello", "world"));
+            String again = queue.enqueue(task, "hello");
+            assertEquals(ids.get(0), again, "batch enqueue must auto-derive the dedup key");
+            assertNotEquals(ids.get(1), again, "a different payload derives a different key");
         }
     }
 
