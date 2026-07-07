@@ -1,7 +1,7 @@
 // Map the SDK's camelCase shapes to the snake_case JSON contract the React SPA
 // (`dashboard/`) expects. Timestamps are Unix milliseconds throughout.
 
-import type { DeadJob, Job, WorkerInfo } from "../../types";
+import type { CircuitBreaker, DeadJob, Job, ReplayEntry, TaskLog, WorkerInfo } from "../../types";
 import type { Delivery, Webhook } from "../../webhooks";
 import type { WorkflowNode, WorkflowRun } from "../../workflows";
 
@@ -133,5 +133,40 @@ export function deadToContract(dead: DeadJob) {
     failed_at: dead.failedAt,
     metadata: dead.metadata ?? null,
     dlq_retry_count: dead.dlqRetryCount,
+  };
+}
+
+export function taskLogToContract(log: TaskLog) {
+  return {
+    job_id: log.jobId,
+    task_name: log.taskName,
+    level: log.level,
+    message: log.message,
+    extra: log.extra ?? null,
+    logged_at: log.loggedAt,
+  };
+}
+
+export function circuitBreakerToContract(row: CircuitBreaker) {
+  return {
+    task_name: row.taskName,
+    state: row.state,
+    failure_count: row.failureCount,
+    last_failure_at: row.lastFailureAt ?? null,
+    opened_at: row.openedAt ?? null,
+    threshold: row.threshold,
+    window_ms: row.windowMs,
+    cooldown_ms: row.cooldownMs,
+  };
+}
+
+export function replayEntryToContract(row: ReplayEntry) {
+  return {
+    id: row.id,
+    original_job_id: row.originalJobId,
+    replay_job_id: row.replayJobId,
+    replayed_at: row.replayedAt,
+    original_error: row.originalError ?? null,
+    replay_error: row.replayError ?? null,
   };
 }

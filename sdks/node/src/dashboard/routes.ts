@@ -60,8 +60,29 @@ export const routes: Route[] = [
     pattern: /^\/api\/jobs\/([^/]+)\/logs$/,
     handle: (q, _url, p) => h.jobLogs(q, id(p)),
   },
+  {
+    method: "GET",
+    pattern: /^\/api\/jobs\/([^/]+)\/replay-history$/,
+    handle: (q, _url, p) => h.replayHistory(q, id(p)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/jobs\/([^/]+)\/dag$/,
+    handle: (q, _url, p) => h.jobDag(q, id(p)),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/jobs\/([^/]+)\/replay$/,
+    handle: (q, _url, p) => h.replayJob(q, id(p)),
+  },
   { method: "GET", pattern: /^\/api\/jobs\/([^/]+)$/, handle: (q, _url, p) => h.job(q, id(p)) },
   { method: "GET", pattern: /^\/api\/dead-letters$/, handle: (q, url) => h.deadLetters(q, url) },
+  { method: "GET", pattern: /^\/api\/logs$/, handle: (q, url) => h.logs(q, url) },
+  {
+    method: "GET",
+    pattern: /^\/api\/circuit-breakers$/,
+    handle: (q) => h.circuitBreakers(q),
+  },
   {
     method: "POST",
     pattern: /^\/api\/dead-letters\/purge$/,

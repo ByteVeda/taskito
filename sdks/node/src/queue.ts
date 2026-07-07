@@ -42,9 +42,11 @@ import {
 import { CodecSerializer, JsonSerializer, type PayloadCodec, type Serializer } from "./serializers";
 import type {
   AnyHandler,
+  CircuitBreaker,
   DeadJob,
   EnqueueOptions,
   Job,
+  JobDag,
   JobError,
   JobFilter,
   Metric,
@@ -52,6 +54,7 @@ import type {
   PeriodicTask,
   QueueLimits,
   RegisteredTask,
+  ReplayEntry,
   ResultOptions,
   Stats,
   StreamOptions,
@@ -573,6 +576,37 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Raw task-log entries for a job (oldest first), including published partials. */
   taskLogs(id: string): TaskLog[] {
     return this.native.getTaskLogs(id);
+  }
+
+  /**
+   * Task logs across jobs, newest first, filtered by task name and/or level.
+   * `sinceMs` is a Unix-ms lower bound (default: the last hour).
+   */
+  queryLogs(
+    options: { task?: string; level?: string; sinceMs?: number; limit?: number } = {},
+  ): Promise<TaskLog[]> {
+    const sinceMs = options.sinceMs ?? Date.now() - 3_600_000;
+    return this.native.queryTaskLogs(options.task, options.level, sinceMs, options.limit ?? 100);
+  }
+
+  /** Circuit-breaker state for every task that has one. */
+  listCircuitBreakers(): Promise<CircuitBreaker[]> {
+    return this.native.listCircuitBreakers();
+  }
+
+  /** Re-enqueue a copy of a job and record it in the replay history. Returns the new job id. */
+  replay(id: string): string {
+    return this.native.replayJob(id);
+  }
+
+  /** Replays recorded for a job, newest first. */
+  replayHistory(id: string): Promise<ReplayEntry[]> {
+    return this.native.getReplayHistory(id);
+  }
+
+  /** The dependency DAG reachable from a job (nodes + dependency->dependent edges). */
+  jobDag(id: string): Promise<JobDag> {
+    return this.native.jobDag(id);
   }
 
   /** Partial-result values logged after `cursor`, plus the advanced cursor. */

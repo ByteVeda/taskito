@@ -4,6 +4,7 @@
 mod job;
 mod lock;
 mod log;
+mod ops;
 mod outcome;
 mod periodic;
 mod stats;
@@ -14,6 +15,9 @@ mod workflow;
 pub use job::{build_new_job, job_to_js, JsJob, JsTaskInvocation};
 pub use lock::{lock_info_to_js, JsLockInfo};
 pub use log::{log_to_js, JsTaskLog};
+pub use ops::{
+    circuit_breaker_to_js, replay_to_js, JsCircuitBreaker, JsDagEdge, JsJobDag, JsReplayEntry,
+};
 pub use outcome::{outcome_to_js, JsOutcome};
 pub use periodic::{periodic_to_js, JsPeriodicTask};
 pub use stats::{

@@ -8,9 +8,12 @@ import type { WebhookInput } from "../../webhooks";
 import type { WorkflowNode } from "../../workflows";
 import { BadRequestError } from "../errors";
 import {
+  circuitBreakerToContract,
   deadToContract,
   deliveryToContract,
   jobToContract,
+  replayEntryToContract,
+  taskLogToContract,
   webhookToContract,
   workerToContract,
   workflowNodeToContract,
@@ -284,14 +287,43 @@ export async function jobErrors(queue: Queue, id: string) {
 
 /** Task-log entries for a job (oldest first). */
 export function jobLogs(queue: Queue, id: string) {
-  return queue.taskLogs(id).map((l) => ({
-    job_id: l.jobId,
-    task_name: l.taskName,
-    level: l.level,
-    message: l.message,
-    extra: l.extra ?? null,
-    logged_at: l.loggedAt,
-  }));
+  return queue.taskLogs(id).map(taskLogToContract);
+}
+
+/** Task logs across jobs filtered by task/level (`since` in seconds). */
+export async function logs(queue: Queue, url: URL) {
+  const since = positiveOr(url.searchParams.get("since"), 3600);
+  const found = await queue.queryLogs({
+    task: url.searchParams.get("task") ?? undefined,
+    level: url.searchParams.get("level") ?? undefined,
+    sinceMs: Date.now() - since * 1000,
+    limit: num(url, "limit") ?? 100,
+  });
+  return found.map(taskLogToContract);
+}
+
+/** Circuit-breaker state for every task that has one. */
+export async function circuitBreakers(queue: Queue) {
+  return (await queue.listCircuitBreakers()).map(circuitBreakerToContract);
+}
+
+/** Re-enqueue a copy of a job. */
+export function replayJob(queue: Queue, id: string) {
+  return { replay_job_id: queue.replay(id) };
+}
+
+/** Replays recorded for a job, newest first. */
+export async function replayHistory(queue: Queue, id: string) {
+  return (await queue.replayHistory(id)).map(replayEntryToContract);
+}
+
+/** Dependency DAG reachable from a job. */
+export async function jobDag(queue: Queue, id: string) {
+  const dag = await queue.jobDag(id);
+  return {
+    nodes: dag.nodes.map(jobToContract),
+    edges: dag.edges.map((edge) => ({ from: edge.from, to: edge.to })),
+  };
 }
 
 /** Purge every dead-letter entry. */
