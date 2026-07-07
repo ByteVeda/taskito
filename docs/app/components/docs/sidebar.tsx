@@ -1,58 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
-import { useActiveSdk, useSdk } from "@/hooks";
-import {
-  forcedSdkForPath,
-  type NavNode,
-  navForSdk,
-  type Sdk,
-  sdkLabels,
-  sdkSwitchTarget,
-} from "@/lib";
+import { Link, useLocation } from "react-router";
+import { useActiveSdk } from "@/hooks";
+import { type NavNode, navForSdk } from "@/lib";
 
 function containsHref(node: NavNode, current: string): boolean {
   return (
     node.href === current ||
     (node.children?.some((c) => containsHref(c, current)) ?? false)
-  );
-}
-
-// Switcher options come from the SDK registry, so a new language appears here
-// automatically.
-const SDK_LABELS = sdkLabels();
-
-/** Global SDK toggle. Sets the shared store (flips inline variants + this nav);
- *  on an SDK-specific page it also navigates to the counterpart page, on a shared
- *  page it stays put. A labelled control — it switches the whole page, not a panel. */
-function SdkSwitch({ sdk, current }: { sdk: Sdk; current: string }) {
-  const { setSdk } = useSdk();
-  const navigate = useNavigate();
-
-  function select(target: Sdk) {
-    if (target === sdk) {
-      return;
-    }
-    setSdk(target);
-    if (forcedSdkForPath(current)) {
-      navigate(sdkSwitchTarget(current, target));
-    }
-  }
-
-  return (
-    <div className="sdk-switch">
-      {SDK_LABELS.map(({ id, label }) => (
-        <button
-          key={id}
-          type="button"
-          className={`sdk-opt ${sdk === id ? "active" : ""}`.trim()}
-          aria-pressed={sdk === id}
-          aria-label={`${label} SDK`}
-          onClick={() => select(id)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -228,7 +182,6 @@ export function Sidebar({
             <kbd>K</kbd>
           </span>
         </button>
-        <SdkSwitch sdk={sdk} current={current} />
         <nav id="sidenav">
           {navForSdk(sdk).map((group) => (
             <NavGroup key={group.title} group={group} current={current} />

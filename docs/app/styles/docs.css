@@ -60,24 +60,75 @@ body {
   padding: 0 5px;
   font-size: 11px;
 }
-/* SDK switcher (Python | Node) — sits above the nav tree */
-.sdk-switch {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  padding: 4px;
-  margin-bottom: 20px;
-  background: var(--panel2);
-  border: 1px solid var(--line2);
-  border-radius: 11px;
+/* Topbar SDK dropdown (lives in .navright, before the search bar). */
+.sdk-dd {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
 }
-.sdk-opt {
+.sdk-dd-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.sdk-dd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--txt2);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.sdk-dd-btn:hover {
+  border-color: var(--line3);
+}
+.sdk-dd-btn:focus-visible {
+  outline: 2px solid var(--indigo-br);
+  outline-offset: 1px;
+}
+.sdk-dd-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  color: var(--indigo-br);
+}
+.sdk-dd-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.sdk-dd .sdk-caret {
+  color: var(--mut);
+}
+.sdk-dd-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 150px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+.sdk-dd-opt {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  width: 100%;
-  padding: 8px 6px;
+  gap: 9px;
+  padding: 8px 10px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -85,27 +136,29 @@ body {
   font-size: 13px;
   font-weight: 500;
   color: var(--mut);
-  text-decoration: none;
+  text-align: left;
   cursor: pointer;
   transition:
     background 0.15s,
-    color 0.15s,
-    box-shadow 0.15s;
+    color 0.15s;
 }
-.sdk-opt svg {
-  width: 15px;
-  height: 15px;
-  flex: none;
-}
-.sdk-opt:hover {
+.sdk-dd-opt:hover {
+  background: var(--panel2);
   color: var(--txt);
 }
-.sdk-opt.active {
+.sdk-dd-opt.active {
   color: var(--indigo-br);
-  background: var(--panel);
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.12),
-    0 0 0 1px var(--indigo-line);
+  background: var(--indigo-soft);
+}
+.sdk-dd-check {
+  margin-left: auto;
+  color: var(--indigo-br);
+}
+/* The label is site chrome — hide it before the nav collapses, keep the button. */
+@media (max-width: 1080px) {
+  .sdk-dd-label {
+    display: none;
+  }
 }
 .nav-group {
   margin-bottom: 22px;
