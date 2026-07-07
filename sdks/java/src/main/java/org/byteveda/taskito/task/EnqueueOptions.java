@@ -31,6 +31,12 @@ public final class EnqueueOptions {
     @JsonProperty("namespace")
     private final String namespace;
 
+    // Idempotency inputs resolve to uniqueKey locally (see DefaultTaskito) and never cross
+    // the wire, so they carry no @JsonProperty and are not serialized into the options JSON.
+    private final Boolean idempotent;
+
+    private final String idempotencyKey;
+
     private EnqueueOptions(Builder b) {
         this.queue = b.queue;
         this.priority = b.priority;
@@ -40,6 +46,8 @@ public final class EnqueueOptions {
         this.uniqueKey = b.uniqueKey;
         this.metadata = b.metadata;
         this.namespace = b.namespace;
+        this.idempotent = b.idempotent;
+        this.idempotencyKey = b.idempotencyKey;
     }
 
     public static EnqueueOptions none() {
@@ -61,7 +69,27 @@ public final class EnqueueOptions {
         b.uniqueKey = uniqueKey;
         b.metadata = metadata;
         b.namespace = namespace;
+        b.idempotent = idempotent;
+        b.idempotencyKey = idempotencyKey;
         return b;
+    }
+
+    /** The explicit dedup key, or {@code null} when none was set. */
+    public String uniqueKey() {
+        return uniqueKey;
+    }
+
+    /**
+     * Tri-state idempotency toggle: {@code TRUE} forces auto-derivation of a {@code uniqueKey},
+     * {@code FALSE} opts this enqueue out of a task-level default, {@code null} defers to the task.
+     */
+    public Boolean idempotent() {
+        return idempotent;
+    }
+
+    /** An explicit idempotency key (used as the {@code uniqueKey} when set), or {@code null}. */
+    public String idempotencyKey() {
+        return idempotencyKey;
     }
 
     public static final class Builder {
@@ -73,6 +101,8 @@ public final class EnqueueOptions {
         private String uniqueKey;
         private String metadata;
         private String namespace;
+        private Boolean idempotent;
+        private String idempotencyKey;
 
         public Builder queue(String queue) {
             this.queue = queue;
@@ -138,6 +168,23 @@ public final class EnqueueOptions {
 
         public Builder namespace(String namespace) {
             this.namespace = namespace;
+            return this;
+        }
+
+        /**
+         * Dedupe this enqueue by auto-deriving a {@code uniqueKey} from the task name and
+         * payload. A duplicate enqueue is a no-op while the first job is pending or running.
+         * An explicit {@link #uniqueKey}/{@link #idempotencyKey} takes precedence; passing
+         * {@code false} opts out of a task-level default.
+         */
+        public Builder idempotent(boolean idempotent) {
+            this.idempotent = idempotent;
+            return this;
+        }
+
+        /** Dedupe this enqueue under an explicit key (equivalent to a caller-supplied {@code uniqueKey}). */
+        public Builder idempotencyKey(String idempotencyKey) {
+            this.idempotencyKey = idempotencyKey;
             return this;
         }
 

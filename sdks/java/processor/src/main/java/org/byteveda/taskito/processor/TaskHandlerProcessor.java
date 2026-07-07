@@ -190,6 +190,9 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         if (priority != 0) {
             chain.append(".priority(").append(priority).append(")");
         }
+        if (boolValue(mirror, "idempotent", false)) {
+            chain.append(".idempotent(true)");
+        }
         return chain.toString();
     }
 
@@ -283,6 +286,11 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
     private long longValue(AnnotationMirror mirror, String key, long fallback) {
         Object value = rawValue(mirror, key);
         return value instanceof Number ? ((Number) value).longValue() : fallback;
+    }
+
+    private boolean boolValue(AnnotationMirror mirror, String key, boolean fallback) {
+        Object value = rawValue(mirror, key);
+        return value instanceof Boolean ? (Boolean) value : fallback;
     }
 
     private Object rawValue(AnnotationMirror mirror, String key) {

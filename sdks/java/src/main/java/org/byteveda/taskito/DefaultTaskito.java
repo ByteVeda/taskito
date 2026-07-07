@@ -24,6 +24,7 @@ import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.interception.Interception;
 import org.byteveda.taskito.interception.Interceptor;
+import org.byteveda.taskito.internal.IdempotencyKeys;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
@@ -167,12 +168,13 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> String enqueue(Task<T> task, T payload, EnqueueOptions options) {
-        return required(dispatchEnqueue(task.name(), payload, options, task.codecNames()), task.name());
+        return required(
+                dispatchEnqueue(task.name(), payload, options, task.codecNames(), task.idempotent()), task.name());
     }
 
     @Override
     public String enqueue(String taskName, Object payload) {
-        return required(dispatchEnqueue(taskName, payload, EnqueueOptions.none(), List.of()), taskName);
+        return required(dispatchEnqueue(taskName, payload, EnqueueOptions.none(), List.of(), false), taskName);
     }
 
     @Override
@@ -182,12 +184,12 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public <T> Optional<String> tryEnqueue(Task<T> task, T payload, EnqueueOptions options) {
-        return dispatchEnqueue(task.name(), payload, options, task.codecNames());
+        return dispatchEnqueue(task.name(), payload, options, task.codecNames(), task.idempotent());
     }
 
     @Override
     public Optional<String> tryEnqueue(String taskName, Object payload) {
-        return dispatchEnqueue(taskName, payload, EnqueueOptions.none(), List.of());
+        return dispatchEnqueue(taskName, payload, EnqueueOptions.none(), List.of(), false);
     }
 
     /** Unwrap a dispatch result, turning a gate {@code Skip} into an {@link EnqueueSkippedException}. */
@@ -202,7 +204,11 @@ final class DefaultTaskito implements Taskito {
      * the enqueue; throws when a gate rejects it.
      */
     private Optional<String> dispatchEnqueue(
-            String taskName, Object payload, EnqueueOptions options, List<String> codecNames) {
+            String taskName,
+            Object payload,
+            EnqueueOptions options,
+            List<String> codecNames,
+            boolean taskIdempotentDefault) {
         String originalTaskName = taskName;
         for (Interceptor interceptor : interceptors) {
             Interception outcome = interceptor.intercept(taskName, payload);
@@ -249,8 +255,38 @@ final class DefaultTaskito implements Taskito {
                     .metadata(encode(context.metadata()))
                     .build();
         }
-        byte[] data = encodeCodecs(serializer.serialize(context.payload()), codecNames);
+        // Serialize before codec-encoding so the idempotency key hashes the deterministic
+        // pre-codec payload — a non-deterministic codec (e.g. an AES-GCM nonce) must not
+        // change the dedup key.
+        byte[] payloadBytes = serializer.serialize(context.payload());
+        String uniqueKey = resolveUniqueKey(taskName, payloadBytes, finalOptions, taskIdempotentDefault);
+        if (uniqueKey != null && !uniqueKey.equals(finalOptions.uniqueKey())) {
+            finalOptions = finalOptions.toBuilder().uniqueKey(uniqueKey).build();
+        }
+        byte[] data = encodeCodecs(payloadBytes, codecNames);
         return Optional.of(backend.enqueue(taskName, data, encode(finalOptions)));
+    }
+
+    /**
+     * Resolve the effective dedup key: an explicit {@code uniqueKey} wins, then an explicit
+     * {@code idempotencyKey}; a per-enqueue {@code idempotent(false)} opts out; otherwise a
+     * per-enqueue {@code idempotent(true)} or the task-level default auto-derives one from the
+     * payload. Returns {@code null} when the enqueue should not be deduped.
+     */
+    private static String resolveUniqueKey(
+            String taskName, byte[] preCodecPayload, EnqueueOptions options, boolean taskIdempotentDefault) {
+        if (options.uniqueKey() != null) {
+            return options.uniqueKey();
+        }
+        if (options.idempotencyKey() != null) {
+            return options.idempotencyKey();
+        }
+        Boolean idempotent = options.idempotent();
+        if (Boolean.FALSE.equals(idempotent)) {
+            return null;
+        }
+        boolean enabled = Boolean.TRUE.equals(idempotent) || taskIdempotentDefault;
+        return enabled ? IdempotencyKeys.autoKey(taskName, preCodecPayload) : null;
     }
 
     /**

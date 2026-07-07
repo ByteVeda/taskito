@@ -32,4 +32,7 @@ public @interface TaskHandler {
 
     /** Priority; 0 (default) is left unset. */
     int priority() default 0;
+
+    /** Auto-derive an idempotency {@code uniqueKey} from the payload on every enqueue. */
+    boolean idempotent() default false;
 }
