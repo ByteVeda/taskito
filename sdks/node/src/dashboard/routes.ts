@@ -1,7 +1,9 @@
 import type { Queue } from "../index";
 import * as auth from "./authHandlers";
 import * as h from "./handlers";
+import * as ops from "./opsHandlers";
 import type { RequestContext } from "./requestContext";
+import * as settings from "./settingsHandlers";
 
 export interface Route {
   method: string;
@@ -88,8 +90,41 @@ export const routes: Route[] = [
   { method: "GET", pattern: /^\/api\/stats\/queues$/, handle: (q, url) => h.statsQueues(q, url) },
   { method: "GET", pattern: /^\/api\/queues\/paused$/, handle: (q) => h.queuesPaused(q) },
   { method: "GET", pattern: /^\/api\/jobs$/, handle: (q, url) => h.jobs(q, url) },
+  {
+    method: "GET",
+    pattern: /^\/api\/jobs\/([^/]+)\/errors$/,
+    handle: (q, _url, p) => h.jobErrors(q, id(p)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/jobs\/([^/]+)\/logs$/,
+    handle: (q, _url, p) => h.jobLogs(q, id(p)),
+  },
   { method: "GET", pattern: /^\/api\/jobs\/([^/]+)$/, handle: (q, _url, p) => h.job(q, id(p)) },
   { method: "GET", pattern: /^\/api\/dead-letters$/, handle: (q, url) => h.deadLetters(q, url) },
+  {
+    method: "POST",
+    pattern: /^\/api\/dead-letters\/purge$/,
+    handle: (q) => h.purgeDeadLetters(q),
+  },
+  { method: "GET", pattern: /^\/api\/settings$/, handle: (q) => settings.listSettings(q) },
+  {
+    method: "GET",
+    pattern: /^\/api\/settings\/(.+)$/,
+    handle: (q, _url, p) => settings.getSetting(q, id(p)),
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/settings\/(.+)$/,
+    handle: (q, _url, p, body) => settings.putSetting(q, id(p), body),
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/settings\/(.+)$/,
+    handle: (q, _url, p) => settings.deleteSetting(q, id(p)),
+  },
+  { method: "GET", pattern: /^\/api\/scaler$/, handle: (q, url) => ops.scaler(q, url) },
+  { method: "GET", pattern: /^\/api\/resources$/, handle: (q) => ops.resourceStatus(q) },
   { method: "GET", pattern: /^\/api\/metrics$/, handle: (q, url) => h.metrics(q, url) },
   {
     method: "GET",

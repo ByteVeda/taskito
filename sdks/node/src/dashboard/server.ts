@@ -21,6 +21,7 @@ import {
 import { AuthStore } from "./authStore";
 import { DashboardError } from "./errors";
 import { openAuthStatus, openWhoami } from "./handlers";
+import { health, readiness } from "./opsHandlers";
 import {
   buildContext,
   CSRF_COOKIE,
@@ -101,6 +102,11 @@ async function dispatch(
   // later API calls authenticate without re-passing the token.
   if (auth && url.searchParams.get("token") && tokenMatches(auth.token, presentedToken(req, url))) {
     setTokenCookie(res, auth.token);
+  }
+
+  if (path === "/health" || path === "/readiness" || path === "/metrics") {
+    await serveProbe(queue, req, res, path);
+    return;
   }
 
   if (!path.startsWith("/api/")) {
@@ -307,6 +313,48 @@ function readBody(req: IncomingMessage): Promise<unknown> {
     req.on("error", () => finish(undefined));
     req.on("aborted", () => finish(undefined));
   });
+}
+
+/**
+ * Probe endpoints outside the session gate. `/health` is always public;
+ * `/readiness` and `/metrics` are optionally gated by
+ * `TASKITO_DASHBOARD_METRICS_TOKEN` as a bearer token.
+ */
+async function serveProbe(
+  queue: Queue,
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+): Promise<void> {
+  if (path === "/health") {
+    sendJson(res, 200, health());
+    return;
+  }
+  if (!metricsTokenOk(req)) {
+    sendJson(res, 401, { error: "unauthorized" });
+    return;
+  }
+  if (path === "/readiness") {
+    sendJson(res, 200, await readiness(queue));
+    return;
+  }
+  try {
+    const { register } = await import("prom-client");
+    const body = await register.metrics();
+    res.writeHead(200, { "content-type": register.contentType });
+    res.end(body);
+  } catch {
+    sendJson(res, 501, { error: "prom-client not installed" });
+  }
+}
+
+/** Probe-friendly by default; a set env token requires a matching bearer header. */
+function metricsTokenOk(req: IncomingMessage): boolean {
+  const token = process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
+  if (!token) {
+    return true;
+  }
+  return tokenMatches(`Bearer ${token}`, req.headers.authorization ?? "");
 }
 
 /** Token-mode session/CSRF cookies so the SPA proceeds without a login. */

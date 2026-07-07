@@ -247,6 +247,32 @@ export function authProviders() {
   return { password_enabled: true, providers: [] };
 }
 
+/** Error history for a job, one row per failed attempt. */
+export async function jobErrors(queue: Queue, id: string) {
+  return (await queue.getJobErrors(id)).map((e) => ({
+    attempt: e.attempt,
+    error: e.error,
+    failed_at: e.failedAt,
+  }));
+}
+
+/** Task-log entries for a job (oldest first). */
+export function jobLogs(queue: Queue, id: string) {
+  return queue.taskLogs(id).map((l) => ({
+    job_id: l.jobId,
+    task_name: l.taskName,
+    level: l.level,
+    message: l.message,
+    extra: l.extra ?? null,
+    logged_at: l.loggedAt,
+  }));
+}
+
+/** Purge every dead-letter entry. */
+export async function purgeDeadLetters(queue: Queue) {
+  return { purged: await queue.purgeDead(0) };
+}
+
 export function cancel(queue: Queue, id: string) {
   return { cancelled: queue.cancelJob(id) || queue.requestCancel(id) };
 }
