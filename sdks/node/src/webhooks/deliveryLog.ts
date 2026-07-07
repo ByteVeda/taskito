@@ -79,8 +79,10 @@ export class DeliveryLog {
     if (filters.event) {
       rows = rows.filter((r) => r.event === filters.event);
     }
-    const offset = filters.offset ?? 0;
-    const limit = filters.limit ?? 50;
+    // Clamp so negative values can't trigger Array.slice's negative-index
+    // semantics and return the wrong page.
+    const offset = Math.max(0, filters.offset ?? 0);
+    const limit = Math.max(0, filters.limit ?? 50);
     return rows.slice(offset, offset + limit).map(fromRow);
   }
 
