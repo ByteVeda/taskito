@@ -169,6 +169,9 @@ impl JsQueue {
         let storage = self.storage.clone();
         spawn_blocking(move || {
             let mut visited: HashSet<String> = HashSet::new();
+            // Both endpoints of an edge report it (dependencies from one
+            // side, dependents from the other) — dedupe by (from, to).
+            let mut seen_edges: HashSet<(String, String)> = HashSet::new();
             let mut nodes = Vec::new();
             let mut edges = Vec::new();
             let mut pending = vec![job_id];
@@ -181,17 +184,21 @@ impl JsQueue {
                 };
                 nodes.push(job_to_js(job));
                 for dep_id in storage.get_dependencies(&current).map_err(to_napi_err)? {
-                    edges.push(JsDagEdge {
-                        from: dep_id.clone(),
-                        to: current.clone(),
-                    });
+                    if seen_edges.insert((dep_id.clone(), current.clone())) {
+                        edges.push(JsDagEdge {
+                            from: dep_id.clone(),
+                            to: current.clone(),
+                        });
+                    }
                     pending.push(dep_id);
                 }
                 for dep_id in storage.get_dependents(&current).map_err(to_napi_err)? {
-                    edges.push(JsDagEdge {
-                        from: current.clone(),
-                        to: dep_id.clone(),
-                    });
+                    if seen_edges.insert((current.clone(), dep_id.clone())) {
+                        edges.push(JsDagEdge {
+                            from: current.clone(),
+                            to: dep_id.clone(),
+                        });
+                    }
                     pending.push(dep_id);
                 }
             }
