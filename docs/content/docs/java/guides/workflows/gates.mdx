@@ -63,10 +63,10 @@ either method on a worker built without `trackWorkflows()` throws a
 
 ```java
 // Approve — the gate completes and downstream steps are enqueued.
-worker.approveGate(runId, "approve-deploy");
+worker.approveGate(run.runId(), "approve-deploy");
 
 // Reject with a reason — downstream steps are skipped, run transitions to FAILED.
-worker.rejectGate(runId, "approve-deploy", "Artifacts failed QA review.");
+worker.rejectGate(run.runId(), "approve-deploy", "Artifacts failed QA review.");
 ```
 
 ## Timeout behaviour

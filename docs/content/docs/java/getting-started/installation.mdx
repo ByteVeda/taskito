@@ -66,8 +66,8 @@ separate install:
 At runtime the platform binary is extracted (content-addressed, safe under
 concurrent processes) and loaded. Two system properties tune this:
 `-Dtaskito.native.lib=/abs/path` loads an explicit library (local development
-against a fresh build), and `-Dtaskito.native.workdir=` relocates extraction on
-hardened `noexec /tmp` hosts.
+against a fresh build), and `-Dtaskito.native.workdir=/var/lib/myapp/taskito-native`
+relocates extraction on hardened `noexec /tmp` hosts.
 
 <Callout type="info">
   On JDK 22+ hot byte operations automatically take a Project Panama (FFM) fast

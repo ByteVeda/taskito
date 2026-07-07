@@ -10,7 +10,7 @@ storage are all in the shared Rust engine. Five concepts cover the surface.
   heads={["Producer", "Worker"]}
   rows={[
     { left: "enqueue(add, payload) → job id" },
-    { self: "stored: pending → claimed → running" },
+    { self: "stored: pending → running" },
     { right: "result written to store", rev: true },
     { left: "getResult(id, Integer.class) → 5" },
   ]}

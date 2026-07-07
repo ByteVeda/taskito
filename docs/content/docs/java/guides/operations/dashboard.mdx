@@ -60,6 +60,13 @@ session. This is a single shared token — no per-user login, RBAC, or SSO. For
 those, put the server behind a reverse proxy that handles auth.
 
 <Callout type="warning">
+  `?token=` puts the secret in the URL, where it can leak via browser history,
+  `Referer` headers, and proxy or access logs. Use it only over HTTPS, redact
+  query strings from logs, and rely on the cookie afterwards — once the first
+  request sets it, the token never needs to appear in a URL again.
+</Callout>
+
+<Callout type="warning">
   Open mode means anyone who can reach the port has full control. Bind it to
   localhost, front it with your own auth, or at minimum set a token — see
   [Security](/java/guides/operations/security).

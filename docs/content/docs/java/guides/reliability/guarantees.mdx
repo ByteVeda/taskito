@@ -3,8 +3,8 @@ title: Delivery Guarantees
 description: "At-least-once execution, job claiming, and staying correct under retries."
 ---
 
-Taskito gives **at-least-once** execution: every enqueued job runs to completion
-at least once. A job can also run *more* than once — a worker that crashes
+Taskito gives **at-least-once** execution: every enqueued job is attempted at
+least once. A job can also run *more* than once — a worker that crashes
 mid-task (after claiming it, before recording the result) leaves the job to be
 picked up again. Design handlers to tolerate that.
 

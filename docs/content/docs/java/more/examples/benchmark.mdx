@@ -11,6 +11,8 @@ a queue.
 ## Benchmark.java
 
 ```java
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.byteveda.taskito.Taskito;
@@ -24,8 +26,10 @@ public final class Benchmark {
     private static final int N = 50_000;
     private static final Task<Integer> NOOP = Task.of("noop", Integer.class);
 
-    public static void main(String[] args) throws InterruptedException {
-        try (Taskito taskito = Taskito.builder().sqlite("bench.db").open()) {
+    public static void main(String[] args) throws Exception {
+        // Fresh database per run — a reused file skews stats with old rows.
+        Path dir = Files.createTempDirectory("taskito-bench");
+        try (Taskito taskito = Taskito.builder().sqlite(dir.resolve("bench.db").toString()).open()) {
 
             // 1. Enqueue throughput — stage N jobs in batches of 1,000.
             long t0 = System.currentTimeMillis();

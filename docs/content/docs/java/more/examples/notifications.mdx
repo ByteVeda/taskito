@@ -107,6 +107,7 @@ The worker runs the channels and registers the periodic digest at `08:00`
 America/New_York time.
 
 ```java
+import java.util.List;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.scheduling.PeriodicTask;
 import org.byteveda.taskito.worker.Worker;
@@ -119,14 +120,33 @@ public final class WorkerMain {
                     .build());
 
             try (Worker worker = taskito.worker()
-                    .handle(Tasks.SEND_EMAIL, email -> emailProvider.send(email))
-                    .handle(Tasks.SEND_SMS, sms -> smsProvider.send(sms))
-                    .handle(Tasks.SEND_DIGEST, ignored -> buildAndFanOutDigests())
+                    .handle(Tasks.SEND_EMAIL, WorkerMain::deliverEmail)
+                    .handle(Tasks.SEND_SMS, WorkerMain::deliverSms)
+                    .handle(Tasks.SEND_DIGEST, ignored -> buildAndFanOutDigests(taskito))
                     .queues("default")
                     .start()) {
                 worker.awaitShutdown();
             }
         }
+    }
+
+    private static Void deliverEmail(Tasks.Email email) {
+        // Call your email provider here.
+        System.out.println("email -> " + email.to());
+        return null;
+    }
+
+    private static Void deliverSms(Tasks.Sms sms) {
+        // Call your SMS provider here.
+        System.out.println("sms -> " + sms.to());
+        return null;
+    }
+
+    private static Void buildAndFanOutDigests(Taskito taskito) {
+        // Build the due digest emails from your data store, then fan out.
+        List<Tasks.Email> due = List.of();
+        taskito.enqueueMany(Tasks.SEND_EMAIL, due);
+        return null;
     }
 }
 ```

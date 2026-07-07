@@ -46,7 +46,7 @@ event listener with a `CountDownLatch` works too:
 ```java
 CountDownLatch done = new CountDownLatch(1);
 Worker worker = taskito.worker()
-        .handle(echo, payload -> payload.length())
+        .handle("echo", String.class, payload -> payload.length())
         .on(EventName.SUCCESS, event -> done.countDown())
         .start();
 ```

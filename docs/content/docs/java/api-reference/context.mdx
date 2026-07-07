@@ -3,7 +3,9 @@ title: Context
 description: "Resources.use inside handlers and the middleware TaskContext."
 ---
 
-A handler receives exactly one argument — its deserialized payload. The
+A handler's first argument is always its deserialized payload — a lambda
+handler takes nothing else, while a `@TaskHandler` method may declare further
+`@Resource(...)` parameters that the generated companion injects. The
 execution context around it is reached two ways: resource resolution inside
 the handler, and the `TaskContext` handed to middleware.
 

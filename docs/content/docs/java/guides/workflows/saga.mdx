@@ -17,6 +17,8 @@ Task<Integer> refund = Task.of("refundPayment", Integer.class);
 Task<Integer> ship = Task.of("shipOrder", Integer.class);
 // No compensator for ship — if it never succeeded, there's nothing to undo.
 
+int orderId = 4212; // the workflow input every step receives
+
 Workflow checkout = Workflow.named("checkout")
         .step(Step.of("reserve", reserve, orderId).compensate(unreserve).build())
         .step(Step.of("charge", charge, orderId).after("reserve").compensate(refund).build())
@@ -134,6 +136,8 @@ the run settles toward failure); once the run is failed, the tracker then
 rolls back the completed compensable steps:
 
 ```java
+int orderId = 4212; // the workflow input every step receives
+
 Workflow safeCheckout = Workflow.named("safe-checkout")
         .step(Step.of("reserve", reserve, orderId).compensate(unreserve).build())
         .step(Step.of("charge", charge, orderId).after("reserve").compensate(refund).build())

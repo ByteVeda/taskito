@@ -30,7 +30,9 @@ taskito.resource("db", PoolConfig.of(10).withMaxLifetime(Duration.ofMinutes(30))
 
 The factory receives a `ResourceContext` — `scope()` plus `use(name)` to depend
 on other resources. A factory may only depend on same-or-longer-lived
-resources (a `WORKER` factory can't use a `TASK` resource).
+resources (a `WORKER` factory can't use a `TASK` resource), and a `POOLED`
+factory may only use `WORKER` resources — pooled instances outlive any one
+task, so a shorter-lived dependency would dangle after its scope ends.
 
 ## Scopes
 

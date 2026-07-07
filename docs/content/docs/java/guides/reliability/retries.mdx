@@ -34,7 +34,7 @@ fires:
 ```java
 Worker worker = queue.worker()
         .handle(CHARGE, this::charge)
-        .on(EventName.RETRY, event -> log.info("retrying {0}", event.taskName))
+        .on(EventName.RETRY, event -> log.info("retrying {}", event.taskName))
         .on(EventName.DEAD, event -> alertOps(event))
         .start();
 ```

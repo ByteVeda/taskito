@@ -13,7 +13,9 @@ This is explicit — you call `deconstruct` and `reconstruct` yourself, and a
 `ProxyHandler` per resource type does the (de)construction:
 
 ```java
-byte[] key = System.getenv("TASKITO_PROXY_KEY").getBytes(StandardCharsets.UTF_8);
+String secret = Objects.requireNonNull(
+        System.getenv("TASKITO_PROXY_KEY"), "TASKITO_PROXY_KEY is not set");
+byte[] key = secret.getBytes(StandardCharsets.UTF_8);
 Proxies proxies = new Proxies(key).register(new FileProxyHandler());
 
 // Producer: reduce the file to a signed ref and enqueue it

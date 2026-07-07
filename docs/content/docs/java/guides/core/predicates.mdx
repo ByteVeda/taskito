@@ -54,7 +54,8 @@ taskito.gate("charge", ctx -> switch (classify(ctx.payload())) {
 |---|---|---|
 | `allow()` | Job created. | Job id present. |
 | `skip(reason)` | Throws `EnqueueSkippedException`. | Returns empty. |
-| `defer(delay)` / `deferUntil(instant)` | Job created, scheduled after `delay` (overrides any delay in the options). | Job id present. |
+| `defer(delay)` | Job created, scheduled `delay` from now (overrides any delay in the options). | Job id present. |
+| `deferUntil(instant)` | Job created, scheduled at the absolute `instant` (overrides any delay in the options). | Job id present. |
 | `reject(reason)` | Throws `PredicateRejectedException`. | Throws too. |
 
 `tryEnqueue` is the gate-aware form — a skip becomes an empty `Optional`

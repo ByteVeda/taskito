@@ -185,15 +185,16 @@ const stats = queue.stats();
 
 ```java
 Task<List<String>> fetchUrls = Task.of("fetchUrls", new TypeReference<>() {});
+List<String> urls = List.of("https://example.com/a", "https://example.com/b");
 
 try (Worker worker = queue.worker()
-        .handle(fetchUrls, urls -> urls.stream().map(App::fetch).toList())
+        .handle(fetchUrls, batch -> batch.stream().map(App::fetch).toList())
         .concurrency(8)
         .start()) {
     String id = queue.enqueue(fetchUrls, urls);
-    List<String> result = queue.awaitJob(id, Duration.ofSeconds(30))
-        .flatMap(job -> queue.getResult(id, List.class))
-        .orElseThrow();
+    queue.awaitJob(id, Duration.ofSeconds(30));
+    // getResult takes a Class token, so read the JSON array as String[].
+    String[] result = queue.getResult(id, String[].class).orElseThrow();
 }
 ```
 
