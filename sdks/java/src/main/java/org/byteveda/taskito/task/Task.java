@@ -80,7 +80,7 @@ public final class Task<T> {
     /**
      * A copy of this task that auto-derives a {@code uniqueKey} from the payload on every
      * enqueue, so a duplicate enqueue is a no-op while the first job is pending or running.
-     * A per-enqueue {@link EnqueueOptions#idempotent(boolean)} overrides this default.
+     * A per-enqueue {@link EnqueueOptions.Builder#idempotent(boolean)} overrides this default.
      */
     public Task<T> idempotent(boolean idempotent) {
         return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
