@@ -2,7 +2,7 @@
 //! storage, so each is async and offloads the blocking I/O to the blocking
 //! pool instead of stalling the JS event loop for the DB round-trip.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use napi::bindgen_prelude::{spawn_blocking, Result};
 use napi_derive::napi;
@@ -11,8 +11,9 @@ use taskito_core::Storage;
 use super::JsQueue;
 use crate::config::JobFilter;
 use crate::convert::{
-    job_error_to_js, job_to_js, metric_to_js, stats_to_js, status_code, worker_to_js, JsJob,
-    JsJobError, JsMetric, JsStats, JsWorkerRow,
+    circuit_breaker_to_js, job_error_to_js, job_to_js, log_to_js, metric_to_js, replay_to_js,
+    stats_to_js, status_code, worker_to_js, JsCircuitBreaker, JsDagEdge, JsJob, JsJobDag,
+    JsJobError, JsMetric, JsReplayEntry, JsStats, JsTaskLog, JsWorkerRow,
 };
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
@@ -110,6 +111,98 @@ impl JsQueue {
                 .get_metrics(task.as_deref(), since_ms)
                 .map_err(to_napi_err)?;
             Ok(metrics.into_iter().map(metric_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Task logs across jobs, filtered by task/level, newest first.
+    /// `since_ms` is a Unix-ms lower bound on `logged_at`.
+    #[napi]
+    pub async fn query_task_logs(
+        &self,
+        task_name: Option<String>,
+        level: Option<String>,
+        since_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<JsTaskLog>> {
+        non_negative(limit, "limit")?;
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let rows = storage
+                .query_task_logs(task_name.as_deref(), level.as_deref(), since_ms, limit)
+                .map_err(to_napi_err)?;
+            Ok(rows.into_iter().map(log_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Circuit-breaker state for every task that has one.
+    #[napi]
+    pub async fn list_circuit_breakers(&self) -> Result<Vec<JsCircuitBreaker>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let rows = storage.list_circuit_breakers().map_err(to_napi_err)?;
+            Ok(rows.into_iter().map(circuit_breaker_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Replays recorded for a job, newest first.
+    #[napi]
+    pub async fn get_replay_history(&self, job_id: String) -> Result<Vec<JsReplayEntry>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let rows = storage.get_replay_history(&job_id).map_err(to_napi_err)?;
+            Ok(rows.into_iter().map(replay_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// The dependency DAG reachable from `job_id`: full job rows as nodes
+    /// plus `dependency -> dependent` edges, walked in both directions.
+    #[napi]
+    pub async fn job_dag(&self, job_id: String) -> Result<JsJobDag> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let mut visited: HashSet<String> = HashSet::new();
+            // Both endpoints of an edge report it (dependencies from one
+            // side, dependents from the other) — dedupe by (from, to).
+            let mut seen_edges: HashSet<(String, String)> = HashSet::new();
+            let mut nodes = Vec::new();
+            let mut edges = Vec::new();
+            let mut pending = vec![job_id];
+            while let Some(current) = pending.pop() {
+                if !visited.insert(current.clone()) {
+                    continue;
+                }
+                let Some(job) = storage.get_job(&current).map_err(to_napi_err)? else {
+                    continue;
+                };
+                nodes.push(job_to_js(job));
+                for dep_id in storage.get_dependencies(&current).map_err(to_napi_err)? {
+                    if seen_edges.insert((dep_id.clone(), current.clone())) {
+                        edges.push(JsDagEdge {
+                            from: dep_id.clone(),
+                            to: current.clone(),
+                        });
+                    }
+                    pending.push(dep_id);
+                }
+                for dep_id in storage.get_dependents(&current).map_err(to_napi_err)? {
+                    if seen_edges.insert((current.clone(), dep_id.clone())) {
+                        edges.push(JsDagEdge {
+                            from: current.clone(),
+                            to: dep_id.clone(),
+                        });
+                    }
+                    pending.push(dep_id);
+                }
+            }
+            Ok(JsJobDag { nodes, edges })
         })
         .await
         .map_err(join_to_napi_err)?

@@ -28,6 +28,11 @@ export interface EnqueueContext {
  * toward the timeout); the outcome hooks fire after the core decides the result.
  */
 export interface Middleware {
+  /**
+   * Stable name used by the dashboard's per-task middleware toggles.
+   * Defaults to the class name for class-based middleware.
+   */
+  name?: string;
   onEnqueue?(ctx: EnqueueContext): void;
   before?(ctx: TaskContext): void | Promise<void>;
   after?(ctx: TaskContext, result: unknown): void | Promise<void>;

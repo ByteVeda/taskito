@@ -41,3 +41,46 @@ export const Interception = {
     return { type: "reject", reason };
   },
 };
+
+/** Dashboard wire shape for enqueue-interception stats. */
+export interface InterceptionStatsSnapshot {
+  total_intercepts: number;
+  total_duration_ms: number;
+  avg_duration_ms: number;
+  strategy_counts: Record<string, number>;
+  max_depth_reached: number;
+}
+
+/**
+ * In-process accumulator over interceptor runs. `max_depth_reached` counts
+ * the deepest interceptor chain applied to one enqueue (this SDK intercepts
+ * whole enqueues, not nested argument trees).
+ */
+export class InterceptionMetrics {
+  private totalIntercepts = 0;
+  private totalDurationMs = 0;
+  private maxDepth = 0;
+  private readonly strategyCounts = new Map<string, number>();
+
+  record(outcomes: readonly Interception[], durationMs: number): void {
+    this.totalIntercepts += 1;
+    this.totalDurationMs += durationMs;
+    this.maxDepth = Math.max(this.maxDepth, outcomes.length);
+    for (const outcome of outcomes) {
+      this.strategyCounts.set(outcome.type, (this.strategyCounts.get(outcome.type) ?? 0) + 1);
+    }
+  }
+
+  toDict(): InterceptionStatsSnapshot {
+    const round2 = (value: number) => Math.round(value * 100) / 100;
+    return {
+      total_intercepts: this.totalIntercepts,
+      total_duration_ms: round2(this.totalDurationMs),
+      avg_duration_ms: round2(
+        this.totalIntercepts > 0 ? this.totalDurationMs / this.totalIntercepts : 0,
+      ),
+      strategy_counts: Object.fromEntries(this.strategyCounts),
+      max_depth_reached: this.maxDepth,
+    };
+  }
+}

@@ -20,6 +20,10 @@ export type TaskitoRouterOptions = RestOptions;
 export interface TaskitoDashboardOptions {
   /** Path to the built SPA assets (defaults to the package's bundled `static/dashboard`). */
   staticDir?: string;
+  /** Legacy shared-token gate. When set, the session-auth login flow is disabled. */
+  auth?: { token: string };
+  /** Mark session cookies `Secure` (default true). Disable only for plain-HTTP dev. */
+  secureCookies?: boolean;
 }
 
 /**
@@ -70,7 +74,10 @@ export function taskitoDashboard(
   queue: Queue,
   options: TaskitoDashboardOptions = {},
 ): RequestHandler {
-  const handler = createDashboardHandler(queue, options.staticDir ?? defaultStaticDir());
+  const handler = createDashboardHandler(queue, options.staticDir ?? defaultStaticDir(), {
+    auth: options.auth,
+    secureCookies: options.secureCookies,
+  });
   return (req, res) => {
     handler(req, res);
   };

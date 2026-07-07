@@ -22,6 +22,10 @@ export interface TaskitoDashboardPluginOptions {
   queue: Queue;
   /** Path to the built SPA assets (defaults to the package's bundled `static/dashboard`). */
   staticDir?: string;
+  /** Legacy shared-token gate. When set, the session-auth login flow is disabled. */
+  auth?: { token: string };
+  /** Mark session cookies `Secure` (default true). Disable only for plain-HTTP dev. */
+  secureCookies?: boolean;
 }
 
 /**
@@ -66,7 +70,10 @@ export const taskitoDashboardPlugin: FastifyPluginAsync<TaskitoDashboardPluginOp
   fastify,
   options,
 ) => {
-  const handler = createDashboardHandler(options.queue, options.staticDir ?? defaultStaticDir());
+  const handler = createDashboardHandler(options.queue, options.staticDir ?? defaultStaticDir(), {
+    auth: options.auth,
+    secureCookies: options.secureCookies,
+  });
   const prefix = fastify.prefix;
 
   // Leave the request body stream intact so the dashboard handler can read POST bodies.

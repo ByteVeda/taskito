@@ -1,5 +1,19 @@
 export { currentJob, type JobContext } from "./context";
-export { type DashboardAuth, type DashboardOptions, serveDashboard } from "./dashboard";
+export {
+  AuthStore,
+  bootstrapAdminFromEnv,
+  type DashboardAuth,
+  type DashboardOptions,
+  type DashboardSession,
+  type DashboardUser,
+  type OAuthConfig,
+  OAuthConfigError,
+  OAuthFlow,
+  type OAuthProvider,
+  oauthConfigFromEnv,
+  type ProviderIdentity,
+  serveDashboard,
+} from "./dashboard";
 export {
   CryptoError,
   InterceptionError,

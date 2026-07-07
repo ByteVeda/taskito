@@ -2,14 +2,18 @@
 // `undefined` from a handler means 404.
 
 import { randomBytes } from "node:crypto";
-import type { EventName } from "../events";
-import type { Queue } from "../index";
-import type { WebhookInput } from "../webhooks";
-import type { WorkflowNode } from "../workflows";
+import type { EventName } from "../../events";
+import type { Queue } from "../../index";
+import type { WebhookInput } from "../../webhooks";
+import type { WorkflowNode } from "../../workflows";
+import { BadRequestError } from "../errors";
 import {
+  circuitBreakerToContract,
   deadToContract,
   deliveryToContract,
   jobToContract,
+  replayEntryToContract,
+  taskLogToContract,
   webhookToContract,
   workerToContract,
   workflowNodeToContract,
@@ -194,20 +198,45 @@ export async function testWebhook(queue: Queue, id: string) {
   return delivery ? { status: delivery.responseCode, delivered: delivery.ok } : undefined;
 }
 
+const DELIVERY_STATUSES = new Set(["delivered", "failed", "dead", "pending"]);
+const MAX_DELIVERY_PAGE = 200;
+
 export function webhookDeliveries(queue: Queue, id: string, url: URL) {
-  const limit = num(url, "limit") ?? 50;
+  if (!queue.webhooks.get(id)) {
+    return undefined;
+  }
+  const status = url.searchParams.get("status") ?? undefined;
+  if (status && !DELIVERY_STATUSES.has(status)) {
+    throw new BadRequestError("status must be one of: delivered, failed, dead, pending");
+  }
+  const event = url.searchParams.get("event") ?? undefined;
+  const limit = Math.min(num(url, "limit") ?? 50, MAX_DELIVERY_PAGE);
   const offset = num(url, "offset") ?? 0;
-  const statusFilter = url.searchParams.get("status");
-  const all = queue.webhooks
-    .deliveries(id)
-    .filter((delivery) => !statusFilter || delivery.status === statusFilter)
-    .reverse(); // newest first, matching the Python delivery store
+  const items = queue.webhooks.deliveries(id, { status, event, limit, offset });
   return {
-    items: all.slice(offset, offset + limit).map(deliveryToContract),
-    total: all.length,
+    items: items.map(deliveryToContract),
+    total: queue.webhooks.deliveryCount(id),
     limit,
     offset,
   };
+}
+
+export function webhookDelivery(queue: Queue, id: string, deliveryId: string) {
+  const delivery = queue.webhooks.delivery(id, deliveryId);
+  return delivery ? deliveryToContract(delivery) : undefined;
+}
+
+export async function replayWebhookDelivery(queue: Queue, id: string, deliveryId: string) {
+  const delivery = await queue.webhooks.replayDelivery(id, deliveryId);
+  return delivery
+    ? { replayed_of: deliveryId, status: delivery.responseCode, delivered: delivery.ok }
+    : undefined;
+}
+
+export function rotateWebhookSecret(queue: Queue, id: string) {
+  const secret = queue.webhooks.rotateSecret(id);
+  // The new secret is returned exactly once, on rotation.
+  return secret === undefined ? undefined : { id, secret };
 }
 
 /** Parse a snake_case webhook request body into a {@link WebhookInput}. */
@@ -229,16 +258,77 @@ function parseWebhookInput(body: unknown): Partial<WebhookInput> {
   return input;
 }
 
-// Open-mode auth (no login): the minimal boot responses the SPA needs.
-export function authStatus() {
+// Token-mode auth boot responses: with a shared-token gate there is no user
+// store, so the SPA gets a fixed identity once past the token check.
+export function openAuthStatus() {
   return { setup_required: false };
 }
-export function whoami() {
+export function openWhoami() {
   return {
     user: { username: "viewer", role: "admin", created_at: 0, last_login_at: 0 },
     csrf_token: "open",
     expires_at: 9_999_999_999_999,
   };
+}
+
+/** Available login providers. OAuth providers are added when configured. */
+export function authProviders() {
+  return { password_enabled: true, providers: [] };
+}
+
+/** Error history for a job, one row per failed attempt. */
+export async function jobErrors(queue: Queue, id: string) {
+  return (await queue.getJobErrors(id)).map((e) => ({
+    attempt: e.attempt,
+    error: e.error,
+    failed_at: e.failedAt,
+  }));
+}
+
+/** Task-log entries for a job (oldest first). */
+export function jobLogs(queue: Queue, id: string) {
+  return queue.taskLogs(id).map(taskLogToContract);
+}
+
+/** Task logs across jobs filtered by task/level (`since` in seconds). */
+export async function logs(queue: Queue, url: URL) {
+  const since = positiveOr(url.searchParams.get("since"), 3600);
+  const found = await queue.queryLogs({
+    task: url.searchParams.get("task") ?? undefined,
+    level: url.searchParams.get("level") ?? undefined,
+    sinceMs: Date.now() - since * 1000,
+    limit: num(url, "limit") ?? 100,
+  });
+  return found.map(taskLogToContract);
+}
+
+/** Circuit-breaker state for every task that has one. */
+export async function circuitBreakers(queue: Queue) {
+  return (await queue.listCircuitBreakers()).map(circuitBreakerToContract);
+}
+
+/** Re-enqueue a copy of a job. */
+export async function replayJob(queue: Queue, id: string) {
+  return { replay_job_id: await queue.replay(id) };
+}
+
+/** Replays recorded for a job, newest first. */
+export async function replayHistory(queue: Queue, id: string) {
+  return (await queue.replayHistory(id)).map(replayEntryToContract);
+}
+
+/** Dependency DAG reachable from a job. */
+export async function jobDag(queue: Queue, id: string) {
+  const dag = await queue.jobDag(id);
+  return {
+    nodes: dag.nodes.map(jobToContract),
+    edges: dag.edges.map((edge) => ({ from: edge.from, to: edge.to })),
+  };
+}
+
+/** Purge every dead-letter entry. */
+export async function purgeDeadLetters(queue: Queue) {
+  return { purged: await queue.purgeDead(0) };
 }
 
 export function cancel(queue: Queue, id: string) {

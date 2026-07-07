@@ -1,5 +1,6 @@
 import { ProxyError } from "../errors";
 import { createLogger } from "../utils/logger";
+import { proxyMetrics } from "./metrics";
 import type { Proxies } from "./proxies";
 import type { ProxyRef } from "./types";
 
@@ -28,7 +29,7 @@ export class ProxySession {
   private readonly proxies: Proxies;
   private readonly deconstructed = new Map<unknown, Map<string | undefined, ProxyRef>>();
   private readonly reconstructed = new Map<string, unknown>();
-  private readonly cleanups: Array<() => void> = [];
+  private readonly cleanups: Array<{ handlerId: string; run: () => void }> = [];
   private closed = false;
 
   /** Construct via {@link Proxies.session}, not directly. */
@@ -72,9 +73,17 @@ export class ProxySession {
     if (this.reconstructed.has(ref.signature)) {
       return this.reconstructed.get(ref.signature);
     }
-    const value = handler.reconstruct(ref.reference);
+    const startedAt = performance.now();
+    let value: unknown;
+    try {
+      value = handler.reconstruct(ref.reference);
+    } catch (error) {
+      proxyMetrics.recordError(ref.handler);
+      throw error;
+    }
+    proxyMetrics.recordReconstruction(ref.handler, performance.now() - startedAt);
     this.reconstructed.set(ref.signature, value);
-    this.cleanups.push(() => handler.cleanup?.(value));
+    this.cleanups.push({ handlerId: ref.handler, run: () => handler.cleanup?.(value) });
     return value;
   }
 
@@ -96,9 +105,10 @@ export class ProxySession {
     this.closed = true;
     for (let cleanup = this.cleanups.pop(); cleanup !== undefined; cleanup = this.cleanups.pop()) {
       try {
-        cleanup();
+        cleanup.run();
       } catch (error) {
         // Cleanup must never fail the rest of the teardown — log and continue.
+        proxyMetrics.recordCleanupError(cleanup.handlerId);
         log.warn("proxy cleanup failed", error);
       }
     }

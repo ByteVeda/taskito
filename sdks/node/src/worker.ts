@@ -1,4 +1,11 @@
 import { type JobContext, runInContext } from "./context";
+import {
+  applyQueueOverrides,
+  applyTaskOverrides,
+  MiddlewareDisableStore,
+  middlewareKey,
+  OverridesStore,
+} from "./dashboard/stores";
 import { SerializationError, TaskNotRegisteredError } from "./errors";
 import type { Emitter, EventName, OutcomeEvent } from "./events";
 import type { Middleware, TaskContext } from "./middleware";
@@ -66,6 +73,18 @@ export class Worker {
   static start(queue: NativeQueue, params: WorkerStartParams): Worker {
     const { tasks, queueLimits, serializer, codecs, middleware, emitter, resources, run } = params;
 
+    // Dashboard-tunable state: per-task middleware disables are re-read on
+    // every invocation (live toggles); task/queue overrides apply here, at
+    // worker startup.
+    const disables = new MiddlewareDisableStore(queue);
+    const middlewareFor = (taskName: string): readonly Middleware[] => {
+      const disabled = disables.getFor(taskName);
+      if (disabled.length === 0) {
+        return middleware;
+      }
+      return middleware.filter((mw, index) => !disabled.includes(middlewareKey(mw, index)));
+    };
+
     // Advance workflow runs as node-jobs settle, unless disabled or unsupported.
     const tracker = (run?.advanceWorkflows ?? true) ? (params.workflowTracker ?? null) : null;
 
@@ -90,6 +109,10 @@ export class Worker {
       }
       const args = serializer.deserialize(payload) as unknown[];
       const ctx: TaskContext = { jobId: invocation.id, taskName: invocation.taskName, args };
+      // Resolve the middleware chain BEFORE allocating the cancel poller and
+      // task scope — it reads storage and may throw, and nothing would clean
+      // those up yet.
+      const chain = middlewareFor(invocation.taskName);
 
       // Cooperative cancel signal + job context exposed to the handler.
       const controller = new AbortController();
@@ -133,16 +156,16 @@ export class Worker {
       };
 
       try {
-        for (const mw of middleware) {
+        for (const mw of chain) {
           await mw.before?.(ctx);
         }
         const result = await runWithResolver(scope.resolver, () => runInContext(context, invoke));
-        for (const mw of middleware) {
+        for (const mw of chain) {
           await mw.after?.(ctx, result);
         }
         return Buffer.from(serializer.serialize(result));
       } catch (error) {
-        for (const mw of middleware) {
+        for (const mw of chain) {
           try {
             await mw.onError?.(ctx, error);
           } catch {
@@ -175,7 +198,7 @@ export class Worker {
         timedOut: outcome.timedOut ?? undefined,
       };
       emitter.emit(mapping.event, event);
-      for (const mw of middleware) {
+      for (const mw of middlewareFor(outcome.taskName)) {
         const hook = mw[mapping.hook] as ((e: OutcomeEvent) => void) | undefined;
         try {
           // Promise.resolve captures async hooks' rejections too.
@@ -194,8 +217,12 @@ export class Worker {
       queues: run?.queues,
       channelCapacity: run?.channelCapacity,
       batchSize: run?.batchSize,
-      taskConfigs: buildTaskConfigs(tasks),
-      queueConfigs: buildQueueConfigs(queueLimits),
+      taskConfigs: applyTaskOverrides(
+        buildTaskConfigs(tasks),
+        tasks.keys(),
+        new OverridesStore(queue),
+      ),
+      queueConfigs: applyQueueOverrides(buildQueueConfigs(queueLimits), new OverridesStore(queue)),
       resources: resources.isEmpty ? undefined : resources.names,
       mesh: run?.mesh,
     };

@@ -1,6 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+  MiddlewareDisableStore,
+  middlewareKey,
+  OverridesStore,
+  type QueueOverride,
+  type TaskOverride,
+} from "./dashboard/stores";
+import {
   InterceptionError,
   JobCancelledError,
   JobFailedError,
@@ -14,7 +21,7 @@ import {
   TaskitoError,
 } from "./errors";
 import { Emitter, type EventHandler, type EventName } from "./events";
-import type { Interceptor } from "./interception";
+import { type Interception, InterceptionMetrics, type Interceptor } from "./interception";
 import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
 import {
@@ -25,6 +32,7 @@ import {
 } from "./native";
 import { encodeNotes } from "./notes";
 import type { Predicate } from "./predicates";
+import { type ProxyHandlerStats, proxyMetrics } from "./proxies";
 import {
   type PoolOptions,
   type ResourceContext,
@@ -35,9 +43,11 @@ import {
 import { CodecSerializer, JsonSerializer, type PayloadCodec, type Serializer } from "./serializers";
 import type {
   AnyHandler,
+  CircuitBreaker,
   DeadJob,
   EnqueueOptions,
   Job,
+  JobDag,
   JobError,
   JobFilter,
   Metric,
@@ -45,6 +55,7 @@ import type {
   PeriodicTask,
   QueueLimits,
   RegisteredTask,
+  ReplayEntry,
   ResultOptions,
   Stats,
   StreamOptions,
@@ -105,6 +116,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
   private readonly interceptors: Interceptor[] = [];
+  private readonly interceptionMetrics = new InterceptionMetrics();
   private readonly gates = new Map<string, Predicate[]>();
   private readonly emitter = new Emitter();
   private readonly resources = new ResourceRuntime();
@@ -429,6 +441,23 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     args: unknown[],
     mode?: { batch: boolean },
   ): { taskName: string; args: unknown[] } {
+    const outcomes: Interception[] = [];
+    const startedAt = this.interceptors.length > 0 ? performance.now() : 0;
+    try {
+      return this.applyInterceptors(name, args, mode, outcomes);
+    } finally {
+      if (this.interceptors.length > 0) {
+        this.interceptionMetrics.record(outcomes, performance.now() - startedAt);
+      }
+    }
+  }
+
+  private applyInterceptors(
+    name: string,
+    args: unknown[],
+    mode: { batch: boolean } | undefined,
+    outcomes: Interception[],
+  ): { taskName: string; args: unknown[] } {
     let taskName = name;
     let currentArgs = args;
     for (const interceptor of this.interceptors) {
@@ -436,6 +465,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       if (!outcome) {
         throw new InterceptionError(`interceptor returned null for task "${taskName}"`);
       }
+      outcomes.push(outcome);
       switch (outcome.type) {
         case "pass":
           break;
@@ -568,6 +598,37 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.getTaskLogs(id);
   }
 
+  /**
+   * Task logs across jobs, newest first, filtered by task name and/or level.
+   * `sinceMs` is a Unix-ms lower bound (default: the last hour).
+   */
+  queryLogs(
+    options: { task?: string; level?: string; sinceMs?: number; limit?: number } = {},
+  ): Promise<TaskLog[]> {
+    const sinceMs = options.sinceMs ?? Date.now() - 3_600_000;
+    return this.native.queryTaskLogs(options.task, options.level, sinceMs, options.limit ?? 100);
+  }
+
+  /** Circuit-breaker state for every task that has one. */
+  listCircuitBreakers(): Promise<CircuitBreaker[]> {
+    return this.native.listCircuitBreakers();
+  }
+
+  /** Re-enqueue a copy of a job and record it in the replay history. Returns the new job id. */
+  replay(id: string): Promise<string> {
+    return this.native.replayJob(id);
+  }
+
+  /** Replays recorded for a job, newest first. */
+  replayHistory(id: string): Promise<ReplayEntry[]> {
+    return this.native.getReplayHistory(id);
+  }
+
+  /** The dependency DAG reachable from a job (nodes + dependency->dependent edges). */
+  jobDag(id: string): Promise<JobDag> {
+    return this.native.jobDag(id);
+  }
+
   /** Partial-result values logged after `cursor`, plus the advanced cursor. */
   private newPartials(id: string, cursor?: string): { values: unknown[]; cursor?: string } {
     const logs = this.native.getTaskLogsAfter(id, cursor);
@@ -659,6 +720,179 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.listPausedQueues();
   }
 
+  /** Read a dashboard settings key, or `null` when unset. */
+  getSetting(key: string): string | null {
+    return this.native.getSetting(key);
+  }
+
+  /** Write a dashboard settings key. */
+  setSetting(key: string, value: string): void {
+    this.native.setSetting(key, value);
+  }
+
+  /** Delete a dashboard settings key. Returns false if it didn't exist. */
+  deleteSetting(key: string): boolean {
+    return this.native.deleteSetting(key);
+  }
+
+  /** All dashboard settings as a key → value record. */
+  listSettings(): Record<string, string> {
+    return this.native.listSettings();
+  }
+
+  // ── Task & queue overrides (dashboard-tunable runtime config) ─────
+
+  /** Every persisted task override keyed by task name. */
+  listTaskOverrides(): Map<string, TaskOverride> {
+    return new OverridesStore(this.native).listTasks();
+  }
+
+  getTaskOverride(taskName: string): TaskOverride | undefined {
+    return new OverridesStore(this.native).getTask(taskName);
+  }
+
+  /**
+   * Set or update a task override; `null` clears a field. Allowed fields:
+   * `rate_limit`, `max_concurrent`, `max_retries`, `retry_backoff`,
+   * `timeout`, `priority`, `paused`. Applied on the next worker start.
+   */
+  setTaskOverride(taskName: string, fields: Record<string, unknown>): TaskOverride {
+    return new OverridesStore(this.native).setTask(taskName, fields);
+  }
+
+  clearTaskOverride(taskName: string): boolean {
+    return new OverridesStore(this.native).clearTask(taskName);
+  }
+
+  listQueueOverrides(): Map<string, QueueOverride> {
+    return new OverridesStore(this.native).listQueues();
+  }
+
+  getQueueOverride(queueName: string): QueueOverride | undefined {
+    return new OverridesStore(this.native).getQueue(queueName);
+  }
+
+  /** Allowed fields: `rate_limit`, `max_concurrent`, `paused`. */
+  setQueueOverride(queueName: string, fields: Record<string, unknown>): QueueOverride {
+    return new OverridesStore(this.native).setQueue(queueName, fields);
+  }
+
+  clearQueueOverride(queueName: string): boolean {
+    return new OverridesStore(this.native).clearQueue(queueName);
+  }
+
+  /**
+   * Every registered task with its registration defaults, any active
+   * override, and the effective values for the next worker start
+   * (snake_case, dashboard contract; durations in seconds).
+   */
+  registeredTasks(): Array<Record<string, unknown>> {
+    const overrides = this.listTaskOverrides();
+    const out: Array<Record<string, unknown>> = [];
+    for (const [name, task] of this.tasks) {
+      const options = task.options ?? {};
+      const defaults: Record<string, unknown> = {
+        max_retries: options.maxRetries ?? null,
+        retry_backoff:
+          options.retryBackoff?.baseMs !== undefined ? options.retryBackoff.baseMs / 1000 : null,
+        timeout: options.timeoutMs !== undefined ? options.timeoutMs / 1000 : null,
+        priority: null,
+        rate_limit: options.rateLimit ?? null,
+        max_concurrent: options.maxConcurrent ?? null,
+      };
+      const override = overrides.get(name);
+      const patch = overridePatch(override);
+      out.push({
+        name,
+        queue: "default",
+        defaults,
+        override: override ? { ...patch, ...(override.paused ? { paused: true } : {}) } : null,
+        effective: { ...defaults, ...patch },
+        paused: override?.paused ?? false,
+      });
+    }
+    return out;
+  }
+
+  /** Every known queue with its limits, override, and paused state. */
+  registeredQueues(): Array<Record<string, unknown>> {
+    const overrides = this.listQueueOverrides();
+    const pausedSet = new Set(this.listPausedQueues());
+    const names = new Set<string>(["default", ...this.queueLimits.keys(), ...overrides.keys()]);
+    const out: Array<Record<string, unknown>> = [];
+    for (const name of [...names].sort()) {
+      const limits = this.queueLimits.get(name);
+      const defaults: Record<string, unknown> = {};
+      if (limits?.rateLimit !== undefined) {
+        defaults.rate_limit = limits.rateLimit;
+      }
+      if (limits?.maxConcurrent !== undefined) {
+        defaults.max_concurrent = limits.maxConcurrent;
+      }
+      const override = overrides.get(name);
+      const patch = overridePatch(override);
+      out.push({
+        name,
+        defaults,
+        override: override ? { ...patch, ...(override.paused ? { paused: true } : {}) } : null,
+        effective: { ...defaults, ...patch },
+        paused: pausedSet.has(name) || (override?.paused ?? false),
+      });
+    }
+    return out;
+  }
+
+  // ── Middleware admin (dashboard toggles) ──────────────────────────
+
+  /** Every registered middleware with its name, class path, and scopes. */
+  listMiddleware(): Array<Record<string, unknown>> {
+    const seen = new Map<string, Record<string, unknown>>();
+    this.middleware.forEach((mw, index) => {
+      const name = middlewareKey(mw, index);
+      if (!seen.has(name)) {
+        seen.set(name, {
+          name,
+          class_path: mw.constructor?.name ?? "Object",
+          scopes: [{ kind: "global" }],
+        });
+      }
+    });
+    return [...seen.values()];
+  }
+
+  /** Every task with at least one disabled middleware. */
+  listMiddlewareDisables(): Record<string, string[]> {
+    return new MiddlewareDisableStore(this.native).listAll();
+  }
+
+  getDisabledMiddlewareFor(taskName: string): string[] {
+    return new MiddlewareDisableStore(this.native).getFor(taskName);
+  }
+
+  /** Disable one middleware for one task (takes effect on the next job). */
+  disableMiddlewareForTask(taskName: string, middlewareName: string): string[] {
+    return new MiddlewareDisableStore(this.native).setDisabled(taskName, middlewareName, true);
+  }
+
+  enableMiddlewareForTask(taskName: string, middlewareName: string): string[] {
+    return new MiddlewareDisableStore(this.native).setDisabled(taskName, middlewareName, false);
+  }
+
+  /** Clear ALL disables for a task — every middleware fires again. */
+  clearMiddlewareDisables(taskName: string): boolean {
+    return new MiddlewareDisableStore(this.native).clearFor(taskName);
+  }
+
+  /** Per-handler proxy reconstruction metrics for this process. */
+  proxyStats(): ProxyHandlerStats[] {
+    return proxyMetrics.toList();
+  }
+
+  /** Enqueue-interception metrics for this process. */
+  interceptionStats() {
+    return this.interceptionMetrics.toDict();
+  }
+
   /** Registered workers (heartbeat + identity). */
   listWorkers(): Promise<WorkerInfo[]> {
     return this.native.listWorkers();
@@ -733,6 +967,25 @@ function toOpenOptions(options: QueueOptions): OpenOptions {
     prefix: options.prefix,
     namespace: options.namespace,
   };
+}
+
+/** Non-null override fields, minus identity/bookkeeping ones (contract patch shape). */
+function overridePatch(
+  override: TaskOverride | QueueOverride | undefined,
+): Record<string, unknown> {
+  if (!override) {
+    return {};
+  }
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(override)) {
+    if (key === "task_name" || key === "queue_name" || key === "updated_at" || key === "paused") {
+      continue;
+    }
+    if (value !== null) {
+      patch[key] = value;
+    }
+  }
+  return patch;
 }
 
 /**

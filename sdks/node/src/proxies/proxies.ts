@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ProxyError } from "../errors";
 import { canonicalJson } from "./canonical";
+import { proxyMetrics } from "./metrics";
 import { ProxySession } from "./proxy-session";
 import type { ProxyHandler, ProxyRef } from "./types";
 
@@ -64,8 +65,21 @@ export class Proxies {
    */
   reconstruct(ref: ProxyRef, expectedPurpose?: string): unknown {
     const handler = this.handlerFor(ref.handler);
-    this.verifyRef(ref, expectedPurpose);
-    return handler.reconstruct(ref.reference);
+    try {
+      this.verifyRef(ref, expectedPurpose);
+    } catch (error) {
+      proxyMetrics.recordChecksumFailure(ref.handler);
+      throw error;
+    }
+    const startedAt = performance.now();
+    try {
+      const value = handler.reconstruct(ref.reference);
+      proxyMetrics.recordReconstruction(ref.handler, performance.now() - startedAt);
+      return value;
+    } catch (error) {
+      proxyMetrics.recordError(ref.handler);
+      throw error;
+    }
   }
 
   /** {@link Proxies.reconstruct} cast to the caller's type. */

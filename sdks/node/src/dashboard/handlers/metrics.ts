@@ -1,7 +1,7 @@
 // Aggregate the core's per-execution metric rows into the SPA's per-task and
 // time-bucketed shapes. The core records a metric for every finished job.
 
-import type { Metric } from "../types";
+import type { Metric } from "../../types";
 
 export interface TaskMetrics {
   count: number;

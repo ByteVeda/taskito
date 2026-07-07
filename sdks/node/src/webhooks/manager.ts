@@ -1,12 +1,16 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Emitter, EventName, OutcomeEvent } from "../events";
 import type { NativeQueue } from "../native";
+import { createLogger } from "../utils";
 import { Deliverer } from "./deliverer";
+import { type DeliveryFilters, DeliveryLog } from "./deliveryLog";
 import { WebhookValidationError } from "./errors";
 import { WebhookStore } from "./store";
 import type { Delivery, Webhook, WebhookInput } from "./types";
 
 const ALL_EVENTS: EventName[] = ["job.completed", "job.retrying", "job.dead", "job.cancelled"];
+
+const log = createLogger("webhooks");
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -31,11 +35,13 @@ function validateWebhook(webhook: Webhook): void {
 /** Manages webhook subscriptions and delivers job events to them. */
 export class WebhookManager {
   private readonly store: WebhookStore;
+  private readonly deliveryLog: DeliveryLog;
   private readonly deliverer = new Deliverer();
   private cache?: Webhook[];
 
   constructor(native: NativeQueue, emitter: Emitter) {
     this.store = new WebhookStore(native);
+    this.deliveryLog = new DeliveryLog(native);
     for (const event of ALL_EVENTS) {
       emitter.on(event, (payload) => this.dispatch(event, payload));
     }
@@ -95,12 +101,34 @@ export class WebhookManager {
 
   delete(id: string): boolean {
     const removed = this.store.delete(id);
+    this.deliveryLog.deleteFor(id);
     this.cache = undefined;
     return removed;
   }
 
-  deliveries(id: string): Delivery[] {
-    return this.deliverer.recentFor(id);
+  /** Replace the signing secret. Returns the new secret (shown exactly once). */
+  rotateSecret(id: string): string | undefined {
+    const existing = this.store.get(id);
+    if (!existing) {
+      return undefined;
+    }
+    const secret = randomBytes(32).toString("base64url");
+    this.store.put({ ...existing, secret, updatedAt: Date.now() });
+    this.cache = undefined;
+    return secret;
+  }
+
+  /** Persisted deliveries for a webhook, newest first. */
+  deliveries(id: string, filters?: DeliveryFilters): Delivery[] {
+    return this.deliveryLog.listFor(id, filters);
+  }
+
+  delivery(id: string, deliveryId: string): Delivery | undefined {
+    return this.deliveryLog.get(id, deliveryId);
+  }
+
+  deliveryCount(id: string): number {
+    return this.deliveryLog.countFor(id);
   }
 
   /** Send a synthetic delivery to a webhook (used by the dashboard "test" action). */
@@ -110,6 +138,25 @@ export class WebhookManager {
       return undefined;
     }
     return this.deliverer.deliver(webhook, "job.completed", { jobId: "test", taskName: "test" });
+  }
+
+  /**
+   * Re-send a stored delivery's original payload as a fresh attempt. The
+   * replay is logged as a NEW delivery record (tagged `replay_of`) so the
+   * audit trail is preserved.
+   */
+  async replayDelivery(id: string, deliveryId: string): Promise<Delivery | undefined> {
+    const webhook = this.store.get(id);
+    const original = this.deliveryLog.get(id, deliveryId);
+    if (!webhook || !original) {
+      return undefined;
+    }
+    const payload = { ...original.payload, replay_of: original.id } as OutcomeEvent & {
+      replay_of: string;
+    };
+    const delivery = await this.deliverer.deliver(webhook, original.event, payload);
+    this.deliveryLog.record(delivery);
+    return delivery;
   }
 
   private dispatch(event: EventName, payload: OutcomeEvent): void {
@@ -128,7 +175,13 @@ export class WebhookManager {
       ) {
         continue;
       }
-      void this.deliverer.deliver(webhook, event, payload);
+      void this.deliverer
+        .deliver(webhook, event, payload)
+        .then((delivery) => this.deliveryLog.record(delivery))
+        .catch((error) => {
+          // A logging failure must never surface as an unhandled rejection.
+          log.warn(() => `webhook delivery log write failed for ${webhook.id}`, error);
+        });
     }
   }
 }

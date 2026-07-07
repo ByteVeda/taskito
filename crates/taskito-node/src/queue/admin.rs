@@ -6,11 +6,12 @@ use std::collections::HashMap;
 
 use napi::bindgen_prelude::{spawn_blocking, Result};
 use napi_derive::napi;
+use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
 
 use super::JsQueue;
 use crate::convert::{dead_job_to_js, JsDeadJob};
-use crate::error::{join_to_napi_err, non_negative, to_napi_err};
+use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
 const DEFAULT_LIMIT: i64 = 50;
 
@@ -64,6 +65,48 @@ impl JsQueue {
                 .purge_dead_by_task(&task_name)
                 .map(|n| n as i64)
                 .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Re-enqueue a copy of an existing job and record it in the replay
+    /// history. Returns the new job id.
+    #[napi]
+    pub async fn replay_job(&self, job_id: String) -> Result<String> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let original = storage
+                .get_job(&job_id)
+                .map_err(to_napi_err)?
+                .ok_or_else(|| invalid_arg(format!("Job not found: {job_id}")))?;
+            let new_job = NewJob {
+                queue: original.queue.clone(),
+                task_name: original.task_name.clone(),
+                payload: original.payload.clone(),
+                priority: original.priority,
+                scheduled_at: now_millis(),
+                max_retries: original.max_retries,
+                timeout_ms: original.timeout_ms,
+                unique_key: None,
+                metadata: Some(format!("{{\"replayed_from\":\"{job_id}\"}}")),
+                notes: original.notes.clone(),
+                depends_on: Vec::new(),
+                expires_at: None,
+                result_ttl_ms: original.result_ttl_ms,
+                namespace: original.namespace.clone(),
+            };
+            let job = storage.enqueue(new_job).map_err(to_napi_err)?;
+            // Best-effort audit row — a history write must not fail the replay.
+            let _ = storage.record_replay(
+                &job_id,
+                &job.id,
+                original.result.as_deref(),
+                None,
+                original.error.as_deref(),
+                None,
+            );
+            Ok(job.id)
         })
         .await
         .map_err(join_to_napi_err)?
