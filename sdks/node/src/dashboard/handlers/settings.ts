@@ -61,7 +61,7 @@ export function putSetting(queue: Queue, key: string, body: unknown) {
   // Accept any JSON-serialisable type — re-encode for storage so callers
   // don't need to stringify themselves.
   const value = typeof raw === "string" ? raw : JSON.stringify(raw);
-  if (value.length > MAX_VALUE_LENGTH) {
+  if (Buffer.byteLength(value, "utf8") > MAX_VALUE_LENGTH) {
     throw new BadRequestError(`setting value exceeds ${MAX_VALUE_LENGTH} bytes`);
   }
   queue.setSetting(key, value);
