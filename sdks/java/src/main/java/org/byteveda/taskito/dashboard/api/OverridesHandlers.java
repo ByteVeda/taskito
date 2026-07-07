@@ -61,8 +61,11 @@ public final class OverridesHandlers {
 
     public Object putQueueOverride(String name, Map<String, Object> body) {
         Map<String, Object> row = store.putQueue(name, body);
-        if (body.containsKey("paused") && body.get("paused") instanceof Boolean paused) {
-            if (paused) {
+        // Reconcile the live queue to the resulting override whenever the caller
+        // touches `paused` — including clearing it (which resolves to not-paused),
+        // where reading the request value alone would leave the queue paused.
+        if (body.containsKey("paused")) {
+            if (Boolean.TRUE.equals(row.get("paused"))) {
                 queue.queue(name).pause();
             } else {
                 queue.queue(name).resume();

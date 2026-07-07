@@ -112,4 +112,16 @@ class DashboardOpsTest {
             assertTrue(metrics.headers().firstValue("content-type").orElse("").startsWith("text/plain"));
         }
     }
+
+    @Test
+    void malformedNumericParamsReturn400(@TempDir Path dir) throws Exception {
+        try (Taskito queue = seededQueue(dir);
+                DashboardServer server = DashboardServer.start(queue, 0)) {
+            DashboardClient client = new DashboardClient(server.port()).as(DashboardClient.seedAdmin(queue));
+            assertEquals(400, client.get("/api/metrics?since=abc").statusCode());
+            assertEquals(400, client.get("/api/dead-letters?limit=xyz").statusCode());
+            assertEquals(400, client.get("/api/scaler?target=nope").statusCode());
+            assertEquals(400, client.get("/api/jobs?limit=notanint").statusCode());
+        }
+    }
 }

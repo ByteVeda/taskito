@@ -70,4 +70,30 @@ public final class Http {
     public static Map<String, Object> errorBody(String code) {
         return Collections.singletonMap("error", code);
     }
+
+    /** Parse a numeric query param; {@code fallback} when absent, 400 when malformed. */
+    public static long longParam(Map<String, String> query, String key, long fallback) {
+        String value = query.get(key);
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw DashboardError.badRequest(key + " must be a number");
+        }
+    }
+
+    /** Parse an integer query param; {@code fallback} when absent, 400 when malformed/overflowing. */
+    public static int intParam(Map<String, String> query, String key, int fallback) {
+        String value = query.get(key);
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw DashboardError.badRequest(key + " must be a number");
+        }
+    }
 }

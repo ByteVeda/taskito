@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.dashboard.support.Http;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.WorkerInfo;
@@ -41,7 +42,7 @@ public final class OpsHandlers {
 
     public Object scaler(Map<String, String> query) {
         String queueName = query.get("queue");
-        long target = query.containsKey("target") ? Long.parseLong(query.get("target")) : DEFAULT_TARGET_QUEUE_DEPTH;
+        long target = Http.longParam(query, "target", DEFAULT_TARGET_QUEUE_DEPTH);
         QueueStats stats = queueName == null ? queue.stats() : queue.statsByQueue(queueName);
         List<WorkerInfo> workers = queue.listWorkers();
         long capacity = workers.stream().mapToLong(w -> w.threads).sum();

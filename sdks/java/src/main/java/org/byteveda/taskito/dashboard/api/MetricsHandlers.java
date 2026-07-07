@@ -2,6 +2,7 @@ package org.byteveda.taskito.dashboard.api;
 
 import java.util.Map;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.dashboard.support.Http;
 
 /**
  * Aggregated metrics endpoints. {@code /api/metrics} returns the per-task
@@ -19,17 +20,12 @@ public final class MetricsHandlers {
     }
 
     public Object aggregated(Map<String, String> query) {
-        return Metrics.aggregateByTask(queue.metrics(query.get("task"), longParam(query, "since", 0)));
+        return Metrics.aggregateByTask(queue.metrics(query.get("task"), Http.longParam(query, "since", 0)));
     }
 
     public Object timeseries(Map<String, String> query) {
-        long since = longParam(query, "since", 0);
-        long bucket = longParam(query, "bucket", DEFAULT_BUCKET_MS);
+        long since = Http.longParam(query, "since", 0);
+        long bucket = Http.longParam(query, "bucket", DEFAULT_BUCKET_MS);
         return Metrics.timeseries(queue.metrics(query.get("task"), since), bucket);
-    }
-
-    private static long longParam(Map<String, String> query, String key, long fallback) {
-        String value = query.get(key);
-        return value == null ? fallback : Long.parseLong(value);
     }
 }
