@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.dashboard.support.Http;
 import org.byteveda.taskito.dashboard.support.Json;
 import org.byteveda.taskito.workflows.NodeSnapshot;
 
@@ -25,8 +26,8 @@ public final class WorkflowsHandlers {
     }
 
     public Object runs(Map<String, String> query) {
-        long limit = longParam(query, "limit", DEFAULT_LIMIT);
-        long offset = longParam(query, "offset", 0);
+        long limit = Http.longParam(query, "limit", DEFAULT_LIMIT);
+        long offset = Http.longParam(query, "offset", 0);
         List<Object> runs =
                 queue.listWorkflowRuns(query.get("definition_name"), query.get("state"), limit, offset).stream()
                         .map(Contract::workflowRun)
@@ -125,10 +126,5 @@ public final class WorkflowsHandlers {
             }
         }
         return out;
-    }
-
-    private static long longParam(Map<String, String> query, String key, long fallback) {
-        String value = query.get(key);
-        return value == null ? fallback : Long.parseLong(value);
     }
 }
