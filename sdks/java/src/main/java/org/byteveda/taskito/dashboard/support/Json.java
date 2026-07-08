@@ -78,6 +78,29 @@ public final class Json {
         }
     }
 
+    /** Parse a JSON array of objects into maps; empty list if malformed/non-array/null. */
+    public static List<Map<String, Object>> parseListOfObjects(String json) {
+        if (json == null || json.isEmpty()) {
+            return List.of();
+        }
+        try {
+            JsonNode node = MAPPER.readTree(json);
+            if (node == null || !node.isArray()) {
+                return List.of();
+            }
+            List<Map<String, Object>> out = new ArrayList<>(node.size());
+            for (JsonNode element : node) {
+                Map<String, Object> map = asMap(element);
+                if (map != null) {
+                    out.add(map);
+                }
+            }
+            return out;
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
     private static Map<String, Object> asMap(JsonNode node) {
         if (node == null || !node.isObject()) {
             return null;

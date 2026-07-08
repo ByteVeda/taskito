@@ -99,6 +99,12 @@ dependencies {
     compileOnly("io.sentry:sentry:7.14.0")
     testImplementation("io.sentry:sentry:7.14.0")
 
+    // Optional: OIDC id_token validation for dashboard OAuth (Google / generic
+    // OIDC). Zero transitive deps. The dashboard degrades to password-only auth
+    // when it is absent, so consumers who enable OAuth add it themselves.
+    compileOnly("com.nimbusds:nimbus-jose-jwt:10.9.1")
+    testImplementation("com.nimbusds:nimbus-jose-jwt:10.9.1")
+
     // Run the @TaskHandler processor over the tests so the generated companions
     // are exercised end-to-end. Consumers wire it the same way.
     testAnnotationProcessor(project(":processor"))

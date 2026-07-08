@@ -5,13 +5,14 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
-import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.dashboard.api.CoreHandlers;
@@ -26,6 +27,12 @@ import org.byteveda.taskito.dashboard.auth.Cookies;
 import org.byteveda.taskito.dashboard.auth.Policy;
 import org.byteveda.taskito.dashboard.auth.RequestContext;
 import org.byteveda.taskito.dashboard.auth.TokenAuth;
+import org.byteveda.taskito.dashboard.auth.oauth.OAuthFlow;
+import org.byteveda.taskito.dashboard.auth.oauth.OAuthHandlers;
+import org.byteveda.taskito.dashboard.auth.oauth.OAuthStateStore;
+import org.byteveda.taskito.dashboard.auth.oauth.config.OAuthConfig;
+import org.byteveda.taskito.dashboard.auth.oauth.error.OAuthConfigError;
+import org.byteveda.taskito.dashboard.auth.oauth.provider.OAuthProvider;
 import org.byteveda.taskito.dashboard.routing.Req;
 import org.byteveda.taskito.dashboard.routing.Router;
 import org.byteveda.taskito.dashboard.store.OverridesStore;
@@ -50,21 +57,23 @@ import org.byteveda.taskito.logging.TaskitoLogger;
  */
 public final class DashboardServer implements AutoCloseable {
     private static final TaskitoLogger LOG = TaskitoLogger.create("dashboard");
+    private static final String METRICS_TOKEN_ENV = "TASKITO_DASHBOARD_METRICS_TOKEN";
 
     private final HttpServer server;
     private final Taskito queue;
     private final Path staticDir;
     private final boolean secureCookies;
-    private static final String METRICS_TOKEN_ENV = "TASKITO_DASHBOARD_METRICS_TOKEN";
 
     private final AuthStore authStore;
     private final TokenAuth tokenAuth;
     private final AuthHandlers authHandlers;
+    private final OAuthHandlers oauthHandlers;
     private final OpsHandlers ops;
     private final String metricsToken;
     private final Router router;
 
-    private DashboardServer(HttpServer server, Taskito queue, Path staticDir, boolean secureCookies, String token) {
+    private DashboardServer(
+            HttpServer server, Taskito queue, Path staticDir, boolean secureCookies, String token, OAuthFlow oauth) {
         this.server = server;
         this.queue = queue;
         this.staticDir = staticDir;
@@ -72,6 +81,7 @@ public final class DashboardServer implements AutoCloseable {
         this.authStore = new AuthStore(SettingsAccess.of(queue));
         this.tokenAuth = token != null ? new TokenAuth(token) : null;
         this.authHandlers = new AuthHandlers(authStore);
+        this.oauthHandlers = new OAuthHandlers(oauth, secureCookies);
         this.ops = new OpsHandlers(queue);
         this.metricsToken = System.getenv(METRICS_TOKEN_ENV);
         this.router = buildRouter();
@@ -100,10 +110,24 @@ public final class DashboardServer implements AutoCloseable {
      */
     public static DashboardServer start(Taskito queue, int port, String token, String staticDir, boolean secureCookies)
             throws IOException {
+        // OAuth is session-mode only; the legacy shared-token mode has no login UI.
+        OAuthFlow oauth = token == null ? buildOAuthFlow(queue, System.getenv()) : null;
+        return startInternal(queue, port, token, staticDir, secureCookies, oauth);
+    }
+
+    /** Test seam: start in session mode with an explicitly built OAuth flow. */
+    static DashboardServer startWithOAuth(Taskito queue, int port, boolean secureCookies, OAuthFlow oauth)
+            throws IOException {
+        return startInternal(queue, port, null, null, secureCookies, oauth);
+    }
+
+    private static DashboardServer startInternal(
+            Taskito queue, int port, String token, String staticDir, boolean secureCookies, OAuthFlow oauth)
+            throws IOException {
         // Resolve assets before binding so a discovery failure can't leak a bound port.
         Path dir = staticDir != null ? Paths.get(staticDir).normalize() : DashboardAssets.resolveOrNull();
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        DashboardServer dashboard = new DashboardServer(server, queue, dir, secureCookies, token);
+        DashboardServer dashboard = new DashboardServer(server, queue, dir, secureCookies, token, oauth);
         // Seed an env admin before serving so no request races the open setup endpoint.
         if (token == null) {
             dashboard.authStore.bootstrapAdminFromEnv();
@@ -112,6 +136,37 @@ public final class DashboardServer implements AutoCloseable {
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         return dashboard;
+    }
+
+    /**
+     * Build the OAuth flow from env, or return {@code null} to run password-only.
+     *
+     * <p>Degrades gracefully: an invalid config logs a warning and disables OAuth
+     * rather than failing startup; a missing nimbus-jose-jwt jar (needed only by
+     * the OIDC providers) is caught as a {@link LinkageError} and likewise
+     * disables OAuth, leaving password login intact.
+     */
+    private static OAuthFlow buildOAuthFlow(Taskito queue, Map<String, String> env) {
+        Optional<OAuthConfig> configured;
+        try {
+            configured = OAuthConfig.fromEnv(env);
+        } catch (OAuthConfigError e) {
+            LOG.warn("Dashboard OAuth disabled: " + e.getMessage());
+            return null;
+        }
+        if (configured.isEmpty()) {
+            return null;
+        }
+        OAuthConfig config = configured.get();
+        try {
+            SettingsAccess settings = SettingsAccess.of(queue);
+            Map<String, OAuthProvider> providers = OAuthFlow.buildProviders(config, HttpClient.newHttpClient());
+            return new OAuthFlow(new AuthStore(settings), config, new OAuthStateStore(settings), providers);
+        } catch (LinkageError e) {
+            // NoClassDefFoundError (a LinkageError) when nimbus-jose-jwt is absent.
+            LOG.warn("Dashboard OAuth disabled: OIDC login requires the nimbus-jose-jwt jar on the classpath");
+            return null;
+        }
     }
 
     public int port() {
@@ -156,6 +211,11 @@ public final class DashboardServer implements AutoCloseable {
         String method = exchange.getRequestMethod();
         if (tokenAuth != null) {
             handleTokenMode(exchange, path, method, query);
+            return;
+        }
+        // OAuth routes emit redirects (not JSON), so they bypass the router; they
+        // are public, so this runs before the auth gate.
+        if (oauthHandlers.serve(exchange, path, method, query)) {
             return;
         }
         RequestContext ctx = RequestContext.build(exchange, authStore);
@@ -214,13 +274,8 @@ public final class DashboardServer implements AutoCloseable {
         r.post("/api/auth/logout", this::logout);
         r.get("/api/auth/whoami", req -> authHandlers.whoami(req.ctx()));
         r.post("/api/auth/change-password", req -> authHandlers.changePassword(req.ctx(), req.jsonBody()));
-        r.get("/api/auth/providers", req -> Map.of("password_enabled", true, "providers", List.of()));
-        r.get("/api/auth/oauth/start/(.+)", req -> {
-            throw DashboardError.notFound("oauth_not_configured");
-        });
-        r.get("/api/auth/oauth/callback/(.+)", req -> {
-            throw DashboardError.notFound("oauth_not_configured");
-        });
+        // /api/auth/providers and /api/auth/oauth/* are served by OAuthHandlers
+        // (they emit JSON or 302 redirects) before the router runs.
 
         // Read
         r.get("/api/stats", req -> core.stats());
