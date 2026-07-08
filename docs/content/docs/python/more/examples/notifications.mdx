@@ -83,7 +83,7 @@ def send_sms(phone: str, message: str) -> dict:
 
 # ── Periodic Digest ──────────────────────────────────────
 
-@queue.periodic(cron="0 9 * * * *")
+@queue.periodic(cron="0 0 9 * * *")
 def daily_digest():
     """Send daily digest email every day at 9 AM."""
     print("[DIGEST] Sending daily digest to all subscribers...")

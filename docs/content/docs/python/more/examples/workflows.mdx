@@ -6,6 +6,18 @@ description: "ML training, map-reduce, resilient pipelines, sub-workflows, incre
 Real-world workflow patterns demonstrating fan-out, conditions, approval
 gates, sub-workflows, and incremental runs.
 
+<Callout type="warn" title="These examples need a running worker">
+  Each example builds and submits a workflow; the step jobs run only while a
+  worker is consuming the queue. Start one — `taskito worker --app app:queue`, or
+  `queue.run_worker()` in a background thread — before calling `run.wait()`.
+  (`Queue(workers=4)` sets the worker *count*; it does not start a worker.)
+
+  A step runs with the args you give it in `wf.step(...)`; it does not
+  auto-receive its predecessor's return value. Data flows between steps via
+  `fan_out`/`fan_in` and `WorkflowContext.results` — as in the map-reduce and
+  ML-gate examples below.
+</Callout>
+
 ## ML training pipeline
 
 A training pipeline that evaluates a model, gates deployment on accuracy,

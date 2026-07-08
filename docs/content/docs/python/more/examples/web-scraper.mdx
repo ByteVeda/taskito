@@ -168,7 +168,9 @@ from tasks import queue
 
 if __name__ == "__main__":
     print("Starting scraper worker...")
-    queue.run_worker(queues=["scraping", "processing", "storage"])
+    # "default" is required: scrape_page (run.py Option 1) runs on the default
+    # queue. Omit the queues= argument to process every registered queue.
+    queue.run_worker(queues=["default", "scraping", "processing", "storage"])
 ```
 
 ## Running it

@@ -95,7 +95,7 @@ def send_emails(items: list[dict]) -> None:
 If you want **N separate jobs** each holding a sub-list (so each chunk retries independently), use `canvas.chunks()`:
 
 ```python
-from taskito.canvas import chunks
+from taskito import chunks
 
 # Five jobs, each handling 100 emails, each with independent retry.
 chunks(send_emails, all_recipients, chunk_size=100).apply(queue)

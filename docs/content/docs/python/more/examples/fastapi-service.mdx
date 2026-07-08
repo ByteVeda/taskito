@@ -63,7 +63,8 @@ def apply_filters(image_url: str, filters: list[str]) -> dict:
 
 app = FastAPI(title="Image Processing Service")
 
-# Mount the taskito router — adds /tasks/stats, /tasks/jobs/{id}, etc.
+# Mount the taskito router — adds /tasks/stats, /tasks/jobs/{id},
+# /tasks/jobs/{id}/progress (SSE), and more.
 app.include_router(TaskitoRouter(queue), prefix="/tasks")
 
 @app.post("/process")
