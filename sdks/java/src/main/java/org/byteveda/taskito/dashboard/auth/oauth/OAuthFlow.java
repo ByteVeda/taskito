@@ -104,7 +104,9 @@ public final class OAuthFlow {
             throw new StateValidationError("state is invalid, expired, or already used");
         }
         OAuthState state = row.get();
-        if (!state.slot().equals(slot)) {
+        // slot is the non-null callback route param; compare from it so a null
+        // slot on a malformed-but-parsed state row is rejected, not an NPE.
+        if (!slot.equals(state.slot())) {
             throw new StateValidationError("state slot does not match callback slot");
         }
 
@@ -121,7 +123,7 @@ public final class OAuthFlow {
                 identity.emailVerified(),
                 config.adminEmails());
         Session session = authStore.createSession(user.username(), user.role());
-        stateStore.pruneExpired();
+        stateStore.pruneExpiredIfDue();
         return new CallbackResult(session, state.nextUrl());
     }
 

@@ -25,6 +25,7 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.byteveda.taskito.dashboard.auth.oauth.OAuthFlow;
 import org.byteveda.taskito.dashboard.auth.oauth.config.OAuthConfig;
@@ -49,6 +50,7 @@ class OidcRoundTripTest {
     private static final String NONCE = "nonce-abc";
 
     private HttpServer server;
+    private ExecutorService executor;
     private RSAKey signingKey;
     private String issuer;
     private String jwksUri;
@@ -80,13 +82,15 @@ class OidcRoundTripTest {
         respondWith("/.well-known/openid-configuration", discovery);
         respondWith("/jwks", jwks);
         respondWith("/token", tokenResponse);
-        server.setExecutor(Executors.newCachedThreadPool());
+        executor = Executors.newCachedThreadPool();
+        server.setExecutor(executor);
         server.start();
     }
 
     @AfterEach
     void stopFakeIdp() {
         server.stop(0);
+        executor.shutdownNow();
     }
 
     @Test

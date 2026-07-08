@@ -3,6 +3,7 @@ package org.byteveda.taskito.dashboard.auth.oauth;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import org.byteveda.taskito.dashboard.auth.Tokens;
 import org.byteveda.taskito.dashboard.auth.oauth.model.OAuthState;
 import org.byteveda.taskito.dashboard.store.SettingsAccess;
@@ -27,6 +28,7 @@ public final class OAuthStateStore {
     public static final long DEFAULT_STATE_TTL_SECONDS = 5 * 60;
 
     private final SettingsAccess settings;
+    private final AtomicLong lastPruneAt = new AtomicLong(0);
 
     public OAuthStateStore(SettingsAccess settings) {
         this.settings = settings;
@@ -91,6 +93,22 @@ public final class OAuthStateStore {
             return Optional.empty();
         }
         return Optional.of(state);
+    }
+
+    /**
+     * Sweep at most once per TTL window so the O(n) KV scan stays off the
+     * per-login hot path. Single-use consume + expiry check already bound the
+     * garbage; this only reclaims rows from abandoned flows.
+     */
+    public void pruneExpiredIfDue() {
+        long now = nowSeconds();
+        long last = lastPruneAt.get();
+        if (now - last < DEFAULT_STATE_TTL_SECONDS) {
+            return;
+        }
+        if (lastPruneAt.compareAndSet(last, now)) {
+            pruneExpired();
+        }
     }
 
     /** Best-effort sweep of expired state rows. Returns the count removed. */
