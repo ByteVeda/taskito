@@ -37,7 +37,7 @@ class LoggingMiddleware(TaskMiddleware):
 | `after(ctx, result, error)` | After task execution (success or failure) |
 | `on_retry(ctx, error, retry_count)` | A job fails and will be retried |
 | `on_enqueue(task_name, args, kwargs, options)` | A job is about to be enqueued |
-| `on_dead_letter(ctx, error)` | A job exhausts all retries and moves to the DLQ |
+| `on_dead_letter(ctx, error)` | A job exhausts all retries and moves to the DLQ (dead letter queue — a holding area for jobs that exhausted their retries) |
 | `on_timeout(ctx)` | A job hits its timeout limit |
 | `on_cancel(ctx)` | A job is cancelled during execution |
 
@@ -190,6 +190,10 @@ Middleware exceptions never prevent task execution or result handling.
 
 ## Middleware vs hooks
 
+Coming from Celery signals? Use these instead of connecting to `task_prerun` /
+`task_postrun` / `task_failure`: queue-level **hooks** for global behavior, or
+per-task **middleware** for scoped behavior.
+
 taskito has two systems for running code around tasks:
 
 |   | Hooks (`@queue.on_failure`, etc.) | Middleware (`TaskMiddleware`) |
@@ -222,4 +226,4 @@ queue = Queue(middleware=[
 ])
 ```
 
-See the [OpenTelemetry guide](/python/guides/integrations) for setup details.
+See the [OpenTelemetry guide](/python/guides/integrations/otel) for setup details.

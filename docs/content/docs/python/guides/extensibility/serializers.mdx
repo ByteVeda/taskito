@@ -6,20 +6,37 @@ description: "CloudpickleSerializer, JsonSerializer, MsgPackSerializer, Encrypte
 import { Callout } from "fumadocs-ui/components/callout";
 
 taskito uses a pluggable serializer for task arguments and results. By
-default, it uses `CloudpickleSerializer`, but you can switch to
-`JsonSerializer` or provide your own.
+default, it uses `SmartSerializer`, but you can switch to
+`JsonSerializer`, `CloudpickleSerializer` directly, or provide your own.
 
 ## Built-in serializers
 
-### CloudpickleSerializer (default)
+### SmartSerializer (default)
 
-Handles lambdas, closures, and complex Python objects. This is the default
-— no configuration needed.
+Encodes plain data (dicts, lists, strings, numbers, booleans, `None`,
+tuples) via MessagePack — fast and compact — and transparently falls
+back to `CloudpickleSerializer` for anything MessagePack can't encode
+(lambdas, closures, custom class instances). A one-byte tag on each
+payload records which codec produced it, so `loads()` always picks the
+right path. This is the default — no configuration needed.
 
 ```python
 from taskito import Queue
 
-queue = Queue()  # uses CloudpickleSerializer
+queue = Queue()  # uses SmartSerializer
+```
+
+### CloudpickleSerializer
+
+Handles lambdas, closures, and complex Python objects unconditionally —
+every payload goes through cloudpickle, skipping `SmartSerializer`'s
+MessagePack fast path. Use it directly if you want that predictability,
+or as the inner serializer for `EncryptedSerializer` / `SignedSerializer`.
+
+```python
+from taskito import Queue, CloudpickleSerializer
+
+queue = Queue(serializer=CloudpickleSerializer())
 ```
 
 ### JsonSerializer
@@ -36,10 +53,13 @@ queue = Queue(serializer=JsonSerializer())
 ### MsgPackSerializer
 
 MessagePack serialization: faster than cloudpickle, produces smaller
-payloads, and is cross-language compatible. Requires the `msgpack` package.
+payloads, and is cross-language compatible. `msgpack` ships as a core
+taskito dependency, so no extra install is required — `taskito[msgpack]`
+exists for discoverability if you want to spell it out in your own
+requirements file:
 
 ```bash
-pip install msgpack
+pip install taskito[msgpack]
 ```
 
 ```python
@@ -59,10 +79,10 @@ queue = Queue(serializer=MsgPackSerializer())
 
 AES-256-GCM encryption for task arguments and results. Payloads stored in
 the database are opaque ciphertext — only the key holder can read them.
-Requires the `cryptography` package.
+Requires the `encryption` extra:
 
 ```bash
-pip install cryptography
+pip install taskito[encryption]
 ```
 
 ```python
@@ -123,28 +143,41 @@ queue = Queue(serializer=SignedSerializer(inner, sign_key))
 
 ## When to use each
 
-|   | CloudpickleSerializer | JsonSerializer | MsgPackSerializer | EncryptedSerializer |
-|---|---|---|---|---|
-| **Complex objects** | Yes | No | No | Depends on inner serializer |
-| **Debugging** | Binary payloads (opaque) | Human-readable JSON | Binary (opaque) | Ciphertext (opaque) |
-| **Cross-language** | Python only | Any language | Any language | Python only (by default) |
-| **Performance** | Good | Good for simple types | Best | Adds encryption overhead |
-| **Security** | None | None | None | AES-256-GCM |
-| **Extra dependency** | No | No | `msgpack` | `cryptography` |
-| **Default** | Yes | No | No | No |
+|   | SmartSerializer | CloudpickleSerializer | JsonSerializer | MsgPackSerializer | EncryptedSerializer |
+|---|---|---|---|---|---|
+| **Complex objects** | Yes (cloudpickle fallback) | Yes | No | No | Depends on inner serializer |
+| **Debugging** | Binary payloads (opaque) | Binary payloads (opaque) | Human-readable JSON | Binary (opaque) | Ciphertext (opaque) |
+| **Cross-language** | Python only | Python only | Any language | Any language | Python only (by default) |
+| **Performance** | Best for plain data | Good | Good for simple types | Best | Adds encryption overhead |
+| **Security** | None | None | None | None | AES-256-GCM |
+| **Extra dependency** | No | No | No | No | `cryptography` (`taskito[encryption]`) |
+| **Default** | Yes | No | No | No | No |
 
-**Rule of thumb**: use `CloudpickleSerializer` (default) unless you have a
-specific reason to switch. Use `EncryptedSerializer` when tasks carry
+**Rule of thumb**: use the default `SmartSerializer` unless you have a
+specific reason to switch — it gets you compact MessagePack payloads for
+plain data with an automatic cloudpickle fallback for anything
+MessagePack can't encode. Use `EncryptedSerializer` when tasks carry
 sensitive data that must not be readable in the database.
+
+**Coming from Celery?** Celery defaults to JSON (`task_serializer="json"`);
+taskito defaults to `SmartSerializer`, which is pickle-based (via
+cloudpickle) for anything MessagePack can't represent. It handles closures
+and arbitrary objects that JSON can't, but that fallback path is
+Python-only and **executes code on load** — use it only with trusted
+payloads. Switch to `JsonSerializer` for cross-language or untrusted data,
+or wrap any serializer in `SignedSerializer` to authenticate payloads
+(HMAC) before they are deserialized.
 
 ## Custom serializers
 
-Implement the `Serializer` protocol with two methods:
+Implement the `Serializer` protocol with two methods. `MsgPackSerializer`
+already ships built-in (see above) — this example is a stand-in for any
+serializer not covered by the built-ins:
 
 ```python
 from taskito import Serializer
 
-class MsgpackSerializer:
+class MyMsgpackSerializer:
     def dumps(self, obj) -> bytes:
         import msgpack
         return msgpack.packb(obj)
@@ -153,7 +186,7 @@ class MsgpackSerializer:
         import msgpack
         return msgpack.unpackb(data, raw=False)
 
-queue = Queue(serializer=MsgpackSerializer())
+queue = Queue(serializer=MyMsgpackSerializer())
 ```
 
 The protocol requires:
