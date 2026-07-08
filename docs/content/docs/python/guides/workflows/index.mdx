@@ -28,13 +28,16 @@ from taskito.workflows import Workflow
 queue = Queue(db_path="tasks.db")
 
 @queue.task()
-def extract(): return fetch_data()
+def extract():        # fetch source data and write it to a store (DB, S3, …)
+    ...
 
 @queue.task()
-def transform(data): return clean(data)
+def transform():      # read what extract wrote, clean it, write the result back
+    ...
 
 @queue.task()
-def load(data): db.insert(data)
+def load():           # read the cleaned data, write it to the warehouse
+    ...
 
 wf = Workflow(name="etl_pipeline")
 wf.step("extract", extract)
@@ -45,6 +48,19 @@ run = queue.submit_workflow(wf)
 result = run.wait(timeout=60)
 print(result.state)  # WorkflowState.COMPLETED
 ```
+
+`after` sets execution **order**, not data flow: a step is *not* automatically
+called with its predecessor's return value — each runs with the args you give it
+in `wf.step(...)`. To pass a value between steps, use fan-out / fan-in or read
+`WorkflowContext.results`. See [Building workflows](/python/guides/workflows/building).
+
+<Callout type="warn" title="Workflows need a running worker">
+  `submit_workflow()` enqueues the step jobs; they execute only while a worker is
+  consuming the queue. Start one first — `taskito worker --app tasks:queue`, or
+  `queue.run_worker()` in a background thread — otherwise `run.wait()` blocks
+  until it times out. Workflows ship in the standard `pip install taskito` wheel;
+  no extra install is needed.
+</Callout>
 
 ## Section overview
 

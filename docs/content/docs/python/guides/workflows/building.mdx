@@ -3,7 +3,7 @@ title: Building Workflows
 description: "Workflow.step(), @queue.workflow() decorator, step configuration, DAG structure, node statuses."
 ---
 
-A workflow is a DAG of steps. Each step wraps a registered task. The engine
+A workflow is a DAG (directed acyclic graph — steps wired by dependencies with no cycles) of steps. Each step wraps a registered task. The engine
 creates jobs in topological order with `depends_on` chains so the existing
 scheduler handles execution.
 
@@ -34,7 +34,11 @@ wf.step("fetch", fetch_task, args=("https://api.example.com",))
 wf.step("process", process_task, after="fetch", kwargs={"mode": "strict"})
 ```
 
-Arguments are serialized at submission time using the queue's serializer.
+Arguments are serialized at submission time using the queue's serializer. A step
+runs with **only** the args and kwargs you declare here — it does *not*
+automatically receive its predecessor's return value. To pass data downstream,
+use [fan-out / fan-in](/python/guides/workflows/fan-out), or read upstream
+results from `WorkflowContext.results` in a condition or gate.
 
 ## Step configuration
 
@@ -83,6 +87,10 @@ This creates a `WorkflowRun` handle. Under the hood:
 2. A `WorkflowRun` record is created
 3. For each step in topological order, a job is enqueued with `depends_on` chains
 4. The run transitions to `RUNNING`
+
+A worker must be consuming the queue for those step jobs to execute — `run.wait()`
+blocks until they finish. Start one first: `taskito worker --app tasks:queue`, or
+`queue.run_worker()` in a background thread.
 
 <Mermaid
   chart={`sequenceDiagram

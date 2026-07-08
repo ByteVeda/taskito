@@ -9,6 +9,25 @@ For simpler pipelines without DAG features, taskito provides **chain**,
 **group**, and **chord** — lightweight composition that doesn't require the
 workflow engine.
 
+## Coming from Celery
+
+taskito's canvas mirrors Celery's `chain` / `group` / `chord` / `.s()` / `.si()` /
+`chunks` / `starmap`, with a few deliberate differences:
+
+| Celery | taskito | Difference |
+|---|---|---|
+| `chain(...).apply_async()` | `chain(...).apply(queue)` | `.apply()` here **submits** the canvas; pass the `queue`. |
+| `chain(...).apply()` (eager) | — | taskito has **no** eager `.apply()`; it always enqueues for workers. |
+| `AsyncResult.get(timeout=)` | `job.result(timeout=)` | Same idea, different name. |
+| `group(...)` → `GroupResult` | `group(...).apply(queue)` → `list[JobResult]` | taskito returns a plain list of handles — iterate and call `.result()` on each. |
+| `.s()` / `.si()` | `.s()` / `.si()` | Identical (mutable vs immutable signature). |
+
+<Callout type="warn" title="`.apply()` means submit, not run">
+  The biggest gotcha: in Celery, `.apply()` executes the canvas **locally and
+  synchronously**. In taskito, `.apply(queue)` **enqueues** it for workers, and
+  you await results with `.result()`. There is no eager local execution.
+</Callout>
+
 ## Signatures
 
 A `Signature` wraps a task call for deferred execution:
