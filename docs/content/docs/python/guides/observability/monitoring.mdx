@@ -41,7 +41,7 @@ taskito queue statistics
   total        468
 ```
 
-### Live dashboard
+### Live CLI stats
 
 ```bash
 taskito info --app myapp:queue --watch
@@ -129,7 +129,7 @@ events (`JOB_ENQUEUED`, `JOB_COMPLETED`, `JOB_FAILED`, `JOB_RETRYING`,
 `JOB_DEAD`, `JOB_CANCELLED`). Events can also be delivered as signed HTTP
 webhooks to external systems.
 
-[Events & Webhooks guide →](/python/guides/extensibility)
+[Events & Webhooks guide →](/python/guides/extensibility/events-webhooks)
 
 ## Prometheus metrics
 
@@ -140,11 +140,14 @@ counters, histograms, and gauges for task execution:
 pip install taskito[prometheus]
 ```
 
-[Prometheus integration →](/python/guides/integrations)
+[Prometheus integration →](/python/guides/integrations/prometheus)
 
 ## Hooks
 
-Run code before/after every task, or on success/failure.
+Run code before/after every task, or on success/failure. For a
+comparison against `TaskMiddleware` — which covers retry, dead-letter,
+timeout, and enqueue hooks these decorators don't — see
+[Middleware vs hooks](/python/guides/extensibility/middleware#middleware-vs-hooks).
 
 ### `@queue.before_task`
 
@@ -243,7 +246,7 @@ taskito_queue_depth{queue="default"}
 **Job processing rate** (rate):
 
 ```text
-rate(taskito_jobs_completed_total[5m])
+rate(taskito_jobs_total{status="completed"}[5m])
 ```
 
 **Job duration p99** (histogram):

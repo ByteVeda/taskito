@@ -43,6 +43,11 @@ def process_order(order_id: int):
 | `level` | `LogLevel` | `LogLevel.INFO` | One of `LogLevel.DEBUG`, `LogLevel.INFO`, `LogLevel.WARNING`, `LogLevel.ERROR`, `LogLevel.CRITICAL`, `LogLevel.RESULT` |
 | `extra` | `dict \| None` | `None` | Structured data to attach as JSON |
 
+`LogLevel.RESULT` is written internally by `current_job.publish()` to
+stream partial results to `job.stream()` consumers — you generally won't
+pass it to `log()` yourself, but it's useful for filtering streamed
+output out of regular log queries.
+
 ## Querying logs
 
 ### Per-job logs
