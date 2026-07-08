@@ -13,7 +13,9 @@ have completed successfully.
 ## Basic usage
 
 Pass `depends_on` when enqueuing a job to declare that it should wait for one
-or more other jobs to finish:
+or more other jobs to finish. `.delay()` is shorthand for `.apply_async()`
+using the task's default options; `.apply_async()` exposes the full set of
+per-call options — including `depends_on` — so it's what you reach for here:
 
 <Tabs items={["Single dependency", "Multiple dependencies"]}>
   <Tab value="Single dependency">
@@ -244,9 +246,10 @@ job_success = on_valid.apply_async(
 ```
 
 <Callout type="info" title="Dependencies vs workflows">
-  `depends_on` is a lower-level primitive than chains, groups, and chords.
-  Use `depends_on` when you need fine-grained control over a custom DAG. Use
-  the workflow primitives when your pipeline fits a standard pattern.
+  `depends_on` is a lower-level primitive than the [chains, groups, and
+  chords](/python/guides/workflows) built on top of it. Use `depends_on` when
+  you need fine-grained control over a custom DAG. Use the workflow
+  primitives when your pipeline fits a standard pattern.
 </Callout>
 
 ## Combining with other features

@@ -5,7 +5,16 @@ description: "Insert many jobs in a single SQLite transaction with task.map() an
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Insert many jobs in a single SQLite transaction for high throughput.
+Insert many jobs in a single database transaction (SQLite or Postgres) for high
+throughput.
+
+<Callout type="info" title="Not the same as task batching">
+  *Batch enqueue* (`task.map()` / `enqueue_many()`) writes **many** separate jobs
+  at once — one job per item. [*Task batching*](/python/guides/core/batching)
+  (`@queue.task(batch=…)`) does the opposite: it collects many `.delay()` calls
+  into **one** job. Use batch enqueue for bulk-insert throughput; use task
+  batching to coalesce small units of work.
+</Callout>
 
 ## `task.map()`
 
