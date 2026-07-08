@@ -3,10 +3,12 @@
 use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jlong, jstring, JNI_FALSE};
 use jni::JNIEnv;
+use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
 
 use super::borrow_queue;
-use crate::convert::{to_json, DeadJobView};
+use crate::convert::{to_json, DeadJobView, ReplayEntryView};
+use crate::error::BindingError;
 use crate::ffi::{guard, new_string, read_string};
 
 /// `String listDead(long handle, long limit, long offset)` — dead-letter entries.
@@ -227,5 +229,69 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listSettin
     guard(&mut env, std::ptr::null_mut(), |env| {
         let queue = unsafe { borrow_queue(handle) };
         new_string(env, to_json(&queue.storage.list_settings()?)?)
+    })
+}
+
+/// `String replayJob(long handle, String jobId)` — re-enqueue a copy of an
+/// existing job and record it in the replay history. Returns the new job id.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_replayJob<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    job_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let id = read_string(env, &job_id)?;
+        let original = queue
+            .storage
+            .get_job(&id)?
+            .ok_or_else(|| BindingError::new(format!("Job not found: {id}")))?;
+        let new_job = NewJob {
+            queue: original.queue.clone(),
+            task_name: original.task_name.clone(),
+            payload: original.payload.clone(),
+            priority: original.priority,
+            scheduled_at: now_millis(),
+            max_retries: original.max_retries,
+            timeout_ms: original.timeout_ms,
+            unique_key: None,
+            metadata: Some(format!("{{\"replayed_from\":\"{id}\"}}")),
+            notes: original.notes.clone(),
+            depends_on: Vec::new(),
+            expires_at: None,
+            result_ttl_ms: original.result_ttl_ms,
+            namespace: original.namespace.clone(),
+        };
+        let job = queue.storage.enqueue(new_job)?;
+        // Best-effort audit row — a history write must not fail the replay.
+        let _ = queue.storage.record_replay(
+            &id,
+            &job.id,
+            original.result.as_deref(),
+            None,
+            original.error.as_deref(),
+            None,
+        );
+        new_string(env, job.id)
+    })
+}
+
+/// `String getReplayHistory(long handle, String jobId)` — replays recorded for
+/// a job, as a JSON array.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_getReplayHistory<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    job_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let id = read_string(env, &job_id)?;
+        let rows = queue.storage.get_replay_history(&id)?;
+        let views: Vec<ReplayEntryView> = rows.iter().map(ReplayEntryView::from).collect();
+        new_string(env, to_json(&views)?)
     })
 }

@@ -225,8 +225,12 @@ public final class DashboardServer implements AutoCloseable {
         r.get("/api/stats/queues", req -> core.statsByQueue());
         r.get("/api/queues/paused", req -> core.queuesPaused());
         r.get("/api/jobs", req -> core.listJobs(req.query()));
+        r.get("/api/jobs/([^/]+)/logs", req -> core.jobLogs(req.param(0)));
+        r.get("/api/jobs/([^/]+)/replay-history", req -> core.replayHistory(req.param(0)));
+        r.get("/api/jobs/([^/]+)/dag", req -> core.jobDag(req.param(0)));
         r.get("/api/jobs/([^/]+)", req -> core.job(req.param(0)));
         r.get("/api/dead-letters", req -> core.listDead(req.query()));
+        r.get("/api/logs", req -> core.logs(req.query()));
         r.get("/api/workers", req -> core.listWorkers());
 
         // Metrics (aggregated — the SPA contract, not raw rows)
@@ -237,6 +241,7 @@ public final class DashboardServer implements AutoCloseable {
         r.get("/api/circuit-breakers", req -> ops.circuitBreakers());
         r.get("/api/event-types", req -> ops.eventTypes());
         r.get("/api/scaler", req -> ops.scaler(req.query()));
+        r.get("/api/resources", req -> ops.resources());
 
         // Settings KV
         r.get("/api/settings", req -> settingsApi.list());
@@ -255,6 +260,7 @@ public final class DashboardServer implements AutoCloseable {
         r.delete("/api/queues/([^/]+)/override", req -> overrides.deleteQueueOverride(req.param(0)));
 
         // Action
+        r.post("/api/jobs/([^/]+)/replay", req -> core.replayJob(req.param(0)));
         r.post("/api/jobs/([^/]+)/cancel", req -> core.cancel(req.param(0)));
         r.post("/api/dead-letters/([^/]+)/retry", req -> core.retryDead(req.param(0)));
         r.post("/api/queues/([^/]+)/pause", req -> core.pause(req.param(0)));

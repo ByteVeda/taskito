@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import org.byteveda.taskito.errors.SerializationException;
 
@@ -55,6 +57,24 @@ public final class Json {
             return asMap(MAPPER.readTree(json));
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    /** Parse a JSON array of strings; empty list if malformed/non-array/null. */
+    public static List<String> parseStringList(String json) {
+        if (json == null || json.isEmpty()) {
+            return List.of();
+        }
+        try {
+            JsonNode node = MAPPER.readTree(json);
+            if (node == null || !node.isArray()) {
+                return List.of();
+            }
+            List<String> out = new ArrayList<>(node.size());
+            node.forEach(element -> out.add(element.asText()));
+            return out;
+        } catch (IOException e) {
+            return List.of();
         }
     }
 

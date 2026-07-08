@@ -17,6 +17,10 @@ public final class WorkerInfo {
     public final String poolType;
     public final int threads;
     public final String tags;
+    /** JSON array of resource names the worker advertised at registration; may be null. */
+    public final String resources;
+    /** JSON object of per-resource health written by the worker's heartbeat; may be null. */
+    public final String resourceHealth;
 
     @JsonCreator
     public WorkerInfo(
@@ -29,7 +33,9 @@ public final class WorkerInfo {
             @JsonProperty("pid") Integer pid,
             @JsonProperty("poolType") String poolType,
             @JsonProperty("threads") int threads,
-            @JsonProperty("tags") String tags) {
+            @JsonProperty("tags") String tags,
+            @JsonProperty("resources") String resources,
+            @JsonProperty("resourceHealth") String resourceHealth) {
         this.workerId = workerId;
         this.queues = queues;
         this.status = status;
@@ -40,5 +46,7 @@ public final class WorkerInfo {
         this.poolType = poolType;
         this.threads = threads;
         this.tags = tags;
+        this.resources = resources;
+        this.resourceHealth = resourceHealth;
     }
 }
