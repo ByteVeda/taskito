@@ -7,6 +7,9 @@ Circuit breakers prevent cascading failures by temporarily stopping task
 execution when a task fails repeatedly. This is especially useful for tasks
 that call external APIs or services.
 
+> Celery has no built-in circuit breaker — this is taskito-native, configured per
+> task with `@queue.task(circuit_breaker={...})`.
+
 ## How it works
 
 A circuit breaker tracks failures within a time window and transitions
@@ -67,6 +70,8 @@ for cb in breakers:
 ```
 
 ### Dashboard API
+
+Requires a running [dashboard](/python/guides/dashboard) (default port `8080`):
 
 ```bash
 curl http://localhost:8080/api/circuit-breakers

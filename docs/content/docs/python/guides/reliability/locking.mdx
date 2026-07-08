@@ -6,8 +6,13 @@ description: "Database-backed mutual-exclusion across workers — sync, async, a
 import { Callout } from "fumadocs-ui/components/callout";
 
 taskito provides a distributed lock primitive backed by the same database
-used for the task queue. Locks work across multiple worker processes and
-machines sharing the same database.
+used for the task queue. Locks work across multiple worker processes on one
+machine, and across multiple machines when the backend is a shared server
+(Postgres or Redis) rather than a local SQLite file.
+
+> Celery has no built-in lock — teams reach for `celery-once` or a Redis lock.
+> taskito's `queue.lock()` uses the queue database directly, so there's nothing
+> extra to run.
 
 ## Overview
 
@@ -52,7 +57,7 @@ queue.lock(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `name` | `str` | — | Lock name. All processes using the same name compete for the same lock. |
-| `ttl` | `int` | `30` | Lock TTL in seconds. Auto-extended if `auto_extend=True`. |
+| `ttl` | `int` | `30` | Lock time-to-live (TTL) in seconds. Auto-extended if `auto_extend=True`. |
 | `auto_extend` | `bool` | `True` | Automatically extend the lock before it expires (background thread). |
 | `owner_id` | `str \| None` | `None` | Custom owner identifier. Defaults to a random UUID per acquisition. |
 | `timeout` | `float \| None` | `None` | Max seconds to wait for the lock. `None` raises immediately if unavailable. |
@@ -101,8 +106,10 @@ exceeded.
 ## Cross-process locking
 
 Because lock state is stored in the database, locks are effective across
-multiple worker processes on the same machine or different machines sharing
-the same database:
+multiple worker processes on the same machine. Locking across **different**
+machines works too, but only when they share a networked database — SQLite
+is a local file, so cross-machine locking requires the Postgres or Redis
+backend:
 
 ```python
 # Process A (machine 1)
@@ -114,10 +121,13 @@ with queue.lock("billing-run"):
     run_billing()
 ```
 
-<Callout type="info" title="SQLite vs Postgres">
+<Callout type="info" title="SQLite vs Postgres vs Redis">
   On SQLite, cross-process locking works via WAL mode and exclusive
-  transactions. For multi-machine deployments, use the PostgreSQL backend
-  where `SELECT FOR UPDATE SKIP LOCKED` provides true distributed semantics.
+  transactions, but SQLite file locking is machine-local — it only works
+  across processes on the same machine. For multi-machine deployments, use
+  the PostgreSQL backend, where `SELECT FOR UPDATE SKIP LOCKED` provides true
+  distributed semantics, or the Redis backend, which also supports
+  `queue.lock()`.
 </Callout>
 
 ## Error handling
