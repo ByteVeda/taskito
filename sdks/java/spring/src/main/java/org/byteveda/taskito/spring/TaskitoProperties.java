@@ -50,8 +50,11 @@ public class TaskitoProperties {
         /** Whether to auto-start a {@code DashboardServer} bean. Off by default. */
         private boolean enabled = false;
 
-        /** Port to bind (0 = ephemeral). */
-        private int port = 8080;
+        /**
+         * Port to bind (0 = ephemeral). Defaults to 8081, not 8080, so it doesn't
+         * clash with Spring Boot's own embedded server; override as needed.
+         */
+        private int port = 8081;
 
         /** Optional shared token gating {@code /api/*}; null enables the session flow. */
         private String token;
