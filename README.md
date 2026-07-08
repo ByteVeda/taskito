@@ -21,8 +21,8 @@ and Diesel over SQLite in WAL mode — exposed to each language through a thin n
 | Language | Install | Package | Docs |
 |----------|---------|---------|------|
 | **Python** | `pip install taskito` | [PyPI](https://pypi.org/project/taskito/) · [`sdks/python`](sdks/python) | [Python docs](https://docs.byteveda.org/taskito) |
-| **Node.js** | `npm install @byteveda/taskito` | [npm](https://www.npmjs.com/package/@byteveda/taskito) · [`sdks/node`](sdks/node) | [Node docs](https://docs.byteveda.org/taskito/node) |
-| **Java** | `org.byteveda:taskito` | [Maven Central](https://central.sonatype.com/artifact/org.byteveda/taskito) · [`sdks/java`](sdks/java) | [Java docs](https://docs.byteveda.org/taskito/java) |
+| **Node.js** | `npm install @byteveda/taskito` | [npm](https://www.npmjs.com/package/@byteveda/taskito) · [`sdks/node`](sdks/node) | [Node docs](https://docs.byteveda.org/taskito/node/getting-started/installation) |
+| **Java** | `org.byteveda:taskito` | [Maven Central](https://central.sonatype.com/artifact/org.byteveda/taskito) · [`sdks/java`](sdks/java) | [Java docs](https://docs.byteveda.org/taskito/java/getting-started/installation) |
 
 Each SDK is self-contained — see its README for install, quickstart, and the full API.
 
