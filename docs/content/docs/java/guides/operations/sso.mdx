@@ -190,11 +190,10 @@ Disable password login entirely:
 export TASKITO_DASHBOARD_PASSWORD_AUTH_ENABLED=false
 ```
 
-Startup refuses this combination if no provider ends up configured — you'd
-have no way to log in — and falls back to password-only rather than locking
-you out. The login page hides the username/password form and renders only
-provider buttons when password auth is off and at least one provider is
-configured.
+Startup **fails** if you disable password auth without configuring at least
+one provider — that would leave no way to log in. With password auth off and
+at least one provider configured, the login page hides the username/password
+form and renders only the provider buttons.
 
 ## Security model
 
