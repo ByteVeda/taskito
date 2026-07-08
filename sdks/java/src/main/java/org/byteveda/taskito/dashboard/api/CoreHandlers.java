@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.dashboard.support.Http;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.JobStatus;
 
@@ -47,10 +48,10 @@ public final class CoreHandlers {
             filter.task(query.get("task"));
         }
         if (query.containsKey("limit")) {
-            filter.limit(Integer.parseInt(query.get("limit")));
+            filter.limit(Http.intParam(query, "limit", 0));
         }
         if (query.containsKey("offset")) {
-            filter.offset(Integer.parseInt(query.get("offset")));
+            filter.offset(Http.intParam(query, "offset", 0));
         }
         return queue.listJobs(filter.build()).stream().map(Contract::job).collect(Collectors.toList());
     }
@@ -60,16 +61,9 @@ public final class CoreHandlers {
     }
 
     public Object listDead(Map<String, String> query) {
-        long limit = longParam(query, "limit", DEFAULT_LIMIT);
-        long offset = longParam(query, "offset", 0);
+        long limit = Http.longParam(query, "limit", DEFAULT_LIMIT);
+        long offset = Http.longParam(query, "offset", 0);
         return queue.listDead(limit, offset).stream().map(Contract::dead).collect(Collectors.toList());
-    }
-
-    public Object listMetrics(Map<String, String> query) {
-        long since = longParam(query, "since", 0);
-        return queue.metrics(query.get("task"), since).stream()
-                .map(Contract::metric)
-                .collect(Collectors.toList());
     }
 
     public Object listWorkers() {
@@ -92,10 +86,5 @@ public final class CoreHandlers {
     public Object resume(String name) {
         queue.queue(name).resume();
         return Map.of("ok", true);
-    }
-
-    private static long longParam(Map<String, String> query, String key, long fallback) {
-        String value = query.get(key);
-        return value == null ? fallback : Long.parseLong(value);
     }
 }

@@ -2,10 +2,10 @@ package org.byteveda.taskito.dashboard.api;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.byteveda.taskito.model.CircuitBreakerState;
 import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.QueueStats;
-import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
 
 /**
@@ -58,7 +58,23 @@ final class Contract {
         m.put("hostname", w.hostname);
         m.put("pid", w.pid);
         m.put("pool_type", w.poolType);
+        m.put("threads", w.threads);
         m.put("tags", w.tags);
+        return m;
+    }
+
+    static Map<String, Object> circuitBreaker(CircuitBreakerState c) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("task_name", c.taskName);
+        m.put("state", c.state);
+        m.put("failure_count", c.failureCount);
+        m.put("threshold", c.threshold);
+        m.put("window_ms", c.windowMs);
+        m.put("cooldown_ms", c.cooldownMs);
+        m.put("opened_at", c.openedAt);
+        m.put("last_failure_at", c.lastFailureAt);
+        m.put("half_open_max_probes", c.halfOpenMaxProbes);
+        m.put("half_open_success_rate", c.halfOpenSuccessRate);
         return m;
     }
 
@@ -73,17 +89,6 @@ final class Contract {
         m.put("failed_at", d.failedAt);
         m.put("metadata", d.metadata);
         m.put("dlq_retry_count", d.dlqRetryCount);
-        return m;
-    }
-
-    static Map<String, Object> metric(TaskMetric t) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("task_name", t.taskName);
-        m.put("job_id", t.jobId);
-        m.put("wall_time_ns", t.wallTimeNs);
-        m.put("memory_bytes", t.memoryBytes);
-        m.put("succeeded", t.succeeded);
-        m.put("recorded_at", t.recordedAt);
         return m;
     }
 }

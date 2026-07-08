@@ -41,6 +41,14 @@ final class DashboardClient {
         return body("POST", path, json, true);
     }
 
+    HttpResponse<String> put(String path, String json) throws Exception {
+        return body("PUT", path, json, true);
+    }
+
+    HttpResponse<String> delete(String path) throws Exception {
+        return body("DELETE", path, null, true);
+    }
+
     HttpResponse<String> postWithoutCsrf(String path, String json) throws Exception {
         return body("POST", path, json, false);
     }

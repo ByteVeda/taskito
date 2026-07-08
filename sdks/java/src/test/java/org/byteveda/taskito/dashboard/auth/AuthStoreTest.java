@@ -7,42 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import org.byteveda.taskito.dashboard.store.SettingsAccess;
+import org.byteveda.taskito.dashboard.InMemorySettings;
 import org.byteveda.taskito.dashboard.support.DashboardError;
 import org.junit.jupiter.api.Test;
 
 class AuthStoreTest {
 
-    private static final class MemSettings implements SettingsAccess {
-        private final Map<String, String> map = new HashMap<>();
-
-        @Override
-        public Optional<String> getSetting(String key) {
-            return Optional.ofNullable(map.get(key));
-        }
-
-        @Override
-        public void setSetting(String key, String value) {
-            map.put(key, value);
-        }
-
-        @Override
-        public boolean deleteSetting(String key) {
-            return map.remove(key) != null;
-        }
-
-        @Override
-        public Map<String, String> listSettings() {
-            return new HashMap<>(map);
-        }
-    }
-
     private AuthStore store() {
-        return new AuthStore(new MemSettings());
+        return new AuthStore(new InMemorySettings());
     }
 
     @Test
