@@ -61,13 +61,75 @@ async `POST` with a JSON body in snake_case:
 A send error or a `5xx` response is retried with exponential backoff (500 ms
 base, doubling, capped at 30 s) up to `maxRetries`; `4xx` responses are not
 retried. Verify the signature on your endpoint by HMAC-SHA256-ing the raw body
-with the shared secret and comparing against the `X-Taskito-Signature` header
-in constant time.
+with the shared secret's raw UTF-8 bytes and comparing against the
+`X-Taskito-Signature` header in constant time.
 
 <Callout type="info">
-  Delivery is fire-and-forget: there is no persisted per-delivery log to query
-  — final failures are logged (with the URL's path redacted). Subscriptions
-  themselves are persisted in the queue's settings store, so every process
-  sharing the backend sees the same hooks; changes propagate to running
-  workers within 30 seconds.
+  Every attempt — successful or not — is recorded in a persistent,
+  per-subscription delivery log (see [Dashboard
+  management](#dashboard-management) below); final failures are also logged
+  server-side (with the URL's path redacted). Subscriptions themselves are
+  persisted in the queue's settings store, so every process sharing the
+  backend sees the same hooks; changes propagate to running workers within 30
+  seconds.
 </Callout>
+
+## SSRF guard
+
+Webhook URLs are vetted by `WebhookUrlValidator` before dashboard-submitted
+subscriptions are stored, and **every delivery re-validates the URL right
+before sending** — regardless of how the subscription was created — so a
+hostname that starts safe and is later rebound to an internal address (DNS
+rebinding) is still refused. Blocked by default:
+
+- Non-`http`/`https` schemes
+- `localhost` and `*.localhost` / `*.local` / `*.internal` / `*.intranet` /
+  `*.lan` / `*.private`
+- Any address that resolves to loopback, link-local, RFC1918 (site-local),
+  multicast, carrier-grade NAT (`100.64.0.0/10`), or IPv6 unique-local
+  (`fc00::/7`) — including cloud metadata endpoints like `169.254.169.254`
+  (link-local)
+
+Set `TASKITO_WEBHOOKS_ALLOW_PRIVATE` (`1`/`true`/`yes`/`on`) to lift the guard
+for local development against `http://localhost`. Keep it unset in
+production.
+
+<Callout type="warning">
+  `WebhookManager.create(...)` called directly from your own code is trusted
+  developer input and is <b>not</b> pre-validated at creation time — only
+  dashboard-submitted URLs are checked at creation. Every delivery, from
+  either surface, is always re-validated regardless.
+</Callout>
+
+## Dashboard management
+
+The same subscriptions this page describes are also manageable from the
+dashboard's Webhooks page, or directly over its REST API — full CRUD,
+delivery history, secret rotation, and a synchronous test-ping. It's the same
+`WebhookManager` under the hood (`WebhookManager.forQueue`, backed by the
+queue's settings store), so changes from either surface are immediately
+visible to every process sharing the backend.
+
+| Method · Path | Effect |
+|---|---|
+| `GET /api/webhooks` · `/{id}` | List / fetch subscriptions. Header values and the secret are masked — only a `has_secret` flag is returned. |
+| `POST /api/webhooks` | Create. Same fields as the builder, plus `generate_secret: true` to mint one server-side. |
+| `PUT /api/webhooks/{id}` | Partial update — only included fields change. |
+| `DELETE /api/webhooks/{id}` | Delete the subscription and its delivery log. |
+| `POST /api/webhooks/{id}/test` | Synchronously deliver a synthetic `test` event (single attempt, no retry) and record the outcome. |
+| `POST /api/webhooks/{id}/rotate-secret` | Mint a fresh secret and persist it. |
+| `GET /api/webhooks/{id}/deliveries` | Paged delivery log — `?status=&event=&limit=&offset=` (max 200). |
+| `GET /api/webhooks/{id}/deliveries/{deliveryId}` | A single delivery. |
+| `POST /api/webhooks/{id}/deliveries/{deliveryId}/replay` | Re-fire a stored payload as a fresh delivery (single attempt); the original record is kept. |
+
+The raw secret is returned exactly once — on `create` (when set or
+generated) and on `rotate-secret` — never on `list`/`get`.
+
+### Delivery history
+
+Each subscription keeps its most recent 200 deliveries in a FIFO log
+(`webhooks:deliveries:<subscriptionId>` in the settings store), newest-first
+when paged. Each record carries the event type, `status`
+(`delivered`/`failed`), attempt count, response code, a response body
+truncated to 2 KiB, latency, and any transport error — enough to debug a
+failing endpoint without leaving the dashboard.

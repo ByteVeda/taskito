@@ -36,9 +36,14 @@ secret; the signature rides in `X-Taskito-Signature: sha256=<hex>`. Verify it
 on the receiver — HMAC the raw body with the shared secret and compare in
 constant time — before trusting the body.
 
-The deliverer POSTs the configured URL directly — there is **no SSRF
-allowlist.** Only register webhook URLs you control, and validate them before
-storing if they come from users.
+Dashboard-submitted webhook URLs are checked by an SSRF guard (loopback,
+link-local, RFC1918, multicast, CGNAT, and IPv6 unique-local addresses are
+rejected by default), and every delivery re-validates the URL again right
+before sending, closing the DNS-rebinding gap. `WebhookManager.create(...)`
+called directly from your own code is trusted input and isn't pre-validated
+at creation — only at delivery time. Set `TASKITO_WEBHOOKS_ALLOW_PRIVATE` to
+disable the guard for local development. See
+[Webhooks: SSRF guard](/java/guides/extensibility/webhooks#ssrf-guard).
 
 ## Proxies
 
@@ -50,10 +55,15 @@ permits any path**, so always set roots in production.
 
 ## Dashboard
 
-The [dashboard](/java/guides/operations/dashboard) runs in **open mode** by
-default — anyone who reaches the port has full control. Start it with a token
-to gate `/api/*`, bind it to localhost, or front it with a reverse proxy that
-enforces your own auth (login / RBAC / SSO).
+The [dashboard](/java/guides/operations/dashboard) requires sign-in by
+default: on a fresh database every route except a small public set returns
+`503 setup_required` until an admin exists, and every route after that needs
+a valid session (admin/viewer RBAC, CSRF on writes) or, if configured,
+[OAuth/OIDC](/java/guides/operations/sso). Passing a `token` instead switches
+to legacy shared-token mode — no users, no sessions, no RBAC — kept for
+back-compat; anyone with the token has full control. Either way, bind the
+port to a trusted network or front it with a reverse proxy for
+defense in depth.
 
 ## Mesh gossip
 
@@ -77,6 +87,7 @@ hosts with a `noexec` `/tmp`.
 - [ ] Payloads signed or encrypted where the storage host isn't fully trusted.
 - [ ] Webhook receivers verify the HMAC signature; webhook URLs are trusted.
 - [ ] `FileProxyHandler` configured with allowlisted roots.
-- [ ] Dashboard bound to localhost, or token-gated behind your own auth.
+- [ ] Dashboard admin account created (or env-bootstrapped) on first deploy;
+      bound to a trusted network regardless of auth mode.
 - [ ] Logs don't echo sensitive payloads (redact in `onEnqueue`
       [middleware](/java/guides/extensibility/middleware)).

@@ -1,10 +1,15 @@
 ---
 title: Dashboard
-description: "Serve the bundled web dashboard and its REST API from a Java process."
+description: "Serve the bundled web dashboard and its REST API — session auth, OAuth/SSO, and legacy token mode."
 ---
 
 The jar bundles the web dashboard SPA; `DashboardServer` serves it plus a JSON
 REST API over the queue — no separate service, no asset build step.
+
+## Starting the dashboard
+
+<Tabs items={["Programmatic", "Taskito.dashboard()", "CLI"]}>
+  <Tab value="Programmatic">
 
 ```java
 try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
@@ -14,41 +19,126 @@ try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
 }
 ```
 
-Or from the [CLI](/java/guides/operations/cli):
+`DashboardServer.start(queue, port)` opens in [session-auth
+mode](#session-auth-default). `start(queue, port, token)` switches to
+[legacy shared-token mode](#legacy-shared-token-mode); four- and five-argument
+overloads add an unpacked SPA directory and a `secureCookies` flag.
+
+  </Tab>
+  <Tab value="Taskito.dashboard()">
+
+```java
+try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
+        DashboardServer server = taskito.dashboard(8080)) {
+    // ...
+}
+
+// Legacy shared-token mode, gating /api/* as a fixed admin identity:
+taskito.dashboard(8080, System.getenv("DASH_TOKEN"));
+```
+
+`Taskito.dashboard(port)` / `dashboard(port, token)` are convenience defaults
+over `DashboardServer.start(...)` for the common case — one fewer import.
+
+  </Tab>
+  <Tab value="CLI">
 
 ```bash
 taskito --url taskito.db dashboard --port 8080
 ```
 
+| Flag | Default | Description |
+|---|---|---|
+| `--port` | `8080` | Bind port (`0` for ephemeral) |
+| `--token` | none | Legacy shared token gating `/api/*` — disables session auth and OAuth |
+| `--static` | bundled SPA | Directory of a prebuilt SPA, overriding the jar's extracted copy |
+| `--insecure-cookies` | off | Drop the `Secure` cookie attribute — for local HTTP development |
+
+  </Tab>
+</Tabs>
+
 Pass `0` as the port for an ephemeral one (`server.port()` reports what was
 bound). The SPA is extracted from the jar to a per-user, content-addressed
 directory on first use; `-Dtaskito.dashboard.dir=/path` (or the `staticDir`
-argument) overrides it with an unpacked build. Without bundled assets only
-`/api/*` responds.
+argument / `--static`) overrides it with an unpacked build. Without bundled
+assets only `/api/*` responds.
 
-## REST API
-
-Everything is JSON, fields in snake_case, timestamps in Unix milliseconds.
-
-| Method · Path | Effect |
-|---|---|
-| `GET /api/stats` | Counts by status across all queues. |
-| `GET /api/stats/queues` | Counts per queue. |
-| `GET /api/queues/paused` | Names of paused queues. |
-| `GET /api/jobs` | Job list — `?status=&queue=&task=&limit=&offset=`. |
-| `GET /api/jobs/{id}` | A single job. |
-| `GET /api/dead-letters` | Dead-letter entries — `?limit=&offset=`. |
-| `GET /api/metrics` | Per-execution metrics — `?task=&since=` (ms window). |
-| `GET /api/workers` | Registered workers + heartbeats. |
-| `GET /api/auth/status` | `{ "auth_required": true\|false }` — never needs a token. |
-| `POST /api/jobs/{id}/cancel` | Cancel a job. |
-| `POST /api/dead-letters/{id}/retry` | Re-enqueue a dead-letter entry. |
-| `POST /api/queues/{name}/pause` · `/resume` | Pause / resume a queue. |
+<Callout type="info">
+  Running Spring Boot? `taskito-spring` can auto-start a `DashboardServer` bean
+  from `taskito.dashboard.*` properties — see
+  [Spring Boot: Dashboard auto-configuration](/java/guides/integrations/spring#dashboard-auto-configuration).
+</Callout>
 
 ## Auth
 
-Auth runs **open** by default. Pass a token to require it on every `/api/*`
-request (except `/api/auth/status`):
+Two modes, chosen by whether a `token` is passed to `start(...)` /
+`dashboard(...)`.
+
+### Session auth (default)
+
+With no token, the dashboard runs password sign-in (and optionally
+[OAuth/OIDC](/java/guides/operations/sso)) with server-side sessions. Users
+and sessions live in the queue's settings key/value store — no dedicated
+tables — so the model is identical across SQLite, PostgreSQL, and Redis.
+
+- **First-run setup.** On a fresh database every route except the public set
+  (`/api/auth/status`, `/api/auth/login`, `/api/auth/setup`,
+  `/api/auth/providers`, `/health`, `/readiness`, `/metrics`) returns
+  `503 setup_required` until an admin exists. `POST /api/auth/setup` creates
+  it (and signs it in); the route locks itself after the first user.
+- **Env-admin bootstrap.** Set both `TASKITO_DASHBOARD_ADMIN_USER` and
+  `TASKITO_DASHBOARD_ADMIN_PASSWORD` before starting the process to seed the
+  first admin without visiting a browser — useful for containers. It's
+  idempotent: once a user with that name exists, later restarts skip
+  creation.
+
+  ```bash
+  export TASKITO_DASHBOARD_ADMIN_USER=admin
+  export TASKITO_DASHBOARD_ADMIN_PASSWORD='change-me-on-first-login'
+  taskito --url taskito.db dashboard --port 8080
+  ```
+
+  <Callout type="warning">
+    Unlike a scripting-language runtime, the JVM cannot scrub a variable out
+    of its own process environment once it has been read — the password
+    stays visible to anything that can inspect the process (`/proc`, a
+    debugger, a core dump) for the process's lifetime. Prefer first-run setup
+    through the SPA where that matters; treat the env var as a one-time
+    recovery path and rotate the password after logging in.
+  </Callout>
+
+- **Passwords** are hashed with PBKDF2-HMAC-SHA256 — 600,000 iterations, a
+  16-byte random salt — no third-party crypto dependency.
+- **Sessions** are opaque tokens with a 24-hour TTL, carried in an `HttpOnly`,
+  `SameSite=Strict` `taskito_session` cookie (plus `Secure` unless disabled —
+  see below).
+- **CSRF** uses the double-submit pattern: a non-HttpOnly `taskito_csrf`
+  cookie must match both the token bound to the session and the
+  `X-CSRF-Token` header on every state-changing request
+  (`POST`/`PUT`/`DELETE`/`PATCH`). `/api/auth/login` and `/api/auth/setup` are
+  exempt — there is no session yet to bind to.
+- **`--insecure-cookies`** (or `secureCookies=false` on `DashboardServer.start`,
+  or `taskito.dashboard.secure-cookies=false` in Spring) drops the `Secure`
+  cookie attribute for local HTTP development. Keep it on — the default — for
+  anything served over HTTPS.
+
+### Roles
+
+RBAC is enforced server-side and is deliberately simple: every state-changing
+route is admin-only except two self-service routes; all reads are open to any
+authenticated user.
+
+| Role | Access |
+|---|---|
+| `admin` | Full access — cancel/replay jobs, purge dead letters, pause/resume queues, manage webhooks, edit settings, edit task/queue overrides. |
+| `viewer` | Read-only, plus their own `POST /api/auth/logout` and `POST /api/auth/change-password`. Any other mutating route returns `403 forbidden`. |
+
+The first user — created via setup or env bootstrap — is always `admin`.
+
+### Legacy shared-token mode
+
+Pass a `token` to gate `/api/*` behind a single fixed credential — no users,
+no sessions, no RBAC. Kept for back-compat with the pre-auth dashboard.
 
 ```java
 DashboardServer.start(taskito, 8080, System.getenv("DASH_TOKEN"));
@@ -56,18 +146,51 @@ DashboardServer.start(taskito, 8080, System.getenv("DASH_TOKEN"));
 
 Requests authenticate with `?token=<token>`; opening `/?token=<token>` once
 sets an httpOnly `taskito_token` cookie so the SPA works for the rest of the
-session. This is a single shared token — no per-user login, RBAC, or SSO. For
-those, put the server behind a reverse proxy that handles auth.
+session. OAuth has no login UI in this mode, so it's disabled automatically —
+`start(queue, port, token, ...)` never builds an OAuth flow when `token` is
+non-null.
 
 <Callout type="warning">
   `?token=` puts the secret in the URL, where it can leak via browser history,
   `Referer` headers, and proxy or access logs. Use it only over HTTPS, redact
-  query strings from logs, and rely on the cookie afterwards — once the first
-  request sets it, the token never needs to appear in a URL again.
+  query strings from logs, and rely on the cookie afterwards.
 </Callout>
 
+## Metrics and health probes
+
+Three routes sit outside `/api/*` and outside the session/token auth gate:
+
+| Route | Access | What it does |
+|---|---|---|
+| `GET /health` | Always public | Liveness — always `{"status": "ok"}` |
+| `GET /readiness` | Public unless `TASKITO_DASHBOARD_METRICS_TOKEN` is set | Storage/worker/resource readiness |
+| `GET /metrics` | Public unless `TASKITO_DASHBOARD_METRICS_TOKEN` is set | Prometheus text exposition |
+
+Set `TASKITO_DASHBOARD_METRICS_TOKEN` to require an
+`Authorization: Bearer <token>` header (checked in constant time) on
+`/readiness` and `/metrics`. `/health` always stays open for liveness probes.
+
+## REST API
+
+Everything is JSON, fields in snake_case, timestamps in Unix milliseconds —
+the same contract the bundled SPA consumes. All paths below are relative to
+`/api/`.
+
+| Group | Routes |
+|---|---|
+| Auth | `auth/status`, `auth/setup`, `auth/login`, `auth/logout`, `auth/whoami`, `auth/change-password`, `auth/providers`, `auth/oauth/start/{slot}`, `auth/oauth/callback/{slot}` — see [SSO](/java/guides/operations/sso) |
+| Stats & jobs | `stats`, `stats/queues`, `queues/paused`, `jobs` (+ `/{id}`, `/{id}/logs`, `/{id}/replay-history`, `/{id}/dag`, `/{id}/cancel`, `/{id}/replay`) |
+| Dead letters | `dead-letters` (+ `/{id}/retry`) |
+| Metrics & logs | `metrics`, `metrics/timeseries`, `logs` |
+| Infrastructure | `workers`, `circuit-breakers`, `resources`, `scaler`, `event-types` |
+| Queue control | `queues/{name}/pause`, `queues/{name}/resume` |
+| Task/queue overrides | `tasks`, `tasks/{name}/override`, `queues`, `queues/{name}/override` — runtime rate limit, concurrency, retries, timeout, priority, and pause, without redeploying |
+| Webhooks | `webhooks` (+ `/{id}`, `/{id}/test`, `/{id}/rotate-secret`, `/{id}/deliveries`, `/{id}/deliveries/{deliveryId}`, `/{id}/deliveries/{deliveryId}/replay`) — see [Webhooks: Dashboard management](/java/guides/extensibility/webhooks#dashboard-management) |
+| Workflows | `workflows/runs` (+ `/{id}`, `/{id}/dag`, `/{id}/children`) |
+| Settings | `settings`, `settings/{key}` |
+
 <Callout type="warning">
-  Open mode means anyone who can reach the port has full control. Bind it to
-  localhost, front it with your own auth, or at minimum set a token — see
-  [Security](/java/guides/operations/security).
+  Every route above is auth-gated: session mode requires a valid session (plus
+  CSRF on writes) except the public auth routes; legacy mode requires the
+  matching token. See [Auth](#auth).
 </Callout>

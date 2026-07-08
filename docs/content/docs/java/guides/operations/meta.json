@@ -1,1 +1,1 @@
-{ "title": "Operations", "pages": ["backends", "inspection", "dashboard", "mesh", "autoscaling", "cli", "testing", "security", "troubleshooting", "deployment", "graalvm"] }
+{ "title": "Operations", "pages": ["backends", "inspection", "dashboard", "sso", "mesh", "autoscaling", "cli", "testing", "security", "troubleshooting", "deployment", "graalvm"] }

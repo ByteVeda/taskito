@@ -68,3 +68,35 @@ Taskito taskito(TaskitoProperties properties) {
   example in an `ApplicationRunner` or a `SmartLifecycle` bean) and register
   your handlers on it.
 </Callout>
+
+## Dashboard auto-configuration
+
+Set `taskito.dashboard.enabled=true` to auto-start a
+[`DashboardServer`](/java/guides/operations/dashboard) bean over the
+`Taskito` bean. It's stopped with the application context
+(`destroyMethod = "close"`) and backs off (`@ConditionalOnMissingBean`) if you
+define your own `DashboardServer` bean.
+
+```yaml
+taskito:
+  url: postgres://localhost/taskito
+  dashboard:
+    enabled: true
+    port: 8080
+    # token: ${DASH_TOKEN:}       # omit for session auth (default); set to use legacy shared-token mode
+    # static-dir: /opt/taskito/dashboard-static
+    # secure-cookies: true       # false drops the Secure cookie attribute for local HTTP
+```
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `taskito.dashboard.enabled` | `boolean` | `false` | Auto-start the dashboard server |
+| `taskito.dashboard.port` | `int` | `8080` | Bind port (`0` for ephemeral) |
+| `taskito.dashboard.token` | `String` | none | Legacy shared token gating `/api/*`; unset enables [session auth](/java/guides/operations/dashboard#session-auth-default) |
+| `taskito.dashboard.static-dir` | `String` | auto-discovered | Directory of a prebuilt SPA, overriding the jar's extracted copy |
+| `taskito.dashboard.secure-cookies` | `boolean` | `true` | Drop the `Secure` cookie attribute for local HTTP development |
+
+OAuth/OIDC env vars (`TASKITO_DASHBOARD_OAUTH_*`, see
+[SSO](/java/guides/operations/sso)) and the admin bootstrap
+(`TASKITO_DASHBOARD_ADMIN_USER`/`_PASSWORD`) are read the same way regardless
+of Spring — they aren't Spring properties.
