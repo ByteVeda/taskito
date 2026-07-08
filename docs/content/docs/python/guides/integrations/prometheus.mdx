@@ -103,6 +103,23 @@ start_metrics_server(port=9090)
 
 This uses `prometheus_client.start_http_server` under the hood.
 
+### This is a different `/metrics` than the dashboard's
+
+`start_metrics_server` opens its own dedicated HTTP server — it is not
+the same endpoint as the dashboard's `GET /metrics` (see
+[REST API](/python/guides/dashboard/rest-api)). Both ultimately call
+`prometheus_client.generate_latest()`, but each only serves metrics
+registered in *its own process*:
+
+- Run `start_metrics_server` in the same process as your
+  `PrometheusMiddleware` / `PrometheusStatsCollector` (typically the
+  worker process) — this is the endpoint you'll usually scrape.
+- The dashboard's `GET /metrics` only shows something useful if the
+  dashboard process itself registered metrics (e.g. it also runs
+  `PrometheusMiddleware`). If your worker and dashboard run as separate
+  processes — the common deployment — scrape the worker's
+  `start_metrics_server` instead.
+
 ## Full example
 
 ```python
@@ -163,19 +180,10 @@ queue = Queue(
 See the [Middleware guide](/python/guides/extensibility/middleware) for more
 on combining middleware.
 
-## Example: alert on high DLQ size
+## Alerting on high DLQ size
 
-```python
-from taskito.contrib.prometheus import PrometheusMiddleware, PrometheusStatsCollector, start_metrics_server
-
-queue = Queue(db_path="myapp.db", middleware=[PrometheusMiddleware()])
-
-# Start metrics and collector
-start_metrics_server(port=9090)
-PrometheusStatsCollector(queue, interval=10).start()
-```
-
-Prometheus alerting rule:
+Using the same setup as the [full example](#full-example) above, a
+couple of alerting rules worth adding:
 
 ```yaml
 groups:

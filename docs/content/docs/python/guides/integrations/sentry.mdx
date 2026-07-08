@@ -133,4 +133,3 @@ When `process_payment` fails:
 1. The error appears in Sentry with tags `taskito.task_name=myapp.tasks.process_payment`, `taskito.job_id=...`, `taskito.queue=default`
 2. If the task retries, each retry is recorded as a breadcrumb
 3. The final failure (after all retries) includes the full breadcrumb trail
-```

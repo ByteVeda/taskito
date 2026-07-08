@@ -59,6 +59,10 @@ All configuration is read from `app.config`:
 | `TASKITO_RESULT_TTL` | `None` | Auto-purge completed jobs after N seconds |
 | `TASKITO_DRAIN_TIMEOUT` | `30` | Seconds to wait for running tasks on shutdown |
 
+Using `TASKITO_BACKEND = "postgres"` requires the `taskito[postgres]`
+extra (`pip install taskito[postgres]`) — see the
+[PostgreSQL guide](/python/guides/operations/postgres).
+
 ## Extension options
 
 The `Taskito` constructor accepts a `cli_group` parameter to rename the CLI
