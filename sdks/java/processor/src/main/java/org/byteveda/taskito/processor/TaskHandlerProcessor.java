@@ -9,7 +9,6 @@ import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
-import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
@@ -29,12 +28,18 @@ import javax.tools.JavaFileObject;
  * needs no dependency on the runtime module.
  */
 @SupportedAnnotationTypes(TaskHandlerProcessor.ANNOTATION)
-@SupportedSourceVersion(SourceVersion.RELEASE_11)
 public final class TaskHandlerProcessor extends AbstractProcessor {
     static final String ANNOTATION = "org.byteveda.taskito.annotation.TaskHandler";
     static final String RESOURCE = "org.byteveda.taskito.annotation.Resource";
     static final String COMPRESSED = "org.byteveda.taskito.annotation.Compressed";
     static final String ENCRYPTED = "org.byteveda.taskito.annotation.Encrypted";
+
+    // Accept whatever the compiler runs at, so building at -source 17+ doesn't warn
+    // that the processor caps out below it (structural read, version-agnostic).
+    @Override
+    public SourceVersion getSupportedSourceVersion() {
+        return SourceVersion.latestSupported();
+    }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
