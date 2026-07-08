@@ -209,7 +209,7 @@ context in async tasks.
 
 ## What serialization format does taskito use?
 
-By default, <SdkSwap python={<code>CloudpickleSerializer</code>} node={<code>JsonSerializer</code>} java={<code>JsonSerializer</code>} /> — <SdkSwap python="which supports most Python objects including lambdas and closures; switch to JsonSerializer for simpler, cross-language payloads" node="human-readable JSON bytes; switch to MsgpackSerializer for compact, binary payloads" java="human-readable JSON bytes via Jackson; switch to MsgpackSerializer for compact, binary payloads" /> — or provide a custom serializer:
+By default, <SdkSwap python={<code>SmartSerializer</code>} node={<code>JsonSerializer</code>} java={<code>JsonSerializer</code>} /> — <SdkSwap python="which uses MessagePack with a cloudpickle fallback, so it handles most Python objects including lambdas and closures; switch to JsonSerializer for simpler, cross-language payloads" node="human-readable JSON bytes; switch to MsgpackSerializer for compact, binary payloads" java="human-readable JSON bytes via Jackson; switch to MsgpackSerializer for compact, binary payloads" /> — or provide a custom serializer:
 
 <SdkOnly sdk="python">
 
