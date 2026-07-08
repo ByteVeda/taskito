@@ -7,10 +7,13 @@ import { Callout } from "fumadocs-ui/components/callout";
 import { Tab, Tabs } from "fumadocs-ui/components/tabs";
 
 taskito ships with a built-in web dashboard for monitoring jobs, inspecting
-dead letters, configuring webhooks, tuning per-task runtime limits, and
+dead letters (the DLQ — a holding area for jobs that exhausted their retries), configuring webhooks, tuning per-task runtime limits, and
 managing your task queue in real time. The dashboard is a single-page
 application served directly from the Python package — **zero extra
 dependencies required**.
+
+> Coming from Celery? This is taskito's built-in equivalent of Flower — no
+> separate monitoring service to install or run.
 
 ![Overview page with stats cards, throughput chart, and recent activity](/screenshots/dashboard/overview.png)
 
@@ -32,7 +35,7 @@ The `--app` argument uses the same `module:attribute` format as the worker.
 from taskito.dashboard import serve_dashboard
 from myapp import queue
 
-serve_dashboard(queue, host="0.0.0.0", port=8000)
+serve_dashboard(queue, host="0.0.0.0", port=8080)
 ```
 
   </Tab>
@@ -104,7 +107,7 @@ The full REST API surface is documented at
 
 The dashboard is a React 19 + Vite 8 + TypeScript SPA routed via TanStack
 Router, styled with Tailwind v4 and shadcn/ui, and shipped as
-hash-busted multi-file assets under `py_src/taskito/static/dashboard/`.
+hash-busted multi-file assets under `sdks/python/taskito/static/dashboard/`.
 
 - **Dark and light mode** — Toggle via the sun/moon button in the header.
   Preference is stored in `localStorage` and follows the system scheme by
@@ -123,7 +126,7 @@ hash-busted multi-file assets under `py_src/taskito/static/dashboard/`.
 
 <Callout type="info" title="Zero extra dependencies at runtime">
   The built SPA ships inside the Python wheel under
-  `py_src/taskito/static/dashboard/` and is served by the Python
+  `sdks/python/taskito/static/dashboard/` and is served by the Python
   dashboard process. No Node.js, no pnpm, no CDN at runtime — just
   `pip install taskito`. Node.js and pnpm are only needed by
   contributors rebuilding the dashboard source.
@@ -213,7 +216,7 @@ pnpm run build
 </Callout>
 
 The build produces a static `index.html` plus hashed JS/CSS chunks
-under `py_src/taskito/static/dashboard/`. The built assets aren't
+under `sdks/python/taskito/static/dashboard/`. The built assets aren't
 committed — release tooling runs `pnpm -C dashboard build` before
 packaging so the wheel ships them.
 
