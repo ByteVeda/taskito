@@ -17,6 +17,16 @@ const ARCH_PAGES = [
   "serialization",
 ];
 
+// Sections that have child pages but no landing/index page. A bare hit on the
+// section URL (e.g. from a breadcrumb crumb or an external link) would otherwise
+// 404, so send it to the section's first page.
+const SECTION_LANDINGS = ["node", "python", "java"].map(
+  (sdk): [string, string] => [
+    `/${sdk}/getting-started`,
+    `/${sdk}/getting-started/installation`,
+  ],
+);
+
 export const REDIRECTS: Record<string, string> = {
   ...Object.fromEntries(
     ARCH_PAGES.map((page) => {
@@ -24,6 +34,8 @@ export const REDIRECTS: Record<string, string> = {
       return [`/python/architecture${suffix}`, `/architecture${suffix}`];
     }),
   ),
+  ...Object.fromEntries(SECTION_LANDINGS),
+  "/resources": "/resources/comparison",
   "/python/more/comparison": "/resources/comparison",
   "/python/more/faq": "/resources/faq",
   "/python/more/changelog": "/resources/changelog",

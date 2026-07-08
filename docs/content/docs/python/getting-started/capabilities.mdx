@@ -1,0 +1,68 @@
+---
+title: Capabilities at a glance
+description: "Everything the Python SDK can do, with a link to each guide."
+---
+
+A map of the Python SDK's features. Everything here runs over the shared Rust
+core — pick a backend, register tasks, run workers.
+
+## Core
+
+| Feature | Guide |
+|---|---|
+| Task registry, enqueue, await results | [Tasks](/python/guides/core/tasks) · [Queue API](/python/api-reference/overview) |
+| SQLite / Postgres / Redis backends | [Postgres](/python/guides/operations/postgres) |
+| Named queues, priority, pause/resume | [Queues](/python/guides/core/queues) |
+| Cron-scheduled & delayed jobs | [Scheduling](/python/guides/core/scheduling) |
+| Cooperative cancellation | [Job management](/python/guides/operations/job-management) |
+| Streaming partial results | [Streaming](/python/guides/advanced-execution/streaming) |
+| Sync & async tasks, concurrency | [Async tasks](/python/guides/advanced-execution/async-tasks) · [Execution model](/python/guides/core/execution-model) |
+| Batch enqueue, dependencies, unique tasks | [Batch enqueue](/python/guides/advanced-execution/batch-enqueue) · [Dependencies](/python/guides/advanced-execution/dependencies) · [Unique tasks](/python/guides/advanced-execution/unique-tasks) |
+| Enqueue predicates & prefork pools | [Predicates](/python/guides/core/predicates) · [Prefork](/python/guides/advanced-execution/prefork) |
+
+## Reliability
+
+| Feature | Guide |
+|---|---|
+| Retries with backoff, dead-letter queue | [Retries](/python/guides/reliability/retries) · [Error handling](/python/guides/reliability/error-handling) |
+| Concurrency caps & rate limits | [Rate limiting](/python/guides/reliability/rate-limiting) |
+| Circuit breakers | [Circuit breakers](/python/guides/reliability/circuit-breakers) |
+| Idempotent enqueue (`unique_key`) | [Idempotency](/python/guides/reliability/idempotency) |
+| Distributed locks | [Locking](/python/guides/reliability/locking) |
+| Delivery guarantees | [Guarantees](/python/guides/reliability/guarantees) |
+
+## Orchestration
+
+| Feature | Guide |
+|---|---|
+| DAG workflows: fan-out/in, conditions, gates, sub-workflows, saga | [Workflows](/python/guides/workflows) · [Sagas](/python/guides/workflows/sagas) |
+| Decentralized work-stealing mesh | [Mesh](/python/guides/operations/mesh) |
+
+## Extensibility
+
+| Feature | Guide |
+|---|---|
+| Lifecycle events & middleware | [Events & webhooks](/python/guides/extensibility/events-webhooks) · [Middleware](/python/guides/extensibility/middleware) |
+| Signed webhook delivery | [Events & webhooks](/python/guides/extensibility/events-webhooks) |
+| Resource injection, interception & proxies | [Dependency injection](/python/guides/resources/dependency-injection) · [Interception](/python/guides/resources/interception) · [Proxies](/python/guides/resources/proxies) |
+| Pluggable serializers (JSON / msgpack / signed / encrypted) | [Serializers](/python/guides/extensibility/serializers) |
+
+## Observability & ops
+
+| Feature | Guide |
+|---|---|
+| Stats, metrics, progress, worker heartbeats | [Monitoring](/python/guides/observability/monitoring) |
+| Structured logging & notes | [Logging](/python/guides/observability/logging) · [Notes](/python/guides/observability/notes) |
+| OpenTelemetry / Prometheus / Sentry | [OTel](/python/guides/integrations/otel) · [Prometheus](/python/guides/integrations/prometheus) · [Sentry](/python/guides/integrations/sentry) |
+| Dashboard + REST API + auth / SSO | [Dashboard](/python/guides/dashboard) · [REST API](/python/guides/dashboard/rest-api) · [Authentication](/python/guides/dashboard/authentication) |
+| KEDA autoscaling (queue-depth scaler) | [KEDA](/python/guides/operations/keda) · [Autoscaler](/python/guides/operations/autoscaler) |
+| Job management & CLI | [Job management](/python/guides/operations/job-management) |
+
+## Framework integrations
+
+[Django](/python/guides/integrations/django) · [FastAPI](/python/guides/integrations/fastapi) · [Flask](/python/guides/integrations/flask)
+
+<Callout type="info">
+  Workflows and mesh are optional capabilities built into the native extension.
+  See [installation](/python/getting-started/installation) to get set up.
+</Callout>
