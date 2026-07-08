@@ -229,13 +229,14 @@ class ResourceTest {
         try (Taskito queue =
                 Taskito.builder().url(dir.resolve("rpw.db").toString()).open()) {
             queue.resource("perWorker", ctx -> new Object());
-            // Force exactly one job per worker so both live workers resolve the resource.
-            CyclicBarrier bothBusy = new CyclicBarrier(2);
-            CountDownLatch ran = new CountDownLatch(2);
+            // Each concurrency-1 worker holds its slot on `release` while running its job, so a
+            // single worker cannot claim both jobs — the second stays for the other worker. We
+            // wait until both instances are built rather than making the jobs rendezvous on a
+            // barrier, which would fail if the two workers don't overlap within one tight window.
+            CountDownLatch release = new CountDownLatch(1);
             TaskFunction<Integer, Integer> handler = p -> {
                 Resources.use("perWorker");
-                bothBusy.await(20, TimeUnit.SECONDS);
-                ran.countDown();
+                release.await(25, TimeUnit.SECONDS);
                 return p;
             };
             try (Worker w1 = queue.worker().concurrency(1).handle(TASK, handler).start();
@@ -243,7 +244,10 @@ class ResourceTest {
                             queue.worker().concurrency(1).handle(TASK, handler).start()) {
                 queue.enqueue(TASK, 1);
                 queue.enqueue(TASK, 2);
-                assertTrue(ran.await(25, TimeUnit.SECONDS));
+                assertTrue(
+                        awaitCreated(queue, "perWorker", 2, Duration.ofSeconds(25)),
+                        "both workers did not each build their own instance");
+                release.countDown();
             }
             // Shared-runtime would build once (created==1); per-worker builds one each.
             assertEquals(2, queue.resourceMetrics().get("perWorker").created());
@@ -425,5 +429,19 @@ class ResourceTest {
             assertEquals(2, metrics.get("conn").disposed(), "pool shutdown disposed every instance");
             assertEquals(2, disposed.get());
         }
+    }
+
+    /** Poll resource metrics until {@code name} has been built {@code target} times, or the deadline passes. */
+    private static boolean awaitCreated(Taskito queue, String name, long target, Duration timeout)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        do {
+            ResourceStat stat = queue.resourceMetrics().get(name);
+            if (stat != null && stat.created() >= target) {
+                return true;
+            }
+            Thread.sleep(25);
+        } while (System.nanoTime() < deadline);
+        return false;
     }
 }
