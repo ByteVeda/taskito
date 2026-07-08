@@ -28,23 +28,16 @@ def send_email(to: str, subject: str, body: str) -> str:
     return f"sent to {to}"
 ```
 
-## 2. Enqueue jobs
+## 2. Start a worker
 
-```python
-from tasks import add, send_email
-
-# Enqueue returns a JobResult handle
-job = add.delay(2, 3)
-print(f"Job ID: {job.id}")        # Job ID: 01936...
-print(f"Status: {job.status}")    # Status: pending
-```
-
-## 3. Start a worker
+A **worker** pulls jobs from the queue and runs them. Start one first — the CLI
+worker runs in the foreground and stays up, processing jobs as they arrive:
 
 <Tabs items={["CLI (Recommended)", "Threading", "Async"]}>
   <Tab value="CLI (Recommended)">
 
 ```bash
+# Runs in its own terminal and blocks, processing jobs until you stop it (Ctrl+C)
 taskito worker --app tasks:queue
 ```
 
@@ -52,6 +45,7 @@ taskito worker --app tasks:queue
   <Tab value="Threading">
 
 ```python
+# Runs the worker in a background thread inside your own process
 import threading
 from tasks import queue
 
@@ -75,22 +69,34 @@ asyncio.run(main())
   </Tab>
 </Tabs>
 
-## 4. Get results
+<Callout type="info" title="Keep the worker running">
+  Nothing executes until a worker is consuming the queue. Enqueued jobs sit in
+  `pending` until a worker claims them — so leave this worker running while you
+  enqueue jobs in the next step.
+</Callout>
+
+## 3. Enqueue jobs and get results
+
+From another terminal (or anywhere in your app), enqueue a job and block for its
+result. The worker from step 2 picks it up and runs it:
 
 ```python
 from tasks import add
 
+# Enqueue — returns a JobResult handle immediately; the function does NOT run here
 job = add.delay(2, 3)
+print(f"Job ID: {job.id}")       # 01936...
+print(f"Status: {job.status}")   # "pending" — until a worker claims it
 
-# Block until complete (with exponential backoff polling)
+# Block until the worker finishes the job (exponential-backoff polling)
 result = job.result(timeout=30)
-print(result)  # 5
+print(result)                    # 5
 
-# Or use async
+# Async variant
 result = await job.aresult(timeout=30)
 ```
 
-## 5. Monitor
+## 4. Monitor
 
 ```python
 from tasks import queue
@@ -122,12 +128,12 @@ taskito dashboard --app tasks:queue
 Open `http://localhost:8080` in your browser. The dashboard includes pages
 covering every aspect of your task queue — no extra dependencies needed.
 
-[Dashboard guide →](/python/guides/observability)
+[Dashboard guide →](/python/guides/dashboard)
 
 ## Next steps
 
-- [Tasks](/python/guides/core) — decorator options, `.delay()` vs `.apply_async()`
-- [Workers](/python/guides/core) — CLI flags, graceful shutdown, worker count
-- [Retries](/python/guides/reliability) — exponential backoff, dead letter queue
+- [Tasks](/python/guides/core/tasks) — decorator options, `.delay()` vs `.apply_async()`
+- [Workers](/python/guides/core/workers) — CLI flags, graceful shutdown, worker count
+- [Retries](/python/guides/reliability/retries) — exponential backoff, dead letter queue
 - [Workflows](/python/guides/workflows) — chain, group, chord
-- [Testing](/python/guides/operations) — run tasks synchronously in tests with `queue.test_mode()`
+- [Testing](/python/guides/operations/testing) — run tasks synchronously in tests with `queue.test_mode()`

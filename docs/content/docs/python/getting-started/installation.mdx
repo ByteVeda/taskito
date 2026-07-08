@@ -6,7 +6,7 @@ description: "Install taskito and prepare your environment."
 import { Callout } from "fumadocs-ui/components/callout";
 
 <Callout title="New to taskito?">
-  See [**Capabilities at a glance**](/python/capabilities) for everything taskito does —
+  See [**Capabilities at a glance**](/python/getting-started/capabilities) for everything taskito does —
   workflows, retries, the dashboard, prefork pools — each with a link to its guide.
 </Callout>
 
@@ -25,6 +25,26 @@ and results. It is installed automatically.
   **not** need a system SQLite installation.
 </Callout>
 
+## Framework & feature extras
+
+taskito exposes optional pip extras for backends and integrations — install
+only what you need:
+
+```bash
+pip install "taskito[postgres]"    # Postgres storage backend
+pip install "taskito[redis]"       # Redis storage backend
+pip install "taskito[flask]"       # Flask integration
+pip install "taskito[fastapi]"     # FastAPI integration
+pip install "taskito[django]"      # Django integration
+pip install "taskito[otel]"        # OpenTelemetry tracing/metrics
+pip install "taskito[prometheus]"  # Prometheus metrics exporter
+pip install "taskito[sentry]"      # Sentry error reporting
+pip install "taskito[encryption]"  # EncryptedSerializer (cryptography)
+pip install "taskito[msgpack]"     # MsgPackSerializer
+```
+
+Extras can be combined, e.g. `pip install "taskito[postgres,otel,sentry]"`.
+
 ## Postgres backend
 
 To use PostgreSQL as the storage backend instead of SQLite:
@@ -33,7 +53,7 @@ To use PostgreSQL as the storage backend instead of SQLite:
 pip install taskito[postgres]
 ```
 
-See the [Postgres backend guide](/python/guides/operations) for configuration details.
+See the [Postgres backend guide](/python/guides/operations/postgres) for configuration details.
 
 ## From source
 
@@ -63,7 +83,7 @@ pip install -e ".[docs]"    # Documentation
 
 ```python
 import taskito
-print(taskito.__version__)  # 0.12.0
+print(taskito.__version__)  # 0.19.0 (your version may differ)
 ```
 
 ## Requirements

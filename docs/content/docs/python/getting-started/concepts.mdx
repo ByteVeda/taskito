@@ -1,42 +1,78 @@
 ---
 title: Concepts
-description: "How taskito's pieces fit together: queues, tasks, workers, and results."
+description: "How taskito's pieces fit together: queues, tasks, workers, results — and why there's no broker."
 ---
 
 import { Cards, Card } from "fumadocs-ui/components/card";
+import { Callout } from "fumadocs-ui/components/callout";
 
-Get taskito installed and running in under 5 minutes.
+A **task queue** lets your app hand slow work — sending an email, processing an
+upload, calling a third-party API — to a background **worker**, so the request
+that triggered it can return right away. taskito is a task queue for Python with
+one distinguishing trait: **it needs no broker.**
 
-<Cards>
-  <Card
-    title="Installation"
-    href="/python/getting-started/installation"
-    description="Install taskito from PyPI with optional extras for your framework."
-  />
-  <Card
-    title="Quickstart"
-    href="/python/getting-started/quickstart"
-    description="Define a task, enqueue it, and start a worker — step by step."
-  />
-</Cards>
+## Why "no broker" matters
+
+Most Python task queues (Celery, RQ, Dramatiq, Huey) split the job into separate
+services you have to run and operate:
+
+- a **broker** (Redis or RabbitMQ) — a standalone server that holds the list of
+  pending jobs and hands them out to workers;
+- a **result backend** (often another Redis, or a database) — where return
+  values are stored; and
+- the **workers** themselves.
+
+taskito collapses the broker and the result backend into a single embedded
+database — SQLite by default, or Postgres. Enqueued jobs and their results live
+in the same file (or the same Postgres instance). There is no message server to
+install, secure, or monitor: `pip install taskito`, point a queue at a path, and
+start a worker.
+
+<Callout type="info" title="Coming from Celery?">
+  Your `broker=redis://…` and `backend=redis://…` URLs both disappear — a single
+  `Queue(db_path="tasks.db")` replaces them. See the
+  [migration guide](/python/guides/operations/migration).
+</Callout>
 
 ## The mental model
 
-A **queue** is a SQLite (or Postgres) database that holds enqueued jobs. You instantiate
-one in your application code:
+A **queue** is a SQLite (or Postgres) database that holds enqueued jobs. You
+instantiate one in your application code:
 
 ```python
 from taskito import Queue
 queue = Queue(db_path="tasks.db")
 ```
 
-A **task** is any function decorated with `@queue.task()`. Calling `.delay(...)` on it
-returns a `JobResult` handle without running the function — the call is enqueued instead.
+A **task** is any function decorated with `@queue.task()`. **Enqueuing** a task —
+calling `.delay(...)` on it — does *not* run the function. It writes a **job**
+row to the database and immediately returns a `JobResult` handle.
 
-A **worker** is a process (or thread, or async task) that pulls jobs from the queue and
-runs the corresponding task function. The Rust scheduler handles dispatch, retries, rate
-limits, and cleanup; Python only runs during actual task execution.
+A **worker** is a process (or thread, or async task) that pulls pending jobs from
+the queue and runs the matching task function. The Rust scheduler handles
+dispatch, retries, rate limits, and cleanup; your Python code runs only during
+actual task execution. **If no worker is running, enqueued jobs simply wait.**
 
-A **result** lives in the same database as the job. Calling `job.result(timeout=30)`
-blocks (or `await job.aresult(...)` yields) until the task finishes, raises if it
-failed, and deserializes the return value.
+A **result** — the task's return value, or the exception it raised — is written
+back to the same database. Calling `job.result(timeout=30)` blocks (or
+`await job.aresult(...)` yields) until the job finishes, then returns the value
+or re-raises the error.
+
+When a task fails, taskito **retries** it with backoff; once it exhausts
+`max_retries` the job moves to the **dead letter queue (DLQ)** — a holding area
+for permanently-failed jobs that you can inspect and replay.
+
+## Next
+
+<Cards>
+  <Card
+    title="Quickstart"
+    href="/python/getting-started/quickstart"
+    description="Define a task, run a worker, and get a result — step by step."
+  />
+  <Card
+    title="Capabilities at a glance"
+    href="/python/getting-started/capabilities"
+    description="Everything taskito does, each linked to its guide."
+  />
+</Cards>
