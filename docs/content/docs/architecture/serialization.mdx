@@ -4,8 +4,17 @@ description: "Pluggable serializers for task arguments and results, with a per-S
 ---
 
 taskito uses a pluggable serializer for task arguments and results. The default
-is <SdkSwap python={<code>CloudpickleSerializer</code>} node={<code>JsonSerializer</code>} java={<code>JsonSerializer</code>} />,
-which <SdkSwap python="supports lambdas, closures, and complex Python objects" node="emits human-readable JSON bytes" java="emits human-readable JSON bytes via Jackson" />.
+is <SdkSwap python={<code>SmartSerializer</code>} node={<code>JsonSerializer</code>} java={<code>JsonSerializer</code>} />,
+which <SdkSwap python="uses MessagePack with a cloudpickle fallback for lambdas, closures, and complex objects" node="emits human-readable JSON bytes" java="emits human-readable JSON bytes via Jackson" />.
+
+<SdkOnly sdk="python">
+
+> Coming from Celery? Celery defaults to JSON; taskito's Python default is
+> `SmartSerializer` (MessagePack with a cloudpickle fallback). The fallback
+> **executes code on load**, and it's Python-only — use `JsonSerializer` for
+> cross-language or untrusted payloads.
+
+</SdkOnly>
 
 <SdkOnly sdk="python">
 
@@ -50,7 +59,8 @@ Taskito queue = Taskito.builder()
 
 | Serializer | Format | Best for |
 |---|---|---|
-| `CloudpickleSerializer` (default) | Binary (pickle) | Complex Python objects, lambdas, closures |
+| `SmartSerializer` (default) | MessagePack + cloudpickle fallback | Mixed payloads; falls back to pickle for complex objects |
+| `CloudpickleSerializer` | Binary (pickle) | Complex Python objects, lambdas, closures |
 | `JsonSerializer` | JSON | Simple types, cross-language interop, debugging |
 
 </SdkOnly>

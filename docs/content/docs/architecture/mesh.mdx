@@ -297,9 +297,11 @@ values cloned atomically).
 | Deque full | New prefetch jobs are dropped, worker falls back to direct DB dispatch |
 
 In every failure case, the database remains the source of truth. The worst
-outcome is reduced performance (more DB polls), never data loss or
-double-execution — those guarantees come from the
-[storage layer's](/architecture/storage) atomic claim mechanism.
+outcome is reduced performance (more DB polls), never data loss or two workers
+running the same job at once — the storage layer's atomic claim mechanism gives
+**exactly-once dispatch**. Execution itself is **at-least-once**: a crash
+mid-task is retried, so the same task body can run more than once. Design tasks
+to be idempotent — see the [failure model](/architecture/failure-model).
 
 ## See also
 

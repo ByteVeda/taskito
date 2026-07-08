@@ -5,7 +5,11 @@ description: "At-least-once delivery semantics and how taskito recovers from cra
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Taskito provides **at-least-once delivery**. Here's what happens when things go wrong.
+Taskito provides **exactly-once dispatch** — `claim_execution` ensures two workers
+never run the same job at once — but **at-least-once execution**: a crash mid-task
+is retried, so a task body can run more than once. (This is why the
+[mesh](/architecture/mesh) can promise no double-*dispatch* while a task may still
+execute twice across a retry.) Here's what happens when things go wrong.
 
 ## Worker crash mid-task
 
