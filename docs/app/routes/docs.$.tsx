@@ -41,12 +41,14 @@ export function meta({ params }: Route.MetaArgs) {
   const path = pathOf(params);
   const dest = redirectFor(path);
   if (dest) {
-    // Prerendered into the old URL's static HTML so a direct hit refreshes to
-    // the new home; canonical points search engines at the destination.
+    // Static redirect stub for a moved URL. The meta-refresh resolves against
+    // the origin, so it needs the deploy base path; SPA navigate() adds it.
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    const target = `${base}${dest}`;
     return [
       { title: "Redirecting… | Taskito" },
-      { httpEquiv: "refresh", content: `0; url=${dest}` },
-      { tagName: "link", rel: "canonical", href: dest },
+      { httpEquiv: "refresh", content: `0; url=${target}` },
+      { tagName: "link", rel: "canonical", href: target },
     ];
   }
   const meta = docMeta(path);
