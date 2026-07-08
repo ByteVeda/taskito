@@ -15,6 +15,12 @@ public final class NodeSnapshot {
     public final Long startedAt;
     public final Long completedAt;
     public final String error;
+    /** Saga rollback job for this node; null outside a compensation flow. */
+    public final String compensationJobId;
+
+    public final Long compensationStartedAt;
+    public final Long compensationCompletedAt;
+    public final String compensationError;
 
     @JsonCreator
     public NodeSnapshot(
@@ -25,7 +31,11 @@ public final class NodeSnapshot {
             @JsonProperty("fanOutCount") Integer fanOutCount,
             @JsonProperty("startedAt") Long startedAt,
             @JsonProperty("completedAt") Long completedAt,
-            @JsonProperty("error") String error) {
+            @JsonProperty("error") String error,
+            @JsonProperty("compensationJobId") String compensationJobId,
+            @JsonProperty("compensationStartedAt") Long compensationStartedAt,
+            @JsonProperty("compensationCompletedAt") Long compensationCompletedAt,
+            @JsonProperty("compensationError") String compensationError) {
         this.nodeName = nodeName;
         this.status = status;
         this.jobId = jobId;
@@ -34,5 +44,9 @@ public final class NodeSnapshot {
         this.startedAt = startedAt;
         this.completedAt = completedAt;
         this.error = error;
+        this.compensationJobId = compensationJobId;
+        this.compensationStartedAt = compensationStartedAt;
+        this.compensationCompletedAt = compensationCompletedAt;
+        this.compensationError = compensationError;
     }
 }

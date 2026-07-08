@@ -40,6 +40,15 @@ public final class NativeWorkflows {
     /** Returns a JSON run + node snapshot, or {@code null} if the run is absent. */
     public static native String getWorkflowStatus(long handle, String runId);
 
+    public static native String listWorkflowRuns(
+            long handle, String definitionNameOrNull, String stateOrNull, long limit, long offset);
+
+    public static native String getWorkflowRun(long handle, String runId);
+
+    public static native String getWorkflowChildren(long handle, String runId);
+
+    public static native String getWorkflowDag(long handle, String runId);
+
     public static native void cancelWorkflowRun(long handle, String runId);
 
     // ── Fan-out / fan-in orchestration (driven by the worker-side tracker) ──

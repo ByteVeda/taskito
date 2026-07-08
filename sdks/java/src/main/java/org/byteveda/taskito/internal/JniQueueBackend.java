@@ -324,6 +324,27 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String listWorkflowRunsJson(String definitionNameOrNull, String stateOrNull, long limit, long offset) {
+        return withOpenHandle(
+                () -> NativeWorkflows.listWorkflowRuns(handle, definitionNameOrNull, stateOrNull, limit, offset));
+    }
+
+    @Override
+    public Optional<String> getWorkflowRunJson(String runId) {
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorkflows.getWorkflowRun(handle, runId)));
+    }
+
+    @Override
+    public String getWorkflowChildrenJson(String runId) {
+        return withOpenHandle(() -> NativeWorkflows.getWorkflowChildren(handle, runId));
+    }
+
+    @Override
+    public Optional<String> getWorkflowDagJson(String runId) {
+        return withOpenHandle(() -> Optional.ofNullable(NativeWorkflows.getWorkflowDag(handle, runId)));
+    }
+
+    @Override
     public void cancelWorkflowRun(String runId) {
         withOpenHandle(() -> {
             NativeWorkflows.cancelWorkflowRun(handle, runId);

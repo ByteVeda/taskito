@@ -97,6 +97,10 @@ struct NodeView<'a> {
     started_at: Option<i64>,
     completed_at: Option<i64>,
     error: Option<&'a str>,
+    compensation_job_id: Option<&'a str>,
+    compensation_started_at: Option<i64>,
+    compensation_completed_at: Option<i64>,
+    compensation_error: Option<&'a str>,
 }
 
 impl<'a> From<&'a WorkflowNode> for NodeView<'a> {
@@ -110,6 +114,43 @@ impl<'a> From<&'a WorkflowNode> for NodeView<'a> {
             started_at: n.started_at,
             completed_at: n.completed_at,
             error: n.error.as_deref(),
+            compensation_job_id: n.compensation_job_id.as_deref(),
+            compensation_started_at: n.compensation_started_at,
+            compensation_completed_at: n.compensation_completed_at,
+            compensation_error: n.compensation_error.as_deref(),
+        }
+    }
+}
+
+/// A workflow run summary (no node detail — `getWorkflowStatus` provides that).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowRunView<'a> {
+    id: &'a str,
+    definition_id: &'a str,
+    state: &'static str,
+    params: Option<&'a str>,
+    error: Option<&'a str>,
+    started_at: Option<i64>,
+    completed_at: Option<i64>,
+    created_at: i64,
+    parent_run_id: Option<&'a str>,
+    parent_node_name: Option<&'a str>,
+}
+
+impl<'a> From<&'a WorkflowRun> for WorkflowRunView<'a> {
+    fn from(r: &'a WorkflowRun) -> Self {
+        Self {
+            id: &r.id,
+            definition_id: &r.definition_id,
+            state: r.state.as_str(),
+            params: r.params.as_deref(),
+            error: r.error.as_deref(),
+            started_at: r.started_at,
+            completed_at: r.completed_at,
+            created_at: r.created_at,
+            parent_run_id: r.parent_run_id.as_deref(),
+            parent_node_name: r.parent_node_name.as_deref(),
         }
     }
 }
@@ -1347,4 +1388,108 @@ fn cascade_skip_pending(
             log::warn!("[taskito-java] skip node '{}' failed: {e}", node.node_name);
         }
     }
+}
+
+/// `String listWorkflowRuns(long, String definitionNameOrNull, String stateOrNull,
+/// long limit, long offset)` — run summaries as a JSON array (dashboard read).
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_listWorkflowRuns<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    definition_name: JString<'local>,
+    state: JString<'local>,
+    limit: jlong,
+    offset: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let definition_name = read_optional_string(env, &definition_name)?;
+        let state_raw = read_optional_string(env, &state)?;
+        let state = match state_raw.as_deref() {
+            Some(s) => Some(
+                WorkflowState::from_str_val(s)
+                    .ok_or_else(|| BindingError::new(format!("unknown workflow state '{s}'")))?,
+            ),
+            None => None,
+        };
+        let wf = queue.workflow_store()?;
+        let runs = wf.list_workflow_runs(
+            definition_name.as_deref(),
+            state,
+            limit.max(0),
+            offset.max(0),
+        )?;
+        let views: Vec<WorkflowRunView> = runs.iter().map(WorkflowRunView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String getWorkflowRun(long, String runId)` — a single run summary, or
+/// `null` if the run no longer exists.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_getWorkflowRun<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        match wf.get_workflow_run(&run_id)? {
+            Some(run) => new_string(env, to_json(&WorkflowRunView::from(&run))?),
+            None => Ok(std::ptr::null_mut()),
+        }
+    })
+}
+
+/// `String getWorkflowChildren(long, String runId)` — sub-workflow runs spawned
+/// by a run, as a JSON array of run summaries.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_getWorkflowChildren<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        let runs = wf.get_child_workflow_runs(&run_id)?;
+        let views: Vec<WorkflowRunView> = runs.iter().map(WorkflowRunView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String getWorkflowDag(long, String runId)` — the serialized DAG JSON backing
+/// a run, or `null` if the run or its definition no longer exists.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeWorkflows_getWorkflowDag<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    run_id: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let run_id = read_string(env, &run_id)?;
+        let wf = queue.workflow_store()?;
+        let Some(run) = wf.get_workflow_run(&run_id)? else {
+            return Ok(std::ptr::null_mut());
+        };
+        let Some(def) = wf.get_workflow_definition_by_id(&run.definition_id)? else {
+            return Ok(std::ptr::null_mut());
+        };
+        let dag = String::from_utf8(def.dag_data)
+            .map_err(|e| BindingError::new(format!("invalid DAG utf8: {e}")))?;
+        new_string(env, dag)
+    })
 }

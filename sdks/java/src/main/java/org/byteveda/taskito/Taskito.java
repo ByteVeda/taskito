@@ -33,6 +33,7 @@ import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
+import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.resources.PoolConfig;
@@ -291,6 +292,18 @@ public interface Taskito extends AutoCloseable {
 
     /** Cancel a workflow run: skip its pending nodes and mark it cancelled. */
     void cancelWorkflow(String runId);
+
+    /** Workflow run summaries, filtered by definition name and/or state, paged. Nulls mean no filter. */
+    List<WorkflowRunInfo> listWorkflowRuns(String definitionName, String state, long limit, long offset);
+
+    /** A single workflow run summary, or empty if the run no longer exists. */
+    Optional<WorkflowRunInfo> getWorkflowRun(String runId);
+
+    /** Sub-workflow runs spawned by a run. */
+    List<WorkflowRunInfo> getWorkflowChildren(String runId);
+
+    /** The serialized DAG JSON backing a run, or empty if the run/definition is gone. */
+    Optional<String> getWorkflowDag(String runId);
 
     // ── Worker ──────────────────────────────────────────────────────
 
