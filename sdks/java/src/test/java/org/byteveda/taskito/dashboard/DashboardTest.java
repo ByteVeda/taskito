@@ -96,4 +96,15 @@ class DashboardTest {
             }
         }
     }
+
+    @Test
+    @Timeout(30)
+    void convenienceMethodStartsServer(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                        Taskito.builder().sqlite(dir.resolve("t.db").toString()).open();
+                DashboardServer server = queue.dashboard(0, "tok")) {
+            assertTrue(server.port() > 0);
+            assertEquals(200, get(server.port(), "/api/stats?token=tok").statusCode());
+        }
+    }
 }
