@@ -155,8 +155,25 @@ def test_failure_propagated():
 
 ## Testing workflows
 
-Chains, groups, and chords work in test mode because they call `enqueue()`
-internally, which is intercepted by the test mode patch.
+Chains and groups work in test mode because they call `enqueue()`
+internally, which is intercepted by the test mode patch. Chords do too — the
+callback receives the list of group results as its first argument:
+
+```python
+from taskito import chord
+
+@queue.task()
+def sum_results(values: list[int]) -> int:
+    return sum(values)
+
+def test_chord():
+    with queue.test_mode() as results:
+        chord([double.s(1), double.s(2)], sum_results.s()).apply()
+
+        # 2 group tasks + 1 callback = 3 results
+        assert len(results) == 3
+        assert results[-1].return_value == 6  # sum([double(1), double(2)]) = sum([2, 4])
+```
 
 ### Chains
 
@@ -414,7 +431,14 @@ def test_e2e():
   tests without running a real worker.
 </Callout>
 
-## Running tests locally
+## Contributing: taskito's own test suite
+
+<Callout type="info">
+  This section is for people contributing to taskito itself — building the
+  Rust extension and running its internal test suite. If you're testing
+  tasks in your own application, the sections above (`test_mode()`,
+  `TestResult`, `MockResource`) are what you want instead.
+</Callout>
 
 ```bash
 # Rust tests
@@ -426,9 +450,9 @@ uv run maturin develop
 # Python tests
 uv run python -m pytest tests/python/ -v
 
-# Linting
-uv run ruff check py_src/ tests/
-uv run mypy py_src/taskito/ --no-incremental
+# Linting (run from sdks/python/)
+uv run ruff check taskito/ tests/
+uv run mypy taskito/ --no-incremental
 ```
 
 To build with native async support:

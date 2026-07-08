@@ -11,10 +11,12 @@ Mesh scheduling adds a decentralized overlay network on top of the
 gossip, route tasks through a consistent-hashing ring, and steal work from
 busy peers — all without a central coordinator.
 
-<Callout type="info">
-  Mesh is **opt-in** and requires the `mesh` cargo feature at build time.
-  Without it, `MeshWorker` is still importable but passing it to `run_worker`
-  has no effect. Build with: `uv run maturin develop --features mesh,workflows`
+<Callout type="warn" title="Not included in the published wheel">
+  The `taskito` package published to PyPI does **not** include the `mesh`
+  cargo feature. `MeshWorker` is importable from it, but passing it to
+  `run_worker` has no effect. To use mesh scheduling you must build the
+  extension from source with the feature enabled:
+  `uv run maturin develop --features mesh,workflows`
 </Callout>
 
 ## Quick start
@@ -185,6 +187,16 @@ services:
     depends_on:
       - worker-1
 ```
+
+<Callout type="warn" title="Illustrative — the CLI can't consume MESH_* env vars">
+  This compose file is illustrative, not runnable as-is: the `taskito worker`
+  CLI has no mesh flags and never reads `MESH_PORT`/`MESH_SEEDS`/`MESH_KEY`.
+  Mesh is only enabled by calling `queue.run_worker(mesh=...)` in your own
+  Python code. Replace `command: taskito worker --app myapp:queue` with an
+  entrypoint that imports `get_mesh()` below and calls
+  `queue.run_worker(mesh=get_mesh())` directly (e.g.
+  `command: python -m myapp`).
+</Callout>
 
 ```python
 # myapp.py — reads mesh config from environment

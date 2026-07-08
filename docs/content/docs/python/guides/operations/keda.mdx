@@ -9,6 +9,19 @@ import { Callout } from "fumadocs-ui/components/callout";
 taskito worker deployment up and down based on queue depth. taskito ships a
 dedicated scaler server that KEDA queries directly.
 
+<Callout type="info">
+  Requires a Kubernetes cluster with the [KEDA operator](https://keda.sh/docs/latest/deploy/)
+  installed. For bare metal, Docker, or systemd without Kubernetes, use the
+  [bare-metal autoscaler](/python/guides/operations/autoscaler) instead.
+</Callout>
+
+<Callout type="warn">
+  The scaler's `/api/scaler` endpoint is unauthenticated by design — see
+  [Security: Scaler bind address](/python/guides/operations/security#scaler-bind-address).
+  Keep it reachable only from inside the cluster (`ClusterIP`, never a public
+  LoadBalancer or Ingress).
+</Callout>
+
 ## Scaler server
 
 Start the scaler alongside your worker:

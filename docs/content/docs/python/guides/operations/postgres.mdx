@@ -97,12 +97,25 @@ your application tables.
 
 ## Connection pooling
 
-The Postgres backend uses Diesel's `r2d2` connection pool with a default
-size of **10 connections**. Each connection has the `search_path` set to
-the configured schema on acquisition.
+The Postgres backend keeps a pool of reusable connections (default size:
+**10**) rather than opening a new connection per query. Each connection has
+the `search_path` set to the configured schema on acquisition.
 
-The pool size is configured at the Rust layer. For most workloads, the
-default of 10 connections is sufficient.
+Unlike the SQLite backend — where the pool size is fixed and not exposed to
+Python (see [Deployment](/python/guides/operations/deployment#sqlite-scaling-limits))
+— the Postgres pool size is tunable from the `Queue` constructor:
+
+```python
+queue = Queue(
+    backend="postgres",
+    db_url="postgresql://user:password@localhost:5432/myapp",
+    pool_size=20,  # default: 10
+)
+```
+
+For most workloads, the default of 10 connections is sufficient. Lower it for
+managed services with strict per-database connection limits (e.g. Supabase);
+raise it if workers are blocking waiting for a free connection under load.
 
 ## Migrations
 
@@ -242,5 +255,8 @@ pg_dump -h localhost -U taskito -d myapp -n taskito > backup.sql
 psql -h localhost -U taskito -d myapp < backup.sql
 ```
 
-For continuous backups, use PostgreSQL's built-in WAL archiving or a tool
-like [pgBackRest](https://pgbackrest.org/).
+For continuous backups, use PostgreSQL's built-in WAL (write-ahead logging —
+see [WAL mode and backups](/python/guides/operations/deployment#wal-mode-and-backups)
+for what WAL means in the SQLite backend; Postgres uses WAL primarily for
+crash recovery and replication rather than reader/writer concurrency)
+archiving, or a tool like [pgBackRest](https://pgbackrest.org/).
