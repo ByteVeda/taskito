@@ -9,6 +9,20 @@ Canvas primitives for composing task workflows. Import directly from the package
 from taskito import chain, group, chord, chunks, starmap
 ```
 
+<Callout type="warn" title="apply_async() means something different here">
+  On `Signature`, `chain`, `group`, and `chord`, `apply_async()` is an
+  **`async def` coroutine** — you must `await` it. This is the opposite of
+  [`TaskWrapper.apply_async()`](/python/api-reference/task) (the method on a
+  plain `@queue.task()`-decorated function), which is synchronous and returns
+  a [`JobResult`](/python/api-reference/result) directly.
+</Callout>
+
+Canvas primitives are **in-thread orchestrators**: `chain.apply()` / `chord.apply()`
+enqueue each step and block on its result in the calling thread, driving the
+whole pipeline client-side. Unlike Celery, there is no broker-linked callback
+chain running server-side — the state lives only in the process that called
+`apply()`.
+
 ---
 
 ## Signature

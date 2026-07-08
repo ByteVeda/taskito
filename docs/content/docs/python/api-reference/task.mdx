@@ -57,6 +57,14 @@ task.apply_async(
 Enqueue with full control over submission options. Any parameter not provided
 falls back to the decorator's default.
 
+<Callout type="warn" title="This apply_async() is synchronous">
+  On a `TaskWrapper` (a `@queue.task()`-decorated function), `apply_async()` is
+  a **plain synchronous call** that returns a [`JobResult`](/python/api-reference/result)
+  directly — do not `await` it. This is different from `Signature.apply_async()` /
+  `chain.apply_async()` / `group.apply_async()` / `chord.apply_async()` in
+  [Canvas](/python/api-reference/canvas), which **are** coroutines you must `await`.
+</Callout>
+
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `args` | `tuple` | `()` | Positional arguments for the task |
