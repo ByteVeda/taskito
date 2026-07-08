@@ -6,6 +6,7 @@ A Rust-powered task queue with native SDKs. One engine — no broker required, j
 
 [![PyPI version](https://img.shields.io/pypi/v/taskito.svg)](https://pypi.org/project/taskito/)
 [![npm version](https://img.shields.io/npm/v/@byteveda/taskito.svg)](https://www.npmjs.com/package/@byteveda/taskito)
+[![Maven Central](https://img.shields.io/maven-central/v/org.byteveda/taskito.svg)](https://central.sonatype.com/artifact/org.byteveda/taskito)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ByteVeda/taskito/blob/master/LICENSE)
 
 </div>
@@ -21,6 +22,7 @@ and Diesel over SQLite in WAL mode — exposed to each language through a thin n
 |----------|---------|---------|------|
 | **Python** | `pip install taskito` | [PyPI](https://pypi.org/project/taskito/) · [`sdks/python`](sdks/python) | [Python docs](https://docs.byteveda.org/taskito) |
 | **Node.js** | `npm install @byteveda/taskito` | [npm](https://www.npmjs.com/package/@byteveda/taskito) · [`sdks/node`](sdks/node) | [Node docs](https://docs.byteveda.org/taskito/node) |
+| **Java** | `org.byteveda:taskito` | [Maven Central](https://central.sonatype.com/artifact/org.byteveda/taskito) · [`sdks/java`](sdks/java) | [Java docs](https://docs.byteveda.org/taskito/java) |
 
 Each SDK is self-contained — see its README for install, quickstart, and the full API.
 
@@ -46,7 +48,7 @@ truth; the GIL/event loop is held only during task execution. `WorkerDispatcher`
 |---|---|---|---|---|---|
 | Broker required | **No** | Yes | Yes | Yes | Yes |
 | Core language | **Rust** | Python | Python | Python | Python |
-| Language SDKs | **Python, Node** | Python | Python | Python | Python |
+| Language SDKs | **Python, Node, Java** | Python | Python | Python | Python |
 | Priority queues | **Yes** | Yes | No | No | Yes |
 | Rate limiting | **Yes** | Yes | No | Yes | No |
 | Dead letter queue | **Yes** | No | Yes | No | No |
