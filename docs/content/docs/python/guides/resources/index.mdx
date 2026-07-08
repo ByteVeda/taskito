@@ -7,7 +7,19 @@ The resource system gives tasks clean access to external dependencies —
 database connections, HTTP clients, cloud clients — without passing live
 objects through the queue. It operates in three layers that together solve
 a fundamental distributed systems problem: task arguments must be
-serializable, but most real-world dependencies are not.
+serializable (able to be turned into bytes so they can cross the process
+boundary into the worker), but most real-world dependencies are not.
+
+Coming from Celery (which has no first-class DI), resources replace the
+module-level globals you'd otherwise create — a single `db = create_engine(...)`
+at import time — with per-worker instances that taskito initializes, scopes, and
+tears down for you.
+
+Two terms come up throughout this section: a **recipe** is the small,
+serializable dict a proxy handler extracts from a live object (e.g. a file
+path and mode) so the worker can rebuild it later, and a **DI marker** is the
+placeholder that replaces a redirected argument (like a database session) so
+the worker knows which named resource to inject in its place.
 
 <Mermaid
   chart={`graph TD
@@ -66,6 +78,10 @@ def process_order(order_id: int, db: Inject["db"]):
     finally:
         session.close()
 ```
+
+The injected `db` is the `sessionmaker` returned by `create_db()`, not a
+session itself — call it (`session = db()`) to get a usable session, and
+close it when you're done.
 
 Enqueue from anywhere in your application:
 

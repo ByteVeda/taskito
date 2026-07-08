@@ -30,7 +30,7 @@ status = queue.resource_status()
 #     "scope": "worker",
 #     "health": "healthy",
 #     "init_duration_ms": 45.2,
-#     "recreations": 1,
+#     "recreations": 0,
 #     "depends_on": ["config"],
 #   },
 #   {
@@ -67,10 +67,10 @@ stats = queue.interception_stats()
 #   "total_duration_ms": 216.0,
 #   "avg_duration_ms": 0.18,
 #   "strategy_counts": {
-#     "pass": 2800,
-#     "convert": 450,
-#     "redirect": 200,
-#     "proxy": 30,
+#     "pass": 800,
+#     "convert": 250,
+#     "redirect": 100,
+#     "proxy": 50,
 #     "reject": 0,
 #   },
 #   "max_depth_reached": 3,
@@ -183,7 +183,7 @@ collector.start()
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `taskito_resource_health_status` | Gauge | `resource` | `1` if healthy, `0` if unhealthy |
-| `taskito_resource_recreation_total` | Gauge | `resource` | Total recreation count |
+| `taskito_resource_recreation_total` | Gauge | `resource` | Total recreation count (a Gauge, not a Counter, despite the `_total` suffix — it's set to the current count on each poll rather than incremented) |
 | `taskito_resource_init_duration_seconds` | Gauge | `resource` | Initialization duration |
 | `taskito_resource_pool_size` | Gauge | `resource` | Pool max size (task scope) |
 | `taskito_resource_pool_active` | Gauge | `resource` | Active pool instances |
