@@ -73,7 +73,8 @@ queue = Queue(db_path="myapp.db", workers=8)  # Explicit count
 
 ## Prefork pool
 
-The default worker pool uses OS threads, which share a single Python GIL. For
+The default worker pool uses OS threads, which share a single Python GIL
+(Global Interpreter Lock — only one thread runs Python bytecode at a time). For
 CPU-bound tasks, use the prefork pool — it spawns separate child processes,
 each with its own GIL:
 

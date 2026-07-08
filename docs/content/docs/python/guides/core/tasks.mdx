@@ -34,7 +34,6 @@ def process_data(data: dict) -> str:
 | `queue` | `str` | `"default"` | Named queue to submit to. |
 | `circuit_breaker` | `dict \| None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
-| `expires` | `float \| None` | `None` | Seconds until the job expires if not started. |
 | `inject` | `list[str] \| None` | `None` | Worker resource names to inject as keyword arguments. See [Resource System](/python/guides/resources). |
 | `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to the queue-level serializer. |
 | `max_concurrent` | `int \| None` | `None` | Max concurrent running instances of this task. `None` means no limit. |
@@ -107,12 +106,16 @@ def important_task():
 
 ### Job expiration
 
-Skip jobs that weren't started within the deadline:
+`expires` is an **enqueue-time** option (not a decorator option) — skip a job that
+wasn't started within the deadline:
 
 ```python
-@queue.task(expires=300)  # skip if not started within 5 minutes
+@queue.task()
 def time_sensitive():
     ...
+
+# Skip if not started within 5 minutes
+time_sensitive.apply_async(args=(), expires=300)
 ```
 
 ### Max retry delay
@@ -142,9 +145,9 @@ def expensive_render():
 Override the queue-level serializer for a specific task:
 
 ```python
-from taskito.serializers import JSONSerializer
+from taskito.serializers import JsonSerializer
 
-@queue.task(serializer=JSONSerializer())
+@queue.task(serializer=JsonSerializer())
 def api_event(payload: dict) -> dict:
     ...
 ```
@@ -209,23 +212,17 @@ result = send_email("user@example.com", "Hello", "World")  # Runs immediately
 
 ## Batch enqueue
 
-Enqueue many jobs in a single SQLite transaction:
+Enqueue many jobs in one transaction with `task.map()` or `queue.enqueue_many()`:
 
 ```python
-# Via task.map()
 jobs = send_email.map([
     ("alice@example.com", "Hi", "Body"),
     ("bob@example.com", "Hi", "Body"),
-    ("carol@example.com", "Hi", "Body"),
 ])
-
-# Via queue.enqueue_many()
-jobs = queue.enqueue_many(
-    task_name=send_email.name,
-    args_list=[("alice@example.com",), ("bob@example.com",)],
-    kwargs_list=[{"subject": "Hi", "body": "Body"}] * 2,
-)
 ```
+
+See [Batch enqueue](/python/guides/advanced-execution/batch-enqueue) for
+`enqueue_many()`, per-item overrides, and per-item result tracking.
 
 ## Metadata
 

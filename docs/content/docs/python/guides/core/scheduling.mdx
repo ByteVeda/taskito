@@ -62,6 +62,10 @@ taskito uses **6-field cron expressions** (with seconds):
 * * * * * *
 ```
 
+> **Coming from Celery:** Celery's `crontab()` only maps to the last 5 fields
+> (minute, hour, day of month, month, day of week) — prepend a seconds field
+> to get taskito's 6-field format.
+
 | Expression | Schedule |
 |---|---|
 | `*/30 * * * * *` | Every 30 seconds |

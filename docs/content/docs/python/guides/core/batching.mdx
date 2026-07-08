@@ -5,6 +5,14 @@ description: Collect many small calls into one larger job
 
 When a task does small per-call work — sending an email, writing a row, calling an API — running one job per call is wasteful. `@queue.task(batch=...)` collects calls in memory and dispatches them as a single job whose payload is the list of accumulated items.
 
+<Callout type="info" title="Not the same as batch enqueue">
+  Task batching coalesces many `.delay()` calls into **one** job.
+  [Batch enqueue](/python/guides/advanced-execution/batch-enqueue)
+  (`task.map()` / `enqueue_many()`) does the reverse — it writes **many** jobs in
+  one transaction. Reach for task batching to cut per-call overhead; reach for
+  batch enqueue for bulk-insert throughput.
+</Callout>
+
 ```python
 from taskito import Queue
 
