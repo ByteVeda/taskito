@@ -114,3 +114,9 @@ app.post("/hooks/deploy-approval", async (req, res) => {
   res.sendStatus(204);
 });
 ```
+
+> **Coming from BullMQ?** `FlowProducer` has no pause/resume primitive — a
+> human-in-the-loop approval step is something you'd build yourself (e.g. a
+> job that polls a database flag). taskito's `.gate()` is a first-class step
+> kind: the run genuinely pauses, and `approveGate`/`rejectGate` resolve it
+> from any process.

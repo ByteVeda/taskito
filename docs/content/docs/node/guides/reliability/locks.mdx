@@ -46,3 +46,9 @@ if (lock.acquire()) {
   never holds a lock past its TTL. Choose a `ttlMs` comfortably longer than the
   protected work's worst case.
 </Callout>
+
+> **Coming from BullMQ?** BullMQ's locking is internal — a `lockDuration`
+> per job that stops two workers double-processing it, not something you can
+> call from application code. taskito's `queue.lock()` / `withLock()` is a
+> general-purpose distributed lock you can use for *any* critical section, job
+> processing or not.

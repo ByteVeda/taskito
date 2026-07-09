@@ -81,6 +81,10 @@ rollback.
   partially consistent.
 </Callout>
 
+> **Coming from BullMQ?** There's no built-in saga/compensation concept in
+> BullMQ — you'd hand-roll rollback logic in your own failure handler. taskito's
+> `compensate` option and automatic reverse-order rollback are taskito-only.
+
 ## Compensate task signature
 
 The compensate task receives the forward step's return value as its single
