@@ -76,7 +76,9 @@ with the shared secret's raw UTF-8 bytes and comparing against the
 
 ## SSRF guard
 
-Webhook URLs are vetted by `WebhookUrlValidator` before dashboard-submitted
+SSRF (tricking the server into fetching an internal URL) is the main risk of
+letting users configure outbound webhook targets. Webhook URLs are vetted by
+`WebhookUrlValidator` before dashboard-submitted
 subscriptions are stored, and **every delivery re-validates the URL right
 before sending** — regardless of how the subscription was created — so a
 hostname that starts safe and is later rebound to an internal address (DNS

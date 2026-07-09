@@ -25,8 +25,11 @@ try (Taskito queue = Taskito.builder().sqlite("tasks.db").open()) {
 | Page | What it covers |
 |---|---|
 | [Dependency injection](/java/guides/resources/dependency-injection) | `Taskito.resource()`, the five scopes, `Resources.use`, annotation-driven injection, teardown, metrics |
+| [Configuration](/java/guides/resources/configuration) | The `resource()` overloads, choosing a scope, teardown, and `PoolConfig` tuning |
 | [Enqueue interception](/java/guides/resources/interception) | `Interceptor` strategies and the `onEnqueue` hook — validate, rewrite, redirect, and reject jobs before serialization |
 | [Resource proxies](/java/guides/resources/proxies) | Signed `ProxyRef`s for non-serializable values — HMAC signing, TTL, purpose binding, sessions |
+| [Observability](/java/guides/resources/observability) | Reading `resourceMetrics()` — created/disposed/active counters |
+| [Testing](/java/guides/resources/testing) | Registering stub resources with `InMemoryTaskito` |
 
 ## The five scopes
 

@@ -91,7 +91,7 @@ taskito:
 | Property | Type | Default | Description |
 |---|---|---|---|
 | `taskito.dashboard.enabled` | `boolean` | `false` | Auto-start the dashboard server |
-| `taskito.dashboard.port` | `int` | `8080` | Bind port (`0` for ephemeral) |
+| `taskito.dashboard.port` | `int` | `8081` | Bind port (`0` for ephemeral); defaults off Spring Boot's own `8080` |
 | `taskito.dashboard.token` | `String` | none | Legacy shared token gating `/api/*`; unset enables [session auth](/java/guides/operations/dashboard#session-auth-default) |
 | `taskito.dashboard.static-dir` | `String` | auto-discovered | Directory of a prebuilt SPA, overriding the jar's extracted copy |
 | `taskito.dashboard.secure-cookies` | `boolean` | `true` | Drop the `Secure` cookie attribute for local HTTP development |
