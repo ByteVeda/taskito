@@ -18,10 +18,11 @@ import type { Route } from "./+types/home";
 
 export function meta(_: Route.MetaArgs) {
   return [
-    { title: "Taskito — one queue, built for Python" },
+    { title: "Taskito — background jobs without a broker" },
     {
       name: "description",
-      content: "Rust-powered task queue for Python. No broker required.",
+      content:
+        "Keep your app fast — run slow work in the background. A Rust-powered task queue with no message broker, for Python, Node, and Java.",
     },
   ];
 }
