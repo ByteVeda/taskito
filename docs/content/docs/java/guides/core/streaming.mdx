@@ -31,6 +31,13 @@ them the same way, so they are readable here.
 `getTaskLogs(jobId)` returns every row for the job, oldest first; poll it until
 the job is terminal:
 
+<Callout type="info">
+  This loop assumes a worker is already running the `train` handler
+  elsewhere — e.g. `taskito.worker().handle(train, p -> runTraining(p))
+  .start()` in another process or thread. Without one, the job stays
+  `PENDING` and the loop polls forever.
+</Callout>
+
 ```java
 String id = taskito.enqueue(train, config);
 

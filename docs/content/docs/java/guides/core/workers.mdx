@@ -21,6 +21,15 @@ core, and handlers execute on a Java thread pool. The worker registers itself
 and heartbeats, so it appears in `listWorkers()` and on the dashboard;
 `close()` unregisters it.
 
+<Callout type="info" title="Coming from Spring @Async?">
+  `@Async` runs the call inline on a Spring-managed thread pool the moment
+  it's invoked — there's no separate producer/consumer step, and queued calls
+  are lost on restart. A `Worker` is a separate, explicitly started process
+  (or thread) that polls durable storage; nothing runs until one is up, and
+  work already enqueued survives a restart because it lives in the store, not
+  in a JVM executor.
+</Callout>
+
 ## Builder options
 
 | Option | Description |
