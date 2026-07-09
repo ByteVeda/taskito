@@ -41,9 +41,9 @@ const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest
 // timing-safe compare against the x-taskito-signature header
 ```
 
-The deliverer fetches the configured URL directly — there is **no SSRF allowlist**.
-Only register webhook URLs you control, and validate them before storing if they
-come from users.
+The deliverer fetches the configured URL directly — there is **no SSRF (server-side
+request forgery) allowlist**. Only register webhook URLs you control, and
+validate them before storing if they come from users.
 
 ## Dashboard
 

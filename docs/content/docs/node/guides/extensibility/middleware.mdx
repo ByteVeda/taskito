@@ -34,9 +34,10 @@ The execution hooks (`before`/`after`/`onError`) receive a context with
 `taskName`, `jobId`, and `args`. The outcome hooks receive an event with
 `taskName`, `jobId`, `queue`, `retryCount`, and `timedOut` (which separates a
 timeout from other failures). `onEnqueue` receives a *mutable* enqueue context —
-see [Enqueue interception](/node/guides/resources/interception). Multiple
-middlewares run in registration order; `before` outermost-first, `after` in
-reverse.
+see [Enqueue interception](/node/guides/resources/interception). Every hook —
+`before`, `after`, `onError`, and the outcome hooks — runs in the same
+registration order for every middleware; the Node SDK doesn't reverse `after`
+the way an "onion" middleware model would.
 
 <Callout type="info">
   Middleware wraps execution and can do async work in the hot path — keep it

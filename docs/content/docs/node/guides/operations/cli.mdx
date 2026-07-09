@@ -12,8 +12,9 @@ taskito --db taskito.db stats
 taskito --db taskito.db jobs --status failed
 taskito --db taskito.db dlq list
 taskito --db taskito.db dlq retry <deadId>
-taskito --db taskito.db queues
 taskito --db taskito.db pause default
+taskito --db taskito.db resume default
+taskito --db taskito.db paused
 taskito --db taskito.db cancel <jobId>
 ```
 
