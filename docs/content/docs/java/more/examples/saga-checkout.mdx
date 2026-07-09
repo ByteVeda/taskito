@@ -67,17 +67,37 @@ public final class Checkout {
 ## Running it
 
 The worker registers the forward *and* compensation handlers, and tracks
-workflows so the saga orchestrator can drive the rollback.
+workflows so the saga orchestrator can drive the rollback. Start it before
+submitting — an unclaimed job never progresses, so `run.await(...)` would
+otherwise time out.
 
 ```java
-WorkflowRun run = Checkout.submit(taskito, order);
-WorkflowStatus done = run.await(Duration.ofMinutes(1));
+import java.time.Duration;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.worker.Worker;
+import org.byteveda.taskito.workflows.WorkflowRun;
+import org.byteveda.taskito.workflows.WorkflowStatus;
 
-switch (done.state) {
-    case COMPLETED -> System.out.println("order placed");
-    case COMPENSATED -> System.out.println("rolled back cleanly — customer charged nothing");
-    case COMPENSATION_FAILED -> System.err.println("manual intervention needed");
-    default -> System.out.println(done.state.wire());
+try (Taskito taskito = Taskito.builder().sqlite("checkout.db").open();
+        Worker worker = taskito.worker()
+                .handle(Tasks.RESERVE, order -> inventory.reserve(order))
+                .handle(Tasks.RELEASE, reservation -> inventory.release(reservation))
+                .handle(Tasks.CHARGE, order -> payments.charge(order))
+                .handle(Tasks.REFUND, charge -> payments.refund(charge))
+                .handle(Tasks.SHIP, order -> shipping.create(order))
+                .handle(Tasks.CANCEL_SHIPMENT, shipment -> shipping.cancel(shipment))
+                .trackWorkflows()
+                .start()) {
+
+    WorkflowRun run = Checkout.submit(taskito, order);
+    WorkflowStatus done = run.await(Duration.ofMinutes(1));
+
+    switch (done.state) {
+        case COMPLETED -> System.out.println("order placed");
+        case COMPENSATED -> System.out.println("rolled back cleanly — customer charged nothing");
+        case COMPENSATION_FAILED -> System.err.println("manual intervention needed");
+        default -> System.out.println(done.state.wire());
+    }
 }
 ```
 
