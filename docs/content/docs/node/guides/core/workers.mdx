@@ -39,3 +39,13 @@ queue.task("fetch", async (url: string) => (await fetch(url)).text());
   Producers and workers only share storage. Enqueue from a web process and run
   workers from a separate process pointed at the same `dbPath` / DSN.
 </Callout>
+
+<Callout type="info" title="Coming from BullMQ?">
+  BullMQ's `new Worker(queueName, processor, { concurrency: N })` runs `N`
+  jobs at once **per worker process** — concurrency scales with how many
+  workers you start. taskito's `runWorker()` takes no processor or
+  concurrency argument (handlers come from `queue.task()`); simultaneous
+  execution is bounded by per-task/per-queue
+  [`maxConcurrent`](/node/guides/reliability/concurrency), enforced by the
+  scheduler across *all* workers on shared storage, not per process.
+</Callout>

@@ -32,6 +32,7 @@ order, then ends when the job reaches a terminal state.
 
 ```ts
 const id = queue.enqueue("train", [10]);
+queue.runWorker(); // a worker must be consuming the queue for `train` to run
 
 for await (const update of queue.stream(id)) {
   console.log(`epoch ${update.epoch}: loss ${update.loss}`);
@@ -43,6 +44,13 @@ const result = await queue.result(id); // "trained"
 `stream(jobId, { timeoutMs, pollMs })` bounds the wait (default 60 s) and poll
 interval (default 200 ms). It works from any process sharing the storage, and a
 late consumer still drains every value already published.
+
+<Callout type="info">
+  `stream()` and `result()` only resolve once a worker actually runs the job.
+  If nothing is consuming the queue, `stream()` yields nothing until its
+  timeout and `result()` rejects with a timeout error — start a worker
+  (`queue.runWorker()`) before or right after enqueuing.
+</Callout>
 
 ## Raw logs
 

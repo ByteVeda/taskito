@@ -33,3 +33,10 @@ queue.registerPeriodic("daily-digest", "digest", "0 0 9 * * *", {
 
 For a one-off future run, use [`delayMs`](/node/guides/core/enqueue-options#delayed-jobs)
 instead of a periodic schedule.
+
+> **Coming from BullMQ?** BullMQ attaches a repeat schedule to a job via
+> `add(name, data, { repeat: { pattern: cron } })` — the schedule lives inside
+> an enqueue call. taskito separates the two: `registerPeriodic(name,
+> taskName, cron, options?)` is its own call, independent of any single
+> `enqueue()`, and `deletePeriodic`/`pausePeriodic`/`resumePeriodic` manage it
+> by name afterward.
