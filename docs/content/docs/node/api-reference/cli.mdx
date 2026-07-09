@@ -15,14 +15,15 @@ on read commands prints machine-readable output.
 | Command | Description |
 |---|---|
 | `enqueue <task> '<jsonArgs>'` | Enqueue a job. |
-| `stats` | Overall queue stats. |
+| `stats [-q <queue>]` | Overall stats, or a single queue's with `-q`. |
 | `jobs [--status <s>] [--limit <n>]` | List jobs. |
-| `queues` | Per-queue stats. |
-| `cancel <jobId>` | Request cancellation. |
+| `cancel <jobId>` | Cancel a pending job, or request cancellation of a running one. |
 | `pause <queue>` / `resume <queue>` | Queue control. |
-| `dlq list` / `dlq retry <id>` / `dlq delete <id>` | Dead-letter ops. |
+| `paused` | List paused queues. |
+| `dlq list` / `dlq retry <id>` / `dlq delete <id>` / `dlq purge [--older-than-ms <n>]` | Dead-letter (DLQ) ops. |
 | `run <module> [--queues a,b]` | Load a module exporting a `Queue` and run its worker. |
 | `dashboard [--port <n>]` | Serve the [dashboard](/node/guides/operations/dashboard). |
+| `scaler [--port <n>] [--target-queue-depth <n>]` | Serve the [KEDA](/node/guides/operations/keda) scaler metric endpoint. |
 
 ```bash
 taskito --db taskito.db enqueue add '[2,3]'

@@ -89,7 +89,7 @@ const run = queue.workflows
   .step("list", "listUrls", { args: [urls] })
   .fanOut("fetch", { after: "list", task: "fetchPage", itemsFrom: "list", queue: "network" })
   .fanIn("aggregate", { after: "fetch", task: "aggregate" })
-  .submit({ queueDefault: "default" });
+  .submit();
 
 const final = await run.wait({ timeoutMs: 120_000 });
 console.log(run.runId, final.state);
@@ -143,5 +143,5 @@ process.on("SIGINT", () => {
 | Transient-failure retries | `retryBackoff` |
 | Workload isolation | `network` queue + `runWorker({ queues })` |
 | Cross-cutting logging | `queue.use({ before, after, onError })` |
-| Parallel-then-join | workflow `chord` |
+| Parallel-then-join over results | workflow `fanOut` / `fanIn` |
 | Scheduled maintenance | `registerPeriodic` + `purgeCompleted` |

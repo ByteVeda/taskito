@@ -34,6 +34,47 @@ new Queue({
 });
 ```
 
+## Payload codecs
+
+A `PayloadCodec` is a reversible byte transform layered *around* a serializer
+— compression, encryption, signing — rather than a replacement for it. Codecs
+compose: a chain encodes in list order on the producer and decodes in reverse
+on the worker. Wire formats are part of the cross-SDK contract, so a
+codec-framed payload decodes from any Taskito SDK.
+
+```ts
+interface PayloadCodec {
+  encode(data: Uint8Array): Uint8Array;
+  decode(data: Uint8Array): Uint8Array;
+}
+```
+
+| Class | Wire format | Description |
+|---|---|---|
+| `GzipCodec(maxDecompressedBytes?)` | standard gzip stream | Compresses; decompression capped at 64 MiB by default (zip-bomb guard). |
+| `HmacCodec(key)` | `[32-byte mac][body]` | HMAC-SHA256 signs; rejects tampered or wrong-key payloads. |
+| `AesGcmCodec(key)` | `[12-byte IV][ciphertext \|\| 16-byte tag]` | AES-128/192/256-GCM (by key length); confidentiality + integrity. |
+
+Apply a chain queue-wide with `QueueOptions.codec` (wraps the serializer,
+covers every payload and result), or register named codecs via
+`QueueOptions.codecs` and opt individual tasks in with `TaskOptions.codecs`
+(payload only — results still use the plain serializer):
+
+```ts
+import { Queue, GzipCodec, HmacCodec } from "@byteveda/taskito";
+
+const queue = new Queue({
+  dbPath: "taskito.db",
+  codec: [new GzipCodec(), new HmacCodec(hmacKey)], // encodes gzip, then hmac
+});
+```
+
+<Callout type="info">
+  `CodecSerializer` is the internal `Serializer` that layers a codec chain
+  around a delegate serializer — `QueueOptions.codec` builds one for you, so
+  you rarely construct it directly.
+</Callout>
+
 ## `Serializer` interface
 
 ```ts

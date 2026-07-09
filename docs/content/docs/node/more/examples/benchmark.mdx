@@ -27,7 +27,7 @@ const enqueueMs = Date.now() - t0;
 // 2. Processing throughput — drain the backlog, polling stats until empty.
 const t1 = Date.now();
 const worker = queue.runWorker({ queues: ["default"], batchSize: 64, channelCapacity: 512 });
-while ((await queue.stats()).complete < N) {
+while ((await queue.stats()).completed < N) {
   await new Promise((r) => setTimeout(r, 20));
 }
 const processMs = Date.now() - t1;
@@ -82,6 +82,6 @@ latency:  p50 8ms  p99 42ms
 | Pattern | Where |
 | --- | --- |
 | Batched staging | `queue.enqueueMany` |
-| Drain to a target | poll `await queue.stats()` for `.complete` |
+| Drain to a target | poll `await queue.stats()` for `.completed` |
 | Worker throughput knobs | `runWorker({ batchSize, channelCapacity })` |
 | Latency percentiles | `listJobs` + `completedAt - createdAt` |

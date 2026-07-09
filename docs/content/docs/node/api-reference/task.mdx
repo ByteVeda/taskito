@@ -4,13 +4,15 @@ description: "queue.task registration and per-task configuration."
 ---
 
 ```ts
-queue.task(name: string, fn: (...args) => R | Promise<R>, config?: TaskConfig): void
+queue.task(name: string, fn: (...args) => R | Promise<R>, options?: TaskOptions): Queue
 ```
 
-Registers a task. `fn` may be sync or `async`; its return value becomes the job
-result. Re-registering a name replaces the function and config.
+Registers a task and returns the queue (chainable) so `enqueue` can infer each
+task's argument types from successive `.task()` calls. `fn` may be sync or
+`async`; its return value becomes the job result. Re-registering a name
+replaces the function and options.
 
-## `TaskConfig`
+## `TaskOptions`
 
 | Field | Type | Description |
 |---|---|---|
@@ -21,6 +23,7 @@ result. Re-registering a name replaces the function and config.
 | `rateLimit` | `` `"100/m"` `` | Rate limit as `count/unit`, unit `s` \| `m` \| `h`. |
 | `circuitBreaker` | `{ threshold, windowMs, cooldownMs }` | Trip after repeated failures. |
 | `inject` | `string[]` | Resource names injected as a trailing `deps` argument. See [Dependency injection](/node/guides/resources/dependency-injection). |
+| `codecs` | `string[]` | Names of registered [payload codecs](/node/api-reference/serializers) applied to this task's payload only. |
 
 ```ts
 queue.task("add", (a: number, b: number) => a + b, {
