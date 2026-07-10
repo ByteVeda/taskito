@@ -7,7 +7,7 @@ import { SDK_IDS } from "../../../app/lib/sdk-registry.ts";
 // Blocking: the shared tree starts empty, so there is no legacy debt.
 
 const BLOCK_RE = /<CodeTabs[^>]*>[\s\S]*?<\/CodeTabs>/g;
-const TAB_RE = /<Tab\s+sdk="([a-z]+)"/g;
+const TAB_RE = /<Tab\b[^>]*\ssdk="([a-z]+)"/g;
 
 export function checkCodeTabs(files) {
   const errors = [];
