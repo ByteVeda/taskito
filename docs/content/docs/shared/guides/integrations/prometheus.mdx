@@ -339,7 +339,8 @@ scrape_configs:
 
 Using the same setup as the [full example](#full-example) above, a couple of
 alerting rules worth adding — `taskito_dlq_size` and `taskito_jobs_total`
-exist on every SDK, so this rule file needs no changes between them:
+carry the same names in the Python and Node exporters, so this rule file
+works unchanged for both:
 
 ```yaml
 groups:
@@ -360,6 +361,20 @@ groups:
         annotations:
           summary: "High task failure rate: {{ $value }} failures/sec"
 ```
+
+These expressions assume the default `taskito` namespace. If you configured a
+custom one (`namespace: "myapp"` in the [Options](#options) above), rewrite
+the prefixes to match — `myapp_dlq_size`, `myapp_jobs_total` — or the alerts
+silently match no series.
+
+<SdkOnly sdk="java">
+
+Java exports metrics through
+[Micrometer](/java/guides/integrations/micrometer), not this contrib — the
+metric names in these rules don't exist there. Build the equivalent alerts on
+the names your Micrometer→Prometheus registry emits instead.
+
+</SdkOnly>
 
 ## Combining with other middleware
 
