@@ -114,7 +114,7 @@ Register a function as a background task. Returns a [`TaskWrapper`](/python/api-
 | `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to queue-level serializer. |
 | `max_concurrent` | `int \| None` | `None` | Max concurrent running instances. `None` = no limit. |
 | `idempotent` | `bool` | `False` | Auto-derive a dedup key from `sha256(task_name\|payload)` so duplicate `.delay()`/`.apply_async()` calls while a job is pending or running return the same job ID. |
-| `compensates` | `TaskWrapper \| str \| None` | `None` | Saga compensator for this task, enqueued in reverse order if a later workflow step fails. See [Sagas](/python/guides/workflows/sagas). |
+| `compensates` | `TaskWrapper \| str \| None` | `None` | Saga compensator for this task, enqueued in reverse order if a later workflow step fails. See [Sagas](/python/guides/workflows/saga). |
 | `batch` | `bool \| dict \| None` | `None` | Enable producer-side batching (`True` for defaults, or a dict with `max_size`/`max_wait_ms`). See [Batching](/python/guides/core/batching). |
 | `predicate` | `Predicate \| Callable \| None` | `None` | Gate execution on a runtime condition, checked at enqueue time and worker-dispatch time. See [Predicates](/python/guides/core/predicates). |
 | `on_false` | `str` | `"defer"` | What to do when `predicate` returns `False` — `"defer"` (re-schedule) or `"cancel"` (terminally skip). |
