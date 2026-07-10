@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   applyDiagramTheme,
@@ -15,6 +15,8 @@ export function Mermaid({ chart }: { chart: string }) {
   // the chart renders large (already "zoomed in") — readable without an inline
   // scrollbar. Click anywhere or press Escape to close.
   const [zoomed, setZoomed] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const modalRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,9 +64,18 @@ export function Mermaid({ chart }: { chart: string }) {
     if (!zoomed) {
       return;
     }
+    // Move focus into the overlay so the keyboard isn't stranded on the
+    // now-hidden trigger; restore it to the trigger on close.
+    const trigger = triggerRef.current;
+    modalRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setZoomed(false);
+      } else if (event.key === "Tab") {
+        // The overlay is the only focusable element — trap Tab on it so
+        // focus can't reach background controls behind the modal.
+        event.preventDefault();
+        modalRef.current?.focus();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -73,6 +84,7 @@ export function Mermaid({ chart }: { chart: string }) {
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      trigger?.focus();
     };
   }, [zoomed]);
 
@@ -82,6 +94,7 @@ export function Mermaid({ chart }: { chart: string }) {
     <>
       {!zoomed && (
         <button
+          ref={triggerRef}
           type="button"
           className="mermaid-fig"
           aria-label="Enlarge diagram"
@@ -93,6 +106,7 @@ export function Mermaid({ chart }: { chart: string }) {
       {zoomed &&
         createPortal(
           <button
+            ref={modalRef}
             type="button"
             className="mermaid-modal"
             aria-label="Close enlarged diagram"
