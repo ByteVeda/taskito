@@ -26,6 +26,7 @@
   --indigo-soft: rgba(31, 157, 84, 0.12);
   --indigo-line: rgba(31, 157, 84, 0.26);
   --cyan: #29b8a8;
+  --turquoise: #40e0d0;
   --grn: #4ec985;
   --amber: #ffb86b;
   --red: #ff6b6b;
@@ -65,6 +66,8 @@
   --indigo-soft: rgba(16, 161, 82, 0.1);
   --indigo-line: rgba(16, 161, 82, 0.26);
   --cyan: #0d9488;
+  /* deeper turquoise on warm paper — bright #40e0d0 fails contrast on light bg */
+  --turquoise: #0d9e8f;
   --grn: #15a34a;
   --amber: #c2410c;
   --red: #dc2626;
