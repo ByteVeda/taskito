@@ -327,6 +327,30 @@ body {
   place-items: center;
   flex: none;
 }
+/* FAQ page: auto-number each question with the same numbered badge used for
+   manually-badged headings elsewhere. Counter-driven, so reordering/adding
+   questions renumbers automatically with no content edits. */
+.article[data-page="faq"] {
+  counter-reset: faq;
+}
+.article[data-page="faq"] h2 {
+  counter-increment: faq;
+}
+.article[data-page="faq"] h2::before {
+  content: counter(faq);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--indigo-br);
+  background: var(--indigo-soft);
+  border: 1px solid var(--indigo-line);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
 .article h3 {
   font-size: 18px;
   font-weight: 600;
