@@ -542,10 +542,9 @@ services:
   This compose file is illustrative, not runnable as-is: the `taskito worker`
   CLI has no mesh flags and never reads `MESH_PORT`/`MESH_SEEDS`/`MESH_KEY`.
   Mesh is only enabled by calling `queue.run_worker(mesh=...)` in your own
-  Python code. Replace `command: taskito worker --app myapp:queue` with an
-  entrypoint that imports `get_mesh()` below and calls
-  `queue.run_worker(mesh=get_mesh())` directly (e.g.
-  `command: python -m myapp`).
+  Python code. Replace `command: taskito worker --app myapp:queue` with
+  `command: python -m myapp`, where `myapp` is a module like the one below —
+  its `__main__` block starts the worker with the env-derived mesh config.
 </Callout>
 
 ```python
@@ -566,6 +565,9 @@ def get_mesh() -> MeshWorker | None:
         seeds=seeds,
         encryption_key=os.environ.get("MESH_KEY"),
     )
+
+if __name__ == "__main__":
+    queue.run_worker(mesh=get_mesh())
 ```
 
 </SdkOnly>
