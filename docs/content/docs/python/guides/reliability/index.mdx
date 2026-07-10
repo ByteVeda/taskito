@@ -5,12 +5,40 @@ description: "Harden your task queue for production workloads."
 
 Harden your task queue for production workloads.
 
-| Guide | Description |
-|---|---|
-| [Retries & Dead Letters](/python/guides/reliability/retries) | Automatic retries with exponential backoff, dead letter queue |
-| [Error Handling](/python/guides/reliability/error-handling) | Task failure lifecycle, error inspection, debugging patterns |
-| [Delivery Guarantees](/python/guides/reliability/guarantees) | At-least-once delivery, idempotency, and exactly-once patterns |
-| [Idempotency](/python/guides/reliability/idempotency) | Auto-derived dedup keys — identical enqueues coalesce to one execution |
-| [Rate Limiting](/python/guides/reliability/rate-limiting) | Throttle task execution with token bucket rate limits |
-| [Circuit Breakers](/python/guides/reliability/circuit-breakers) | Protect downstream services from cascading failures |
-| [Distributed Locking](/python/guides/reliability/locking) | Mutual exclusion across workers with database-backed locks |
+<Cards>
+  <Card
+    title="Retries & Dead Letters"
+    href="/python/guides/reliability/retries"
+    description="Automatic retries with exponential backoff, dead letter queue"
+  />
+  <Card
+    title="Error Handling"
+    href="/python/guides/reliability/error-handling"
+    description="Task failure lifecycle, error inspection, debugging patterns"
+  />
+  <Card
+    title="Delivery Guarantees"
+    href="/python/guides/reliability/guarantees"
+    description="At-least-once delivery, idempotency, and exactly-once patterns"
+  />
+  <Card
+    title="Idempotency"
+    href="/python/guides/reliability/idempotency"
+    description="Auto-derived dedup keys — identical enqueues coalesce to one execution"
+  />
+  <Card
+    title="Rate Limiting"
+    href="/python/guides/reliability/rate-limiting"
+    description="Throttle task execution with token bucket rate limits"
+  />
+  <Card
+    title="Circuit Breakers"
+    href="/python/guides/reliability/circuit-breakers"
+    description="Protect downstream services from cascading failures"
+  />
+  <Card
+    title="Distributed Locking"
+    href="/python/guides/reliability/locking"
+    description="Mutual exclusion across workers with database-backed locks"
+  />
+</Cards>

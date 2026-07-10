@@ -3,9 +3,6 @@ title: Overview
 description: "Zero-dependency built-in web UI for browsing jobs, configuring webhooks, tuning per-task runtime limits, and managing the queue."
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
-import { Tab, Tabs } from "fumadocs-ui/components/tabs";
-
 taskito ships with a built-in web dashboard for monitoring jobs, inspecting
 dead letters (the DLQ — a holding area for jobs that exhausted their retries), configuring webhooks, tuning per-task runtime limits, and
 managing your task queue in real time. The dashboard is a single-page
@@ -16,6 +13,31 @@ dependencies required**.
 > separate monitoring service to install or run.
 
 ![Overview page with stats cards, throughput chart, and recent activity](/screenshots/dashboard/overview.png)
+
+## In this section
+
+<Cards>
+  <Card
+    title="Authentication"
+    href="/python/guides/dashboard/authentication"
+    description="Session-based login, CSRF, env-var bootstrap, and the setup-required flow."
+  />
+  <Card
+    title="SSO (OAuth & OIDC)"
+    href="/python/guides/dashboard/sso"
+    description="Sign in with Google, GitHub, or any OIDC provider — per-domain and per-org allowlists, OAuth-only mode."
+  />
+  <Card
+    title="Task & Queue Overrides"
+    href="/python/guides/dashboard/task-overrides"
+    description="Tune retry policy, concurrency, rate limits, and middleware per task — without redeploying."
+  />
+  <Card
+    title="REST API"
+    href="/python/guides/dashboard/rest-api"
+    description="JSON endpoints for stats, jobs, dead letters, metrics, logs, infrastructure, webhooks, and runtime overrides."
+  />
+</Cards>
 
 ## Launching the dashboard
 

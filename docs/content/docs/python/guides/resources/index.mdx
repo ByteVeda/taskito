@@ -101,11 +101,35 @@ taskito worker --app myapp.tasks:queue
 
 ## Section overview
 
-| Page | What it covers |
-|---|---|
-| [Argument Interception](/python/guides/resources/interception) | Modes, strategies, custom types, `analyze()`, metrics |
-| [Dependency Injection](/python/guides/resources/dependency-injection) | `worker_resource()`, scopes, dependencies, teardown, health checks |
-| [Resource Proxies](/python/guides/resources/proxies) | Built-in handlers, HMAC signing, security, `NoProxy`, cloud handlers |
-| [Configuration](/python/guides/resources/configuration) | TOML config, pool tuning, frozen and reloadable resources, hot reload |
-| [Testing](/python/guides/resources/testing) | `test_mode(resources=)`, `MockResource`, pytest fixtures |
-| [Observability](/python/guides/resources/observability) | Prometheus metrics, dashboard endpoints, CLI commands |
+<Cards>
+  <Card
+    title="Argument Interception"
+    href="/python/guides/resources/interception"
+    description="Modes, strategies, custom types, analyze(), metrics"
+  />
+  <Card
+    title="Dependency Injection"
+    href="/python/guides/resources/dependency-injection"
+    description="worker_resource(), scopes, dependencies, teardown, health checks"
+  />
+  <Card
+    title="Resource Proxies"
+    href="/python/guides/resources/proxies"
+    description="Built-in handlers, HMAC signing, security, NoProxy, cloud handlers"
+  />
+  <Card
+    title="Configuration"
+    href="/python/guides/resources/configuration"
+    description="TOML config, pool tuning, frozen and reloadable resources, hot reload"
+  />
+  <Card
+    title="Testing"
+    href="/python/guides/resources/testing"
+    description="test_mode(resources=), MockResource, pytest fixtures"
+  />
+  <Card
+    title="Observability"
+    href="/python/guides/resources/observability"
+    description="Prometheus metrics, dashboard endpoints, CLI commands"
+  />
+</Cards>

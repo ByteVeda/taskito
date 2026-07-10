@@ -64,13 +64,45 @@ in `wf.step(...)`. To pass a value between steps, use fan-out / fan-in or read
 
 ## Section overview
 
-| Page | What it covers |
-|---|---|
-| [Building Workflows](/python/guides/workflows/building) | `Workflow.step()`, decorator pattern, step configuration, DAG structure |
-| [Fan-Out & Fan-In](/python/guides/workflows/fan-out) | Splitting results into parallel jobs, collecting with aggregation |
-| [Conditions & Error Handling](/python/guides/workflows/conditions) | `on_success`, `on_failure`, `always`, callable conditions, `on_failure` modes |
-| [Approval Gates](/python/guides/workflows/gates) | Human-in-the-loop pause/resume, timeout, approve/reject API |
-| [Sub-Workflows & Scheduling](/python/guides/workflows/composition) | Nesting workflows, cron-scheduled runs |
-| [Incremental Runs](/python/guides/workflows/caching) | Result hashing, `CACHE_HIT`, dirty-set propagation, TTL |
-| [Analysis & Visualization](/python/guides/workflows/analysis) | Critical path, bottleneck analysis, Mermaid/DOT rendering |
-| [Canvas Primitives](/python/guides/workflows/canvas) | Chain, group, chord — simple composition without DAGs |
+<Cards>
+  <Card
+    title="Building Workflows"
+    href="/python/guides/workflows/building"
+    description="Workflow.step(), decorator pattern, step configuration, DAG structure"
+  />
+  <Card
+    title="Fan-Out & Fan-In"
+    href="/python/guides/workflows/fan-out"
+    description="Splitting results into parallel jobs, collecting with aggregation"
+  />
+  <Card
+    title="Conditions & Error Handling"
+    href="/python/guides/workflows/conditions"
+    description="on_success, on_failure, always, callable conditions, on_failure modes"
+  />
+  <Card
+    title="Approval Gates"
+    href="/python/guides/workflows/gates"
+    description="Human-in-the-loop pause/resume, timeout, approve/reject API"
+  />
+  <Card
+    title="Sub-Workflows & Scheduling"
+    href="/python/guides/workflows/composition"
+    description="Nesting workflows, cron-scheduled runs"
+  />
+  <Card
+    title="Incremental Runs"
+    href="/python/guides/workflows/caching"
+    description="Result hashing, CACHE_HIT, dirty-set propagation, TTL"
+  />
+  <Card
+    title="Analysis & Visualization"
+    href="/python/guides/workflows/analysis"
+    description="Critical path, bottleneck analysis, Mermaid/DOT rendering"
+  />
+  <Card
+    title="Canvas Primitives"
+    href="/python/guides/workflows/canvas"
+    description="Chain, group, chord — simple composition without DAGs"
+  />
+</Cards>

@@ -5,15 +5,55 @@ description: "Harden your Node.js task queue for production workloads."
 
 Harden your task queue for production workloads.
 
-| Guide | Description |
-|---|---|
-| [Error Handling](/node/guides/reliability/error-handling) | Task failure lifecycle, error inspection, debugging patterns |
-| [Delivery Guarantees](/node/guides/reliability/guarantees) | At-least-once delivery and exactly-once patterns |
-| [Retries](/node/guides/reliability/retries) | Automatic retries with exponential backoff |
-| [Timeouts](/node/guides/reliability/timeouts) | Bound task runtime and reclaim stalled jobs |
-| [Idempotency](/node/guides/reliability/idempotency) | Deduplicate enqueues with unique keys |
-| [Rate Limiting](/node/guides/reliability/rate-limiting) | Throttle task execution with token-bucket limits |
-| [Concurrency](/node/guides/reliability/concurrency) | Cap how many jobs of a task run at once |
-| [Circuit Breakers](/node/guides/reliability/circuit-breakers) | Protect downstream services from cascading failures |
-| [Dead-letter queue](/node/guides/reliability/dead-letter) | Capture and replay exhausted jobs |
-| [Distributed Locking](/node/guides/reliability/locks) | Mutual exclusion across workers with database-backed locks |
+<Cards>
+  <Card
+    title="Error Handling"
+    href="/node/guides/reliability/error-handling"
+    description="Task failure lifecycle, error inspection, debugging patterns"
+  />
+  <Card
+    title="Delivery Guarantees"
+    href="/node/guides/reliability/guarantees"
+    description="At-least-once delivery and exactly-once patterns"
+  />
+  <Card
+    title="Retries"
+    href="/node/guides/reliability/retries"
+    description="Automatic retries with exponential backoff"
+  />
+  <Card
+    title="Timeouts"
+    href="/node/guides/reliability/timeouts"
+    description="Bound task runtime and reclaim stalled jobs"
+  />
+  <Card
+    title="Idempotency"
+    href="/node/guides/reliability/idempotency"
+    description="Deduplicate enqueues with unique keys"
+  />
+  <Card
+    title="Rate Limiting"
+    href="/node/guides/reliability/rate-limiting"
+    description="Throttle task execution with token-bucket limits"
+  />
+  <Card
+    title="Concurrency"
+    href="/node/guides/reliability/concurrency"
+    description="Cap how many jobs of a task run at once"
+  />
+  <Card
+    title="Circuit Breakers"
+    href="/node/guides/reliability/circuit-breakers"
+    description="Protect downstream services from cascading failures"
+  />
+  <Card
+    title="Dead-letter queue"
+    href="/node/guides/reliability/dead-letter"
+    description="Capture and replay exhausted jobs"
+  />
+  <Card
+    title="Distributed Locking"
+    href="/node/guides/reliability/locks"
+    description="Mutual exclusion across workers with database-backed locks"
+  />
+</Cards>

@@ -5,15 +5,55 @@ description: "The building blocks of every Java taskito application."
 
 The building blocks of every taskito application.
 
-| Guide | Description |
-|---|---|
-| [Tasks](/java/guides/core/tasks) | Describe tasks with `Task.of()`, configure retries, timeouts, and options |
-| [Queues & Priority](/java/guides/core/queues) | Named queues, priority levels, and routing |
-| [Workers](/java/guides/core/workers) | Start workers, control concurrency, graceful shutdown |
-| [Execution Models](/java/guides/core/execution-model) | How tasks move from enqueue to completion |
-| [Enqueue options](/java/guides/core/enqueue-options) | Per-job delay, priority, uniqueness, and metadata |
-| [Batching](/java/guides/core/batching) | Producer-side `Batcher`/`enqueueMany` and worker-side `batchSize` |
-| [Predicates](/java/guides/core/predicates) | Gate an enqueue on a runtime condition |
-| [Scheduling](/java/guides/core/scheduling) | Periodic tasks with cron expressions |
-| [Cancellation](/java/guides/core/cancellation) | Cancel queued and in-flight jobs |
-| [Streaming partial results](/java/guides/core/streaming) | Emit progress from a running task |
+<Cards>
+  <Card
+    title="Tasks"
+    href="/java/guides/core/tasks"
+    description="Describe tasks with Task.of(), configure retries, timeouts, and options"
+  />
+  <Card
+    title="Queues & Priority"
+    href="/java/guides/core/queues"
+    description="Named queues, priority levels, and routing"
+  />
+  <Card
+    title="Workers"
+    href="/java/guides/core/workers"
+    description="Start workers, control concurrency, graceful shutdown"
+  />
+  <Card
+    title="Execution Models"
+    href="/java/guides/core/execution-model"
+    description="How tasks move from enqueue to completion"
+  />
+  <Card
+    title="Enqueue options"
+    href="/java/guides/core/enqueue-options"
+    description="Per-job delay, priority, uniqueness, and metadata"
+  />
+  <Card
+    title="Batching"
+    href="/java/guides/core/batching"
+    description="Producer-side Batcher/enqueueMany and worker-side batchSize"
+  />
+  <Card
+    title="Predicates"
+    href="/java/guides/core/predicates"
+    description="Gate an enqueue on a runtime condition"
+  />
+  <Card
+    title="Scheduling"
+    href="/java/guides/core/scheduling"
+    description="Periodic tasks with cron expressions"
+  />
+  <Card
+    title="Cancellation"
+    href="/java/guides/core/cancellation"
+    description="Cancel queued and in-flight jobs"
+  />
+  <Card
+    title="Streaming partial results"
+    href="/java/guides/core/streaming"
+    description="Emit progress from a running task"
+  />
+</Cards>

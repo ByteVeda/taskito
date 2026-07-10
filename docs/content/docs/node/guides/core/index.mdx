@@ -5,14 +5,50 @@ description: "The building blocks of every Node.js taskito application."
 
 The building blocks of every taskito application.
 
-| Guide | Description |
-|---|---|
-| [Tasks](/node/guides/core/tasks) | Register tasks with `queue.task()`, configure retries, timeouts, and options |
-| [Queues & Priority](/node/guides/core/queues) | Named queues, priority levels, and routing |
-| [Workers](/node/guides/core/workers) | Start workers, control concurrency, graceful shutdown |
-| [Execution Models](/node/guides/core/execution-model) | How tasks move from enqueue to completion |
-| [Enqueue options](/node/guides/core/enqueue-options) | Per-job delay, priority, uniqueness, and metadata |
-| [Predicates](/node/guides/core/predicates) | Gate an enqueue on a runtime condition |
-| [Scheduling](/node/guides/core/scheduling) | Periodic tasks with cron expressions |
-| [Cancellation](/node/guides/core/cancellation) | Cancel queued and in-flight jobs |
-| [Streaming partial results](/node/guides/core/streaming) | Emit progress from a running task |
+<Cards>
+  <Card
+    title="Tasks"
+    href="/node/guides/core/tasks"
+    description="Register tasks with queue.task(), configure retries, timeouts, and options"
+  />
+  <Card
+    title="Queues & Priority"
+    href="/node/guides/core/queues"
+    description="Named queues, priority levels, and routing"
+  />
+  <Card
+    title="Workers"
+    href="/node/guides/core/workers"
+    description="Start workers, control concurrency, graceful shutdown"
+  />
+  <Card
+    title="Execution Models"
+    href="/node/guides/core/execution-model"
+    description="How tasks move from enqueue to completion"
+  />
+  <Card
+    title="Enqueue options"
+    href="/node/guides/core/enqueue-options"
+    description="Per-job delay, priority, uniqueness, and metadata"
+  />
+  <Card
+    title="Predicates"
+    href="/node/guides/core/predicates"
+    description="Gate an enqueue on a runtime condition"
+  />
+  <Card
+    title="Scheduling"
+    href="/node/guides/core/scheduling"
+    description="Periodic tasks with cron expressions"
+  />
+  <Card
+    title="Cancellation"
+    href="/node/guides/core/cancellation"
+    description="Cancel queued and in-flight jobs"
+  />
+  <Card
+    title="Streaming partial results"
+    href="/node/guides/core/streaming"
+    description="Emit progress from a running task"
+  />
+</Cards>

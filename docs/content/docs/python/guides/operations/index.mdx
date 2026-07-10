@@ -6,16 +6,60 @@ description: "Run taskito reliably in production — testing, deployment, scalin
 Run taskito reliably in production — with no Redis or RabbitMQ broker to operate,
 just an embedded SQLite file or a Postgres instance.
 
-| Guide | Description |
-|---|---|
-| [Testing](/python/guides/operations/testing) | Test mode, fixtures, mocking resources, and workflow testing |
-| [Job Management](/python/guides/operations/job-management) | Cancel, pause, archive, revoke, replay, and clean up jobs |
-| [Troubleshooting](/python/guides/operations/troubleshooting) | Diagnose stuck jobs, lock contention, and worker issues |
-| [Security](/python/guides/operations/security) | Serializer signing/encryption, dashboard auth, and SSRF guards |
-| [Deployment](/python/guides/operations/deployment) | systemd, Docker, WAL mode, Postgres, and production checklists |
-| [Mesh Scheduling](/python/guides/operations/mesh) | Decentralized multi-worker work-stealing overlay |
-| [Bare-Metal Autoscaler](/python/guides/operations/autoscaler) | Automatically scale worker processes without Kubernetes |
-| [KEDA Autoscaling](/python/guides/operations/keda) | Kubernetes event-driven autoscaling for workers |
-| [Postgres Backend](/python/guides/operations/postgres) | Set up and run taskito with PostgreSQL |
-| [Migrating from Celery](/python/guides/operations/migration) | Side-by-side comparison and step-by-step migration guide |
-| [Upgrading to 0.15](/python/guides/operations/upgrading-0.15) | Breaking changes and migration steps for the 0.15 release |
+<Cards>
+  <Card
+    title="Testing"
+    href="/python/guides/operations/testing"
+    description="Test mode, fixtures, mocking resources, and workflow testing"
+  />
+  <Card
+    title="Job Management"
+    href="/python/guides/operations/job-management"
+    description="Cancel, pause, archive, revoke, replay, and clean up jobs"
+  />
+  <Card
+    title="Troubleshooting"
+    href="/python/guides/operations/troubleshooting"
+    description="Diagnose stuck jobs, lock contention, and worker issues"
+  />
+  <Card
+    title="Security"
+    href="/python/guides/operations/security"
+    description="Serializer signing/encryption, dashboard auth, and SSRF guards"
+  />
+  <Card
+    title="Deployment"
+    href="/python/guides/operations/deployment"
+    description="systemd, Docker, WAL mode, Postgres, and production checklists"
+  />
+  <Card
+    title="Mesh Scheduling"
+    href="/python/guides/operations/mesh"
+    description="Decentralized multi-worker work-stealing overlay"
+  />
+  <Card
+    title="Bare-Metal Autoscaler"
+    href="/python/guides/operations/autoscaler"
+    description="Automatically scale worker processes without Kubernetes"
+  />
+  <Card
+    title="KEDA Autoscaling"
+    href="/python/guides/operations/keda"
+    description="Kubernetes event-driven autoscaling for workers"
+  />
+  <Card
+    title="Postgres Backend"
+    href="/python/guides/operations/postgres"
+    description="Set up and run taskito with PostgreSQL"
+  />
+  <Card
+    title="Migrating from Celery"
+    href="/python/guides/operations/migration"
+    description="Side-by-side comparison and step-by-step migration guide"
+  />
+  <Card
+    title="Upgrading to 0.15"
+    href="/python/guides/operations/upgrading-0.15"
+    description="Breaking changes and migration steps for the 0.15 release"
+  />
+</Cards>
