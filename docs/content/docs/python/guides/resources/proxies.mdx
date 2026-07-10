@@ -153,7 +153,7 @@ through to the serializer as-is:
 from taskito import NoProxy
 
 session = requests.Session()
-session.headers["Authorization"] = "Bearer token"
+session.headers["User-Agent"] = "my-worker/1.0"
 
 # Pass to the serializer instead of the proxy system
 process.delay(NoProxy(session))
@@ -166,6 +166,14 @@ MessagePack can't encode, so it can round-trip most live objects including
 handling for a specific call without disabling the handler globally. See
 [Pluggable Serializers](/python/guides/extensibility/serializers) for the
 full serializer matrix.
+
+<Callout type="warning">
+  `NoProxy` sends the object through the serializer, so it lands in the queue
+  payload (and any backups). Don't wrap objects carrying live credentials — an
+  authenticated session, an open DB connection — in it. Inject those as a
+  worker-owned [resource](/python/guides/resources/dependency-injection)
+  instead.
+</Callout>
 
 ## Proxy metrics
 
