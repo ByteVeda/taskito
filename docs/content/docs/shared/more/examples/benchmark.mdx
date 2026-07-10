@@ -205,6 +205,7 @@ import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.JobStatus;
+import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 
@@ -228,8 +229,10 @@ public final class Benchmark {
             }
             long enqueueMs = System.currentTimeMillis() - t0;
 
-            // 2. Processing throughput — drain the backlog, polling stats until empty.
+            // 2. Processing throughput — drain the backlog, polling stats with a
+            // deadline so a failed job or stuck worker can't hang the benchmark.
             long t1 = System.currentTimeMillis();
+            long deadline = t1 + 120_000;
             long processMs;
             try (Worker worker = taskito.worker()
                     .handle(NOOP, n -> null)
@@ -237,8 +240,17 @@ public final class Benchmark {
                     .batchSize(64)
                     .channelCapacity(512)
                     .start()) {
-                while (taskito.stats().completed < N) {
+                QueueStats stats = taskito.stats();
+                while (stats.completed < N) {
+                    if (stats.failed > 0 || stats.dead > 0) {
+                        throw new IllegalStateException(
+                                "jobs failed during the run: failed=" + stats.failed + " dead=" + stats.dead);
+                    }
+                    if (System.currentTimeMillis() > deadline) {
+                        throw new IllegalStateException("drain timed out with " + stats.completed + "/" + N + " completed");
+                    }
                     Thread.sleep(20);
+                    stats = taskito.stats();
                 }
                 processMs = System.currentTimeMillis() - t1;
             }
