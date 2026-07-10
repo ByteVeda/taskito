@@ -281,8 +281,9 @@ Workflow wf = Workflow.named("notify")
 
 ## Chord
 
-Fan-out with a callback — run tasks in parallel, then pass the group to a
-final task:
+Fan-out with a callback — run tasks in parallel, then run a final task once
+every member finishes (whether the callback sees the members' results is
+SDK-specific — see the notes below):
 
 <CodeTabs>
   <Tab sdk="python">
@@ -330,6 +331,16 @@ queue.submitWorkflow(report);
 
   </Tab>
 </CodeTabs>
+
+<SdkOnly sdk="python">
+
+<Callout type="info">
+  The callback receives the list of member results as its first argument —
+  `merge` above is called with `[result1, result2, result3]`. Use an
+  immutable signature (`merge.si()`) to opt out.
+</Callout>
+
+</SdkOnly>
 
 <SdkOnly sdk="node">
 
