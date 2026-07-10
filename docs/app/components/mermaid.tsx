@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   applyDiagramTheme,
   diagramThemeCss,
@@ -10,6 +11,10 @@ export function Mermaid({ chart }: { chart: string }) {
   const id = useId();
   const resolvedTheme = useThemeMode();
   const [svg, setSvg] = useState<string>("");
+  // Inline diagrams fit the column; clicking opens a full-viewport overlay where
+  // the chart renders large (already "zoomed in") — readable without an inline
+  // scrollbar. Click anywhere or press Escape to close.
+  const [zoomed, setZoomed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,9 +31,7 @@ export function Mermaid({ chart }: { chart: string }) {
         themeCSS: diagramThemeCss(theme),
         securityLevel: "loose",
         fontFamily: '"IBM Plex Sans", "Inter", system-ui, sans-serif',
-        // useMaxWidth:false renders at natural size instead of shrinking wide
-        // LR charts to fit — a scroll wrapper (below) keeps the text readable.
-        flowchart: { padding: 18, htmlLabels: true, useMaxWidth: false },
+        flowchart: { padding: 18, htmlLabels: true, useMaxWidth: true },
         sequence: {
           actorFontFamily: '"IBM Plex Sans", sans-serif',
           noteFontFamily: '"IBM Plex Sans", sans-serif',
@@ -55,16 +58,50 @@ export function Mermaid({ chart }: { chart: string }) {
     };
   }, [chart, id, resolvedTheme]);
 
-  // Outer scrolls when the natural-size diagram is wider than the column; the
-  // `mx-auto w-fit` inner centers narrow diagrams and never clips the left edge
-  // of a wide one (unlike flex centering, which makes overflow unreachable).
+  useEffect(() => {
+    if (!zoomed) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setZoomed(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [zoomed]);
+
+  // Only one SVG is in the DOM per state (inline OR overlay), so there's no
+  // duplicate-id copy to break the arrowhead/marker `url(#…)` references.
   return (
-    <div className="my-6 overflow-x-auto">
-      <div
-        className="mx-auto w-fit"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
-    </div>
+    <>
+      {!zoomed && (
+        <button
+          type="button"
+          className="mermaid-fig"
+          aria-label="Enlarge diagram"
+          onClick={() => setZoomed(true)}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      )}
+      {zoomed &&
+        createPortal(
+          <button
+            type="button"
+            className="mermaid-modal"
+            aria-label="Close enlarged diagram"
+            onClick={() => setZoomed(false)}
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />,
+          document.body,
+        )}
+    </>
   );
 }

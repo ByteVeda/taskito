@@ -446,6 +446,50 @@ body {
   font-weight: 600;
 }
 
+/* Inline diagram: resets the <button> chrome and fits the chart to the column;
+   a click opens the enlarged overlay (.mermaid-modal). */
+.mermaid-fig {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  margin: 24px 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  cursor: zoom-in;
+}
+.mermaid-fig svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Full-viewport overlay: the diagram opens large (already enlarged) on a dim
+   scrim. `display: grid` + `margin: auto` on the SVG centres it when it fits and
+   never clips the left edge when it overflows (unlike flex centring); the very
+   rare wider-than-viewport chart then scrolls inside the overlay. */
+.mermaid-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  margin: 0;
+  padding: 32px;
+  border: 0;
+  display: grid;
+  overflow: auto;
+  cursor: zoom-out;
+  background: rgba(8, 8, 12, 0.74);
+  backdrop-filter: blur(3px);
+}
+.mermaid-modal svg {
+  height: 84vh;
+  width: auto;
+  max-width: none;
+  margin: auto;
+}
+
 /* code block */
 .codeblock {
   margin: 18px 0;
