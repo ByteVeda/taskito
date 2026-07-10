@@ -72,11 +72,11 @@ main {
   padding: 64px 32px 80px;
 }
 .hero h1 {
-  font-size: clamp(44px, 5vw, 68px);
+  font-size: clamp(44px, 5vw, 60px);
   line-height: 0.98;
   letter-spacing: -0.035em;
   font-weight: 600;
-  margin: 24px 0 0;
+  margin: 22px 0 0;
 }
 .hero h1 .grad {
   display: block;
