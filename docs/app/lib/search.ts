@@ -9,6 +9,8 @@ export interface SearchDoc {
   section: string;
   description: string;
   text: string;
+  /** Default-SDK URL when this entry is an SDK mount of a shared page. */
+  canonical?: string;
 }
 
 function sectionOf(slug: string): string {
@@ -30,6 +32,7 @@ export const SEARCH_DOCS: SearchDoc[] = DOC_METAS.map((d) => ({
   section: sectionOf(d.slug),
   description: d.description,
   text: `${d.description} ${humanizeSlug(d.slug)}`.trim(),
+  canonical: d.canonical,
 }));
 
 let index: MiniSearch<SearchDoc> | null = null;
