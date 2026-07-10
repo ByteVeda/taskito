@@ -409,6 +409,15 @@ body {
   background: var(--indigo);
   opacity: 0.6;
 }
+/* Loose markdown lists wrap each item's text in a <p>, whose default 12px top
+   margin pushes the text below the absolutely-positioned bullet. Zero it so the
+   bullet lines up with the first line; keep spacing only between stacked <p>s. */
+.article li > p {
+  margin: 0;
+}
+.article li > p + p {
+  margin-top: 8px;
+}
 
 /* code block */
 .codeblock {
