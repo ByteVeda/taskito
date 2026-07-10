@@ -145,6 +145,7 @@ def load_config():
 @queue.worker_resource("db", depends_on=["config"])
 def create_db(config):
     # Return a sessionmaker so the injected `db` is callable: `session = db()`.
+    # In production, wire a teardown to dispose the engine (see Teardown below).
     return sessionmaker(create_engine(config.db_url, pool_size=10))
 
 
@@ -161,16 +162,18 @@ Cycles are detected eagerly at registration time and raise
 
 ## Teardown
 
-Supply a teardown callable to clean up the resource on graceful shutdown:
+Supply a teardown callable to clean up the resource on graceful shutdown. Build
+the engine inside the factory — not at module scope — so it's created within the
+resource lifecycle, then dispose it in teardown to release the connection pool:
 
 ```python
-engine = create_engine("postgresql://localhost/myapp")
-
 @queue.worker_resource(
     "db",
-    teardown=lambda _factory: engine.dispose(),  # dispose the engine on shutdown
+    # The injected `db` is the sessionmaker; `db.kw["bind"]` is its engine.
+    teardown=lambda db: db.kw["bind"].dispose(),
 )
 def create_db():
+    engine = create_engine("postgresql://localhost/myapp")
     return sessionmaker(engine)
 ```
 
