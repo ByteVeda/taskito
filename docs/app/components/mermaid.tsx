@@ -64,9 +64,7 @@ export function Mermaid({ chart }: { chart: string }) {
     if (!zoomed) {
       return;
     }
-    // Move focus into the overlay so the keyboard isn't stranded on the
-    // now-hidden trigger; restore it to the trigger on close.
-    const trigger = triggerRef.current;
+    // Focus the overlay; cleanup restores focus to the trigger on close.
     modalRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -84,7 +82,9 @@ export function Mermaid({ chart }: { chart: string }) {
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
-      trigger?.focus();
+      // Read the ref fresh: the trigger remounts on close and is focusable by
+      // the time cleanup runs (it was null while zoomed).
+      triggerRef.current?.focus();
     };
   }, [zoomed]);
 
