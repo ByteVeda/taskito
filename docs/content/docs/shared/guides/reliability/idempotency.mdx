@@ -105,8 +105,13 @@ queue.task("chargeCustomer", async (customerId: number, amountCents: number) => 
   await paymentProvider.charge(customerId, amountCents);
 });
 
-const key = `charge:${customerId}:${amountCents}`;
-queue.enqueue("chargeCustomer", [customerId, amountCents], { uniqueKey: key });
+function enqueueCharge(customerId: number, amountCents: number) {
+  const key = `charge:${customerId}:${amountCents}`;
+  return queue.enqueue("chargeCustomer", [customerId, amountCents], { uniqueKey: key });
+}
+
+enqueueCharge(42, 1_999);
+enqueueCharge(42, 1_999); // same key — coalesced into the first job
 ```
 
 </SdkOnly>
