@@ -295,6 +295,9 @@ body {
 .crumb a:hover {
   color: var(--mut);
 }
+.crumb-root {
+  cursor: default;
+}
 .crumb .sep {
   opacity: 0.5;
 }
