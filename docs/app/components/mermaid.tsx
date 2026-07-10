@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   applyDiagramTheme,
   diagramThemeCss,
@@ -8,7 +8,6 @@ import { useThemeMode } from "@/lib/theme";
 
 export function Mermaid({ chart }: { chart: string }) {
   const id = useId();
-  const containerRef = useRef<HTMLDivElement>(null);
   const resolvedTheme = useThemeMode();
   const [svg, setSvg] = useState<string>("");
 
@@ -27,7 +26,9 @@ export function Mermaid({ chart }: { chart: string }) {
         themeCSS: diagramThemeCss(theme),
         securityLevel: "loose",
         fontFamily: '"IBM Plex Sans", "Inter", system-ui, sans-serif',
-        flowchart: { padding: 18, htmlLabels: true, useMaxWidth: true },
+        // useMaxWidth:false renders at natural size instead of shrinking wide
+        // LR charts to fit — a scroll wrapper (below) keeps the text readable.
+        flowchart: { padding: 18, htmlLabels: true, useMaxWidth: false },
         sequence: {
           actorFontFamily: '"IBM Plex Sans", sans-serif',
           noteFontFamily: '"IBM Plex Sans", sans-serif',
@@ -54,12 +55,16 @@ export function Mermaid({ chart }: { chart: string }) {
     };
   }, [chart, id, resolvedTheme]);
 
+  // Outer scrolls when the natural-size diagram is wider than the column; the
+  // `mx-auto w-fit` inner centers narrow diagrams and never clips the left edge
+  // of a wide one (unlike flex centering, which makes overflow unreachable).
   return (
-    <div
-      ref={containerRef}
-      className="my-6 flex justify-center [&_svg]:max-w-full"
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div className="my-6 overflow-x-auto">
+      <div
+        className="mx-auto w-fit"
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    </div>
   );
 }
