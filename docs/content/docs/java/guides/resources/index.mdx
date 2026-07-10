@@ -22,14 +22,38 @@ try (Taskito queue = Taskito.builder().sqlite("tasks.db").open()) {
 }
 ```
 
-| Page | What it covers |
-|---|---|
-| [Dependency injection](/java/guides/resources/dependency-injection) | `Taskito.resource()`, the five scopes, `Resources.use`, annotation-driven injection, teardown, metrics |
-| [Configuration](/java/guides/resources/configuration) | The `resource()` overloads, choosing a scope, teardown, and `PoolConfig` tuning |
-| [Enqueue interception](/java/guides/resources/interception) | `Interceptor` strategies and the `onEnqueue` hook — validate, rewrite, redirect, and reject jobs before serialization |
-| [Resource proxies](/java/guides/resources/proxies) | Signed `ProxyRef`s for non-serializable values — HMAC signing, TTL, purpose binding, sessions |
-| [Observability](/java/guides/resources/observability) | Reading `resourceMetrics()` — created/disposed/active counters |
-| [Testing](/java/guides/resources/testing) | Registering stub resources with `InMemoryTaskito` |
+<Cards>
+  <Card
+    title="Dependency injection"
+    href="/java/guides/resources/dependency-injection"
+    description="Taskito.resource(), the five scopes, Resources.use, annotation-driven injection, teardown, metrics"
+  />
+  <Card
+    title="Configuration"
+    href="/java/guides/resources/configuration"
+    description="The resource() overloads, choosing a scope, teardown, and PoolConfig tuning"
+  />
+  <Card
+    title="Enqueue interception"
+    href="/java/guides/resources/interception"
+    description="Interceptor strategies and the onEnqueue hook — validate, rewrite, redirect, and reject jobs before serialization"
+  />
+  <Card
+    title="Resource proxies"
+    href="/java/guides/resources/proxies"
+    description="Signed ProxyRefs for non-serializable values — HMAC signing, TTL, purpose binding, sessions"
+  />
+  <Card
+    title="Observability"
+    href="/java/guides/resources/observability"
+    description="Reading resourceMetrics() — created/disposed/active counters"
+  />
+  <Card
+    title="Testing"
+    href="/java/guides/resources/testing"
+    description="Registering stub resources with InMemoryTaskito"
+  />
+</Cards>
 
 ## The five scopes
 

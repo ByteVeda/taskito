@@ -5,14 +5,50 @@ description: "Harden your Java task queue for production workloads."
 
 Harden your task queue for production workloads.
 
-| Guide | Description |
-|---|---|
-| [Error Handling](/java/guides/reliability/error-handling) | Task failure lifecycle, error inspection, the exception hierarchy |
-| [Delivery Guarantees](/java/guides/reliability/guarantees) | At-least-once delivery and exactly-once patterns |
-| [Retries](/java/guides/reliability/retries) | Automatic retries with exponential backoff |
-| [Timeouts](/java/guides/reliability/timeouts) | Bound task runtime per execution attempt |
-| [Idempotency](/java/guides/reliability/idempotency) | Deduplicate enqueues with unique keys |
-| [Rate Limiting](/java/guides/reliability/rate-limiting) | Throttle and defer enqueues with gates |
-| [Concurrency](/java/guides/reliability/concurrency) | Size and autoscale the worker's handler pool |
-| [Dead-letter queue](/java/guides/reliability/dead-letter) | Capture and replay exhausted jobs |
-| [Distributed Locking](/java/guides/reliability/locks) | Mutual exclusion across workers with database-backed locks |
+<Cards>
+  <Card
+    title="Error Handling"
+    href="/java/guides/reliability/error-handling"
+    description="Task failure lifecycle, error inspection, the exception hierarchy"
+  />
+  <Card
+    title="Delivery Guarantees"
+    href="/java/guides/reliability/guarantees"
+    description="At-least-once delivery and exactly-once patterns"
+  />
+  <Card
+    title="Retries"
+    href="/java/guides/reliability/retries"
+    description="Automatic retries with exponential backoff"
+  />
+  <Card
+    title="Timeouts"
+    href="/java/guides/reliability/timeouts"
+    description="Bound task runtime per execution attempt"
+  />
+  <Card
+    title="Idempotency"
+    href="/java/guides/reliability/idempotency"
+    description="Deduplicate enqueues with unique keys"
+  />
+  <Card
+    title="Rate Limiting"
+    href="/java/guides/reliability/rate-limiting"
+    description="Throttle and defer enqueues with gates"
+  />
+  <Card
+    title="Concurrency"
+    href="/java/guides/reliability/concurrency"
+    description="Size and autoscale the worker's handler pool"
+  />
+  <Card
+    title="Dead-letter queue"
+    href="/java/guides/reliability/dead-letter"
+    description="Capture and replay exhausted jobs"
+  />
+  <Card
+    title="Distributed Locking"
+    href="/java/guides/reliability/locks"
+    description="Mutual exclusion across workers with database-backed locks"
+  />
+</Cards>

@@ -21,10 +21,18 @@ queue.task("sync", async (id: string) => {
 });
 ```
 
-| Page | What it covers |
-|---|---|
-| [Dependency injection](/node/guides/resources/dependency-injection) | `queue.resource()`, worker/task/pooled scopes, `useResource`, declarative `inject`, teardown |
-| [Enqueue interception](/node/guides/resources/interception) | The `onEnqueue` hook — validate, redact, and rewrite jobs before serialization |
+<Cards>
+  <Card
+    title="Dependency injection"
+    href="/node/guides/resources/dependency-injection"
+    description="queue.resource(), worker/task/pooled scopes, useResource, declarative inject, teardown"
+  />
+  <Card
+    title="Enqueue interception"
+    href="/node/guides/resources/interception"
+    description="The onEnqueue hook — validate, redact, and rewrite jobs before serialization"
+  />
+</Cards>
 
 <Callout type="info">
   Coming from Python? Node's resource system is intentionally lighter — no
