@@ -22,11 +22,12 @@ services you have to run and operate:
   values are stored; and
 - the **workers** themselves.
 
-taskito collapses the broker and the result backend into a single embedded
-database — SQLite by default, or Postgres. Enqueued jobs and their results live
-in the same file (or the same Postgres instance). There is no message server to
-install, secure, or monitor: `pip install taskito`, point a queue at a path, and
-start a worker.
+taskito collapses the broker and the result backend into a single queue
+database — an embedded SQLite file by default, or a Postgres server for shared
+deployments. Enqueued jobs and their results live in the same place. There is no
+separate message broker to install, secure, or monitor: with SQLite it's `pip
+install taskito`, point a queue at a path, and start a worker; Postgres still
+runs its own database server, but that's the only external service.
 
 <Callout type="info" title="Coming from Celery?">
   Your `broker=redis://…` and `backend=redis://…` URLs both disappear — a single
