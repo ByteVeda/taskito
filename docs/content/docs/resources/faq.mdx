@@ -3,6 +3,8 @@ title: FAQ
 description: "Frequently asked questions about taskito."
 ---
 
+<SdkOnly sdk="python">
+
 ## Can I use taskito with Django?
 
 Yes. Create a `Queue` instance in one of your Django apps and import it where needed:
@@ -45,6 +47,88 @@ def generate_report(report_id: int):
         ...
 ```
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+## Can I use taskito with Express, Fastify, or NestJS?
+
+Yes — all three. Define the queue and tasks once, then mount the REST API and
+dashboard with the matching contrib helper. The worker runs the same way
+regardless of framework; each helper's peer (`express` / `fastify` /
+`@nestjs/common`) is installed separately.
+
+**Express** — `@byteveda/taskito/contrib/express`:
+
+```ts
+import express from "express";
+import { taskitoRouter, taskitoDashboard } from "@byteveda/taskito/contrib/express";
+
+const app = express();
+app.use("/tasks", taskitoRouter(queue));     // REST API
+app.use("/admin", taskitoDashboard(queue));  // dashboard SPA
+app.listen(3000);
+```
+
+**Fastify** — `@byteveda/taskito/contrib/fastify`:
+
+```ts
+import Fastify from "fastify";
+import { taskitoFastify, taskitoDashboardPlugin } from "@byteveda/taskito/contrib/fastify";
+
+const app = Fastify();
+await app.register(taskitoFastify, { queue, prefix: "/tasks" });
+await app.register(taskitoDashboardPlugin, { queue, prefix: "/admin" });
+await app.listen({ port: 3000 });
+```
+
+**NestJS** — `@byteveda/taskito/contrib/nest`:
+
+```ts
+import { Module } from "@nestjs/common";
+import { TaskitoModule } from "@byteveda/taskito/contrib/nest";
+
+@Module({ imports: [TaskitoModule.forRoot(queue)] })
+export class AppModule {}
+```
+
+Inject `TaskitoService` into your providers to enqueue and read results.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+## Can I use taskito with Spring Boot?
+
+Yes, via the `org.byteveda:taskito-spring` starter (Spring Boot 3). Add it and
+the auto-configuration builds a `Taskito` bean from your `taskito.*` properties
+— inject it anywhere:
+
+```java
+@Service
+public class SignupService {
+    private final Taskito taskito;
+    public SignupService(Taskito taskito) { this.taskito = taskito; }
+
+    public void register(User user) {
+        taskito.enqueue("send_welcome_email", user.email());
+    }
+}
+```
+
+```yaml
+taskito:
+  url: postgres://localhost/taskito
+  pool-size: 8
+  namespace: my-app
+```
+
+The worker is not auto-started — build one from the injected bean in an
+`ApplicationRunner`, or set `taskito.dashboard.enabled=true` to auto-start the
+dashboard. Non-Spring apps just build a `Taskito` and `Worker` programmatically.
+
+</SdkOnly>
+
 ## Can multiple processes share the same SQLite file?
 
 Yes, with caveats. SQLite in WAL mode allows concurrent readers and one writer
@@ -64,22 +148,70 @@ The job stays in `running` status in SQLite. On the next worker start, the
 If no timeout is set, stale jobs remain in `running` status indefinitely.
 **Always set a timeout on your tasks.**
 
+<SdkOnly sdk="python">
+
 ```python
 @queue.task(timeout=300)  # 5 minute timeout
 def process(data):
     ...
 ```
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```ts
+queue.task("process", process, { timeoutMs: 300_000 }); // 5 minute timeout
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+```java
+Task<Data> process = Task.of("process", Data.class)
+        .timeout(Duration.ofMinutes(5));
+```
+
+</SdkOnly>
+
 ## How big can the SQLite database get?
 
 SQLite can handle databases up to 281 TB (theoretical limit). In practice,
-taskito databases stay small if you set `result_ttl` to auto-purge old jobs:
+taskito databases stay small if you purge finished jobs. Without cleanup,
+expect ~1 KB per job — a million completed jobs ≈ 1 GB.
+
+<SdkOnly sdk="python">
+
+Set `result_ttl` to auto-purge old jobs:
 
 ```python
 queue = Queue(db_path="myapp.db", result_ttl=86400)  # Purge after 24h
 ```
 
-Without cleanup, expect ~1 KB per job. A million completed jobs ≈ 1 GB.
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There is no result-TTL knob; call `purgeCompleted` on a schedule (the argument
+is milliseconds):
+
+```ts
+setInterval(() => queue.purgeCompleted(86_400_000), 3_600_000); // keep 24h
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There is no result-TTL knob; call `purgeCompleted` on a schedule (the argument
+is milliseconds):
+
+```java
+taskito.purgeCompleted(Duration.ofHours(24).toMillis()); // keep 24h
+```
+
+</SdkOnly>
 
 ## Can I use a remote or networked SQLite?
 
@@ -89,14 +221,48 @@ SQLite depends on. Always place the database on local storage.
 
 ## When should I use Postgres instead of SQLite?
 
-Use the **Postgres backend** (`pip install taskito[postgres]`) when you need:
+Use the **Postgres backend** when you need:
 
 - **Multi-machine workers** — run workers on separate servers sharing the same queue
 - **Higher write throughput** — Postgres handles concurrent writers better than SQLite
 - **Existing Postgres infrastructure** — leverage your existing database and backups
 
-For single-machine workloads, SQLite is simpler and requires zero setup. See
-the <SdkLink to="guides/operations">Postgres backend guide</SdkLink>.
+For single-machine workloads, SQLite is simpler and requires zero setup.
+
+<SdkOnly sdk="python">
+
+Install the extra, then point the queue at Postgres:
+
+```python
+# pip install taskito[postgres]
+queue = Queue(db_url="postgres://localhost/taskito")
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Postgres is already compiled into the prebuilt native binary — no extra install,
+just switch the backend:
+
+```ts
+new Queue({ backend: "postgres", dsn: process.env.PG_URL, schema: "taskito" });
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Postgres ships inside the bundled native library — no extra dependency, just
+switch the backend:
+
+```java
+Taskito.builder().postgres(System.getenv("PG_URL")).open();
+```
+
+</SdkOnly>
+
+See the <SdkLink to="guides/operations">Postgres backend guide</SdkLink>.
 
 ## Is taskito production-ready?
 
@@ -108,7 +274,10 @@ multi-server setups, use the <SdkLink to="guides/operations">Postgres backend</S
 
 ## What observability options does taskito support?
 
-taskito offers three observability integrations, each suited to different needs:
+<SdkOnly sdk="python">
+
+taskito offers three observability integrations, each implemented as a
+`TaskMiddleware` and combinable:
 
 | Integration | Best for | Install |
 |-------------|----------|---------|
@@ -116,7 +285,45 @@ taskito offers three observability integrations, each suited to different needs:
 | **<SdkLink to="guides/integrations">Prometheus</SdkLink>** | Metrics dashboards, alerting on queue depth/error rates | `pip install taskito[prometheus]` |
 | **<SdkLink to="guides/integrations">Sentry</SdkLink>** | Error tracking with rich context and breadcrumbs | `pip install taskito[sentry]` |
 
-All three are implemented as `TaskMiddleware` and can be combined together.
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+taskito ships three observability middlewares under `@byteveda/taskito/contrib/*`.
+Install the peer you use, then register with `queue.use(...)`:
+
+| Integration | Best for | Peer |
+|-------------|----------|------|
+| **<SdkLink to="guides/integrations">OpenTelemetry</SdkLink>** | Distributed tracing, correlating tasks with HTTP requests | `@opentelemetry/api` |
+| **<SdkLink to="guides/integrations">Prometheus</SdkLink>** | Metrics dashboards, alerting on queue depth/error rates | `prom-client` |
+| **<SdkLink to="guides/integrations">Sentry</SdkLink>** | Error tracking with rich context and breadcrumbs | `@sentry/node` |
+
+```ts
+import { otelMiddleware } from "@byteveda/taskito/contrib/otel";
+queue.use(otelMiddleware());
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+taskito ships two contrib middlewares, registered with `taskito.use(...)`. Their
+third-party dependency is `compileOnly` — add the runtime dep yourself:
+
+| Integration | Best for | Runtime dep |
+|-------------|----------|-------------|
+| **<SdkLink to="guides/integrations">Micrometer</SdkLink>** (`TaskitoObservation`) | One instrumentation → both a metrics timer and a trace span | `io.micrometer:micrometer-observation` |
+| **<SdkLink to="guides/integrations">Sentry</SdkLink>** (`SentryMiddleware`) | Error tracking on failed attempts and dead-letters | `io.sentry:sentry` |
+
+```java
+taskito.use(new TaskitoObservation(registry));
+```
+
+OpenTelemetry and Prometheus are reached downstream of Micrometer — OTel as a
+`micrometer-tracing` backend, Prometheus as the dashboard's `/metrics` endpoint
+or a Micrometer `MeterRegistry`. There is no dedicated OTel/Prometheus class.
+
+</SdkOnly>
 
 ## How does taskito compare to running Celery with SQLite?
 
@@ -256,7 +463,9 @@ handles, database connections, or thread locks.
 
 ## Can I run the dashboard and worker in the same process?
 
-They're designed to run as separate processes sharing the same database:
+They're designed to run as separate processes sharing the same database.
+
+<SdkOnly sdk="python">
 
 ```bash
 # Terminal 1
@@ -269,7 +478,40 @@ taskito dashboard --app myapp:queue
 For embedding in a FastAPI app, use `TaskitoRouter` instead — it provides the
 same stats and job management as REST endpoints.
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```bash
+# Terminal 1 — run a worker over a module that exports a Queue
+taskito run ./app.js --queues default
+
+# Terminal 2 — serve the dashboard
+taskito --db taskito.db dashboard --port 8787
+```
+
+To embed the dashboard in an existing HTTP server, call `serveDashboard(queue, { port })`.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Workers are started programmatically (there is no `taskito worker` command);
+the dashboard has both a programmatic API and a CLI command:
+
+```java
+// In your app — start a worker
+Worker worker = taskito.worker().handle(myTask, ...).concurrency(4).start();
+
+// Anywhere — start the dashboard
+taskito.dashboard(8081); // or DashboardServer.start(taskito, 8081)
+```
+
+</SdkOnly>
+
 ## How do I reset / clear all jobs?
+
+<SdkOnly sdk="python">
 
 ```python
 # Purge all completed jobs
@@ -278,6 +520,28 @@ queue.purge_completed(older_than=0)
 # Purge all dead letters
 queue.purge_dead(older_than=0)
 ```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```ts
+// Purge all completed jobs and dead letters (argument is milliseconds; 0 = all)
+await queue.purgeCompleted(0);
+await queue.purgeDead(0);
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+```java
+// Purge all completed jobs and dead letters (argument is milliseconds; 0 = all)
+taskito.purgeCompleted(0L);
+taskito.purgeDead(0L);
+```
+
+</SdkOnly>
 
 Or delete the database file and restart:
 
