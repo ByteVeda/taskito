@@ -55,8 +55,8 @@ export default function Home() {
       <SiteNav onSearch={() => setSearchOpen(true)} showSdkSelect={false} />
       <main>
         <Hero />
-        <ScenarioFinder />
         <HowItWorks />
+        <ScenarioFinder />
         <Features />
         <UseCases />
         <Comparison />
