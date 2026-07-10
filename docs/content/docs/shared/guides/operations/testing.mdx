@@ -1,15 +1,43 @@
 ---
 title: Testing
-description: "Test mode, TestResult, MockResource, fixtures, and workflow testing."
+description: "Unit-test tasks in isolation, then exercise the full enqueue → execute → result path without a production backend."
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
+<SdkName/> tasks are plain functions, so the fastest tests call them
+directly with no queue involved. For coverage of enqueue, dispatch, and
+result plumbing, each binding also gives you a way to run the whole path
+without standing up a production backend:
 
-taskito includes a built-in test mode that runs tasks **synchronously** in
-the calling thread — no worker, no Rust scheduler, no SQLite. This makes
-tests fast, deterministic, and easy to write.
+<SdkOnly sdk="python">
+
+`test_mode()` patches `enqueue()` so every `.delay()` / `.apply_async()` call
+runs the task **synchronously** in the calling thread — no worker, no Rust
+scheduler, no SQLite. This makes tests fast, deterministic, and easy to
+write.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no synchronous test mode — tests run a real
+<SdkLink to="guides/core/workers">worker</SdkLink> against a throwaway
+SQLite database, so the whole enqueue → execute → result path runs
+in-process with no mocks of the core.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The `taskito-test` artifact ships a pure-Java, in-memory `QueueBackend` — the
+full client API with no native library and no disk — ideal for fast unit
+tests of producers, handlers, retries, and dead-lettering.
+
+</SdkOnly>
 
 ## Quick example
+
+<CodeTabs>
+  <Tab sdk="python">
 
 ```python
 from taskito import Queue
@@ -28,6 +56,79 @@ def test_add():
         assert results[0].return_value == 5
         assert results[0].succeeded
 ```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { Queue, type Worker } from "@byteveda/taskito";
+
+let worker: Worker | undefined;
+afterEach(() => {
+  worker?.stop(); // always stop — a leaked worker keeps polling across tests
+  worker = undefined;
+});
+
+function newQueue(): Queue {
+  // a fresh temp DB per test keeps them independent
+  return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "test-")), "q.db") });
+}
+
+it("runs a task end to end", async () => {
+  const queue = newQueue();
+  queue.task("add", (a: number, b: number) => a + b);
+
+  const id = queue.enqueue("add", [2, 3]);
+  worker = queue.runWorker();
+
+  expect(await queue.result(id)).toBe(5);
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```kotlin
+testImplementation("org.byteveda:taskito-test:0.18.0")
+```
+
+```java
+import org.byteveda.taskito.test.InMemoryTaskito;
+
+@Test
+void runsATaskEndToEnd() throws Exception {
+    try (Taskito taskito = InMemoryTaskito.open()) {
+        String id = taskito.enqueue("add", List.of(2, 3));
+
+        try (Worker worker = taskito.worker()
+                .handle("add", List.class, numbers ->
+                        (int) numbers.get(0) + (int) numbers.get(1))
+                .start()) {
+            Job job = taskito.awaitJob(id, Duration.ofSeconds(5)).orElseThrow();
+            assertEquals(JobStatus.COMPLETE, job.status);
+        }
+
+        assertEquals(5, taskito.getResult(id, Integer.class).orElseThrow());
+    }
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="java">
+
+`InMemoryTaskito.open(serializer)` swaps the JSON default. To construct the
+backend explicitly (e.g. to share one across a custom builder), pass it to
+`Taskito.builder().open(new InMemoryQueueBackend())`.
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
 
 ## How it works
 
@@ -53,7 +154,7 @@ with queue.test_mode(propagate_errors=False, resources=None) as results:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `propagate_errors` | `bool` | `False` | If `True`, task exceptions are re-raised immediately instead of being captured in `TestResult.error` |
-| `resources` | `dict[str, Any] \| None` | `None` | Map of resource name → mock instance or `MockResource` for injection. See [Resource System](/python/guides/resources). |
+| `resources` | `dict[str, Any] \| None` | `None` | Map of resource name → mock instance or `MockResource` for injection. See <SdkLink to="guides/resources">Resource System</SdkLink>. |
 
 The context manager yields a `TestResults` list that accumulates results as
 tasks execute.
@@ -238,59 +339,18 @@ def test_context():
         assert ctx["queue_name"] == "default"
 ```
 
-## Pytest integration
+</SdkOnly>
 
-### Fixture pattern
+## Faking dependencies
 
-Create a reusable fixture for test mode:
+Register a stub factory to swap a real dependency in tests — the worker
+injects whatever is registered by name, so tasks can't tell a fake from the
+real thing and no real connection is ever opened. See
+<SdkLink to="guides/resources/dependency-injection">dependency injection</SdkLink>
+for how resources are registered and scoped.
 
-```python
-# conftest.py
-import pytest
-from myapp import queue
-
-@pytest.fixture
-def task_results():
-    with queue.test_mode() as results:
-        yield results
-
-# test_tasks.py
-def test_add(task_results):
-    add.delay(2, 3)
-    assert task_results[0].return_value == 5
-
-def test_email(task_results):
-    send_email.delay("user@example.com", "Hello", "World")
-    assert task_results[0].succeeded
-```
-
-### Fixture with error propagation
-
-```python
-@pytest.fixture
-def strict_tasks():
-    with queue.test_mode(propagate_errors=True) as results:
-        yield results
-```
-
-### Testing async code
-
-Test mode works with async test functions — the tasks still execute
-synchronously:
-
-```python
-import pytest
-
-@pytest.mark.asyncio
-async def test_async_enqueue(task_results):
-    add.delay(1, 2)
-    assert task_results[0].return_value == 3
-```
-
-## Testing with worker resources
-
-If your tasks use [worker resources](/python/guides/resources) (injected via
-`inject=` or `Inject["name"]`), pass mock instances through `resources=`:
+<CodeTabs>
+  <Tab sdk="python">
 
 ```python
 from unittest.mock import MagicMock
@@ -314,6 +374,31 @@ def test_create_user():
     assert results[0].succeeded
     mock_db.return_value.add.assert_called_once()
 ```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { useResource } from "@byteveda/taskito";
+
+queue.resource("db", () => fakeDb);
+queue.task("sync", async () => {
+  const db = await useResource("db");
+  // ...
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.resource("db", context -> fakeDb);
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
 
 ### `MockResource`
 
@@ -390,6 +475,110 @@ mock_db.execute.assert_called_once()
   tests don't fail due to missing files or network connections.
 </Callout>
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+### `mockResource()`
+
+`mockResource(value)` wraps a value as a factory and records how often it
+was built — register the factory and assert on `resolutions` to confirm a
+worker-scoped resource was built once, not once per job:
+
+```ts
+import { mockResource, Queue, useResource } from "@byteveda/taskito";
+
+const db = mockResource({ query: () => 7 });
+queue.resource("db", db.factory);
+
+queue.task("read", async () => {
+  const conn = await useResource<{ query: () => number }>("db");
+  return conn.query();
+});
+
+queue.enqueue("read");
+queue.enqueue("read");
+worker = queue.runWorker();
+
+// worker-scoped singleton, built once even though two jobs ran
+await waitFor(() => db.resolutions === 1);
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+### Asserting resource construction
+
+`InMemoryTaskito` paired with a counting factory confirms a resource was
+built the expected number of times, without touching a native backend:
+
+```java
+try (Taskito queue = InMemoryTaskito.open()) {
+    AtomicInteger built = new AtomicInteger();
+    queue.resource("db", ctx -> {
+        built.incrementAndGet();
+        return new FakeDatabase();
+    });
+    // ... run the task through a worker ...
+    assertEquals(1, built.get());
+    assertEquals(1, queue.resourceMetrics().get("db").created());
+}
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+## Pytest integration
+
+### Fixture pattern
+
+Create a reusable fixture for test mode:
+
+```python
+# conftest.py
+import pytest
+from myapp import queue
+
+@pytest.fixture
+def task_results():
+    with queue.test_mode() as results:
+        yield results
+
+# test_tasks.py
+def test_add(task_results):
+    add.delay(2, 3)
+    assert task_results[0].return_value == 5
+
+def test_email(task_results):
+    send_email.delay("user@example.com", "Hello", "World")
+    assert task_results[0].succeeded
+```
+
+### Fixture with error propagation
+
+```python
+@pytest.fixture
+def strict_tasks():
+    with queue.test_mode(propagate_errors=True) as results:
+        yield results
+```
+
+### Testing async code
+
+Test mode works with async test functions — the tasks still execute
+synchronously:
+
+```python
+import pytest
+
+@pytest.mark.asyncio
+async def test_async_enqueue(task_results):
+    add.delay(1, 2)
+    assert task_results[0].return_value == 3
+```
+
 ## What test mode does NOT cover
 
 Test mode is designed for **unit and integration testing** of task logic.
@@ -460,3 +649,74 @@ To build with native async support:
 ```bash
 uv run maturin develop --features native-async
 ```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+## Synchronization
+
+`awaitJob(id, timeout)` blocks until the job reaches a terminal state and is
+the simplest synchronization point — tests rarely need a sleep. Registering
+an event listener with a `CountDownLatch` works too:
+
+```java
+CountDownLatch done = new CountDownLatch(1);
+Worker worker = taskito.worker()
+        .handle("echo", String.class, payload -> payload.length())
+        .on(EventName.SUCCESS, event -> done.countDown())
+        .start();
+```
+
+## Integration tests
+
+For coverage of the real storage engine (scheduling, claims, locks), open a
+throwaway SQLite database — the whole enqueue → execute → result path runs
+in-process:
+
+```java
+Path dir = Files.createTempDirectory("taskito-test");
+try (Taskito taskito = Taskito.builder().sqlite(dir.resolve("q.db").toString()).open()) {
+    // real backend, no server
+}
+```
+
+Always close (or try-with-resources) workers — a leaked worker keeps
+polling across tests.
+
+<Callout type="warn" title="In-memory backend scope">
+  The in-memory backend covers the queue contract, not the native engine:
+  workflows are not supported in-memory, and storage-engine behavior (SQL
+  claims, cron timing) is only exercised against a real backend. Keep a few
+  SQLite-backed integration tests alongside the fast in-memory suite.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+## Polling for side effects
+
+When you assert on a side effect rather than a return value, poll until it
+settles instead of sleeping a fixed time:
+
+```ts
+async function waitFor(predicate: () => boolean, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+```
+
+<Callout type="info">
+  Awaiting `queue.result(id)` (shown in the quick example above) is the
+  simplest synchronization point — it resolves when the job reaches a
+  terminal state and rejects on failure, so most tests don't need
+  `waitFor` at all. Reach for it when you're asserting on a side effect
+  instead of a return value.
+</Callout>
+
+</SdkOnly>
