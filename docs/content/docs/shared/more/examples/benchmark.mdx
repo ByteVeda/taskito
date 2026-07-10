@@ -54,29 +54,32 @@ def bench_enqueue(task, n):
     args_list = [(i,) for i in range(n)]
 
     start = time.perf_counter()
-    jobs = task.map(args_list)
+    task.map(args_list)
     elapsed = time.perf_counter() - start
 
     rate = n / elapsed
     print(f"  Enqueued {n:,} jobs in {elapsed:.2f}s ({rate:,.0f} jobs/s)")
-    return jobs
 
-def bench_process(jobs, timeout=120):
-    """Measure processing throughput by waiting for all jobs."""
-    n = len(jobs)
+def bench_process(n, baseline, timeout=120):
+    """Measure processing throughput by polling stats until n jobs drain.
+
+    Waiting on a single job handle isn't enough — jobs don't finish in
+    enqueue order, so the counter (against a baseline from before this
+    round) is the only reliable "all done" signal.
+    """
     start = time.perf_counter()
-
-    last = jobs[-1]
-    try:
-        last.result(timeout=timeout, poll_interval=0.01, max_poll_interval=0.1)
-    except TimeoutError:
+    deadline = start + timeout
+    while time.perf_counter() < deadline:
         stats = queue.stats()
-        print(f"  Timed out! Stats: {stats}")
-        return
-
-    elapsed = time.perf_counter() - start
-    rate = n / elapsed
-    print(f"  Processed {n:,} jobs in {elapsed:.2f}s ({rate:,.0f} jobs/s)")
+        if stats["failed"] or stats["dead"]:
+            print(f"  Aborting — jobs failed during the run: {stats}")
+            return
+        if stats["completed"] - baseline >= n:
+            elapsed = time.perf_counter() - start
+            print(f"  Processed {n:,} jobs in {elapsed:.2f}s ({n / elapsed:,.0f} jobs/s)")
+            return
+        time.sleep(0.02)
+    print(f"  Timed out! Stats: {queue.stats()}")
 
 def bench_latency(task, samples=100):
     """Measure single-job round-trip latency."""
@@ -101,19 +104,23 @@ def main():
     print(f"  DB:      {DB_PATH}")
     print()
 
-    # Start worker in background
+    # Stage the first batch BEFORE the worker starts, so the enqueue rate
+    # doesn't include worker/database contention — same methodology as the
+    # other-language benchmarks on this page.
+    print("── noop task (framework overhead) ──")
+    bench_enqueue(noop, NUM_JOBS)
+
     worker_thread = threading.Thread(target=queue.run_worker, daemon=True)
     worker_thread.start()
-    time.sleep(0.5)
-
-    print("── noop task (framework overhead) ──")
-    jobs = bench_enqueue(noop, NUM_JOBS)
-    bench_process(jobs)
+    bench_process(NUM_JOBS, baseline=0)
     print()
 
+    # The queue is fully drained here, so the running worker only
+    # idle-polls during this enqueue — negligible contention.
     print("── cpu_light task ──")
-    jobs = bench_enqueue(cpu_light, NUM_JOBS)
-    bench_process(jobs)
+    baseline = queue.stats()["completed"]
+    bench_enqueue(cpu_light, NUM_JOBS)
+    bench_process(NUM_JOBS, baseline=baseline)
     print()
 
     print("── single-job latency ──")
