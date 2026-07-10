@@ -1187,13 +1187,32 @@ body {
 .toc-link:hover {
   color: var(--txt);
 }
+/* h3 sub-headings: extra indent + a dot marker so the nesting under the parent
+   h2 reads at a glance. The dot picks up the accent on hover/active. */
 .toc-link.sub {
-  padding-left: 26px;
+  padding-left: 30px;
   font-size: 12.5px;
+  position: relative;
+}
+.toc-link.sub::before {
+  content: "";
+  position: absolute;
+  left: 19px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--line3);
+  transition: background 0.15s;
 }
 .toc-link.active {
   color: var(--indigo-br);
   border-left-color: var(--indigo);
+}
+.toc-link.sub:hover::before,
+.toc-link.sub.active::before {
+  background: var(--indigo);
 }
 
 /* mobile */
