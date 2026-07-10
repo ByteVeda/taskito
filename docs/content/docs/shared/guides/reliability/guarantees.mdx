@@ -20,8 +20,11 @@ instance already claimed the job, the claim fails and that instance skips it.
   abandoned claim and retries the job.
 - A job **may run twice** — if a worker crashes after starting the task but
   before its result is recorded.
-- A job **will not run concurrently** — the atomic claim means only one
-  worker ever holds it at a time.
+- A job **will not be dispatched concurrently** — the atomic claim means only
+  one worker is ever handed it at a time. The narrow exception: when an
+  attempt times out, the reaper schedules a retry but cannot kill the
+  still-running task body, so the new attempt can briefly overlap the old
+  one. Idempotent task code covers this case too.
 
 <SdkOnly sdk="java">
 
