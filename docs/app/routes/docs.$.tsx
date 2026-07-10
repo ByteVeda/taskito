@@ -6,6 +6,7 @@ import { mdxComponents } from "@/components/mdx";
 import { getDocLoader } from "@/lib/content";
 import { docMeta } from "@/lib/manifest";
 import { redirectFor } from "@/lib/redirects";
+import { isSdk } from "@/lib/sdk-registry";
 import type { Route } from "./+types/docs.$";
 
 function pathOf(params: { "*"?: string }): string {
@@ -23,13 +24,19 @@ function Breadcrumb({ path }: { path: string }) {
     const label =
       docMeta(href)?.title ??
       seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-    return { href, label };
+    // The SDK root (e.g. `/python`) has no page of its own — it only redirects
+    // to the first doc — so render it as a plain label, not a link.
+    return { href, label, linked: !(i === 0 && isSdk(seg)) };
   });
   return (
     <div className="crumb">
       {crumbs.map((c) => (
         <Fragment key={c.href}>
-          <Link to={c.href}>{c.label}</Link>
+          {c.linked ? (
+            <Link to={c.href}>{c.label}</Link>
+          ) : (
+            <span className="crumb-root">{c.label}</span>
+          )}
           <span className="sep">/</span>
         </Fragment>
       ))}
