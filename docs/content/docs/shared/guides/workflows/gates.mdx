@@ -416,10 +416,10 @@ gate — any external system can drive a gate this way:
 ```python
 @app.post("/hooks/deploy-approval")
 def deploy_approval():
-    # Resolving a gate is a privileged state transition: authenticate the
-    # caller, verify the webhook signature, and authorize access to this
-    # run first.
+    # Fail closed — resolving a gate is a privileged state transition.
+    verify_webhook_signature(request)      # abort(401) on a bad signature
     body = request.get_json()
+    authorize_run(request, body["run_id"])  # abort(403) unless the caller may resolve this run
     if body["approved"]:
         queue.approve_gate(body["run_id"], "approve_deploy")
     else:
@@ -432,9 +432,10 @@ def deploy_approval():
 
 ```ts
 app.post("/hooks/deploy-approval", async (req, res) => {
-  // Resolving a gate is a privileged state transition: authenticate the caller,
-  // verify the webhook signature, and authorize access to this run first.
+  // Fail closed — resolving a gate is a privileged state transition.
+  verifyWebhookSignature(req);       // throw 401 on a bad signature
   const { runId, approved, reason } = req.body;
+  await authorizeRun(req, runId);    // throw 403 unless the caller may resolve this run
   queue.workflows.resolveGate(runId, "approve-deploy", approved, reason);
   res.sendStatus(204);
 });
@@ -444,13 +445,15 @@ app.post("/hooks/deploy-approval", async (req, res) => {
   <Tab sdk="java">
 
 ```java
-// Resolving a gate is a privileged state transition: authenticate the caller,
-// verify the webhook signature, and authorize access to this run first.
-void onDeployApproval(String runId, boolean approved, String reason) {
-    if (approved) {
-        worker.approveGate(runId, "approve-deploy");
+// Fail closed — resolving a gate is a privileged state transition.
+void onDeployApproval(HttpRequest request) {
+    verifyWebhookSignature(request);        // 401 on a bad signature
+    ApprovalPayload payload = parse(request);
+    authorizeRun(request, payload.runId()); // 403 unless the caller may resolve this run
+    if (payload.approved()) {
+        worker.approveGate(payload.runId(), "approve-deploy");
     } else {
-        worker.rejectGate(runId, "approve-deploy", reason);
+        worker.rejectGate(payload.runId(), "approve-deploy", payload.reason());
     }
 }
 ```
