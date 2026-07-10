@@ -17,13 +17,20 @@ queue.task("call_flaky_api", callApi, {
 | `threshold` | Failures within `windowMs` that trip the breaker. |
 | `windowMs` | Rolling window for counting failures. |
 | `cooldownMs` | How long the breaker stays open before a trial dispatch. |
+| `halfOpenMaxProbes` | Probe jobs let through while half-open (default 5). |
+| `halfOpenSuccessRate` | Success rate (0.0–1.0) among probes required to close (default 0.8). |
 
 While **open**, jobs of that task are held rather than dispatched. After
-`cooldownMs` the breaker half-opens and lets a job through; success closes it,
-failure re-opens it.
+`cooldownMs` the breaker half-opens and lets a limited number of probe jobs
+through (`halfOpenMaxProbes`); if enough of them succeed
+(`halfOpenSuccessRate`) the breaker closes, otherwise it re-opens.
 
 <Callout type="info">
   Pair with [retries](/node/guides/reliability/retries): retries handle
   transient blips on a healthy dependency; the breaker handles a dependency
   that is down, so you stop spending the retry budget on it.
 </Callout>
+
+> **Coming from BullMQ?** BullMQ has no built-in circuit breaker — it's a
+> taskito-specific addition. You'd otherwise reach for a separate library
+> (e.g. `opossum`) alongside a BullMQ `Worker`.

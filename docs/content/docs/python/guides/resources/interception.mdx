@@ -79,6 +79,14 @@ The resource name is the key you use in `@queue.worker_resource("name")`.
 If your resource has a different name, register a custom redirect with
 `register_type()`.
 
+REDIRECT is a type shift, not just a value swap: the caller passes a live
+`Session` (or `Redis`, `MongoClient`, ...) to `.delay()`, but the worker's
+task function receives whatever the named resource's factory returns —
+for `"db"`, that's typically a `sessionmaker` you call to get a session, a
+different type than what the caller passed in. See
+[Dependency Injection](/python/guides/resources/dependency-injection) for how
+the factory return value is injected.
+
 ## Built-in PROXY types
 
 These objects are deconstructed to a recipe dict and rebuilt by the worker:
@@ -177,7 +185,8 @@ print(report)
 ```
 
 `analyze()` is a development and debugging tool. It reads the registry but
-makes no changes to arguments.
+makes no changes to arguments. `_interceptor` is an internal accessor — it is
+not yet part of the stable public API and may change between releases.
 
 ## Interception metrics
 
@@ -187,10 +196,12 @@ stats = queue.interception_stats()
 #   "total_intercepts": 1200,
 #   "total_duration_ms": 216.0,
 #   "avg_duration_ms": 0.18,
-#   "strategy_counts": {"pass": 2800, "convert": 450, "redirect": 200, "proxy": 30, "reject": 0},
+#   "strategy_counts": {"pass": 800, "convert": 250, "redirect": 100, "proxy": 50, "reject": 0},
 #   "max_depth_reached": 3,
 # }
 ```
+
+`total_intercepts` always equals the sum of `strategy_counts`.
 
 See [Observability](/python/guides/resources/observability) for Prometheus
 metrics and dashboard endpoints.

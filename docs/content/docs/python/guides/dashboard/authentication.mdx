@@ -135,7 +135,7 @@ stats = s.get("http://localhost:8080/api/stats").json()
 s.post("http://localhost:8080/api/queues/default/pause")
 ```
 
-## SSRF guard for outbound URLs
+## SSRF (server-side request forgery) guard for outbound URLs
 
 Webhook URLs entered through the dashboard are vetted before any
 delivery happens. By default the server rejects:

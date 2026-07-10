@@ -65,13 +65,16 @@ queue.task("load", async (runId: string) => {
 });
 
 export function runPipeline(runId: string) {
-  return queue.workflows
+  // `queueDefault`/`params` are submit-time options, so build the workflow
+  // without the chained `.submit()` and pass the builder to
+  // `queue.workflows.submit(builder, options)` instead.
+  const workflow = queue.workflows
     .define("etl", 1)
     .step("extract", "extract", { args: [runId] })
     .step("clean", "clean", { args: [runId], after: "extract" })
     .step("enrich", "enrich", { args: [runId], after: "extract", queue: "io" })
-    .step("load", "load", { args: [runId], after: ["clean", "enrich"], priority: 10 })
-    .submit({ queueDefault: "default", params: { runId } });
+    .step("load", "load", { args: [runId], after: ["clean", "enrich"], priority: 10 });
+  return queue.workflows.submit(workflow, { queueDefault: "default", params: { runId } });
 }
 ```
 

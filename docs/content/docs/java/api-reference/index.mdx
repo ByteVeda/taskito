@@ -10,6 +10,7 @@ The public API lives under `org.byteveda.taskito` (Maven coordinates
 
 | Page | Covers |
 |---|---|
+| [Overview](/java/api-reference/overview) | The layered architecture — `Taskito` down to the native `QueueBackend`. |
 | [Taskito](/java/api-reference/queue) | `Taskito.builder()`, enqueue, inspect, admin, locks, periodic. |
 | [Task](/java/api-reference/task) | `Task.of` typed tasks, `EnqueueOptions`, `RetryPolicy`, the annotations. |
 | [Worker](/java/api-reference/worker) | The `Worker.Builder` and the running worker handle. |
@@ -17,6 +18,10 @@ The public API lives under `org.byteveda.taskito` (Maven coordinates
 | [Context](/java/api-reference/context) | `Resources.use` and the middleware `TaskContext`. |
 | [Resources](/java/api-reference/resources) | Worker dependency injection — scopes, pools, disposal. |
 | [Serializers](/java/api-reference/serializers) | `JsonSerializer`, `MsgpackSerializer`, payload codecs. |
+| [Batching](/java/api-reference/batching) | `Batcher` — buffer payloads and flush them as one `enqueueMany` call. |
 | [Workflows](/java/api-reference/workflows) | The `Workflow` builder, `WorkflowRun`, gates, sagas, analysis. |
+| [Canvas](/java/api-reference/canvas) | `Canvas.link`, `chain`, `group`, and `chord` shortcuts. |
+| [Saga](/java/api-reference/saga) | `Step.Builder.compensate`, saga run/node states, the rollback contract. |
 | [Errors](/java/api-reference/errors) | The `TaskitoException` hierarchy. |
+| [Testing](/java/api-reference/testing) | The in-memory backend for fast, native-library-free tests. |
 | [CLI](/java/api-reference/cli) | The `taskito` command. |

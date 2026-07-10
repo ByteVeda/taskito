@@ -6,8 +6,10 @@ description: "File / logger / HTTP session / cloud client proxies — HMAC signi
 import { Callout } from "fumadocs-ui/components/callout";
 
 Proxies handle objects that are neither serializable primitives nor
-DI-injectable — things like file handles, HTTP sessions, and cloud clients
-that have capturable state.
+DI-injectable (eligible to be replaced by a named
+[worker resource](/python/guides/resources/dependency-injection), like a
+database session) — things like file handles, HTTP sessions, and cloud
+clients that have capturable state.
 
 When interception detects a proxy-able argument, the handler's
 `deconstruct()` method extracts a JSON-serializable recipe. The worker
@@ -151,15 +153,27 @@ through to the serializer as-is:
 from taskito import NoProxy
 
 session = requests.Session()
-session.headers["Authorization"] = "Bearer token"
+session.headers["User-Agent"] = "my-worker/1.0"
 
-# Pass to cloudpickle instead of the proxy system
+# Pass to the serializer instead of the proxy system
 process.delay(NoProxy(session))
 ```
 
-Use `NoProxy` when the serializer can handle the value directly (e.g.,
-with cloudpickle) or when you want to suppress proxy handling for a
-specific call without disabling the handler globally.
+Use `NoProxy` when the serializer can handle the value directly — taskito's
+default serializer, `SmartSerializer`, falls back to cloudpickle for objects
+MessagePack can't encode, so it can round-trip most live objects including
+`requests.Session` — or when you want to suppress proxy
+handling for a specific call without disabling the handler globally. See
+[Pluggable Serializers](/python/guides/extensibility/serializers) for the
+full serializer matrix.
+
+<Callout type="warning">
+  `NoProxy` sends the object through the serializer, so it lands in the queue
+  payload (and any backups). Don't wrap objects carrying live credentials — an
+  authenticated session, an open DB connection — in it. Inject those as a
+  worker-owned [resource](/python/guides/resources/dependency-injection)
+  instead.
+</Callout>
 
 ## Proxy metrics
 

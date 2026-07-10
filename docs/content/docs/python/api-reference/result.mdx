@@ -38,6 +38,11 @@ print(job.status)  # "pending"
 print(job.status)  # "complete"
 ```
 
+> **A note on naming.** The per-job status is `"complete"` (singular). The
+> aggregate count bucket from [`queue.stats()`](/python/api-reference/queue/queues)
+> is `"completed"` (past tense). Status **filters** such as `list_jobs(status=…)`
+> accept either spelling.
+
 ### `job.progress`
 
 ```python

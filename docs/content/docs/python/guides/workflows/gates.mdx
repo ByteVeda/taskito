@@ -30,7 +30,7 @@ execute until the gate is resolved.
 ## Resolving a gate
 
 ```python
-run = queue.submit_workflow(wf)
+run = queue.submit_workflow(wf)  # run.id is this workflow run's ID
 
 # Later, after review:
 queue.approve_gate(run.id, "approve")   # → gate COMPLETED, deploy runs
@@ -69,10 +69,16 @@ also skipped.
 
 ## Events
 
-When a gate enters `WAITING_APPROVAL`, a `WORKFLOW_GATE_REACHED` event fires:
+When a gate enters `WAITING_APPROVAL`, a `WORKFLOW_GATE_REACHED` event fires.
+Subscribe with `queue.on_event()` (see the
+[events reference](/python/api-reference/queue/events) for the full list of
+event types):
 
 ```python
-@queue.on(EventType.WORKFLOW_GATE_REACHED)
+from taskito.events import EventType
+
 def notify_team(event_type, payload):
     send_slack(f"Workflow {payload['run_id']} needs approval at {payload['node_name']}")
+
+queue.on_event(EventType.WORKFLOW_GATE_REACHED, notify_team)
 ```

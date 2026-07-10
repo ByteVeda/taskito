@@ -59,8 +59,11 @@ Pre-0.15 payloads (untagged cloudpickle) are read transparently by 0.15 workers
 
 ## 2. Per-task / per-queue stats are computed server-side
 
-**What changed.** Per-task and per-queue statistics are now computed on the
-server side using `SINTERCARD`, replacing the previous O(N) full-scan approach.
+**What changed.** On the **Redis backend**, per-task and per-queue statistics
+are now computed on the server side using `SINTERCARD` (a Redis 7.0+ command
+that counts set intersection size without transferring the members),
+replacing the previous O(N) full-scan approach. SQLite and Postgres already
+computed these with a server-side `SELECT COUNT(...)` and are unaffected.
 This is a pure performance improvement.
 
 **Action required:** none. No data migration, no API change, no configuration
@@ -143,26 +146,12 @@ and may take a few seconds on large databases.
   back to a pre-0.15 binary after deploying.
 </Callout>
 
-## 6. Job payloads moved to a side table (`job_payloads`)
+## 6. Job payloads side table (`job_payloads`) — superseded
 
-<Callout type="warn">
-  **Superseded.** A later release **removed** the `job_payloads` side table and
-  moved payloads back inline on `jobs`/`archived_jobs`. The narrow dequeue scan
-  already excludes the blobs by column selection, so the side table bought
-  nothing. The `jobs.payload`/`jobs.result` columns were never dropped, so the
-  removal moves no data and needs no upgrade window. This section is kept only as
-  history for databases that passed through 0.15.
-</Callout>
-
-**What 0.15 did.** Payload BLOBs were stored in a separate `job_payloads` table
-rather than inline on the `jobs` row, dual-written alongside the kept
-`jobs.payload`/`jobs.result` columns. This was transparent — no API change, no
-change to enqueue or result behaviour.
-
-<Callout type="info">
-  Redis was never affected: the Redis backend stores job payloads inline in the
-  job JSON object and never used a side table.
-</Callout>
+**Superseded:** 0.15 briefly dual-wrote payload BLOBs to a separate
+`job_payloads` table; a later release removed it and moved payloads back
+inline on `jobs`/`archived_jobs` (no data moved, no upgrade window, no action
+needed — this is kept only as history). Redis was never affected.
 
 ## Upgrade checklist
 

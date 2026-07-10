@@ -1,68 +1,91 @@
 ---
 title: Capabilities at a glance
-description: "Everything the Python SDK can do, with a link to each guide."
+description: Everything taskito already does, in one place — with a link to the deep-dive guide for each.
 ---
 
-A map of the Python SDK's features. Everything here runs over the shared Rust
-core — pick a backend, register tasks, run workers.
+import { Cards, Card } from "fumadocs-ui/components/card";
+import {
+  ShieldCheck,
+  Workflow,
+  Cpu,
+  CalendarClock,
+  Activity,
+  Plug,
+} from "lucide-react";
 
-## Core
+taskito ships a broad feature set out of the box. If you're evaluating it — or
+suspect a capability is missing — scan this page first. Every card links to the
+guide that documents it.
 
-| Feature | Guide |
-|---|---|
-| Task registry, enqueue, await results | [Tasks](/python/guides/core/tasks) · [Queue API](/python/api-reference/overview) |
-| SQLite / Postgres / Redis backends | [Postgres](/python/guides/operations/postgres) |
-| Named queues, priority, pause/resume | [Queues](/python/guides/core/queues) |
-| Cron-scheduled & delayed jobs | [Scheduling](/python/guides/core/scheduling) |
-| Cooperative cancellation | [Job management](/python/guides/operations/job-management) |
-| Streaming partial results | [Streaming](/python/guides/advanced-execution/streaming) |
-| Sync & async tasks, concurrency | [Async tasks](/python/guides/advanced-execution/async-tasks) · [Execution model](/python/guides/core/execution-model) |
-| Batch enqueue, dependencies, unique tasks | [Batch enqueue](/python/guides/advanced-execution/batch-enqueue) · [Dependencies](/python/guides/advanced-execution/dependencies) · [Unique tasks](/python/guides/advanced-execution/unique-tasks) |
-| Enqueue predicates & prefork pools | [Predicates](/python/guides/core/predicates) · [Prefork](/python/guides/advanced-execution/prefork) |
+## If you think it's missing, it isn't
 
-## Reliability
+These are the capabilities most often assumed absent. They aren't.
 
-| Feature | Guide |
-|---|---|
-| Retries with backoff, dead-letter queue | [Retries](/python/guides/reliability/retries) · [Error handling](/python/guides/reliability/error-handling) |
-| Concurrency caps & rate limits | [Rate limiting](/python/guides/reliability/rate-limiting) |
-| Circuit breakers | [Circuit breakers](/python/guides/reliability/circuit-breakers) |
-| Idempotent enqueue (`unique_key`) | [Idempotency](/python/guides/reliability/idempotency) |
-| Distributed locks | [Locking](/python/guides/reliability/locking) |
-| Delivery guarantees | [Guarantees](/python/guides/reliability/guarantees) |
+| You might assume… | Reality |
+| --- | --- |
+| No canvas / workflows — no chain, group, or chord | [`chain` / `group` / `chord`](/python/guides/workflows/canvas) are exported from the top-level package, backed by a full workflow DSL. |
+| No Flower-like dashboard | [`taskito dashboard --app myapp:queue`](/python/guides/dashboard) serves a built-in monitoring UI. |
+| No retry backoff or per-exception retries | [`max_retries`, `retry_backoff`, `retry_on`, `dont_retry_on`](/python/guides/reliability/retries) are arguments on every task. |
+| No soft timeouts | [`current_job.check_timeout()`](/python/guides/reliability/error-handling) gives cooperative soft timeouts. |
+| GIL bottleneck with no escape hatch | [`--pool prefork`](/python/guides/advanced-execution/prefork) runs child processes with independent GILs for true CPU parallelism. |
 
-## Orchestration
+## By capability
 
-| Feature | Guide |
-|---|---|
-| DAG workflows: fan-out/in, conditions, gates, sub-workflows, saga | [Workflows](/python/guides/workflows) · [Sagas](/python/guides/workflows/sagas) |
-| Decentralized work-stealing mesh | [Mesh](/python/guides/operations/mesh) |
+<Cards>
+  <Card
+    icon={<ShieldCheck />}
+    title="Reliability"
+    href="/python/guides/reliability"
+    description="Retries with exponential backoff, per-exception rules, soft timeouts, dead-letter replay, circuit breakers, and idempotent enqueue."
+  />
+  <Card
+    icon={<Workflow />}
+    title="Workflows"
+    href="/python/guides/workflows/canvas"
+    description="Compose with chain, fan out with group, fan in with chord — plus dependency graphs with cascade cancel."
+  />
+  <Card
+    icon={<Cpu />}
+    title="Concurrency"
+    href="/python/guides/advanced-execution/prefork"
+    description="A thread pool for I/O-bound work and a prefork pool for true CPU parallelism, with a native async API."
+  />
+  <Card
+    icon={<CalendarClock />}
+    title="Scheduling"
+    href="/python/guides/core/scheduling"
+    description="Priorities, rate limiting, periodic (cron) tasks, delayed execution, and job expiration."
+  />
+  <Card
+    icon={<Activity />}
+    title="Observability"
+    href="/python/guides/dashboard"
+    description="A built-in dashboard, events, HMAC-signed webhooks, Prometheus, OpenTelemetry, and structured logging."
+  />
+  <Card
+    icon={<Plug />}
+    title="Extensibility"
+    href="/python/guides/extensibility"
+    description="Pluggable serializers, per-task middleware, a fully async API, and Postgres or Redis backends."
+  />
+</Cards>
 
-## Extensibility
+## One-liners
 
-| Feature | Guide |
-|---|---|
-| Lifecycle events & middleware | [Events & webhooks](/python/guides/extensibility/events-webhooks) · [Middleware](/python/guides/extensibility/middleware) |
-| Signed webhook delivery | [Events & webhooks](/python/guides/extensibility/events-webhooks) |
-| Resource injection, interception & proxies | [Dependency injection](/python/guides/resources/dependency-injection) · [Interception](/python/guides/resources/interception) · [Proxies](/python/guides/resources/proxies) |
-| Pluggable serializers (JSON / msgpack / signed / encrypted) | [Serializers](/python/guides/extensibility/serializers) |
+```python
+# Reliability — backoff + per-exception retry rules
+@queue.task(max_retries=5, retry_backoff=2.0, retry_on=[TimeoutError])
+def fetch_url(url: str) -> str: ...
 
-## Observability & ops
+# Workflows — sequential pipeline (group / chord for fan-out / fan-in)
+chain(fetch.s(url), parse.s(), store.s()).apply()
 
-| Feature | Guide |
-|---|---|
-| Stats, metrics, progress, worker heartbeats | [Monitoring](/python/guides/observability/monitoring) |
-| Structured logging & notes | [Logging](/python/guides/observability/logging) · [Notes](/python/guides/observability/notes) |
-| OpenTelemetry / Prometheus / Sentry | [OTel](/python/guides/integrations/otel) · [Prometheus](/python/guides/integrations/prometheus) · [Sentry](/python/guides/integrations/sentry) |
-| Dashboard + REST API + auth / SSO | [Dashboard](/python/guides/dashboard) · [REST API](/python/guides/dashboard/rest-api) · [Authentication](/python/guides/dashboard/authentication) |
-| KEDA autoscaling (queue-depth scaler) | [KEDA](/python/guides/operations/keda) · [Autoscaler](/python/guides/operations/autoscaler) |
-| Job management & CLI | [Job management](/python/guides/operations/job-management) |
+# Scheduling — priority + rate limit
+@queue.task(priority=9, rate_limit="100/m")
+def notify(user_id: int) -> None: ...
+```
 
-## Framework integrations
-
-[Django](/python/guides/integrations/django) · [FastAPI](/python/guides/integrations/fastapi) · [Flask](/python/guides/integrations/flask)
-
-<Callout type="info">
-  Workflows and mesh are optional capabilities built into the native extension.
-  See [installation](/python/getting-started/installation) to get set up.
-</Callout>
+```bash
+taskito worker --pool prefork --app tasks:queue   # CPU-bound: true parallelism
+taskito dashboard --app tasks:queue               # Flower-style monitoring UI
+```

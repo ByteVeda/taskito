@@ -30,7 +30,10 @@ body {
   border-radius: 8px;
 }
 .side-search {
-  display: flex;
+  /* Redundant with the top-nav search on desktop, so hidden there; re-shown
+     below 880px, where the nav search button (.kbar) is hidden and the sidebar
+     drawer becomes the only search entry point. */
+  display: none;
   align-items: center;
   gap: 9px;
   width: 100%;
@@ -44,6 +47,11 @@ body {
   cursor: pointer;
   margin-bottom: 22px;
   transition: border-color 0.2s;
+}
+@media (max-width: 880px) {
+  .side-search {
+    display: flex;
+  }
 }
 .side-search:hover {
   border-color: var(--line3);
@@ -327,6 +335,30 @@ body {
   place-items: center;
   flex: none;
 }
+/* FAQ page: auto-number each question with the same numbered badge used for
+   manually-badged headings elsewhere. Counter-driven, so reordering/adding
+   questions renumbers automatically with no content edits. */
+.article[data-page="faq"] {
+  counter-reset: faq;
+}
+.article[data-page="faq"] h2 {
+  counter-increment: faq;
+}
+.article[data-page="faq"] h2::before {
+  content: counter(faq);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--indigo-br);
+  background: var(--indigo-soft);
+  border: 1px solid var(--indigo-line);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
 .article h3 {
   font-size: 18px;
   font-weight: 600;
@@ -384,6 +416,78 @@ body {
   border-radius: 50%;
   background: var(--indigo);
   opacity: 0.6;
+}
+/* Loose markdown lists wrap each item's text in a <p>, whose default 12px top
+   margin pushes the text below the absolutely-positioned bullet. Zero it so the
+   bullet lines up with the first line; keep spacing only between stacked <p>s. */
+.article li > p {
+  margin: 0;
+}
+.article li > p + p {
+  margin-top: 8px;
+}
+/* Ordered lists: Tailwind Preflight resets `ol` to `list-style: none`, so the
+   numbers disappear. Restore decimal markers + the indent they need, and tint
+   them. (Kept off `display: flex`, which would drop the ::marker.) */
+.article ol {
+  margin: 14px 0;
+  padding-left: 26px;
+  list-style: decimal;
+}
+.article ol li {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--txt2);
+  padding-left: 6px;
+  margin: 9px 0;
+}
+.article ol li::marker {
+  color: var(--indigo);
+  font-weight: 600;
+}
+
+/* Inline diagram: resets the <button> chrome and fits the chart to the column;
+   a click opens the enlarged overlay (.mermaid-modal). */
+.mermaid-fig {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  margin: 24px 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  cursor: zoom-in;
+}
+.mermaid-fig svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Full-viewport overlay: the diagram opens large (already enlarged) on a dim
+   scrim. `display: grid` + `margin: auto` on the SVG centres it when it fits and
+   never clips the left edge when it overflows (unlike flex centring); the very
+   rare wider-than-viewport chart then scrolls inside the overlay. */
+.mermaid-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  margin: 0;
+  padding: 32px;
+  border: 0;
+  display: grid;
+  overflow: auto;
+  cursor: zoom-out;
+  background: rgba(8, 8, 12, 0.74);
+  backdrop-filter: blur(3px);
+}
+.mermaid-modal svg {
+  height: 84vh;
+  width: auto;
+  max-width: none;
+  margin: auto;
 }
 
 /* code block */
@@ -558,11 +662,11 @@ body {
   font-size: 14.5px;
 }
 .callout.info {
-  border-color: color-mix(in oklch, var(--cyan) 40%, transparent);
-  background: color-mix(in oklch, var(--cyan) 9%, transparent);
+  border-color: color-mix(in oklch, var(--turquoise) 40%, transparent);
+  background: color-mix(in oklch, var(--turquoise) 9%, transparent);
 }
 .callout.info .ci {
-  color: var(--cyan);
+  color: var(--turquoise);
 }
 .callout.warn {
   border-color: color-mix(in oklch, var(--amber) 45%, transparent);
@@ -742,6 +846,44 @@ body {
 }
 .md-table.matrix th:nth-child(2) {
   color: var(--indigo-br);
+}
+
+/* Frozen header + first column for large tables (applied by MdxTable when a
+   table is wide or long). Contained scroll on both axes keeps the surface
+   bounded; the feature column and the tool header stay pinned. */
+.md-table.sticky {
+  overflow: auto;
+  max-height: min(72vh, 640px);
+}
+/* Collapsed borders don't scroll with sticky cells, so switch to separate;
+   the per-cell top/bottom borders already in place keep the row rules. */
+.md-table.sticky table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.md-table.sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.md-table.sticky th:first-child,
+.md-table.sticky td:first-child {
+  position: sticky;
+  left: 0;
+  /* redraw the right edge the collapsed border used to provide */
+  box-shadow: inset -1px 0 0 var(--line);
+  /* long feature names wrap instead of widening the frozen column */
+  white-space: normal;
+  max-width: 240px;
+}
+.md-table.sticky td:first-child {
+  z-index: 1;
+  /* solid fill so scrolled cells don't show through the frozen column */
+  background: var(--panel);
+}
+/* top-left corner outranks both the header row and the frozen column */
+.md-table.sticky thead th:first-child {
+  z-index: 3;
 }
 
 /* when-to-use split */
@@ -1108,13 +1250,32 @@ body {
 .toc-link:hover {
   color: var(--txt);
 }
+/* h3 sub-headings: extra indent + a dot marker so the nesting under the parent
+   h2 reads at a glance. The dot picks up the accent on hover/active. */
 .toc-link.sub {
-  padding-left: 26px;
+  padding-left: 30px;
   font-size: 12.5px;
+  position: relative;
+}
+.toc-link.sub::before {
+  content: "";
+  position: absolute;
+  left: 19px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--line3);
+  transition: background 0.15s;
 }
 .toc-link.active {
   color: var(--indigo-br);
   border-left-color: var(--indigo);
+}
+.toc-link.sub:hover::before,
+.toc-link.sub.active::before {
+  background: var(--indigo);
 }
 
 /* mobile */

@@ -169,6 +169,26 @@ public final class WorkerMain {
 }
 ```
 
+## Running it
+
+`Run.java` only submits and awaits the workflow — it enqueues no worker of its
+own, so `run.await(...)` blocks until something dequeues the jobs. Start
+`WorkerMain` first (it keeps running and serves both queues), then run `Run`
+against the same database:
+
+<Tabs items={["Terminal 1 — Worker", "Terminal 2 — Submitter"]}>
+  <Tab value="Terminal 1 — Worker">
+    ```bash
+    java -cp app.jar WorkerMain
+    ```
+  </Tab>
+  <Tab value="Terminal 2 — Submitter">
+    ```bash
+    java -cp app.jar Run
+    ```
+  </Tab>
+</Tabs>
+
 ## Key patterns
 
 | Pattern | Where |

@@ -108,7 +108,7 @@ def build_pipeline(api_endpoint: str, csv_path: str, target_table: str):
 
     # Stage 2: Transform (each depends on its extract)
     job_norm_a = normalize.apply_async(
-        args=[[], "schema_v2"],  # actual data passed via result
+        args=[[], "schema_v2"],  # depends_on ORDERS only — see note below
         depends_on=job_api.id,
         metadata=json.dumps({"stage": "transform", "schema": "v2"}),
     )
@@ -154,6 +154,14 @@ if __name__ == "__main__":
         fetched = queue.get_job(ext_job.id)
         print(f"  {ext_job.id} dependents: {fetched.dependents}")
 ```
+
+> **`depends_on` orders jobs; it does not pass data.** It only guarantees a job
+> starts after its dependencies reach a terminal state — it does **not** inject
+> their return values. That is why each `normalize`/`load` call above is enqueued
+> with a placeholder `[]`: the task loads its own input (from the database, an
+> object store, or a key the upstream task wrote). To thread one task's return
+> value straight into the next, use a chain or the
+> [canvas API](/python/guides/workflows/canvas) instead.
 
 ## worker.py
 

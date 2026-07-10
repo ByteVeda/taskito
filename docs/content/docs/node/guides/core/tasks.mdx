@@ -49,3 +49,14 @@ Beyond per-task config, you can set defaults for an entire named queue:
 ```ts
 queue.configureQueue("emails", { rateLimit: "50/s" });
 ```
+
+<Callout type="info" title="Coming from BullMQ?">
+  BullMQ splits a job into `queue.add(name, data)` on one side and a
+  `new Worker(queueName, processor)` callback on the other — the processor
+  lives wherever you construct the `Worker`. taskito ties the handler to the
+  task name once, via `queue.task(name, handler, options)`; `enqueue()` just
+  references that name, and `runWorker()` takes no processor argument. Also
+  note: `enqueue()` returns the job id (a `string`), not a rich `Job` object —
+  fetch a snapshot with `queue.getJob(id)` or block on
+  [`queue.result(id)`](/node/api-reference/result).
+</Callout>

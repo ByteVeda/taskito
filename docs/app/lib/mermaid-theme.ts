@@ -41,6 +41,8 @@ const DARK_VARIABLES = {
   actorLineColor: "#5c5c70",
   signalColor: "#ececf4",
   signalTextColor: "#ececf4",
+  // Badge circle is filled with signalColor (near-white here); use dark text.
+  sequenceNumberColor: "#08080c",
   labelBoxBkgColor: "#13131d",
   labelBoxBorderColor: "#33334a",
   loopTextColor: "#ececf4",
@@ -82,6 +84,8 @@ const LIGHT_VARIABLES = {
   actorLineColor: "#8b877a",
   signalColor: "#1b1a15",
   signalTextColor: "#1b1a15",
+  // Badge circle is filled with signalColor (near-black here); use light text.
+  sequenceNumberColor: "#ffffff",
   labelBoxBkgColor: "#ffffff",
   labelBoxBorderColor: "#cfc9ba",
   loopTextColor: "#1b1a15",
@@ -106,6 +110,12 @@ const DARK_THEME_CSS = `
   .er.relationshipLabel,
   .er.relationshipLabelBox { fill: #ececf4 !important; }
   .er.relationshipLabelBox + text { fill: #0f0f17 !important; }
+  /* subgraph cluster + unstyled ("default") flowchart nodes aren't covered by
+     themeVariables reliably, so pin them here; turquoise marks the cluster. */
+  .cluster rect { fill: #0c0c13 !important; stroke: #40e0d0 !important; }
+  .cluster .nodeLabel, .cluster span, .cluster text { fill: #ececf4 !important; color: #ececf4 !important; }
+  .node.default rect, .node.default polygon, .node.default path { fill: #13131d !important; stroke: #33334a !important; }
+  .node.default .nodeLabel, .node.default span, .node.default text { fill: #ececf4 !important; color: #ececf4 !important; }
 `;
 
 const LIGHT_THEME_CSS = `
@@ -116,6 +126,12 @@ const LIGHT_THEME_CSS = `
   .er .er.attribute-text,
   .er .attribute-text,
   .er text { fill: #1b1a15 !important; }
+  /* subgraph cluster + unstyled ("default") flowchart nodes aren't covered by
+     themeVariables reliably, so pin them here; turquoise marks the cluster. */
+  .cluster rect { fill: #fbf9f3 !important; stroke: #0d9e8f !important; }
+  .cluster .nodeLabel, .cluster span, .cluster text { fill: #1b1a15 !important; color: #1b1a15 !important; }
+  .node.default rect, .node.default polygon, .node.default path { fill: #ffffff !important; stroke: #cfc9ba !important; }
+  .node.default .nodeLabel, .node.default span, .node.default text { fill: #1b1a15 !important; color: #1b1a15 !important; }
 `;
 
 export function diagramThemeCss(theme: DiagramTheme): string {

@@ -20,14 +20,19 @@ await queue.statsAllQueues(); // Record<queue, stats>
 
 ## Metrics
 
-`getMetrics(windowMs, task?)` aggregates finished jobs over a trailing window
-into per-task counts, a success/failure split, and latency percentiles
-(p50/p95/p99):
+`getMetrics(sinceMs, task?)` returns the raw per-execution metric rows
+(`taskName`, `jobId`, `wallTimeNs`, `memoryBytes`, `succeeded`, `recordedAt`)
+recorded at or after `sinceMs` (a Unix-ms timestamp, not a duration) — one
+entry per finished job, not a pre-aggregated summary:
 
 ```ts
-await queue.getMetrics(3_600_000); // last hour, all tasks
-await queue.getMetrics(3_600_000, "add"); // one task
+await queue.getMetrics(Date.now() - 3_600_000); // last hour, all tasks
+await queue.getMetrics(Date.now() - 3_600_000, "add"); // one task
 ```
+
+Aggregate them yourself (counts, success/failure split, p50/p95/p99 latency
+percentiles) — the [dashboard](/node/guides/operations/dashboard) does exactly
+this over `/api/metrics` and `/api/metrics/timeseries`.
 
 ## Progress
 

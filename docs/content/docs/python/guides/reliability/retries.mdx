@@ -33,7 +33,7 @@ delay = min(max_delay, base_delay * 2^retry_count) + jitter
 
 - `base_delay` = `retry_backoff` (in seconds)
 - `max_delay` = 300 seconds (5 minutes)
-- `jitter` = random 0–500ms to prevent thundering herd
+- `jitter` = random 0–500ms to prevent thundering herd (many retries firing at the same instant)
 
 **Example with `retry_backoff=2.0`:**
 
@@ -47,18 +47,21 @@ delay = min(max_delay, base_delay * 2^retry_count) + jitter
 
 ## Exception filtering
 
-Control which exceptions trigger retries with `retry_on` and `dont_retry_on`:
+Control which exceptions trigger retries with `retry_on` (a whitelist) **or**
+`dont_retry_on` (a blacklist). Use one or the other — not both (see the note below).
 
 ```python
-@queue.task(
-    max_retries=5,
-    retry_on=[ConnectionError, TimeoutError],
-    dont_retry_on=[ValueError],
-)
+# Whitelist: retry only these exceptions; everything else skips straight to DLQ.
+@queue.task(max_retries=5, retry_on=[ConnectionError, TimeoutError])
 def fetch_data(url):
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
+
+# Blacklist: retry everything except these exceptions.
+@queue.task(max_retries=5, dont_retry_on=[ValueError])
+def parse_data(raw):
+    return json.loads(raw)  # a ValueError here is permanent — don't retry it
 ```
 
 | Parameter | Description |
@@ -70,9 +73,13 @@ If neither is set, all exceptions trigger retries (default behavior).
 
 <Callout type="info">
   `retry_on` and `dont_retry_on` are mutually exclusive in practice — if
-  `retry_on` is set, only those exceptions are retried regardless of
-  `dont_retry_on`.
+  `retry_on` is set, only those exceptions are retried and `dont_retry_on` is
+  ignored. Set one, not both.
 </Callout>
+
+> **Coming from Celery:** `retry_backoff` here is a **float** — the base delay in
+> seconds — not Celery's boolean flag. Celery's `autoretry_for=(SomeError,)` maps
+> to taskito's `retry_on=[SomeError]`.
 
 ## Retry flow
 
@@ -142,13 +149,18 @@ def unreliable():
 
 job = unreliable.delay()
 
-# After the job fails and retries...
+# After the job exhausts all retries...
 for error in job.errors:
     print(f"Attempt {error['attempt']}: {error['error']}")
     # Attempt 0: timeout
     # Attempt 1: timeout
     # Attempt 2: timeout
+    # Attempt 3: timeout
 ```
+
+`max_retries` counts retries **after** the first attempt — `max_retries=3`
+means the task runs up to 4 times total (the initial attempt plus 3 retries),
+recording 4 entries in `job.errors` (attempts 0–3).
 
 Each error entry contains:
 

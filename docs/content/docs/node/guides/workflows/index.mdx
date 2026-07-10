@@ -6,9 +6,10 @@ description: "Orchestrate multi-step DAGs in Node.js with the Taskito workflow b
 import { Cards, Card } from "fumadocs-ui/components/card";
 import { Callout } from "fumadocs-ui/components/callout";
 
-Orchestrate multi-step DAGs where each step is a registered task and `after`
-declares its dependencies. The Rust core schedules steps in topological order;
-a worker advances the run as each step settles.
+Orchestrate multi-step DAGs (directed acyclic graphs — steps with dependencies
+and no cycles) where each step is a registered task and `after` declares its
+dependencies. The Rust core schedules steps in topological order; a worker
+advances the run as each step settles.
 
 ```ts
 const handle = queue.workflows
@@ -27,6 +28,23 @@ handle.nodes();                   // per-step status snapshot
 
 Requires the addon built with the `workflows` cargo feature (enabled by
 `pnpm build:native`).
+
+<Callout type="warning" title="Workflows need a running worker">
+  `.submit()` enqueues the step jobs; they only execute while a worker (a
+  process that claims and executes queued jobs) is consuming the queue. Start
+  one first — `queue.runWorker()`, as above — otherwise `handle.wait()` blocks
+  until it times out.
+</Callout>
+
+<Callout type="info" title="Coming from BullMQ?">
+  BullMQ's closest equivalent is `FlowProducer` — `.add({ name, queueName,
+  data, children: [...] })` builds a parent/child job **tree**: one parent,
+  many children, no joins. taskito's workflow builder is a general **DAG**: a
+  step's `after` can list multiple predecessors, so two branches can merge
+  back into one step (a join `FlowProducer` can't express). Conditions, gates,
+  sagas, and caching are also taskito-only — there's no BullMQ equivalent for
+  those.
+</Callout>
 
 <Cards>
   <Card
@@ -53,5 +71,20 @@ Requires the addon built with the `workflows` cargo feature (enabled by
     title="Saga Compensation"
     href="/node/guides/workflows/saga"
     description="Automatically roll back completed steps in reverse order when a run fails."
+  />
+  <Card
+    title="Canvas Primitives"
+    href="/node/guides/workflows/canvas"
+    description="chain / group / chord shorthands for common DAG shapes."
+  />
+  <Card
+    title="Incremental Runs"
+    href="/node/guides/workflows/caching"
+    description="Cache a step's result and reuse it across runs with a dirty set."
+  />
+  <Card
+    title="Analysis & Visualization"
+    href="/node/guides/workflows/analysis"
+    description="Introspect a run's DAG — dependencies, levels, critical path, stats."
   />
 </Cards>

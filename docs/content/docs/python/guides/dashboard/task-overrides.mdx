@@ -18,7 +18,8 @@ Two surfaces:
 - **Queue overrides** — per-queue knobs: rate limit, concurrency,
   paused.
 
-Plus a separate but related toggle for **middleware** on a per-task
+Plus a separate but related toggle for
+[**middleware**](/python/guides/extensibility/middleware) on a per-task
 basis (see [§ Middleware toggles](#middleware-toggles) below).
 
 ## Tasks page
@@ -55,24 +56,26 @@ This is the most important thing to internalize:
 
 | Change | Takes effect |
 |---|---|
-| Pausing a task | Next worker restart for the rate-limit/concurrency side effects, **but** the paused flag is plumbed through the live `paused_queues` mechanism so the scheduler stops dequeuing immediately for queue-level pauses |
-| Pausing a queue | **Immediately** on running workers (writes to `paused_queues`) |
-| Rate limit / max concurrent / retries / timeout / priority on a task | **Next worker restart** — the values are baked into `PyTaskConfig` at `run_worker` time and passed to the Rust scheduler |
-| Rate limit / max concurrent on a queue | **Next worker restart** — same mechanism, merged into `queue_configs` JSON sent to Rust |
-| Middleware on/off per task | **Next job** — middleware lookup happens at every task invocation |
+| Pausing a queue — via `queue.pause(name)`, the dashboard's Queues page, or the REST API's queue-override endpoint | **Immediately** on every running worker — the scheduler checks the live pause state on every poll cycle, no restart needed |
+| Setting `paused=True` on a **queue override** through the Python API (`queue.set_queue_override(...)`) directly, without also calling `queue.pause()` | Recorded, but only applied the next time a worker starts. Call `queue.pause(name)` (or use the dashboard/REST API, which does this for you) for an immediate effect |
+| Setting `paused=True` on a **task override** (`queue.set_task_override(...)`) | Recorded and shown in the dashboard/API as paused, but **not currently enforced by the scheduler** — the task keeps being dequeued and run normally. Treat it as an operator-visible annotation today, not a functional kill switch; pause the task's queue if you need it to actually stop |
+| Rate limit / max concurrent / retries / timeout / priority on a task | **Next worker restart** — these values are read once when a worker starts and used for the rest of that worker's lifetime |
+| Rate limit / max concurrent on a queue | **Next worker restart** — same mechanism |
+| Middleware on/off per task | **Next job** — the middleware lookup runs on every task invocation |
 
-This split is intentional. Pause is a fast-path safety valve;
-retry/rate-limit changes need scheduler buy-in and are deliberately
-"restart to apply" so operators have a clear mental model of when the
-new values take over.
+This split is intentional. Queue-level pause is a fast-path safety
+valve wired directly into the scheduler's poll loop; retry/rate-limit
+changes need scheduler buy-in and are deliberately "restart to apply"
+so operators have a clear mental model of when the new values take
+over.
 
-<Callout type="info" title="Hot-reload of all knobs is a planned follow-up">
-  Pulling rate-limit / retries / timeout into the Rust scheduler's
-  per-poll lookup would let those changes hot-reload too. The
-  ``PyTaskConfig`` → scheduler path would gain a cache-invalidation
-  counter (incremented on every override write) the poller checks
-  before each admission cycle. Until then, restart the worker to apply
-  changes to those knobs.
+<Callout type="info" title="Per-task pause and hot-reload are planned follow-ups">
+  Two gaps are tracked for a future release: wiring the per-task
+  `paused` override into the scheduler (today it's metadata only), and
+  pulling rate-limit / retries / timeout into the scheduler's per-poll
+  lookup so those changes hot-reload instead of requiring a restart.
+  Until then, restart the worker to apply changes to those knobs, and
+  use a queue-level pause if you need a task to actually stop running.
 </Callout>
 
 ## Programmatic API
@@ -91,12 +94,13 @@ queue.set_task_override(
     rate_limit="200/m",
     max_retries=10,
 )
-queue.set_task_override("myapp.tasks.send_email", paused=True)  # immediate-ish
+queue.set_task_override("myapp.tasks.send_email", paused=True)  # recorded only — not enforced by the scheduler yet
 queue.clear_task_override("myapp.tasks.send_email")
 
 # Queues
 queue.set_queue_override("email", max_concurrent=5)
-queue.set_queue_override("email", paused=True)  # immediate
+queue.set_queue_override("email", paused=True)  # recorded — applies on next worker start
+queue.pause("email")  # this is what actually stops dequeuing immediately
 queue.clear_queue_override("email")
 
 # Discovery — what's registered + what's overridden
@@ -185,15 +189,18 @@ queue.get_disabled_middleware_for("myapp.tasks.send_email")  # ["demo.metrics"]
 ### Pause one task without redeploying
 
 A flaky third-party API is rate-limiting your `send_email` task and
-you want to stop new sends while you investigate:
+you want to stop new sends while you investigate. Marking the task
+itself as paused only records the state for operators to see — it
+doesn't stop the scheduler today. To actually stop new sends, pause
+the queue that task runs on:
 
 ```python
-queue.set_task_override("myapp.tasks.send_email", paused=True)
-# ... or from the dashboard: Tasks → send_email → Edit → check "Pause this task"
+queue.pause("email")
+# ... or from the dashboard: Infrastructure → Queues → email → Pause
 ```
 
-Existing in-flight jobs finish normally; nothing new dequeues until
-you clear the override.
+Existing in-flight jobs finish normally; nothing new dequeues from
+that queue until you call `queue.resume("email")`.
 
 ### Lower a rate limit during an incident
 

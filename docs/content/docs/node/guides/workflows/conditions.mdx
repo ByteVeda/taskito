@@ -110,3 +110,8 @@ queue.workflows
 | `timeoutMs` | `number` | Per-attempt timeout |
 | `priority` | `number` | Queue priority |
 | `queue` | `string` | Queue name |
+
+> **Coming from BullMQ?** `FlowProducer` runs every child unconditionally —
+> there's no per-child `on_success` / `on_failure` branching. Conditional
+> steps are taskito-only; in BullMQ you'd inspect the parent job's outcome
+> yourself and decide whether to `add()` the next job at all.

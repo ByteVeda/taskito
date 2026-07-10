@@ -3,15 +3,19 @@ title: Operations
 description: "Run taskito reliably in production — testing, deployment, scaling, migration."
 ---
 
-Run taskito reliably in production.
+Run taskito reliably in production — with no Redis or RabbitMQ broker to operate,
+just an embedded SQLite file or a Postgres instance.
 
 | Guide | Description |
 |---|---|
 | [Testing](/python/guides/operations/testing) | Test mode, fixtures, mocking resources, and workflow testing |
 | [Job Management](/python/guides/operations/job-management) | Cancel, pause, archive, revoke, replay, and clean up jobs |
 | [Troubleshooting](/python/guides/operations/troubleshooting) | Diagnose stuck jobs, lock contention, and worker issues |
+| [Security](/python/guides/operations/security) | Serializer signing/encryption, dashboard auth, and SSRF guards |
 | [Deployment](/python/guides/operations/deployment) | systemd, Docker, WAL mode, Postgres, and production checklists |
+| [Mesh Scheduling](/python/guides/operations/mesh) | Decentralized multi-worker work-stealing overlay |
 | [Bare-Metal Autoscaler](/python/guides/operations/autoscaler) | Automatically scale worker processes without Kubernetes |
 | [KEDA Autoscaling](/python/guides/operations/keda) | Kubernetes event-driven autoscaling for workers |
 | [Postgres Backend](/python/guides/operations/postgres) | Set up and run taskito with PostgreSQL |
 | [Migrating from Celery](/python/guides/operations/migration) | Side-by-side comparison and step-by-step migration guide |
+| [Upgrading to 0.15](/python/guides/operations/upgrading-0.15) | Breaking changes and migration steps for the 0.15 release |

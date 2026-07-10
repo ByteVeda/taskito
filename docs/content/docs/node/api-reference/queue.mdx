@@ -21,6 +21,8 @@ const queue = new Queue(options);
 | `prefix` | `string` | Redis key prefix. |
 | `namespace` | `string` | Namespace applied to enqueued jobs + the worker scheduler. |
 | `serializer` | `Serializer` | Arg/result serializer (default `JsonSerializer`). |
+| `codec` | `PayloadCodec \| PayloadCodec[]` | Global codec chain wrapping the serializer — covers every payload and result. See [Serializers](/node/api-reference/serializers). |
+| `codecs` | `Record<string, PayloadCodec>` | Named codec registry for per-task `codecs` (payload only). |
 
 ## Tasks & enqueue
 
@@ -35,10 +37,13 @@ const queue = new Queue(options);
 
 | Method | Description |
 |---|---|
-| `result(id, { timeoutMs? })` | Await a job's result. |
+| `getJob(id)` → `Job \| null` | Fetch a job's current state. |
+| `getResult(id)` | Deserialized result of a completed job, or `undefined` if not yet ready. |
+| `result(id, { timeoutMs?, pollMs? })` | Await a job's terminal result; rejects on failure/cancellation/timeout. |
 | `stream(id, { timeoutMs?, pollMs? })` | Async-iterate a job's [published partials](/node/guides/core/streaming). |
 | `taskLogs(id)` | Raw task-log entries for a job. |
-| `requestCancel(id)` | Abort a running job's signal. |
+| `requestCancel(id)` | Request cooperative cancellation of a running job. |
+| `isCancelRequested(id)` | Whether cancellation has been requested for a job. |
 | `cancelJob(id)` | Cancel a pending job. |
 
 ## Inspection & management
@@ -51,8 +56,8 @@ background thread pool.
 | `stats()` → `Promise<Stats>` / `statsByQueue(q)` → `Promise<Stats>` / `statsAllQueues()` → `Promise<Record<string, Stats>>` | Counts by status. |
 | `listJobs(filter)` → `Promise<Job[]>` | List jobs. |
 | `getJobErrors(id)` → `Promise<JobError[]>` | Per-attempt error history. |
-| `getMetrics(windowMs, task?)` → `Promise<Metric[]>` | Aggregated metrics. |
-| `deadLetters()` → `Promise<DeadJob[]>` / `retryDead(id)` / `deleteDead(id)` / `purgeDead(ms)` → `Promise<number>` | DLQ ops. |
+| `getMetrics(sinceMs, task?)` → `Promise<Metric[]>` | Raw per-execution metric rows recorded at or after the Unix-ms `sinceMs`. |
+| `deadLetters()` → `Promise<DeadJob[]>` / `retryDead(id)` / `deleteDead(id)` / `purgeDead(ms)` → `Promise<number>` | DLQ (dead-letter queue) ops. |
 | `purgeCompleted(ms)` → `Promise<number>` | Drop old completed jobs. |
 | `pauseQueue(q)` / `resumeQueue(q)` / `listPausedQueues()` | Queue control. |
 | `listWorkers()` → `Promise<WorkerInfo[]>` | Registered workers. |
@@ -64,6 +69,8 @@ background thread pool.
 | `runWorker(options?)` | Start a [worker](/node/api-reference/worker). |
 | `on(event, handler)` | [Events](/node/guides/extensibility/events). |
 | `use(middleware)` | [Middleware](/node/guides/extensibility/middleware) (incl. the `onEnqueue` [interception](/node/guides/resources/interception) hook). |
+| `intercept(interceptor)` | Register an [enqueue interceptor](/node/guides/resources/interception) — runs before defaults, middleware, and gates. |
+| `gate(name, predicate)` | Reject an enqueue when the [predicate](/node/guides/core/predicates) returns `false`. |
 | `resource(name, factory, opts?)` | Register an injectable [resource](/node/guides/resources/dependency-injection) (`scope`, `dispose`). |
 | `webhooks` | [Webhooks](/node/guides/extensibility/webhooks) manager. |
 | `workflows` | [Workflow](/node/api-reference/workflows) builder + queries. |

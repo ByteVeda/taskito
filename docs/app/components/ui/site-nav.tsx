@@ -166,9 +166,12 @@ const LINKS: { label: string; href: string; sdk?: boolean }[] = [
 export function SiteNav({
   onSearch,
   onMenu,
+  showSdkSelect = true,
 }: {
   onSearch?: () => void;
   onMenu?: () => void;
+  // Landing hides it — the hero language tabs already own SDK selection there.
+  showSdkSelect?: boolean;
 }) {
   const sdk = useActiveSdk();
   return (
@@ -197,7 +200,7 @@ export function SiteNav({
         ))}
       </div>
       <div className="navright">
-        <SdkSelect />
+        {showSdkSelect ? <SdkSelect /> : null}
         <button type="button" className="kbar" onClick={onSearch}>
           <Search size={14} />
           <span>Search</span>

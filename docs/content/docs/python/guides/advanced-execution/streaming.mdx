@@ -6,6 +6,11 @@ description: "Stream partial results from long-running tasks via current_job.pub
 Stream intermediate results from long-running tasks. Instead of waiting for
 the final result, consumers receive partial data as it becomes available.
 
+Partial results are delivered by polling the database (the `task_logs`
+table), not pushed by a message broker. For streaming progress over HTTP
+instead of polling in Python, see the
+[FastAPI SSE integration](/python/guides/integrations/fastapi#sse-progress-streaming).
+
 ## Publishing partial results
 
 Inside a task, call `current_job.publish(data)` to emit a partial result:

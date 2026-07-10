@@ -7,9 +7,11 @@ When a task throws (or its promise rejects), Taskito decides the job's fate from
 its retry budget. Each failing attempt runs the `onError` middleware hook, then:
 
 1. **Retry** — if attempts remain, the job is rescheduled with
-   [backoff](/node/guides/reliability/retries).
+   [backoff](/node/guides/reliability/retries) (a growing delay between
+   attempts, so retries don't hammer a struggling dependency).
 2. **Dead-letter** — once the budget is exhausted, the job moves to the
-   [dead-letter queue](/node/guides/reliability/dead-letter).
+   [dead-letter queue](/node/guides/reliability/dead-letter) (DLQ — a holding
+   area for permanently-failed jobs you can inspect and replay).
 
 ```ts
 queue.task("fetch", fetchUrl, {

@@ -3,7 +3,8 @@ title: Workflows
 description: "Orchestrate multi-step DAGs in Java with the Taskito workflow builder."
 ---
 
-Orchestrate multi-step DAGs where each step is a registered task and its
+Orchestrate multi-step DAGs (directed acyclic graphs — steps as nodes, `after`
+edges between them, no cycles) where each step is a registered task and its
 `after` list declares its dependencies. The Rust core schedules steps in
 topological order; a worker that calls `trackWorkflows()` advances the run as
 each step settles.
@@ -49,7 +50,19 @@ supply payloads at submit time via
   payloads and predicates.
 </Callout>
 
+<Callout type="info" title="Coming from chained JMS listeners or RabbitMQ routing keys?">
+  Wiring a multi-step pipeline by hand usually means one listener per step and
+  custom state (a status column, a Redis key) to track what's done. A
+  `Workflow` declares the whole DAG — steps, `after` dependencies, and
+  retries — once, and the tracker walks the graph instead of your code.
+</Callout>
+
 <Cards>
+  <Card
+    title="Building Workflows"
+    href="/java/guides/workflows/building"
+    description="The Step.Builder reference, the build+submit flow, and the node status lifecycle."
+  />
   <Card
     title="Fan-out / Fan-in"
     href="/java/guides/workflows/fan-out"
@@ -74,5 +87,20 @@ supply payloads at submit time via
     title="Saga Compensation"
     href="/java/guides/workflows/saga"
     description="Automatically roll back completed steps in reverse order when a run fails."
+  />
+  <Card
+    title="Canvas Primitives"
+    href="/java/guides/workflows/canvas"
+    description="Chain, group, and chord shorthands for common workflow shapes."
+  />
+  <Card
+    title="Incremental Runs"
+    href="/java/guides/workflows/caching"
+    description="Reuse a step's result across runs — cache hits skip re-execution within a TTL."
+  />
+  <Card
+    title="Analysis & Visualization"
+    href="/java/guides/workflows/analysis"
+    description="Introspect a workflow definition's DAG — order, levels, ancestors, and diagrams."
   />
 </Cards>

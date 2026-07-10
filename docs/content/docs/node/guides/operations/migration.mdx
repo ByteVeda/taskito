@@ -17,9 +17,11 @@ handlers are **registered by name** on the queue rather than wired to a separate
 | `queue.add("job", data, opts)` | `queue.task("job", fn)` once, then `queue.enqueue("job", args, opts)` |
 | `job.data` | the positional `args` passed to the handler |
 | `job.id`, progress | `currentJob()` → `jobId`, `setProgress()` |
+| `await job.waitUntilFinished(queueEvents)` | `await queue.result(id, { timeoutMs })` — defaults to 30s and throws `ResultTimeoutError` on timeout |
 | `attempts` + `backoff` | `maxRetries` + `retryBackoff` |
 | `rateLimiter` | per-task / per-queue `rateLimit: "100/m"` |
 | `QueueEvents` | `queue.on(event, …)` + [middleware](/node/guides/extensibility/middleware) |
+| `QueueScheduler` | not needed — a running `queue.runWorker()` handles delayed and repeatable jobs itself |
 | Repeatable jobs (cron) | `queue.registerPeriodic(name, task, cron)` |
 | Flows (parent/child) | [Workflows](/node/guides/workflows) (DAG, fan-out, gates, saga) |
 | `queue.getJobCounts()` | `await queue.stats()` / `statsAllQueues()` |
@@ -52,6 +54,10 @@ queue.runWorker({ queues: ["emails"] });
 - **Built-in orchestration** — DAG [workflows](/node/guides/workflows) and a
   [mesh](/node/guides/operations/mesh) replace hand-rolled flows and external
   schedulers.
+- **No separate scheduler process** — delayed and `registerPeriodic` (cron) jobs
+  fire from the same `queue.runWorker()` poll loop that runs your tasks. If no
+  worker process is running, cron jobs simply don't fire — there's no
+  `QueueScheduler`-equivalent to run independently.
 
 <Callout type="info">
   Migrating incrementally? Point Taskito at the same Redis you already run, move

@@ -70,7 +70,7 @@ export function sendCampaign(recipients: string[], subject: string, body: string
 Watch the backlog drain and catch addresses that exhausted their retries.
 
 ```ts
-console.log(await queue.statsByQueue("default")); // { pending, running, complete, failed, dead, cancelled }
+console.log(await queue.statsByQueue("default")); // { pending, running, completed, failed, dead, cancelled }
 
 for (const dead of await queue.deadLetters(50)) {
   console.warn(`gave up on ${dead.taskName}: ${dead.error}`);

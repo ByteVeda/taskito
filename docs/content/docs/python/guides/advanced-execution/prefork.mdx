@@ -4,7 +4,7 @@ description: "Spawn child processes for true CPU parallelism — each child has 
 ---
 
 Spawn separate child processes for true CPU parallelism. Each child has its
-own Python GIL, so CPU-bound tasks don't block each other.
+own Python GIL (Global Interpreter Lock — only one thread runs Python bytecode at a time), so CPU-bound tasks don't block each other.
 
 ## When to use
 
@@ -27,6 +27,10 @@ taskito worker --app myapp:queue --pool prefork
 
 The `app` parameter tells each child process how to import your Queue
 instance. It must be an importable path in `module:attribute` format.
+
+Mapping from Celery: `--pool prefork` / `--concurrency N` ≈ taskito's
+`--pool prefork` / `workers=N`. The default pool differs, though — taskito
+defaults to `thread`, while Celery defaults to `prefork`.
 
 ## How it works
 

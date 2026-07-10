@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   applyDiagramTheme,
   diagramThemeCss,
@@ -8,9 +9,14 @@ import { useThemeMode } from "@/lib/theme";
 
 export function Mermaid({ chart }: { chart: string }) {
   const id = useId();
-  const containerRef = useRef<HTMLDivElement>(null);
   const resolvedTheme = useThemeMode();
   const [svg, setSvg] = useState<string>("");
+  // Inline diagrams fit the column; clicking opens a full-viewport overlay where
+  // the chart renders large (already "zoomed in") — readable without an inline
+  // scrollbar. Click anywhere or press Escape to close.
+  const [zoomed, setZoomed] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const modalRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,12 +60,62 @@ export function Mermaid({ chart }: { chart: string }) {
     };
   }, [chart, id, resolvedTheme]);
 
+  useEffect(() => {
+    if (!zoomed) {
+      return;
+    }
+    // Focus the overlay; cleanup restores focus to the trigger on close.
+    modalRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setZoomed(false);
+      } else if (event.key === "Tab") {
+        // The overlay is the only focusable element — trap Tab on it so
+        // focus can't reach background controls behind the modal.
+        event.preventDefault();
+        modalRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+      // Read the ref fresh: the trigger remounts on close and is focusable by
+      // the time cleanup runs (it was null while zoomed).
+      triggerRef.current?.focus();
+    };
+  }, [zoomed]);
+
+  // Only one SVG is in the DOM per state (inline OR overlay), so there's no
+  // duplicate-id copy to break the arrowhead/marker `url(#…)` references.
   return (
-    <div
-      ref={containerRef}
-      className="my-6 flex justify-center [&_svg]:max-w-full"
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <>
+      {!zoomed && (
+        <button
+          ref={triggerRef}
+          type="button"
+          className="mermaid-fig"
+          aria-label="Enlarge diagram"
+          onClick={() => setZoomed(true)}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      )}
+      {zoomed &&
+        createPortal(
+          <button
+            ref={modalRef}
+            type="button"
+            className="mermaid-modal"
+            aria-label="Close enlarged diagram"
+            onClick={() => setZoomed(false)}
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid produces trusted SVG from author content
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />,
+          document.body,
+        )}
+    </>
   );
 }

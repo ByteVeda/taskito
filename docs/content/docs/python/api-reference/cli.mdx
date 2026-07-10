@@ -1,6 +1,6 @@
 ---
 title: CLI Reference
-description: "The taskito command-line interface — worker, info, scaler, autoscale."
+description: "The taskito command-line interface — worker, dashboard, info, pause, resume, scaler, autoscale, resources, reload."
 ---
 
 taskito provides a command-line interface for running workers and inspecting
@@ -50,6 +50,51 @@ taskito worker --app myapp.tasks:queue --pool prefork
 
 The worker blocks until interrupted with `Ctrl+C`. It performs a graceful
 shutdown — in-flight tasks are allowed to complete before the process exits.
+
+### `taskito dashboard`
+
+Start the web dashboard (SPA + REST API) for the queue.
+
+```bash
+taskito dashboard --app <module:attribute> [--host <addr>] [--port <port>] [--insecure-cookies]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--app` | — | Python path to the `Queue` instance |
+| `--host` | `127.0.0.1` | Bind address |
+| `--port` | `8080` | Bind port |
+| `--insecure-cookies` | `False` | Drop the `Secure` flag on session cookies (local HTTP dev only) |
+
+**Example:**
+
+```bash
+taskito dashboard --app myapp.tasks:queue --port 8080
+```
+
+See the [Dashboard guide](/python/guides/dashboard) for authentication and deployment.
+
+### `taskito pause` / `taskito resume`
+
+Pause or resume a named queue. A paused queue stops dequeuing new jobs;
+in-flight jobs still run to completion.
+
+```bash
+taskito pause --app <module:attribute> <queue_name>
+taskito resume --app <module:attribute> <queue_name>
+```
+
+| Flag / Arg | Required | Description |
+|---|---|---|
+| `--app` | Yes | Python path to the `Queue` instance |
+| `queue_name` | Yes | Name of the queue to pause or resume |
+
+**Example:**
+
+```bash
+taskito pause --app myapp.tasks:queue emails
+taskito resume --app myapp.tasks:queue emails
+```
 
 ### `taskito info`
 
@@ -196,6 +241,42 @@ taskito autoscale --app myapp.tasks:queue --min-workers 2 --max-workers 20
 
 See the [Autoscaler guide](/python/guides/operations/autoscaler) for deployment
 patterns and tuning advice.
+
+### `taskito resources`
+
+Show the status of every registered resource — scope, health, init time,
+recreation count, and dependencies.
+
+```bash
+taskito resources --app <module:attribute>
+```
+
+| Flag | Required | Description |
+|---|---|---|
+| `--app` | Yes | Python path to the `Queue` instance |
+
+See the [Resource System](/python/guides/resources) guide for background.
+
+### `taskito reload`
+
+Send `SIGHUP` to a running worker process to hot-reload resources without
+restarting the worker.
+
+```bash
+taskito reload --pid <pid> [--resource <name>]
+```
+
+| Flag | Required | Description |
+|---|---|---|
+| `--pid` | Yes | PID of the running worker process |
+| `--resource` | No | Reload only this resource (default: all reloadable resources) |
+
+**Example:**
+
+```bash
+taskito reload --pid 12345
+taskito reload --pid 12345 --resource db_pool
+```
 
 ## Error messages
 

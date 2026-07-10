@@ -51,7 +51,7 @@ charge_customer.apply_async(args=(42, 1000), idempotent=False)
 | `idempotent=True` (decorator) | `bool` | Default for every `delay()` / `apply_async()` |
 | `idempotency_key="…"` (call) | `str` | Explicit key. Overrides auto-derivation. |
 | `idempotent=False` (call) | `bool` | Disable auto-derivation for this submission |
-| `unique_key="…"` (call) | `str` | Backwards-compat alias of `idempotency_key` |
+| `unique_key="…"` (call) | `str` | The underlying storage dedup key. Highest precedence — overrides `idempotency_key` and auto-derivation. |
 
 Precedence (high to low): `unique_key` → `idempotency_key` → auto-derivation.
 

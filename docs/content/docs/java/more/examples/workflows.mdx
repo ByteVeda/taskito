@@ -3,9 +3,20 @@ title: DAG Workflow Examples
 description: "Fan-out/fan-in map-reduce, approval gates, error-handling conditions, sub-workflows, caching, and canvas shortcuts."
 ---
 
-These are focused recipes for the `Workflow` builder. Each is independent —
-combine them as your orchestration needs grow. See the
-[Workflows reference](/java/api-reference/workflows) for the underlying model.
+These are focused recipes for the `Workflow` builder — snippets, not full
+programs. Each is independent — combine them as your orchestration needs
+grow. See the [Workflows reference](/java/api-reference/workflows) for the
+underlying model.
+
+<Callout type="warn">
+  Every recipe below assumes a `Worker` is already running against the same
+  store, with handlers registered for each step's task and `trackWorkflows()`
+  set where a recipe uses gates, conditions, or sub-workflows — otherwise
+  `run.await(...)` times out with nothing to dequeue the jobs. See
+  [ETL Data Pipeline](/java/more/examples/data-pipeline) or
+  [Web Scraper Pipeline](/java/more/examples/web-scraper) for a full
+  worker-plus-workflow program.
+</Callout>
 
 ## Map-reduce with fan-out / fan-in
 

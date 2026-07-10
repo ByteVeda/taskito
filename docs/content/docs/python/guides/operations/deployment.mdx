@@ -7,6 +7,13 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 This guide covers running taskito in production environments.
 
+<Callout type="info" title="No broker to operate">
+  Unlike Celery (which needs Redis or RabbitMQ as a message broker), taskito's
+  scheduler lives inside the worker process and reads directly from SQLite or
+  Postgres. There's no separate broker process to run, monitor, or fail over —
+  one less moving part in production.
+</Callout>
+
 ## SQLite file location
 
 Choose a persistent, backed-up location for your database:
@@ -14,6 +21,11 @@ Choose a persistent, backed-up location for your database:
 ```python
 queue = Queue(db_path="/var/lib/myapp/taskito.db")
 ```
+
+SQLite runs in **WAL** (write-ahead logging) mode by default — see
+[WAL mode and backups](#wal-mode-and-backups) below — which appends writes to
+a separate log file instead of the main database file, letting many readers
+proceed concurrently with the one writer.
 
 **Best practices:**
 
@@ -81,9 +93,24 @@ COPY . .
 
 # Store the database in a volume
 VOLUME /data
-ENV TASKITO_DB_PATH=/data/taskito.db
 
 CMD ["taskito", "worker", "--app", "myapp:queue"]
+```
+
+<Callout type="warn" title="TASKITO_DB_PATH is not read automatically">
+  The `taskito` CLI and the `Queue` constructor do not read a `TASKITO_DB_PATH`
+  environment variable — that env var name is only recognized by the Flask and
+  Django integrations. If your `myapp:queue` module builds the `Queue`
+  directly, read the path yourself (and keep the `ENV TASKITO_DB_PATH=...`
+  line in the Dockerfile above), as shown below.
+</Callout>
+
+```python
+# myapp.py
+import os
+from taskito import Queue
+
+queue = Queue(db_path=os.environ.get("TASKITO_DB_PATH", "/data/taskito.db"))
 ```
 
 ### docker-compose.yml
@@ -340,7 +367,11 @@ are serialized. This is the primary throughput ceiling.
 
 - **1,000–5,000 jobs/second** for enqueue + dequeue cycles (small payloads)
 - Throughput decreases with larger payloads, complex queries, or spinning disks
-- The connection pool size (default: 8) controls read concurrency — tune it based on your read/write ratio
+- The connection pool (a fixed set of reusable database connections, avoiding
+  the overhead of opening a new one per query) size is fixed at 8 for the
+  SQLite backend — it is not configurable from the Python `Queue`
+  constructor. The `pool_size` argument on `Queue()` only takes effect on the
+  [Postgres backend](/python/guides/operations/postgres#connection-pooling)
 
 **When to upgrade to Postgres:**
 
@@ -362,6 +393,11 @@ of these limitations while keeping the same API.
 | 5K–20K jobs/s | Postgres | 16–32 | prefork | Switch to Postgres for concurrent writers |
 | 20K–50K jobs/s | Postgres | 32+ | prefork | Multiple worker processes, tune `pool_size` |
 | > 50K jobs/s | — | — | — | Consider Celery + RabbitMQ for this scale |
+
+`Pool` is the worker execution pool: `thread` (default, one process with
+multiple OS threads) or `prefork` (multiple worker subprocesses, true CPU
+parallelism). See [Prefork Workers](/python/guides/advanced-execution/prefork)
+for when and how to switch.
 
 <Callout type="info">
   These are rough guidelines for noop tasks. Real throughput depends on task

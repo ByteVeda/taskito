@@ -30,14 +30,14 @@ for job in stuck:
 have exceeded their `timeout_ms` and retries them. If a job has no timeout
 set, it stays stuck forever.
 
-To recover a stuck job manually:
+`timeout_ms` is the internal, database-stored deadline in milliseconds; you
+set it in seconds via `@queue.task(timeout=...)` (or `default_timeout` on
+`Queue()`) and taskito converts it under the hood.
 
-```python
-import time
-
-# Mark the job as failed so it retries
-queue._inner.retry(job_id, int(time.time() * 1000))
-```
+Recovery is automatic once a `timeout` is set: the stale reaper marks the job
+failed and then retries it (or moves it to the dead letter queue). A job stuck
+with **no** timeout stays `running` indefinitely — set a timeout going forward,
+and re-enqueue the work with a fresh `.delay()` if you need it to run now.
 
 To prevent this in future, always set a timeout on production tasks:
 
@@ -66,11 +66,14 @@ for w in workers:
 
 **Possible causes**:
 
-1. **GIL-bound CPU task**: a long-running CPU task is holding the GIL,
+1. **GIL-bound CPU task**: a long-running CPU task is holding the GIL
+   (Global Interpreter Lock — only one thread runs Python bytecode at a time),
    blocking the scheduler thread from dispatching new jobs. The scheduler
    runs in Rust, but it still needs the GIL to call Python functions.
 
-   Fix: switch to the prefork pool for CPU-bound tasks.
+   Fix: switch to the [prefork pool](/python/guides/advanced-execution/prefork)
+   for CPU-bound tasks — it runs tasks in separate subprocesses instead of
+   threads, so one task's GIL usage can't block the scheduler.
 
    ```bash
    taskito worker --app myapp:queue --pool prefork
@@ -241,8 +244,7 @@ job = queue.get_job(job_id)
 print(job.to_dict()["task_name"])  # e.g. "myapp.tasks.process"
 
 # Check what the worker has registered
-# (add this temporarily to your worker startup)
-print(list(queue._task_registry.keys()))
+print([t["name"] for t in queue.registered_tasks()])
 ```
 
 **Fix**: use consistent import paths. If the task is `myapp/tasks.py:process`,

@@ -16,7 +16,10 @@ Install with the `otel` extra:
 pip install taskito[otel]
 ```
 
-This installs `opentelemetry-api` as a dependency.
+This installs `opentelemetry-api` and `opentelemetry-sdk` as
+dependencies. It does **not** install an exporter — for the OTLP example
+below, also run `pip install opentelemetry-exporter-otlp` (or whichever
+exporter package matches your backend).
 
 ## Setup
 
@@ -31,7 +34,7 @@ queue = Queue(middleware=[OpenTelemetryMiddleware()])
 
 ## What gets traced
 
-Each task execution produces a span with:
+Each task execution produces a span (a timed unit of work in a distributed trace) with:
 
 - **Span name**: `taskito.execute.<task_name>` (customizable)
 - **Attributes**:

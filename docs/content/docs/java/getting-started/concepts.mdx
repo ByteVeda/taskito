@@ -6,6 +6,28 @@ description: "Client, task, job, worker, result — the Java mental model over t
 The Java SDK is a typed shell; the scheduler, dispatcher, worker pool, and
 storage are all in the shared Rust engine. Five concepts cover the surface.
 
+## Why no broker
+
+A typical JVM background-job setup runs several separate services: a message
+**broker** (a standalone server that holds pending jobs — RabbitMQ, JMS, or a
+Redis-backed queue) that hands work to consumers, somewhere to store results,
+and the worker processes themselves. Spring's `@Async` skips the broker but
+skips durability too — queued calls live in an in-process executor and vanish
+on restart.
+
+taskito collapses all of that into the `Taskito` client: one SQLite file (or a
+Postgres schema, or Redis) holds the job queue, the results, and any cron
+schedules together. There's no broker to install, secure, or monitor —
+`Taskito.builder().sqlite(...).open()` is the whole setup.
+
+<Callout type="info" title="Coming from a brokered queue or Spring @Async?">
+  Your `ConnectionFactory` / `spring.rabbitmq.*` / JMS listener config
+  disappears — a single `Taskito.builder().sqlite("taskito.db").open()`
+  replaces the broker, the result store, and the connection pool. Unlike
+  `@Async`, jobs survive an app restart: they're rows in storage, not
+  in-memory tasks.
+</Callout>
+
 <Seq
   heads={["Producer", "Worker"]}
   rows={[
@@ -43,6 +65,11 @@ status, and result. Jobs move through a state machine: `PENDING → RUNNING →
 COMPLETE`, or `FAILED` (retrying), or `DEAD` (retries exhausted), or
 `CANCELLED`. The engine claims jobs atomically, so the same job never runs
 twice concurrently.
+
+A failing job retries with **backoff** (each wait longer than the last) until
+its budget is exhausted, then lands in the **dead-letter queue** (DLQ, a
+holding area for exhausted jobs) — see
+[dead-letter](/java/guides/reliability/dead-letter).
 
 ## Worker
 

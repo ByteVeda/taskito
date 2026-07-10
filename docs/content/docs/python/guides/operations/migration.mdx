@@ -16,7 +16,7 @@ with less infrastructure and simpler configuration.
 |---|---|---|
 | `Celery()` app | `Queue()` | `Queue(db_path=...)` replaces `Celery(broker=..., backend=...)` — no broker URL, no result-backend URL, no `app.conf` setup. |
 | `@app.task` | `@queue.task()` | Same decorator shape; `max_retries`, `rate_limit`, `bind=True`, `name=` carry over with identical names. |
-| `.apply_async()` | `.apply_async()` | Same kwargs (`countdown`, `eta`, `priority`, `queue`); taskito adds `delay`, `unique_key`, `expires`, `depends_on`. |
+| `.apply_async()` | `.apply_async()` | `priority` and `queue` carry over. Celery's `countdown` becomes `delay`; there is no `eta` (use `delay` with relative seconds). taskito adds `unique_key`, `expires`, `depends_on`. |
 | `.delay()` | `.delay()` | Drop-in. Returns `JobResult` instead of `AsyncResult`. |
 | `AsyncResult` | `JobResult` | `.result(timeout=...)` replaces `.get(timeout=...)`; async variant `await job.aresult()`. |
 | Canvas (`chain`, `group`, `chord`) | `chain`, `group`, `chord` | API-compatible. taskito adds a DAG `Workflow` builder with conditions, gates, and fan-in. |
@@ -212,6 +212,12 @@ chord(
 
 Almost identical. The only change: `.apply_async()` becomes `.apply()`.
 
+<Callout type="warn" title="`.apply()` is not Celery's eager `.apply()`">
+  In Celery, `.apply()` runs the canvas **locally and synchronously**. In taskito,
+  `.apply(queue)` **submits** it to the queue for workers to run — await results
+  with `.result()`. taskito has no eager local execution mode.
+</Callout>
+
 ### Periodic tasks
 
 <Tabs items={["Celery", "taskito"]}>
@@ -339,7 +345,7 @@ Some Celery features don't have taskito equivalents:
 | Distributed workers (multi-server) | Use Postgres backend |
 | Message routing (exchanges, topics) | Use named queues instead |
 | `celery multi` (process management) | Use systemd, supervisor, or Docker |
-| Custom serializers (JSON, msgpack) | `JsonSerializer`, `CloudpickleSerializer` (default), or custom `Serializer` protocol |
+| Custom serializers (JSON, msgpack) | `SmartSerializer` (default), `JsonSerializer`, `CloudpickleSerializer`, or custom `Serializer` protocol |
 | Task cancellation (mid-execution) | Cancel pending or running jobs (`cancel_running_job()` + `check_cancelled()`) |
 | ETA (absolute datetime scheduling) | Use `delay` (relative seconds) |
 | `bind=True` (self argument) | Use `current_job` context instead |

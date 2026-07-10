@@ -98,8 +98,12 @@ export default function DocRoute({ params }: Route.ComponentProps) {
     );
   }
 
+  // Last path segment as a page id, so page-specific styling (e.g. FAQ question
+  // numbering) can hook a single page via `.article[data-page="faq"]`.
+  const pageId = path.split("/").filter(Boolean).pop() ?? "";
+
   return (
-    <article className="article">
+    <article className="article" data-page={pageId}>
       <Breadcrumb path={path} />
       {meta?.title ? <h1>{meta.title}</h1> : null}
       {meta?.description ? <p className="lead">{meta.description}</p> : null}

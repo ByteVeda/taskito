@@ -6,8 +6,11 @@ description: "async def tasks dispatched directly onto a dedicated event loop."
 import { Callout } from "fumadocs-ui/components/callout";
 
 taskito runs async task functions natively — no wrapping in `asyncio.run()`,
-no thread-pool bridging. Define a coroutine and the worker dispatches it
-directly onto a dedicated event loop.
+no thread-pool bridging. Define a coroutine (an `async def` function) and the worker dispatches it
+directly onto a dedicated event loop (the asyncio scheduler that runs coroutines).
+
+Unlike Celery, this needs no `asgiref` or `sync_to_async` shims — the worker
+dispatches `async def` tasks natively.
 
 ```python
 from taskito import Queue
@@ -73,11 +76,12 @@ queue = Queue(
 
 ## Job context
 
-`current_job` works inside async tasks — it reads from `contextvars` rather
+`current_job` works inside async tasks — it reads from `contextvars` (Python's async-safe per-task storage) rather
 than `threading.local`, so it's safe across `await` boundaries:
 
 ```python
-from taskito.context import current_job
+import asyncio
+from taskito import current_job
 
 @queue.task()
 async def process(item_id: str) -> str:
@@ -150,6 +154,8 @@ dispatches each job to the correct pool based on the `_taskito_is_async`
 attribute set at registration time:
 
 ```python
+import asyncio
+
 @queue.task()
 def sync_task(x: int) -> int:
     return x * 2
@@ -198,6 +204,8 @@ result = await job.aresult(timeout=30)
 ### Async worker
 
 ```python
+import asyncio
+
 async def main():
     await queue.arun_worker(queues=["default"])
 

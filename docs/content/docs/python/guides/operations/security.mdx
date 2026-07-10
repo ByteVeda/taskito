@@ -46,8 +46,17 @@ key = os.urandom(32)  # 32+ bytes, identical on producers and workers
 queue = Queue(serializer=SignedSerializer(SmartSerializer(), key))
 ```
 
-For confidentiality as well, wrap `EncryptedSerializer`. See
-[Pluggable Serializers](/docs/guides/extensibility/serializers) for the full
+For confidentiality as well, wrap `EncryptedSerializer` (AES-GCM, so it
+authenticates the payload too — no need to also wrap `SignedSerializer`):
+
+```python
+from taskito.serializers import EncryptedSerializer, SmartSerializer
+
+enc_key = os.urandom(32)  # 16, 24, or 32 bytes for AES-128/192/256
+queue = Queue(serializer=EncryptedSerializer(SmartSerializer(), enc_key))
+```
+
+See [Pluggable Serializers](/python/guides/extensibility/serializers) for the full
 matrix.
 
 ### Payloads at rest
@@ -97,7 +106,7 @@ with `TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`
 
 Outbound webhook URLs are validated against private/loopback/link-local and
 cloud-metadata addresses **at delivery time** (not just registration), which
-closes the DNS-rebinding SSRF window, and redirects are not followed. For
+closes the DNS-rebinding SSRF (server-side request forgery) window, and redirects are not followed. For
 local development against `http://localhost`, set
 `TASKITO_WEBHOOKS_ALLOW_PRIVATE=1`.
 

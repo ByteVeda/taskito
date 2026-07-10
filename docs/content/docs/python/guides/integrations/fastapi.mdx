@@ -61,7 +61,7 @@ uvicorn myapp:app --reload
 how results are serialized, and page sizes:
 
 ```python
-from fastapi import Depends, HTTPException
+from fastapi import Depends, Header, HTTPException
 from taskito.contrib.fastapi import TaskitoRouter
 
 def require_api_key(x_api_key: str = Header(...)):
@@ -77,7 +77,7 @@ app.include_router(
         result_timeout=5.0,
         default_page_size=25,
         max_page_size=200,
-        result_serializer=lambda v: v if isinstance(v, (str, int, float, bool, None)) else str(v),
+        result_serializer=lambda v: v if isinstance(v, (str, int, float, bool, type(None))) else str(v),
     ),
     prefix="/tasks",
 )

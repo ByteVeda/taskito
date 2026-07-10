@@ -84,9 +84,9 @@ TASKITO_DASHBOARD_PORT = 9000
 
 ## Queue configuration
 
-Create a `taskito` queue instance in your Django project. The
-`get_queue()` function in `taskito.contrib.django.settings` is used to
-retrieve the queue instance.
+Create a `taskito` queue instance in your Django project — this is the
+object your tasks are decorated on and the one the worker CLI runs
+against (`--app myproject.tasks:queue`).
 
 ```python
 # myproject/tasks.py
@@ -100,6 +100,23 @@ def send_welcome_email(user_id: int):
     user = User.objects.get(id=user_id)
     user.email_user("Welcome!", "Thanks for signing up.")
 ```
+
+Task modules are located via Django's standard app autodiscovery:
+`taskito.contrib.django`'s `AppConfig.ready()` imports a `tasks` module
+(the name is configurable via `TASKITO_AUTODISCOVER_MODULE`) from every
+installed app, which registers any `@queue.task()`-decorated functions
+it imports.
+
+<Callout type="info" title="get_queue() is a separate Queue instance">
+  `taskito.contrib.django.settings.get_queue()` — used internally by the
+  admin views and the `manage.py taskito_*` commands — builds its own
+  `Queue` from the `TASKITO_*` Django settings. It is **not** the same
+  Python object as the `queue` you create in `myproject/tasks.py`. Point
+  both at the same `TASKITO_DB_PATH` / `TASKITO_BACKEND` / `TASKITO_DB_URL`
+  so they read the same underlying storage — otherwise the admin views
+  show an empty or different queue than the one your worker is
+  processing.
+</Callout>
 
 <Callout type="info" title="Lazy imports">
   Import Django models inside the task function body to avoid app registry

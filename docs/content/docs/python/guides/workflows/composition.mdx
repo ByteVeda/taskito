@@ -15,7 +15,7 @@ Use `WorkflowProxy.as_step()` to embed one workflow inside another:
 @queue.workflow("etl")
 def etl_pipeline(region):
     wf = Workflow()
-    wf.step("extract", extract, args=[region])
+    wf.step("extract", extract, args=(region,))
     wf.step("load", load, after="extract")
     return wf
 
@@ -78,8 +78,12 @@ outer run hanging), and the parent run finalizes normally.
 
 Stack `@queue.periodic()` on top of `@queue.workflow()`:
 
+taskito cron is **6-field, seconds first** (`sec min hour day month weekday`), so
+`0 0 2 * * *` is 02:00:00 daily — not Celery's 5-field `crontab`. Prepend a
+seconds field when porting a Celery schedule.
+
 ```python
-@queue.periodic(cron="0 0 2 * * *")    # 2:00 AM daily
+@queue.periodic(cron="0 0 2 * * *")    # sec=0 min=0 hour=2 → 2:00 AM daily
 @queue.workflow("nightly_analytics")
 def nightly():
     wf = Workflow()

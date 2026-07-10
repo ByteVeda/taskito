@@ -16,6 +16,12 @@ queue.enqueue("welcome", [user.id], { uniqueKey: `welcome:${user.id}` }); // ign
 Backed by a partial unique index in the store, so the dedup is atomic across
 producers and processes. Once the first job finishes, the key frees up.
 
+> **Coming from BullMQ?** BullMQ's usual dedup trick is an explicit custom
+> `jobId` passed to `add()`. taskito's `uniqueKey` is the same idea, but
+> scoped to "while the first job is pending/running" rather than a permanent
+> reservation — enqueue the same key again later, after the job completes,
+> and it creates a fresh job.
+
 ## Idempotent tasks
 
 Separately from enqueue dedup, **task functions should be safe to run more than

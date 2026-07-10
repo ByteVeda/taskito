@@ -29,13 +29,18 @@ try {
 | `ResultTimeoutError` | `TaskitoError` | `result()` times out before the job settles. |
 | `QueueError` | `TaskitoError` | Queue construction / operational error (e.g. no `dbPath`/`dsn`). |
 | `LockNotAcquiredError` | `TaskitoError` | `withLock` can't acquire a held lock. |
+| `LockLostError` | `TaskitoError` | A held lock's lease expired before `withLock`'s guarded section finished. |
 | `SerializationError` | `TaskitoError` | (De)serialization or payload-integrity failure (e.g. a bad `SignedSerializer` signature). |
+| `CryptoError` | `SerializationError` | A [payload codec](/node/api-reference/serializers) (`HmacCodec`, `AesGcmCodec`) fails to decrypt or verify. |
 | `NotesValidationError` | `TaskitoError` | A `notes` object breaks the contract (>15 fields or >4 KiB). |
 | `WorkflowError` | `TaskitoError` | Workflow definition, submission, or query error. |
 | `PredicateRejectedError` | `TaskitoError` | An enqueue-time [gate](/node/guides/core/predicates) rejected the submission. |
+| `InterceptionError` | `TaskitoError` | An [enqueue interceptor](/node/guides/resources/interception) rejects, misbehaves, or redirects illegally. |
+| `ProxyError` | `TaskitoError` | A [proxy handler](/node/guides/resources/interception) signature, expiry, purpose, or allowlist failure. |
 | `ResourceError` | `TaskitoError` | Base for resource dependency-injection errors. |
 | `ResourceNotFoundError` | `ResourceError` | Resolving a resource name that was never registered. |
 | `ResourceScopeError` | `ResourceError` | Resolving a task-scoped resource at worker scope. |
+| `ResourceUnavailableError` | `ResourceError` | A pooled resource couldn't be checked out before its acquire timeout. |
 
 Selected errors carry context: `TaskNotRegisteredError.taskName`,
 `JobFailedError.jobId`, `ResultTimeoutError.timeoutMs`,

@@ -17,9 +17,16 @@ tools. Install only what you need.
 | **Prometheus** | `pip install taskito[prometheus]` | `PrometheusMiddleware`, queue depth gauges, `/metrics` server |
 | **Sentry** | `pip install taskito[sentry]` | `SentryMiddleware` with auto error capture and task tags |
 | **Encryption** | `pip install taskito[encryption]` | `EncryptedSerializer` for at-rest payload encryption |
-| **MsgPack** | `pip install taskito[msgpack]` | `MsgpackSerializer` for compact binary serialization |
+| **MsgPack** | `pip install taskito[msgpack]` | `MsgPackSerializer` for compact binary serialization |
 | **Postgres** | `pip install taskito[postgres]` | Multi-machine workers via PostgreSQL backend |
 | **Redis** | `pip install taskito[redis]` | Redis storage backend |
+
+<Callout type="info">
+  Postgres and Redis here are **shared storage backends** — the queue itself,
+  used to run workers across multiple machines. They are not message brokers
+  (a separate server such as Redis or RabbitMQ that holds pending jobs):
+  taskito never needs a separate broker regardless of backend.
+</Callout>
 
 ## Framework integrations
 

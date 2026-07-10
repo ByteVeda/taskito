@@ -25,3 +25,8 @@ queue.configureQueue("video", { maxConcurrent: 4 });
   limiting](/node/guides/reliability/rate-limiting) bounds *throughput over
   time*. They compose — a task can be both `maxConcurrent: 2` and `100/min`.
 </Callout>
+
+> **Coming from BullMQ?** See the note on [workers](/node/guides/core/workers)
+> — BullMQ's `concurrency` option scales with worker-process count; taskito's
+> `maxConcurrent` is a single global cap the scheduler enforces no matter how
+> many workers are running.

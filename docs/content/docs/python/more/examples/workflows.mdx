@@ -6,6 +6,18 @@ description: "ML training, map-reduce, resilient pipelines, sub-workflows, incre
 Real-world workflow patterns demonstrating fan-out, conditions, approval
 gates, sub-workflows, and incremental runs.
 
+<Callout type="warn" title="These examples need a running worker">
+  Each example builds and submits a workflow; the step jobs run only while a
+  worker is consuming the queue. Start one — `taskito worker --app app:queue`, or
+  `queue.run_worker()` in a background thread — before calling `run.wait()`.
+  (`Queue(workers=4)` sets the worker *count*; it does not start a worker.)
+
+  A step runs with the args you give it in `wf.step(...)`; it does not
+  auto-receive its predecessor's return value. Data flows between steps via
+  `fan_out`/`fan_in` and `WorkflowContext.results` — as in the map-reduce and
+  ML-gate examples below.
+</Callout>
+
 ## ML training pipeline
 
 A training pipeline that evaluates a model, gates deployment on accuracy,
@@ -20,23 +32,27 @@ queue = Queue(db_path="ml.db", workers=4)
 
 @queue.task()
 def fetch_dataset() -> dict:
+    # Fetch the dataset and stage it in a store. The return value is recorded
+    # in the run's ctx.results so gates/conditions can read it.
     return {"rows": 50_000, "path": "/data/train.parquet"}
 
 
 @queue.task()
-def train_model(dataset: dict) -> dict:
-    # ... training logic ...
+def train_model() -> dict:
+    # Read the staged dataset from the store, train, and register the model.
     return {"model_id": "v3.2", "accuracy": 0.97, "loss": 0.08}
 
 
 @queue.task()
-def evaluate(model: dict) -> dict:
-    return {"accuracy": model["accuracy"], "passed": model["accuracy"] > 0.90}
+def evaluate() -> dict:
+    # Read the trained model's metrics from the registry.
+    return {"accuracy": 0.97, "passed": True}
 
 
 @queue.task()
-def deploy(model_id: str) -> str:
-    return f"deployed {model_id}"
+def deploy() -> str:
+    # Deploy the latest registered model.
+    return "deployed v3.2"
 
 
 @queue.task()
@@ -45,6 +61,8 @@ def notify_failure() -> str:
 
 
 def accuracy_gate(ctx: WorkflowContext) -> bool:
+    # Steps don't receive each other's results as args — they share the model
+    # through the registry. The gate reads evaluate's RETURN VALUE via ctx.results.
     return ctx.results.get("evaluate", {}).get("passed", False)
 
 

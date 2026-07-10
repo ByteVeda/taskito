@@ -73,7 +73,7 @@ pip install tomli
 | `max_lifetime` | float | `3600.0` | Task scope: max seconds an instance lives. |
 | `idle_timeout` | float | `300.0` | Task scope: max idle seconds before eviction. |
 | `reloadable` | bool | `false` | Allow hot reload via SIGHUP or CLI. |
-| `frozen` | bool | `false` | Wrap instance in a read-only proxy. |
+| `frozen` | bool | `false` | Wrap instance in a read-only wrapper. |
 
 ## Pool configuration
 
@@ -106,7 +106,9 @@ startup. This avoids the cold-start latency on the first burst of tasks.
 
 ## Frozen resources
 
-Wrap a resource in a read-only proxy to prevent accidental mutation:
+Wrap a resource in a read-only wrapper to prevent accidental mutation. (This
+is unrelated to the [Resource Proxies](/python/guides/resources/proxies)
+layer — "wrapper" here just means attribute writes raise.)
 
 ```python
 @queue.worker_resource("config", frozen=True)
@@ -141,7 +143,9 @@ taskito reload --pid <worker-pid>
 taskito reload --pid <worker-pid> --resource feature_flags  # reload one resource
 ```
 
-Or programmatically from application code:
+Or programmatically from application code (internal accessor — the supported
+triggers are `SIGHUP` and `taskito reload` above; this attribute is not yet part
+of the stable API):
 
 ```python
 results = queue._resource_runtime.reload()

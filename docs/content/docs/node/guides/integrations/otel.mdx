@@ -12,7 +12,8 @@ import { otelMiddleware } from "@byteveda/taskito/contrib/otel";
 queue.use(otelMiddleware());
 ```
 
-One span is created per execution attempt, named `taskito.execute.<taskName>`.
+One span (a single traced operation, OpenTelemetry's unit of work) is created
+per execution attempt, named `taskito.execute.<taskName>`.
 The span ends with status `OK` on success and `ERROR` (with the exception
 recorded) on throw. A retry is a new attempt, so it produces a new span.
 

@@ -48,7 +48,11 @@ wf.step("deploy", deploy, after="validate", condition=high_score)
 
 ## Error strategies
 
-Set the workflow-level error strategy:
+Set the workflow-level error strategy. Don't confuse this with the
+step-level condition from the previous section: `Workflow(on_failure=...)`
+picks the engine's global strategy (`"fail_fast"` or `"continue"`), while
+`condition="on_failure"` on a step is a per-step predicate meaning "run this
+step if a predecessor failed" — same word, different axis.
 
 <Tabs items={["Fail Fast (default)", "Continue"]}>
   <Tab value="Fail Fast (default)">

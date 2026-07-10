@@ -29,7 +29,10 @@ This guide covers both, starting with the events that drive them.
 
 ## Event types
 
-The `EventType` enum defines all available lifecycle events:
+The `EventType` enum defines all available lifecycle events. Each
+member's `.value` is the dotted, lowercase wire string used in webhook
+payloads, delivery logs, and the REST API — e.g.
+`EventType.JOB_FAILED.value == "job.failed"`:
 
 | Event | Fires when | Payload fields |
 |---|---|---|
@@ -135,7 +138,7 @@ queue.remove_webhook(sub.id)
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `url` | `str` | — | http/https URL. SSRF-guarded — see below |
+| `url` | `str` | — | http/https URL. SSRF-guarded (server-side request forgery) — see below |
 | `events` | `list[EventType] \| None` | `None` | Event types to subscribe to. `None` means all events |
 | `task_filter` | `list[str] \| None` | `None` | Restrict to specific task names. `None` means all tasks |
 | `headers` | `dict[str, str] \| None` | `None` | Extra HTTP headers (e.g. `Authorization`) |

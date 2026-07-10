@@ -45,3 +45,10 @@ queue.task("charge", async (orderId: string) => {
   A completed job's result is stored and can be awaited by id from any process
   sharing the storage — see [result](/node/api-reference/result).
 </Callout>
+
+> **Coming from BullMQ?** BullMQ's `QueueEvents` is a dedicated Redis Streams
+> consumer, so any process can listen for job outcomes. taskito's
+> `queue.on(event, handler)` fires inside the **worker process** handling the
+> job — it isn't a cross-process subscription. For visibility from another
+> process, poll `queue.getJob(id)` / `queue.stats()`, or use the
+> [dashboard](/node/guides/operations/dashboard) / REST API.

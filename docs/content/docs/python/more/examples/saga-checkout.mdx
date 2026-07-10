@@ -11,7 +11,7 @@ Each forward step has a compensator declared via `@queue.task(compensates=...)`:
 
 ```python
 from taskito import Queue
-from taskito.workflows import Workflow
+from taskito.workflows import Workflow, WorkflowState
 
 queue = Queue()
 
@@ -98,14 +98,14 @@ run = queue.submit_workflow(build_checkout("ABC", 2, 5000, "cust-42"))
 final = run.wait(timeout=60)
 
 if final.state == WorkflowState.COMPLETED:
-    print("Checkout succeeded:", final.nodes["ship"].result_hash)
+    print("Checkout succeeded; ship job:", final.nodes["ship"].job_id)
 elif final.state == WorkflowState.COMPENSATED:
     print("Checkout failed but rolled back cleanly")
 elif final.state == WorkflowState.COMPENSATION_FAILED:
     print("Manual cleanup needed — some compensators failed")
     for name, node in final.nodes.items():
         if node.status.value == "compensation_failed":
-            print(f"  - {name}: {node.compensation_error}")
+            print(f"  - {name}: {node.error}")
 ```
 
 ## What happens on failure

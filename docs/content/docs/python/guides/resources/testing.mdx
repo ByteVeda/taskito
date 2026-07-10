@@ -9,6 +9,9 @@ The `test_mode()` context manager runs tasks synchronously in the calling
 thread without starting a worker. Pass mock resources to override real
 factories during tests.
 
+> Coming from Celery, `test_mode()` replaces `task_always_eager` — but as a
+> context manager it's scoped, so it's safe to use in parallel test runs.
+
 ## Injecting mock resources
 
 ```python
@@ -42,6 +45,8 @@ When `test_mode(resources=...)` is active:
 
 ```python
 from taskito import MockResource
+
+real_session_factory = sessionmaker(create_engine("sqlite:///test.db"))
 
 def test_with_spy():
     spy_db = MockResource("db", wraps=real_session_factory, track_calls=True)

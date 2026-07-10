@@ -47,7 +47,7 @@ queue = Queue(
 The scheduler checks every ~60 seconds and purges:
 
 - Completed jobs older than `result_ttl`
-- Dead letter entries older than `result_ttl`
+- Dead letter (DLQ — a holding area for jobs that exhausted their retries) entries older than `result_ttl`
 - Error history records older than `result_ttl`
 
 Set to `None` (default) to disable auto-cleanup.
@@ -141,6 +141,8 @@ Archived jobs are no longer returned by `queue.stats()` or
 ### Scheduled archival
 
 ```python
+from taskito import current_job
+
 @queue.periodic(cron="0 0 2 * * *")  # Daily at 2 AM
 def nightly_archival():
     archived = queue.archive(older_than=7 * 86400)  # Archive jobs older than 7 days
@@ -191,7 +193,10 @@ for entry in dead:
 
 ## SQLite configuration
 
-taskito configures SQLite for optimal performance:
+Left at their defaults, SQLite's own pragmas favor safety over throughput
+and let concurrent readers block on writers — so taskito sets these at
+connection time to give WAL-mode concurrency and predictable behavior under
+lock contention without any configuration on your part:
 
 | Pragma | Value | Purpose |
 |---|---|---|

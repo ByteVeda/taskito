@@ -17,6 +17,15 @@ Workflow report = Workflow.named("report")
         .step("render", renderTask, 1, "crunch");
 ```
 
+<Callout type="info">
+  These snippets assume a worker is already running with `.trackWorkflows()`
+  and handlers for `seedTask`, `crunchTask`, and `renderTask` — e.g.
+  `queue.worker().handle(seedTask, ...).handle(crunchTask,
+  ...).handle(renderTask, ...).trackWorkflows().start()`. `submitWorkflow`
+  only creates the run; a tracking worker is what advances it and applies the
+  cache.
+</Callout>
+
 On the first run `crunch` executes normally; on a second run within five
 minutes its node status is `CACHE_HIT` and the task is not re-executed —
 `render` still runs.

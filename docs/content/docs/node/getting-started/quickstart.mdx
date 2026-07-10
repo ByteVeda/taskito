@@ -3,7 +3,8 @@ title: Quickstart
 description: "Define a task, enqueue a job, run a worker, await the result — in TypeScript."
 ---
 
-Four steps: construct a queue, register a task, enqueue a job, run a worker.
+Four steps: construct a queue, register a task, enqueue a job (add it to
+storage), run a worker (a process that claims and executes queued jobs).
 
 ```ts
 import { Queue } from "@byteveda/taskito";
@@ -33,9 +34,8 @@ The producer and the worker only need to share storage — `enqueue` from your w
 app, `runWorker` from a separate process pointed at the same `dbPath` / DSN.
 
 <Callout type="info">
-  Tasks can be `async`. The dispatcher awaits the returned promise; an
-  `async def`-style task that does I/O runs on the native async pool without a
-  thread per job.
+  Tasks can be `async`. The dispatcher awaits the returned promise; an `async`
+  task that does I/O runs on the native async pool without a thread per job.
 </Callout>
 
 ## Where to next

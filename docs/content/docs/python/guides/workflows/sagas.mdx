@@ -13,7 +13,7 @@ from taskito.workflows import Workflow
 
 queue = Queue()
 
-@queue.task
+@queue.task()
 def refund(forward_args, forward_kwargs, forward_result):
     charge_id = forward_result  # the id returned by charge()
     payment_api.refund(charge_id)
@@ -22,7 +22,7 @@ def refund(forward_args, forward_kwargs, forward_result):
 def charge(amount: int, customer_id: str) -> str:
     return payment_api.charge(amount, customer_id)
 
-@queue.task
+@queue.task()
 def ship(order_id: int):
     shipping_api.ship(order_id)
 
@@ -149,4 +149,4 @@ Saga lifecycle emits dedicated events on the queue's event bus:
 | `NODE_COMPENSATED`                     | A node's compensator finished successfully              |
 | `NODE_COMPENSATION_FAILED`             | A node's compensator failed after retries               |
 
-Subscribe via `queue.on(EventType.WORKFLOW_COMPENSATED, callback)` like any other workflow event.
+Subscribe via `queue.on_event(EventType.WORKFLOW_COMPENSATED, callback)` like any other workflow event.

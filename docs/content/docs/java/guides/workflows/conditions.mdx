@@ -25,6 +25,13 @@ WorkflowStatus status = run.await(Duration.ofSeconds(30));
 status.state; // FAILED — even if recover ran (see below)
 ```
 
+<Callout type="warning">
+  `run.await(...)` only returns once a worker is running and tracking this
+  workflow — e.g. `queue.worker().handle(riskyTask, ...).handle(celebrateTask,
+  ...).handle(recoverTask, ...).trackWorkflows(pipeline).start()`. Without a
+  tracking worker, the run stays `PENDING` forever.
+</Callout>
+
 ## Condition values
 
 | Builder method | Wire value | When the step runs |

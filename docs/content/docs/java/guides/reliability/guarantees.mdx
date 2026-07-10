@@ -15,6 +15,12 @@ guarded update — before executing, so two workers never run the same job
 concurrently. If that worker dies, the claim lapses and the scheduler dispatches
 the job again.
 
+<Callout type="info" title="Coming from JMS/RabbitMQ?">
+  There's no manual ack/nack: a claimed job's redelivery is driven by the
+  claim lapsing, not by a consumer forgetting to acknowledge. You still get
+  the same at-least-once contract you'd design a JMS listener around.
+</Callout>
+
 ## Staying correct: idempotency
 
 Because a job may run more than once, make side effects idempotent:

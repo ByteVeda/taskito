@@ -289,7 +289,7 @@ restored = Predicate.from_dict(blob)
 ## Metrics & events
 
 ```python
-queue._predicate_metrics.snapshot()
+queue._predicate_metrics.snapshot()  # internal accessor — not yet part of the stable API
 # {"allowed": 412, "denied": 3, "deferred": 8, "cancelled": 1, "errors": 0}
 ```
 
@@ -406,7 +406,7 @@ through a dashboard textbox without code deploys).
 ```python
 from taskito.events import EventType
 
-def on_event(event_type: EventType, payload: dict) -> None:
+def on_predicate_event(event_type: EventType, payload: dict) -> None:
     print(event_type.value, payload)
 
 for event in (
@@ -414,5 +414,5 @@ for event in (
     EventType.PREDICATE_CANCELLED,
     EventType.PREDICATE_REJECTED,
 ):
-    queue._event_bus.on(event, on_event)
+    queue.on_event(event, on_predicate_event)
 ```

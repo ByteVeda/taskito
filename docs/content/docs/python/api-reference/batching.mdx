@@ -9,7 +9,7 @@ Producer-side task batching primitives. Import paths:
 from taskito.batching import BatchAccumulator, BatchConfig, BatchedJobResult
 ```
 
-For the conceptual overview and trade-offs, see [Task batching](/docs/guides/core/batching).
+For the conceptual overview and trade-offs, see [Task batching](/python/guides/core/batching).
 
 ---
 
@@ -89,7 +89,7 @@ assert isinstance(result, BatchedJobResult)
 assert result.id is None
 ```
 
-If you need per-item results, batching is the wrong primitive — use [`canvas.chunks()`](/docs/api-reference/canvas) instead, which creates one job per chunk and supports per-chunk retry.
+If you need per-item results, batching is the wrong primitive — use [`canvas.chunks()`](/python/api-reference/canvas) instead, which creates one job per chunk and supports per-chunk retry.
 
 ---
 

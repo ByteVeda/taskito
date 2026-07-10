@@ -14,9 +14,11 @@ queue.enqueue("scrape", [url], { timeoutMs: 10_000 }); // per-job override
 ```
 
 A timeout counts as a failure: it consumes a retry and, if retries remain, the
-job is re-enqueued. When the budget is exhausted the job dead-letters with its
-`timedOut` flag set — surfaced to [middleware](/node/guides/extensibility/middleware)
-`onTimeout` and the Sentry/observability integrations.
+job is re-enqueued. When the budget is exhausted the job dead-letters with
+`timedOut: true` on the outcome — passed to the `onRetry` / `onDeadLetter`
+[middleware](/node/guides/extensibility/middleware) hooks and the `job.retrying`
+/ `job.dead` [events](/node/guides/extensibility/events), so handlers can tell
+a timeout apart from any other error.
 
 <Callout type="warning">
   For `async` tasks, the timeout aborts the task's
@@ -26,3 +28,8 @@ job is re-enqueued. When the budget is exhausted the job dead-letters with its
 
 Always set a timeout on production tasks — without one, a wedged task can hold a
 worker slot indefinitely.
+
+> **Coming from BullMQ?** BullMQ has no first-class per-job timeout option —
+> processors typically race their own work against a manual `Promise.race` (or
+> rely on `lockDuration` as an indirect signal). taskito's `timeoutMs` is
+> enforced by the dispatcher directly, no manual race needed.

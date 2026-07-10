@@ -136,7 +136,7 @@ them in your app's `__init__.py`.
 OperationalError: database is locked
 ```
 
-SQLite allows concurrent reads (WAL mode), but only one writer at a time.
+SQLite allows concurrent reads (WAL mode — write-ahead logging, lets many readers and one writer run concurrently), but only one writer at a time.
 taskito sets `busy_timeout=5000ms` to wait for locks, but heavy write loads
 can still cause contention.
 
@@ -149,7 +149,7 @@ can still cause contention.
 **Fixes:**
 
 - Avoid opening the database file with other tools while the worker is running
-- Use `enqueue_many()` / `task.map()` for batch inserts — they use a single transaction
+- Use [`enqueue_many()` / `task.map()`](/python/guides/advanced-execution/batch-enqueue) for batch inserts — they use a single transaction
 - If running multiple processes, ensure only one worker process writes at a time
 
 ### Timeout reaping

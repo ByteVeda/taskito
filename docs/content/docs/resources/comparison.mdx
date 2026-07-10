@@ -4,7 +4,7 @@ description: "Taskito vs Celery, RQ, Dramatiq, Huey, TaskIQ — feature matrix a
 ---
 
 **TL;DR**: Taskito is <SdkSwap python="Celery" node="BullMQ" java="a task queue" /> without the
-broker. Rust scheduler, no Redis/RabbitMQ, lower latency, better concurrency.
+broker (a separate server such as Redis or RabbitMQ that holds pending jobs). Rust scheduler, no Redis/RabbitMQ, lower latency, better concurrency.
 Start with SQLite, scale to Postgres when needed.
 
 ## Feature matrix
@@ -36,7 +36,7 @@ Start with SQLite, scale to Postgres when needed.
 | Async canvas | **Yes** | No | No | No | No | No |
 | OpenTelemetry | **Yes** (optional) | Yes (contrib) | No | No | No | Yes (built-in) |
 | CLI | **Yes** | Yes | Yes | Yes | Yes | Yes |
-| Result backend | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite | Redis / custom |
+| Result backend (where task return values are stored) | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite | Redis / custom |
 | Setup complexity | **`pip install`** | Broker + backend | Redis server | Broker | Redis server | Broker + backend |
 
 ## When to use taskito
@@ -71,7 +71,7 @@ widely adopted.
 | **Dependencies** | 1 (cloudpickle) | 10+ (kombu, billiard, vine, etc.) |
 | **Configuration** | Constructor params | Settings module or app config |
 | **Worker model** | Rust OS threads | prefork/eventlet/gevent pools |
-| **Distributed** | No (single process) | Yes (multi-server) |
+| **Distributed** | Single machine by default; multi-server via Postgres/Redis backend | Yes (multi-server) |
 | **Canvas** | chain, group, chord, starmap, chunks | chain, group, chord, starmap, chunks, and more |
 
 **Choose taskito** if you want zero-infrastructure simplicity on a single machine.
@@ -139,7 +139,7 @@ async and already have a broker.
 | **Broker** | None (DB-backed) | Redis / RabbitMQ / Nats |
 | **Async** | Native + sync | Async-first |
 | **Scheduler** | Rust (Tokio) | Python |
-| **GIL** | Rust scheduler bypasses GIL | Python scheduler competes for GIL |
+| **GIL** (Global Interpreter Lock — only one thread runs Python bytecode at a time) | Rust scheduler bypasses GIL | Python scheduler competes for GIL |
 | **Setup** | `pip install taskito` | Install broker + taskiq + broker plugin |
 
 Choose taskito if you want zero infrastructure. Choose TaskIQ if you're fully

@@ -32,3 +32,9 @@ taskito --db taskito.db dlq retry <deadId>
   metadata survive the DLQ round-trip, so context attached at enqueue is
   preserved through replay.
 </Callout>
+
+> **Coming from BullMQ?** BullMQ has no separate dead-letter store — exhausted
+> jobs stay in the same queue's `failed` set (`queue.getFailed()`,
+> `job.retry()`). taskito moves them into a distinct DLQ with its own
+> `deadLetters()` / `retryDead()` / `purgeDead()` API, so failed jobs don't
+> clutter the same listings as active work.

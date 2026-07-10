@@ -17,7 +17,7 @@ queue.workflows
 | `step(name, task, opts?)` | A task node. `opts`: `after`, `args`, `queue`, `maxRetries`, `timeoutMs`, `priority`, `condition`, `compensate`, `cache`. |
 | `fanOut(name, { after, task, itemsFrom })` | Expand into one child per item. |
 | `fanIn(name, { after, task })` | Collect children's results into an array. |
-| `gate(name, { after, timeoutMs?, onTimeout? })` | Pause for [approval](/node/guides/workflows/gates). |
+| `gate(name, { after, timeoutMs?, onTimeout?, message? })` | Pause for [approval](/node/guides/workflows/gates). |
 | `subWorkflow(name, { after, workflow })` | Run a child workflow as a node. |
 | `chain(steps[], { after? })` | Canvas: wire `steps` sequentially. |
 | `group(steps[], { after? })` | Canvas: run `steps` in parallel. |
@@ -28,6 +28,16 @@ queue.workflows
 Canvas `steps` are `{ name, task, ...stepOptions }` (`after` is managed by the helper).
 
 `condition`: `"on_success"` (default) · `"on_failure"` · `"always"`.
+
+The chained `submit()` takes no arguments. To set submit-time
+`queueDefault`/`params`, stop before the final `.submit()` and pass the
+builder to `queue.workflows.submit(builder, { queueDefault?, params? })`
+instead:
+
+```ts
+const workflow = queue.workflows.define("etl").step("extract", "extract");
+const run = queue.workflows.submit(workflow, { queueDefault: "io", params: { runId } });
+```
 
 ## `WorkflowHandle`
 
@@ -44,7 +54,7 @@ Canvas `steps` are `{ name, task, ...stepOptions }` (`after` is managed by the h
 queue.workflows.list({ state: "running" });
 queue.workflows.run(runId); // a single run snapshot
 queue.workflows.nodes(runId); // per-step status
-queue.workflows.dag(runId); // the DAG graph (nodes + edges)
+queue.workflows.dag(runId); // the DAG graph as a JSON string (nodes + edges); JSON.parse it, or use analyze()
 queue.workflows.children(runId); // spawned sub-workflow runs
 queue.workflows.approveGate(runId, "review");
 queue.workflows.rejectGate(runId, "review", reason);
@@ -59,6 +69,7 @@ queue.workflows.clearCache(); // drop all cached step results
 
 ```ts
 const a = queue.workflows.analyze(runId);
+a?.node("load"); // one node's status record, or undefined
 a?.roots(); // entry nodes
 a?.leaves(); // exit nodes
 a?.ancestors("load"); // transitive upstream deps

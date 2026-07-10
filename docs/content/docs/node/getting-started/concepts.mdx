@@ -1,11 +1,36 @@
 ---
 title: Concepts
-description: "Queue, task, worker, result — the Node.js mental model over the Rust core."
+description: "Queue, task, worker, result — the Node.js mental model over the Rust core, and why there's no broker."
 ---
 
-The Node SDK is a typed shell; the scheduler, dispatcher, worker pool, and
-storage are all the same Rust engine the Python SDK uses. Four concepts cover
-the surface.
+A **task queue** hands off slow work — sending an email, resizing an upload,
+calling a third-party API — to a background **worker** (a process that pulls
+jobs off the queue and runs them), so the request that triggered it can return
+right away. The Node SDK is a typed shell; the scheduler, dispatcher, worker
+pool, and storage are all the same Rust engine the Python SDK uses. Four
+concepts cover the surface.
+
+## Why no broker
+
+Most Node.js task queues — BullMQ, Bee-Queue, Agenda — need a standalone
+**broker** (a separate server that holds and dispatches jobs): you provision a
+Redis instance, secure it, and keep it running alongside your app. taskito has
+no broker. The queue, job results, and cron schedules all live in one embedded
+SQLite file — nothing extra to install or operate.
+
+```ts
+import { Queue } from "@byteveda/taskito";
+
+const queue = new Queue({ dbPath: "taskito.db" }); // that's the whole setup
+```
+
+<Callout type="info" title="Coming from BullMQ?">
+  BullMQ's `new Queue(name, { connection: redis })` plus a separately-run
+  Redis server becomes a single `new Queue({ dbPath })` — no connection to
+  provision. Point every process at the same file (or DSN) and they share one
+  logical queue. See [installation](/node/getting-started/installation) if you
+  want Postgres or Redis as a shared backend instead of a file.
+</Callout>
 
 <Seq
   heads={["Producer", "Worker"]}
@@ -39,7 +64,7 @@ rate limit, circuit breaker) is attached at registration.
 
 Enqueuing a task creates a **job** — a row in storage with arguments, priority,
 status, and result. Jobs move through a state machine: `pending → running →
-completed`, or `failed → retrying`, or `dead` (retries exhausted), or
+complete`, or `failed → retrying`, or `dead` (retries exhausted), or
 `cancelled`. The engine claims jobs atomically, so the same job never runs
 twice concurrently.
 

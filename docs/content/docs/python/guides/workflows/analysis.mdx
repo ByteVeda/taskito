@@ -31,6 +31,9 @@ wf.stats()
 | `topological_levels()` | `list[list[str]]` | Nodes grouped by depth |
 | `stats()` | `dict` | Node count, edge count, depth, width, density |
 
+`density` is edges ÷ possible edges — how tightly connected the DAG is,
+from `0.0` (no edges) to `1.0` (fully connected).
+
 ## Critical path
 
 Find the longest-weighted path through the DAG:

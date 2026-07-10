@@ -153,22 +153,24 @@ def main() -> None:
     # 1. Allowed (acme is in the allowlist).
     send_daily_report.delay(tenant="acme")
 
-    # 2. Cancel at enqueue: tenant not in allowlist + on_false='cancel'
-    #    is implied by the Cancel return path of TenantIn... actually,
-    #    TenantIn returns False which combines with on_false='defer'
-    #    here, so the call is deferred. Use TenantIn(...).evaluate()
-    #    behavior plus on_false='cancel' for hard rejection:
-    try:
-        send_daily_report.delay(tenant="initech")
-    except PredicateRejectedError:
-        print("not allowed")
+    # 2. Deferred: initech is not in the allowlist. send_daily_report uses
+    #    on_false="defer", so the enqueue succeeds and the job is held back to
+    #    be re-evaluated later — no exception is raised.
+    send_daily_report.delay(tenant="initech")
 
-    # 3. Bypass the billing flag by setting it in env.
+    # 3. Rejected at enqueue: charge_card uses on_false="cancel", and the
+    #    new_billing flag is unset, so the predicate denies and enqueue raises.
+    try:
+        charge_card.delay(tenant="acme", cents=4200)
+    except PredicateRejectedError:
+        print("billing flag off — charge rejected")
+
+    # 4. Bypass the billing flag by setting it in env; now it enqueues.
     import os
     os.environ["FF_NEW_BILLING"] = "true"
     charge_card.delay(tenant="acme", cents=4200)
 
-    # 4. Async predicate + async task — both awaited transparently.
+    # 5. Async predicate + async task — both awaited transparently.
     index_document.delay(tenant="acme", doc_id="doc-1")
 
     # ── Inspection: dashboard reads the same shape ─────────────────
@@ -253,5 +255,5 @@ for event in (
   `circuit_breaker` — they are enforced in the Rust scheduler.
   Predicates are for the gates the scheduler doesn't already provide:
   time, payload, feature flags, custom logic.
-* See the [Predicates guide](/docs/guides/core/predicates) for the
+* See the [Predicates guide](/python/guides/core/predicates) for the
   full API surface.

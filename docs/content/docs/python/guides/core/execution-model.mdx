@@ -29,7 +29,7 @@ native async.
 ## Thread pool (default)
 
 The default. Runs sync task functions on Rust `std::thread` threads. Each
-worker acquires the Python GIL only during task execution — the scheduler and
+worker acquires the Python GIL (Global Interpreter Lock — only one thread runs Python bytecode at a time) only during task execution — the scheduler and
 dispatch logic never touch it.
 
 ```python

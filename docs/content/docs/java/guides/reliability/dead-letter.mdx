@@ -7,6 +7,12 @@ When a job exhausts its retries it moves to the **dead-letter queue** (DLQ) and
 the `DEAD` event fires. The DLQ keeps the payload and error history so you can
 investigate and replay.
 
+<Callout type="info" title="Coming from JMS/RabbitMQ?">
+  There's no separate DLQ/DLX to declare, bind, or point a routing key at —
+  taskito's dead-letter store is built into the same client and queried
+  through the same API (`listDead`, `retryDead`) as everything else.
+</Callout>
+
 ```java
 List<DeadJob> dead = queue.listDead(50, 0);        // newest first, paged
 List<DeadJob> charges = queue.listDeadByTask("charge", 50, 0);

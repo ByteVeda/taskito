@@ -32,7 +32,6 @@ export function Hero() {
   // The selected snippet IS the global SDK — clicking a tab sets it, so the hero
   // copy, the install/quickstart links, and the docs sidebar switch all follow.
   const active = HERO_PANES.find((p) => p.sdk === sdk) ?? HERO_PANES[0];
-  const label = sdkProfile(active.sdk).label;
   const codeHtml =
     active.lang === "ts"
       ? highlightTs(active.code)
@@ -44,30 +43,33 @@ export function Hero() {
     <section className="hero">
       <div className="left">
         <h1>
-          One queue.
-          <span className="grad">Built for {label}.</span>
+          Keep your app fast —{" "}
+          <span className="grad">run slow work in the background.</span>
         </h1>
         <p className="sub">
-          A Rust-powered task queue with a first-class <b>{label}</b> SDK over
-          one core and one store — no broker. Start on <code>SQLite</code>,
-          scale to <code>Postgres</code>.
+          A task queue with <b>no message broker</b>. Your app hands slow work —
+          sending email, processing uploads, running pipelines — to a background
+          worker and gets the result later; the queue, results, and schedules
+          all live in{" "}
+          <b>
+            one <code>SQLite</code> file
+          </b>{" "}
+          (scale to <code>Postgres</code>). First-class{" "}
+          <b>Python, Node, and Java</b> over one Rust core.
         </p>
         <div className="btns">
           <Link className="btn pri" to={active.docHref}>
             Quickstart →
-          </Link>
-          <Link className="btn sec" to={`/${sdk}/getting-started/installation`}>
-            Install
           </Link>
           <a className="btn gho" href="https://github.com/ByteVeda/taskito">
             GitHub ↗
           </a>
         </div>
         <div className="metarow">
-          <span>Brokerless</span>
+          <span>No broker</span>
           <span>Rust core</span>
-          <span>{label} SDK</span>
-          <span>DAG workflows</span>
+          <span>MIT licensed</span>
+          <span>Python · Node · Java</span>
         </div>
       </div>
 
@@ -123,14 +125,6 @@ export function Hero() {
               </div>
             ))}
           </div>
-        </div>
-
-        <div className="hero-doclinks">
-          {HERO_PANES.map((p) => (
-            <Link key={p.sdk} className="hero-doclink" to={p.docHref}>
-              {p.docLabel} →
-            </Link>
-          ))}
         </div>
       </div>
     </section>

@@ -4,9 +4,10 @@ description: "Compile taskito applications to a native binary with GraalVM."
 ---
 
 The SDK is built to stay native-image friendly, and CI proves it: every change
-compiles a smoke application into a GraalVM native image (with
-`--no-fallback`, so missing metadata fails the build) and runs the full
-enqueue → execute → result path in the compiled binary.
+compiles a smoke application into a GraalVM (ahead-of-time compiler to a
+native binary) native image (with `--no-fallback`, so missing metadata fails
+the build) and runs the full enqueue → execute → result path in the compiled
+binary.
 
 Two design choices do the heavy lifting:
 

@@ -5,6 +5,13 @@ description: "Process model, native library packaging, and graceful shutdown in 
 
 ## Process model
 
+<Callout type="info" title="No broker to operate">
+  Unlike Celery or a JMS/RabbitMQ setup, taskito's scheduler lives inside the
+  worker process and reads directly from SQLite, Postgres, or Redis. There's
+  no separate broker process to run, monitor, or fail over — one less moving
+  part in production.
+</Callout>
+
 Producers and workers are separate processes that share storage. A typical
 deploy:
 

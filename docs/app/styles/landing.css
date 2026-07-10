@@ -72,11 +72,11 @@ main {
   padding: 64px 32px 80px;
 }
 .hero h1 {
-  font-size: clamp(44px, 5vw, 68px);
+  font-size: clamp(44px, 5vw, 60px);
   line-height: 0.98;
   letter-spacing: -0.035em;
   font-weight: 600;
-  margin: 24px 0 0;
+  margin: 22px 0 0;
 }
 .hero h1 .grad {
   display: block;
@@ -84,6 +84,9 @@ main {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  /* tight line-height (0.98) + background-clip:text clips glyph descenders
+     (the "g" in "background."); pad the box so the descender stays painted */
+  padding-bottom: 0.12em;
 }
 .hero .sub {
   margin-top: 22px;
@@ -274,10 +277,12 @@ main {
   padding: 20px 22px;
   color: var(--txt);
   white-space: pre;
-  min-height: 296px;
+  /* Fixed height so every SDK tab renders the same box — no resize/layout shift
+     when switching Python/Node/Java. Snippets are sized to fit without scroll. */
+  height: 384px;
+  box-sizing: border-box;
   tab-size: 4;
-  /* Long lines scroll within the terminal instead of being clipped on mobile. */
-  overflow-x: auto;
+  overflow: auto;
 }
 .code .cur {
   display: inline-block;

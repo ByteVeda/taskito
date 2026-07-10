@@ -10,9 +10,11 @@ All endpoints return `application/json` and live under the same origin
 as the dashboard itself.
 
 <Callout type="warn" title="All API routes are auth-gated">
-  Every `/api/*` endpoint except the public set (`/api/auth/status`,
-  `/api/auth/login`, `/api/auth/setup`) requires a valid session cookie
-  obtained from `POST /api/auth/login`. State-changing requests
+  Every route requires a valid session cookie obtained from `POST
+  /api/auth/login` **except** this public set: `/api/auth/status`,
+  `/api/auth/login`, `/api/auth/setup`, `/api/auth/providers`,
+  `/api/auth/oauth/start/{slot}`, `/api/auth/oauth/callback/{slot}`,
+  `/health`, `/readiness`, and `/metrics`. State-changing requests
   (POST/PUT/DELETE) additionally require a CSRF header. See
   [Dashboard Authentication](/python/guides/dashboard/authentication) for
   the login flow and headless usage examples.
@@ -50,6 +52,11 @@ Returns the current user, CSRF token, and expiry. `401` when no session.
 ### `POST /api/auth/change-password`
 
 Body: `{"old_password": "...", "new_password": "..."}`.
+
+OAuth/OIDC discovery and callback routes (`GET /api/auth/providers`,
+`GET /api/auth/oauth/start/{slot}`, `GET /api/auth/oauth/callback/{slot}`)
+are also public — see [SSO](/python/guides/dashboard/sso#api-surface) for
+the full flow.
 
 ## Stats
 

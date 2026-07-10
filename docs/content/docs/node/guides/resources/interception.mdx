@@ -63,6 +63,46 @@ queue.enqueue("charge", [-5]); // throws — nothing is enqueued
   in [Middleware](/node/guides/extensibility/middleware).
 </Callout>
 
+## Enqueue interceptors
+
+`queue.intercept(interceptor)` is a separate, more structural mechanism. It
+runs *before* `onEnqueue`, per-task defaults, middleware, and gates, and
+decides the fate of the whole enqueue rather than mutating a shared context
+in place:
+
+```ts
+import { Interception } from "@byteveda/taskito";
+
+queue.intercept((taskName, args) => {
+  if (taskName === "chargeCard" && (args[0] as number) < 0) {
+    return Interception.reject("charge amount must be non-negative");
+  }
+  return Interception.pass();
+});
+```
+
+An interceptor returns one of four outcomes:
+
+| Outcome | Effect |
+|---|---|
+| `Interception.pass()` | Enqueue unchanged. |
+| `Interception.convert(args)` | Replace the args; the task name stays the same. |
+| `Interception.redirect(taskName, args)` | Enqueue a different task with new args instead. |
+| `Interception.reject(reason)` | Block the enqueue — `enqueue`/`enqueueMany` throws `InterceptionError`. |
+
+Multiple interceptors chain in registration order, each seeing the previous
+one's (possibly redirected) task name and args. `redirect` is rejected for
+`enqueueMany` (a batch is stored under one task name) and for tasks
+registered with per-task [codecs](/node/api-reference/serializers) — the
+redirect target's codec chain can't be resolved from a bare name.
+
+<Callout type="info">
+  `intercept` and `onEnqueue` solve overlapping problems differently:
+  `intercept` runs first and can redirect to a different task or reject
+  outright; `onEnqueue` runs after and mutates the (possibly redirected)
+  context in place. Most apps need only one.
+</Callout>
+
 ## Why no proxies?
 
 Python's SDK also ships object *proxies* — a system for shipping non-serializable

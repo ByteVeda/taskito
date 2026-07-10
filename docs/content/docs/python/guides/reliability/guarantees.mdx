@@ -15,9 +15,14 @@ crashes mid-execution.
 
 ## Why not exactly-once?
 
-Exactly-once delivery is impossible in distributed systems without two-phase
-commit. Taskito's approach matches Celery, SQS, and most production job
-systems: deliver at least once, design tasks to handle duplicates.
+Exactly-once *delivery* is impossible: a worker can run a task's side effect and
+then crash before it acknowledges completion, so the job is retried and the side
+effect runs again. No protocol closes this gap in general — the effect and the
+acknowledgement can't be committed atomically across separate systems. What you
+can get is exactly-once *effect*, by making tasks idempotent (dedup keys) or
+routing writes through a transactional outbox/inbox. Taskito's approach matches
+Celery, SQS, and most production job systems: deliver at least once, design
+tasks to handle duplicates.
 
 ## How recovery works
 
@@ -83,8 +88,10 @@ job = send_report.apply_async(
 ```
 
 If a job with the same `unique_key` is already pending or running, the
-duplicate is silently dropped. See
-[Unique Tasks](/python/guides/advanced-execution) for details.
+duplicate enqueue does **not** create a second job — it returns the existing
+job's ID, so the two calls coalesce onto one execution. See
+[Unique Tasks](/python/guides/advanced-execution/unique-tasks) and
+[Idempotency](/python/guides/reliability/idempotency) for details.
 
 ### Avoid side effects that can't be undone
 
@@ -110,7 +117,8 @@ the same `unique_key` can be enqueued again.
 
 ```python
 job1 = task.apply_async(args=(1,), unique_key="order-123")  # Enqueued
-job2 = task.apply_async(args=(1,), unique_key="order-123")  # Skipped (job1 pending)
+job2 = task.apply_async(args=(1,), unique_key="order-123")  # Coalesced onto job1
+assert job2.id == job1.id  # same job — no duplicate created
 # ... job1 completes ...
 job3 = task.apply_async(args=(1,), unique_key="order-123")  # Enqueued (new job)
 ```

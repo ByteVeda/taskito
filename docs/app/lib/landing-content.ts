@@ -102,14 +102,14 @@ import org.byteveda.taskito.task.Task;
 import org.byteveda.taskito.worker.Worker;
 
 Task<int[]> add = Task.of("add", int[].class).retries(3);
-
 try (Taskito queue = Taskito.builder().sqlite("tasks.db").open();
      Worker worker = queue.worker()
          .handle(add, p -> p[0] + p[1])
          .start()) {
   String id = queue.enqueue(add, new int[] {2, 3});
   queue.awaitJob(id, java.time.Duration.ofSeconds(10));
-  System.out.println(queue.getResult(id, Integer.class).orElseThrow()); // → 5
+  var sum = queue.getResult(id, Integer.class).orElseThrow();
+  System.out.println(sum); // → 5
 }`,
     output: [
       { glyph: "$", glyphKind: "p", text: "java -cp app.jar Tasks" },

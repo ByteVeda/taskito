@@ -1,23 +1,24 @@
 ---
 title: Enqueue options
-description: "Priority, delay, idempotency, metadata, and namespace at enqueue time."
+description: "Priority, delay, idempotency, metadata, and routing at enqueue time."
 ---
 
 The third argument to `enqueue` sets per-job options:
 
 ```ts
 queue.enqueue("send_email", [user], {
+  queue: "emails",
   priority: 5,
   delayMs: 30_000,
   uniqueKey: `welcome:${user.id}`,
   metadata: "source=signup",
   notes: { campaign: "welcome", attempt: 1 },
-  namespace: "emails",
 });
 ```
 
 | Option | Description |
 |---|---|
+| `queue` | The named queue to route to (default `"default"`) — see [Queues & Priority](/node/guides/core/queues). |
 | `priority` | Higher dequeues first within a queue. |
 | `maxRetries` | Override the task's retry budget for this job. |
 | `timeoutMs` | Override the per-attempt timeout for this job. |
@@ -25,7 +26,15 @@ queue.enqueue("send_email", [user], {
 | `uniqueKey` | Idempotency key — a duplicate enqueue is a no-op while the first job is pending/running. |
 | `metadata` | Free-form string stored with the job (surfaces on the dashboard / inspection). |
 | `notes` | Structured annotations — a JSON object, ≤15 fields and ≤4 KiB encoded. |
-| `namespace` | The queue name to route to. |
+| `namespace` | Tenant/environment isolation — a worker only claims jobs whose `namespace` exactly matches its own (unset by default). Orthogonal to `queue`: two jobs can share a `queue` name but sit in different namespaces, invisible to each other's workers. |
+
+> **Coming from BullMQ?** BullMQ's `add(name, data, opts)` third argument maps
+> field-for-field: `opts.delay` → `delayMs`, `opts.priority` → `priority`
+> (inverted direction — see [queues](/node/guides/core/queues)), and an
+> explicit custom `opts.jobId` (BullMQ's usual dedup trick) → `uniqueKey`.
+> taskito's `uniqueKey` dedup is automatic and scoped to "while the first job
+> is pending/running" — it frees up once that job finishes, rather than
+> permanently reserving the key.
 
 ## Idempotency
 
