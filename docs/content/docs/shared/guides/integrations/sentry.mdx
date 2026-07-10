@@ -1,0 +1,350 @@
+---
+title: Sentry Integration
+description: "Report task failures to Sentry, tagged by task name, job id, and queue."
+---
+
+taskito ships a Sentry middleware that reports task failures to
+[Sentry](https://sentry.io), tagging each event with the task name, job id,
+and queue so failures are groupable and searchable. Sentry itself is never
+initialized for you — call `Sentry.init(...)` in your own app before
+registering the middleware.
+
+## Installation
+
+<SdkOnly sdk="python">
+
+Install the `sentry` extra, which pulls in `sentry-sdk`:
+
+```bash
+pip install taskito[sentry]
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Peer dependency: install `@sentry/node` yourself and import the middleware
+from the `taskito/contrib/sentry` subpath.
+
+```bash
+npm install @sentry/node
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Optional dependency: the SDK compiles against `io.sentry:sentry` as
+`compileOnly`, so nothing lands on your classpath until you add the runtime
+dependency yourself.
+
+```kotlin
+implementation("io.sentry:sentry:7.14.0")
+```
+
+</SdkOnly>
+
+Initialize Sentry, then register the middleware on the queue:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+import sentry_sdk
+from taskito import Queue
+from taskito.contrib.sentry import SentryMiddleware
+
+sentry_sdk.init(dsn="https://examplePublicKey@o0.ingest.sentry.io/0")
+
+queue = Queue(db_path="myapp.db", middleware=[SentryMiddleware()])
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import * as Sentry from "@sentry/node";
+import { sentryMiddleware } from "@byteveda/taskito/contrib/sentry";
+
+Sentry.init({ dsn: process.env.SENTRY_DSN });
+
+queue.use(sentryMiddleware());
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+import io.sentry.Sentry;
+import org.byteveda.taskito.contrib.SentryMiddleware;
+
+Sentry.init(options -> options.setDsn(System.getenv("SENTRY_DSN")));
+
+taskito.use(new SentryMiddleware());
+```
+
+  </Tab>
+</CodeTabs>
+
+<Callout type="info">
+  None of the three bindings call `Sentry.init` for you — configure the DSN,
+  environment, and sampling with the Sentry SDK itself. When Sentry hasn't
+  been initialized, the middleware's hooks are safe no-ops.
+</Callout>
+
+## What it captures
+
+Each binding decides *when* to report a failure differently:
+
+<SdkOnly sdk="python">
+
+Every task execution opens a Sentry scope tagged with the job's metadata
+(prefix customizable via `tag_prefix`):
+
+| Tag | Value |
+|-----|-------|
+| `taskito.task_name` | The registered task name |
+| `taskito.job_id` | The job ID |
+| `taskito.queue` | The queue name |
+| `taskito.retry_count` | Current retry attempt |
+
+The Sentry transaction name defaults to `taskito:<task_name>` (customizable
+via `transaction_name_fn`). When a task raises, `SentryMiddleware` calls
+`sentry_sdk.capture_exception()` automatically — **every failed attempt** is
+reported, not just the terminal failure. When a task is retried, a
+breadcrumb is added (category `taskito` by default, level `warning`,
+message `Retrying <task_name> (attempt <N>): <error>`), so the final failure
+carries a trail of the retries leading up to it.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+The exception (with its stack trace) is captured internally in `onError`
+and held per job. It's only reported to Sentry once the job **dead-letters**
+— so each dead job produces a single event carrying the original stack plus
+the task/job/queue tags. Successful jobs and jobs that recover on retry are
+never reported. Set `captureRetries: true` to also report each intermediate
+retry as a `"warning"`-level event.
+
+Tags set on every event: `taskito.task_name`, `taskito.job_id`,
+`taskito.queue`, `taskito.retry_count`, and `taskito.timed_out` (when the
+job timed out). If a job dead-letters from a timeout without throwing, a
+synthetic error is captured so the failure is still recorded.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Two kinds of events are reported:
+
+- **Every failed attempt** — the handler's exception is captured with its
+  stack trace as soon as it throws. A job that recovers on a later retry
+  still produces one event per failed attempt.
+- **Dead-letters** — when a job exhausts its retries, a `FATAL`-level
+  message (`task dead-lettered: <error>`) marks the terminal failure.
+
+Both event kinds carry the tags `taskito.task` (task name) and
+`taskito.job` (job id).
+
+</SdkOnly>
+
+## Configuration
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+SentryMiddleware(
+    tag_prefix="myapp",
+    transaction_name_fn=lambda ctx: f"task-{ctx.task_name}",
+    task_filter=lambda name: not name.startswith("internal."),
+    extra_tags_fn=lambda ctx: {"worker.host": socket.gethostname()},
+)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+sentryMiddleware({
+  tagPrefix: "myapp",
+  captureRetries: true,
+  level: "error",
+  extraTags: (event) => ({ "worker.host": os.hostname() }),
+  taskFilter: (taskName) => !taskName.startsWith("internal."),
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// The one-argument constructor takes a Predicate<String> over the task
+// name; return false to skip a task entirely.
+new SentryMiddleware(task -> !task.startsWith("noisy."));
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `tag_prefix` | `str` | `"taskito"` | Prefix for Sentry tag keys and breadcrumb category. |
+| `transaction_name_fn` | `Callable[[JobContext], str] \| None` | `None` | Custom transaction name builder. Receives `JobContext`. Defaults to `<prefix>:<task_name>`. |
+| `task_filter` | `Callable[[str], bool] \| None` | `None` | Predicate on task name. Return `True` to report, `False` to skip. `None` reports all tasks. |
+| `extra_tags_fn` | `Callable[[JobContext], dict[str, str]] \| None` | `None` | Returns extra Sentry tags to set. Receives `JobContext`. |
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `tagPrefix` | `string` | `"taskito"` | Prefix for Sentry tag keys. |
+| `captureRetries` | `boolean` | `false` | Also report each retried failure as a `"warning"` event. |
+| `level` | `SeverityLevel` | `"error"` | Severity for the terminal dead-letter event. |
+| `extraTags` | `(event) => Record<string, string>` | — | Extra tags merged onto the event. |
+| `taskFilter` | `(taskName) => boolean` | — | Return `false` to skip a task. |
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`SentryMiddleware` has no other options beyond the task filter — DSN,
+environment, and sampling are all configured through the Sentry SDK itself.
+
+</SdkOnly>
+
+## Full example
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+import sentry_sdk
+from taskito import Queue
+from taskito.contrib.sentry import SentryMiddleware
+
+# Initialize Sentry first
+sentry_sdk.init(
+    dsn="https://examplePublicKey@o0.ingest.sentry.io/0",
+    traces_sample_rate=1.0,
+)
+
+# Create queue with Sentry middleware
+queue = Queue(db_path="myapp.db", middleware=[SentryMiddleware()])
+
+@queue.task(max_retries=3)
+def process_payment(order_id: str, amount: float):
+    """Process a payment — errors are automatically reported to Sentry."""
+    result = payment_gateway.charge(order_id, amount)
+    if not result.success:
+        raise PaymentError(f"Payment failed: {result.error}")
+    return result.transaction_id
+```
+
+When `process_payment` fails, the error appears in Sentry tagged
+`taskito.task_name=myapp.tasks.process_payment`, `taskito.job_id=...`,
+`taskito.queue=default`. Each retry is recorded as a breadcrumb, so the
+final failure (after all retries) includes the full breadcrumb trail.
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { Queue } from "@byteveda/taskito";
+import * as Sentry from "@sentry/node";
+import { sentryMiddleware } from "@byteveda/taskito/contrib/sentry";
+
+// Initialize Sentry first
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  tracesSampleRate: 1.0,
+});
+
+// Create the queue and register the middleware
+const queue = new Queue({ dbPath: "myapp.db" });
+queue.use(sentryMiddleware());
+
+queue.task(
+  "processPayment",
+  async (orderId: string, amount: number) => {
+    const result = await paymentGateway.charge(orderId, amount);
+    if (!result.success) {
+      throw new Error(`Payment failed: ${result.error}`);
+    }
+    return result.transactionId;
+  },
+  { maxRetries: 3 },
+);
+```
+
+If `processPayment` keeps failing until it exhausts its retries, one event
+is sent to Sentry — carrying the original stack trace from the last failed
+attempt plus tags `taskito.task_name=processPayment`, `taskito.job_id=...`,
+`taskito.queue=default`, `taskito.retry_count=3`.
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+import io.sentry.Sentry;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.contrib.SentryMiddleware;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+
+// Initialize Sentry first
+Sentry.init(options -> {
+    options.setDsn(System.getenv("SENTRY_DSN"));
+    options.setTracesSampleRate(1.0);
+});
+
+Taskito taskito = Taskito.builder().sqlite("myapp.db").open();
+taskito.use(new SentryMiddleware());
+
+Task<PaymentRequest> processPayment = Task.of("process_payment", PaymentRequest.class)
+        .maxRetries(3);
+
+try (Worker worker = taskito.worker()
+        .handle(processPayment, payload ->
+                paymentGateway.charge(payload.orderId(), payload.amount()))
+        .start()) {
+    worker.awaitShutdown();
+}
+```
+
+Each failed attempt of `process_payment` is captured immediately with tags
+`taskito.task=process_payment`, `taskito.job=<job id>`. Once retries are
+exhausted, a final `FATAL` dead-letter event marks the terminal failure.
+
+  </Tab>
+</CodeTabs>
+
+## Combining with other middleware
+
+Sentry middleware composes with any other middleware registered on the
+same queue or worker — see the
+<SdkLink to="guides/extensibility/middleware">Middleware guide</SdkLink> for
+how hooks run across multiple middleware instances.
+
+<SdkOnly sdk="python">
+
+```python
+from taskito.contrib.otel import OpenTelemetryMiddleware
+from taskito.contrib.prometheus import PrometheusMiddleware
+
+queue = Queue(
+    db_path="myapp.db",
+    middleware=[
+        OpenTelemetryMiddleware(),
+        PrometheusMiddleware(),
+        SentryMiddleware(),
+    ],
+)
+```
+
+</SdkOnly>

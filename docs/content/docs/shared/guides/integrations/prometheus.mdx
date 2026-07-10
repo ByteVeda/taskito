@@ -1,0 +1,407 @@
+---
+title: Prometheus Metrics
+description: "Per-task execution counters and a duration histogram from middleware, plus polled queue depth and dead-letter gauges."
+---
+
+Taskito exports Prometheus metrics through two pieces — a middleware that
+records per-task execution counters and a duration histogram, and a stats
+collector that polls queue depth and dead-letter size onto gauges on an
+interval. Both write into the same
+<SdkSwap python={<code>prometheus-client</code>} node={<code>prom-client</code>} />
+registry, so one HTTP endpoint can serve everything.
+
+<SdkOnly sdk="java">
+
+Java has no Prometheus contrib — metrics come from
+[Micrometer](/java/guides/integrations/micrometer) instead, which yields a
+timer (and a trace span) from one instrumentation.
+
+</SdkOnly>
+
+## Installation
+
+<SdkOnly sdk="python">
+
+```bash
+pip install taskito[prometheus]
+```
+
+This installs `prometheus-client` as a dependency.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Peer dependency: `prom-client`. Import from the `taskito/contrib/prometheus`
+subpath — it is not exported from the main barrel.
+
+</SdkOnly>
+
+## Metrics tracked
+
+<SdkOnly sdk="python">
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `taskito_jobs_total` | Counter | `task`, `status` | Total jobs processed (`status` is `completed` or `failed`) |
+| `taskito_job_duration_seconds` | Histogram | `task` | Job execution duration |
+| `taskito_active_workers` | Gauge | — | Number of currently executing workers |
+| `taskito_retries_total` | Counter | `task` | Total retry attempts |
+| `taskito_queue_depth` | Gauge | `queue` | Number of pending jobs, polled by `PrometheusStatsCollector` |
+| `taskito_dlq_size` | Gauge | — | Number of dead-letter jobs, polled |
+| `taskito_worker_utilization` | Gauge | `queue` | Ratio of running jobs to total workers for that queue (0.0–1.0), polled |
+
+The first four are written by `PrometheusMiddleware` as each job runs; the
+last three are polled by `PrometheusStatsCollector`. Metrics are created once
+per `namespace` and reused, so it's safe to construct the middleware and the
+collector independently as long as they share a namespace.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `taskito_jobs_total` | Counter | `task`, `status` | Finished executions by outcome (`status` is `completed` or `failed`) |
+| `taskito_job_duration_seconds` | Histogram | `task` | Execution duration |
+| `taskito_active_workers` | Gauge | — | Jobs currently executing |
+| `taskito_retries_total` | Counter | `task` | Retry attempts |
+| `taskito_queue_depth` | Gauge | `queue` | Pending jobs per queue, polled by `PrometheusStatsCollector` |
+| `taskito_dlq_size` | Gauge | — | Dead-letter queue size, polled |
+
+<Callout type="info">
+  There's no `worker_utilization` gauge on Node — `PrometheusStatsCollector`
+  only polls queue depth and DLQ size.
+</Callout>
+
+</SdkOnly>
+
+## Instrumenting job execution
+
+<SdkOnly sdk="python">
+
+Add `PrometheusMiddleware` to your queue to track per-task execution metrics:
+
+```python
+from taskito import Queue
+from taskito.contrib.prometheus import PrometheusMiddleware
+
+queue = Queue(db_path="myapp.db", middleware=[PrometheusMiddleware()])
+```
+
+```python
+PrometheusMiddleware(
+    namespace="myapp",
+    disabled_metrics={"resource", "proxy"},
+    task_filter=lambda name: not name.startswith("internal."),
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `namespace` | `str` | `"taskito"` | Prefix for all metric names. |
+| `extra_labels_fn` | `Callable[[JobContext], dict[str, str]] \| None` | `None` | Accepted for forward compatibility — not currently applied to any metric's labels. |
+| `disabled_metrics` | `set[str] \| None` | `None` | Metric groups or individual names to skip. Groups: `"jobs"`, `"queue"`, `"resource"`, `"proxy"`, `"intercept"`. |
+| `task_filter` | `Callable[[str], bool] \| None` | `None` | Predicate that receives a task name. Return `True` to export metrics for the task, `False` to skip it. `None` exports all tasks. |
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Register `prometheusMiddleware` to record per-job counters and the duration
+histogram:
+
+```ts
+import { prometheusMiddleware } from "@byteveda/taskito/contrib/prometheus";
+
+queue.use(prometheusMiddleware());
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `namespace` | `string` | `"taskito"` | Metric name prefix |
+| `register` | `Registry` | global `register` | prom-client registry to register metrics into |
+| `taskFilter` | `(taskName) => boolean` | — | Return `false` to skip a task |
+| `buckets` | `number[]` | prom-client defaults | Histogram bucket boundaries (seconds) |
+
+</SdkOnly>
+
+## Queue-level metrics
+
+<SdkOnly sdk="python">
+
+For queue-level metrics, use the stats collector. It polls `queue.stats()`
+(and resource/proxy/interception stats) on a background thread:
+
+```python
+from taskito.contrib.prometheus import PrometheusStatsCollector
+
+collector = PrometheusStatsCollector(queue, interval=10)
+collector.start()
+```
+
+```python
+PrometheusStatsCollector(
+    queue,
+    interval=10,
+    namespace="myapp",
+    disabled_metrics={"intercept"},
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `queue` | `Queue` | — | The Queue instance to poll. |
+| `interval` | `float` | `10.0` | Seconds between polls. |
+| `namespace` | `str` | `"taskito"` | Prefix for metric names. Must match `PrometheusMiddleware`'s namespace to share metric objects. |
+| `disabled_metrics` | `set[str] \| None` | `None` | Metric groups or names to skip. Same groups as `PrometheusMiddleware`. |
+
+Call `collector.stop()` on shutdown — it signals the background thread and
+joins it (up to 5s).
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`PrometheusStatsCollector` polls queue depth and DLQ size on an interval:
+
+```ts
+import { PrometheusStatsCollector } from "@byteveda/taskito/contrib/prometheus";
+
+const collector = new PrometheusStatsCollector(queue);
+collector.start();
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `namespace` | `string` | `"taskito"` | Metric name prefix |
+| `register` | `Registry` | global `register` | Registry to write gauges into |
+| `intervalMs` | `number` | `10000` | Poll interval in milliseconds |
+
+The internal timer is unref'd, so it never keeps the process alive on its
+own. Call `.stop()` on graceful shutdown:
+
+```ts
+process.on("SIGTERM", () => {
+  collector.stop();
+  worker.stop();
+});
+```
+
+<Callout type="info">
+  Metrics for one namespace are built once per registry, so registering
+  multiple middlewares is safe. Pass the same `register` to the middleware and
+  the collector to keep everything in one registry.
+</Callout>
+
+</SdkOnly>
+
+## Exposing metrics
+
+<SdkOnly sdk="python">
+
+Start a standalone `/metrics` endpoint for Prometheus to scrape:
+
+```python
+from taskito.contrib.prometheus import start_metrics_server
+
+start_metrics_server(port=9090)
+```
+
+This uses `prometheus_client.start_http_server` under the hood.
+
+### This is a different `/metrics` than the dashboard's
+
+`start_metrics_server` opens its own dedicated HTTP server — it is not the
+same endpoint as the dashboard's `GET /metrics` (see
+<SdkLink to="guides/dashboard/rest-api">REST API</SdkLink>). Both ultimately
+call `prometheus_client.generate_latest()`, but each only serves metrics
+registered in *its own process*:
+
+- Run `start_metrics_server` in the same process as your
+  `PrometheusMiddleware` / `PrometheusStatsCollector` (typically the worker
+  process) — this is the endpoint you'll usually scrape.
+- The dashboard's `GET /metrics` only shows something useful if the
+  dashboard process itself registered metrics (e.g. it also runs
+  `PrometheusMiddleware`). If your worker and dashboard run as separate
+  processes — the common deployment — scrape the worker's
+  `start_metrics_server` instead.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no standalone metrics server built in — mount the registry on your
+own HTTP server:
+
+```ts
+import { register } from "prom-client";
+import express from "express";
+
+const app = express();
+app.get("/metrics", async (_req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
+});
+```
+
+<Callout type="info">
+  The dashboard's own
+  <SdkLink to="guides/operations/dashboard-api">`GET /api/metrics`</SdkLink>
+  is a separate, JSON-based aggregation, not a Prometheus text-exposition
+  endpoint — scrape the server above instead.
+</Callout>
+
+</SdkOnly>
+
+## Full example
+
+<SdkOnly sdk="python">
+
+```python
+from taskito import Queue
+from taskito.contrib.prometheus import (
+    PrometheusMiddleware,
+    PrometheusStatsCollector,
+    start_metrics_server,
+)
+
+queue = Queue(db_path="myapp.db", middleware=[PrometheusMiddleware()])
+
+# Start metrics endpoint
+start_metrics_server(port=9090)
+
+# Start queue stats polling
+collector = PrometheusStatsCollector(queue, interval=10)
+collector.start()
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```ts
+import { Queue } from "@byteveda/taskito";
+import {
+  prometheusMiddleware,
+  PrometheusStatsCollector,
+} from "@byteveda/taskito/contrib/prometheus";
+import { register } from "prom-client";
+import express from "express";
+
+const queue = new Queue({ dbPath: "myapp.db" });
+queue.use(prometheusMiddleware());
+
+const collector = new PrometheusStatsCollector(queue);
+collector.start();
+
+const app = express();
+app.get("/metrics", async (_req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
+});
+app.listen(9090);
+```
+
+</SdkOnly>
+
+Prometheus scrape config for either SDK:
+
+```yaml
+scrape_configs:
+  - job_name: taskito
+    static_configs:
+      - targets: ["localhost:9090"]
+```
+
+## Grafana dashboard tips
+
+<SdkOnly sdk="python">
+
+- **Throughput** — `rate(taskito_jobs_total[5m])` by `task` and `status`
+- **Duration p95** — `histogram_quantile(0.95, rate(taskito_job_duration_seconds_bucket[5m]))`
+- **Queue depth** — `taskito_queue_depth` by `queue`
+- **DLQ size** — `taskito_dlq_size` with an alert threshold
+- **Worker utilization** — `taskito_worker_utilization` by `queue`
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+- **Throughput** — `rate(taskito_jobs_total[5m])` by `task` and `status`
+- **Duration p95** — `histogram_quantile(0.95, rate(taskito_job_duration_seconds_bucket[5m]))`
+- **Queue depth** — `taskito_queue_depth` by `queue`
+- **DLQ size** — `taskito_dlq_size` with an alert threshold
+
+</SdkOnly>
+
+## Alerting on high DLQ size
+
+Using the same setup as the [full example](#full-example) above, a couple of
+alerting rules worth adding — `taskito_dlq_size` and `taskito_jobs_total`
+exist on every SDK, so this rule file needs no changes between them:
+
+```yaml
+groups:
+  - name: taskito
+    rules:
+      - alert: HighDLQSize
+        expr: taskito_dlq_size > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "taskito dead letter queue has {{ $value }} entries"
+      - alert: HighErrorRate
+        expr: rate(taskito_jobs_total{status="failed"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High task failure rate: {{ $value }} failures/sec"
+```
+
+## Combining with other middleware
+
+<SdkOnly sdk="python">
+
+`PrometheusMiddleware` composes with other middleware:
+
+```python
+from taskito.contrib.otel import OpenTelemetryMiddleware
+from taskito.contrib.sentry import SentryMiddleware
+
+queue = Queue(
+    db_path="myapp.db",
+    middleware=[
+        OpenTelemetryMiddleware(),
+        PrometheusMiddleware(),
+        SentryMiddleware(),
+    ],
+)
+```
+
+See the <SdkLink to="guides/extensibility/middleware">Middleware guide</SdkLink>
+for more on combining middleware.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`prometheusMiddleware` composes with other middleware — register each with
+its own `queue.use()` call, in the order you want their hooks to run:
+
+```ts
+import { otelMiddleware } from "@byteveda/taskito/contrib/otel";
+import { sentryMiddleware } from "@byteveda/taskito/contrib/sentry";
+import { prometheusMiddleware } from "@byteveda/taskito/contrib/prometheus";
+
+queue.use(otelMiddleware());
+queue.use(prometheusMiddleware());
+queue.use(sentryMiddleware());
+```
+
+See <SdkLink to="guides/extensibility/middleware">Middleware</SdkLink> for
+more on hook ordering.
+
+</SdkOnly>
