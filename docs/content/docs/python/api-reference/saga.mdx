@@ -104,7 +104,7 @@ Frozen dataclass passed in via the contextvar. Fields:
 | `Compensated`         |     ✓    | All compensators succeeded                                         |
 | `CompensationFailed`  |     ✓    | At least one compensator failed; subsequent waves were not dispatched |
 
-`WorkflowState.is_terminal()` returns `True` for `Compensated` and `CompensationFailed`. `WorkflowRun.wait()` unblocks on any of the five terminal states (`Completed`, `Failed`, `Cancelled`, `Compensated`, `CompensationFailed`).
+`WorkflowState.is_terminal()` returns `True` for `Compensated` and `CompensationFailed`. `WorkflowRun.wait()` unblocks on any of the six terminal states (`Completed`, `CompletedWithFailures`, `Failed`, `Cancelled`, `Compensated`, `CompensationFailed`).
 
 ---
 
