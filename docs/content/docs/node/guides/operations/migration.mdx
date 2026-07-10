@@ -17,7 +17,7 @@ handlers are **registered by name** on the queue rather than wired to a separate
 | `queue.add("job", data, opts)` | `queue.task("job", fn)` once, then `queue.enqueue("job", args, opts)` |
 | `job.data` | the positional `args` passed to the handler |
 | `job.id`, progress | `currentJob()` → `jobId`, `setProgress()` |
-| `await job.waitUntilFinished(queueEvents)` | `await queue.result(id)` |
+| `await job.waitUntilFinished(queueEvents)` | `await queue.result(id, { timeoutMs })` — defaults to 30s and throws `ResultTimeoutError` on timeout |
 | `attempts` + `backoff` | `maxRetries` + `retryBackoff` |
 | `rateLimiter` | per-task / per-queue `rateLimit: "100/m"` |
 | `QueueEvents` | `queue.on(event, …)` + [middleware](/node/guides/extensibility/middleware) |
