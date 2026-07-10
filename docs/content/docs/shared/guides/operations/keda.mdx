@@ -94,9 +94,11 @@ taskito --backend postgres --dsn "$DATABASE_URL" scaler --port 9091
 ```java
 try (Taskito taskito = Taskito.builder().postgres(System.getenv("DATABASE_URL")).open();
         Scaler scaler = Scaler.start(taskito, ScalerOptions.onPort(9090))) {
-    // serves until closed
+    Thread.currentThread().join(); // serve until the process is killed
 }
 ```
+
+(`main` needs `throws InterruptedException` for the `join()`.)
 
 There's no bundled CLI for the scaler — embed `Scaler.start(...)` in a small
 entrypoint alongside (or instead of) your worker process.
