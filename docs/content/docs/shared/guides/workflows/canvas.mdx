@@ -412,9 +412,12 @@ result = chain(
 ).with_compensation([refund, cancel_order]).apply(queue)
 ```
 
-`with_compensation` requires exactly one entry per chain step. If `step_b`
-fails after `step_a` succeeded, `cancel_order` then `refund` are enqueued —
-reverse order, one at a time.
+`with_compensation` requires exactly one entry per chain step (a slot can be
+`None` to skip that step). Only steps that **completed** are compensated, in
+reverse order, one at a time — the failed step itself never ran to completion,
+so it has nothing to undo. If `step_b` fails after `step_a` succeeded, only
+`refund` (step_a's compensator) is enqueued; `cancel_order` would run only in
+a longer chain where `step_b` completed and a later step failed.
 
 ### group compensation
 
