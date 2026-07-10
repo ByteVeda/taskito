@@ -19,7 +19,7 @@ queue, rate limits, periodic tasks, and worker heartbeats.
 
 <SchemaGrid />
 
-<Callout>
+<Callout type="info">
   **Relationships:** `jobs` → `job_errors` (1 ─ \*, error history) and `jobs` →
   `dead_letter` (1 ─ 0..1, DLQ on retry exhaustion).
 </Callout>

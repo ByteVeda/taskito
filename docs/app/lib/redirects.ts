@@ -17,15 +17,19 @@ const ARCH_PAGES = [
   "serialization",
 ];
 
+const SDKS = ["node", "python", "java"];
+
 // Sections that have child pages but no landing/index page. A bare hit on the
 // section URL (e.g. from a breadcrumb crumb or an external link) would otherwise
-// 404, so send it to the section's first page.
-const SECTION_LANDINGS = ["node", "python", "java"].map(
-  (sdk): [string, string] => [
-    `/${sdk}/getting-started`,
-    `/${sdk}/getting-started/installation`,
-  ],
-);
+// 404, so send it to the section's first page. This covers both the bare SDK
+// root (`/python`) and its getting-started section (`/python/getting-started`).
+const SECTION_LANDINGS = SDKS.flatMap((sdk): [string, string][] => {
+  const first = `/${sdk}/getting-started/installation`;
+  return [
+    [`/${sdk}`, first],
+    [`/${sdk}/getting-started`, first],
+  ];
+});
 
 export const REDIRECTS: Record<string, string> = {
   ...Object.fromEntries(
