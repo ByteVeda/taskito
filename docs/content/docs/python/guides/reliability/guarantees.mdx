@@ -15,9 +15,14 @@ crashes mid-execution.
 
 ## Why not exactly-once?
 
-Exactly-once delivery is impossible in distributed systems without two-phase
-commit (a distributed-transaction protocol that coordinates commit across systems). Taskito's approach matches Celery, SQS, and most production job
-systems: deliver at least once, design tasks to handle duplicates.
+Exactly-once *delivery* is impossible: a worker can run a task's side effect and
+then crash before it acknowledges completion, so the job is retried and the side
+effect runs again. No protocol closes this gap in general — the effect and the
+acknowledgement can't be committed atomically across separate systems. What you
+can get is exactly-once *effect*, by making tasks idempotent (dedup keys) or
+routing writes through a transactional outbox/inbox. Taskito's approach matches
+Celery, SQS, and most production job systems: deliver at least once, design
+tasks to handle duplicates.
 
 ## How recovery works
 
