@@ -5,7 +5,9 @@ description: "Composable gates that decide whether a job runs — from a simple 
 
 A **predicate** (also called a gate) is a small check evaluated before a job
 is allowed to proceed — a declarative way to say "only do this under
-condition X." When it denies, no job is created.
+condition X." What a denial does depends on the configured outcome: a reject
+or cancel outcome means no work runs, while a defer outcome schedules the job
+to try again later.
 <SdkSwap python={<>Register one with the <code>predicate=</code> option on <code>@queue.task</code>.</>} node={<>Register one with <code>queue.gate()</code>.</>} java={<>Register one with <code>taskito.predicate()</code>, or the richer <code>taskito.gate()</code>.</>} />
 
 ## Quick start
