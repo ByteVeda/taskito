@@ -113,8 +113,8 @@ try (Worker worker = queue.worker()
         .start()) {
     WorkflowStatus status = run.await(Duration.ofSeconds(30));
     // ship fails → charge rolled back (refund) → reserve rolled back (unreserve)
-    status.state; // COMPENSATED
-    status.node("charge").orElseThrow().status; // COMPENSATED
+    System.out.println(status.state); // COMPENSATED
+    System.out.println(status.node("charge").orElseThrow().status); // COMPENSATED
 }
 ```
 
