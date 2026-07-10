@@ -41,6 +41,8 @@ const DARK_VARIABLES = {
   actorLineColor: "#5c5c70",
   signalColor: "#ececf4",
   signalTextColor: "#ececf4",
+  // Badge circle is filled with signalColor (near-white here); use dark text.
+  sequenceNumberColor: "#08080c",
   labelBoxBkgColor: "#13131d",
   labelBoxBorderColor: "#33334a",
   loopTextColor: "#ececf4",
@@ -82,6 +84,8 @@ const LIGHT_VARIABLES = {
   actorLineColor: "#8b877a",
   signalColor: "#1b1a15",
   signalTextColor: "#1b1a15",
+  // Badge circle is filled with signalColor (near-black here); use light text.
+  sequenceNumberColor: "#ffffff",
   labelBoxBkgColor: "#ffffff",
   labelBoxBorderColor: "#cfc9ba",
   loopTextColor: "#1b1a15",
