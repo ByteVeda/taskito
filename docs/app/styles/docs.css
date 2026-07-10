@@ -30,7 +30,10 @@ body {
   border-radius: 8px;
 }
 .side-search {
-  display: flex;
+  /* Redundant with the top-nav search on desktop, so hidden there; re-shown
+     below 880px, where the nav search button (.kbar) is hidden and the sidebar
+     drawer becomes the only search entry point. */
+  display: none;
   align-items: center;
   gap: 9px;
   width: 100%;
@@ -44,6 +47,11 @@ body {
   cursor: pointer;
   margin-bottom: 22px;
   transition: border-color 0.2s;
+}
+@media (max-width: 880px) {
+  .side-search {
+    display: flex;
+  }
 }
 .side-search:hover {
   border-color: var(--line3);
