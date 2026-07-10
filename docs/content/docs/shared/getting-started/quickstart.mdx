@@ -1,0 +1,340 @@
+---
+title: Quickstart
+description: "Build your first task queue in 5 minutes."
+---
+
+Four pieces make up the core loop — a **task**, a **worker**, an enqueued
+**job**, and its **result** — plus how to check on the queue afterward. No
+broker to stand up: everything below talks to one embedded store.
+
+## 1. Define tasks
+
+A task is a named function registered on the queue. Producers enqueue by
+name; a worker executes the registered function and stores its return value
+as the result.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+Create a file called `tasks.py`:
+
+```python
+from taskito import Queue
+
+# Create a queue backed by SQLite
+queue = Queue(db_path="tasks.db")
+
+@queue.task()
+def add(a: int, b: int) -> int:
+    return a + b
+
+@queue.task(max_retries=3, retry_backoff=2.0)
+def send_email(to: str, subject: str, body: str) -> str:
+    # Your email sending logic here
+    print(f"Sending email to {to}: {subject}")
+    return f"sent to {to}"
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { Queue } from "@byteveda/taskito";
+
+const queue = new Queue({ dbPath: "taskito.db" });
+
+// Register a task with optional per-task config.
+queue.task("add", (a: number, b: number) => a + b, {
+  maxRetries: 3,
+  retryBackoff: { baseMs: 1000, maxMs: 60_000 },
+  timeoutMs: 30_000,
+  maxConcurrent: 4,
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+import com.fasterxml.jackson.core.type.TypeReference;
+import java.time.Duration;
+import java.util.Map;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.task.Task;
+
+// A task is a name plus its payload type — the producer never needs the handler body.
+Task<Map<String, Integer>> add =
+        Task.of("add", new TypeReference<Map<String, Integer>>() {})
+                .retries(3)
+                .timeout(Duration.ofSeconds(30));
+
+Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
+```
+
+  </Tab>
+</CodeTabs>
+
+## 2. Start a worker
+
+A worker polls storage, claims due jobs, and dispatches them to the
+registered functions above. Start one before you enqueue — or leave it
+running while you enqueue in the next step:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+<Tabs items={["CLI (Recommended)", "Threading", "Async"]}>
+  <Tab value="CLI (Recommended)">
+
+```bash
+# Runs in its own terminal and blocks, processing jobs until you stop it (Ctrl+C)
+taskito worker --app tasks:queue
+```
+
+  </Tab>
+  <Tab value="Threading">
+
+```python
+# Runs the worker in a background thread inside your own process
+import threading
+from tasks import queue
+
+t = threading.Thread(target=queue.run_worker, daemon=True)
+t.start()
+```
+
+  </Tab>
+  <Tab value="Async">
+
+```python
+import asyncio
+from tasks import queue
+
+async def main():
+    await queue.arun_worker()
+
+asyncio.run(main())
+```
+
+  </Tab>
+</Tabs>
+
+  </Tab>
+  <Tab sdk="node">
+
+<Tabs items={["CLI (Recommended)", "Programmatic"]}>
+  <Tab value="CLI (Recommended)">
+
+```bash
+# Loads the module that registers the tasks above and runs a worker over them
+taskito run ./app.js --queues default
+```
+
+  </Tab>
+  <Tab value="Programmatic">
+
+```ts
+// Same process, or a separate one pointed at the same dbPath / DSN
+const worker = queue.runWorker({ queues: ["default"] });
+```
+
+  </Tab>
+</Tabs>
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+import org.byteveda.taskito.worker.Worker;
+
+Worker worker = taskito.worker()
+        .handle(add, p -> p.get("a") + p.get("b"))
+        .start();
+// ... later: worker.close();
+```
+
+  </Tab>
+</CodeTabs>
+
+<Callout type="info" title="Keep the worker running">
+  Nothing executes until a worker is consuming the queue. Enqueued jobs sit in
+  `pending` until a worker claims them — so leave this worker running while you
+  enqueue jobs in the next step.
+</Callout>
+
+## 3. Enqueue jobs and get results
+
+From another process (or anywhere in your app), enqueue a job and read its
+result. The worker from step 2 picks it up and runs it:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from tasks import add
+
+# Enqueue — returns a JobResult handle immediately; the function does NOT run here
+job = add.delay(2, 3)
+print(f"Job ID: {job.id}")       # 01936...
+print(f"Status: {job.status}")   # "pending" — until a worker claims it
+
+# Block until the worker finishes the job (exponential-backoff polling)
+result = job.result(timeout=30)
+print(result)                    # 5
+
+# Async variant
+result = await job.aresult(timeout=30)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+// Enqueue a job (producer).
+const id = queue.enqueue("add", [2, 3], { priority: 5 });
+
+// Await the result — the worker from step 2 picks it up and runs it.
+const result = await queue.result(id); // 5
+
+worker.stop();
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// Enqueue a job (producer).
+String id = taskito.enqueue(add, Map.of("a", 2, "b", 3));
+
+// Block until the job is terminal, then read its result.
+taskito.awaitJob(id, Duration.ofSeconds(20));
+int result = taskito.getResult(id, Integer.class).orElseThrow(); // 5
+
+worker.close();
+```
+
+  </Tab>
+</CodeTabs>
+
+## 4. Monitor
+
+Check queue health without leaving the terminal:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from tasks import queue
+
+stats = queue.stats()
+print(stats)
+# {'pending': 0, 'running': 0, 'completed': 5, 'failed': 0, 'dead': 0, 'cancelled': 0}
+```
+
+Or the CLI:
+
+```bash
+taskito info --app tasks:queue
+```
+
+<SdkOnly sdk="python">
+
+```bash
+# Live dashboard, refreshes every 2s
+taskito info --app tasks:queue --watch
+```
+
+</SdkOnly>
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+await queue.stats(); // { pending, running, completed, failed, dead, cancelled }
+```
+
+Or the CLI:
+
+```bash
+taskito --db taskito.db stats
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+QueueStats stats = taskito.stats(); // pending, running, completed, failed, dead, cancelled
+```
+
+Or the CLI:
+
+```bash
+taskito --url taskito.db stats
+```
+
+  </Tab>
+</CodeTabs>
+
+### Web dashboard
+
+For a full visual interface — job browsing, metrics charts, dead letter
+management, and queue controls — run the bundled dashboard. It ships in the
+package itself; no separate service or extra dependencies:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```bash
+taskito dashboard --app tasks:queue
+```
+
+Open `http://localhost:8080` in your browser.
+
+<SdkOnly sdk="python">
+
+[Dashboard guide →](/python/guides/dashboard)
+
+</SdkOnly>
+
+  </Tab>
+  <Tab sdk="node">
+
+```bash
+pnpm build:dashboard          # builds the SPA into static/dashboard (one-time)
+taskito --db taskito.db dashboard --port 8787
+```
+
+Open `http://localhost:8787` in your browser.
+
+<SdkOnly sdk="node">
+
+[Dashboard guide →](/node/guides/operations/dashboard)
+
+</SdkOnly>
+
+  </Tab>
+  <Tab sdk="java">
+
+```bash
+taskito --url taskito.db dashboard --port 8080 --token "$DASH_TOKEN"
+```
+
+Open `http://localhost:8080` in your browser.
+
+<SdkOnly sdk="java">
+
+[Dashboard guide →](/java/guides/operations/dashboard)
+
+</SdkOnly>
+
+  </Tab>
+</CodeTabs>
+
+## Next steps
+
+- <SdkLink to="getting-started/concepts">Concepts</SdkLink> — the mental model behind queue, task, worker, and result
+- <SdkLink to="guides/core/tasks">Tasks</SdkLink> — registration options and per-task configuration
+- <SdkLink to="guides/core/workers">Workers</SdkLink> — running workers, concurrency, and graceful shutdown
+- <SdkLink to="guides/reliability/retries">Retries</SdkLink> — exponential backoff and the dead letter queue
+- <SdkLink to="guides/workflows">Workflows</SdkLink> — orchestrate multi-step DAGs of dependent tasks
+- <SdkLink to="guides/operations/testing">Testing</SdkLink> — unit-test tasks directly, or run them through a real worker in your suite

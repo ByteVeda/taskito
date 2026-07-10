@@ -1,0 +1,464 @@
+---
+title: Benchmark
+description: "A self-contained throughput benchmark — measure enqueue rate, processing rate, and end-to-end latency on your own hardware."
+---
+
+Numbers depend heavily on your machine, backend, and task body, so the only
+number that matters is the one you measure. Each SDK ships a self-contained
+benchmark that stages a batch of jobs, drains them with a worker, and reports
+the rates that bound a queue: enqueue throughput, processing throughput, and
+end-to-end latency.
+
+## The benchmark
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+"""taskito throughput benchmark.
+
+Measures:
+1. Enqueue throughput (jobs/sec) using batch insert
+2. Processing throughput (jobs/sec) with N workers
+3. End-to-end latency
+"""
+
+import os
+import threading
+import time
+
+from taskito import Queue
+
+# ── Configuration ────────────────────────────────────────
+
+NUM_JOBS = 10_000
+NUM_WORKERS = os.cpu_count() or 4
+DB_PATH = ":memory:"  # In-memory for pure speed test
+
+queue = Queue(db_path=DB_PATH, workers=NUM_WORKERS)
+
+@queue.task()
+def noop(x):
+    """Minimal task — measures framework overhead."""
+    return x
+
+@queue.task()
+def cpu_light(x):
+    """Light CPU work — string formatting."""
+    return f"processed-{x}-{'x' * 100}"
+
+# ── Benchmark Functions ──────────────────────────────────
+
+def bench_enqueue(task, n):
+    """Measure batch enqueue throughput."""
+    args_list = [(i,) for i in range(n)]
+
+    start = time.perf_counter()
+    jobs = task.map(args_list)
+    elapsed = time.perf_counter() - start
+
+    rate = n / elapsed
+    print(f"  Enqueued {n:,} jobs in {elapsed:.2f}s ({rate:,.0f} jobs/s)")
+    return jobs
+
+def bench_process(jobs, timeout=120):
+    """Measure processing throughput by waiting for all jobs."""
+    n = len(jobs)
+    start = time.perf_counter()
+
+    last = jobs[-1]
+    try:
+        last.result(timeout=timeout, poll_interval=0.01, max_poll_interval=0.1)
+    except TimeoutError:
+        stats = queue.stats()
+        print(f"  Timed out! Stats: {stats}")
+        return
+
+    elapsed = time.perf_counter() - start
+    rate = n / elapsed
+    print(f"  Processed {n:,} jobs in {elapsed:.2f}s ({rate:,.0f} jobs/s)")
+
+def bench_latency(task, samples=100):
+    """Measure single-job round-trip latency."""
+    latencies = []
+    for i in range(samples):
+        start = time.perf_counter()
+        job = task.delay(i)
+        job.result(timeout=10)
+        latencies.append(time.perf_counter() - start)
+
+    avg = sum(latencies) / len(latencies)
+    p50 = sorted(latencies)[len(latencies) // 2]
+    p99 = sorted(latencies)[int(len(latencies) * 0.99)]
+    print(f"  Latency (n={samples}): avg={avg*1000:.1f}ms p50={p50*1000:.1f}ms p99={p99*1000:.1f}ms")
+
+# ── Main ─────────────────────────────────────────────────
+
+def main():
+    print(f"taskito benchmark")
+    print(f"  Workers: {NUM_WORKERS}")
+    print(f"  Jobs:    {NUM_JOBS:,}")
+    print(f"  DB:      {DB_PATH}")
+    print()
+
+    # Start worker in background
+    worker_thread = threading.Thread(target=queue.run_worker, daemon=True)
+    worker_thread.start()
+    time.sleep(0.5)
+
+    print("── noop task (framework overhead) ──")
+    jobs = bench_enqueue(noop, NUM_JOBS)
+    bench_process(jobs)
+    print()
+
+    print("── cpu_light task ──")
+    jobs = bench_enqueue(cpu_light, NUM_JOBS)
+    bench_process(jobs)
+    print()
+
+    print("── single-job latency ──")
+    bench_latency(noop)
+    print()
+
+    stats = queue.stats()
+    print(f"Final stats: {stats}")
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { Queue } from "@byteveda/taskito";
+
+const N = 50_000;
+const queue = new Queue({ dbPath: "bench.db" });
+
+queue.task("noop", (_n: number) => undefined);
+
+// 1. Enqueue throughput — stage N jobs in batches of 1,000.
+const t0 = Date.now();
+for (let i = 0; i < N; i += 1_000) {
+  queue.enqueueMany("noop", Array.from({ length: 1_000 }, (_, k) => ({ args: [i + k] })));
+}
+const enqueueMs = Date.now() - t0;
+
+// 2. Processing throughput — drain the backlog, polling stats until empty.
+const t1 = Date.now();
+const worker = queue.runWorker({ queues: ["default"], batchSize: 64, channelCapacity: 512 });
+while ((await queue.stats()).completed < N) {
+  await new Promise((r) => setTimeout(r, 20));
+}
+const processMs = Date.now() - t1;
+worker.stop();
+
+// 3. End-to-end latency — created → completed across a sample of jobs.
+const sample = await queue.listJobs({ status: "complete", limit: 1_000 });
+const latencies = sample
+  .filter((j) => j.completedAt)
+  .map((j) => (j.completedAt as number) - j.createdAt)
+  .sort((a, b) => a - b);
+const p50 = latencies[Math.floor(latencies.length * 0.5)];
+const p99 = latencies[Math.floor(latencies.length * 0.99)];
+
+console.log(`enqueue:  ${Math.round(N / (enqueueMs / 1000))} jobs/s`);
+console.log(`process:  ${Math.round(N / (processMs / 1000))} jobs/s`);
+console.log(`latency:  p50 ${p50}ms  p99 ${p99}ms`);
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.JobStatus;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+
+public final class Benchmark {
+    private static final int N = 50_000;
+    private static final Task<Integer> NOOP = Task.of("noop", Integer.class);
+
+    public static void main(String[] args) throws Exception {
+        // Fresh database per run — a reused file skews stats with old rows.
+        Path dir = Files.createTempDirectory("taskito-bench");
+        try (Taskito taskito = Taskito.builder().sqlite(dir.resolve("bench.db").toString()).open()) {
+
+            // 1. Enqueue throughput — stage N jobs in batches of 1,000.
+            long t0 = System.currentTimeMillis();
+            for (int i = 0; i < N; i += 1_000) {
+                List<Integer> batch = new ArrayList<>(1_000);
+                for (int k = 0; k < 1_000; k++) {
+                    batch.add(i + k);
+                }
+                taskito.enqueueMany(NOOP, batch);
+            }
+            long enqueueMs = System.currentTimeMillis() - t0;
+
+            // 2. Processing throughput — drain the backlog, polling stats until empty.
+            long t1 = System.currentTimeMillis();
+            long processMs;
+            try (Worker worker = taskito.worker()
+                    .handle(NOOP, n -> null)
+                    .concurrency(8)
+                    .batchSize(64)
+                    .channelCapacity(512)
+                    .start()) {
+                while (taskito.stats().completed < N) {
+                    Thread.sleep(20);
+                }
+                processMs = System.currentTimeMillis() - t1;
+            }
+
+            // 3. End-to-end latency — created → completed across a sample of jobs.
+            List<Long> latencies = taskito
+                    .listJobs(JobFilter.builder().status(JobStatus.COMPLETE).limit(1_000).build())
+                    .stream()
+                    .filter(job -> job.completedAt != null)
+                    .map(job -> job.completedAt - job.createdAt)
+                    .sorted()
+                    .toList();
+            long p50 = latencies.get((int) (latencies.size() * 0.5));
+            long p99 = latencies.get((int) (latencies.size() * 0.99));
+
+            System.out.printf("enqueue:  %d jobs/s%n", Math.round(N / (enqueueMs / 1000.0)));
+            System.out.printf("process:  %d jobs/s%n", Math.round(N / (processMs / 1000.0)));
+            System.out.printf("latency:  p50 %dms  p99 %dms%n", p50, p99);
+        }
+    }
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+## Running it
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```bash
+python benchmark.py
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```bash
+node benchmark.ts
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```bash
+java -cp app.jar Benchmark
+```
+
+  </Tab>
+</CodeTabs>
+
+## Sample output
+
+Illustrative — measure your own:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```
+taskito benchmark
+  Workers: 8
+  Jobs:    10,000
+  DB:      :memory:
+
+── noop task (framework overhead) ──
+  Enqueued 10,000 jobs in 0.18s (55,556 jobs/s)
+  Processed 10,000 jobs in 2.41s (4,149 jobs/s)
+
+── cpu_light task ──
+  Enqueued 10,000 jobs in 0.19s (52,632 jobs/s)
+  Processed 10,000 jobs in 2.53s (3,953 jobs/s)
+
+── single-job latency ──
+  Latency (n=100): avg=1.2ms p50=1.1ms p99=3.4ms
+
+Final stats: {'pending': 0, 'running': 0, 'completed': 20100, 'failed': 0, 'dead': 0, 'cancelled': 0}
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```
+enqueue:  120000 jobs/s
+process:  35000 jobs/s
+latency:  p50 8ms  p99 42ms
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```
+enqueue:  110000 jobs/s
+process:  30000 jobs/s
+latency:  p50 9ms  p99 45ms
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+<Callout type="info">
+  Actual numbers depend on your hardware, Python version, and SQLite
+  configuration. The numbers above are from an 8-core machine with Python
+  3.12.
+</Callout>
+
+</SdkOnly>
+
+## What drives the numbers
+
+<SdkOnly sdk="python">
+
+| Symptom | Config to change | Why |
+|---------|-----------------|-----|
+| Low throughput (I/O tasks) | Increase `workers` | More threads = more concurrent I/O |
+| Low throughput (CPU tasks) | Use `pool="prefork"` | Each process gets its own GIL |
+| High latency | Decrease `scheduler_poll_interval_ms` | Scheduler checks for ready jobs more often |
+| Database too busy | Increase `scheduler_poll_interval_ms` | Less frequent polling reduces DB load |
+| Memory growing | Set `result_ttl` | Auto-cleanup old results and metrics |
+| Jobs timing out | Increase `default_timeout` | Give tasks more time to complete |
+| Jobs piling up | Add more workers or use Postgres | SQLite single-writer limit may bottleneck |
+
+```python
+# More workers for I/O-bound tasks
+queue = Queue(workers=16)
+
+# Fewer workers for CPU-bound tasks (limited by GIL)
+queue = Queue(workers=4)
+
+# In-memory DB for maximum throughput (no persistence)
+queue = Queue(db_path=":memory:")
+
+# File DB for durability (slightly slower)
+queue = Queue(db_path="tasks.db")
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Lever | Effect |
+| --- | --- |
+| `enqueueMany` | one storage round-trip per batch instead of per job |
+| `batchSize` | jobs claimed per scheduler poll — fewer polls under load |
+| `channelCapacity` | in-flight buffer between the scheduler and the worker |
+| Backend | SQLite (WAL) for a single node; Postgres/Redis to scale out workers |
+| Task body | a real handler's I/O usually dominates — benchmark *your* task too |
+
+<Callout type="info">
+  The hot path is the Rust core — enqueue, dequeue, and result handling never
+  touch the JS event loop except to run your handler. Raise `batchSize` and
+  `channelCapacity` together to keep a busy worker saturated.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+| Lever | Effect |
+| --- | --- |
+| `enqueueMany` | one storage round-trip per batch instead of per job |
+| `batchSize` | jobs claimed per scheduler poll — fewer polls under load |
+| `channelCapacity` | in-flight buffer between the scheduler and the handler pool |
+| `concurrency` | handler threads draining the channel |
+| Backend | SQLite (WAL) for a single node; Postgres/Redis to scale out workers |
+| Task body | a real handler's I/O usually dominates — benchmark *your* task too |
+
+<Callout type="info">
+  The hot path is the Rust core — enqueue, dequeue, and result handling happen
+  natively; your JVM only runs the handler body. Raise `batchSize` and
+  `channelCapacity` together to keep a busy worker saturated.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+## Why it's fast
+
+| Component | How it helps |
+|---|---|
+| **Batch inserts** | `task.map()` inserts all jobs in a single SQLite transaction |
+| **WAL mode** | Concurrent reads while writing — workers don't block enqueue |
+| **Rust scheduler** | 50ms poll loop runs in native code, not Python |
+| **OS threads** | Workers are Rust `std::thread`, not Python threads |
+| **GIL per task** | GIL acquired only during Python task execution, released between tasks |
+| **tokio mpsc channels** | Bounded async dispatch to workers |
+| **r2d2 pool** | Up to 8 concurrent SQLite connections |
+| **Diesel ORM** | Compiled SQL queries, no runtime query building |
+
+## How it compares
+
+Rough directional comparison on the same hardware (8-core, single
+machine). These are not scientific benchmarks — run the benchmark above on
+your own hardware for accurate numbers.
+
+| Metric | taskito (SQLite) | taskito (Postgres) | Celery + Redis | Dramatiq + Redis |
+|--------|-----------------|-------------------|---------------|-----------------|
+| Enqueue throughput | ~55,000/s | ~20,000/s | ~5,000/s | ~3,000/s |
+| Processing (noop, 8 workers) | ~4,000/s | ~3,500/s | ~2,000/s | ~1,500/s |
+| p50 latency | 1.1ms | 2.5ms | 5–10ms | 8–15ms |
+| p99 latency | 3.4ms | 8ms | 20–50ms | 30–80ms |
+| Memory (idle worker) | ~30 MB | ~35 MB | ~80 MB | ~60 MB |
+| Setup | `pip install taskito` | + Postgres | + Redis + Celery | + Redis + Dramatiq |
+| External services | 0 | 1 (Postgres) | 2 (Redis + result backend) | 1 (Redis) |
+
+<Callout type="info">
+  Celery numbers are from public benchmarks and community reports. Your
+  mileage will vary depending on workload, serializer, and broker
+  configuration. Run your own benchmarks before making decisions.
+</Callout>
+
+**Why is taskito faster?**
+
+- Rust scheduler avoids GIL contention — scheduling and dispatch never block Python
+- SQLite WAL mode with batch inserts — disk I/O is minimized
+- Direct DB polling — no broker hop (enqueue → DB → dequeue is one less network round-trip vs enqueue → Redis → dequeue)
+- OS thread pool with per-task GIL acquisition — no multiprocessing overhead for I/O-bound tasks
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Batched staging | `queue.enqueueMany` |
+| Drain to a target | poll `await queue.stats()` for `.completed` |
+| Worker throughput knobs | `runWorker({ batchSize, channelCapacity })` |
+| Latency percentiles | `listJobs` + `completedAt - createdAt` |
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+## Key patterns
+
+| Pattern | Where |
+| --- | --- |
+| Batched staging | `taskito.enqueueMany` |
+| Drain to a target | poll `taskito.stats().completed` |
+| Worker throughput knobs | `batchSize` + `channelCapacity` + `concurrency` |
+| Latency percentiles | `listJobs` + `completedAt − createdAt` |
+
+</SdkOnly>
