@@ -10,8 +10,8 @@ differs.
 Unlike a Celery/RabbitMQ setup, there's no separate broker (message-routing
 middleman process) to run: the scheduler lives inside the worker process and
 reads/writes the backend directly. SQLite and Postgres need nothing beyond a
-database, and even the Redis backend is just a data store here, not a required
-dependency of the queue itself.
+database. Redis still requires a Redis instance when you select it, but it's used
+directly as the queue's data store rather than as a separate broker.
 
 ```java
 Taskito.builder().open();                                    // SQLite at .taskito/taskito.db (default)
