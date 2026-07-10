@@ -84,6 +84,9 @@ main {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  /* tight line-height (0.98) + background-clip:text clips glyph descenders
+     (the "g" in "background."); pad the box so the descender stays painted */
+  padding-bottom: 0.12em;
 }
 .hero .sub {
   margin-top: 22px;
