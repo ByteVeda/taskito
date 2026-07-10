@@ -426,6 +426,25 @@ body {
 .article li > p + p {
   margin-top: 8px;
 }
+/* Ordered lists: Tailwind Preflight resets `ol` to `list-style: none`, so the
+   numbers disappear. Restore decimal markers + the indent they need, and tint
+   them. (Kept off `display: flex`, which would drop the ::marker.) */
+.article ol {
+  margin: 14px 0;
+  padding-left: 26px;
+  list-style: decimal;
+}
+.article ol li {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--txt2);
+  padding-left: 6px;
+  margin: 9px 0;
+}
+.article ol li::marker {
+  color: var(--indigo);
+  font-weight: 600;
+}
 
 /* code block */
 .codeblock {
