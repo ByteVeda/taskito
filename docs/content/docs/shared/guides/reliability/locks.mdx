@@ -1,0 +1,504 @@
+---
+title: Distributed Locking
+description: "TTL-bounded, owner-scoped locks backed by the queue's storage — mutual exclusion across workers and processes."
+---
+
+Coordinate across processes without a separate lock server. taskito's
+distributed locks are TTL-bounded and owner-scoped, backed by the same
+storage as the task queue — locks work across multiple worker processes on
+one machine, and across multiple machines when the backend is a shared
+server (Postgres or Redis) rather than a local SQLite file.
+
+Use a lock when multiple workers or processes must not run the same
+critical section at the same time — refreshing a shared cache, running a
+singleton periodic task, or calling an external API with a single-writer
+constraint.
+
+<SdkOnly sdk="python">
+
+> Celery has no built-in lock — teams reach for `celery-once` or a Redis
+> lock. taskito's `queue.lock()` uses the queue database directly, so
+> there's nothing extra to run.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+> **Coming from BullMQ?** BullMQ's locking is internal — a `lockDuration`
+> per job that stops two workers double-processing it, not something you
+> can call from application code. taskito's `queue.lock()` / `withLock()`
+> is a general-purpose distributed lock you can use for *any* critical
+> section, job processing or not.
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+<Seq
+  heads={["Worker", "Database"]}
+  rows={[
+    { left: "queue.lock('cache-refresh') — acquire" },
+    { right: "granted (ttl=30s, owner-scoped)", rev: true },
+    { self: "auto-extends while held (auto_extend=True)" },
+    { left: "with-block exits → release" },
+  ]}
+/>
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Seq
+  heads={["Worker", "Lock store"]}
+  rows={[
+    { left: "acquire('report', { ttlMs })" },
+    { right: "granted — owner-scoped", rev: true },
+    { self: "auto-extend at ttlMs / 3 while held" },
+    { left: "release() (or block exit via `using`)" },
+  ]}
+/>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Seq
+  heads={["Worker", "Lock store"]}
+  rows={[
+    { left: "lock(\"report\", ttlMs).acquire()" },
+    { right: "granted — owner-scoped", rev: true },
+    { self: "extend(ttlMs) before long sections" },
+    { left: "release() (or close() via try-with-resources)" },
+  ]}
+/>
+
+</SdkOnly>
+
+## Quick start
+
+The scoped form acquires, runs, and releases in one call — the shortest
+path for a critical section:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+with queue.lock("cache-refresh"):
+    refresh_cache()
+```
+
+The lock is automatically released when the `with` block exits, even if an
+exception is raised.
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+await queue.withLock("report:2026-06", async () => {
+  await rebuildReport();
+});
+```
+
+`withLock` acquires, runs, and releases — throwing `LockNotAcquiredError`
+if the lock is held elsewhere.
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+boolean ran = taskito.withLock("report:2026-06", 60_000, () -> rebuildReport());
+if (!ran) {
+    log.info("another worker holds the lock");
+}
+```
+
+`withLock` acquires, runs, and releases — returning whether the body ran.
+It never throws for a lock that's already held; it returns `false` instead.
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+### Async context manager
+
+```python
+async with queue.alock("cache-refresh"):
+    await refresh_cache()
+```
+
+`alock()` accepts the same parameters as `lock()` and is safe to use inside
+async functions and FastAPI/Django async views.
+
+</SdkOnly>
+
+## Manual handle
+
+For cases that don't map to a single block — acquiring in one place and
+releasing in another — drive the lock explicitly:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+lock = queue.lock("resource", ttl=30)
+if lock.acquire():
+    try:
+        ...  # critical section
+    finally:
+        lock.release()
+else:
+    ...  # another process holds the lock
+```
+
+`lock.extend(ttl=None)` pushes the expiry out on demand, and `lock.info()`
+returns the current holder. Calling `acquire()` directly like this — instead
+of entering `with` — does **not** start the auto-extend background thread
+even when `auto_extend=True`; only the context manager does that. Prefer
+`with queue.lock(...)` for anything that maps to a single block.
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+using lock = queue.lock("resource", { ttlMs: 30_000 });
+if (lock.acquire()) {
+  // ... critical section
+} // released at block exit (via `using`)
+```
+
+`lock.extend(ms)`, `lock.info()`, and `lock.ownerId` round out the API.
+With `using`, the lock releases automatically when the block exits;
+otherwise call `lock.release()`.
+
+  </Tab>
+  <Tab sdk="java">
+
+`Lock` is `AutoCloseable`, so try-with-resources releases it at block exit:
+
+```java
+try (Lock lock = taskito.lock("resource", 30_000)) {
+    if (lock.acquire()) {
+        // ... critical section
+    }
+} // released at block exit
+```
+
+| Method | Description |
+|---|---|
+| `acquire()` | Try once; `false` if another owner holds a live lock. |
+| `tryAcquire(Duration timeout)` | Retry every 50ms until obtained or the timeout elapses. |
+| `extend(long ttlMs)` | Push the expiry out if still held; `false` means the lock was lost. |
+| `release()` / `close()` | Give the lock up (no-op if not held). |
+
+`taskito.lock(name)` without a TTL defaults to 30 seconds.
+
+  </Tab>
+</CodeTabs>
+
+## Auto-extension
+
+Whether a held lock renews itself before its TTL expires differs by SDK:
+
+<SdkOnly sdk="python">
+
+When `auto_extend=True` (the default), a background thread extends the
+lock's TTL at `ttl / 3` intervals. This prevents the lock from expiring
+during a long-running operation without requiring an artificially large
+TTL:
+
+```python
+# This lock stays alive for as long as the block runs, even if it takes
+# several minutes — the background thread re-extends it every ttl/3.
+with queue.lock("long-job", ttl=30, auto_extend=True):
+    run_slow_operation()
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`autoExtend` defaults to `true` — while held, the lock renews itself at
+`ttlMs / 3`. If a renewal ever fails (the lock expired or was stolen),
+auto-extend stops rather than fighting for a lock this handle no longer
+holds. Pass `autoExtend: false` to manage extension yourself with
+`lock.extend()`:
+
+```ts
+using lock = queue.lock("long-job", { ttlMs: 30_000, autoExtend: false });
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="warn">
+  Locks do not auto-extend. Choose a TTL comfortably longer than the
+  protected work's worst case, or call `extend()` at checkpoints — a failed
+  extend means the lock expired and another owner may now hold it, so stop
+  the critical section. Expiry is what keeps a crashed owner from holding a
+  lock forever.
+</Callout>
+
+</SdkOnly>
+
+## Waiting for a lock
+
+By default, a failed acquisition doesn't wait — the caller finds out
+immediately:
+
+<SdkOnly sdk="python">
+
+`lock()` raises `LockNotAcquiredError` immediately if the lock is held by
+another process. Pass `timeout` to retry every `retry_interval` seconds
+until it succeeds or the timeout elapses:
+
+```python
+from taskito.locks import LockNotAcquiredError
+
+try:
+    with queue.lock("resource", timeout=5.0):
+        do_work()
+except LockNotAcquiredError:
+    print("Could not acquire lock within 5 seconds")
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info">
+  There's no built-in retry-with-timeout on `Lock` or `withLock` — both fail
+  fast. If you need to wait, poll `acquire()` in your own loop with a short
+  delay between attempts.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`tryAcquire(Duration)` retries every 50ms until it succeeds or the timeout
+elapses:
+
+```java
+try (Lock lock = taskito.lock("resource", 30_000)) {
+    if (!lock.tryAcquire(Duration.ofSeconds(5))) {
+        log.info("could not acquire lock within 5 seconds");
+        return;
+    }
+    doWork();
+}
+```
+
+</SdkOnly>
+
+## Inspecting a lock
+
+Check who currently holds a lock — useful for a dashboard, a health check,
+or deciding whether to skip a queued retry:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+info = queue.lock("my-lock").info()
+# {"lock_name": "my-lock", "owner_id": "...", "acquired_at": ..., "expires_at": ...}
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const info = queue.lock("my-lock").info();
+// { lockName, ownerId, acquiredAt, expiresAt } | undefined
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Optional<LockInfo> info = taskito.lockInfo("my-lock");
+info.ifPresent(i -> log.info("held by {} until {}", i.ownerId, i.expiresAt));
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+<Callout type="info" title="Owner token is sensitive">
+  `owner_id` is a bearer token — whoever knows it can release or extend the
+  lock. The high-level `queue.lock(name).info()` masks it to `"***"` for
+  any caller that isn't the current holder, so prefer it over the
+  low-level `queue._inner.get_lock_info()` (which returns the raw token)
+  when surfacing lock status to other parties, e.g. a dashboard or another
+  tenant.
+</Callout>
+
+</SdkOnly>
+
+## Handling a held lock
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito.locks import LockNotAcquiredError
+
+try:
+    with queue.lock("my-lock", timeout=2.0):
+        critical_section()
+except LockNotAcquiredError:
+    # Another process holds the lock; handle gracefully
+    log.warning("skipping — another process is running the critical section")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { LockNotAcquiredError } from "@byteveda/taskito";
+
+try {
+  await queue.withLock("my-lock", async () => {
+    await criticalSection();
+  });
+} catch (error) {
+  if (error instanceof LockNotAcquiredError) {
+    // Another process holds the lock; handle gracefully
+    log.warn("skipping — another process is running the critical section");
+  } else {
+    throw error;
+  }
+}
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+boolean ran = taskito.withLock("my-lock", 30_000, () -> criticalSection());
+if (!ran) {
+    // Another process holds the lock; withLock doesn't throw for this case
+    log.warn("skipping — another process is running the critical section");
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="node">
+
+<Callout type="info">
+  `withLock` throws a different error, `LockLostError`, if the lease was
+  lost while the guarded function was still running (the TTL expired
+  faster than auto-extend could renew it) — the critical section may have
+  run unprotected, so the result is discarded either way.
+</Callout>
+
+</SdkOnly>
+
+## Cross-machine locking
+
+Because lock state lives in the queue's storage, locks are effective across
+multiple worker processes on the same machine. Locking across
+**different** machines works too, but only when they share a networked
+backend — SQLite is a local file, so cross-machine locking requires the
+Postgres or Redis backend:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+# Process A (machine 1)
+with queue.lock("billing-run"):
+    run_billing()
+
+# Process B (machine 2) — waits or raises while process A holds the lock
+with queue.lock("billing-run", timeout=30.0):
+    run_billing()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+// Process A (machine 1)
+await queue.withLock("billing-run", async () => {
+  await runBilling();
+});
+
+// Process B (machine 2) — throws LockNotAcquiredError while A holds it
+await queue.withLock("billing-run", async () => {
+  await runBilling();
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// Process A (machine 1)
+taskito.withLock("billing-run", 30_000, () -> runBilling());
+
+// Process B (machine 2) — returns false while A holds it; retry-wait instead:
+try (Lock lock = taskito.lock("billing-run", 30_000)) {
+    if (lock.tryAcquire(Duration.ofSeconds(30))) {
+        runBilling();
+    }
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<Callout type="info" title="SQLite vs Postgres vs Redis">
+  On SQLite, cross-process locking works via WAL mode and exclusive
+  transactions, but SQLite file locking is machine-local — it only works
+  across processes on the same machine. For multi-machine deployments, use
+  the PostgreSQL backend, where `SELECT FOR UPDATE SKIP LOCKED` guards lock
+  acquisition too, or the Redis backend, which supports the same
+  acquire/release/extend/info operations via Lua scripts.
+</Callout>
+
+<SdkOnly sdk="python">
+
+## Low-level API
+
+For advanced use cases, drive a lock without a `DistributedLock` handle,
+using the same primitives it's built on:
+
+```python
+import uuid
+
+owner_id = uuid.uuid4().hex
+
+# Acquire (ttl_ms, not seconds)
+acquired = queue._inner.acquire_lock("my-lock", owner_id, ttl_ms=30_000)
+
+# Extend
+queue._inner.extend_lock("my-lock", owner_id, ttl_ms=30_000)
+
+# Inspect
+info = queue._inner.get_lock_info("my-lock")
+# {"lock_name": "my-lock", "owner_id": "...", "acquired_at": ..., "expires_at": ...}
+
+# Release
+queue._inner.release_lock("my-lock", owner_id)
+```
+
+<Callout type="warn">
+  The low-level API skips auto-extension and does not release on
+  exception. Prefer `queue.lock()` / `queue.alock()` for production code.
+</Callout>
+
+</SdkOnly>
+
+## See also
+
+- <SdkLink to="guides/reliability/guarantees">Delivery guarantees</SdkLink> —
+  locks complement at-least-once delivery for exactly-once-feeling critical
+  sections.
+- <SdkLink to="guides/reliability/idempotency">Idempotency</SdkLink> —
+  dedup keys solve a related but different problem: duplicate enqueues, not
+  concurrent execution.

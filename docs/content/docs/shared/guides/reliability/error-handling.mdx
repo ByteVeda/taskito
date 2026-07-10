@@ -1,0 +1,723 @@
+---
+title: Error Handling
+description: "What happens when a task fails — the retry, timeout, and dead-letter lifecycle, inspecting error history, and each SDK's exception hierarchy."
+---
+
+When a <SdkSwap python={<>task raises an exception</>} node={<>task throws (or its promise rejects)</>} java={<>handler throws</>} />, Taskito decides
+the job's fate from its retry budget. Each failing attempt is recorded,
+then:
+
+1. **Retry** — if attempts remain, the job is rescheduled with
+   <SdkLink to="guides/reliability/retries">backoff</SdkLink> (a growing
+   delay between attempts, so retries don't hammer a struggling dependency).
+2. **Dead-letter** — once the budget is exhausted, the job moves to the
+   dead-letter queue, a holding area for permanently-failed jobs you can
+   inspect and replay.
+
+<Mermaid
+  chart={`flowchart LR
+    A["Exception raised"] --> B["Error recorded"]
+    B --> C{"Attempts left?"}
+    C -->|Yes| D["Reschedule with backoff"]
+    C -->|No| E["Move to dead-letter queue"]`}
+/>
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(max_retries=3, retry_backoff=1.0, max_retry_delay=60)
+def fetch(url):
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("fetch", fetchUrl, {
+  maxRetries: 3,
+  retryBackoff: { baseMs: 1000, maxMs: 60_000 },
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<String> FETCH = Task.of("fetch", String.class)
+        .maxRetries(3)
+        .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(1), Duration.ofMinutes(1)));
+```
+
+  </Tab>
+</CodeTabs>
+
+Returning normally is success; an uncaught throw is failure. There's no
+in-task "stop retrying" signal from inside a failing attempt — set retries
+to `0` for a fire-once task.
+
+<SdkOnly sdk="java">
+
+`TaskFunction` declares `throws Exception`, so checked exceptions propagate
+without wrapping. `maxRetries` defaults to `0` — never retry — so a fresh
+task is fire-once until you opt into retries.
+
+</SdkOnly>
+
+## Timeouts
+
+A per-attempt timeout bounds a single execution attempt. When it elapses,
+the attempt is marked failed and timed-out — this consumes a retry like any
+other failure, and once the budget is exhausted the job dead-letters with
+the timed-out flag set on the outcome, so hooks and event listeners can tell
+a timeout apart from other errors.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(timeout=30)  # 30 second timeout
+def long_task():
+    ...
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("slow", handler, { timeoutMs: 30_000 });
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<String> SLOW = Task.of("slow", String.class).timeout(Duration.ofSeconds(30));
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+The scheduler detects an exceeded timeout externally — its maintenance
+reaper checks roughly every 5 seconds — and marks the job failed, which
+triggers the retry/DLQ logic above.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+The dispatcher races the task against the timeout (`tokio::time::timeout`).
+For `async` tasks, the timeout aborts the task's
+<SdkLink to="guides/core/cancellation">`AbortSignal`</SdkLink> — honor it
+(e.g. pass `signal` to `fetch`) so the underlying work actually stops, not
+just the bookkeeping.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The dispatcher races the handler against the timeout. Unset (or `0`) means
+no limit.
+
+</SdkOnly>
+
+<Callout type="warn">
+  Timeout reaping marks the job as failed, but it does **not** kill the
+  running <SdkSwap python="thread" node="task" java="handler" />: the code
+  keeps running until it returns, and the late result is discarded. Always
+  set a timeout on production tasks — without one, a wedged
+  <SdkSwap python="task" node="task" java="handler" /> can hold a worker
+  <SdkSwap python="slot" node="slot" java="thread" /> indefinitely.
+</Callout>
+
+<SdkOnly sdk="node">
+
+For CPU-bound synchronous work that might hang, honoring `AbortSignal` isn't
+enough on its own — see
+<SdkLink to="guides/operations/troubleshooting">Troubleshooting: worker is
+unresponsive</SdkLink> for offloading it.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Make long-running handlers cooperative: poll
+`taskito.isCancelRequested(jobId)` or bound their own blocking calls, so the
+underlying work actually stops. See
+<SdkLink to="guides/core/cancellation">Cancellation</SdkLink>.
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+### Soft timeouts
+
+While the hard timeout above is enforced by the scheduler from the outside,
+a **soft timeout** lets the task itself react to time pressure — it's
+cooperative, so the task must call `check_timeout()` at safe points:
+
+```python
+from taskito import current_job
+
+@queue.task(soft_timeout=30)
+def long_task():
+    for chunk in data_chunks:
+        process(chunk)
+        current_job.check_timeout()  # raises SoftTimeoutError after 30s
+```
+
+| Timeout type | Mechanism | Exception |
+|---|---|---|
+| Hard timeout (`timeout`) | Scheduler reaps the job externally | `TaskTimeoutError` (internal) |
+| Soft timeout (`soft_timeout`) | Task checks elapsed time via `check_timeout()` | `SoftTimeoutError` |
+
+</SdkOnly>
+
+## Inspecting failures
+
+Every attempt's error is recorded — one entry per failed attempt:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.job_errors(job_id)          # one entry per failed attempt
+queue.list_jobs(status="failed")
+queue.dead_letters()              # exhausted jobs
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+await queue.getJobErrors(id); // one entry per failed attempt
+await queue.listJobs({ status: "failed" });
+await queue.deadLetters(); // exhausted jobs
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+List<JobError> errors = queue.jobErrors(jobId); // one entry per failed attempt
+List<Job> failed = queue.listJobs(JobFilter.builder().status(JobStatus.FAILED).build());
+List<DeadJob> dead = queue.listDead(50, 0);     // exhausted jobs
+```
+
+  </Tab>
+</CodeTabs>
+
+Each error entry carries an id, the job it belongs to, an attempt number
+(0-indexed), the error message, and a failure timestamp:
+
+| Field | Description |
+|---|---|
+| `id` | Unique error record ID |
+| <SdkSwap python={<code>job_id</code>} node={<code>jobId</code>} java={<code>jobId</code>} /> | The job this error belongs to |
+| `attempt` | Attempt number (0-indexed) |
+| `error` | Error message |
+| <SdkSwap python={<code>failed_at</code>} node={<code>failedAt</code>} java={<code>failedAt</code>} /> | Timestamp in milliseconds |
+
+<SdkOnly sdk="python">
+
+A job handle also exposes its own history directly:
+
+```python
+job = unreliable_task.delay()
+
+for error in job.errors:
+    print(f"Attempt {error['attempt']}: {error['error']} at {error['failed_at']}")
+```
+
+</SdkOnly>
+
+### Querying the database directly
+
+For deep debugging, query the jobs table directly (SQLite shown; the same
+status codes apply on every backend):
+
+```bash
+sqlite3 myapp.db "SELECT id, task_name, status, error FROM jobs WHERE status = 3 LIMIT 10;"
+```
+
+Status codes: `0`=pending, `1`=running, `2`=complete, `3`=failed, `4`=dead,
+`5`=cancelled.
+
+## Diagnosing dead letters
+
+**Same error on every attempt** — the failure is deterministic (bad
+arguments, a missing dependency). Fix the root cause, then replay.
+**Intermittent errors** — the failure is transient (a network timeout, a
+flaky dependency); replaying will likely succeed.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+dead = queue.dead_letters(limit=20)
+
+new_job_id = queue.retry_dead(dead[0]["id"])
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const dead = await queue.deadLetters();
+
+queue.retryDead(dead[0].id); // re-enqueue (preserves notes/metadata)
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+List<DeadJob> dead = queue.listDead(20, 0);
+
+String newJobId = queue.retryDead(dead.get(0).id); // re-enqueue (preserves metadata)
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+<Callout type="info" title="Config preservation">
+  Replayed jobs preserve the original job's `priority`, `max_retries`,
+  `timeout`, and `result_ttl` settings — no need to re-specify them.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info">
+  A retried dead job re-enters as `pending` with a fresh retry budget. Notes
+  and metadata survive the DLQ round-trip. See
+  <SdkLink to="guides/reliability/dead-letter">Dead-letter queue</SdkLink>
+  for listing, deleting, and purging.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info">
+  A retried dead job re-enters as `PENDING` with a fresh retry budget.
+  Metadata survives the DLQ round-trip. See
+  <SdkLink to="guides/reliability/dead-letter">Dead-letter queue</SdkLink>
+  for listing, deleting, and purging.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+See <SdkLink to="guides/reliability/retries">Retries</SdkLink> for the full
+dead-letter queue API — listing, purging, and error history.
+
+</SdkOnly>
+
+## Cancellation
+
+Cancellation is cooperative — a running <SdkSwap python="task" node="task"
+java="handler" /> must check for it at safe points; nothing preempts it
+mid-execution. One that never checks runs to completion.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito import current_job
+
+@queue.task()
+def long_task(items):
+    for item in items:
+        process(item)
+        current_job.check_cancelled()  # raises TaskCancelledError
+
+# From the caller:
+queue.cancel_running_job(job_id)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { currentJob } from "@byteveda/taskito";
+
+queue.task("download", async (url: string) => {
+  const { signal } = currentJob() ?? {};
+  const res = await fetch(url, { signal });
+  return res.text();
+});
+
+queue.requestCancel(jobId);
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.requestCancel(jobId); // caller side
+
+// handler side: poll between units of work
+for (Chunk chunk : chunks) {
+    if (taskito.isCancelRequested(jobId)) {
+        throw new InterruptedException("cancelled");
+    }
+    process(chunk);
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/core/cancellation">Cancellation</SdkLink> for
+cancelling a still-pending job and progress reporting.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/core/cancellation">Cancellation</SdkLink> for
+cancelling a still-pending job, progress reporting, and getting the job id
+into a handler.
+
+</SdkOnly>
+
+## Reacting to outcomes
+
+Middleware and events fire as the core decides each outcome:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito import Queue, TaskMiddleware, EventType
+
+class AlertOnFailure(TaskMiddleware):
+    def after(self, ctx, result, error):
+        if error:
+            log.error(ctx.task_name, error)  # each failing attempt
+
+    def on_retry(self, ctx, error, retry_count):
+        metrics.incr("retry", tags={"task": ctx.task_name})
+
+    def on_dead_letter(self, ctx, error):
+        alert_ops(ctx, error)
+
+queue = Queue(db_path="tasks.db", middleware=[AlertOnFailure()])
+queue.on_event(EventType.JOB_DEAD, lambda _type, payload: page_oncall(payload))
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.use({
+  onError: (ctx, err) => log.error(ctx.taskName, err), // each throwing attempt
+  onRetry: (e) => metrics.inc("retry", e.taskName),
+  onDeadLetter: (e) => alertOps(e),
+});
+queue.on("job.dead", (e) => pageOncall(e));
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+queue.use(new Middleware() {
+    @Override
+    public void onError(TaskContext context, Throwable error) {
+        log.error(context.taskName, error); // each throwing attempt
+    }
+
+    @Override
+    public void onRetry(OutcomeEvent event) {
+        metrics.increment("retry", event.taskName);
+    }
+
+    @Override
+    public void onDeadLetter(OutcomeEvent event) {
+        alertOps(event);
+    }
+});
+
+Worker worker = queue.worker()
+        .handle(FETCH, this::fetch)
+        .on(EventName.DEAD, event -> pageOncall(event))
+        .start();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+See <SdkLink to="guides/extensibility/middleware">Middleware</SdkLink> for
+the full hook lifecycle and execution order.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/extensibility/middleware">Middleware</SdkLink> and
+<SdkLink to="guides/extensibility/events">Events</SdkLink> for the full hook
+and event lists.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/extensibility/middleware">Middleware</SdkLink> and
+<SdkLink to="guides/extensibility/events">Events</SdkLink> for the full hook
+and event lists.
+
+</SdkOnly>
+
+<Callout type="info">
+  A throw fails only the current *attempt*. To fail fast with no retries,
+  set retries to `0`; to make failures safe to retry, keep
+  <SdkSwap python="tasks" node="handlers" java="handlers" />
+  <SdkLink to="guides/reliability/idempotency"> idempotent</SdkLink>.
+</Callout>
+
+## Cleanup on failure
+
+Use a `finally` block (or hooks) to release resources regardless of outcome:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task()
+def process_file(path):
+    tmp = download_to_temp(path)
+    try:
+        return parse(tmp)
+    finally:
+        os.unlink(tmp)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("processFile", async (path: string) => {
+  const tmp = await downloadToTemp(path);
+  try {
+    return await parse(tmp);
+  } finally {
+    await fs.unlink(tmp);
+  }
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<String> PROCESS_FILE = Task.of("process_file", String.class);
+
+queue.worker().handle(PROCESS_FILE, path -> {
+    String tmp = downloadToTemp(path);
+    try {
+        return parse(tmp);
+    } finally {
+        Files.deleteIfExists(Path.of(tmp));
+    }
+});
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+## Serialization errors
+
+The default `SmartSerializer` uses MessagePack for common types and falls
+back to cloudpickle for anything else. The cloudpickle fallback fails on:
+
+- **Unpicklable objects**: open file handles, database connections, sockets,
+  thread locks
+- **Module-level objects that can't be resolved**: dynamically generated
+  classes without stable import paths
+- **Very large objects**: cloudpickle has no hard limit, but extremely large
+  payloads slow down SQLite writes
+
+**Fix**: pass simple, serializable data (strings, numbers, dicts, lists) as
+task arguments, and reconstruct complex objects inside the task:
+
+```python
+# Bad — passing a connection object
+@queue.task()
+def query(conn, sql):  # conn can't be pickled
+    return conn.execute(sql)
+
+# Good — pass connection info, create inside the task
+@queue.task()
+def query(db_url, sql):
+    conn = create_connection(db_url)
+    return conn.execute(sql)
+```
+
+See [Serialization](/architecture/serialization) for the full serializer
+list, including `JsonSerializer` for cross-language or untrusted payloads.
+
+### Exception filtering
+
+Use `retry_on` and `dont_retry_on` to control which exceptions trigger
+retries:
+
+```python
+@queue.task(
+    max_retries=5,
+    retry_on=[ConnectionError, TimeoutError],
+    dont_retry_on=[ValueError],
+)
+def call_api(url):
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+```
+
+See <SdkLink to="guides/reliability/retries">Retries — Exception
+Filtering</SdkLink> for details.
+
+### Test mode for isolation
+
+Run tasks synchronously and inspect errors without a worker using
+<SdkLink to="guides/operations/testing">test mode</SdkLink>:
+
+```python
+with queue.test_mode() as results:
+    risky_task.delay()
+
+    if results[0].failed:
+        print(results[0].error)
+        print(results[0].traceback)
+```
+
+</SdkOnly>
+
+## Exception hierarchy
+
+<SdkOnly sdk="python">
+
+All Taskito exceptions inherit from `TaskitoError`, so you can catch the
+base class for broad handling:
+
+```
+TaskitoError (base)
+├── TaskTimeoutError        — hard timeout exceeded
+├── SoftTimeoutError        — soft timeout exceeded (check_timeout)
+├── TaskCancelledError      — task cancelled (check_cancelled)
+├── MaxRetriesExceededError — all retry attempts exhausted
+├── SerializationError      — serialization/deserialization failure
+├── CircuitBreakerOpenError — circuit breaker is open
+├── RateLimitExceededError  — rate limit exceeded
+├── JobNotFoundError        — job ID not found (also a KeyError)
+└── QueueError              — queue-level operational error
+```
+
+```python
+from taskito import TaskitoError, SoftTimeoutError, TaskCancelledError
+
+try:
+    result = job.result(timeout=30)
+except TaskitoError as e:
+    print(f"Taskito error: {e}")
+```
+
+Import any exception directly from the `taskito` package:
+
+```python
+from taskito import TaskCancelledError, SoftTimeoutError, SerializationError
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Every SDK error extends `TaskitoError`, so you can catch the base class for
+broad handling:
+
+| Error | Thrown when |
+|---|---|
+| `TaskNotRegisteredError` | A worker dequeued a job whose task name was never registered. |
+| `JobFailedError` | An awaited job (`queue.result()`) failed or dead-lettered. |
+| `JobCancelledError` | An awaited job was cancelled. |
+| `ResultTimeoutError` | An awaited job didn't settle within the timeout. |
+| `QueueError` | A queue-level configuration or operational error. |
+| `LockNotAcquiredError` | A <SdkLink to="guides/reliability/locks">distributed lock</SdkLink> is held by another owner. |
+| `LockLostError` | A held lock's lease was lost before the guarded section finished. |
+| `SerializationError` | A payload or result failed to (de)serialize. |
+| `CryptoError` | A codec failed to decrypt or verify a payload. Subtype of `SerializationError`. |
+| `NotesValidationError` | A `notes` object violates the structured-notes contract. |
+| `ResourceError` | Base class for <SdkLink to="guides/resources/dependency-injection">resource</SdkLink> errors. |
+| `ResourceNotFoundError` | Resolving a resource name that was never registered. Subtype of `ResourceError`. |
+| `ResourceScopeError` | A resource is resolved from a scope that outlives it. Subtype of `ResourceError`. |
+| `ResourceUnavailableError` | A pooled resource couldn't be checked out before its acquire timeout. Subtype of `ResourceError`. |
+| `WorkflowError` | A workflow definition, submission, or query error. |
+| `PredicateRejectedError` | An enqueue-time predicate gate rejected the submission. |
+| `ProxyError` | A proxy handler, signature, expiry, purpose, or allowlist failure. |
+| `InterceptionError` | An enqueue interceptor rejected, misbehaved, or redirected illegally. |
+
+```ts
+import { TaskitoError, JobFailedError } from "@byteveda/taskito";
+
+try {
+  const result = await queue.result(jobId, { timeoutMs: 30_000 });
+} catch (err) {
+  if (err instanceof TaskitoError) {
+    console.error("Taskito error:", err.message);
+  }
+}
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Every SDK error is an unchecked `TaskitoException`; the `errors` package
+narrows it so callers can catch exactly what they care about:
+
+| Exception | Raised when |
+|---|---|
+| `ConfigurationException` | The client was misconfigured — missing connection URL, unusable storage directory. |
+| `SerializationException` | A payload or result failed to (de)serialize. |
+| `CryptoException` | A signing or encrypting serializer failed — HMAC mismatch, bad tag/IV. Subtype of `SerializationException`. |
+| `InterceptionException` | An interceptor rejected the enqueue; no job was created. |
+| `PredicateRejectedException` | An enqueue gate returned `Reject`; no job was created. |
+| `EnqueueSkippedException` | A gate returned `Skip` on `enqueue` — use `tryEnqueue` to get an empty `Optional` instead. |
+| `LockException` | A <SdkLink to="guides/reliability/locks">distributed lock</SdkLink> operation failed or was interrupted. |
+| `ResourceException` | A <SdkLink to="guides/resources/dependency-injection">worker resource</SdkLink> could not be resolved — unknown name, scope violation, exhausted pool. |
+| `ProxyException` | A <SdkLink to="guides/resources/proxies">proxy ref</SdkLink> failed to verify or reconstruct. |
+| `WorkflowException` | A workflow could not be driven to completion — run not found, missing payload or condition. |
+| `WebhookException` | A webhook could not be stored, loaded, signed, or its payload encoded. |
+
+```java
+try {
+    queue.enqueue(FETCH, url);
+} catch (TaskitoException e) {
+    log.error("Taskito error: {}", e.getMessage());
+}
+```
+
+</SdkOnly>
+
+## See also
+
+<SdkLink to="guides/operations/troubleshooting">Troubleshooting</SdkLink>
+covers symptom-based debugging — a task not registered on the worker,
+SQLite lock contention, jobs stuck in `running`, high latency, and growing
+databases.

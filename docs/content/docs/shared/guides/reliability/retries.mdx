@@ -1,0 +1,436 @@
+---
+title: Retries
+description: "Automatic retries with exponential backoff before dead-lettering, and how exhausted jobs move to the dead-letter queue."
+---
+
+A task that fails is retried automatically before it dead-letters. The retry
+budget and backoff curve are enforced by the shared Rust scheduler — durable
+across worker crashes and identical in behavior across every binding — so a
+job that survives a worker restart mid-backoff still retries on schedule.
+
+## Retry policy
+
+Configure the retry budget and backoff on the task itself:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(max_retries=5, retry_backoff=2.0)
+def flaky_api_call(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("charge", chargeCard, {
+  maxRetries: 5,
+  retryBackoff: { baseMs: 2000, maxMs: 300_000 },
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<Order> CHARGE = Task.of("charge", Order.class)
+        .maxRetries(5)
+        .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(2), Duration.ofMinutes(5)));
+```
+
+  </Tab>
+</CodeTabs>
+
+### Parameter reference
+
+<SdkOnly sdk="python">
+
+| Parameter | Default | Description |
+|---|---|---|
+| `max_retries` | `3` | Retry attempts after the first, before the job dead-letters. |
+| `retry_backoff` | `1.0` | Base delay in seconds for exponential backoff. |
+| `max_retry_delay` | `300` (5 min) | Cap on the backoff delay, in seconds. |
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Option | Default | Description |
+|---|---|---|
+| `maxRetries` | `3` | Attempts after the first before dead-lettering. `0` = never retry. |
+| `retryBackoff.baseMs` | `1000` | First backoff; roughly doubles each attempt. |
+| `retryBackoff.maxMs` | `300000` (5 min) | Cap on the backoff delay. |
+
+> **Coming from BullMQ?** Watch the off-by-one: BullMQ's `attempts` counts the
+> *total* tries including the first (`attempts: 3` = 1 try + 2 retries).
+> taskito's `maxRetries` counts only the retries *after* the first
+> (`maxRetries: 3` = 1 try + 3 retries = 4 total). BullMQ's
+> `backoff: { type: "exponential", delay }` maps to `retryBackoff.baseMs`.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+| Option | Default | Description |
+|---|---|---|
+| `maxRetries` | `0` | Attempts after the first before dead-lettering. Defaults to never-retry, so set it on any task you want retried. |
+| `RetryPolicy.exponential(base, max)` | 1s / 5min if no policy is registered | Retry N waits about `base · 2^N`, capped at `max`, plus jitter up to `base`. |
+
+</SdkOnly>
+
+The retry *budget* travels with the job; the *backoff curve* is a setting
+registered with the worker when it starts (unset fields keep the core's
+built-in default). Override the budget per job at enqueue time — see
+[Per-job overrides](#per-job-overrides) below.
+
+## Backoff formula
+
+The scheduler computes each retry's delay from the task's base delay `B` and
+cap `M`:
+
+```
+delay = min(M, B * 2^retry_count) + jitter
+```
+
+`jitter` is a random value uniform between `0` and `B`, so a burst of
+identical failures doesn't retry in lockstep. With defaults (`B` = 1s, `M` =
+5 minutes) and a task configured with a 2-second base delay, the schedule
+looks like:
+
+| Attempt | Delay |
+|---|---|
+| 1st retry | ~2s |
+| 2nd retry | ~4s |
+| 3rd retry | ~8s |
+| 4th retry | ~16s |
+| 5th retry | ~32s |
+
+## Custom delay schedules
+
+<SdkOnly sdk="python">
+
+`retry_delays` sets each attempt's base delay by index instead of computing
+it from the exponential curve:
+
+```python
+@queue.task(max_retries=5, retry_delays=[1.0, 5.0, 30.0])
+def flaky_api_call(url):
+    ...
+```
+
+Retry 0 waits ~1s, retry 1 waits ~5s, retry 2 waits ~30s — each still gets
+jitter up to `retry_backoff` seconds added on top (`retry_backoff` isn't
+overridden, just not used to *compute* the listed delays). Once the list
+runs out (retries 3 and 4 here), taskito falls back to the exponential
+formula above using `retry_backoff` and `max_retry_delay` as `B` and `M`.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`RetryPolicy.delays(...)` replaces the exponential curve with explicit
+per-attempt delays, applied exactly with **no** jitter:
+
+```java
+Task<Order> CHARGE = Task.of("charge", Order.class)
+        .maxRetries(3)
+        .retryPolicy(RetryPolicy.delays(
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(5),
+                Duration.ofSeconds(30)));
+```
+
+Supply at least `maxRetries` delays — once the list is exhausted, further
+retries fire immediately (no exponential fallback).
+
+</SdkOnly>
+
+## Exception filtering
+
+<SdkOnly sdk="python">
+
+Control which exceptions trigger a retry with `retry_on` (a whitelist) **or**
+`dont_retry_on` (a blacklist) — set one, not both:
+
+```python
+# Whitelist: retry only these exceptions; everything else skips straight to DLQ.
+@queue.task(max_retries=5, retry_on=[ConnectionError, TimeoutError])
+def fetch_data(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+
+# Blacklist: retry everything except these exceptions.
+@queue.task(max_retries=5, dont_retry_on=[ValueError])
+def parse_data(raw):
+    return json.loads(raw)  # a ValueError here is permanent — don't retry it
+```
+
+| Parameter | Description |
+|---|---|
+| `retry_on` | Whitelist — only retry on these exception types (and their subclasses). All others skip straight to DLQ. |
+| `dont_retry_on` | Blacklist — never retry on these exception types (and their subclasses), even if retries remain. |
+
+If neither is set, every exception triggers a retry. If both are set,
+`dont_retry_on` is checked first — a match there skips retry regardless of
+`retry_on` — and `retry_on` then acts as the whitelist for everything else.
+In practice, use one or the other.
+
+> **Coming from Celery:** `retry_backoff` here is a **float** — the base
+> delay in seconds — not Celery's boolean flag. Celery's
+> `autoretry_for=(SomeError,)` maps to taskito's `retry_on=[SomeError]`.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no exception-type filter on the Node binding today — every error
+triggers a retry until the budget is exhausted. Distinguish terminal errors
+inside the task and either swallow them (return normally) or throw so the
+job dead-letters immediately by setting `maxRetries: 0` for that call:
+
+```ts
+queue.enqueue("parseData", [raw], { maxRetries: 0 }); // no retry for this job
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There's no exception-type filter on the Java binding today — every thrown
+exception triggers a retry until the budget is exhausted. Distinguish
+terminal errors inside the handler, or set `maxRetries(0)` for calls that
+should dead-letter immediately on any failure.
+
+</SdkOnly>
+
+## Per-job overrides
+
+Override the retry budget for a single submission without changing the
+task's registered default:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+flaky_api_call.apply_async(args=("https://example.com",), max_retries=1)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.enqueue("charge", [order], { maxRetries: 1 });
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+queue.enqueue(CHARGE, order, EnqueueOptions.builder().maxRetries(1).build());
+```
+
+  </Tab>
+</CodeTabs>
+
+The backoff curve itself is a worker-registration setting, not a per-job
+option — it can't be overridden at enqueue time.
+
+## Retry flow
+
+<Mermaid
+  chart={`flowchart TD
+    A["Task Execution"] --> B{Success?}
+    B -->|Yes| C["Status: Complete<br/>Store result"]
+    B -->|No| D["Record error in<br/>job_errors table"]
+    D --> SR{"Exception passes<br/>filter?"}
+    SR -->|No| I["Move to Dead Letter Queue<br/>Status: Dead"]
+    SR -->|Yes| E{"retry_count < max_retries?"}
+    E -->|Yes| F["Calculate backoff delay"]
+    F --> G["Status: Pending<br/>retry_count += 1"]
+    G --> H["Wait for scheduled time"]
+    H --> A
+    E -->|No| I`}
+/>
+
+<SdkOnly sdk="python">
+
+The "Exception passes filter?" step only applies filtering when `retry_on`
+or `dont_retry_on` is set on the task — otherwise every exception passes
+straight through to the retry-budget check.
+
+</SdkOnly>
+
+## Timeouts count as retries
+
+A task that exceeds its timeout is treated as a failure by the same
+retry/DLQ engine — it consumes a retry like any other exception. The
+scheduler tags the outcome with a `timed_out` flag so your hooks can tell a
+timeout apart from a regular exception.
+
+<SdkOnly sdk="python">
+
+The scheduler reaps timed-out jobs on a periodic sweep (checking every ~5
+seconds):
+
+```python
+@queue.task(timeout=10)  # 10 second timeout
+def slow_task():
+    time.sleep(60)  # Will be reaped after 10s
+```
+
+The `timed_out` flag drives the `on_timeout` middleware hook — it fires in
+addition to `on_retry` / `on_dead_letter` whenever the failure was a
+timeout, so you can alert on wedged tasks separately from ordinary errors.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/reliability/timeouts">Timeouts</SdkLink> for
+`timeoutMs`, how the dispatcher enforces it, and the `timedOut: true` flag
+surfaced to the `onRetry` / `onDeadLetter` middleware hooks and
+`job.retrying` / `job.dead` events.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/reliability/timeouts">Timeouts</SdkLink> for
+`.timeout(...)`, how the dispatcher enforces it, and the timed-out flag
+surfaced as `OutcomeEvent.timedOut` to event listeners and middleware
+outcome hooks.
+
+</SdkOnly>
+
+## Observing retries
+
+<SdkOnly sdk="python">
+
+Via middleware, or the `job.retrying` / `job.dead` events:
+
+```python
+from taskito import EventType, TaskMiddleware
+
+class AlertOnRetry(TaskMiddleware):
+    def on_retry(self, ctx, error, retry_count):
+        log.warning(f"{ctx.task_name} retrying (attempt {retry_count}): {error}")
+
+    def on_dead_letter(self, ctx, error):
+        alert_ops(ctx.task_name, error)
+
+queue.add_middleware(AlertOnRetry())
+
+# Or, equivalently, as events:
+queue.on(EventType.JOB_RETRYING, lambda e: log.warning(f"retrying {e}"))
+queue.on(EventType.JOB_DEAD, lambda e: alert_ops(e))
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+The `job.retrying` <SdkLink to="guides/extensibility/events">event</SdkLink>
+fires on each retry; once the budget is exhausted the job moves to the
+<SdkLink to="guides/reliability/dead-letter">dead-letter queue</SdkLink> and
+`job.dead` fires:
+
+```ts
+queue.on("job.retrying", (e) => log.warn(`retrying ${e.taskName}`));
+queue.on("job.dead", (e) => alertOps(e));
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Observe retries as they happen via middleware `onRetry` or a worker event
+listener; once the budget is exhausted the job moves to the
+<SdkLink to="guides/reliability/dead-letter">dead-letter queue</SdkLink> and
+the `DEAD` event fires:
+
+```java
+Worker worker = queue.worker()
+        .handle(CHARGE, this::charge)
+        .on(EventName.RETRY, event -> log.info("retrying {}", event.taskName))
+        .on(EventName.DEAD, event -> alertOps(event))
+        .start();
+```
+
+</SdkOnly>
+
+<Callout type="info">
+  Retries re-run the whole task from the start, so design tasks to be
+  <SdkLink to="guides/reliability/idempotency"> idempotent</SdkLink> — a
+  crash after a side effect but before the result write will re-execute the
+  task.
+</Callout>
+
+## Dead-letter queue
+
+Jobs that exhaust their retry budget move to the dead-letter queue (DLQ) for
+inspection and manual replay. The DLQ keeps the payload and full error
+history, and a replayed job re-enters as pending with a fresh retry budget.
+
+<SdkOnly sdk="python">
+
+```python
+# List the 10 most recent dead letters
+dead = queue.dead_letters(limit=10, offset=0)
+
+for d in dead:
+    print(f"Job: {d['original_job_id']}")
+    print(f"Task: {d['task_name']}")
+    print(f"Error: {d['error']}")
+    print(f"Retries: {d['retry_count']}")
+
+# Re-enqueue a dead letter job (creates a new job)
+new_job_id = queue.retry_dead(dead[0]["id"])
+
+# Delete dead letters older than 24 hours
+deleted = queue.purge_dead(older_than=86400)
+```
+
+<Callout type="info" title="Config preservation">
+  Replayed jobs preserve the original job's `priority`, `max_retries`,
+  `timeout`, and `result_ttl` settings — the DLQ stores the full
+  configuration, so you don't need to re-specify them.
+</Callout>
+
+Every failed attempt is recorded with its error message, accessible via
+`job.errors`:
+
+```python
+job = unreliable.delay()
+
+# After the job exhausts all retries...
+for error in job.errors:
+    print(f"Attempt {error['attempt']}: {error['error']}")
+```
+
+`max_retries` counts retries **after** the first attempt — `max_retries=3`
+means the task runs up to 4 times total, recording 4 entries in
+`job.errors` (attempts 0–3). Each entry has `id`, `job_id`, `attempt`
+(0-indexed), `error`, and `failed_at` (Unix ms).
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/reliability/dead-letter">Dead-letter queue</SdkLink>
+for `deadLetters()`, `retryDead()`, `purgeDead()`, and per-attempt error
+history via `getJobErrors()`.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/reliability/dead-letter">Dead-letter queue</SdkLink>
+for `listDead()`, `retryDead()`, `purgeDead()`, and per-attempt error
+history via `jobErrors()`.
+
+</SdkOnly>

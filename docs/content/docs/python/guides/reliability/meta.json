@@ -7,6 +7,6 @@
     "idempotency",
     "rate-limiting",
     "circuit-breakers",
-    "locking"
+    "locks"
   ]
 }
