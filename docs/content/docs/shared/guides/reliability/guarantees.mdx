@@ -151,13 +151,22 @@ Worker worker = queue.worker()
 def notify(user_id):
     send_email(user_id, "Your order shipped")
 
-# Good — check before sending
+# Good — atomically claim the send before doing it
 @queue.task()
 def notify(user_id):
-    if not db.execute("SELECT notified FROM orders WHERE user_id = ?", (user_id,)).fetchone()[0]:
+    claimed = db.execute(
+        "UPDATE orders SET notified = 1 WHERE user_id = ? AND notified = 0",
+        (user_id,),
+    )
+    if claimed.rowcount:
         send_email(user_id, "Your order shipped")
-        db.execute("UPDATE orders SET notified = 1 WHERE user_id = ?", (user_id,))
 ```
+
+The guarded `UPDATE` is atomic — two overlapping executions can't both win
+it, unlike a separate check-then-send. The trade-off: a crash between the
+claim and the send drops the email (at-most-once for that side effect). When
+the provider accepts an idempotency key, prefer that — it keeps the retry
+*and* dedupes the send, as in the `charge` example above.
 
 </SdkOnly>
 
