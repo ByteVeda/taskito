@@ -582,11 +582,11 @@ body {
   font-size: 14.5px;
 }
 .callout.info {
-  border-color: color-mix(in oklch, var(--cyan) 40%, transparent);
-  background: color-mix(in oklch, var(--cyan) 9%, transparent);
+  border-color: color-mix(in oklch, var(--turquoise) 40%, transparent);
+  background: color-mix(in oklch, var(--turquoise) 9%, transparent);
 }
 .callout.info .ci {
-  color: var(--cyan);
+  color: var(--turquoise);
 }
 .callout.warn {
   border-color: color-mix(in oklch, var(--amber) 45%, transparent);
