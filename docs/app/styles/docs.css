@@ -1239,6 +1239,11 @@ body {
   width: 14px;
   height: 14px;
 }
+/* Top-level entries are auto-numbered (1., 2., …) from a counter; sub-headings
+   use a dot instead (below). The counter resets per page. */
+#toc-list {
+  counter-reset: toc-section;
+}
 .toc-link {
   display: block;
   font-size: 13px;
@@ -1249,6 +1254,15 @@ body {
     color 0.15s,
     border-color 0.15s;
   cursor: pointer;
+}
+.toc-link:not(.sub) {
+  counter-increment: toc-section;
+}
+.toc-link:not(.sub)::before {
+  content: counter(toc-section) ". ";
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 11px;
 }
 .toc-link:hover {
   color: var(--txt);

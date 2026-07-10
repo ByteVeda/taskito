@@ -101,7 +101,10 @@ export function Toc() {
             href={`#${h.id}`}
             className={`toc-link ${h.level === 3 ? "sub" : ""} ${h.id === active ? "active" : ""}`.trim()}
           >
-            {h.text}
+            {/* Top-level entries are auto-numbered by CSS counter; strip any
+                authored "N." prefix (some pages number their own headings) so
+                the number isn't shown twice. */}
+            {h.level === 2 ? h.text.replace(/^\d+[.)]\s+/, "") : h.text}
           </a>
         ))}
       </div>
