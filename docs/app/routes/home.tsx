@@ -52,7 +52,7 @@ export default function Home() {
         <div className="glow" />
         <div className="glow two" />
       </div>
-      <SiteNav onSearch={() => setSearchOpen(true)} />
+      <SiteNav onSearch={() => setSearchOpen(true)} showSdkSelect={false} />
       <main>
         <Hero />
         <ScenarioFinder />
