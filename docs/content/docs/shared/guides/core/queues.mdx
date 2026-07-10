@@ -1,0 +1,388 @@
+---
+title: Queues & Priority
+description: "Named queues, priority ordering, pause/resume, and per-queue limits."
+---
+
+Every job belongs to a queue (default `"default"`). Queues are routing
+labels in shared storage — a worker chooses which queues it serves, and
+jobs dequeue in priority order within each queue.
+
+## Named queues and routing
+
+Route tasks to different queues to isolate workloads — separate I/O-bound
+tasks (API calls, emails) from CPU-bound ones (data processing, report
+generation), and run each on a dedicated worker process.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(queue="emails")
+def send_email(to, subject, body):
+    ...
+
+@queue.task()  # goes to the "default" queue
+def process_data(data):
+    ...
+
+send_email.delay("user@example.com", "Welcome", "...")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("sendEmail", (to: string, subject: string, body: string) => {
+  // ...
+});
+
+const id = queue.enqueue("sendEmail", [to, subject, body], { queue: "emails" });
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class).queue("emails");
+
+String id = taskito.enqueue(sendEmail, payload);
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+Override the decorator's default at enqueue time:
+
+```python
+send_email.apply_async(args=(to, subject, body), queue="urgent-emails")
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Routing only happens at enqueue time — the options object passed to
+`queue.task()` has no `queue` field, so there's no per-task default to set
+or override; every `enqueue()` call picks the queue independently.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The queue can also be set per enqueue, overriding the task's default:
+
+```java
+taskito.enqueue(sendEmail, payload, EnqueueOptions.builder().queue("urgent-emails").build());
+```
+
+See <SdkLink to="guides/core/enqueue-options">enqueue options</SdkLink> for
+the rest of what an enqueue call can override.
+
+</SdkOnly>
+
+## Worker queue subscription
+
+A worker only dequeues jobs from the queues it's told to serve — queues it
+isn't watching accumulate jobs untouched, no matter how many pile up.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.run_worker(queues=["emails", "reports"])
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.runWorker({ queues: ["emails", "default"] }); // serve two queues
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.worker()
+        .handle(sendEmail, p -> deliver(p))
+        .queues("emails", "default")   // serve two queues
+        .start();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+Or from the CLI:
+
+```bash
+# Process only email tasks
+taskito worker --app myapp:queue --queues emails
+
+# Process multiple queues
+taskito worker --app myapp:queue --queues emails,reports
+
+# Process all registered queues (default)
+taskito worker --app myapp:queue
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Or from the CLI:
+
+```bash
+taskito run ./app.js --queues emails,reports
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info">
+  There's no worker subcommand on the bundled CLI — workers are code,
+  started with `taskito.worker()`. The CLI does have `pause`/`resume`
+  subcommands for queue control; see
+  <SdkLink to="guides/operations/cli">CLI</SdkLink>.
+</Callout>
+
+</SdkOnly>
+
+<Callout type="info" title="Use queues to isolate workloads">
+  Separate I/O-bound tasks (API calls, emails) from CPU-bound tasks (data
+  processing, report generation) into different queues. Run them on
+  different worker processes for optimal resource usage.
+</Callout>
+
+## Priority
+
+Higher-priority jobs dequeue first within a queue. Priority is a plain
+integer with no fixed scale — pick whatever range fits your app.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+# This specific job is extra urgent
+urgent_task.apply_async(args=(data,), priority=100)  # ahead of priority=0 jobs
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.enqueue("report", [id], { priority: 10 }); // ahead of priority 0 jobs
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.enqueue(report, payload, EnqueueOptions.builder().priority(10).build());
+// ahead of priority 0 jobs
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="node">
+
+<Callout type="warn" title="Coming from BullMQ?">
+  Priority direction is **inverted**. BullMQ treats a *lower* `priority`
+  number as higher priority (`1` runs before `10`). taskito is the other way
+  round — a *higher* `priority` number dequeues first. Porting a BullMQ
+  priority scheme means inverting the numbers, not copying them.
+</Callout>
+
+</SdkOnly>
+
+### Default priority
+
+<SdkOnly sdk="python">
+
+Set a default at task registration; individual enqueues can still override it:
+
+```python
+@queue.task(priority=10)
+def urgent_task(data):
+    ...
+
+@queue.task(priority=0)  # default
+def normal_task(data):
+    ...
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Set a default on the task descriptor; a per-enqueue `EnqueueOptions.priority(...)`
+still overrides it:
+
+```java
+Task<OrderPayload> urgentTask = Task.of("urgent_task", OrderPayload.class).priority(10);
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info">
+  There's no registration-time default — `priority` is enqueue-only, set per
+  call as shown above.
+</Callout>
+
+</SdkOnly>
+
+### How it works
+
+- Higher-priority jobs go first.
+- Among jobs of equal priority, the one that became eligible earliest (the
+  oldest `scheduled_at`) goes first.
+- Each queue is ordered independently of the others.
+
+## Pause and resume
+
+Pausing stops dispatch for a queue without stopping the worker — in-flight
+jobs finish, new ones wait. Paused queues still accept new enqueues; they
+just won't be dequeued until resumed.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.pause("emails")
+queue.paused_queues()   # ["emails"]
+queue.resume("emails")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.pauseQueue("emails");
+queue.listPausedQueues(); // ["emails"]
+queue.resumeQueue("emails");
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Queue emails = taskito.queue("emails");
+emails.pause();
+emails.isPaused();              // true
+taskito.listPausedQueues();     // ["emails"]
+emails.resume();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+See <SdkLink to="guides/operations/job-management">Job management</SdkLink>
+for maintenance-window patterns, cancellation, and archival built on top of
+pause/resume.
+
+</SdkOnly>
+
+## Per-queue limits
+
+A rate limit or concurrency cap applied to an entire queue, independently of
+any per-task settings — checked in the scheduler before per-task limits, so
+it's the right knob for protecting a shared downstream resource (an API, a
+database) regardless of which task is hitting it.
+
+<SdkOnly sdk="python">
+
+```python
+queue.set_queue_rate_limit("emails", "20/s")   # max 20 emails per second
+queue.set_queue_concurrency("reports", 2)      # heavy tasks: max 2 at a time
+```
+
+The format is the same as `rate_limit` on `@queue.task()`: `"N/s"`, `"N/m"`,
+or `"N/h"`. Both settings are read once when `run_worker()` starts — call
+them beforehand, or between worker restarts to change them.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```ts
+queue.configureQueue("emails", {
+  rateLimit: "50/s",
+  maxConcurrent: 10,
+});
+```
+
+`rateLimit` follows the same `"<count>/<unit>"` spec as a task's `rateLimit`
+option. Limits are applied when a worker calls `runWorker()` — set them
+before starting the worker.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info">
+  The Java SDK has no queue-level rate limit or concurrency cap — throughput
+  is shaped per task instead: producer-side gates for rate limiting (see
+  <SdkLink to="guides/reliability/rate-limiting">Rate limiting</SdkLink>) and
+  worker thread-pool sizing for concurrency (see
+  <SdkLink to="guides/reliability/concurrency">Concurrency</SdkLink>).
+</Callout>
+
+</SdkOnly>
+
+## Per-queue stats
+
+Scope job counts to a single queue, or get every queue's counts in one call.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.stats_by_queue("emails")   # {"pending": 3, "running": 1, ...}
+queue.stats_all_queues()         # {"emails": {...}, "reports": {...}}
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+await queue.statsByQueue("emails");
+await queue.statsAllQueues();
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+long backlog = taskito.statsByQueue("emails").pending;
+Map<String, QueueStats> all = taskito.statsAllQueues();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+## Queue-level defaults
+
+Configure defaults for every task at the `Queue` level; individual
+`@queue.task()` decorators override them:
+
+```python
+queue = Queue(
+    db_path="myapp.db",
+    default_priority=0,    # default priority for all tasks
+    default_retry=3,       # default max retries
+    default_timeout=300,   # default timeout in seconds
+)
+```
+
+</SdkOnly>

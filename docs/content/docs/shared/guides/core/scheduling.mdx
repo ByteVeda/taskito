@@ -1,0 +1,409 @@
+---
+title: Scheduling
+description: "Delay a task to run once in the future, or register it on a recurring cron schedule."
+---
+
+taskito supports two ways to schedule work ahead of time: **delayed tasks**
+(run once, at a specific point in the future) and **periodic tasks** (run
+repeatedly on a cron expression). Both ride the same scheduler that
+dispatches ordinary jobs — a delayed job just isn't eligible until its
+scheduled time passes, and periodic tasks are enqueued by the scheduler's
+maintenance loop when they come due. No separate cron daemon or scheduler
+process is needed.
+
+## Delayed tasks
+
+Enqueue with a delay to run a task once, in the future:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+# Run 1 hour from now
+send_email.apply_async(
+    args=("user@example.com", "Reminder", "Don't forget!"),
+    delay=3600,  # seconds
+)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+// Run 1 hour from now
+queue.enqueue("send_email", ["user@example.com", "Reminder", "Don't forget!"], {
+  delayMs: 60 * 60 * 1000,
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// Run 1 hour from now
+taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
+        .delay(Duration.ofHours(1))
+        .build());
+```
+
+  </Tab>
+</CodeTabs>
+
+The job is created immediately — it just sits `pending` until the delay
+elapses. A worker never claims it before then.
+
+<SdkOnly sdk="python">
+
+See <SdkLink to="guides/core/tasks">Tasks</SdkLink> for the rest of what
+`apply_async` accepts alongside `delay`.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/core/enqueue-options#delayed-jobs">Enqueue
+options</SdkLink> for the rest of what `delayMs` composes with.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/core/enqueue-options#delayed-jobs">Enqueue
+options</SdkLink> for the rest of what `delay` composes with.
+
+</SdkOnly>
+
+## Periodic tasks
+
+Register a task on a cron expression once; from then on, every running
+worker's scheduler enqueues a fresh job for it each time the schedule fires:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.periodic(
+    name="daily-digest",
+    cron="0 0 9 * * *",
+    args=("2026-06-16",),
+    timezone="America/New_York",
+)
+def digest(date: str):
+    """Run every day at 9:00 AM Eastern."""
+    send_digest(date)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("digest", (date: string) => sendDigest(date));
+
+// cron is 6/7-field, seconds first: sec min hour day-of-month month day-of-week
+queue.registerPeriodic("daily-digest", "digest", "0 0 9 * * *", {
+  args: ["2026-06-16"],
+  timezone: "America/New_York",
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+long nextFire = taskito.registerPeriodic(
+        PeriodicTask.builder("daily-digest", "digest", "0 0 9 * * *")
+                .payload(Map.of("edition", "morning"))
+                .queue("emails")
+                .timezone("America/New_York")
+                .build());
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+`@queue.periodic()` registers the function as a normal task (it can still be
+enqueued manually) and records the schedule. The schedule itself isn't sent
+to the scheduler until <SdkLink to="guides/core/workers">`run_worker()`</SdkLink>
+starts — every `@queue.periodic()`-decorated function is collected and
+registered as a batch at that point, upserted by name, so restarting a
+worker with the same decorators just re-applies the same schedule rather
+than duplicating it.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`registerPeriodic(name, taskName, cron, options?)` talks to the scheduler
+immediately — there's no separate worker-startup step — and returns the
+computed next fire time (Unix ms). Re-registering the same `name` replaces
+the schedule (upsert by name).
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`registerPeriodic(PeriodicTask)` talks to the scheduler immediately and
+returns the next fire time (Unix ms). Re-registering the same name replaces
+the schedule (upsert by name).
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+Several schedules can share one `@queue.periodic()`-decorated worker file:
+
+```python
+@queue.periodic(cron="0 */5 * * * *")
+def health_check():
+    """Run every 5 minutes."""
+    ping_services()
+
+@queue.periodic(cron="0 0 0 * * *")
+def daily_cleanup():
+    """Run at midnight every day."""
+    queue.purge_completed(older_than=86400)
+
+@queue.periodic(cron="0 0 9 * * 1", args=("weekly",))
+def weekly_report(report_type):
+    """Run every Monday at 9:00 AM."""
+    generate_report(report_type)
+```
+
+</SdkOnly>
+
+### Cron expression format
+
+taskito uses **6-field cron expressions** (with seconds) — a 7th, optional
+year field is also accepted:
+
+```
+┌─────────── second (0-59)
+│ ┌───────── minute (0-59)
+│ │ ┌─────── hour (0-23)
+│ │ │ ┌───── day of month (1-31)
+│ │ │ │ ┌─── month (1-12)
+│ │ │ │ │ ┌─ day of week (0-6, Sun=0)
+│ │ │ │ │ │
+* * * * * *
+```
+
+<Callout type="info">
+  The cron field order is **seconds first** (`sec min hour dom mon dow`).
+  `"0 0 9 * * *"` is 09:00:00 daily, not every minute.
+</Callout>
+
+| Expression | Schedule |
+|---|---|
+| `*/30 * * * * *` | Every 30 seconds |
+| `0 */5 * * * *` | Every 5 minutes |
+| `0 0 * * * *` | Every hour |
+| `0 30 * * * *` | Every hour at :30 |
+| `0 0 */2 * * *` | Every 2 hours |
+| `0 0 0 * * *` | Every day at midnight |
+| `0 0 9 * * *` | Every day at 9:00 AM |
+| `0 0 9 * * 1-5` | Weekdays at 9:00 AM |
+| `0 30 9 * * 1-5` | Weekdays at 9:30 AM |
+| `0 0 0 1 * *` | First day of every month at midnight |
+| `0 0 0 * * 0` | Every Sunday at midnight |
+| `0 0 0 1 1 *` | January 1st at midnight (yearly) |
+
+<SdkOnly sdk="python">
+
+> **Coming from Celery:** Celery's `crontab()` only maps to the last 5 fields
+> (minute, hour, day of month, month, day of week) — prepend a seconds field
+> to get taskito's 6-field format.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+> **Coming from BullMQ?** BullMQ attaches a repeat schedule to a job via
+> `add(name, data, { repeat: { pattern: cron } })` — the schedule lives
+> inside an enqueue call. taskito separates the two: `registerPeriodic(name,
+> taskName, cron, options?)` is its own call, independent of any single
+> `enqueue()`, and `deletePeriodic`/`pausePeriodic`/`resumePeriodic` manage it
+> by name afterward.
+
+</SdkOnly>
+
+### Registration options
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.periodic(
+    cron="0 0 * * * *",           # Required: cron expression
+    name="hourly-cleanup",         # Optional: explicit name
+    args=(3600,),                  # Optional: positional args
+    kwargs={"force": True},        # Optional: keyword args
+    queue="maintenance",           # Optional: target queue
+    timezone="America/New_York",   # Optional: IANA timezone (default: UTC)
+)
+def cleanup(older_than, force=False):
+    ...
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.registerPeriodic("hourly-cleanup", "cleanup", "0 0 * * * *", {
+  args: [3600],
+  queue: "maintenance",
+  timezone: "America/New_York",
+  enabled: true, // register active immediately (default)
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.registerPeriodic(
+        PeriodicTask.builder("hourly-cleanup", "cleanup", "0 0 * * * *")
+                .payload(Map.of("olderThan", 3600))
+                .queue("maintenance")
+                .timezone("America/New_York")
+                .enabled(true) // register active immediately (default)
+                .build());
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `cron` | `str` | required | Cron expression (6-field, seconds first). |
+| `name` | `str \| None` | the function's `module.qualname` | Explicit schedule name. Re-registering the same name replaces it. |
+| `args` | `tuple` | `()` | Positional arguments passed to the task on each run. |
+| `kwargs` | `dict \| None` | `None` | Keyword arguments passed to the task on each run. |
+| `queue` | `str` | `"default"` | Named queue the enqueued job targets. |
+| `timezone` | `str \| None` | `None` (UTC) | IANA timezone the cron expression is evaluated in. |
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `args` | `unknown[]` | `[]` | Positional args passed to the task each time it fires. |
+| `queue` | `string` | `"default"` | Queue the periodic job is enqueued into. |
+| `timezone` | `string` | UTC | IANA timezone the cron expression is evaluated in. |
+| `enabled` | `boolean` | `true` | Register active immediately, or paused (won't fire until resumed). |
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+| Builder method | Description |
+|---|---|
+| `payload(Object)` | Payload passed to the task on each fire. |
+| `queue(String)` | Queue to enqueue into. |
+| `timezone(String)` | IANA timezone for the cron expression (default UTC). |
+| `enabled(boolean)` | Register paused when `false` (default `true`). |
+
+</SdkOnly>
+
+### Timezone support
+
+Cron expressions are evaluated in **UTC** by default. Pass any IANA timezone
+name to schedule in local time instead — daylight saving transitions are
+handled automatically (via `chrono-tz` under the hood), so a schedule pinned
+to `"09:00 America/New_York"` keeps firing at 9 AM local time across the
+spring/fall clock changes.
+
+## Managing periodic tasks
+
+<SdkOnly sdk="node">
+
+```ts
+queue.listPeriodic(); // every registered schedule, enabled or paused
+
+queue.pausePeriodic("daily-digest"); // stop firing, keep the registration
+queue.resumePeriodic("daily-digest");
+queue.deletePeriodic("daily-digest"); // unschedule; false if unknown
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+```java
+List<PeriodicInfo> all = taskito.listPeriodic(); // enabled and paused
+
+taskito.pausePeriodic("daily-digest");   // stop firing, keep the registration
+taskito.resumePeriodic("daily-digest");
+taskito.deletePeriodic("daily-digest");  // unschedule; false if unknown
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+There's no public API yet to list, pause, or delete a registered schedule —
+`@queue.periodic()` is the only entry point, and schedules are re-registered
+as a batch every time <SdkLink to="guides/core/workers">`run_worker()`</SdkLink>
+starts. Removing a `@queue.periodic()` decorator from your code does **not**
+delete its row from storage — the schedule keeps firing and enqueuing jobs
+for a task name no running worker handles anymore, so retire a schedule
+deliberately rather than just deleting the decorator.
+
+</SdkOnly>
+
+## Overrun and multiple schedulers
+
+**A slow run can overlap its own next fire.** The scheduler only checks
+whether a schedule's next-run time has passed — it doesn't track whether the
+previous fire is still executing. If a periodic task's execution regularly
+outlasts its own cron interval, a new job can be enqueued and dispatched
+before the last one finishes.
+
+<SdkOnly sdk="python">
+
+If overlap is unsafe for a task, cap it with `max_concurrent=1` on the
+underlying task (see
+<SdkLink to="guides/core/tasks#per-task-concurrency-limit">per-task
+concurrency</SdkLink>) — the poller enforces that limit by task name, whether
+the job came from a periodic schedule or a normal enqueue.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+If overlap is unsafe for a task, cap it with `maxConcurrent: 1` (see
+<SdkLink to="guides/reliability/concurrency">concurrency</SdkLink>) — the
+scheduler enforces that limit by task name, whether the job came from a
+periodic schedule or a normal enqueue.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The Java SDK doesn't expose a per-task concurrency cap in code yet. If
+overlapping runs would be unsafe, keep the cron interval comfortably longer
+than the task's worst-case execution time, or make the handler itself safe
+to run concurrently with itself.
+
+</SdkOnly>
+
+**Missed windows aren't backfilled.** If no worker's scheduler has been
+running — say, during a deploy — due schedules just accumulate. When a
+scheduler comes back, it enqueues only the single **next due** occurrence,
+not one job per missed interval.
+
+**Multiple workers sharing one schedule is safe in practice.** Every running
+worker's scheduler checks for due periodic tasks independently — there's no
+leader election. Each fire's job carries a `unique_key` derived from the
+schedule name and the exact fire timestamp, enforced by a partial unique
+index on active jobs, so two schedulers racing the same due window can't
+both insert a job for it.
+
+Periodic task state — the schedule, its cron expression, and its next/last
+fire time — is persisted in storage (the `periodic_tasks` table for
+SQLite/Postgres, or `periodic:*` keys for Redis), so it survives worker
+restarts.

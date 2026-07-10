@@ -1,0 +1,756 @@
+---
+title: Tasks
+description: "Register task functions and attach per-task retry, timeout, and other execution options."
+---
+
+A task is a named function bound to a queue. The name is the contract —
+producers enqueue by name, and any worker with that name registered executes
+the function and stores its return value as the job's result.
+
+## Defining a task
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito import Queue
+
+queue = Queue(db_path="myapp.db")
+
+@queue.task()
+def process_data(data: dict) -> str:
+    # Your logic here
+    return "done"
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("add", (a: number, b: number) => a + b);
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class);
+```
+
+For generic payloads that a `Class` token can't express, use a Jackson
+`TypeReference` instead: `Task.of("send_email", new TypeReference<Map<String,
+Object>>() {})`.
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="java">
+
+### Binding a handler
+
+A `Task<T>` is just a name and a payload type — it's a producer-side
+descriptor, not a function. A worker binds the actual logic separately, as a
+`TaskFunction<T, R>` that receives the deserialized payload and returns a
+result (or `null`):
+
+```java
+try (Worker worker = taskito.worker()
+        .handle(sendEmail, payload -> deliver(payload))             // Task + TaskFunction
+        .handle("resize", ImageJob.class, payload -> resize(payload)) // name + payload type
+        .start()) { ... }
+```
+
+`Handler.of(task, fn)` pairs the two for registration via `register(handler)`
+or a `HandlerRegistry`. See <SdkLink to="guides/core/workers">Workers</SdkLink>
+for the full worker lifecycle.
+
+### Typed tasks from `@TaskHandler`
+
+Annotate handler methods with `@TaskHandler`; the compile-time processor
+(`org.byteveda:taskito-processor`) generates a `<Class>Tasks` companion with a
+typed `Task` constant per method plus a `bind(...)` — name declared once, full
+generics, zero runtime reflection:
+
+```java
+class EmailTasks {
+    @TaskHandler("send_email")          // explicit name
+    String send(EmailPayload p) { ... }
+
+    @TaskHandler                        // name defaults to "report"
+    Report report(List<Metric> metrics) { ... }
+}
+
+// generated EmailTasksTasks:
+String id = taskito.enqueue(EmailTasksTasks.SEND, payload);
+
+taskito.worker()
+        .apply(b -> EmailTasksTasks.bind(b, new EmailTasks()))
+        .start();
+```
+
+The annotation also accepts `queue`, `maxRetries`, `timeoutMs`, `priority`,
+`idempotent`, and a `circuitBreakerThreshold` (plus
+`circuitBreakerWindowSeconds`/`circuitBreakerCooldownSeconds`/
+`circuitBreakerHalfOpenProbes`/`circuitBreakerHalfOpenSuccessRate`) for
+per-task defaults. See
+<SdkLink to="getting-started/installation">installation</SdkLink> for the
+processor setup.
+
+<Callout type="info">
+  Register a handler for every task a worker's queues can carry — a job whose
+  task has no handler on the claiming worker fails with "no handler
+  registered". Re-registering a task name replaces the previous handler.
+</Callout>
+
+</SdkOnly>
+
+## Task options
+
+Attach retry, timeout, priority, and other execution defaults when you
+register the task. Each SDK exposes them with its own names and shape:
+
+<SdkOnly sdk="python">
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `str \| None` | Auto-generated | Explicit task name. Defaults to `module.qualname`. |
+| `max_retries` | `int` | `3` | Max retry attempts before moving to DLQ. |
+| `retry_backoff` | `float` | `1.0` | Base delay in seconds for exponential backoff. |
+| `retry_delays` | `list[float] \| None` | `None` | Per-attempt delays in seconds, overrides backoff. e.g. `[1, 5, 30]`. |
+| `max_retry_delay` | `int \| None` | `None` | Cap on backoff delay in seconds (default 300 s). |
+| `timeout` | `int` | `300` | Max execution time in seconds (hard timeout). |
+| `soft_timeout` | `float \| None` | `None` | Cooperative time limit; checked via `current_job.check_timeout()`. |
+| `priority` | `int` | `0` | Default priority (higher = more urgent). |
+| `rate_limit` | `str \| None` | `None` | Rate limit string, e.g. `"100/m"`. |
+| `queue` | `str` | `"default"` | Named queue to submit to. |
+| `circuit_breaker` | `dict \| None` | `None` | Circuit breaker config: `{"threshold": 5, "window": 60, "cooldown": 120}`. |
+| `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
+| `inject` | `list[str] \| None` | `None` | Worker resource names to inject as keyword arguments. See <SdkLink to="guides/resources/dependency-injection">Resource System</SdkLink>. |
+| `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to the queue-level serializer. |
+| `max_concurrent` | `int \| None` | `None` | Max concurrent running instances of this task. `None` means no limit. |
+
+```python
+@queue.task(
+    name="emails.send",
+    max_retries=5,
+    retry_backoff=2.0,
+    max_retry_delay=60,  # cap backoff at 60 s
+    timeout=60,
+    priority=10,
+    rate_limit="100/m",
+    queue="emails",
+    max_concurrent=10,
+)
+def send_email(to: str, subject: str, body: str):
+    ...
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Option | Description |
+|---|---|
+| `maxRetries` | Attempts before dead-lettering. See <SdkLink to="guides/reliability/retries">retries</SdkLink>. |
+| `retryBackoff` | Exponential backoff bounds (`baseMs`, `maxMs`). |
+| `timeoutMs` | Per-attempt <SdkLink to="guides/reliability/timeouts">timeout</SdkLink>. |
+| `maxConcurrent` | Max simultaneously-running jobs of this task (<SdkLink to="guides/reliability/concurrency">concurrency</SdkLink>). |
+| `rateLimit` | <SdkLink to="guides/reliability/rate-limiting">Rate limit</SdkLink> string, `count/unit` (e.g. `"100/m"`). |
+| `circuitBreaker` | Trip after repeated failures (<SdkLink to="guides/reliability/circuit-breakers">circuit breakers</SdkLink>). |
+
+```ts
+queue.task("add", (a: number, b: number) => a + b, {
+  maxRetries: 3,
+  retryBackoff: { baseMs: 1000, maxMs: 60_000 },
+  timeoutMs: 30_000,
+  maxConcurrent: 4,
+  rateLimit: "100/m",
+  circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
+});
+```
+
+<Callout type="info">
+  Register a task before enqueuing or running a worker for it. Per-task config
+  is applied to the scheduler at registration time — re-registering replaces
+  it. There's no task-level default for `queue` or `priority` — set those per
+  job with <SdkLink to="guides/core/enqueue-options">enqueue options</SdkLink>
+  instead.
+</Callout>
+
+Beyond per-task config, set defaults for an entire named queue:
+
+```ts
+queue.configureQueue("emails", { rateLimit: "50/s" });
+```
+
+<Callout type="info" title="Coming from BullMQ?">
+  BullMQ splits a job into `queue.add(name, data)` on one side and a `new
+  Worker(queueName, processor)` callback on the other — the processor lives
+  wherever you construct the `Worker`. taskito ties the handler to the task
+  name once, via `queue.task(name, handler, options)`; `enqueue()` just
+  references that name, and `runWorker()` takes no processor argument. Also
+  note: `enqueue()` returns the job id (a `string`), not a rich `Job` object —
+  fetch a snapshot with `queue.getJob(id)` or block on
+  <SdkLink to="api-reference/result">`queue.result(id)`</SdkLink>.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Fluent methods attach default enqueue options; each returns a new descriptor
+(the type is immutable):
+
+| Method | Description |
+|---|---|
+| `queue(name)` | Route jobs to a named queue (<SdkLink to="guides/core/queues">queues</SdkLink>). |
+| `priority(n)` | Higher dequeues first within a queue. |
+| `retries(n)` / `maxRetries(n)` | Attempts before dead-lettering. |
+| `timeout(duration)` / `timeoutMs(ms)` | Per-attempt timeout. |
+| `delay(duration)` / `delayMs(ms)` | Delay first execution. |
+| `retryPolicy(policy)` | Retry-backoff curve (below). |
+| `codecs(names...)` | Named payload codecs applied to this task's payload. |
+| `circuitBreaker(config)` | Guard with a `CircuitBreakerConfig` — trips after repeated failures (see [Circuit breakers](#circuit-breakers) below). |
+| `withOptions(options)` | Replace the defaults with an `EnqueueOptions` wholesale. |
+
+```java
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class)
+        .queue("emails")
+        .priority(5)
+        .retries(3)
+        .timeout(Duration.ofSeconds(30))
+        .delay(Duration.ofSeconds(10));
+```
+
+<Callout type="info">
+  There's no native per-task `rate_limit` field in the Java SDK — throughput is
+  shaped on the producer side with an enqueue gate instead. See
+  <SdkLink to="guides/reliability/rate-limiting">rate limiting</SdkLink>.
+  Worker resources aren't a `Task` option either — pull them inside the
+  handler via `Resources.use("name")` or an `@Resource`-annotated parameter.
+  See <SdkLink to="guides/resources/dependency-injection">dependency
+  injection</SdkLink>.
+</Callout>
+
+</SdkOnly>
+
+## Retries
+
+Retry scheduling lives in the shared core, so retries stay durable and
+survive worker crashes — no in-memory retry state to lose. Backoff is
+exponential by default: the delay roughly doubles each attempt, up to a
+configurable cap.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(max_retries=5, retry_backoff=2.0)
+def flaky_api_call(url):
+    ...
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("charge", chargeCard, {
+  maxRetries: 5,
+  retryBackoff: { baseMs: 1000, maxMs: 60_000 },
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<Order> charge = Task.of("charge", Order.class)
+        .maxRetries(5)
+        .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(1), Duration.ofMinutes(1)));
+```
+
+  </Tab>
+</CodeTabs>
+
+The cap on the exponential curve is `max_retry_delay` in Python,
+`retryBackoff.maxMs` in Node, and the `max` argument to
+`RetryPolicy.exponential` in Java.
+
+<SdkOnly sdk="python">
+
+Use `retry_delays` for an exact per-attempt wait schedule instead of
+exponential backoff — the final value repeats for any further retries up to
+`max_retries`:
+
+```python
+@queue.task(retry_delays=[1, 5, 30])  # 1s after 1st fail, 5s after 2nd, 30s after 3rd
+def flaky_api_call():
+    ...
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`retryBackoff` only shapes an exponential curve (`baseMs`, `maxMs`) — there's
+no option for an explicit per-attempt delay list.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`RetryPolicy.delays(...)` is the explicit per-attempt equivalent — applied
+exactly, with no jitter. Supply at least as many delays as `maxRetries`; once
+the list is exhausted, further retries fire immediately:
+
+```java
+Task<Order> poll = Task.of("poll", Order.class)
+        .retries(3)
+        .retryPolicy(RetryPolicy.delays(
+                Duration.ofSeconds(5), Duration.ofSeconds(30), Duration.ofMinutes(2)));
+```
+
+</SdkOnly>
+
+See <SdkLink to="guides/reliability/retries">Retries</SdkLink> for the full
+retry flow and dead-letter behavior.
+
+## Timeouts
+
+A timeout bounds a single execution attempt; exceeding it counts as a failure
+and consumes a retry.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(timeout=60)
+def long_running():
+    ...
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("scrape", scrape, { timeoutMs: 30_000 });
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<String> scrape = Task.of("scrape", String.class)
+        .timeout(Duration.ofSeconds(30));
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+### Soft timeouts
+
+A soft timeout raises `SoftTimeoutError` only when the task cooperatively
+checks — useful for a long loop that should stop cleanly instead of being
+killed mid-iteration:
+
+```python
+from taskito import current_job
+
+@queue.task(timeout=300, soft_timeout=60)
+def long_running(items):
+    for item in items:
+        current_job.check_timeout()  # raises SoftTimeoutError if soft_timeout exceeded
+        process(item)
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/reliability/timeouts">Timeouts</SdkLink> for how a
+timeout is surfaced to middleware and events, and how to make an `async` task
+actually stop work when one fires.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/reliability/timeouts">Timeouts</SdkLink> — a timeout
+releases the job's bookkeeping, not the handler's thread, so long-running
+handlers should poll `queue.isCancelRequested(jobId)` to actually stop.
+
+</SdkOnly>
+
+## Circuit breakers
+
+Trip a task's circuit breaker after repeated failures so a failing downstream
+dependency gets time to recover instead of being hammered by retries. The
+breaker opens after `threshold` failures inside a rolling window, then
+half-opens after a cooldown to test recovery with a handful of probe jobs.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(circuit_breaker={"threshold": 5, "window": 60, "cooldown": 120})
+def call_external_api():
+    ...
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("call_flaky_api", callApi, {
+  circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 120_000 },
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<Response> callFlakyApi = Task.of("call_flaky_api", Response.class)
+        .circuitBreaker(CircuitBreakerConfig.builder(5)
+                .windowSeconds(60)
+                .cooldownSeconds(120)
+                .build());
+```
+
+  </Tab>
+</CodeTabs>
+
+Half-open recovery is tunable too: `half_open_probes` / `halfOpenMaxProbes` /
+`halfOpenProbes(int)` caps how many probe jobs run while half-open (default
+5), and `half_open_success_rate` / `halfOpenSuccessRate` /
+`halfOpenSuccessRate(double)` is the probe success rate required to close
+again (default 0.8).
+
+<SdkOnly sdk="python">
+
+See <SdkLink to="guides/reliability/circuit-breakers">Circuit
+breakers</SdkLink> for the full state machine and how to inspect breaker
+state at runtime.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/reliability/circuit-breakers">Circuit
+breakers</SdkLink> — pair it with <SdkLink to="guides/reliability/retries">retries</SdkLink>:
+retries absorb transient blips, the breaker stops spending that budget on a
+dependency that's actually down.
+
+</SdkOnly>
+
+## Concurrency
+
+<SdkOnly sdk="python">
+
+`max_concurrent` caps how many instances of a task run at once, enforced by
+the scheduler across every worker on shared storage — not per worker:
+
+```python
+@queue.task(max_concurrent=3)
+def expensive_render():
+    ...
+# At most 3 instances of expensive_render run simultaneously across all workers.
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`maxConcurrent` limits how many jobs of a task run at once across all
+workers — enforced by the scheduler against the live running count, so it
+holds even with many workers on shared storage:
+
+```ts
+queue.task("transcode", transcode, { maxConcurrent: 2 }); // never more than 2 at once
+```
+
+Apply it to a whole queue instead with `queue.configureQueue("video", {
+maxConcurrent: 4 })`. See
+<SdkLink to="guides/reliability/concurrency">Concurrency</SdkLink>.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Concurrency in the Java SDK is a **worker-level** setting, not a per-task
+field on `Task`: each worker runs its handlers on a thread pool, and the
+pool's size caps how many jobs that worker executes at once.
+
+```java
+Worker worker = queue.worker()
+        .handle(transcode, this::transcode)
+        .concurrency(2) // at most 2 handlers run at once on this worker
+        .start();
+```
+
+To cap a task globally, give it a dedicated queue and size a single worker to
+the limit, or serialize the critical section with a
+<SdkLink to="guides/reliability/locks">distributed lock</SdkLink>. See
+<SdkLink to="guides/reliability/concurrency">Concurrency</SdkLink>.
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+## Per-task middleware
+
+Apply middleware to a specific task only, in addition to queue-level
+middleware:
+
+```python
+from taskito.contrib.sentry import SentryMiddleware
+
+@queue.task(middleware=[SentryMiddleware()])
+def important_task():
+    ...
+```
+
+## Per-task serializer
+
+Override the queue-level serializer for a specific task — the full
+round-trip: arguments are serialized with it at enqueue time and deserialized
+with it on the worker before the task function is called. Both the sync
+worker and the native async worker honor the per-task serializer, falling
+back to the queue-level serializer for tasks that have none registered.
+
+```python
+from taskito.serializers import JsonSerializer
+
+@queue.task(serializer=JsonSerializer())
+def api_event(payload: dict) -> dict:
+    ...
+```
+
+Useful when a task needs a different format (e.g., human-readable JSON for
+audit tasks) or when the payload isn't picklable. See
+<SdkLink to="guides/extensibility/serializers">Serializers</SdkLink>.
+
+## Job expiration
+
+`expires` is an **enqueue-time** option (not a decorator option) — skip a job
+that wasn't started within the deadline:
+
+```python
+@queue.task()
+def time_sensitive():
+    ...
+
+# Skip if not started within 5 minutes
+time_sensitive.apply_async(args=(), expires=300)
+```
+
+## Task naming
+
+By default, tasks are named using `module.qualname`:
+
+```python
+# In myapp/tasks.py
+@queue.task()
+def process():  # Named: myapp.tasks.process
+    ...
+```
+
+Override with an explicit name:
+
+```python
+@queue.task(name="my-custom-name")
+def process():  # Named: my-custom-name
+    ...
+```
+
+</SdkOnly>
+
+## Enqueuing jobs
+
+<CodeTabs>
+  <Tab sdk="python">
+
+Submit with the task's default options:
+
+```python
+job = send_email.delay("user@example.com", "Hello", "World")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const id = queue.enqueue("sendEmail", ["user@example.com", "Hello", "World"]);
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+String id = taskito.enqueue(sendEmail, payload);        // typed
+String id2 = taskito.enqueue("send_email", payload);    // by name, default options
+```
+
+  </Tab>
+</CodeTabs>
+
+Override options at enqueue time:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+job = send_email.apply_async(
+    args=("user@example.com", "Hello", "World"),
+    priority=100,          # Override priority
+    delay=3600,            # Run 1 hour from now
+    queue="urgent-emails", # Override queue
+    max_retries=10,        # Override retries
+    timeout=120,           # Override timeout
+    unique_key="welcome-user@example.com",  # Deduplicate
+    metadata='{"source": "signup"}',        # Attach JSON metadata
+)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const id = queue.enqueue("sendEmail", ["user@example.com", "Hello", "World"], {
+  priority: 100, // Override priority
+  delayMs: 3_600_000, // Run 1 hour from now
+  queue: "urgent-emails", // Override queue
+  maxRetries: 10, // Override retries
+  timeoutMs: 120_000, // Override timeout
+  uniqueKey: "welcome-user@example.com", // Deduplicate
+  metadata: JSON.stringify({ source: "signup" }), // Attach metadata
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+String id = taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
+        .priority(100)                                     // Override priority
+        .delay(Duration.ofHours(1))                         // Run 1 hour from now
+        .queue("urgent-emails")                              // Override queue
+        .maxRetries(10)                                      // Override retries
+        .timeout(Duration.ofSeconds(120))                    // Override timeout
+        .uniqueKey("welcome-user@example.com")               // Deduplicate
+        .metadata("{\"source\": \"signup\"}")                // Attach metadata
+        .build());
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+### Direct call
+
+Calling a task directly runs it synchronously, bypassing the queue —
+useful in tests:
+
+```python
+result = send_email("user@example.com", "Hello", "World")  # Runs immediately
+```
+
+</SdkOnly>
+
+## Batch enqueue
+
+Enqueue many jobs of one task in a single storage round-trip:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+jobs = send_email.map([
+    ("alice@example.com", "Hi", "Body"),
+    ("bob@example.com", "Hi", "Body"),
+])
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const ids = queue.enqueueMany("sendEmail", [
+  { args: ["alice@example.com", "Hi", "Body"] },
+  { args: ["bob@example.com", "Hi", "Body"], options: { priority: 5 } },
+]);
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+List<String> ids = taskito.enqueueMany(sendEmail, List.of(emailA, emailB));
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+Each item can carry its own overrides. See
+<SdkLink to="guides/advanced-execution/batch-enqueue">Batch enqueue</SdkLink>
+for `enqueue_many()`, per-item overrides, and per-item result tracking.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Each entry has its own `args` and `options`. See
+<SdkLink to="guides/core/enqueue-options">Enqueue options</SdkLink> for the
+full batch-enqueue contract.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Unlike the per-item form above, one shared `EnqueueOptions` applies to the
+whole batch — not a list of per-job options. `enqueueAll` is an alias of
+`enqueueMany`. See <SdkLink to="guides/core/batching">Batching</SdkLink> for
+the buffering `Batcher<T>` helper built on top of it.
+
+</SdkOnly>
+
+## Metadata
+
+Attach an arbitrary string — commonly JSON — to a job at enqueue time. It's
+stored with the job and visible in dead letter queue entries:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+job = process.apply_async(
+    args=(data,),
+    metadata='{"user_id": 42, "source": "api"}',
+)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.enqueue("process", [data], {
+  metadata: JSON.stringify({ userId: 42, source: "api" }),
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.enqueue(process, data, EnqueueOptions.builder()
+        .metadata("{\"userId\": 42, \"source\": \"api\"}")
+        .build());
+```
+
+  </Tab>
+</CodeTabs>
