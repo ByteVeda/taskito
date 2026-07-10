@@ -141,7 +141,9 @@ if __name__ == "__main__":
 import { Queue } from "@byteveda/taskito";
 
 const N = 50_000;
-const queue = new Queue({ dbPath: "bench.db" });
+// Fresh database per run — leftover rows from a previous run would satisfy
+// the completed-count below early and skew the latency sample.
+const queue = new Queue({ dbPath: `bench-${process.pid}.db` });
 
 queue.task("noop", (_n: number) => undefined);
 
@@ -152,14 +154,30 @@ for (let i = 0; i < N; i += 1_000) {
 }
 const enqueueMs = Date.now() - t0;
 
-// 2. Processing throughput — drain the backlog, polling stats until empty.
+// 2. Processing throughput — drain the backlog, polling stats with a
+// deadline so a failed job or stuck worker can't hang the benchmark.
 const t1 = Date.now();
+const deadline = t1 + 120_000;
 const worker = queue.runWorker({ queues: ["default"], batchSize: 64, channelCapacity: 512 });
-while ((await queue.stats()).completed < N) {
-  await new Promise((r) => setTimeout(r, 20));
+let processMs = 0;
+try {
+  while (true) {
+    const stats = await queue.stats();
+    if (stats.failed > 0 || stats.dead > 0) {
+      throw new Error(`jobs failed during the run: ${JSON.stringify(stats)}`);
+    }
+    if (stats.completed >= N) {
+      processMs = Date.now() - t1;
+      break;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`drain timed out: ${JSON.stringify(stats)}`);
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+} finally {
+  worker.stop();
 }
-const processMs = Date.now() - t1;
-worker.stop();
 
 // 3. End-to-end latency — created → completed across a sample of jobs.
 const sample = await queue.listJobs({ status: "complete", limit: 1_000 });
