@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
+import { useActiveSdk } from "@/hooks";
+import type { Sdk } from "@/lib";
 
 interface Heading {
   id: string;
@@ -7,19 +9,30 @@ interface Heading {
   level: number;
 }
 
-function readHeadings(article: Element): Heading[] {
-  return [...article.querySelectorAll<HTMLElement>("h2[id], h3[id]")].map(
-    (el) => ({
-      id: el.id,
-      text: el.textContent ?? "",
-      level: el.tagName === "H3" ? 3 : 2,
-    }),
+/** Headings inside an inactive `SdkOnly` block ship in the HTML but are hidden
+ *  via CSS, so skip any heading whose nearest `data-sdk-variant` ancestor isn't
+ *  the active SDK — otherwise the TOC lists every SDK's questions at once. */
+function visibleHeadingEls(article: Element, sdk: Sdk): HTMLElement[] {
+  return [...article.querySelectorAll<HTMLElement>("h2[id], h3[id]")].filter(
+    (el) => {
+      const variant = el.closest("[data-sdk-variant]");
+      return !variant || variant.getAttribute("data-sdk-variant") === sdk;
+    },
   );
+}
+
+function toHeading(el: HTMLElement): Heading {
+  return {
+    id: el.id,
+    text: el.textContent ?? "",
+    level: el.tagName === "H3" ? 3 : 2,
+  };
 }
 
 /** On-this-page TOC, built from the rendered article headings with scroll-spy. */
 export function Toc() {
   const { pathname } = useLocation();
+  const sdk = useActiveSdk();
   const [headings, setHeadings] = useState<Heading[]>([]);
   const [active, setActive] = useState<string>("");
 
@@ -27,7 +40,7 @@ export function Toc() {
   // when this effect first runs after a client-side navigation. Re-scan on every
   // article mutation (via MutationObserver) so the TOC fills in once the page
   // content actually mounts, and re-arm scroll-spy whenever the heading set changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-scan when the path changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-scan on path or SDK change
   useEffect(() => {
     const article = document.querySelector(".article");
     if (!article) {
@@ -38,7 +51,8 @@ export function Toc() {
     let lastKey = "";
 
     const scan = () => {
-      const next = readHeadings(article);
+      const els = visibleHeadingEls(article, sdk);
+      const next = els.map(toHeading);
       const key = next.map((h) => h.id).join("|");
       if (key === lastKey) {
         return;
@@ -59,7 +73,7 @@ export function Toc() {
         },
         { rootMargin: "-80px 0px -70% 0px" },
       );
-      for (const el of article.querySelectorAll("h2[id], h3[id]")) {
+      for (const el of els) {
         spy.observe(el);
       }
     };
@@ -71,7 +85,7 @@ export function Toc() {
       content.disconnect();
       spy?.disconnect();
     };
-  }, [pathname]);
+  }, [pathname, sdk]);
 
   if (headings.length === 0) {
     return <aside className="toc" aria-hidden="true" />;
