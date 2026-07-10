@@ -785,6 +785,41 @@ body {
   color: var(--indigo-br);
 }
 
+/* Frozen header + first column for large tables (applied by MdxTable when a
+   table is wide or long). Contained scroll on both axes keeps the surface
+   bounded; the feature column and the tool header stay pinned. */
+.md-table.sticky {
+  overflow: auto;
+  max-height: min(72vh, 640px);
+}
+/* Collapsed borders don't scroll with sticky cells, so switch to separate;
+   the per-cell top/bottom borders already in place keep the row rules. */
+.md-table.sticky table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.md-table.sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.md-table.sticky th:first-child,
+.md-table.sticky td:first-child {
+  position: sticky;
+  left: 0;
+  /* redraw the right edge the collapsed border used to provide */
+  box-shadow: inset -1px 0 0 var(--line);
+}
+.md-table.sticky td:first-child {
+  z-index: 1;
+  /* solid fill so scrolled cells don't show through the frozen column */
+  background: var(--panel);
+}
+/* top-left corner outranks both the header row and the frozen column */
+.md-table.sticky thead th:first-child {
+  z-index: 3;
+}
+
 /* when-to-use split */
 .use-split {
   display: grid;
