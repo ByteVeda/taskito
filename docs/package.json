@@ -10,6 +10,7 @@
     "start": "serve build/client",
     "typecheck": "react-router typegen && tsc --noEmit",
     "lint": "biome check",
+    "check:parity": "node scripts/parity/index.mjs",
     "format": "biome format --write"
   },
   "dependencies": {
