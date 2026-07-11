@@ -103,6 +103,16 @@ class QueueLifecycleMixin:
 
         print("\n".join(lines))
 
+    def shutdown(self) -> None:
+        """Request graceful worker shutdown (drain running tasks, then stop).
+
+        Programmatic equivalent of SIGINT/SIGTERM: the scheduler stops
+        dispatching and :meth:`run_worker` returns once running tasks finish,
+        bounded by the drain timeout. Non-blocking and safe to call from any
+        thread; a no-op when no worker is running.
+        """
+        self._inner.request_shutdown()
+
     def run_worker(
         self,
         queues: Sequence[str] | None = None,

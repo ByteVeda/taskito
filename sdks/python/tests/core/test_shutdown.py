@@ -32,8 +32,8 @@ def test_graceful_shutdown_completes_inflight(queue: Queue, poll_until: PollUnti
         message="slow_task never reached running state",
     )
 
-    # Request graceful shutdown
-    queue._inner.request_shutdown()
+    # Request graceful shutdown via the public API
+    queue.shutdown()
 
     # Worker should finish the in-flight task
     worker_thread.join(timeout=10)
@@ -45,7 +45,7 @@ def test_graceful_shutdown_completes_inflight(queue: Queue, poll_until: PollUnti
 
 
 def test_shutdown_stops_worker(queue: Queue) -> None:
-    """request_shutdown causes run_worker to return."""
+    """queue.shutdown() causes run_worker to return."""
 
     @queue.task()
     def noop() -> None:
@@ -56,7 +56,12 @@ def test_shutdown_stops_worker(queue: Queue) -> None:
 
     # Tiny grace window so the worker reaches its poll loop before shutdown.
     time.sleep(0.1)
-    queue._inner.request_shutdown()
+    queue.shutdown()
 
     worker_thread.join(timeout=10)
     assert not worker_thread.is_alive()
+
+
+def test_shutdown_without_worker_is_noop(queue: Queue) -> None:
+    """shutdown() on a queue with no running worker does nothing."""
+    queue.shutdown()  # must not raise
