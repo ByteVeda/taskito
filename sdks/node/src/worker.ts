@@ -20,6 +20,7 @@ import type {
 } from "./native";
 import { type ResourceRuntime, runWithResolver } from "./resources";
 import { deserializeCall, type PayloadCodec, type Serializer } from "./serializers";
+import { encodeTaskError } from "./task-error";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
 import type { WorkflowTracker } from "./workflows";
@@ -175,7 +176,12 @@ export class Worker {
             // onError hooks must not mask the original task failure.
           }
         }
-        throw error;
+        // Rethrow as the canonical structured-error JSON. With an empty name,
+        // Error#toString() is just the message, so the native layer stores the
+        // bare JSON object as the job's error string.
+        const structured = new Error(encodeTaskError(error));
+        structured.name = "";
+        throw structured;
       } finally {
         clearInterval(poller);
         try {

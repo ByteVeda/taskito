@@ -1,3 +1,5 @@
+import { decodeTaskError } from "./task-error";
+
 /** Base class for all Taskito SDK errors. Every error below extends this. */
 export class TaskitoError extends Error {
   constructor(message: string) {
@@ -16,14 +18,35 @@ export class TaskNotRegisteredError extends TaskitoError {
   }
 }
 
-/** Thrown by {@link Queue.result} when the awaited job failed or dead-lettered. */
+/**
+ * Thrown by {@link Queue.result} when the awaited job failed or dead-lettered.
+ * A structured (cross-SDK JSON) reason exposes `errtype`/`traceback`; a plain
+ * legacy/system string is surfaced verbatim with those fields undefined.
+ */
 export class JobFailedError extends TaskitoError {
+  /** The task exception's class name, when the reason is structured. */
+  readonly errtype?: string;
+  /** Best-effort stack lines from the failing worker, when structured. */
+  readonly traceback?: readonly string[];
+  /** The stored error string exactly as persisted. */
+  readonly raw: string;
+
   constructor(
     readonly jobId: string,
     reason: string,
   ) {
-    super(`Job ${jobId} failed: ${reason}`);
+    const decoded = decodeTaskError(reason);
+    super(
+      decoded
+        ? `Job ${jobId} failed: ${decoded.errtype}: ${decoded.message}`
+        : `Job ${jobId} failed: ${reason}`,
+    );
     this.name = "JobFailedError";
+    this.raw = reason;
+    if (decoded) {
+      this.errtype = decoded.errtype;
+      this.traceback = decoded.traceback;
+    }
   }
 }
 
