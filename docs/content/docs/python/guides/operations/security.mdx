@@ -100,6 +100,12 @@ once at least one user exists; until then every API route returns
   is always open for liveness probes.
 - **Settings.** The settings API never exposes or accepts keys under the
   internal `auth:` namespace (password hashes, sessions, CSRF secret).
+- **Security headers.** Every dashboard response carries a
+  `Content-Security-Policy` locked to the dashboard's own origin,
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and
+  `Referrer-Policy: same-origin`. Configured external links and integration
+  URLs are also scheme-filtered client-side — only `http(s)` and same-origin
+  paths ever become clickable.
 
 <Callout type="warn" title="Contrib routers are not auth-gated by default">
   The FastAPI/Flask routers in `taskito.contrib` expose job-control endpoints

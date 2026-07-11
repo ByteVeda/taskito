@@ -60,6 +60,11 @@ way, bind it to localhost or a private network, or mount it behind your own
 auth via the [Express](/node/guides/integrations/express#dashboard) /
 [Fastify](/node/guides/integrations/fastify) helpers.
 
+Every dashboard response carries defense-in-depth headers: a
+`Content-Security-Policy` locked to the dashboard's own origin,
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` (the dashboard
+can't be framed), and `Referrer-Policy: same-origin`.
+
 ## Hardening checklist
 
 - [ ] Storage reachable only from trusted services, on a private network.

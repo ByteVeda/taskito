@@ -193,6 +193,11 @@ that mode's own credential (a valid session, or the shared token) or a
 point scrapers at the bearer token. In open mode they stay public unless that
 env token is set. `/health` always stays open for liveness probes.
 
+Every response — JSON, SPA assets, and probes alike — carries defense-in-depth
+headers: a `Content-Security-Policy` locked to the dashboard's own origin,
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and
+`Referrer-Policy: same-origin`.
+
 ## REST API
 
 Everything is JSON, fields in snake_case, timestamps in Unix milliseconds —
