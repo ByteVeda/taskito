@@ -17,8 +17,53 @@ depending on it). Keep Python/Node/Java specifics in the shell.
 them. Each shell serializes args/kwargs at enqueue and deserializes them in the
 worker — using whatever serializer it wants. The Python shell defaults to cloudpickle
 (Python-only). **Cross-language constraint:** a job enqueued by one language and run
-by another requires both to agree on a neutral serializer (JSON or msgpack);
-cloudpickle is Python-internal only.
+by another requires both sides to use the wire envelope below.
+
+## Wire envelope (cross-SDK payloads)
+A wire payload is one tag byte followed by the codec body. The tag records which
+codec produced the body, so any shell can dispatch a decoder (or reject clearly)
+without out-of-band configuration:
+
+| Tag    | Body        | Cross-SDK | Notes |
+|--------|-------------|-----------|-------|
+| `0x00` | native      | **never** — reject with a clear error | Language-native codec (e.g. pickle). Same-language producer/consumer only. |
+| `0x01` | msgpack     | optional  | Legacy tagged format; shells MAY read it, SHOULD NOT write it cross-SDK. |
+| `0x02` | CBOR (RFC 8949) | **default** | The cross-SDK wire format. |
+| `0x03` | reserved    | —         | Tagged JSON (not yet specified). |
+| `0x04+`| reserved    | —         | Future (protobuf, …). |
+
+Untagged payloads predate the envelope and are same-SDK legacy; a shell MUST NOT
+assume any tag discipline unless the task is configured with a tagged serializer
+on both sides. (Sniffing is unsafe: raw msgpack/CBOR bodies can begin with any
+byte value.)
+
+**Why CBOR over JSON**: integers survive — JS `Number` is exact only to 2^53−1
+while other languages carry 64-bit/unbounded ints; CBOR bignums round-trip them
+losslessly. IANA tags also round-trip datetimes (tag 0/1), decimals (tag 4), and
+byte strings without a hand-rolled registry. Mature codecs exist everywhere
+(`cbor2`, `cbor-x`, `jackson-dataformat-cbor`, `fxamacker/cbor`, …).
+
+**Call body** (`Job.payload`): a 2-element CBOR array `[args, kwargs]` — `args`
+an array, `kwargs` a map (empty map when the language has no keyword arguments).
+Job-scoped extras belong in the `metadata`/`notes` columns, not the payload.
+Convention for cross-SDK tasks: prefer a single object argument
+(`args = [ {…} ]`, `kwargs = {}`) — it maps cleanly onto every language's
+handler-binding model.
+
+**Result body** (`Job.result`): a bare CBOR value (no array wrapper).
+
+**Cross-SDK rules**:
+- A shell reading tag `0x00` on a payload it did not produce MUST fail with an
+  error naming the tag, not a generic decode error.
+- Producer and consumer of a task MUST be configured with the same wire
+  serializer; the tag is a self-check, not a negotiation mechanism.
+- Delivery-side semantics (retries, DLQ, acks) are unaffected — the envelope is
+  purely a payload contract.
+
+**Test vectors** (hex, `0x02`-tagged CBOR):
+- call `f(1, "a")`, no kwargs → `02 82 82 01 61 61 a0` — `[ [1, "a"], {} ]`
+- result `true` → `02 f5`
+- big int `2^53` → `02 1b 00 20 00 00 00 00 00 00`
 
 ## Dispatch call sequence
 1. Shell constructs `Storage` (SQLite default; `postgres`/`redis` features) — `storage/traits.rs`.

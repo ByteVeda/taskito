@@ -40,7 +40,13 @@ import {
   ResourceRuntime,
   type ResourceScope,
 } from "./resources";
-import { CodecSerializer, JsonSerializer, type PayloadCodec, type Serializer } from "./serializers";
+import {
+  CodecSerializer,
+  JsonSerializer,
+  type PayloadCodec,
+  type Serializer,
+  serializeCall,
+} from "./serializers";
 import type {
   AnyHandler,
   CircuitBreaker,
@@ -159,7 +165,9 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     if (typeof this.native.markWorkflowNodeResult !== "function") {
       return undefined;
     }
-    this.workflowTracker ??= new WorkflowTracker(this.native, this.serializer);
+    this.workflowTracker ??= new WorkflowTracker(this.native, this.serializer, (taskName, args) =>
+      this.encodeTaskPayload(taskName, args),
+    );
     return this.workflowTracker;
   }
 
@@ -494,11 +502,12 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /**
-   * Serialize a task payload and apply the task's named codecs in order.
-   * Payload only — results stay on the queue serializer.
+   * Serialize task args (call-shaped, honoring wire serializers) and apply
+   * the task's named codecs in order. Payload only — results stay on the
+   * queue serializer's plain `serialize`.
    */
-  private encodeTaskPayload(taskName: string, value: unknown): Buffer {
-    let data = this.serializer.serialize(value);
+  private encodeTaskPayload(taskName: string, args: unknown): Buffer {
+    let data = serializeCall(this.serializer, Array.isArray(args) ? args : [args]);
     for (const name of this.tasks.get(taskName)?.options?.codecs ?? []) {
       const codec = this.codecs.get(name);
       if (!codec) {

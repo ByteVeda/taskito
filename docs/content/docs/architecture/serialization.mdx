@@ -62,6 +62,7 @@ Taskito queue = Taskito.builder()
 | `SmartSerializer` (default) | MessagePack + cloudpickle fallback | Mixed payloads; falls back to pickle for complex objects |
 | `CloudpickleSerializer` | Binary (pickle) | Complex Python objects, lambdas, closures |
 | `JsonSerializer` | JSON | Simple types, cross-language interop, debugging |
+| `CborSerializer` | CBOR (wire-envelope tag `0x02`) | Cross-SDK tasks — big integers, datetimes, bytes round-trip losslessly |
 
 </SdkOnly>
 
@@ -71,6 +72,7 @@ Taskito queue = Taskito.builder()
 |---|---|---|
 | `JsonSerializer` (default) | JSON | Simple types, cross-language interop, debugging |
 | `MsgpackSerializer` | Binary (msgpack) | Compact payloads, smaller storage |
+| `CborSerializer` | Binary (CBOR, wire-envelope tag `0x02`) | Cross-SDK tasks — big integers, `Date`, bytes round-trip losslessly |
 | `SignedSerializer` | Wraps a codec + HMAC-SHA256 | Tamper detection |
 | `EncryptedSerializer` | Wraps a codec + AES-256-GCM | Encrypted, authenticated payloads |
 
@@ -82,6 +84,7 @@ Taskito queue = Taskito.builder()
 |---|---|---|
 | `JsonSerializer` (default) | JSON (Jackson) | Simple types, cross-language interop, debugging |
 | `MsgpackSerializer` | Binary (msgpack) | Compact payloads, smaller storage |
+| `CborSerializer` | Binary (CBOR, wire-envelope tag `0x02`) | Cross-SDK tasks — big integers, decimals, bytes round-trip losslessly |
 | `SignedSerializer` | Wraps a serializer + HMAC-SHA256 | Tamper detection |
 | `EncryptedSerializer` | Wraps a serializer + AES-GCM | Encrypted, authenticated payloads |
 

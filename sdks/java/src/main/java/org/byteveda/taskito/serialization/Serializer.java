@@ -22,4 +22,19 @@ public interface Serializer {
                 + " does not support the generic payload type " + type
                 + "; use a Jackson-based serializer or a non-generic Task payload type");
     }
+
+    /**
+     * Call-shaped encoding for task payloads. Wire serializers (e.g.
+     * {@link CborSerializer}) override this to write the cross-SDK call body
+     * {@code [args, kwargs]} from the binding contract; the default keeps the
+     * bare-value body. Results always use {@link #serialize}/{@link #deserialize}.
+     */
+    default byte[] serializeCall(Object payload) {
+        return serialize(payload);
+    }
+
+    /** Inverse of {@link #serializeCall}: decode a call payload to the handler argument. */
+    default Object deserializeCall(byte[] bytes, Type payloadType) {
+        return deserialize(bytes, payloadType);
+    }
 }

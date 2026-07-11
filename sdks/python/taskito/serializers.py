@@ -7,14 +7,18 @@ import hmac
 import json
 from typing import Any, Protocol, runtime_checkable
 
+import cbor2
 import cloudpickle
 import msgpack
 
-# Format tags for the envelope written by ``SmartSerializer``. A legacy
+# Wire-envelope tags: the first payload byte records which codec produced the
+# body. Tags 0x00-0x01 predate the cross-SDK contract; 0x02+ are part of it
+# (see crates/taskito-core/BINDING_CONTRACT.md "Wire envelope"). A legacy
 # cloudpickle payload starts with the pickle protocol-2+ opcode ``\x80``, which
 # never collides with these tags — so untagged bytes are unambiguously legacy.
-_CODEC_CLOUDPICKLE = b"\x00"
+_CODEC_CLOUDPICKLE = b"\x00"  # native: same-language only, never cross-SDK
 _CODEC_MSGPACK = b"\x01"
+_CODEC_CBOR = b"\x02"  # cross-SDK default wire format
 
 # msgpack has no native tuple type and would silently flatten tuples to lists.
 # A custom ExtType preserves them so payloads round-trip with exact Python
@@ -103,6 +107,38 @@ class MsgPackSerializer:
         return msgpack.unpackb(data, raw=False)
 
 
+class CborSerializer:
+    """CBOR-based serializer for cross-SDK payloads (RFC 8949).
+
+    Writes the ``0x02`` wire-envelope tag followed by a CBOR body, per the
+    cross-SDK contract in ``BINDING_CONTRACT.md``. Use for tasks produced or
+    consumed by another SDK: unlike JSON, CBOR round-trips big integers
+    (bignum), ``datetime`` (tag 0), ``bytes``, and ``Decimal`` (tag 4)
+    losslessly across languages.
+
+    Only CBOR-representable types are supported. Tuples become arrays on the
+    wire (like JSON/msgpack); naive ``datetime`` values are rejected by cbor2 —
+    use timezone-aware datetimes. For arbitrary Python objects keep the default
+    :class:`SmartSerializer` (same-language only).
+    """
+
+    def dumps(self, obj: Any) -> bytes:
+        return _CODEC_CBOR + cbor2.dumps(obj)
+
+    def loads(self, data: bytes) -> Any:
+        if not data:
+            raise ValueError("Cannot deserialize empty payload")
+        tag, body = data[:1], data[1:]
+        if tag == _CODEC_CBOR:
+            return cbor2.loads(body)
+        if tag == _CODEC_CLOUDPICKLE:
+            raise ValueError(
+                "Payload is native-tagged (0x00): produced by a same-language-only "
+                "serializer, not readable as CBOR wire format"
+            )
+        raise ValueError(f"Payload is not CBOR wire format (tag {data[0]:#04x}, expected 0x02)")
+
+
 class SmartSerializer:
     """Default serializer: msgpack for plain payloads, cloudpickle fallback.
 
@@ -134,6 +170,10 @@ class SmartSerializer:
             return _msgpack_unpackb(body)
         if tag == _CODEC_CLOUDPICKLE:
             return cloudpickle.loads(body)
+        if tag == _CODEC_CBOR:
+            # Cross-SDK wire payload (e.g. enqueued by another SDK's
+            # CborSerializer) — readable without per-task configuration.
+            return cbor2.loads(body)
         # Untagged: a legacy cloudpickle payload from before the envelope existed.
         return cloudpickle.loads(data)
 

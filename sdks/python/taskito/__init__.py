@@ -48,6 +48,7 @@ from taskito.notes import MAX_NOTE_FIELDS
 from taskito.proxies.no_proxy import NoProxy
 from taskito.result import JobResult
 from taskito.serializers import (
+    CborSerializer,
     CloudpickleSerializer,
     EncryptedSerializer,
     JsonSerializer,
@@ -65,6 +66,7 @@ __all__ = [
     "BatchItemResult",
     "BatchPartialFailureError",
     "BatchResultTypeError",
+    "CborSerializer",
     "CircuitBreakerOpenError",
     "CircularDependencyError",
     "CloudpickleSerializer",

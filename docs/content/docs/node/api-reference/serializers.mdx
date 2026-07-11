@@ -1,6 +1,6 @@
 ---
 title: Serializers
-description: "JsonSerializer, MsgpackSerializer, and the Serializer interface."
+description: "JsonSerializer, MsgpackSerializer, CborSerializer, and the Serializer interface."
 ---
 
 ```ts
@@ -14,11 +14,18 @@ import type { Serializer } from "@byteveda/taskito";
 |---|---|
 | `JsonSerializer` | Default. Human-readable JSON bytes. |
 | `MsgpackSerializer` | Compact binary (msgpack). |
+| `CborSerializer` | Binary (CBOR, RFC 8949), tagged with the `0x02` wire-envelope byte — the default format for tasks produced or consumed by another Taskito SDK. Integers beyond `Number.MAX_SAFE_INTEGER` round-trip as `BigInt`. |
 | `SignedSerializer` | Wraps another codec with an HMAC-SHA256 tag; rejects tampered payloads. |
 | `EncryptedSerializer` | Wraps another codec with AES-256-GCM; encrypts + authenticates. |
 
 ```ts
 new Queue({ dbPath: "taskito.db", serializer: new MsgpackSerializer() });
+```
+
+```ts
+import { Queue, CborSerializer } from "@byteveda/taskito";
+
+new Queue({ dbPath: "taskito.db", serializer: new CborSerializer() });
 ```
 
 `SignedSerializer(secret, inner?)` prefixes each payload with a 32-byte HMAC tag

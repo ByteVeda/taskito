@@ -262,7 +262,7 @@ final class DefaultTaskito implements Taskito {
         // Serialize before codec-encoding so the idempotency key hashes the deterministic
         // pre-codec payload — a non-deterministic codec (e.g. an AES-GCM nonce) must not
         // change the dedup key.
-        byte[] payloadBytes = serializer.serialize(context.payload());
+        byte[] payloadBytes = serializer.serializeCall(context.payload());
         String uniqueKey = resolveUniqueKey(taskName, payloadBytes, finalOptions, taskIdempotentDefault);
         if (uniqueKey != null && !uniqueKey.equals(finalOptions.uniqueKey())) {
             finalOptions = finalOptions.toBuilder().uniqueKey(uniqueKey).build();
@@ -359,7 +359,7 @@ final class DefaultTaskito implements Taskito {
             // auto-derive, mirroring the single-enqueue path (explicit
             // uniqueKey/idempotencyKey precedence preserved). Key hashes the
             // deterministic pre-codec bytes.
-            byte[] payloadBytes = serializer.serialize(payload);
+            byte[] payloadBytes = serializer.serializeCall(payload);
             EnqueueOptions jobOptions = options;
             String uniqueKey = resolveUniqueKey(task.name(), payloadBytes, jobOptions, task.idempotent());
             if (uniqueKey != null && !uniqueKey.equals(jobOptions.uniqueKey())) {
@@ -634,7 +634,7 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public long registerPeriodic(PeriodicTask task) {
-        byte[] payload = task.payload == null ? null : serializer.serialize(task.payload);
+        byte[] payload = task.payload == null ? null : serializer.serializeCall(task.payload);
         return backend.registerPeriodic(
                 task.name, task.taskName, task.cron, payload, task.queue, task.timezone, task.enabled);
     }
@@ -688,7 +688,7 @@ final class DefaultTaskito implements Taskito {
                             + "' has no payload; supply one via submitWorkflow(wf, payloads)");
                 }
                 payloadNames.add(step.name);
-                payloads.add(serializer.serialize(payload));
+                payloads.add(serializer.serializeCall(payload));
             }
         }
         String runId = backend.submitWorkflow(
@@ -869,7 +869,7 @@ final class DefaultTaskito implements Taskito {
             }
             specs.add(stepSpec(step));
             if (step.payload != null) {
-                payloads.put(step.name, Base64.getEncoder().encodeToString(serializer.serialize(step.payload)));
+                payloads.put(step.name, Base64.getEncoder().encodeToString(serializer.serializeCall(step.payload)));
             }
         }
         Map<String, Object> blob = new LinkedHashMap<>();

@@ -93,7 +93,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
             for (Middleware m : middleware) {
                 m.before(context);
             }
-            Object argument = serializer.deserialize(decodePayload(payload, task.codecs), task.payloadType);
+            Object argument = serializer.deserializeCall(decodePayload(payload, task.codecs), task.payloadType);
             Object result = task.handler.apply(argument);
             for (Middleware m : middleware) {
                 m.after(context, result);

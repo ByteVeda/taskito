@@ -91,6 +91,11 @@ dependencies {
     compileOnly("org.msgpack:jackson-dataformat-msgpack:0.9.8")
     testImplementation("org.msgpack:jackson-dataformat-msgpack:0.9.8")
 
+    // Optional: the CBOR wire serializer (cross-SDK payloads). Same model —
+    // consumers that use CborSerializer add this dependency themselves.
+    compileOnly("com.fasterxml.jackson.dataformat:jackson-dataformat-cbor:2.17.2")
+    testImplementation("com.fasterxml.jackson.dataformat:jackson-dataformat-cbor:2.17.2")
+
     // Optional: observability contrib middleware. Consumers that use them add the
     // matching runtime dependency themselves.
     compileOnly("io.micrometer:micrometer-observation:1.13.6")

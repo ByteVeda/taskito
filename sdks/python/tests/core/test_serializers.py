@@ -6,6 +6,7 @@ import pickle
 import pytest
 
 from taskito.serializers import (
+    CborSerializer,
     CloudpickleSerializer,
     JsonSerializer,
     Serializer,
@@ -218,6 +219,66 @@ class TestSmartSerializer:
 
     def test_satisfies_protocol(self) -> None:
         assert isinstance(SmartSerializer(), Serializer)
+
+    def test_loads_cbor_wire_payload(self) -> None:
+        """Cross-SDK CBOR payloads (tag 0x02) load without per-task config."""
+        encoded = CborSerializer().dumps({"from": "another-sdk", "n": 2**80})
+        assert SmartSerializer().loads(encoded) == {"from": "another-sdk", "n": 2**80}
+
+
+class TestCborSerializer:
+    def test_roundtrip_dict(self) -> None:
+        s = CborSerializer()
+        data = {"key": "value", "num": 42, "nested": [1, 2, 3], "raw": b"\x00\xff"}
+        assert s.loads(s.dumps(data)) == data
+
+    def test_wire_tag_is_0x02(self) -> None:
+        assert CborSerializer().dumps([1, 2])[:1] == b"\x02"
+
+    def test_big_int_roundtrip(self) -> None:
+        """Integers beyond 2^53 (JS Number limit) and 2^64 (CBOR bignum)
+        must survive — the reason CBOR is the cross-SDK default over JSON."""
+        s = CborSerializer()
+        for val in [2**53 + 1, 2**64 + 1, -(2**80)]:
+            assert s.loads(s.dumps(val)) == val
+
+    def test_datetime_roundtrip(self) -> None:
+        from datetime import datetime, timezone
+
+        s = CborSerializer()
+        moment = datetime(2026, 7, 11, 12, 30, 45, tzinfo=timezone.utc)
+        assert s.loads(s.dumps(moment)) == moment
+
+    def test_call_envelope_shape(self) -> None:
+        """An ``(args, kwargs)`` payload becomes a 2-element CBOR array —
+        the cross-SDK call-body shape from BINDING_CONTRACT.md."""
+        s = CborSerializer()
+        restored = s.loads(s.dumps(((1, "a"), {"k": True})))
+        assert restored == [[1, "a"], {"k": True}]
+
+    def test_matches_binding_contract_vector(self) -> None:
+        """Byte-exact against the BINDING_CONTRACT.md test vector for
+        call ``f(1, "a")`` — the fixture every SDK's tests assert."""
+        s = CborSerializer()
+        assert s.dumps(((1, "a"), {})).hex() == "028282016161a0"
+        assert s.loads(bytes.fromhex("028282016161a0")) == [[1, "a"], {}]
+
+    def test_rejects_native_tagged_payload(self) -> None:
+        native = SmartSerializer().dumps(lambda x: x)
+        assert native[:1] == b"\x00"
+        with pytest.raises(ValueError, match="native-tagged"):
+            CborSerializer().loads(native)
+
+    def test_rejects_untagged_payload(self) -> None:
+        with pytest.raises(ValueError, match="not CBOR wire format"):
+            CborSerializer().loads(b'{"json": true}')
+
+    def test_empty_payload_rejected(self) -> None:
+        with pytest.raises(ValueError, match="empty payload"):
+            CborSerializer().loads(b"")
+
+    def test_satisfies_protocol(self) -> None:
+        assert isinstance(CborSerializer(), Serializer)
 
 
 class TestSignedSerializer:
