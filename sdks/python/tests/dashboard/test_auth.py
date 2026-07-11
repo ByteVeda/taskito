@@ -205,9 +205,11 @@ def test_verify_password_rejects_oauth_sentinel_hash() -> None:
     assert verify_password("anything", "oauth:okta") is False
 
 
-def test_get_or_create_oauth_user_creates_user_with_admin_when_table_empty(
+def test_get_or_create_oauth_user_first_user_is_viewer_without_allowlist(
     queue: Queue,
 ) -> None:
+    # Even on an empty table, admin comes only from the allowlist — never
+    # from first-login-wins.
     store = AuthStore(queue)
     user = store.get_or_create_oauth_user(
         slot="google",
@@ -217,10 +219,23 @@ def test_get_or_create_oauth_user_creates_user_with_admin_when_table_empty(
         email_verified=True,
     )
     assert user.username == "google:1184283742"
-    assert user.role == "admin"
+    assert user.role == "viewer"
     assert user.email == "alice@acme.com"
     assert user.display_name == "Alice Example"
     assert user.is_oauth is True
+
+
+def test_get_or_create_oauth_user_allowlisted_first_user_is_admin(queue: Queue) -> None:
+    store = AuthStore(queue)
+    user = store.get_or_create_oauth_user(
+        slot="google",
+        subject="1184283742",
+        email="alice@acme.com",
+        name="Alice Example",
+        email_verified=True,
+        admin_emails=("alice@acme.com",),
+    )
+    assert user.role == "admin"
 
 
 def test_get_or_create_oauth_user_subsequent_user_is_viewer(queue: Queue) -> None:
@@ -362,10 +377,17 @@ def open_dashboard_server(queue: Queue) -> Generator[tuple[str, Queue]]:
         server.shutdown()
 
 
-def _get(url: str, *, cookies: dict[str, str] | None = None) -> tuple[int, Any, dict[str, str]]:
+def _get(
+    url: str,
+    *,
+    cookies: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, Any, dict[str, str]]:
     req = urllib.request.Request(url, method="GET")
     if cookies:
         req.add_header("Cookie", "; ".join(f"{k}={v}" for k, v in cookies.items()))
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
     try:
         resp = urllib.request.urlopen(req)
     except urllib.error.HTTPError as e:
@@ -602,6 +624,90 @@ def test_health_endpoint_is_public(dashboard_server: tuple[str, Queue]) -> None:
     assert status == 200
 
 
+# ── Viewer role (read-only RBAC) ───────────────────────────────────────
+
+
+def test_viewer_can_read_but_not_mutate(dashboard_server: tuple[str, Queue]) -> None:
+    base, queue = dashboard_server
+    store = AuthStore(queue)
+    viewer = store.create_user("watcher", "hunter2-secret", role="viewer")
+    session = store.create_session(viewer)
+    cookies = {"taskito_session": session.token, "taskito_csrf": session.csrf_token}
+
+    status, _, _ = _get(f"{base}/api/stats", cookies=cookies)
+    assert status == 200
+
+    status, body, _ = _post(
+        f"{base}/api/dead-letters/purge",
+        {},
+        cookies=cookies,
+        headers={"X-CSRF-Token": session.csrf_token},
+    )
+    assert status == 403
+    assert body["error"] == "forbidden"
+
+
+def test_viewer_keeps_auth_self_service(dashboard_server: tuple[str, Queue]) -> None:
+    base, queue = dashboard_server
+    store = AuthStore(queue)
+    viewer = store.create_user("watcher", "hunter2-secret", role="viewer")
+    session = store.create_session(viewer)
+    status, _, _ = _post(
+        f"{base}/api/auth/change-password",
+        {"old_password": "hunter2-secret", "new_password": "brand-new-secure"},
+        cookies={"taskito_session": session.token, "taskito_csrf": session.csrf_token},
+        headers={"X-CSRF-Token": session.csrf_token},
+    )
+    assert status == 200
+
+
+# ── Probe endpoints (/readiness, /metrics) ─────────────────────────────
+
+
+def test_readiness_requires_session_when_auth_enabled(
+    dashboard_server: tuple[str, Queue],
+) -> None:
+    base, queue = dashboard_server
+    store = AuthStore(queue)
+    user = store.create_user("alice", "hunter2-secret")
+
+    status, body, _ = _get(f"{base}/readiness")
+    assert status == 401
+    assert body["error"] == "not_authenticated"
+
+    session = store.create_session(user)
+    status, _, _ = _get(f"{base}/readiness", cookies={"taskito_session": session.token})
+    assert status == 200
+
+
+def test_metrics_requires_auth_when_enabled(dashboard_server: tuple[str, Queue]) -> None:
+    base, _ = dashboard_server
+    status, body, _ = _get(f"{base}/metrics")
+    assert status == 401
+    assert body["error"] == "not_authenticated"
+
+
+def test_probe_accepts_metrics_bearer_when_auth_enabled(
+    dashboard_server: tuple[str, Queue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base, queue = dashboard_server
+    monkeypatch.setenv("TASKITO_DASHBOARD_METRICS_TOKEN", "scraper-token")
+    store = AuthStore(queue)
+    user = store.create_user("alice", "hunter2-secret")
+
+    status, _, _ = _get(f"{base}/readiness", headers={"Authorization": "Bearer scraper-token"})
+    assert status == 200
+
+    status, _, _ = _get(f"{base}/readiness", headers={"Authorization": "Bearer wrong"})
+    assert status == 401
+
+    # A valid session works even when the bearer token is configured.
+    session = store.create_session(user)
+    status, _, _ = _get(f"{base}/readiness", cookies={"taskito_session": session.token})
+    assert status == 200
+
+
 # ── Auth disabled (the default) ────────────────────────────────────────
 
 
@@ -654,3 +760,21 @@ def test_auth_disabled_rejects_auth_endpoints(
             status, body, _ = _post(f"{base}{path}", {})
         assert status == 404, path
         assert body == {"error": "auth_disabled"}, path
+
+
+def test_auth_disabled_probes_stay_public(open_dashboard_server: tuple[str, Queue]) -> None:
+    base, _ = open_dashboard_server
+    status, _, _ = _get(f"{base}/readiness")
+    assert status == 200
+
+
+def test_auth_disabled_probe_honours_metrics_token(
+    open_dashboard_server: tuple[str, Queue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base, _ = open_dashboard_server
+    monkeypatch.setenv("TASKITO_DASHBOARD_METRICS_TOKEN", "scraper-token")
+    status, _, _ = _get(f"{base}/readiness")
+    assert status == 401
+    status, _, _ = _get(f"{base}/readiness", headers={"Authorization": "Bearer scraper-token"})
+    assert status == 200
