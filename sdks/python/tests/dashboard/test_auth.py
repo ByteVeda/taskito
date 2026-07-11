@@ -708,6 +708,22 @@ def test_probe_accepts_metrics_bearer_when_auth_enabled(
     assert status == 200
 
 
+# ── Security headers ───────────────────────────────────────────────────
+
+
+def test_security_headers_on_every_response(open_dashboard_server: tuple[str, Queue]) -> None:
+    base, _ = open_dashboard_server
+    # "/" is skipped: SPA assets may be absent in CI, and the headers are
+    # emitted from end_headers() so they apply to every response uniformly.
+    for path in ("/health", "/api/stats"):
+        resp = urllib.request.urlopen(f"{base}{path}")
+        headers = resp.headers
+        assert headers["X-Content-Type-Options"] == "nosniff", path
+        assert headers["X-Frame-Options"] == "DENY", path
+        assert headers["Referrer-Policy"] == "same-origin", path
+        assert "default-src 'self'" in (headers["Content-Security-Policy"] or ""), path
+
+
 # ── Auth disabled (the default) ────────────────────────────────────────
 
 
