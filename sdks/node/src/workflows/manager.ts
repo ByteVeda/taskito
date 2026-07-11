@@ -1,6 +1,6 @@
 import { WorkflowError } from "../errors";
 import type { NativeQueue } from "../native";
-import type { Serializer } from "../serializers";
+import { type Serializer, serializeCall } from "../serializers";
 import { WorkflowAnalysis, type WorkflowGraph } from "./analysis";
 import { WorkflowBuilder } from "./builder";
 import { WorkflowCacheStore } from "./cache";
@@ -47,7 +47,7 @@ export class WorkflowManager {
     private readonly encodePayload: (taskName: string, value: unknown) => Uint8Array = (
       _taskName,
       value,
-    ) => this.serializer.serialize(value),
+    ) => serializeCall(this.serializer, value as unknown[]),
   ) {
     if (typeof this.native.submitWorkflow !== "function") {
       throw new WorkflowError("the native addon was built without the 'workflows' feature");

@@ -64,6 +64,7 @@ export {
 export { type ScalerOptions, serveScaler } from "./scaler";
 export {
   AesGcmCodec,
+  CborSerializer,
   CodecSerializer,
   EncryptedSerializer,
   GzipCodec,

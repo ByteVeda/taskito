@@ -29,24 +29,44 @@ export class CodecSerializer implements Serializer {
   private readonly delegate: Serializer;
   private readonly codecs: readonly PayloadCodec[];
 
+  /** Present only when the delegate is call-aware, so callers can detect it. */
+  readonly serializeCall?: (args: unknown[]) => Uint8Array;
+  readonly deserializeCall?: (bytes: Uint8Array) => unknown[];
+
   constructor(delegate: Serializer = new JsonSerializer(), codecs: readonly PayloadCodec[] = []) {
     this.delegate = delegate;
     this.codecs = [...codecs];
+    const serializeCall = delegate.serializeCall?.bind(delegate);
+    if (serializeCall) {
+      this.serializeCall = (args) => this.encode(serializeCall(args));
+    }
+    const deserializeCall = delegate.deserializeCall?.bind(delegate);
+    if (deserializeCall) {
+      this.deserializeCall = (bytes) => deserializeCall(this.decode(bytes));
+    }
   }
 
   serialize(value: unknown): Uint8Array {
-    let data = this.delegate.serialize(value);
-    for (const codec of this.codecs) {
-      data = codec.encode(data);
-    }
-    return data;
+    return this.encode(this.delegate.serialize(value));
   }
 
   deserialize(bytes: Uint8Array): unknown {
-    let data = bytes;
-    for (const codec of [...this.codecs].reverse()) {
-      data = codec.decode(data);
+    return this.delegate.deserialize(this.decode(bytes));
+  }
+
+  private encode(data: Uint8Array): Uint8Array {
+    let out = data;
+    for (const codec of this.codecs) {
+      out = codec.encode(out);
     }
-    return this.delegate.deserialize(data);
+    return out;
+  }
+
+  private decode(bytes: Uint8Array): Uint8Array {
+    let out = bytes;
+    for (const codec of [...this.codecs].reverse()) {
+      out = codec.decode(out);
+    }
+    return out;
   }
 }

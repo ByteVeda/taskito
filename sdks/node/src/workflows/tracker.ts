@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { JsOutcome, NativeQueue } from "../native";
-import type { Serializer } from "../serializers";
+import { type Serializer, serializeCall } from "../serializers";
 import { createLogger } from "../utils";
 import { CACHE_TASK, WorkflowCacheStore } from "./cache";
 import { predecessorsOf, successorsOf, transitiveDeferred } from "./plan";
@@ -310,7 +310,7 @@ export class WorkflowTracker {
     }
     const job = jobId ? this.native.getJob(jobId) : null;
     const result = job?.result ? this.serializer.deserialize(job.result) : null;
-    const payload = Buffer.from(this.serializer.serialize([result]));
+    const payload = Buffer.from(serializeCall(this.serializer, [result]));
     this.native.enqueueCompensation(
       runId,
       node,
@@ -394,7 +394,7 @@ export class WorkflowTracker {
       (JSON.parse(meta.fan_out).itemsFrom as string | null) ?? singlePred(plan, node);
     const items = this.readArrayResult(runId, itemsFrom);
     const childNames = items.map((_, i) => `${node}[${i}]`);
-    const childPayloads = items.map((item) => Buffer.from(this.serializer.serialize([item])));
+    const childPayloads = items.map((item) => Buffer.from(serializeCall(this.serializer, [item])));
 
     this.native.expandFanOut(
       runId,
@@ -434,7 +434,7 @@ export class WorkflowTracker {
       return;
     }
     // The combiner receives the whole list as its single positional argument.
-    const payload = Buffer.from(this.serializer.serialize([results]));
+    const payload = Buffer.from(serializeCall(this.serializer, [results]));
     this.native.createDeferredJob(
       runId,
       fanInNode,
@@ -585,7 +585,7 @@ export class WorkflowTracker {
     }
     const payload = meta.args_template
       ? Buffer.from(meta.args_template, "base64")
-      : Buffer.from(this.serializer.serialize([]));
+      : Buffer.from(serializeCall(this.serializer, []));
     this.native.createDeferredJob(
       runId,
       node,
@@ -621,7 +621,7 @@ export class WorkflowTracker {
       return;
     }
     const value = this.serializer.deserialize(cached);
-    const payload = Buffer.from(this.serializer.serialize([value]));
+    const payload = Buffer.from(serializeCall(this.serializer, [value]));
     this.native.createDeferredJob(
       runId,
       node,

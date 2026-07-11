@@ -19,7 +19,7 @@ import type {
   TaskConfigInput,
 } from "./native";
 import { type ResourceRuntime, runWithResolver } from "./resources";
-import type { PayloadCodec, Serializer } from "./serializers";
+import { deserializeCall, type PayloadCodec, type Serializer } from "./serializers";
 import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
 import type { WorkflowTracker } from "./workflows";
@@ -91,7 +91,7 @@ export class Worker {
     const taskCallback = async (invocation: JsTaskInvocation): Promise<Buffer> => {
       // Built-in workflow cache-return: echo the single (cached) arg as the result.
       if (invocation.taskName === CACHE_TASK) {
-        const [value] = serializer.deserialize(invocation.payload) as unknown[];
+        const [value] = deserializeCall(serializer, invocation.payload);
         return Buffer.from(serializer.serialize(value));
       }
       const task = tasks.get(invocation.taskName);
@@ -107,7 +107,7 @@ export class Worker {
         }
         payload = codec.decode(payload);
       }
-      const args = serializer.deserialize(payload) as unknown[];
+      const args = deserializeCall(serializer, payload);
       const ctx: TaskContext = { jobId: invocation.id, taskName: invocation.taskName, args };
       // Resolve the middleware chain BEFORE allocating the cancel poller and
       // task scope — it reads storage and may throw, and nothing would clean
