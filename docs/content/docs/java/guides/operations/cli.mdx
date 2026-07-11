@@ -33,9 +33,10 @@ taskito --url taskito.db dashboard --port 8080 --auth
 ```
 
 Serves the bundled [dashboard](/java/guides/operations/dashboard) until
-interrupted — openly by default. `--auth` enables session authentication;
-`--token <token>` gates the API with a legacy shared token instead;
-`--static <dir>` overrides the SPA assets.
+interrupted. This example enables session authentication with `--auth`;
+omit the flag to serve openly (the default). `--token <token>` gates the
+API with a legacy shared token instead; `--static <dir>` overrides the
+SPA assets.
 
 ## Other backends
 
