@@ -15,10 +15,20 @@ const ERROR_MESSAGES: Record<string, string> = {
   oauth_denied: "Access denied. Your account is not in the allowed list.",
 };
 
+/**
+ * Post-login redirects must stay on this origin: only root-relative paths
+ * (``/...`` but not protocol-relative ``//...``) are honoured, mirroring the
+ * server-side ``next`` validation on the OAuth callback.
+ */
+function safeNextPath(next: unknown): string | undefined {
+  if (typeof next !== "string") return undefined;
+  return next.startsWith("/") && !next.startsWith("//") ? next : undefined;
+}
+
 export function LoginForm() {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { next?: string; error?: string } | undefined;
-  const nextPath = typeof search?.next === "string" ? search.next : undefined;
+  const nextPath = safeNextPath(search?.next);
   const oauthError =
     typeof search?.error === "string" ? (ERROR_MESSAGES[search.error] ?? search.error) : null;
 
