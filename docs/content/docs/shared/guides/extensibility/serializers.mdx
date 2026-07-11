@@ -487,7 +487,7 @@ override it in a generics-aware implementation, as `JsonSerializer` does.
 |---|---|---|---|---|---|---|
 | **Complex objects** | Yes (cloudpickle fallback) | Yes | No | No | No (CBOR-representable types only) | Depends on inner serializer |
 | **Debugging** | Binary payloads (opaque) | Binary payloads (opaque) | Human-readable JSON | Binary (opaque) | Binary (opaque) | Ciphertext (opaque) |
-| **Cross-language** | Python only | Python only | Any language | Any language | Any language (cross-SDK default) | Python only (by default) |
+| **Cross-language** | Python only | Python only | Portable format, same-SDK payloads | Portable format, same-SDK payloads | Yes (cross-SDK wire format) | Python only (by default) |
 | **Performance** | Best for plain data | Good | Good for simple types | Best | Good | Adds encryption overhead |
 | **Security** | None | None | None | None | None | AES-256-GCM |
 | **Extra dependency** | No | No | No | No | No | `cryptography` (`taskito[encryption]`) |
