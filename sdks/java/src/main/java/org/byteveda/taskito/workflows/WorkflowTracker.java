@@ -93,7 +93,7 @@ public final class WorkflowTracker {
         Map<String, Condition> conditions = new HashMap<>();
         for (Step step : workflow.steps()) {
             if (step.payload != null) {
-                byNode.put(step.name, serializer.serialize(step.payload));
+                byNode.put(step.name, serializer.serializeCall(step.payload));
             }
             if (step.callableCondition != null) {
                 conditions.put(step.name, step.callableCondition);
@@ -196,7 +196,7 @@ public final class WorkflowTracker {
         byte[][] payloads = new byte[items.size()][];
         for (int i = 0; i < items.size(); i++) {
             names[i] = fanOut.name + "[" + i + "]";
-            payloads[i] = serializer.serialize(items.get(i));
+            payloads[i] = serializer.serializeCall(items.get(i));
         }
         backend.expandFanOut(
                 runId,
@@ -253,7 +253,7 @@ public final class WorkflowTracker {
             finalizeIfTerminal(runId);
             return;
         }
-        byte[] payload = serializer.serialize(results);
+        byte[] payload = serializer.serializeCall(results);
         for (PlanNode fanIn : fanIns) {
             backend.createDeferredJob(
                     runId,
