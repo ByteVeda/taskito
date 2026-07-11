@@ -24,6 +24,7 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
+    "cbor2>=5.6",
     "cloudpickle>=3.0",
     "msgpack>=1.0",
     'tzdata; platform_system == "Windows"',
