@@ -154,6 +154,19 @@ queue.purge_dead(older_than: int = 86400) -> int
 
 Purge dead letter entries older than `older_than` seconds. Returns count deleted.
 
+### `queue.requeue_job()`
+
+```python
+queue.requeue_job(job_id: str) -> bool
+```
+
+Force a stuck `running` job back to `pending`, releasing its execution claim
+so a healthy worker can re-claim it. Preserves the retry budget and clears any
+pending cancel request. Returns `False` when the job doesn't exist or isn't
+running. Only for jobs whose owning worker is confirmed dead or hung — a
+still-alive worker may finish the old attempt and the job runs twice. Async
+twin: `arequeue_job()`.
+
 ## Cleanup
 
 ### `queue.purge_completed()`

@@ -255,7 +255,7 @@ transforming them:
 ```python
 from myapp.tasks import queue
 
-report = queue._interceptor.analyze(
+report = queue.analyze_arguments(
     args=(user_session, "Hello"),
     kwargs={"attachment": open("file.pdf", "rb")},
 )
@@ -266,9 +266,10 @@ print(report)
 #   kwargs.attachment  (BufferedReader)        → PROXY (handler=file)
 ```
 
-`analyze()` is a development and debugging tool. It reads the registry but
-makes no changes to arguments. `_interceptor` is an internal accessor — it is
-not yet part of the stable public API and may change between releases.
+`analyze_arguments()` is a development and debugging tool. It reads the
+registry but makes no changes to arguments, and returns an empty report when
+the queue was created with `interception="off"`. The per-task variant
+`my_task.analyze(...)` takes the task's own call arguments directly.
 
 ### Interception metrics
 

@@ -74,6 +74,18 @@ queue.health_check(name: str) -> bool
 Run a resource's health check immediately. Returns `True` if healthy, `False`
 otherwise or if the runtime is not initialized.
 
+### `queue.reload_resources()`
+
+```python
+queue.reload_resources(names: list[str] | None = None) -> dict[str, bool]
+```
+
+Hot-reload reloadable worker resources — the programmatic equivalent of
+SIGHUP. Tears down and re-creates each target in dependency order. `None`
+reloads every resource registered with `reloadable=True`. Returns a
+name-to-success mapping; empty when no worker resource runtime is active in
+this process. Async twin: `areload_resources()`.
+
 ### `queue.resource_status()`
 
 ```python
@@ -111,6 +123,16 @@ Register a custom type with the interception system. Requires
 | `converter` | `Callable \| None` | Converter callable for `"convert"` strategy. |
 | `type_key` | `str \| None` | Dispatch key for the converter reconstructor. |
 | `proxy_handler` | `str \| None` | Handler name for `"proxy"` strategy. |
+
+### `queue.analyze_arguments()`
+
+```python
+queue.analyze_arguments(args: tuple = (), kwargs: dict | None = None) -> InterceptionReport
+```
+
+Dry-run the argument interceptor without enqueuing — the report describes the
+strategy chosen for each argument. Empty when the queue was created with
+`interception="off"`. Per-task variant: `my_task.analyze(...)`.
 
 ### `queue.interception_stats()`
 

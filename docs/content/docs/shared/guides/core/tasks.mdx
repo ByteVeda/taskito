@@ -534,16 +534,16 @@ audit tasks) or when the payload isn't picklable. See
 
 ## Job expiration
 
-`expires` is an **enqueue-time** option (not a decorator option) — skip a job
-that wasn't started within the deadline:
+`expires` skips a job that wasn't started within the deadline. Set a default
+on the task, override it per call, or pass it only at enqueue time:
 
 ```python
-@queue.task()
+@queue.task(expires=300)  # every job skipped if not started within 5 minutes
 def time_sensitive():
     ...
 
-# Skip if not started within 5 minutes
-time_sensitive.apply_async(args=(), expires=300)
+time_sensitive.delay()                      # uses the 300s default
+time_sensitive.apply_async(args=(), expires=60)  # tighter window for this call
 ```
 
 ## Task naming
