@@ -34,6 +34,16 @@ class DashboardTest {
                         HttpResponse.BodyHandlers.ofString());
     }
 
+    private static HttpResponse<String> getWithToken(int port, String path, String token) throws Exception {
+        return HttpClient.newHttpClient()
+                .send(
+                        HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                                .header("X-Taskito-Token", token)
+                                .GET()
+                                .build(),
+                        HttpResponse.BodyHandlers.ofString());
+    }
+
     @Test
     @Timeout(30)
     void servesSnakeCaseContract(@TempDir Path dir) throws Exception {
@@ -92,7 +102,8 @@ class DashboardTest {
             try (DashboardServer server = DashboardServer.start(queue, 0, "sekret", null)) {
                 int port = server.port();
                 assertEquals(401, get(port, "/api/stats").statusCode());
-                assertEquals(200, get(port, "/api/stats?token=sekret").statusCode());
+                assertEquals(401, get(port, "/api/stats?token=sekret").statusCode());
+                assertEquals(200, getWithToken(port, "/api/stats", "sekret").statusCode());
             }
         }
     }
@@ -104,7 +115,7 @@ class DashboardTest {
                         Taskito.builder().sqlite(dir.resolve("t.db").toString()).open();
                 DashboardServer server = queue.dashboard(0, "tok")) {
             assertTrue(server.port() > 0);
-            assertEquals(200, get(server.port(), "/api/stats?token=tok").statusCode());
+            assertEquals(200, getWithToken(server.port(), "/api/stats", "tok").statusCode());
         }
     }
 }
