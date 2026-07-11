@@ -363,6 +363,7 @@ class QueueDecoratorMixin:
         max_retries: int = 3,
         retry_backoff: float = 1.0,
         timeout: int = 300,
+        expires: float | None = None,
         priority: int = 0,
         rate_limit: str | None = None,
         queue: str = "default",
@@ -392,6 +393,10 @@ class QueueDecoratorMixin:
             max_retries: Max retry attempts on failure before moving to DLQ.
             retry_backoff: Base delay in seconds for exponential backoff between retries.
             timeout: Max execution time in seconds before the task is killed.
+            expires: Default job expiry in seconds — a job is skipped
+                (cancelled and archived) if it hasn't started within this
+                window after enqueue. Per-call ``apply_async(expires=...)``
+                overrides it. ``None`` (default) means jobs never expire.
             priority: Priority level (higher = more urgent).
             rate_limit: Rate limit string, e.g. ``"100/m"``, ``"10/s"``, ``"3600/h"``.
             queue: Named queue to submit to.
@@ -622,6 +627,7 @@ class QueueDecoratorMixin:
                 default_queue=queue,
                 default_max_retries=max_retries,
                 default_timeout=timeout,
+                default_expires=expires,
                 inject=final_inject or None,
             )
 
