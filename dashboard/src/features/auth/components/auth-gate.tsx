@@ -7,6 +7,7 @@ import { useAuthStatus, useWhoami } from "../hooks";
 /**
  * Wraps the authenticated portion of the dashboard.
  *
+ * - When the server reports auth disabled, children render immediately.
  * - When setup is required, redirects to ``/login`` (which shows the setup
  *   form).
  * - When the user isn't signed in, redirects to ``/login``.
@@ -20,16 +21,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const status = useAuthStatus();
   const whoami = useWhoami();
 
+  const authDisabled = status.data?.auth_enabled === false;
   const setupRequired = status.data?.setup_required === true;
   const authenticated = !!whoami.data?.user;
   const loading = status.isLoading || whoami.isLoading;
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || authDisabled) return;
     if (setupRequired || !authenticated) {
       void navigate({ to: "/login" });
     }
-  }, [loading, setupRequired, authenticated, navigate]);
+  }, [loading, authDisabled, setupRequired, authenticated, navigate]);
+
+  if (authDisabled) {
+    return <>{children}</>;
+  }
 
   if (loading || setupRequired || !authenticated) {
     return (

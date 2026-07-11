@@ -23,6 +23,8 @@ export interface SetupResponse {
 
 export interface AuthStatus {
   setup_required: boolean;
+  /** Absent on older servers, which always enforce auth. */
+  auth_enabled?: boolean;
 }
 
 export interface WhoamiResponse {
