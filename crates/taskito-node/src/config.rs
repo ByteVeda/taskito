@@ -1,6 +1,8 @@
 //! Plain option objects passed from JavaScript. napi maps snake_case Rust
 //! fields to camelCase JS keys (`maxRetries`, `timeoutMs`).
 
+use std::collections::HashMap;
+
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
@@ -50,6 +52,44 @@ pub struct EnqueueOptions {
 pub struct EnqueueJob {
     pub payload: Buffer,
     pub options: Option<EnqueueOptions>,
+}
+
+/// A subscriber task's own delivery settings, keyed by task name in
+/// [`PublishOptions::task_defaults`]. Unset fields fall back to the queue
+/// defaults, so the shell never has to duplicate them.
+#[napi(object)]
+#[derive(Default)]
+pub struct DeliveryDefaultsInput {
+    pub priority: Option<i32>,
+    pub max_retries: Option<i32>,
+    pub timeout_ms: Option<i64>,
+}
+
+/// Options for [`crate::queue::JsQueue::publish`]. All optional — omitted
+/// delivery settings resolve per subscriber (task defaults, then queue
+/// defaults) in the core.
+#[napi(object)]
+#[derive(Default)]
+pub struct PublishOptions {
+    /// Dedup key, salted per subscription in the core so republishing the
+    /// same key yields no new delivery for any subscriber.
+    pub idempotency_key: Option<String>,
+    /// Free-form metadata string stored on every delivery.
+    pub metadata: Option<String>,
+    /// Pre-encoded canonical notes JSON object; the core stamps `topic` and
+    /// `subscription` into it per delivery.
+    pub notes: Option<String>,
+    pub priority: Option<i32>,
+    /// Deliver no earlier than `now + delayMs`.
+    pub delay_ms: Option<i64>,
+    pub max_retries: Option<i32>,
+    pub timeout_ms: Option<i64>,
+    /// Expire undelivered jobs at `now + expiresMs`.
+    pub expires_ms: Option<i64>,
+    pub result_ttl_ms: Option<i64>,
+    /// Per-task delivery defaults from the publisher's task registry, so a
+    /// subscriber's own registration options are honored.
+    pub task_defaults: Option<HashMap<String, DeliveryDefaultsInput>>,
 }
 
 /// Filter for [`crate::queue::JsQueue::list_jobs`]. All fields optional.

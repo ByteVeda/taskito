@@ -53,6 +53,8 @@ export interface WorkerStartParams {
   resources: ResourceRuntime;
   /** The queue's shared tracker (undefined on addons without workflows). */
   workflowTracker?: WorkflowTracker;
+  /** Flushes the queue's pending topic subscriptions under this worker's id. */
+  declareSubscriptions?: (workerId: string) => Promise<void>;
   run?: WorkerRunOptions;
 }
 
@@ -242,7 +244,19 @@ export class Worker {
       void queue.workerHeartbeat(native.id, snapshot && JSON.stringify(snapshot)).catch((error) => {
         log.debug(() => "worker heartbeat failed", error);
       });
+      // Same cadence: prune ephemeral subscriptions whose owner is gone.
+      // Per-tick failures are swallowed like the heartbeat's — the next
+      // beat retries.
+      void queue.reapEphemeralSubscriptions().catch((error) => {
+        log.debug(() => "ephemeral subscription reap failed", error);
+      });
     };
+    // Register this worker's topic subscriptions (ephemeral ones under its id)
+    // now that the id exists. Fire-and-forget like the heartbeat: a failure is
+    // logged and the worker still runs.
+    void params.declareSubscriptions?.(native.id).catch((error) => {
+      log.debug(() => "subscription registration failed", error);
+    });
     sendHeartbeat();
     const heartbeat = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();

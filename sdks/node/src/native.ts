@@ -17,6 +17,7 @@ export type NativeWorker = InstanceType<typeof JsWorker>;
 
 export type {
   CircuitBreakerInput,
+  DeliveryDefaultsInput,
   EnqueueOptions,
   JobFilter,
   JsCircuitBreaker,
@@ -30,6 +31,7 @@ export type {
   JsOutcome,
   JsReplayEntry,
   JsStats,
+  JsSubscription,
   JsTaskInvocation,
   JsTaskLog,
   JsWorkerRow,
@@ -38,6 +40,7 @@ export type {
   JsWorkflowRun,
   MeshWorkerConfig,
   OpenOptions,
+  PublishOptions,
   QueueConfigInput,
   TaskConfigInput,
   WorkerOptions,

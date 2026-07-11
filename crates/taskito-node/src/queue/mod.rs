@@ -15,6 +15,7 @@ mod inspect;
 mod locks;
 mod logs;
 mod periodic;
+mod pubsub;
 #[cfg(feature = "workflows")]
 mod workflows;
 

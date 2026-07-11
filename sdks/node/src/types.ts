@@ -2,6 +2,7 @@ import type {
   CircuitBreakerInput,
   MeshWorkerConfig,
   EnqueueOptions as NativeEnqueueOptions,
+  PublishOptions as NativePublishOptions,
 } from "./native";
 
 export type {
@@ -16,6 +17,7 @@ export type {
   JsMetric as Metric,
   JsReplayEntry as ReplayEntry,
   JsStats as Stats,
+  JsSubscription as Subscription,
   JsTaskLog as TaskLog,
   JsWorkerRow as WorkerInfo,
   MeshWorkerConfig,
@@ -29,6 +31,28 @@ export type {
 export interface EnqueueOptions extends Omit<NativeEnqueueOptions, "notes"> {
   /** Structured annotations stored on the job — at most 15 fields, 4 KiB encoded. */
   notes?: Record<string, unknown>;
+}
+
+/**
+ * Per-publish options. Mirrors the native options, but `notes` is a structured
+ * object here (validated and JSON-encoded before it reaches the core) and
+ * `taskDefaults` is built internally from the queue's task registry.
+ */
+export interface PublishOptions extends Omit<NativePublishOptions, "notes" | "taskDefaults"> {
+  /** Structured annotations stamped on every delivery (plus `topic`/`subscription`). */
+  notes?: Record<string, unknown>;
+}
+
+/** Options for {@link Queue.subscriber}: task options plus subscription routing. */
+export interface SubscriberOptions extends TaskOptions {
+  /** Stable subscription identity — re-registering the same `(topic, name)`
+   *  updates the routing target instead of duplicating. Defaults to the task name. */
+  subscriptionName?: string;
+  /** Queue the subscriber's delivery jobs go to (default `"default"`). */
+  queue?: string;
+  /** Persist across restarts (default true). `false` = ephemeral: registered
+   *  only by a running worker and reaped once that worker stops heartbeating. */
+  durable?: boolean;
 }
 
 /** Options for {@link Queue.result}. */
