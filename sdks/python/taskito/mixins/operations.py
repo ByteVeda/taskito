@@ -24,6 +24,17 @@ class QueueOperationsMixin:
         """Re-enqueue a dead letter job. Returns new job ID."""
         return self._inner.retry_dead(dead_id)  # type: ignore[no-any-return]
 
+    def requeue_job(self, job_id: str) -> bool:
+        """Force a stuck Running job back to Pending so a healthy worker re-runs it.
+
+        Releases the job's execution claim atomically and preserves its retry
+        budget. Returns False when the job doesn't exist or isn't Running.
+
+        Warning: only use when the owning worker is confirmed dead or hung —
+        a still-alive worker may finish the old attempt and the job runs twice.
+        """
+        return self._inner.requeue_job(job_id)  # type: ignore[no-any-return]
+
     def purge_dead(self, older_than: int = 86400) -> int:
         """Delete dead letter entries older than a given age."""
         return self._inner.purge_dead(older_than)  # type: ignore[no-any-return]
