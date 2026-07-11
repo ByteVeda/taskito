@@ -105,18 +105,22 @@ async function dispatch(
   const path = url.pathname;
   const auth = options.auth;
 
-  // Token mode: a valid `?token=` bootstraps an httpOnly cookie so the SPA's
-  // later API calls authenticate without re-passing the token.
-  if (auth && url.searchParams.get("token") && tokenMatches(auth.token, presentedToken(req, url))) {
-    setTokenCookie(res, auth.token);
-  }
-
   if (path === "/health" || path === "/readiness" || path === "/metrics") {
-    await serveProbe(queue, req, res, path);
+    await serveProbe(queue, req, res, path, options);
     return;
   }
 
   if (!path.startsWith("/api/")) {
+    // Token mode: a valid `?token=` on a page load (never an API call)
+    // bootstraps an httpOnly cookie, then redirects to strip the token from
+    // the URL so it can't leak via history or the Referer header.
+    const queryToken = url.searchParams.get("token");
+    if (auth && req.method === "GET" && queryToken && tokenMatches(auth.token, queryToken)) {
+      setTokenCookie(res, auth.token);
+      url.searchParams.delete("token");
+      redirect(res, `${url.pathname}${url.search}`);
+      return;
+    }
     if (assets.serve(path, res)) {
       return;
     }
@@ -390,7 +394,7 @@ async function dispatchTokenMode(
   path: string,
   auth: DashboardAuth,
 ): Promise<void> {
-  if (!isPublicApiPath(path) && !tokenMatches(auth.token, presentedToken(req, url))) {
+  if (!isPublicApiPath(path) && !tokenMatches(auth.token, presentedToken(req))) {
     sendJson(res, 401, { error: "unauthorized" });
     return;
   }
@@ -454,21 +458,23 @@ function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * Probe endpoints outside the session gate. `/health` is always public;
- * `/readiness` and `/metrics` are optionally gated by
- * `TASKITO_DASHBOARD_METRICS_TOKEN` as a bearer token.
+ * Probe endpoints. `/health` is always public (liveness). `/readiness` and
+ * `/metrics` accept the optional `TASKITO_DASHBOARD_METRICS_TOKEN` bearer or,
+ * when dashboard auth is on, that mode's own credential — see
+ * {@link probeAuthorized}.
  */
 async function serveProbe(
   queue: Queue,
   req: IncomingMessage,
   res: ServerResponse,
   path: string,
+  options: DashboardHandlerOptions,
 ): Promise<void> {
   if (path === "/health") {
     sendJson(res, 200, health());
     return;
   }
-  if (!metricsTokenOk(req)) {
+  if (!probeAuthorized(queue, req, options)) {
     sendJson(res, 401, { error: "unauthorized" });
     return;
   }
@@ -488,13 +494,34 @@ async function serveProbe(
   }
 }
 
-/** Probe-friendly by default; a set env token requires a matching bearer header. */
-function metricsTokenOk(req: IncomingMessage): boolean {
-  const token = process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
-  if (!token) {
+/**
+ * Gate for `/readiness` and `/metrics`. Accepted credentials: the optional
+ * `TASKITO_DASHBOARD_METRICS_TOKEN` bearer (scraper-friendly), the legacy
+ * shared token in token mode, or a valid session in session mode. Open mode
+ * with no metrics token stays public (probe-friendly default).
+ */
+function probeAuthorized(
+  queue: Queue,
+  req: IncomingMessage,
+  options: DashboardHandlerOptions,
+): boolean {
+  const metricsToken = process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
+  if (metricsToken) {
+    if (tokenMatches(`Bearer ${metricsToken}`, req.headers.authorization ?? "")) {
+      return true;
+    }
+  } else if (!options.auth && options.authEnabled !== true) {
     return true;
   }
-  return tokenMatches(`Bearer ${token}`, req.headers.authorization ?? "");
+  if (options.auth) {
+    return tokenMatches(options.auth.token, presentedToken(req));
+  }
+  if (options.authEnabled === true) {
+    const store = new AuthStore(queue);
+    const ctx = buildContext(req, (token) => store.getSession(token));
+    return ctx.session !== undefined;
+  }
+  return false;
 }
 
 /** Token-mode session/CSRF cookies so the SPA proceeds without a login. */
