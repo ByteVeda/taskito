@@ -88,6 +88,26 @@ public final class EnqueueOptions {
         return b;
     }
 
+    /** The target queue, or {@code null} for the default. */
+    public String queue() {
+        return queue;
+    }
+
+    /** The job priority, or {@code null} for the core default. */
+    public Integer priority() {
+        return priority;
+    }
+
+    /** The retry budget, or {@code null} for the core default. */
+    public Integer maxRetries() {
+        return maxRetries;
+    }
+
+    /** The per-job timeout in milliseconds, or {@code null} for the core default. */
+    public Long timeoutMs() {
+        return timeoutMs;
+    }
+
     /** Job ids this enqueue waits on before it can be dequeued, or {@code null} when none. */
     public List<String> dependsOn() {
         return dependsOn;

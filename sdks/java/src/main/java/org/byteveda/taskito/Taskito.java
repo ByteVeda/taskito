@@ -31,12 +31,15 @@ import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
+import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
+import org.byteveda.taskito.pubsub.PublishOptions;
+import org.byteveda.taskito.pubsub.SubscriptionOptions;
 import org.byteveda.taskito.resources.PoolConfig;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceScope;
@@ -274,6 +277,58 @@ public interface Taskito extends AutoCloseable {
 
     /** Resume a paused periodic task; false if none had that name. */
     boolean resumePeriodic(String name);
+
+    // ── Pub/Sub ─────────────────────────────────────────────────────
+
+    /**
+     * Subscribe {@code task} to {@code topic} as an independent, durable
+     * subscriber named after the task. Every {@link #publish} to the topic then
+     * enqueues one ordinary job of this task; register a handler for it on the
+     * worker as usual. Returns {@code this}.
+     */
+    <T> Taskito subscribe(String topic, Task<T> task);
+
+    /**
+     * As {@link #subscribe(String, Task)} with explicit {@link SubscriptionOptions}.
+     * A durable subscription registers immediately; an ephemeral one
+     * ({@code durable(false)}) binds to a worker and registers when that worker
+     * starts, disappearing once it stops heartbeating.
+     */
+    <T> Taskito subscribe(String topic, Task<T> task, SubscriptionOptions options);
+
+    /**
+     * Publish a message to {@code topic}: one job per active subscription, each
+     * carrying the same serialized payload. Returns the created jobs — empty
+     * when the topic has no active subscribers (a valid no-op). Each delivery's
+     * notes carry {@code topic} and {@code subscription} for filtering.
+     */
+    List<Job> publish(String topic, Object payload);
+
+    /**
+     * As {@link #publish(String, Object)} with {@link PublishOptions}. An
+     * {@code idempotencyKey} dedupes per subscriber: republishing the same key
+     * yields no new deliveries, and a subscription added later still gets its
+     * own copy.
+     */
+    List<Job> publish(String topic, Object payload, PublishOptions options);
+
+    /** Remove a subscription; false if none matched. */
+    boolean unsubscribe(String topic, String name);
+
+    /** Stop deliveries without unregistering; false if none matched. */
+    boolean pauseSubscription(String topic, String name);
+
+    /** Resume a paused subscription; false if none matched. */
+    boolean resumeSubscription(String topic, String name);
+
+    /** Every registered subscription (active or paused), across all topics. */
+    List<Subscription> listSubscriptions();
+
+    /** One topic's active subscriptions. */
+    List<Subscription> listSubscriptions(String topic);
+
+    /** Distinct topics that currently have at least one subscription. */
+    List<String> listTopics();
 
     // ── Workflows ───────────────────────────────────────────────────
 

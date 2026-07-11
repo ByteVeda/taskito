@@ -3,12 +3,15 @@
 //! Option and filter structs cross as JSON strings (decoded here); opaque job
 //! payloads cross as raw `byte[]` and are never interpreted by the core.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
+use taskito_core::pubsub::{DeliveryDefaults, PublishRequest};
 use taskito_core::resilience::circuit_breaker::CircuitState;
 use taskito_core::storage::models::{
-    CircuitBreakerRow, JobErrorRow, LockInfoRow, PeriodicTaskRow, ReplayHistoryRow, TaskLogRow,
-    TaskMetricRow, WorkerRow,
+    CircuitBreakerRow, JobErrorRow, LockInfoRow, PeriodicTaskRow, ReplayHistoryRow,
+    SubscriptionRow, TaskLogRow, TaskMetricRow, WorkerRow,
 };
 use taskito_core::storage::{DeadJob, QueueStats};
 
@@ -82,6 +85,82 @@ pub fn build_new_job(
         namespace: options
             .namespace
             .or_else(|| default_namespace.map(str::to_string)),
+    }
+}
+
+/// Options accepted by `NativeQueue.publish`. Delivery fields left unset
+/// resolve per subscriber (its own task defaults, then the queue defaults).
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PublishOptions {
+    pub idempotency_key: Option<String>,
+    pub metadata: Option<String>,
+    /// Pre-encoded canonical notes JSON; the core stamps topic/subscription in.
+    pub notes: Option<String>,
+    pub priority: Option<i32>,
+    pub delay_ms: Option<i64>,
+    pub max_retries: Option<i32>,
+    pub timeout_ms: Option<i64>,
+    pub expires_ms: Option<i64>,
+    pub result_ttl_ms: Option<i64>,
+    /// Per-task delivery settings from the SDK's task registry, keyed by task name.
+    pub task_defaults: Option<HashMap<String, TaskDeliveryDefaults>>,
+}
+
+/// A subscriber task's own delivery settings. Absent fields mirror
+/// [`build_new_job`]'s zero defaults so a delivery resolves like a plain enqueue.
+#[derive(Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TaskDeliveryDefaults {
+    pub priority: i32,
+    pub max_retries: i32,
+    pub timeout_ms: i64,
+}
+
+/// Build a core [`PublishRequest`] from a publish call. The queue-level
+/// fallback is [`build_new_job`]'s zero defaults — the Java shell keeps no
+/// queue-wide delivery config, so enqueue and publish resolve identically.
+pub fn build_publish_request(
+    topic: String,
+    payload: Vec<u8>,
+    options: PublishOptions,
+    default_namespace: Option<&str>,
+) -> PublishRequest {
+    let now = now_millis();
+    PublishRequest {
+        topic,
+        payload,
+        idempotency_key: options.idempotency_key,
+        metadata: options.metadata,
+        notes: options.notes,
+        priority: options.priority,
+        // Saturate rather than wrap/panic on an absurd delay or expiry.
+        scheduled_at: now.saturating_add(options.delay_ms.unwrap_or(0).max(0)),
+        max_retries: options.max_retries,
+        timeout_ms: options.timeout_ms,
+        expires_at: options.expires_ms.map(|ms| now.saturating_add(ms.max(0))),
+        result_ttl_ms: options.result_ttl_ms,
+        namespace: default_namespace.map(str::to_string),
+        queue_defaults: DeliveryDefaults {
+            priority: 0,
+            max_retries: 0,
+            timeout_ms: 0,
+        },
+        task_defaults: options
+            .task_defaults
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, task)| {
+                (
+                    name,
+                    DeliveryDefaults {
+                        priority: task.priority,
+                        max_retries: task.max_retries,
+                        timeout_ms: task.timeout_ms,
+                    },
+                )
+            })
+            .collect(),
     }
 }
 
@@ -163,6 +242,35 @@ impl<'a> From<&'a Job> for JobView<'a> {
     }
 }
 
+/// Java-facing view of a topic subscription. `created_at` is Unix milliseconds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionView<'a> {
+    pub topic: &'a str,
+    pub subscription_name: &'a str,
+    pub task_name: &'a str,
+    pub queue: &'a str,
+    pub active: bool,
+    pub durable: bool,
+    pub owner_worker_id: Option<&'a str>,
+    pub created_at: i64,
+}
+
+impl<'a> From<&'a SubscriptionRow> for SubscriptionView<'a> {
+    fn from(r: &'a SubscriptionRow) -> Self {
+        Self {
+            topic: &r.topic,
+            subscription_name: &r.subscription_name,
+            task_name: &r.task_name,
+            queue: &r.queue,
+            active: r.active,
+            durable: r.durable,
+            owner_worker_id: r.owner_worker_id.as_deref(),
+            created_at: r.created_at,
+        }
+    }
+}
+
 /// Java-facing view of a task's circuit-breaker state. `state` is the lowercase wire
 /// string (`closed`/`open`/`half_open`); timestamps are Unix milliseconds.
 #[derive(Serialize)]
@@ -212,6 +320,20 @@ pub struct WorkerOptions {
     /// dispatcher; otherwise this is ignored.
     #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
     pub mesh_config: Option<String>,
+    /// Topic subscriptions written at worker start; ephemeral entries bind to
+    /// the started worker's id.
+    pub subscriptions: Option<Vec<SubscriptionSpec>>,
+}
+
+/// One topic subscription declared by the SDK, registered at worker start.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionSpec {
+    pub topic: String,
+    pub subscription_name: String,
+    pub task_name: String,
+    pub queue: String,
+    pub durable: bool,
 }
 
 /// A task's retry-backoff curve. Fields left unset fall back to the core's

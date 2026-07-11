@@ -135,6 +135,33 @@ public final class NativeQueue {
     /** Pause (false) or resume (true) a periodic task; false if none had that name. */
     public static native boolean setPeriodicEnabled(long handle, String name, boolean enabled);
 
+    // ── Pub/Sub ─────────────────────────────────────────────────────
+    /** Insert or update a topic subscription (idempotent on topic + name). */
+    public static native void registerSubscription(
+            long handle,
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull);
+
+    /** A JSON array of subscriptions — all of them, or only a topic's active ones. */
+    public static native String listSubscriptions(long handle, String topicOrNull);
+
+    /** Remove a subscription; false if none matched. */
+    public static native boolean unsubscribe(long handle, String topic, String subscriptionName);
+
+    /** Pause (false) or resume (true) a subscription; false if none matched. */
+    public static native boolean setSubscriptionActive(
+            long handle, String topic, String subscriptionName, boolean active);
+
+    /** Drop ephemeral subscriptions whose owning worker is gone; returns the count removed. */
+    public static native long reapEphemeralSubscriptions(long handle);
+
+    /** Publish to a topic; returns the created delivery jobs as a JSON array. */
+    public static native String publish(long handle, String topic, byte[] payload, String optionsJson);
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker; returns its handle. {@code bridge} is a {@code WorkerBridge}. */
     public static native long runWorker(long handle, Object bridge, String optionsJson);

@@ -2,7 +2,9 @@ package org.byteveda.taskito.test;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +20,8 @@ import org.byteveda.taskito.spi.WorkerControl;
 /**
  * A pure-Java, in-memory {@link QueueBackend} for fast unit tests — no JNI, no
  * disk. It runs jobs on a small polling worker (dispatch → complete/fail → retry
- * or dead-letter), and supports inspection, admin, settings, and locks.
+ * or dead-letter), and supports inspection, admin, settings, locks, and topic
+ * pub/sub (fan-out, per-subscriber dedup, ephemeral reaping).
  *
  * <p>Not supported: workflows (use a native backend). Periodic registration is
  * recorded but never fires. Behaviour approximates the core for testing handlers,
@@ -36,6 +39,8 @@ public final class InMemoryQueueBackend implements QueueBackend {
     private final Map<String, List<Map<String, Object>>> logs = new ConcurrentHashMap<>();
     private final java.util.Set<String> paused = ConcurrentHashMap.newKeySet();
     private final List<InMemoryWorker> workers = new CopyOnWriteArrayList<>();
+    private final Map<String, SubscriptionRec> subscriptions = new ConcurrentHashMap<>();
+    private final java.util.Set<String> liveWorkers = ConcurrentHashMap.newKeySet();
     private final AtomicLong seq = new AtomicLong();
 
     private static long now() {
@@ -84,6 +89,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
         job.uniqueKey = uniqueKey;
         job.metadata = text(opts, "metadata");
         job.namespace = text(opts, "namespace");
+        job.notes = text(opts, "notes");
         long createdAt = now();
         job.createdAt = createdAt;
         job.scheduledAt = createdAt + optLong(opts, "delayMs", 0);
@@ -432,14 +438,189 @@ public final class InMemoryQueueBackend implements QueueBackend {
         return true;
     }
 
+    // ── Pub/Sub ─────────────────────────────────────────────────────
+
+    @Override
+    public synchronized void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull) {
+        // Full replacement mirrors the core's upsert: re-registering updates the
+        // routing target and clears any previously set owner.
+        subscriptions.put(
+                subscriptionKey(topic, subscriptionName),
+                new SubscriptionRec(
+                        topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, seq.incrementAndGet()));
+    }
+
+    @Override
+    public String listSubscriptionsJson(String topicOrNull) {
+        List<Map<String, Object>> views = new ArrayList<>();
+        for (SubscriptionRec sub : subscriptionsInOrder()) {
+            if (topicOrNull != null && !(topicOrNull.equals(sub.topic) && sub.active)) {
+                continue;
+            }
+            views.add(subscriptionView(sub));
+        }
+        return toJson(views);
+    }
+
+    @Override
+    public boolean unsubscribe(String topic, String subscriptionName) {
+        return subscriptions.remove(subscriptionKey(topic, subscriptionName)) != null;
+    }
+
+    @Override
+    public boolean setSubscriptionActive(String topic, String subscriptionName, boolean active) {
+        SubscriptionRec sub = subscriptions.get(subscriptionKey(topic, subscriptionName));
+        if (sub == null) {
+            return false;
+        }
+        sub.active = active;
+        return true;
+    }
+
+    @Override
+    public long reapEphemeralSubscriptions() {
+        long removed = 0;
+        for (Map.Entry<String, SubscriptionRec> entry : subscriptions.entrySet()) {
+            String owner = entry.getValue().ownerWorkerId;
+            if (owner != null && !liveWorkers.contains(owner) && subscriptions.remove(entry.getKey()) != null) {
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    @Override
+    public synchronized String publishJson(String topic, byte[] payload, String optionsJson) {
+        JsonNode opts = readNode(optionsJson);
+        List<Map<String, Object>> views = new ArrayList<>();
+        for (SubscriptionRec sub : subscriptionsInOrder()) {
+            if (!topic.equals(sub.topic) || !sub.active) {
+                continue;
+            }
+            // enqueueOne's unique-key scan gives keyed publishes per-subscriber
+            // dedup: a republished key resolves to the existing delivery.
+            String id = enqueueOne(sub.taskName, payload, deliveryOptions(opts, sub));
+            views.add(jobView(jobs.get(id)));
+        }
+        return toJson(views);
+    }
+
+    private static String subscriptionKey(String topic, String name) {
+        return topic + "\0" + name;
+    }
+
+    /** Registration order (creation seq), matching the core's stable listing order. */
+    private List<SubscriptionRec> subscriptionsInOrder() {
+        List<SubscriptionRec> ordered = new ArrayList<>(subscriptions.values());
+        ordered.sort(Comparator.comparingLong(sub -> sub.createdSeq));
+        return ordered;
+    }
+
+    private static Map<String, Object> subscriptionView(SubscriptionRec sub) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("topic", sub.topic);
+        view.put("subscriptionName", sub.name);
+        view.put("taskName", sub.taskName);
+        view.put("queue", sub.queue);
+        view.put("active", sub.active);
+        view.put("durable", sub.durable);
+        view.put("ownerWorkerId", sub.ownerWorkerId);
+        return view;
+    }
+
+    /**
+     * One delivery's enqueue options: routing from the subscription, delivery
+     * settings resolving publish override → the subscriber task's defaults →
+     * zero, the idempotency key salted per subscriber (the unique-key scan is
+     * global, so a raw key would dedup away all but one delivery), and the
+     * caller's notes stamped with {@code topic}/{@code subscription}.
+     */
+    private static ObjectNode deliveryOptions(JsonNode opts, SubscriptionRec sub) {
+        JsonNode taskDefaults = opts == null ? null : opts.path("taskDefaults").get(sub.taskName);
+        ObjectNode delivery = JSON.createObjectNode();
+        delivery.put("queue", sub.queue);
+        delivery.put("priority", resolveDeliveryInt(opts, taskDefaults, "priority"));
+        delivery.put("maxRetries", resolveDeliveryInt(opts, taskDefaults, "maxRetries"));
+        delivery.put("timeoutMs", resolveDeliveryLong(opts, taskDefaults, "timeoutMs"));
+        delivery.put("delayMs", optLong(opts, "delayMs", 0));
+        String idempotencyKey = text(opts, "idempotencyKey");
+        if (idempotencyKey != null) {
+            delivery.put("uniqueKey", idempotencyKey + "::" + sub.name);
+        }
+        String metadata = text(opts, "metadata");
+        if (metadata != null) {
+            delivery.put("metadata", metadata);
+        }
+        delivery.put("notes", deliveryNotes(text(opts, "notes"), sub));
+        return delivery;
+    }
+
+    private static int resolveDeliveryInt(JsonNode opts, JsonNode taskDefaults, String field) {
+        JsonNode override = opts == null ? null : opts.get(field);
+        if (override != null && !override.isNull()) {
+            return override.asInt();
+        }
+        return optInt(taskDefaults, field, 0);
+    }
+
+    private static long resolveDeliveryLong(JsonNode opts, JsonNode taskDefaults, String field) {
+        JsonNode override = opts == null ? null : opts.get(field);
+        if (override != null && !override.isNull()) {
+            return override.asLong();
+        }
+        return optLong(taskDefaults, field, 0);
+    }
+
+    /** The caller's notes (if any) with {@code topic} and {@code subscription} stamped in. */
+    private static String deliveryNotes(String callerNotes, SubscriptionRec sub) {
+        ObjectNode notes = JSON.createObjectNode();
+        if (callerNotes != null) {
+            JsonNode parsed = readNode(callerNotes);
+            if (parsed.isObject()) {
+                notes.setAll((ObjectNode) parsed);
+            }
+        }
+        notes.put("topic", sub.topic);
+        notes.put("subscription", sub.name);
+        return notes.toString();
+    }
+
     // ── Worker ──────────────────────────────────────────────────────
 
     @Override
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
-        InMemoryWorker worker = new InMemoryWorker(bridge, parseQueues(optionsJson));
+        JsonNode options = readNode(optionsJson);
+        String workerId = "im-worker-" + seq.incrementAndGet();
+        registerWorkerSubscriptions(workerId, options);
+        liveWorkers.add(workerId);
+        InMemoryWorker worker = new InMemoryWorker(bridge, parseQueues(optionsJson), workerId);
         workers.add(worker);
         worker.start();
         return worker;
+    }
+
+    /** Register the worker's declared subscriptions; ephemeral ones bind to its id. */
+    private void registerWorkerSubscriptions(String workerId, JsonNode options) {
+        JsonNode specs = options == null ? null : options.get("subscriptions");
+        if (specs == null || !specs.isArray()) {
+            return;
+        }
+        for (JsonNode spec : specs) {
+            boolean durable = spec.path("durable").asBoolean(true);
+            registerSubscription(
+                    text(spec, "topic"),
+                    text(spec, "subscriptionName"),
+                    text(spec, "taskName"),
+                    optText(spec, "queue", DEFAULT_QUEUE),
+                    durable,
+                    durable ? null : workerId);
+        }
     }
 
     /** The worker's queue filter from its options JSON; empty = consume every queue. */
@@ -658,6 +839,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
         view.put("uniqueKey", job.uniqueKey);
         view.put("namespace", job.namespace);
         view.put("metadata", job.metadata);
+        view.put("notes", job.notes);
         return view;
     }
 
@@ -722,7 +904,37 @@ public final class InMemoryQueueBackend implements QueueBackend {
         String uniqueKey;
         String namespace;
         String metadata;
+        String notes;
         volatile boolean cancelRequested;
+    }
+
+    /** A topic subscription row. Keyed by {@link #subscriptionKey}. */
+    private static final class SubscriptionRec {
+        final String topic;
+        final String name;
+        final String taskName;
+        final String queue;
+        final boolean durable;
+        final String ownerWorkerId;
+        final long createdSeq;
+        volatile boolean active = true;
+
+        SubscriptionRec(
+                String topic,
+                String name,
+                String taskName,
+                String queue,
+                boolean durable,
+                String ownerWorkerId,
+                long createdSeq) {
+            this.topic = topic;
+            this.name = name;
+            this.taskName = taskName;
+            this.queue = queue;
+            this.durable = durable;
+            this.ownerWorkerId = ownerWorkerId;
+            this.createdSeq = createdSeq;
+        }
     }
 
     private static final class LockRec {
@@ -743,13 +955,15 @@ public final class InMemoryQueueBackend implements QueueBackend {
     private final class InMemoryWorker implements WorkerControl {
         private final WorkerBridge bridge;
         private final java.util.Set<String> queues;
+        private final String workerId;
         private final Map<Long, String> inFlight = new ConcurrentHashMap<>();
         private volatile boolean running = true;
         private Thread loop;
 
-        InMemoryWorker(WorkerBridge bridge, java.util.Set<String> queues) {
+        InMemoryWorker(WorkerBridge bridge, java.util.Set<String> queues, String workerId) {
             this.bridge = bridge;
             this.queues = queues;
+            this.workerId = workerId;
         }
 
         void start() {
@@ -819,6 +1033,10 @@ public final class InMemoryQueueBackend implements QueueBackend {
             if (loop != null) {
                 loop.interrupt();
             }
+            // This worker just went away: its ephemeral subscriptions are now
+            // dead-owned, so reap immediately (mirrors the native shutdown path).
+            liveWorkers.remove(workerId);
+            reapEphemeralSubscriptions();
         }
 
         @Override

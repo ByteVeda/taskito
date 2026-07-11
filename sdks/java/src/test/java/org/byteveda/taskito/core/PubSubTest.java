@@ -1,0 +1,238 @@
+package org.byteveda.taskito.core;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.internal.JniQueueBackend;
+import org.byteveda.taskito.model.Job;
+import org.byteveda.taskito.model.JobStatus;
+import org.byteveda.taskito.model.Subscription;
+import org.byteveda.taskito.pubsub.PublishOptions;
+import org.byteveda.taskito.pubsub.SubscriptionOptions;
+import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.Worker;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+
+class PubSubTest {
+
+    private static final Task<String> SEND_EMAIL = Task.of("pubsub.send_email", String.class);
+    private static final Task<String> TRACK_ORDER = Task.of("pubsub.track_order", String.class);
+
+    private Taskito open(Path dir) {
+        return Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open();
+    }
+
+    @Test
+    void subscriptionNameDefaultsToTaskName(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+            List<Subscription> subs = queue.listSubscriptions("orders");
+            assertEquals(1, subs.size());
+            Subscription sub = subs.get(0);
+            assertEquals("orders", sub.topic);
+            assertEquals(SEND_EMAIL.name(), sub.name);
+            assertEquals(SEND_EMAIL.name(), sub.taskName);
+            assertEquals("default", sub.queue);
+            assertTrue(sub.active);
+            assertTrue(sub.durable);
+            assertEquals(List.of("orders"), queue.listTopics());
+        }
+    }
+
+    @Test
+    void redeclareUpdatesRoutingInsteadOfDuplicating(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe(
+                    "orders",
+                    SEND_EMAIL,
+                    SubscriptionOptions.builder().name("email").build());
+            queue.subscribe(
+                    "orders",
+                    TRACK_ORDER,
+                    SubscriptionOptions.builder().name("email").queue("emails").build());
+            List<Subscription> subs = queue.listSubscriptions("orders");
+            assertEquals(1, subs.size());
+            assertEquals(TRACK_ORDER.name(), subs.get(0).taskName);
+            assertEquals("emails", subs.get(0).queue);
+        }
+    }
+
+    @Test
+    void unsubscribeReportsWhetherAnythingWasRemoved(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+            assertTrue(queue.unsubscribe("orders", SEND_EMAIL.name()));
+            assertFalse(queue.unsubscribe("orders", SEND_EMAIL.name()));
+            assertTrue(queue.listSubscriptions().isEmpty());
+        }
+    }
+
+    @Test
+    void publishWithoutSubscribersIsANoOp(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            assertTrue(queue.publish("orders", "o-1").isEmpty());
+            assertEquals(0, queue.stats().pending);
+        }
+    }
+
+    @Test
+    void publishFansOutOnePerSubscriberWithStampedNotes(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+            queue.subscribe("orders", TRACK_ORDER);
+
+            List<Job> deliveries = queue.publish(
+                    "orders",
+                    "o-1",
+                    PublishOptions.builder().notes(Map.of("tenant", "acme")).build());
+
+            assertEquals(2, deliveries.size());
+            for (Job job : deliveries) {
+                Map<String, Object> notes = job.notesMap().orElseThrow();
+                assertEquals("orders", notes.get("topic"));
+                assertEquals("acme", notes.get("tenant"));
+            }
+            List<String> tasks = new ArrayList<>();
+            deliveries.forEach(job -> tasks.add(job.taskName));
+            Collections.sort(tasks);
+            assertEquals(List.of(SEND_EMAIL.name(), TRACK_ORDER.name()), tasks);
+        }
+    }
+
+    @Test
+    void pauseBlocksDeliveriesAndResumeRestoresThem(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+            queue.subscribe("orders", TRACK_ORDER);
+
+            assertTrue(queue.pauseSubscription("orders", TRACK_ORDER.name()));
+            List<Job> paused = queue.publish("orders", "o-1");
+            assertEquals(1, paused.size());
+            assertEquals(SEND_EMAIL.name(), paused.get(0).taskName);
+            // The paused row stays registered (visible in the all-topics listing).
+            assertEquals(1, queue.listSubscriptions("orders").size());
+            assertEquals(2, queue.listSubscriptions().size());
+
+            assertTrue(queue.resumeSubscription("orders", TRACK_ORDER.name()));
+            assertEquals(2, queue.publish("orders", "o-2").size());
+            assertFalse(queue.pauseSubscription("orders", "unknown"));
+        }
+    }
+
+    @Test
+    void idempotencyKeyDedupesPerSubscriber(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+            queue.subscribe("orders", TRACK_ORDER);
+            PublishOptions keyed =
+                    PublishOptions.builder().idempotencyKey("evt-42").build();
+
+            List<Job> first = queue.publish("orders", "o-1", keyed);
+            List<Job> second = queue.publish("orders", "o-1", keyed);
+            assertEquals(2, first.size());
+            assertEquals(2, second.size());
+            assertEquals(ids(first), ids(second));
+            assertEquals(2, queue.stats().pending);
+
+            // A subscriber added after the first publish still gets its own copy.
+            queue.subscribe(
+                    "orders",
+                    SEND_EMAIL,
+                    SubscriptionOptions.builder().name("audit").build());
+            List<Job> third = queue.publish("orders", "o-1", keyed);
+            assertEquals(3, third.size());
+            assertEquals(3, queue.stats().pending);
+        }
+    }
+
+    @Test
+    void deliveriesHonorSubscriberTaskDefaultsAndPublishOverrides(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL.priority(7).maxRetries(2));
+            queue.subscribe("orders", TRACK_ORDER);
+
+            for (Job job : queue.publish("orders", "o-1")) {
+                if (job.taskName.equals(SEND_EMAIL.name())) {
+                    assertEquals(7, job.priority);
+                    assertEquals(2, job.maxRetries);
+                } else {
+                    assertEquals(0, job.priority);
+                }
+            }
+
+            // An explicit publish-level override beats the subscriber's defaults.
+            List<Job> overridden = queue.publish(
+                    "orders", "o-2", PublishOptions.builder().priority(9).build());
+            overridden.forEach(job -> assertEquals(9, job.priority));
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void ephemeralSubscriptionRegistersWithARunningWorker(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe(
+                    "orders",
+                    SEND_EMAIL,
+                    SubscriptionOptions.builder().durable(false).build());
+            // No owning worker yet, so the subscription is not registered.
+            assertTrue(queue.publish("orders", "o-1").isEmpty());
+
+            try (Worker worker =
+                    queue.worker().handle(SEND_EMAIL, payload -> payload).start()) {
+                List<Job> deliveries = queue.publish("orders", "o-2");
+                assertEquals(1, deliveries.size());
+                Job done = queue.awaitJob(deliveries.get(0).id, Duration.ofSeconds(10))
+                        .orElseThrow();
+                assertEquals(JobStatus.COMPLETE, done.status);
+                assertEquals("o-2", queue.getResult(done.id, String.class).orElseThrow());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void reapRemovesDeadOwnedSubscriptionsOnly(@TempDir Path dir) throws Exception {
+        String options = new ObjectMapper()
+                .writeValueAsString(
+                        Map.of("backend", "sqlite", "dsn", dir.resolve("t.db").toString()));
+        JniQueueBackend backend = JniQueueBackend.open(options);
+        try (Taskito queue = Taskito.builder().open(backend)) {
+            try (Worker worker = queue.worker().start()) {
+                String liveWorkerId = queue.listWorkers().get(0).workerId;
+                backend.registerSubscription("orders", "live", SEND_EMAIL.name(), "default", false, liveWorkerId);
+                backend.registerSubscription("orders", "ghost", SEND_EMAIL.name(), "default", false, "gone-worker");
+                backend.registerSubscription("orders", "durable", SEND_EMAIL.name(), "default", true, null);
+
+                // The running worker's own heartbeat may reap concurrently, so
+                // assert the converged state rather than this call's count.
+                backend.reapEphemeralSubscriptions();
+                List<String> names = new ArrayList<>();
+                queue.listSubscriptions("orders").forEach(sub -> names.add(sub.name));
+                Collections.sort(names);
+                assertEquals(List.of("durable", "live"), names);
+            }
+        }
+    }
+
+    private static List<String> ids(List<Job> jobs) {
+        List<String> ids = new ArrayList<>();
+        jobs.forEach(job -> ids.add(job.id));
+        Collections.sort(ids);
+        return ids;
+    }
+}

@@ -162,6 +162,50 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException("periodic tasks not supported by this backend");
     }
 
+    // ── Pub/Sub ─────────────────────────────────────────────────────
+    // Optional capability: default to throwing so existing custom backends keep
+    // compiling and fail explicitly only when pub/sub is actually used.
+    String PUBSUB_UNSUPPORTED = "pub/sub not supported by this backend";
+
+    /** Insert or update a topic subscription (idempotent on topic + name). */
+    default void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** A JSON array of subscriptions — all of them, or only a topic's active ones. */
+    default String listSubscriptionsJson(String topicOrNull) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** Remove a subscription; false if none matched. */
+    default boolean unsubscribe(String topic, String subscriptionName) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** Pause (false) or resume (true) a subscription; false if none matched. */
+    default boolean setSubscriptionActive(String topic, String subscriptionName, boolean active) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** Drop ephemeral subscriptions whose owning worker is gone; returns the count removed. */
+    default long reapEphemeralSubscriptions() {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /**
+     * Fan a payload out to every active subscription of {@code topic}. Returns
+     * the created jobs as a JSON array — empty when nothing is subscribed.
+     */
+    default String publishJson(String topic, byte[] payload, String optionsJson) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
     // ── Workflows ───────────────────────────────────────────────────
     // Optional capability: default to throwing so existing custom backends keep
     // compiling and fail explicitly only when workflows are actually used.

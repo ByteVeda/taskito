@@ -287,6 +287,46 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull) {
+        withOpenHandle(() -> {
+            NativeQueue.registerSubscription(
+                    handle, topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull);
+            return null;
+        });
+    }
+
+    @Override
+    public String listSubscriptionsJson(String topicOrNull) {
+        return withOpenHandle(() -> NativeQueue.listSubscriptions(handle, topicOrNull));
+    }
+
+    @Override
+    public boolean unsubscribe(String topic, String subscriptionName) {
+        return withOpenHandle(() -> NativeQueue.unsubscribe(handle, topic, subscriptionName));
+    }
+
+    @Override
+    public boolean setSubscriptionActive(String topic, String subscriptionName, boolean active) {
+        return withOpenHandle(() -> NativeQueue.setSubscriptionActive(handle, topic, subscriptionName, active));
+    }
+
+    @Override
+    public long reapEphemeralSubscriptions() {
+        return withOpenHandle(() -> NativeQueue.reapEphemeralSubscriptions(handle));
+    }
+
+    @Override
+    public String publishJson(String topic, byte[] payload, String optionsJson) {
+        return withOpenHandle(() -> NativeQueue.publish(handle, topic, payload, optionsJson));
+    }
+
+    @Override
     public String submitWorkflow(
             String name,
             int version,
