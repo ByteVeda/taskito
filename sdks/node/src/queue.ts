@@ -165,7 +165,9 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     if (typeof this.native.markWorkflowNodeResult !== "function") {
       return undefined;
     }
-    this.workflowTracker ??= new WorkflowTracker(this.native, this.serializer);
+    this.workflowTracker ??= new WorkflowTracker(this.native, this.serializer, (taskName, args) =>
+      this.encodeTaskPayload(taskName, args),
+    );
     return this.workflowTracker;
   }
 

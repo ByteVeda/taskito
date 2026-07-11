@@ -94,6 +94,10 @@ export class WorkflowTracker {
   constructor(
     private readonly native: NativeQueue,
     private readonly serializer: Serializer,
+    /** Per-task payload encoder (serializer + named codecs) so tracker-created
+     *  jobs decode under the worker's unconditional codec reversal. */
+    private readonly encodeCall: (taskName: string, args: unknown[]) => Uint8Array = (_, args) =>
+      serializeCall(this.serializer, args),
   ) {
     this.cache = new WorkflowCacheStore(native);
   }
@@ -310,7 +314,7 @@ export class WorkflowTracker {
     }
     const job = jobId ? this.native.getJob(jobId) : null;
     const result = job?.result ? this.serializer.deserialize(job.result) : null;
-    const payload = Buffer.from(serializeCall(this.serializer, [result]));
+    const payload = Buffer.from(this.encodeCall(meta.compensate, [result]));
     this.native.enqueueCompensation(
       runId,
       node,
@@ -394,7 +398,7 @@ export class WorkflowTracker {
       (JSON.parse(meta.fan_out).itemsFrom as string | null) ?? singlePred(plan, node);
     const items = this.readArrayResult(runId, itemsFrom);
     const childNames = items.map((_, i) => `${node}[${i}]`);
-    const childPayloads = items.map((item) => Buffer.from(serializeCall(this.serializer, [item])));
+    const childPayloads = items.map((item) => Buffer.from(this.encodeCall(meta.task_name, [item])));
 
     this.native.expandFanOut(
       runId,
@@ -434,7 +438,7 @@ export class WorkflowTracker {
       return;
     }
     // The combiner receives the whole list as its single positional argument.
-    const payload = Buffer.from(serializeCall(this.serializer, [results]));
+    const payload = Buffer.from(this.encodeCall(meta.task_name, [results]));
     this.native.createDeferredJob(
       runId,
       fanInNode,
@@ -585,7 +589,7 @@ export class WorkflowTracker {
     }
     const payload = meta.args_template
       ? Buffer.from(meta.args_template, "base64")
-      : Buffer.from(serializeCall(this.serializer, []));
+      : Buffer.from(this.encodeCall(meta.task_name, []));
     this.native.createDeferredJob(
       runId,
       node,
@@ -621,6 +625,7 @@ export class WorkflowTracker {
       return;
     }
     const value = this.serializer.deserialize(cached);
+    // CACHE_TASK is internal and has no per-task codecs; keep the bare wire shape.
     const payload = Buffer.from(serializeCall(this.serializer, [value]));
     this.native.createDeferredJob(
       runId,
