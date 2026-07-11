@@ -47,10 +47,10 @@ export function tokenMatches(expected: string, presented: string | undefined): b
 }
 
 /** Persist a valid token as an httpOnly cookie so the SPA's later calls authenticate. */
-export function setTokenCookie(res: ServerResponse, token: string): void {
+export function setTokenCookie(res: ServerResponse, token: string, secure: boolean): void {
   res.setHeader(
     "set-cookie",
-    `${TOKEN_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`,
+    `${TOKEN_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${secure ? "; Secure" : ""}`,
   );
 }
 

@@ -116,7 +116,7 @@ async function dispatch(
     // the URL so it can't leak via history or the Referer header.
     const queryToken = url.searchParams.get("token");
     if (auth && req.method === "GET" && queryToken && tokenMatches(auth.token, queryToken)) {
-      setTokenCookie(res, auth.token);
+      setTokenCookie(res, auth.token, options.secureCookies !== false);
       url.searchParams.delete("token");
       redirect(res, `${url.pathname}${url.search}`);
       return;
