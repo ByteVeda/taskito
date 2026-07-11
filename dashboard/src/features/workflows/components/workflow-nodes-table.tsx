@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Layers } from "lucide-react";
-import { Badge, EmptyState } from "@/components/ui";
+import { Badge, EmptyState, TaskErrorSummary } from "@/components/ui";
 import type { WorkflowNode } from "@/lib/api-types";
 import { WORKFLOW_NODE_LABEL, WORKFLOW_NODE_TONE } from "@/lib/status";
 import { formatDuration, formatRelative } from "@/lib/time";
@@ -76,7 +76,7 @@ function NodeRow({ node }: { node: WorkflowNode }) {
         {duration ?? "—"}
       </td>
       <td className="max-w-[200px] truncate px-4 py-3 text-[0.8rem] text-danger">
-        {node.error ?? ""}
+        {node.error ? <TaskErrorSummary error={node.error} /> : ""}
       </td>
     </tr>
   );

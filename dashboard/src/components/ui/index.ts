@@ -103,5 +103,6 @@ export {
   TableRow,
 } from "./table";
 export { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
+export { TaskErrorBlock, TaskErrorSummary } from "./task-error";
 export { Toaster, toast } from "./toaster";
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./tooltip";

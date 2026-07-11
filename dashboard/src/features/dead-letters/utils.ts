@@ -1,4 +1,5 @@
 import type { DeadLetter } from "@/lib/api-types";
+import { parseTaskError } from "@/lib/task-error";
 
 export interface DeadLetterGroup {
   /** Stable key: `taskName::ExceptionClass`. */
@@ -21,14 +22,17 @@ const EMPTY_ERROR_LABEL = "(no error captured)";
 const UNKNOWN_EXCEPTION = "Error";
 
 /**
- * Extract the exception class from a Python traceback string.
+ * Extract the exception class from an error string.
  *
- * Python tracebacks end with a line like ``ValueError: permanent failure…``.
- * We read the last non-blank line and pull the token before the first `:`.
- * Falls back to "Error" if the input isn't a recognisable traceback.
+ * Structured errors (canonical JSON per the cross-SDK contract) carry the
+ * class in `errtype`. Legacy Python tracebacks end with a line like
+ * ``ValueError: permanent failure…`` — we read the last non-blank line and
+ * pull the token before the first `:`. Falls back to "Error" otherwise.
  */
 export function extractExceptionClass(error: string | null | undefined): string {
   if (!error) return UNKNOWN_EXCEPTION;
+  const structured = parseTaskError(error);
+  if (structured) return structured.errtype;
   const trimmed = error.trim();
   if (!trimmed) return UNKNOWN_EXCEPTION;
   const lines = trimmed.split("\n");
@@ -47,10 +51,13 @@ export function extractExceptionClass(error: string | null | undefined): string 
 
 /**
  * Extract the one-line reason from a traceback — the text after the exception
- * class on the final traceback line. Useful for a group's sub-summary.
+ * class on the final traceback line (or `message` for structured errors).
+ * Useful for a group's sub-summary.
  */
 export function extractReason(error: string | null | undefined): string {
   if (!error) return EMPTY_ERROR_LABEL;
+  const structured = parseTaskError(error);
+  if (structured) return structured.message || EMPTY_ERROR_LABEL;
   const trimmed = error.trim();
   if (!trimmed) return EMPTY_ERROR_LABEL;
   const lines = trimmed.split("\n");

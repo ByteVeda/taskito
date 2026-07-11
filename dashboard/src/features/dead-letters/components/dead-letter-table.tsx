@@ -9,6 +9,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TaskErrorSummary,
 } from "@/components/ui";
 import type { DeadLetter } from "@/lib/api-types";
 import { formatRelative } from "@/lib/time";
@@ -60,9 +61,10 @@ function DeadLetterTableRow({ item }: { item: DeadLetter }) {
       <TableCell className="text-[var(--fg-muted)]">{item.queue}</TableCell>
       <TableCell className="max-w-[300px]">
         {item.error ? (
-          <span className="block truncate font-mono text-[0.78rem] text-danger" title={item.error}>
-            {item.error}
-          </span>
+          <TaskErrorSummary
+            error={item.error}
+            className="block truncate font-mono text-[0.78rem] text-danger"
+          />
         ) : (
           <span className="text-[var(--fg-subtle)]">—</span>
         )}
