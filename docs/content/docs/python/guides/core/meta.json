@@ -8,6 +8,7 @@
     "scheduling",
     "predicates",
     "batching",
+    "pubsub",
     "workflows"
   ]
 }

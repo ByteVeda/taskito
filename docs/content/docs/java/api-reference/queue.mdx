@@ -84,6 +84,20 @@ try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open()) {
 | `registerPeriodic(PeriodicTask)` | Register (or replace) a cron task → next fire time (Unix ms). |
 | `listPeriodic()` / `deletePeriodic(name)` / `pausePeriodic(name)` / `resumePeriodic(name)` | Periodic task management. |
 
+## Pub/Sub
+
+See [Pub/Sub](/java/guides/core/pubsub) for the full guide (delivery
+semantics, lifecycle, cross-SDK topics).
+
+| Method | Description |
+|---|---|
+| `subscribe(topic, Task<T>)` / `subscribe(topic, Task<T>, SubscriptionOptions)` | Wire `Task` into `topic`'s routing (durable by default). Register the handler on the worker separately, as for any task. |
+| `publish(topic, payload)` / `publish(topic, payload, PublishOptions)` → `List<Job>` | Fan a message out to every active subscription — one job each. Empty list when nothing is subscribed. |
+| `unsubscribe(topic, name)` | Remove a subscription; `false` if none matched. |
+| `pauseSubscription(topic, name)` / `resumeSubscription(topic, name)` | Stop/resume deliveries without unregistering; `false` if none matched. |
+| `listSubscriptions()` / `listSubscriptions(topic)` | Every subscription, or one topic's active ones. |
+| `listTopics()` | Distinct topics with at least one subscription. |
+
 ## Subsystems
 
 | Method | Description |
