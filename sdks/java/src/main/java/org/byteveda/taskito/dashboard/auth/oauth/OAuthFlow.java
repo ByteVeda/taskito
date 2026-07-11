@@ -42,8 +42,8 @@ public final class OAuthFlow {
         if (!this.providers.isEmpty() && config.adminEmails().isEmpty()) {
             // OAuth users only ever get the viewer role without an allowlist, so an
             // OAuth-only deployment would silently have zero admins.
-            LOG.warn("OAuth is configured without admin emails: every OAuth login gets the viewer role."
-                    + " Set " + OAuthConfig.ENV_ADMIN_EMAILS + " (or OAuthConfig.adminEmails) to grant admin access.");
+            LOG.warn("OAuth is configured without admin emails: every OAuth login gets the viewer role." + " Set "
+                    + OAuthConfig.ENV_ADMIN_EMAILS + " (or OAuthConfig.adminEmails) to grant admin access.");
         }
     }
 

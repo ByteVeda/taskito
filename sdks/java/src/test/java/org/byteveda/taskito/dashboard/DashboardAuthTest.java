@@ -196,8 +196,7 @@ class DashboardAuthTest {
             HttpResponse<String> boot = raw(port, "GET", "/?token=sekret&tab=jobs", null);
             assertEquals(302, boot.statusCode());
             assertEquals("/?tab=jobs", boot.headers().firstValue("Location").orElse(""));
-            assertTrue(boot.headers().allValues("set-cookie").stream()
-                    .anyMatch(c -> c.startsWith("taskito_token=")));
+            assertTrue(boot.headers().allValues("set-cookie").stream().anyMatch(c -> c.startsWith("taskito_token=")));
 
             // A wrong query token neither bootstraps nor redirects.
             HttpResponse<String> miss = raw(port, "GET", "/?token=nope", null);
