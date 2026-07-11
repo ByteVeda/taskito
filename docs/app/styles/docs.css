@@ -52,6 +52,20 @@ body {
   .side-search {
     display: flex;
   }
+  /* The dropdown button already names the SDK; the label is dead weight at
+     phone widths where the topbar is fighting for room. */
+  .sdk-dd-label {
+    display: none;
+  }
+}
+@media (max-width: 480px) {
+  /* Collapse the SDK picker to its language icon + caret so the topbar's
+     min-content width fits small phones (down to 320px) without pushing the
+     theme/GitHub buttons off-screen. The icon still identifies the SDK and
+     the accessible name is unchanged. */
+  .sdk-dd-name {
+    display: none;
+  }
 }
 .side-search:hover {
   border-color: var(--line3);
@@ -384,6 +398,9 @@ body {
   padding: 1.5px 6px;
   border-radius: 5px;
   color: var(--txt);
+  /* Long identifiers (env vars, dotted paths) must break rather than widen
+     the page into a horizontal scroll on phones. */
+  overflow-wrap: anywhere;
 }
 .article a {
   color: var(--indigo-br);

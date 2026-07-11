@@ -351,6 +351,16 @@
   .kbar {
     display: none;
   }
+  /* Tighten the bar so its min-content width fits small phones (375px) —
+     otherwise the whole page gains a horizontal scroll and the right-side
+     icons land off-screen. */
+  .nav {
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  .navright {
+    gap: 8px;
+  }
   .foot-grid {
     grid-template-columns: 1fr 1fr;
   }

@@ -123,7 +123,7 @@ function SdkSelect() {
         onClick={() => setOpen((o) => !o)}
       >
         <span className="sdk-dd-icon">{SDK_ICONS[active.id]}</span>
-        <span>{active.label}</span>
+        <span className="sdk-dd-name">{active.label}</span>
         <ChevronDown className="sdk-caret" size={13} aria-hidden="true" />
       </button>
       {open ? (
