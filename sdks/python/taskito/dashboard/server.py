@@ -296,10 +296,10 @@ def _make_handler(
             if path == "/health":
                 self._json_response(check_health())
             elif path == "/readiness":
-                if self._metrics_token_ok():
+                if self._probe_authorized(ctx):
                     self._json_response(check_readiness(queue))
             elif path == "/metrics":
-                if self._metrics_token_ok():
+                if self._probe_authorized(ctx):
                     self._serve_prometheus_metrics()
             else:
                 self._json_response({"error": "Not found"}, status=404)
@@ -606,19 +606,23 @@ def _make_handler(
             self.end_headers()
             self.wfile.write(body)
 
-        def _metrics_token_ok(self) -> bool:
-            """Gate ``/metrics`` and ``/readiness`` behind an optional bearer token.
+        def _probe_authorized(self, ctx: RequestContext) -> bool:
+            """Gate ``/metrics`` and ``/readiness``.
 
-            When ``TASKITO_DASHBOARD_METRICS_TOKEN`` is unset the endpoints stay
-            public (probe-friendly default). When set, a matching
-            ``Authorization: Bearer <token>`` header is required. Writes a 401
-            and returns ``False`` when the check fails.
+            Accepted credentials: the optional ``TASKITO_DASHBOARD_METRICS_TOKEN``
+            bearer token (scraper-friendly) or, when session auth is enabled, a
+            valid dashboard session. Open mode with no token configured stays
+            public (probe-friendly default). Writes a 401 and returns ``False``
+            when every applicable check fails.
             """
             token = os.environ.get("TASKITO_DASHBOARD_METRICS_TOKEN")
-            if not token:
+            if token:
+                header = self.headers.get("Authorization", "")
+                if hmac.compare_digest(header, f"Bearer {token}"):
+                    return True
+            elif not auth_enabled:
                 return True
-            header = self.headers.get("Authorization", "")
-            if hmac.compare_digest(header, f"Bearer {token}"):
+            if auth_enabled and ctx.is_authenticated:
                 return True
             self._json_response({"error": "not_authenticated"}, status=401)
             return False
