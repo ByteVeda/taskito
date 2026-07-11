@@ -337,6 +337,20 @@ def test_oauth_users_namespace_by_slot(queue: Queue) -> None:
 
 @pytest.fixture
 def dashboard_server(queue: Queue) -> Generator[tuple[str, Queue]]:
+    handler = _make_handler(queue, auth_enabled=True)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{port}", queue
+    finally:
+        server.shutdown()
+
+
+@pytest.fixture
+def open_dashboard_server(queue: Queue) -> Generator[tuple[str, Queue]]:
+    """Server with the default configuration — auth disabled."""
     handler = _make_handler(queue)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port = server.server_address[1]
@@ -401,7 +415,7 @@ def test_auth_status_before_setup(dashboard_server: tuple[str, Queue]) -> None:
     base, _ = dashboard_server
     status, body, _ = _get(f"{base}/api/auth/status")
     assert status == 200
-    assert body == {"setup_required": True}
+    assert body == {"auth_enabled": True, "setup_required": True}
 
 
 def test_protected_route_returns_503_before_setup(dashboard_server: tuple[str, Queue]) -> None:
@@ -586,3 +600,57 @@ def test_health_endpoint_is_public(dashboard_server: tuple[str, Queue]) -> None:
     AuthStore(queue).create_user("alice", "hunter2-secret")
     status, _, _ = _get(f"{base}/health")
     assert status == 200
+
+
+# ── Auth disabled (the default) ────────────────────────────────────────
+
+
+def test_auth_disabled_status(open_dashboard_server: tuple[str, Queue]) -> None:
+    base, _ = open_dashboard_server
+    status, body, _ = _get(f"{base}/api/auth/status")
+    assert status == 200
+    assert body == {"auth_enabled": False, "setup_required": False}
+
+
+def test_auth_disabled_serves_api_without_session(
+    open_dashboard_server: tuple[str, Queue],
+) -> None:
+    base, _ = open_dashboard_server
+    status, _, _ = _get(f"{base}/api/stats")
+    assert status == 200
+
+
+def test_auth_disabled_allows_mutations_without_csrf(
+    open_dashboard_server: tuple[str, Queue],
+) -> None:
+    base, _ = open_dashboard_server
+    status, _, _ = _post(f"{base}/api/dead-letters/purge", {})
+    assert status == 200
+
+
+def test_auth_disabled_ignores_existing_users(
+    open_dashboard_server: tuple[str, Queue],
+) -> None:
+    base, queue = open_dashboard_server
+    AuthStore(queue).create_user("alice", "hunter2-secret")
+    status, _, _ = _get(f"{base}/api/stats")
+    assert status == 200
+
+
+def test_auth_disabled_rejects_auth_endpoints(
+    open_dashboard_server: tuple[str, Queue],
+) -> None:
+    base, _ = open_dashboard_server
+    for method, path in [
+        ("GET", "/api/auth/whoami"),
+        ("GET", "/api/auth/providers"),
+        ("POST", "/api/auth/login"),
+        ("POST", "/api/auth/setup"),
+        ("POST", "/api/auth/logout"),
+    ]:
+        if method == "GET":
+            status, body, _ = _get(f"{base}{path}")
+        else:
+            status, body, _ = _post(f"{base}{path}", {})
+        assert status == 404, path
+        assert body == {"error": "auth_disabled"}, path

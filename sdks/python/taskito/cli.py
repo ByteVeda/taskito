@@ -61,6 +61,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     dash_parser.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
     dash_parser.add_argument(
+        "--auth",
+        action="store_true",
+        default=False,
+        help="Enable session authentication (login/setup, CSRF, RBAC); off by default",
+    )
+    dash_parser.add_argument(
         "--insecure-cookies",
         action="store_true",
         default=False,
@@ -295,6 +301,7 @@ def run_dashboard(args: argparse.Namespace) -> None:
         host=args.host,
         port=args.port,
         secure_cookies=not args.insecure_cookies,
+        auth_enabled=args.auth,
     )
 
 

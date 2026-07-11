@@ -52,10 +52,12 @@ request timeout.
 ## Dashboard
 
 The [dashboard](/node/guides/operations/dashboard) runs in **open mode** by
-default — anyone who reaches the port has full control. Pass `auth: { token }` to
-gate the API with a shared bearer token, bind it to localhost, or mount it behind
-your own auth (login / RBAC / SSO) via the
-[Express](/node/guides/integrations/express#dashboard) /
+default — anyone who reaches the port has full control. For production,
+pass `authEnabled: true` (or `--auth`) to enable the session flow —
+first-run setup, password login, CSRF, admin/viewer roles — or
+`auth: { token }` to gate the API with a legacy shared bearer token. Either
+way, bind it to localhost or a private network, or mount it behind your own
+auth via the [Express](/node/guides/integrations/express#dashboard) /
 [Fastify](/node/guides/integrations/fastify) helpers.
 
 ## Hardening checklist
@@ -64,6 +66,7 @@ your own auth (login / RBAC / SSO) via the
 - [ ] Enqueue behind your own authn/authz — never expose storage to clients.
 - [ ] No secrets in task args; fetch them inside the handler.
 - [ ] Webhook receivers verify the HMAC signature; webhook URLs are trusted.
-- [ ] Dashboard bound to localhost or behind auth.
+- [ ] Dashboard auth enabled (`authEnabled: true` / `--auth`), and the port
+      bound to localhost or behind auth.
 - [ ] Logs don't echo sensitive payloads (use `onEnqueue` to
       [redact](/node/guides/resources/interception)).

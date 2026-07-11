@@ -31,8 +31,28 @@ It serves the SPA plus the `/api/*` REST contract over the queue:
 See the [REST API reference](/node/guides/operations/dashboard-api) for the full
 endpoint list.
 
-Auth runs **open** by default. Pass `auth: { token }` to require a bearer token
-on every `/api/*` request (except `/api/auth/status`):
+Auth runs **open** by default — no setup screen, no login, no CSRF or
+roles. The auth endpoints respond `404 {"error": "auth_disabled"}`, except
+`GET /api/auth/status`, which reports
+`{ auth_enabled: false, setup_required: false }` so the SPA skips the login
+flow. Production deployments should enable session authentication (or keep
+the dashboard on a private network behind their own auth):
+
+```ts
+serveDashboard(queue, { port: 8787, authEnabled: true });
+```
+
+(or `taskito dashboard --auth` from the CLI). With `authEnabled: true` the
+full session flow runs: a one-time setup screen creates the first admin —
+or bootstrap it headlessly with `TASKITO_DASHBOARD_ADMIN_USER` /
+`TASKITO_DASHBOARD_ADMIN_PASSWORD` — then password login with server-side
+sessions, CSRF protection on writes, and admin/viewer roles. OAuth/SSO
+providers configured via `TASKITO_DASHBOARD_OAUTH_*` env vars apply only in
+this mode.
+
+The legacy shared-token gate is unchanged: pass `auth: { token }` to require
+a bearer token on every `/api/*` request (except `/api/auth/status`). It
+overrides `authEnabled`.
 
 ```ts
 serveDashboard(queue, { port: 8787, auth: { token: process.env.DASH_TOKEN! } });
@@ -41,8 +61,8 @@ serveDashboard(queue, { port: 8787, auth: { token: process.env.DASH_TOKEN! } });
 Requests authenticate via `Authorization: Bearer <token>`, an `X-Taskito-Token`
 header, or `?token=<token>`. Opening `/?token=<token>` once sets an httpOnly
 cookie so the SPA works for the rest of the session. The token is compared in
-constant time. For full login / RBAC / SSO, mount the dashboard inside an existing
-app behind your own auth via the
+constant time. You can also mount the dashboard inside an existing app behind
+your own auth via the
 [Express](/node/guides/integrations/express#dashboard) or
 [Fastify](/node/guides/integrations/fastify) helpers.
 

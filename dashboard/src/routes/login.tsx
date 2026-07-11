@@ -16,7 +16,7 @@ function LoginPage() {
   const status = useAuthStatus();
   const whoami = useWhoami();
 
-  if (whoami.data?.user) {
+  if (status.data?.auth_enabled === false || whoami.data?.user) {
     return <Navigate to="/" />;
   }
 

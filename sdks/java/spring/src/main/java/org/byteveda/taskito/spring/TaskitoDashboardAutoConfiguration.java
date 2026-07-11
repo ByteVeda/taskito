@@ -32,6 +32,7 @@ public class TaskitoDashboardAutoConfiguration {
                 dashboard.getPort(),
                 dashboard.getToken(),
                 dashboard.getStaticDir(),
-                dashboard.isSecureCookies());
+                dashboard.isSecureCookies(),
+                dashboard.isAuthEnabled());
     }
 }

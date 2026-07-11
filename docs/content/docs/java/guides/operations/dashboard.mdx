@@ -1,6 +1,6 @@
 ---
 title: Dashboard
-description: "Serve the bundled web dashboard and its REST API — session auth, OAuth/SSO, and legacy token mode."
+description: "Serve the bundled web dashboard and its REST API — open by default, with opt-in session auth, OAuth/SSO, and legacy token mode."
 ---
 
 The jar bundles the web dashboard SPA; `DashboardServer` serves it plus a JSON
@@ -19,10 +19,11 @@ try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
 }
 ```
 
-`DashboardServer.start(queue, port)` opens in [session-auth
-mode](#session-auth-default). `start(queue, port, token)` switches to
-[legacy shared-token mode](#legacy-shared-token-mode); four- and five-argument
-overloads add an unpacked SPA directory and a `secureCookies` flag.
+`DashboardServer.start(queue, port)` serves openly — no authentication.
+`start(queue, port, true)` enables [session auth](#session-auth-opt-in);
+`start(queue, port, token)` switches to
+[legacy shared-token mode](#legacy-shared-token-mode). The full variant is
+`start(queue, port, token, staticDir, secureCookies, authEnabled)`.
 
   </Tab>
   <Tab value="Taskito.dashboard()">
@@ -33,12 +34,16 @@ try (Taskito taskito = Taskito.builder().sqlite("taskito.db").open();
     // ...
 }
 
+// Session auth (login/setup, CSRF, roles):
+taskito.dashboard(8080, true);
+
 // Legacy shared-token mode, gating /api/* as a fixed admin identity:
 taskito.dashboard(8080, System.getenv("DASH_TOKEN"));
 ```
 
-`Taskito.dashboard(port)` / `dashboard(port, token)` are convenience defaults
-over `DashboardServer.start(...)` for the common case — one fewer import.
+`Taskito.dashboard(port)` / `dashboard(port, authEnabled)` /
+`dashboard(port, token)` are convenience defaults over
+`DashboardServer.start(...)` for the common case — one fewer import.
 
   </Tab>
   <Tab value="CLI">
@@ -50,6 +55,7 @@ taskito --url taskito.db dashboard --port 8080
 | Flag | Default | Description |
 |---|---|---|
 | `--port` | `8080` | Bind port (`0` for ephemeral) |
+| `--auth` | off | Enable session authentication (login/setup, CSRF, roles) |
 | `--token` | none | Legacy shared token gating `/api/*` — disables session auth and OAuth |
 | `--static` | bundled SPA | Directory of a prebuilt SPA, overriding the jar's extracted copy |
 | `--insecure-cookies` | off | Drop the `Secure` cookie attribute — for local HTTP development |
@@ -71,21 +77,35 @@ assets only `/api/*` responds.
 
 ## Auth
 
-Two modes, chosen by whether a `token` is passed to `start(...)` /
-`dashboard(...)`.
+Three modes: **open** (the default — no authentication), **session auth**
+(opt-in via `authEnabled` / `--auth`), and **legacy shared-token** (a
+non-null `token`, which overrides `authEnabled`).
 
-### Session auth (default)
+### Open mode (default)
 
-With no token, the dashboard runs password sign-in (and optionally
-[OAuth/OIDC](/java/guides/operations/sso)) with server-side sessions. Users
-and sessions live in the queue's settings key/value store — no dedicated
-tables — so the model is identical across SQLite, PostgreSQL, and Redis.
+With neither `authEnabled` nor a `token`, the dashboard serves openly —
+no setup screen, no login, no CSRF or roles. The auth endpoints respond
+`404 {"error": "auth_disabled"}`, except `GET /api/auth/status`, which
+returns `{"auth_enabled": false, "setup_required": false}` so the SPA
+skips the login flow. Suits local development; production deployments
+should enable session auth or keep the port on a private network.
+
+### Session auth (opt-in)
+
+With `authEnabled=true` (or `--auth`), the dashboard runs password sign-in
+(and optionally [OAuth/OIDC](/java/guides/operations/sso)) with server-side
+sessions. Users and sessions live in the queue's settings key/value store —
+no dedicated tables — so the model is identical across SQLite, PostgreSQL,
+and Redis.
 
 - **First-run setup.** On a fresh database every route except the public set
   (`/api/auth/status`, `/api/auth/login`, `/api/auth/setup`,
   `/api/auth/providers`, `/health`, `/readiness`, `/metrics`) returns
   `503 setup_required` until an admin exists. `POST /api/auth/setup` creates
   it (and signs it in); the route locks itself after the first user.
+  `GET /api/auth/status` reports
+  `{"auth_enabled": true, "setup_required": bool}` so the SPA knows which
+  screen to show.
 - **Env-admin bootstrap.** Set both `TASKITO_DASHBOARD_ADMIN_USER` and
   `TASKITO_DASHBOARD_ADMIN_PASSWORD` before starting the process to seed the
   first admin without visiting a browser — useful for containers. It's
@@ -95,8 +115,10 @@ tables — so the model is identical across SQLite, PostgreSQL, and Redis.
   ```bash
   export TASKITO_DASHBOARD_ADMIN_USER=admin
   export TASKITO_DASHBOARD_ADMIN_PASSWORD='change-me-on-first-login'
-  taskito --url taskito.db dashboard --port 8080
+  taskito --url taskito.db dashboard --port 8080 --auth
   ```
+
+  The env vars are only read when session auth is enabled.
 
   <Callout type="warning">
     Unlike a scripting-language runtime, the JVM cannot scrub a variable out
@@ -190,7 +212,8 @@ the same contract the bundled SPA consumes. All paths below are relative to
 | Settings | `settings`, `settings/{key}` |
 
 <Callout type="warning">
-  Every route above is auth-gated: session mode requires a valid session (plus
-  CSRF on writes) except the public auth routes; legacy mode requires the
-  matching token. See [Auth](#auth).
+  Gating depends on the [auth mode](#auth): open mode (the default) serves
+  every route without credentials; session mode requires a valid session
+  (plus CSRF on writes) except the public auth routes; legacy mode requires
+  the matching token.
 </Callout>

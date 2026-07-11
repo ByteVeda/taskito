@@ -78,9 +78,13 @@ queue.max_payload_bytes = 0                 # disable the cap
 
 ## Dashboard
 
-The dashboard enforces authentication once at least one user exists; until
-then every API route returns `503 setup_required`. Bootstrap the first admin
-with `TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`
+The dashboard serves **openly by default** — authentication is opt-in via
+`serve_dashboard(auth_enabled=True)` or `taskito dashboard --auth`. Production
+deployments should enable it (or keep the dashboard on a private network
+behind their own auth). With auth enabled, the dashboard enforces sessions
+once at least one user exists; until then every API route returns
+`503 setup_required`. Bootstrap the first admin with
+`TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`
 (the password is removed from the environment after first use).
 
 - **Roles.** Mutating routes (cancel/replay jobs, purge dead-letters, pause
@@ -147,7 +151,8 @@ network boundary (e.g. a KEDA sidecar on a private network).
 - [ ] Network-isolate Postgres/Redis; least-privilege credentials.
 - [ ] Use `SignedSerializer` (and/or `EncryptedSerializer`) for the queue.
 - [ ] Set `recipe_signing_key` if any proxy handler is registered.
-- [ ] Create a dashboard admin; serve the dashboard over TLS.
+- [ ] Enable dashboard auth (`--auth` / `auth_enabled=True`) and create an
+      admin; serve the dashboard over TLS.
 - [ ] Set `TASKITO_DASHBOARD_METRICS_TOKEN` if metrics are network-reachable.
 - [ ] Auth-gate any mounted FastAPI/Flask contrib routers.
 - [ ] Leave `max_payload_bytes` enabled (default 1 MiB) unless you need larger.

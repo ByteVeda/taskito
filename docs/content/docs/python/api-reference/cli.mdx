@@ -56,7 +56,7 @@ shutdown — in-flight tasks are allowed to complete before the process exits.
 Start the web dashboard (SPA + REST API) for the queue.
 
 ```bash
-taskito dashboard --app <module:attribute> [--host <addr>] [--port <port>] [--insecure-cookies]
+taskito dashboard --app <module:attribute> [--host <addr>] [--port <port>] [--auth] [--insecure-cookies]
 ```
 
 | Flag | Default | Description |
@@ -64,6 +64,7 @@ taskito dashboard --app <module:attribute> [--host <addr>] [--port <port>] [--in
 | `--app` | — | Python path to the `Queue` instance |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port` | `8080` | Bind port |
+| `--auth` | `False` | Enable session authentication (login/setup, CSRF, roles); off by default |
 | `--insecure-cookies` | `False` | Drop the `Secure` flag on session cookies (local HTTP dev only) |
 
 **Example:**

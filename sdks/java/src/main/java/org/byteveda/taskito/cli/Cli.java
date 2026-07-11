@@ -255,6 +255,9 @@ public final class Cli {
         @Option(names = "--port", defaultValue = "8080")
         int port;
 
+        @Option(names = "--auth", description = "Enable session authentication (off by default).")
+        boolean auth;
+
         @Option(names = "--token", description = "Require this token for API access.")
         String token;
 
@@ -269,7 +272,8 @@ public final class Cli {
         @Override
         public Integer call() throws Exception {
             try (Taskito queue = parent.open();
-                    DashboardServer server = DashboardServer.start(queue, port, token, staticDir, !insecureCookies)) {
+                    DashboardServer server =
+                            DashboardServer.start(queue, port, token, staticDir, !insecureCookies, auth)) {
                 System.out.println("dashboard on http://localhost:" + server.port());
                 new CountDownLatch(1).await();
             }

@@ -1,9 +1,11 @@
 // Dashboard HTTP dispatch: /api/* -> JSON handlers, everything else -> the SPA.
 //
-// Two auth modes:
-// - Session mode (default): full login flow — first-run setup, password
-//   sessions, CSRF double-submit, and admin/viewer roles, all persisted in
-//   the queue's settings store.
+// Three auth modes:
+// - Open mode (default): no authentication — every route serves openly and
+//   the auth endpoints (except /api/auth/status) respond 404.
+// - Session mode (`authEnabled: true`): full login flow — first-run setup,
+//   password sessions, CSRF double-submit, and admin/viewer roles, all
+//   persisted in the queue's settings store.
 // - Token mode (legacy, `auth: {token}`): a single shared token gates the
 //   API; the SPA gets a fixed identity once past the token check.
 
@@ -43,6 +45,8 @@ const MAX_BODY_BYTES = 1024 * 1024;
 export interface DashboardHandlerOptions {
   /** Legacy shared-token gate. When set, the session-auth flow is disabled. */
   auth?: DashboardAuth;
+  /** Enable the session-auth flow (default false — the dashboard serves openly). */
+  authEnabled?: boolean;
   /** Mark session cookies `Secure` (default true). Disable only for plain-HTTP dev. */
   secureCookies?: boolean /** OAuth login flow (built from env by `serveDashboard` when omitted). */;
   oauth?: OAuthFlow;
@@ -122,6 +126,11 @@ async function dispatch(
 
   if (auth) {
     await dispatchTokenMode(queue, req, res, url, path, auth);
+    return;
+  }
+
+  if (options.authEnabled !== true) {
+    await dispatchOpenMode(queue, req, res, url, path);
     return;
   }
 
@@ -345,6 +354,31 @@ function sessionCookies(token: string, csrf: string, ttl: number, secure: boolea
 function clearSessionCookies(secure: boolean): string[] {
   const attrs = `SameSite=Strict; Path=/; Max-Age=0${secure ? "; Secure" : ""}`;
   return [`${SESSION_COOKIE}=; HttpOnly; ${attrs}`, `${CSRF_COOKIE}=; ${attrs}`];
+}
+
+/** Open dispatch (auth disabled, the default): every route serves without a
+ * session; the auth endpoints respond 404 so the SPA hides login affordances. */
+async function dispatchOpenMode(
+  queue: Queue,
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  path: string,
+): Promise<void> {
+  if (path.startsWith("/api/auth/")) {
+    if (path === "/api/auth/status") {
+      sendJson(res, 200, openAuthStatus(false));
+    } else {
+      sendJson(res, 404, { error: "auth_disabled" });
+    }
+    return;
+  }
+  const openCtx: RequestContext = {
+    session: undefined,
+    csrfCookie: undefined,
+    csrfHeader: undefined,
+  };
+  await runRoute(queue, req, res, url, path, openCtx, true);
 }
 
 /** Legacy shared-token dispatch: stub auth boot endpoints + token-gated API. */

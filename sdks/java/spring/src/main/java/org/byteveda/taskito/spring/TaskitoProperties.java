@@ -56,7 +56,10 @@ public class TaskitoProperties {
          */
         private int port = 8081;
 
-        /** Optional shared token gating {@code /api/*}; null enables the session flow. */
+        /** Whether to enforce session authentication (login/setup, CSRF, RBAC). Off by default. */
+        private boolean authEnabled = false;
+
+        /** Optional shared token gating {@code /api/*}; overrides the session flow. */
         private String token;
 
         /** Optional unpacked SPA directory; null auto-discovers the bundled assets. */
@@ -79,6 +82,14 @@ public class TaskitoProperties {
 
         public void setPort(int port) {
             this.port = port;
+        }
+
+        public boolean isAuthEnabled() {
+            return authEnabled;
+        }
+
+        public void setAuthEnabled(boolean authEnabled) {
+            this.authEnabled = authEnabled;
         }
 
         public String getToken() {

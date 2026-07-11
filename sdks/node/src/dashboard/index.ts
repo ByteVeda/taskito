@@ -16,6 +16,12 @@ export interface DashboardOptions {
   /** Path to the built SPA assets. Defaults to the package's bundled `static/dashboard`. */
   staticDir?: string;
   /**
+   * Enable session authentication (first-run setup, password login, CSRF,
+   * admin/viewer roles). Off by default — the dashboard serves openly.
+   * Ignored when the legacy `auth` token gate is set.
+   */
+  authEnabled?: boolean;
+  /**
    * Legacy shared-token gate: require this bearer token on every `/api/*`
    * request (except `/api/auth/status`). When set, the session-auth login
    * flow is disabled. Open `/?token=<token>` once to use the SPA behind it.
@@ -40,24 +46,27 @@ const defaultStaticDir = (): string => fileURLToPath(new URL(STATIC_REL, import.
 
 /**
  * Start the web dashboard over `queue` — serves the React SPA plus a JSON API.
- * Without `auth`, the dashboard runs the full session flow: first-run setup,
- * password login, CSRF protection, and admin/viewer roles. An initial admin
- * can be bootstrapped from `TASKITO_DASHBOARD_ADMIN_USER` /
+ * By default the dashboard serves openly with no authentication. Pass
+ * `authEnabled: true` to run the full session flow: first-run setup, password
+ * login, CSRF protection, and admin/viewer roles. An initial admin can be
+ * bootstrapped from `TASKITO_DASHBOARD_ADMIN_USER` /
  * `TASKITO_DASHBOARD_ADMIN_PASSWORD`.
  * Returns the listening HTTP server; call `.close()` to stop it.
  */
 export function serveDashboard(queue: Queue, options: DashboardOptions = {}): Server {
-  const bootstrap = options.auth
-    ? Promise.resolve()
-    : bootstrapAdminFromEnv(queue)
+  const sessionMode = !options.auth && options.authEnabled === true;
+  const bootstrap = sessionMode
+    ? bootstrapAdminFromEnv(queue)
         .then(() => undefined)
         .catch((error) => {
           log.warn(() => `admin bootstrap failed: ${String(error)}`);
-        });
+        })
+    : Promise.resolve();
   const server = createDashboardServer(queue, options.staticDir ?? defaultStaticDir(), {
     auth: options.auth,
+    authEnabled: options.authEnabled,
     secureCookies: options.secureCookies,
-    oauth: options.oauth ?? (options.auth ? undefined : buildOauthFlowFromEnv(queue)),
+    oauth: options.oauth ?? (sessionMode ? buildOauthFlowFromEnv(queue) : undefined),
   });
   // A bind failure (e.g. EADDRINUSE) without an 'error' listener crashes the process.
   server.on("error", (error) => {

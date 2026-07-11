@@ -71,18 +71,29 @@ returns a page, fields in snake_case:
 
 ## Auth
 
-By default the dashboard runs in **open mode**: `GET /api/auth/status` reports
-`{ setup_required: false }` and `GET /api/auth/whoami` returns an admin identity.
+By default the dashboard runs in **open mode**: every route serves without
+credentials, `GET /api/auth/status` reports
+`{ auth_enabled: false, setup_required: false }`, and the other auth
+endpoints respond `404 { "error": "auth_disabled" }`.
 
-Pass `auth: { token }` to [`serveDashboard`](/node/guides/operations/dashboard) to
-require a bearer token. Then every `/api/*` request except `GET /api/auth/status`
-must present the token via `Authorization: Bearer <token>`, an `X-Taskito-Token`
-header, a `?token=` query, or the `taskito_token` cookie; otherwise it returns
-`401`. This is a single shared token — there is no per-user login, RBAC, or SSO.
+Pass `authEnabled: true` to
+[`serveDashboard`](/node/guides/operations/dashboard) for **session mode**:
+first-run setup, password login with server-side sessions, CSRF on writes,
+and admin/viewer roles. `GET /api/auth/status` then reports
+`{ auth_enabled: true, setup_required: <bool> }`, and every route outside
+the public set requires a valid session.
+
+Pass `auth: { token }` instead for the **legacy token mode**: every `/api/*`
+request except `GET /api/auth/status` must present the token via
+`Authorization: Bearer <token>`, an `X-Taskito-Token` header, a `?token=`
+query, or the `taskito_token` cookie; otherwise it returns `401`. This is a
+single shared token — no per-user login or roles — and it overrides
+`authEnabled`.
 
 <Callout type="warning">
   Open mode means anyone who can reach the port has full control. Don't expose it
-  on an untrusted network — bind to localhost, or mount it behind your own auth
-  with the [Express](/node/guides/integrations/express#dashboard) /
+  on an untrusted network — enable session auth, bind to localhost, or mount it
+  behind your own auth with the
+  [Express](/node/guides/integrations/express#dashboard) /
   [Fastify](/node/guides/integrations/fastify) helpers.
 </Callout>

@@ -102,5 +102,5 @@ it("mounts the dashboard JSON API", async () => {
   const base = await serve((app) => app.use("/admin", taskitoDashboard(queue)));
   const res = await fetch(`${base}/admin/api/auth/status`);
   expect(res.status).toBe(200);
-  expect(await res.json()).toMatchObject({ setup_required: true });
+  expect(await res.json()).toMatchObject({ auth_enabled: false, setup_required: false });
 });

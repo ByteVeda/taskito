@@ -47,11 +47,14 @@ import org.byteveda.taskito.logging.TaskitoLogger;
  * built on the JDK's {@code com.sun.net.httpserver}. The JSON contract is
  * snake_case with Unix-millisecond timestamps.
  *
- * <p>Two auth modes:
+ * <p>Three auth modes:
  * <ul>
- *   <li><b>Session</b> (default): password users + sessions in the settings KV,
- *       CSRF double-submit, admin/viewer RBAC, first-run setup. Bootstrap an
- *       admin with {@code TASKITO_DASHBOARD_ADMIN_USER}/{@code _PASSWORD}.
+ *   <li><b>Open</b> (default): no authentication — every route serves openly
+ *       and the auth endpoints (except {@code /api/auth/status}) respond 404.
+ *   <li><b>Session</b> ({@code authEnabled=true}): password users + sessions in
+ *       the settings KV, CSRF double-submit, admin/viewer RBAC, first-run
+ *       setup. Bootstrap an admin with
+ *       {@code TASKITO_DASHBOARD_ADMIN_USER}/{@code _PASSWORD}.
  *   <li><b>Legacy token</b>: pass a shared {@code token} to gate {@code /api/*}
  *       as a fixed admin identity (no users/sessions). Kept for back-compat.
  * </ul>
@@ -67,6 +70,7 @@ public final class DashboardServer implements AutoCloseable {
 
     private final AuthStore authStore;
     private final TokenAuth tokenAuth;
+    private final boolean authEnabled;
     private final AuthHandlers authHandlers;
     private final OAuthHandlers oauthHandlers;
     private final OpsHandlers ops;
@@ -74,13 +78,20 @@ public final class DashboardServer implements AutoCloseable {
     private final Router router;
 
     private DashboardServer(
-            HttpServer server, Taskito queue, Path staticDir, boolean secureCookies, String token, OAuthFlow oauth) {
+            HttpServer server,
+            Taskito queue,
+            Path staticDir,
+            boolean secureCookies,
+            String token,
+            boolean authEnabled,
+            OAuthFlow oauth) {
         this.server = server;
         this.queue = queue;
         this.staticDir = staticDir;
         this.secureCookies = secureCookies;
         this.authStore = new AuthStore(SettingsAccess.of(queue));
         this.tokenAuth = token != null ? new TokenAuth(token) : null;
+        this.authEnabled = authEnabled;
         this.authHandlers = new AuthHandlers(authStore);
         this.oauthHandlers = new OAuthHandlers(oauth, secureCookies);
         this.ops = new OpsHandlers(queue);
@@ -88,49 +99,69 @@ public final class DashboardServer implements AutoCloseable {
         this.router = buildRouter();
     }
 
-    /** Start on {@code port} (0 = ephemeral) in session-auth mode. */
+    /** Start on {@code port} (0 = ephemeral) in open mode — no authentication. */
     public static DashboardServer start(Taskito queue, int port) throws IOException {
-        return start(queue, port, null, null, true);
+        return start(queue, port, null, null, true, false);
+    }
+
+    /** Start on {@code port}; {@code authEnabled=true} enables the session-auth flow. */
+    public static DashboardServer start(Taskito queue, int port, boolean authEnabled) throws IOException {
+        return start(queue, port, null, null, true, authEnabled);
     }
 
     /** Start in legacy shared-token mode; the session flow is disabled. */
     public static DashboardServer start(Taskito queue, int port, String token) throws IOException {
-        return start(queue, port, token, null, true);
+        return start(queue, port, token, null, true, false);
     }
 
     /** As {@link #start(Taskito, int, String)} but with an unpacked SPA directory. */
     public static DashboardServer start(Taskito queue, int port, String token, String staticDir) throws IOException {
-        return start(queue, port, token, staticDir, true);
+        return start(queue, port, token, staticDir, true, false);
+    }
+
+    /** As the full variant with auth disabled (the default). */
+    public static DashboardServer start(Taskito queue, int port, String token, String staticDir, boolean secureCookies)
+            throws IOException {
+        return start(queue, port, token, staticDir, secureCookies, false);
     }
 
     /**
-     * Start on {@code port} (0 = ephemeral). A null {@code token} enables the
-     * session flow; a null {@code staticDir} auto-discovers the bundled SPA.
-     * {@code secureCookies=false} drops the {@code Secure} cookie attribute for
-     * local HTTP development.
+     * Start on {@code port} (0 = ephemeral). A non-null {@code token} selects the
+     * legacy shared-token mode; otherwise {@code authEnabled} picks the session
+     * flow (true) or open mode (false, the default). A null {@code staticDir}
+     * auto-discovers the bundled SPA. {@code secureCookies=false} drops the
+     * {@code Secure} cookie attribute for local HTTP development.
      */
-    public static DashboardServer start(Taskito queue, int port, String token, String staticDir, boolean secureCookies)
+    public static DashboardServer start(
+            Taskito queue, int port, String token, String staticDir, boolean secureCookies, boolean authEnabled)
             throws IOException {
-        // OAuth is session-mode only; the legacy shared-token mode has no login UI.
-        OAuthFlow oauth = token == null ? buildOAuthFlow(queue, System.getenv()) : null;
-        return startInternal(queue, port, token, staticDir, secureCookies, oauth);
+        // OAuth is session-mode only; open and legacy token modes have no login UI.
+        boolean sessionMode = token == null && authEnabled;
+        OAuthFlow oauth = sessionMode ? buildOAuthFlow(queue, System.getenv()) : null;
+        return startInternal(queue, port, token, staticDir, secureCookies, authEnabled, oauth);
     }
 
     /** Test seam: start in session mode with an explicitly built OAuth flow. */
     static DashboardServer startWithOAuth(Taskito queue, int port, boolean secureCookies, OAuthFlow oauth)
             throws IOException {
-        return startInternal(queue, port, null, null, secureCookies, oauth);
+        return startInternal(queue, port, null, null, secureCookies, true, oauth);
     }
 
     private static DashboardServer startInternal(
-            Taskito queue, int port, String token, String staticDir, boolean secureCookies, OAuthFlow oauth)
+            Taskito queue,
+            int port,
+            String token,
+            String staticDir,
+            boolean secureCookies,
+            boolean authEnabled,
+            OAuthFlow oauth)
             throws IOException {
         // Resolve assets before binding so a discovery failure can't leak a bound port.
         Path dir = staticDir != null ? Paths.get(staticDir).normalize() : DashboardAssets.resolveOrNull();
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        DashboardServer dashboard = new DashboardServer(server, queue, dir, secureCookies, token, oauth);
+        DashboardServer dashboard = new DashboardServer(server, queue, dir, secureCookies, token, authEnabled, oauth);
         // Seed an env admin before serving so no request races the open setup endpoint.
-        if (token == null) {
+        if (token == null && authEnabled) {
             dashboard.authStore.bootstrapAdminFromEnv();
         }
         server.createContext("/", dashboard::dispatch);
@@ -214,6 +245,10 @@ public final class DashboardServer implements AutoCloseable {
             handleTokenMode(exchange, path, method, query);
             return;
         }
+        if (!authEnabled) {
+            handleOpenMode(exchange, path, method, query);
+            return;
+        }
         // OAuth routes emit redirects (not JSON), so they bypass the router; they
         // are public, so this runs before the auth gate.
         if (oauthHandlers.serve(exchange, path, method, query)) {
@@ -222,6 +257,25 @@ public final class DashboardServer implements AutoCloseable {
         RequestContext ctx = RequestContext.build(exchange, authStore);
         Policy.authorize(path, method, ctx, authStore);
         if (!router.dispatch(exchange, method, path, query, ctx)) {
+            Http.respondError(exchange, 404, "not found");
+        }
+    }
+
+    /**
+     * Open mode (auth disabled, the default): every route serves without a
+     * session; the auth endpoints respond 404 so the SPA hides login affordances.
+     */
+    private void handleOpenMode(HttpExchange exchange, String path, String method, Map<String, String> query)
+            throws IOException {
+        if (path.equals("/api/auth/status")) {
+            Http.respondJson(exchange, 200, Map.of("auth_enabled", false, "setup_required", false));
+            return;
+        }
+        if (path.startsWith("/api/auth/")) {
+            Http.respondError(exchange, 404, "auth_disabled");
+            return;
+        }
+        if (!router.dispatch(exchange, method, path, query, RequestContext.open())) {
             Http.respondError(exchange, 404, "not found");
         }
     }

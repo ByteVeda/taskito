@@ -258,10 +258,11 @@ function parseWebhookInput(body: unknown): Partial<WebhookInput> {
   return input;
 }
 
-// Token-mode auth boot responses: with a shared-token gate there is no user
-// store, so the SPA gets a fixed identity once past the token check.
-export function openAuthStatus() {
-  return { setup_required: false };
+// Auth boot responses for the non-session modes. Token mode reports
+// `auth_enabled: true` (the SPA gets a fixed identity once past the token
+// check); open mode reports `auth_enabled: false` so the SPA skips login.
+export function openAuthStatus(authEnabled = true) {
+  return { auth_enabled: authEnabled, setup_required: false };
 }
 export function openWhoami() {
   return {

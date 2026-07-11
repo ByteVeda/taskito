@@ -3,12 +3,14 @@ title: SSO (OAuth & OIDC)
 description: "Sign in to the dashboard with Google, GitHub, or any OIDC provider. Domain/org allowlists, OAuth-only mode."
 ---
 
-The dashboard's [session auth](/java/guides/operations/dashboard#session-auth-default)
+The dashboard's [session auth](/java/guides/operations/dashboard#session-auth-opt-in)
 supports native sign-in for **Google**, **GitHub**, and any
 **OIDC-compliant** provider (Okta, Auth0, Keycloak, Microsoft Entra, Dex, …).
 Multiple OIDC providers can run side by side, each its own button on the
-login screen. OAuth is off by default — setting any provider's env vars turns
-it on, alongside password login unless you opt out.
+login screen. OAuth requires session auth to be enabled
+(`authEnabled=true` / `--auth`; the dashboard serves openly by default) and
+is itself off by default — setting any provider's env vars turns it on,
+alongside password login unless you opt out.
 
 <Callout title="Optional dependency for Google and OIDC" type="info">
   ID-token validation for Google and generic OIDC needs

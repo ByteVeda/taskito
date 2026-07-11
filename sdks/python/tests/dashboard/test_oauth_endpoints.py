@@ -132,7 +132,7 @@ def server_factory(
     handles: list[ThreadingHTTPServer] = []
 
     def _factory(flow: OAuthFlow | None) -> str:
-        handler = _make_handler(queue, oauth_flow=flow)
+        handler = _make_handler(queue, oauth_flow=flow, auth_enabled=True)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         handles.append(server)
         port = server.server_address[1]
