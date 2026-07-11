@@ -75,6 +75,13 @@ describe("CborSerializer", () => {
     const s = new CborSerializer();
     expect(() => s.deserializeCall(s.serialize({ not: "a call" }))).toThrow(/wire shape/);
   });
+
+  it("encodes Map values as plain RFC 8949 maps, not tag 259", () => {
+    const s = new CborSerializer();
+    const bytes = s.serialize(new Map([["k", 1]]));
+    // tag byte + a1 (1-entry map) + 61 6b ("k") + 01 — no d9 0103 (tag 259) prefix
+    expect(Buffer.from(bytes).toString("hex")).toBe("02a1616b01");
+  });
 });
 
 describe("call-shape helpers", () => {

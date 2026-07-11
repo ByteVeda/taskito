@@ -23,10 +23,16 @@ function tagged(body: Uint8Array): Uint8Array {
  * keyword arguments surfaces them here as a trailing options object.
  */
 export class CborSerializer implements Serializer {
-  // Plain RFC 8949 structures only: cbor-x "records" are a proprietary
-  // extension other SDKs cannot decode. `variableMapSize` emits minimal
-  // (canonical) map headers so output matches other SDKs' encoders.
-  private readonly encoder = new Encoder({ useRecords: false, variableMapSize: true });
+  // Plain RFC 8949 structures only: cbor-x "records" and tag-259 maps are
+  // extensions other SDKs cannot decode (tag 259 defaults ON once records are
+  // off). `variableMapSize` emits minimal (canonical) map headers so output
+  // matches other SDKs' encoders.
+  // `useTag259ForMaps` is honored at runtime but missing from cbor-x's typings.
+  private readonly encoder = new Encoder({
+    useRecords: false,
+    useTag259ForMaps: false,
+    variableMapSize: true,
+  } as ConstructorParameters<typeof Encoder>[0]);
   private readonly decoder = new Decoder({ useRecords: false, mapsAsObjects: true });
 
   serialize(value: unknown): Uint8Array {
