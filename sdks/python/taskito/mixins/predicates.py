@@ -91,6 +91,13 @@ class QueuePredicateMixin:
         """Return the serialized predicate for ``task_name`` or ``None``."""
         return self._task_predicate_serialized.get(task_name)
 
+    def predicate_stats(self) -> dict[str, int]:
+        """Return predicate outcome counters for this queue instance.
+
+        Keys: ``allowed``, ``denied``, ``deferred``, ``cancelled``, ``errors``.
+        """
+        return self._predicate_metrics.snapshot()
+
     def register_predicate(self, op: str, *, replace: bool = False) -> Callable[[type], type]:
         """Class decorator: register a custom :class:`Predicate` subclass.
 

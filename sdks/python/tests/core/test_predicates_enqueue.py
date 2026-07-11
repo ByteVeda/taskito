@@ -185,3 +185,36 @@ def test_cancel_emits_predicate_rejected_event(queue: Queue, poll_until: PollUnt
 
     poll_until(lambda: len(received) >= 1, timeout=2)
     assert received[0]["reason"] == "no good"
+
+
+def test_predicate_stats_counts_outcomes(queue: Queue) -> None:
+    """queue.predicate_stats() exposes the outcome counters publicly."""
+
+    @queue.task(predicate=_Const(True))
+    def allowed_task() -> str:
+        return "ok"
+
+    @queue.task(predicate=_Const(False), name="denied_task")
+    def denied_task() -> str:
+        return "ok"
+
+    @queue.task(predicate=_Const(Defer(seconds=60.0)), name="deferred_task")
+    def deferred_task() -> str:
+        return "ok"
+
+    @queue.task(predicate=_Const(Cancel(reason="nope")), name="cancelled_task")
+    def cancelled_task() -> str:
+        return "ok"
+
+    allowed_task.delay()
+    denied_task.delay()  # bare False counts as denied (then defers by default)
+    deferred_task.delay()
+    with pytest.raises(PredicateRejectedError):
+        cancelled_task.delay()
+
+    stats = queue.predicate_stats()
+    assert stats["allowed"] == 1
+    assert stats["denied"] == 1
+    assert stats["deferred"] == 1
+    assert stats["cancelled"] == 1
+    assert stats["errors"] == 0
