@@ -224,7 +224,19 @@ pub fn execute_task(
 }
 
 pub fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
-    // Try to get a full traceback
+    // Canonical structured error (BINDING_CONTRACT.md "Task errors") — the
+    // Python module owns the encoding so every worker path emits one format.
+    if let Ok(errors_mod) = py.import("taskito.task_errors") {
+        if let Ok(encoded) = errors_mod.call_method1(
+            "encode_from_parts",
+            (e.get_type(py), e.value(py), e.traceback(py)),
+        ) {
+            if let Ok(json) = encoded.extract::<String>() {
+                return json;
+            }
+        }
+    }
+    // Fallback: plain traceback text (readers treat non-JSON as legacy).
     if let Ok(tb_mod) = py.import("traceback") {
         if let Ok(formatted) = tb_mod.call_method1(
             "format_exception",
