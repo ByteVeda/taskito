@@ -288,8 +288,8 @@ describe("flow", () => {
     });
     expect(nextUrl).toBe("/jobs");
     expect(session.username).toBe("fake:sub-1");
-    // First OAuth user with a verified email becomes admin.
-    expect(session.role).toBe("admin");
+    // Admin comes only from the allowlist — first OAuth user is a viewer.
+    expect(session.role).toBe("viewer");
     expect(new AuthStore(queue).getUser("fake:sub-1")?.email).toBe("dev@corp.com");
 
     // Replayed state fails.
