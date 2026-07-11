@@ -53,12 +53,12 @@ class OAuthFlowTest {
     }
 
     @Test
-    void handleCallbackLandsSessionAndMapsFirstUserToAdmin() {
+    void handleCallbackLandsSessionAsViewerWithoutAllowlist() {
         flow.start("fake", "/next");
         String state = fake.lastState.state();
         OAuthFlow.CallbackResult result = flow.handleCallback("fake", "code", state, null);
         assertEquals("fake:subject-1", result.session().username());
-        assertEquals("admin", result.session().role()); // first verified user
+        assertEquals("viewer", result.session().role()); // admin comes only from the allowlist
         assertEquals("/next", result.nextUrl());
         assertTrue(authStore.getUser("fake:subject-1").isPresent());
     }

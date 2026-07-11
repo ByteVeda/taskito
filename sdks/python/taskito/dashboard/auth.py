@@ -179,24 +179,18 @@ def _oauth_bootstrap_role(
     email: str | None,
     email_verified: bool,
     admin_emails: tuple[str, ...],
-    user_table_empty: bool,
 ) -> str:
     """Decide the role for a freshly-created OAuth user.
 
-    Order: any path to ``admin`` requires a verified email (defence against
-    spoofed claims). If an explicit admin list is configured, only listed
-    emails get ``admin`` — the first-user-wins fallback is skipped. With no
-    admin list, the very first user (empty table) gets ``admin``, everyone
-    else gets ``viewer``.
+    ``admin`` requires a verified email (defence against spoofed claims)
+    AND membership in the configured admin list. Everyone else — including
+    the very first user — gets ``viewer``: admin access comes only from the
+    allowlist, the password setup flow, or the env bootstrap, so a stray
+    first OAuth login can never win admin.
     """
     if not email_verified or not email:
         return "viewer"
-    normalised = email.lower()
-    if admin_emails:
-        if normalised in {e.lower() for e in admin_emails}:
-            return "admin"
-        return "viewer"
-    if user_table_empty:
+    if email.lower() in {e.lower() for e in admin_emails}:
         return "admin"
     return "viewer"
 
@@ -337,7 +331,6 @@ class AuthStore:
             email=email,
             email_verified=email_verified,
             admin_emails=admin_emails,
-            user_table_empty=not users,
         )
         now_ms = int(time.time() * 1000)
         users[username] = {

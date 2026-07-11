@@ -226,3 +226,34 @@ describe("providers listing", () => {
     expect(await res.json()).toEqual({ password_enabled: true, providers: [] });
   });
 });
+
+describe("probes", () => {
+  it("gates /readiness and /metrics behind a session; /health stays public", async () => {
+    expect((await fetch(`${base}/health`)).status).toBe(200);
+    expect((await fetch(`${base}/readiness`)).status).toBe(401);
+    expect((await fetch(`${base}/metrics`)).status).toBe(401);
+
+    const { headers } = await seedAdminAndSession(queue);
+    expect((await fetch(`${base}/readiness`, { headers })).status).not.toBe(401);
+  });
+
+  it("accepts the metrics bearer token alongside sessions", async () => {
+    const previous = process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
+    process.env.TASKITO_DASHBOARD_METRICS_TOKEN = "scrape-secret";
+    try {
+      const ok = await fetch(`${base}/readiness`, {
+        headers: { authorization: "Bearer scrape-secret" },
+      });
+      expect(ok.status).not.toBe(401);
+      expect(
+        (await fetch(`${base}/readiness`, { headers: { authorization: "Bearer wrong" } })).status,
+      ).toBe(401);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
+      } else {
+        process.env.TASKITO_DASHBOARD_METRICS_TOKEN = previous;
+      }
+    }
+  });
+});

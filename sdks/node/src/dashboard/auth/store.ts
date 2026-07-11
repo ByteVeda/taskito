@@ -155,24 +155,20 @@ function validateRole(role: string): void {
 }
 
 /**
- * Role for a freshly-created OAuth user. Any path to `admin` requires a
- * verified email. An explicit admin list wins over the first-user-wins
- * fallback; with no list, the very first user becomes `admin`.
+ * Role for a freshly-created OAuth user. `admin` requires a verified email
+ * AND membership in the admin list — everyone else, including the very first
+ * user, gets `viewer`, so a stray first OAuth login can never win admin.
  */
 export function oauthBootstrapRole(options: {
   email: string | null;
   emailVerified: boolean;
   adminEmails: readonly string[];
-  userTableEmpty: boolean;
 }): string {
   if (!options.emailVerified || !options.email) {
     return "viewer";
   }
   const normalised = options.email.toLowerCase();
-  if (options.adminEmails.length > 0) {
-    return options.adminEmails.some((e) => e.toLowerCase() === normalised) ? "admin" : "viewer";
-  }
-  return options.userTableEmpty ? "admin" : "viewer";
+  return options.adminEmails.some((e) => e.toLowerCase() === normalised) ? "admin" : "viewer";
 }
 
 // ── Persisted row shapes (cross-SDK snake_case JSON) ────────────────────
@@ -348,7 +344,6 @@ export class AuthStore {
       email: options.email,
       emailVerified: options.emailVerified,
       adminEmails: options.adminEmails ?? [],
-      userTableEmpty: Object.keys(users).length === 0,
     });
     const now = Date.now();
     users[username] = {

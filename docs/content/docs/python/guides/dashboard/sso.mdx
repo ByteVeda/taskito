@@ -171,9 +171,9 @@ role using this rule:
 
 1. **`TASKITO_DASHBOARD_OAUTH_ADMIN_EMAILS` match** — case-insensitive
    match against a verified email → role `admin`.
-2. **Empty user table fallback** — if no users (password or OAuth) exist
-   yet, the first OAuth user with a verified email becomes `admin`.
-3. **Everyone else** → role `viewer`.
+2. **Everyone else** → role `viewer`. There is no first-user fallback:
+   admin access comes only from the allowlist, the password setup flow,
+   or the env bootstrap.
 
 ```bash
 export TASKITO_DASHBOARD_OAUTH_ADMIN_EMAILS=alice@your-company.com,bob@your-company.com

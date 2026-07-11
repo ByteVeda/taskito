@@ -180,8 +180,63 @@ class DashboardAuthTest {
             int port = server.port();
             assertTrue(raw(port, "GET", "/api/auth/status", null).body().contains("\"setup_required\":false"));
             assertEquals(401, raw(port, "GET", "/api/stats", null).statusCode());
-            assertEquals(200, raw(port, "GET", "/api/stats?token=sekret", null).statusCode());
+            assertEquals(200, rawWithToken(port, "/api/stats", "sekret").statusCode());
         }
+    }
+
+    @Test
+    void queryTokenOnlyBootstrapsPageLoads(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir);
+                DashboardServer server = DashboardServer.start(queue, 0, "sekret", null)) {
+            int port = server.port();
+            // A query token no longer authenticates API calls (it leaks into logs).
+            assertEquals(401, raw(port, "GET", "/api/stats?token=sekret", null).statusCode());
+
+            // On a page load it sets the cookie and redirects with the token stripped.
+            HttpResponse<String> boot = raw(port, "GET", "/?token=sekret&tab=jobs", null);
+            assertEquals(302, boot.statusCode());
+            assertEquals("/?tab=jobs", boot.headers().firstValue("Location").orElse(""));
+            assertTrue(boot.headers().allValues("set-cookie").stream().anyMatch(c -> c.startsWith("taskito_token=")));
+
+            // A wrong query token neither bootstraps nor redirects.
+            HttpResponse<String> miss = raw(port, "GET", "/?token=nope", null);
+            assertTrue(miss.statusCode() != 302);
+            assertTrue(miss.headers().allValues("set-cookie").isEmpty());
+        }
+    }
+
+    @Test
+    void probesRequireSessionWhenAuthEnabled(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir);
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
+            int port = server.port();
+            assertEquals(200, raw(port, "GET", "/health", null).statusCode());
+            assertEquals(401, raw(port, "GET", "/readiness", null).statusCode());
+            assertEquals(401, raw(port, "GET", "/metrics", null).statusCode());
+
+            DashboardClient client = new DashboardClient(port).as(DashboardClient.seedAdmin(queue));
+            assertEquals(200, client.get("/readiness").statusCode());
+            assertEquals(200, client.get("/metrics").statusCode());
+        }
+    }
+
+    @Test
+    void probesRequireTokenInLegacyMode(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir);
+                DashboardServer server = DashboardServer.start(queue, 0, "sekret", null)) {
+            int port = server.port();
+            assertEquals(200, raw(port, "GET", "/health", null).statusCode());
+            assertEquals(401, raw(port, "GET", "/readiness", null).statusCode());
+            assertEquals(200, rawWithToken(port, "/readiness", "sekret").statusCode());
+        }
+    }
+
+    private static HttpResponse<String> rawWithToken(int port, String path, String token) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .header("X-Taskito-Token", token)
+                .GET()
+                .build();
+        return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     @Test

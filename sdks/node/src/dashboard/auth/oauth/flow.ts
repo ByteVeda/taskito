@@ -3,6 +3,7 @@
 // AuthStore integration.
 
 import type { Queue } from "../../../index";
+import { createLogger } from "../../../utils";
 import { isSafeRedirect } from "../../urlSafety";
 import { AuthStore, type DashboardSession } from "../store";
 import { callbackUrl, configuredProviders, type OAuthConfig } from "./config";
@@ -16,6 +17,8 @@ import { s256Challenge } from "./pkce";
 import type { FetchLike } from "./providers";
 import { GenericOidcProvider, GitHubProvider, GoogleProvider } from "./providers";
 import { OAuthStateStore } from "./stateStore";
+
+const log = createLogger("dashboard");
 
 /** Instantiate one provider per configured slot, keyed by slot. */
 export function buildProviders(
@@ -47,6 +50,16 @@ export class OAuthFlow {
   ) {
     this.providers = options.providers ?? buildProviders(config);
     this.stateStore = options.stateStore ?? new OAuthStateStore(queue);
+    if (this.providers.size > 0 && config.adminEmails.length === 0) {
+      // OAuth users only ever get the viewer role without an allowlist, so an
+      // OAuth-only deployment would silently have zero admins.
+      log.warn(
+        () =>
+          "OAuth is configured without admin emails: every OAuth login gets the " +
+          "viewer role. Set TASKITO_DASHBOARD_OAUTH_ADMIN_EMAILS (or " +
+          "OAuthConfig.adminEmails) to grant admin access.",
+      );
+    }
   }
 
   get passwordAuthEnabled(): boolean {

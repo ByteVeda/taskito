@@ -223,7 +223,7 @@ public final class DashboardServer implements AutoCloseable {
                 serveMetrics(exchange);
             } else if (path.startsWith("/api/")) {
                 handleApi(exchange, path);
-            } else {
+            } else if (!tokenBootstrapRedirect(exchange, path)) {
                 serveStatic(exchange, path);
             }
         } catch (DashboardError e) {
@@ -282,15 +282,11 @@ public final class DashboardServer implements AutoCloseable {
 
     private void handleTokenMode(HttpExchange exchange, String path, String method, Map<String, String> query)
             throws IOException {
-        String queryToken = query.get("token");
-        if (queryToken != null && tokenAuth.matches(queryToken)) {
-            exchange.getResponseHeaders().add("Set-Cookie", TokenAuth.openCookie(queryToken, secureCookies));
-        }
         if (path.equals("/api/auth/status")) {
             Http.respondJson(exchange, 200, TokenAuth.openStatus());
             return;
         }
-        if (!tokenAuth.matches(tokenAuth.presented(exchange, query))) {
+        if (!tokenAuth.matches(tokenAuth.presented(exchange))) {
             Http.respondError(exchange, 401, "unauthorized");
             return;
         }
@@ -426,7 +422,7 @@ public final class DashboardServer implements AutoCloseable {
     // ---- probes ------------------------------------------------------------
 
     private void serveReadiness(HttpExchange exchange) throws IOException {
-        if (!metricsTokenOk(exchange)) {
+        if (!probeAuthorized(exchange)) {
             Http.respondError(exchange, 401, "unauthorized");
             return;
         }
@@ -434,7 +430,7 @@ public final class DashboardServer implements AutoCloseable {
     }
 
     private void serveMetrics(HttpExchange exchange) throws IOException {
-        if (!metricsTokenOk(exchange)) {
+        if (!probeAuthorized(exchange)) {
             Http.respondError(exchange, 401, "unauthorized");
             return;
         }
@@ -446,11 +442,31 @@ public final class DashboardServer implements AutoCloseable {
         }
     }
 
-    /** Open when no metrics token is configured; otherwise require a bearer match. */
-    private boolean metricsTokenOk(HttpExchange exchange) {
-        if (metricsToken == null || metricsToken.isEmpty()) {
+    /**
+     * Gate for {@code /readiness} and {@code /metrics}. Accepted credentials: the
+     * optional {@code TASKITO_DASHBOARD_METRICS_TOKEN} bearer (scraper-friendly),
+     * the legacy shared token in token mode, or a valid session in session mode.
+     * Open mode with no metrics token stays public (probe-friendly default).
+     */
+    private boolean probeAuthorized(HttpExchange exchange) {
+        boolean metricsTokenSet = metricsToken != null && !metricsToken.isEmpty();
+        if (metricsTokenSet) {
+            if (metricsBearerMatches(exchange)) {
+                return true;
+            }
+        } else if (tokenAuth == null && !authEnabled) {
             return true;
         }
+        if (tokenAuth != null) {
+            return tokenAuth.matches(tokenAuth.presented(exchange));
+        }
+        if (authEnabled) {
+            return RequestContext.build(exchange, authStore).authenticated();
+        }
+        return false;
+    }
+
+    private boolean metricsBearerMatches(HttpExchange exchange) {
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         if (authorization == null || !authorization.startsWith("Bearer ")) {
             return false;
@@ -458,6 +474,44 @@ public final class DashboardServer implements AutoCloseable {
         String presented = authorization.substring("Bearer ".length()).trim();
         return MessageDigest.isEqual(
                 metricsToken.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Token mode: a valid {@code ?token=} on a page load (never an API call)
+     * bootstraps the httpOnly cookie, then redirects to strip the token from the
+     * URL so it can't leak via history or the Referer header.
+     */
+    private boolean tokenBootstrapRedirect(HttpExchange exchange, String path) throws IOException {
+        if (tokenAuth == null || !"GET".equals(exchange.getRequestMethod())) {
+            return false;
+        }
+        String queryToken = Http.query(exchange).get("token");
+        if (queryToken == null || !tokenAuth.matches(queryToken)) {
+            return false;
+        }
+        exchange.getResponseHeaders().add("Set-Cookie", TokenAuth.openCookie(queryToken, secureCookies));
+        exchange.getResponseHeaders().set("Location", path + queryWithoutToken(exchange));
+        exchange.sendResponseHeaders(302, -1);
+        return true;
+    }
+
+    /** The raw query minus the {@code token} parameter, with a leading '?' when non-empty. */
+    private static String queryWithoutToken(HttpExchange exchange) {
+        String raw = exchange.getRequestURI().getRawQuery();
+        if (raw == null || raw.isEmpty()) {
+            return "";
+        }
+        StringBuilder kept = new StringBuilder();
+        for (String pair : raw.split("&")) {
+            if (pair.equals("token") || pair.startsWith("token=")) {
+                continue;
+            }
+            if (kept.length() > 0) {
+                kept.append('&');
+            }
+            kept.append(pair);
+        }
+        return kept.length() == 0 ? "" : "?" + kept;
     }
 
     // ---- static + helpers --------------------------------------------------

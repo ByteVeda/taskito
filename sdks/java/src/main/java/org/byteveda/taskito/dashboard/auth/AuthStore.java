@@ -171,7 +171,7 @@ public final class AuthStore {
             saveUsers(users);
             return toUser(username, row);
         }
-        String role = oauthBootstrapRole(email, emailVerified, adminEmails, users.isEmpty());
+        String role = oauthBootstrapRole(email, emailVerified, adminEmails);
         long now = nowMillis();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("password_hash", PasswordHasher.oauthSentinel(slot));
@@ -185,19 +185,19 @@ public final class AuthStore {
         return toUser(username, row);
     }
 
-    /** Role for a freshly seen OAuth user. Admin needs a verified email. */
-    public static String oauthBootstrapRole(
-            String email, boolean emailVerified, List<String> adminEmails, boolean userTableEmpty) {
+    /**
+     * Role for a freshly seen OAuth user: admin requires a verified email AND a
+     * listed address. Everyone else — including the very first user — gets
+     * viewer, so a stray first OAuth login can never win admin.
+     */
+    public static String oauthBootstrapRole(String email, boolean emailVerified, List<String> adminEmails) {
         if (!emailVerified || email == null || email.isBlank()) {
             return ROLE_VIEWER;
         }
         String normalised = email.toLowerCase(Locale.ROOT);
-        if (adminEmails != null && !adminEmails.isEmpty()) {
-            boolean listed = adminEmails.stream()
-                    .anyMatch(e -> e.toLowerCase(Locale.ROOT).equals(normalised));
-            return listed ? ROLE_ADMIN : ROLE_VIEWER;
-        }
-        return userTableEmpty ? ROLE_ADMIN : ROLE_VIEWER;
+        boolean listed = adminEmails != null
+                && adminEmails.stream().anyMatch(e -> e.toLowerCase(Locale.ROOT).equals(normalised));
+        return listed ? ROLE_ADMIN : ROLE_VIEWER;
     }
 
     // ---- sessions ----------------------------------------------------------

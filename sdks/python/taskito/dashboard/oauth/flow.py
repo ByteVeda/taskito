@@ -9,6 +9,7 @@ session.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from taskito.dashboard.auth import AuthStore
@@ -36,6 +37,8 @@ from taskito.dashboard.url_safety import is_safe_redirect
 if TYPE_CHECKING:
     from taskito.app import Queue
     from taskito.dashboard.auth import Session
+
+logger = logging.getLogger("taskito.dashboard.oauth")
 
 
 def build_providers(
@@ -70,6 +73,14 @@ class OAuthFlow:
             providers if providers is not None else build_providers(config)
         )
         self._state_store = state_store or OAuthStateStore(queue)
+        if self._providers and not config.admin_emails:
+            # OAuth users only ever get the viewer role without an allowlist,
+            # so an OAuth-only deployment would silently have zero admins.
+            logger.warning(
+                "OAuth is configured without admin emails: every OAuth login "
+                "gets the viewer role. Set TASKITO_DASHBOARD_OAUTH_ADMIN_EMAILS "
+                "(or OAuthConfig.admin_emails) to grant admin access."
+            )
 
     # ── Introspection ────────────────────────────────────────────────
 

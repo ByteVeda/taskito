@@ -12,7 +12,10 @@ import java.util.Map;
  * back-compat with {@code --token}; the session flow is the default.
  *
  * <p>The token is accepted, in order, from {@code Authorization: Bearer},
- * {@code X-Taskito-Token}, {@code ?token=}, or the {@code taskito_token} cookie.
+ * {@code X-Taskito-Token}, or the {@code taskito_token} cookie. A {@code ?token=}
+ * query param is deliberately NOT accepted here — query strings leak into access
+ * logs, browser history, and the Referer header; it is only honoured once on a
+ * page load to bootstrap the cookie.
  */
 public final class TokenAuth {
     private static final long OPEN_COOKIE_MAX_AGE = 24 * 60 * 60;
@@ -23,7 +26,7 @@ public final class TokenAuth {
         this.token = token;
     }
 
-    public String presented(HttpExchange exchange, Map<String, String> query) {
+    public String presented(HttpExchange exchange) {
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         if (authorization != null && authorization.startsWith("Bearer ")) {
             return authorization.substring("Bearer ".length()).trim();
@@ -31,10 +34,6 @@ public final class TokenAuth {
         String header = exchange.getRequestHeaders().getFirst("X-Taskito-Token");
         if (header != null && !header.isEmpty()) {
             return header;
-        }
-        String queryToken = query.get("token");
-        if (queryToken != null && !queryToken.isEmpty()) {
-            return queryToken;
         }
         return Cookies.get(exchange, Cookies.LEGACY_TOKEN);
     }

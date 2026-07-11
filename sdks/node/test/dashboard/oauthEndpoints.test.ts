@@ -134,7 +134,7 @@ it("callback creates a session, sets cookies, and redirects to next", async () =
   expect(cookies.some((c) => c.startsWith("taskito_csrf="))).toBe(true);
 
   const user = new AuthStore(queue).getUser("fake:sub-9");
-  expect(user?.role).toBe("admin"); // first user with a verified email
+  expect(user?.role).toBe("viewer"); // admin comes only from the allowlist
   expect(user?.email).toBe("dev@corp.com");
 
   // The session cookie authenticates API calls.

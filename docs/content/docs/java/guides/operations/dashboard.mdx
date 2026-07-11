@@ -100,7 +100,7 @@ and Redis.
 
 - **First-run setup.** On a fresh database every route except the public set
   (`/api/auth/status`, `/api/auth/login`, `/api/auth/setup`,
-  `/api/auth/providers`, `/health`, `/readiness`, `/metrics`) returns
+  `/api/auth/providers`, `/health`) returns
   `503 setup_required` until an admin exists. `POST /api/auth/setup` creates
   it (and signs it in); the route locks itself after the first user.
   `GET /api/auth/status` reports
@@ -166,31 +166,32 @@ no sessions, no RBAC. Kept for back-compat with the pre-auth dashboard.
 DashboardServer.start(taskito, 8080, System.getenv("DASH_TOKEN"));
 ```
 
-Requests authenticate with `?token=<token>`; opening `/?token=<token>` once
-sets an httpOnly `taskito_token` cookie so the SPA works for the rest of the
-session. OAuth has no login UI in this mode, so it's disabled automatically —
+API requests authenticate via `Authorization: Bearer <token>`, an
+`X-Taskito-Token` header, or the `taskito_token` cookie (compared in constant
+time). Opening `/?token=<token>` once sets the httpOnly cookie and redirects
+with the token stripped from the URL, keeping the secret out of subsequent
+browser history and `Referer` propagation — a `?token=` query is never
+accepted on `/api/*` calls. The bootstrap request itself still reaches server
+and proxy access logs, so redact query strings there. OAuth has
+no login UI in this mode, so it's disabled automatically —
 `start(queue, port, token, ...)` never builds an OAuth flow when `token` is
 non-null.
 
-<Callout type="warning">
-  `?token=` puts the secret in the URL, where it can leak via browser history,
-  `Referer` headers, and proxy or access logs. Use it only over HTTPS, redact
-  query strings from logs, and rely on the cookie afterwards.
-</Callout>
-
 ## Metrics and health probes
 
-Three routes sit outside `/api/*` and outside the session/token auth gate:
+Three routes sit outside `/api/*`:
 
 | Route | Access | What it does |
 |---|---|---|
 | `GET /health` | Always public | Liveness — always `{"status": "ok"}` |
-| `GET /readiness` | Public unless `TASKITO_DASHBOARD_METRICS_TOKEN` is set | Storage/worker/resource readiness |
-| `GET /metrics` | Public unless `TASKITO_DASHBOARD_METRICS_TOKEN` is set | Prometheus text exposition |
+| `GET /readiness` | Gated when auth is on (see below) | Storage/worker/resource readiness |
+| `GET /metrics` | Gated when auth is on (see below) | Prometheus text exposition |
 
-Set `TASKITO_DASHBOARD_METRICS_TOKEN` to require an
-`Authorization: Bearer <token>` header (checked in constant time) on
-`/readiness` and `/metrics`. `/health` always stays open for liveness probes.
+With session or token auth enabled, `/readiness` and `/metrics` require either
+that mode's own credential (a valid session, or the shared token) or a
+`TASKITO_DASHBOARD_METRICS_TOKEN` bearer header (checked in constant time) —
+point scrapers at the bearer token. In open mode they stay public unless that
+env token is set. `/health` always stays open for liveness probes.
 
 ## REST API
 
