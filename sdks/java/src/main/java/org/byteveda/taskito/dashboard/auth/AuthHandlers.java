@@ -57,6 +57,9 @@ public final class AuthHandlers {
 
     public Map<String, Object> whoami(RequestContext ctx) {
         Session session = ctx.session();
+        if (session == null) {
+            throw DashboardError.notFound("not_authenticated");
+        }
         User user = store.getUser(session.username()).orElse(null);
         if (user == null) {
             store.deleteSession(session.token());
@@ -71,6 +74,9 @@ public final class AuthHandlers {
 
     public Map<String, Object> changePassword(RequestContext ctx, Map<String, Object> body) {
         Session session = ctx.session();
+        if (session == null) {
+            throw DashboardError.badRequest("not_authenticated");
+        }
         String oldPassword = requireField(body, "old_password");
         String newPassword = requireField(body, "new_password");
         User user = store.getUser(session.username()).orElse(null);
