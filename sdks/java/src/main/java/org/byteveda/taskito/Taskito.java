@@ -313,9 +313,17 @@ public interface Taskito extends AutoCloseable {
 
     // ── Dashboard ───────────────────────────────────────────────────
 
-    /** Start the dashboard HTTP server over this client on {@code port} (0 = ephemeral). */
+    /**
+     * Start the dashboard HTTP server over this client on {@code port}
+     * (0 = ephemeral). Serves openly — no authentication.
+     */
     default DashboardServer dashboard(int port) throws IOException {
         return DashboardServer.start(this, port);
+    }
+
+    /** As {@link #dashboard(int)}; {@code authEnabled=true} enables the session login flow. */
+    default DashboardServer dashboard(int port, boolean authEnabled) throws IOException {
+        return DashboardServer.start(this, port, authEnabled);
     }
 
     /** As {@link #dashboard(int)} but gating {@code /api/*} behind a shared {@code token}. */

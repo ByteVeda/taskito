@@ -18,7 +18,7 @@ public final class AuthHandlers {
     }
 
     public Map<String, Object> status() {
-        return Map.of("setup_required", store.countUsers() == 0);
+        return Map.of("auth_enabled", true, "setup_required", store.countUsers() == 0);
     }
 
     public Map<String, Object> setup(Map<String, Object> body) {

@@ -52,7 +52,7 @@ public final class TokenAuth {
     }
 
     public static Map<String, Object> openStatus() {
-        return Map.of("setup_required", false);
+        return Map.of("auth_enabled", true, "setup_required", false);
     }
 
     public static Map<String, Object> openWhoami() {

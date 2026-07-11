@@ -36,7 +36,7 @@ class DashboardAuthTest {
     @Test
     void gatesUntilFirstAdminExists(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             int port = server.port();
             assertEquals(503, raw(port, "GET", "/api/stats", null).statusCode());
             assertTrue(raw(port, "GET", "/api/auth/status", null).body().contains("\"setup_required\":true"));
@@ -46,7 +46,7 @@ class DashboardAuthTest {
     @Test
     void setupCreatesAdminOnce(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             int port = server.port();
             HttpResponse<String> setup =
                     raw(port, "POST", "/api/auth/setup", "{\"username\":\"root\",\"password\":\"password123\"}");
@@ -65,7 +65,7 @@ class DashboardAuthTest {
     @Test
     void loginSetsCookiesAndRedactsToken(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             int port = server.port();
             raw(port, "POST", "/api/auth/setup", "{\"username\":\"root\",\"password\":\"password123\"}");
             HttpResponse<String> login =
@@ -83,7 +83,7 @@ class DashboardAuthTest {
     @Test
     void rejectsBadCredentials(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             int port = server.port();
             raw(port, "POST", "/api/auth/setup", "{\"username\":\"root\",\"password\":\"password123\"}");
             HttpResponse<String> bad =
@@ -96,7 +96,7 @@ class DashboardAuthTest {
     @Test
     void unauthenticatedApiIsRejected(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             DashboardClient.seedAdmin(queue); // a user now exists
             assertEquals(401, raw(server.port(), "GET", "/api/stats", null).statusCode());
         }
@@ -105,7 +105,7 @@ class DashboardAuthTest {
     @Test
     void authenticatedReadsSucceed(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             DashboardClient client = new DashboardClient(server.port()).as(DashboardClient.seedAdmin(queue));
             assertEquals(200, client.get("/api/stats").statusCode());
             assertEquals(200, client.get("/api/auth/whoami").statusCode());
@@ -115,7 +115,7 @@ class DashboardAuthTest {
     @Test
     void csrfIsRequiredForWrites(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             DashboardClient client = new DashboardClient(server.port()).as(DashboardClient.seedAdmin(queue));
             assertEquals(
                     403,
@@ -127,7 +127,7 @@ class DashboardAuthTest {
     @Test
     void viewersCannotWrite(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             DashboardClient.seedAdmin(queue); // keep setup satisfied
             DashboardClient viewer =
                     new DashboardClient(server.port()).as(DashboardClient.seedUser(queue, "read-only", "viewer"));
@@ -139,7 +139,7 @@ class DashboardAuthTest {
     @Test
     void logoutInvalidatesSession(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             DashboardClient client = new DashboardClient(server.port()).as(DashboardClient.seedAdmin(queue));
             assertEquals(200, client.post("/api/auth/logout", null).statusCode());
             assertEquals(401, client.get("/api/auth/whoami").statusCode());
@@ -149,7 +149,7 @@ class DashboardAuthTest {
     @Test
     void changePasswordRotatesCredential(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             int port = server.port();
             DashboardClient client = new DashboardClient(port).as(DashboardClient.seedUser(queue, "root", "admin"));
             HttpResponse<String> changed = client.post(
@@ -165,7 +165,7 @@ class DashboardAuthTest {
     @Test
     void oauthEndpointsReport404WhenUnconfigured(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir);
-                DashboardServer server = DashboardServer.start(queue, 0)) {
+                DashboardServer server = DashboardServer.start(queue, 0, true)) {
             int port = server.port();
             assertTrue(raw(port, "GET", "/api/auth/providers", null).body().contains("\"password_enabled\":true"));
             assertEquals(
@@ -181,6 +181,56 @@ class DashboardAuthTest {
             assertTrue(raw(port, "GET", "/api/auth/status", null).body().contains("\"setup_required\":false"));
             assertEquals(401, raw(port, "GET", "/api/stats", null).statusCode());
             assertEquals(200, raw(port, "GET", "/api/stats?token=sekret", null).statusCode());
+        }
+    }
+
+    @Test
+    void openModeIsTheDefault(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir);
+                DashboardServer server = DashboardServer.start(queue, 0)) {
+            int port = server.port();
+            HttpResponse<String> status = raw(port, "GET", "/api/auth/status", null);
+            assertEquals(200, status.statusCode());
+            assertTrue(status.body().contains("\"auth_enabled\":false"));
+            assertTrue(status.body().contains("\"setup_required\":false"));
+            assertEquals(200, raw(port, "GET", "/api/stats", null).statusCode());
+        }
+    }
+
+    @Test
+    void openModeAllowsWritesWithoutCsrf(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir);
+                DashboardServer server = DashboardServer.start(queue, 0)) {
+            assertEquals(
+                    200,
+                    raw(server.port(), "POST", "/api/queues/emails/pause", null).statusCode());
+        }
+    }
+
+    @Test
+    void openModeStaysOpenWhenUsersExist(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir);
+                DashboardServer server = DashboardServer.start(queue, 0)) {
+            DashboardClient.seedAdmin(queue);
+            assertEquals(200, raw(server.port(), "GET", "/api/stats", null).statusCode());
+        }
+    }
+
+    @Test
+    void openModeRejectsAuthEndpoints(@TempDir Path dir) throws Exception {
+        try (Taskito queue = open(dir);
+                DashboardServer server = DashboardServer.start(queue, 0)) {
+            int port = server.port();
+            for (String path : List.of("/api/auth/whoami", "/api/auth/providers")) {
+                HttpResponse<String> response = raw(port, "GET", path, null);
+                assertEquals(404, response.statusCode(), path);
+                assertTrue(response.body().contains("auth_disabled"), path);
+            }
+            for (String path : List.of("/api/auth/login", "/api/auth/setup", "/api/auth/logout")) {
+                HttpResponse<String> response = raw(port, "POST", path, "{}");
+                assertEquals(404, response.statusCode(), path);
+                assertTrue(response.body().contains("auth_disabled"), path);
+            }
         }
     }
 }
