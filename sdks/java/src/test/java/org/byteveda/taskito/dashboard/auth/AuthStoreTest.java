@@ -83,22 +83,21 @@ class AuthStoreTest {
     @Test
     void oauthBootstrapRolePrecedence() {
         // Unverified / missing email never becomes admin.
-        assertEquals("viewer", AuthStore.oauthBootstrapRole("a@x.com", false, List.of(), true));
-        assertEquals("viewer", AuthStore.oauthBootstrapRole(null, true, List.of(), true));
-        // Admin-email list wins (case-insensitive) and disables first-user-wins.
-        assertEquals("admin", AuthStore.oauthBootstrapRole("A@X.com", true, List.of("a@x.com"), false));
-        assertEquals("viewer", AuthStore.oauthBootstrapRole("b@x.com", true, List.of("a@x.com"), true));
-        // No admin list: first verified user wins.
-        assertEquals("admin", AuthStore.oauthBootstrapRole("c@x.com", true, List.of(), true));
-        assertEquals("viewer", AuthStore.oauthBootstrapRole("c@x.com", true, List.of(), false));
+        assertEquals("viewer", AuthStore.oauthBootstrapRole("a@x.com", false, List.of()));
+        assertEquals("viewer", AuthStore.oauthBootstrapRole(null, true, List.of()));
+        // Admin-email list is the only path to admin (case-insensitive).
+        assertEquals("admin", AuthStore.oauthBootstrapRole("A@X.com", true, List.of("a@x.com")));
+        assertEquals("viewer", AuthStore.oauthBootstrapRole("b@x.com", true, List.of("a@x.com")));
+        // No admin list: everyone — including the first user — is a viewer.
+        assertEquals("viewer", AuthStore.oauthBootstrapRole("c@x.com", true, List.of()));
     }
 
     @Test
     void getOrCreateOauthUserProvisionsThenRefreshes() {
         AuthStore store = store();
-        User created = store.getOrCreateOauthUser("google", "123", "a@x.com", "Ann", true, List.of());
+        User created = store.getOrCreateOauthUser("google", "123", "a@x.com", "Ann", true, List.of("a@x.com"));
         assertEquals("google:123", created.username());
-        assertEquals("admin", created.role()); // first user
+        assertEquals("admin", created.role()); // allowlisted
         assertTrue(created.isOauth());
 
         User refreshed = store.getOrCreateOauthUser("google", "123", "new@x.com", "Ann N", true, List.of("z@x.com"));

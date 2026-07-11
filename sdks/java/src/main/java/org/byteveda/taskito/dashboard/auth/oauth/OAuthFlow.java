@@ -17,6 +17,7 @@ import org.byteveda.taskito.dashboard.auth.oauth.model.OAuthState;
 import org.byteveda.taskito.dashboard.auth.oauth.model.ProviderIdentity;
 import org.byteveda.taskito.dashboard.auth.oauth.provider.OAuthProvider;
 import org.byteveda.taskito.dashboard.auth.oauth.provider.Providers;
+import org.byteveda.taskito.logging.TaskitoLogger;
 
 /**
  * The seam between the HTTP handler layer and the provider implementations. It
@@ -25,6 +26,8 @@ import org.byteveda.taskito.dashboard.auth.oauth.provider.Providers;
  * {@link #handleCallback} to land a session.
  */
 public final class OAuthFlow {
+    private static final TaskitoLogger LOG = TaskitoLogger.create("dashboard");
+
     private final AuthStore authStore;
     private final OAuthConfig config;
     private final OAuthStateStore stateStore;
@@ -36,6 +39,12 @@ public final class OAuthFlow {
         this.config = config;
         this.stateStore = stateStore;
         this.providers = new LinkedHashMap<>(providers);
+        if (!this.providers.isEmpty() && config.adminEmails().isEmpty()) {
+            // OAuth users only ever get the viewer role without an allowlist, so an
+            // OAuth-only deployment would silently have zero admins.
+            LOG.warn("OAuth is configured without admin emails: every OAuth login gets the viewer role."
+                    + " Set " + OAuthConfig.ENV_ADMIN_EMAILS + " (or OAuthConfig.adminEmails) to grant admin access.");
+        }
     }
 
     /** The landed session plus the sanitised post-login redirect target. */
