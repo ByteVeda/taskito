@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import org.byteveda.taskito.errors.TaskErrors;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
@@ -103,7 +104,8 @@ final class WorkerDispatchBridge implements WorkerBridge {
             for (Middleware m : middleware) {
                 m.onError(context, t);
             }
-            bound.failJob(token, describe(t));
+            // Canonical structured error (middleware above saw the live Throwable).
+            bound.failJob(token, TaskErrors.encode(t));
         } finally {
             if (scope != null) {
                 Resources.exit(scope); // unbind the thread + dispose task-scoped resources (LIFO)
@@ -182,10 +184,5 @@ final class WorkerDispatchBridge implements WorkerBridge {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private static String describe(Throwable t) {
-        String message = t.getMessage();
-        return message == null ? t.getClass().getSimpleName() : t.getClass().getSimpleName() + ": " + message;
     }
 }
