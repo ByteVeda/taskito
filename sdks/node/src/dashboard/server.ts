@@ -41,6 +41,23 @@ const log = createLogger("dashboard");
 /** Max request body size (1 MiB) — reject larger payloads to bound memory. */
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/**
+ * Defense-in-depth headers on every response. The CSP assumes a fully
+ * self-contained SPA bundle (no inline scripts — the theme bootstrap ships as
+ * /theme-init.js); inline style attributes need 'unsafe-inline' in style-src.
+ */
+const SECURITY_HEADERS: ReadonlyArray<readonly [string, string]> = [
+  [
+    "content-security-policy",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; " +
+      "base-uri 'self'; form-action 'self'; object-src 'none'",
+  ],
+  ["x-content-type-options", "nosniff"],
+  ["x-frame-options", "DENY"],
+  ["referrer-policy", "same-origin"],
+];
+
 /** Options accepted by {@link createDashboardHandler} / {@link createDashboardServer}. */
 export interface DashboardHandlerOptions {
   /** Legacy shared-token gate. When set, the session-auth flow is disabled. */
@@ -76,6 +93,11 @@ export function createDashboardHandler(
   const assets = new StaticAssets(staticDir);
   const resolved = normalizeOptions(options);
   return (req, res) => {
+    // Single choke point: every response — JSON, assets, probes, redirects —
+    // carries the security headers.
+    for (const [name, value] of SECURITY_HEADERS) {
+      res.setHeader(name, value);
+    }
     void dispatch(queue, assets, req, res, resolved).catch((error) => {
       log.error(() => "dashboard dispatch failed", error);
       if (!res.headersSent) {

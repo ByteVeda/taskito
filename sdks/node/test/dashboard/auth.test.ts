@@ -85,3 +85,13 @@ it("gates probes behind the legacy token; /health stays public", async () => {
   const ok = await fetch(`${base}/readiness`, { headers: { "x-taskito-token": TOKEN } });
   expect(ok.status).not.toBe(401);
 });
+
+it("sets security headers on every response", async () => {
+  for (const path of ["/health", "/api/auth/status", "/"]) {
+    const res = await fetch(`${base}${path}`);
+    expect(res.headers.get("x-content-type-options"), path).toBe("nosniff");
+    expect(res.headers.get("x-frame-options"), path).toBe("DENY");
+    expect(res.headers.get("referrer-policy"), path).toBe("same-origin");
+    expect(res.headers.get("content-security-policy"), path).toContain("default-src 'self'");
+  }
+});
