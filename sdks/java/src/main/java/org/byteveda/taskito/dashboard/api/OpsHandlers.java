@@ -1,6 +1,7 @@
 package org.byteveda.taskito.dashboard.api;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -8,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.BinaryOperator;
 import java.util.stream.Collectors;
 import org.byteveda.taskito.Taskito;
 import org.byteveda.taskito.dashboard.support.Http;
@@ -79,7 +81,10 @@ public final class OpsHandlers {
             advertised.addAll(Json.parseStringList(worker.resources));
             Map<String, Object> health = Json.parseMap(worker.resourceHealth);
             if (health != null) {
-                health.forEach((name, value) -> reported.merge(name, severity(String.valueOf(value)), Math::max));
+                // BinaryOperator.maxBy keeps the merge on boxed Integers — Math::max
+                // would funnel both arguments through an unchecked Integer->int unboxing.
+                health.forEach((name, value) -> reported.merge(
+                        name, severity(String.valueOf(value)), BinaryOperator.maxBy(Comparator.naturalOrder())));
             }
         }
         Set<String> all = new TreeSet<>(advertised);
