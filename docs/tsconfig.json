@@ -18,6 +18,7 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "allowJs": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,

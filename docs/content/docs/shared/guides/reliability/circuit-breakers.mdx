@@ -1,0 +1,401 @@
+---
+title: Circuit Breakers
+description: "Trip a task after repeated failures, then sample-probe before fully closing — protect a failing dependency from cascading load."
+---
+
+A circuit breaker stops a task from running once it fails too often within a
+time window, giving a failing downstream dependency — an external API, a
+database, a third-party service — time to recover instead of getting
+hammered by every retry. Enforcement lives entirely in the shared core
+scheduler; each SDK only supplies the configuration.
+
+<SdkOnly sdk="python">
+
+> Celery has no built-in circuit breaker — this is taskito-native, configured
+> per task with `circuit_breaker={...}`.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+> **Coming from BullMQ?** BullMQ has no built-in circuit breaker either —
+> it's a taskito-specific addition. You'd otherwise reach for a separate
+> library (e.g. `opossum`) alongside a BullMQ `Worker`.
+
+</SdkOnly>
+
+## How it works
+
+A circuit breaker tracks failures within a time window and transitions
+through three states:
+
+<Mermaid
+  chart={`stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: failures >= threshold within window
+    Open --> HalfOpen: cooldown elapsed
+    HalfOpen --> Closed: success rate >= threshold
+    HalfOpen --> Open: success rate impossible OR timeout`}
+/>
+
+- **Closed** — normal operation. Tasks execute as usual; each failure is
+  counted, and the count resets once a success comes in or the window
+  expires.
+- **Open** — too many failures. Jobs of that task are gated rather than
+  executed.
+- **Half-Open** — after the cooldown elapses, a limited number of probe jobs
+  are let through (default 5). Their successes and failures are tracked
+  separately from the closed-state counter. The circuit closes once the
+  success rate among completed probes meets the threshold (default 80%). If
+  enough probes fail that the threshold becomes mathematically impossible
+  before all of them complete, the circuit re-opens immediately. If the
+  probe quota is used up without the cooldown period completing a full
+  cycle, it also re-opens as a safety valve.
+
+<Callout type="info">
+  A gated job isn't dropped or dead-lettered — the poller reschedules it 5
+  seconds out and re-checks the breaker the next time it's due, so it runs
+  as soon as the breaker closes (or gets picked as a half-open probe). This
+  5-second recheck interval is fixed by the core scheduler and isn't
+  configurable from any SDK.
+</Callout>
+
+## Configuration
+
+A circuit breaker is configured per task, alongside its other resilience
+settings. It's only enforced once a worker registers that task's config at
+startup — enqueuing jobs before any such worker has started just queues
+them normally, since there's nothing yet to gate on.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito import Queue
+
+queue = Queue(db_path="tasks.db")
+
+@queue.task(
+    circuit_breaker={
+        "threshold": 5,   # open after 5 failures
+        "window": 60,     # within a 60-second window
+        "cooldown": 120,  # stay open 2 minutes before half-open
+    }
+)
+def call_external_api(endpoint: str) -> dict:
+    return requests.get(endpoint).json()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { Queue } from "@byteveda/taskito";
+
+const queue = new Queue({ dbPath: "tasks.db" });
+
+queue.task("call_flaky_api", callApi, {
+  circuitBreaker: { threshold: 5, windowMs: 60_000, cooldownMs: 120_000 },
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<Response> callFlakyApi = Task.of("call_flaky_api", Response.class)
+        .circuitBreaker(CircuitBreakerConfig.builder(5)
+                .windowSeconds(60)
+                .cooldownSeconds(120)
+                .build());
+```
+
+  </Tab>
+</CodeTabs>
+
+### Parameter reference
+
+Each binding exposes the same breaker with its own names, defaults, and
+required fields:
+
+<SdkOnly sdk="python">
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `threshold` | `int` | `5` | Number of failures to trigger the breaker. |
+| `window` | `int` | `60` | Time window in seconds for counting failures. |
+| `cooldown` | `int` | `300` | Seconds to wait before allowing a half-open probe. |
+| `half_open_probes` | `int` | `5` | Number of probe requests allowed while half-open. |
+| `half_open_success_rate` | `float` | `0.8` | Required success rate (0.0–1.0) among probes to close from half-open. |
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `threshold` | `number` | required | Failures within `windowMs` that trip the breaker. |
+| `windowMs` | `number` | required | Rolling window for counting failures. |
+| `cooldownMs` | `number` | required | How long the breaker stays open before a half-open probe. |
+| `halfOpenMaxProbes` | `number` | `5` | Probe jobs let through while half-open. |
+| `halfOpenSuccessRate` | `number` | `0.8` | Success rate (0.0–1.0) among probes required to close. |
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+| Builder method | Type | Default | Description |
+|---|---|---|---|
+| `CircuitBreakerConfig.builder(threshold)` / `.of(threshold)` | `int` | required, must be `> 0` | Failure count that trips the breaker. |
+| `.window(Duration)` / `.windowSeconds(long)` | `Duration` | `60s` | Rolling window for counting failures. |
+| `.cooldown(Duration)` / `.cooldownSeconds(long)` | `Duration` | `300s` | How long the breaker stays open before admitting half-open probes. |
+| `.halfOpenProbes(int)` | `int` | `5` | Probe runs admitted while half-open; must be `> 0`. |
+| `.halfOpenSuccessRate(double)` | `double` | `0.8` | Success rate (0.0–1.0) among probes required to re-close; must be within `[0.0, 1.0]`. |
+
+</SdkOnly>
+
+## Inspecting circuit breaker state
+
+Only tasks with a registered breaker show up here — plain tasks return
+nothing.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+breakers = queue.circuit_breakers()
+for cb in breakers:
+    print(f"{cb['task_name']}: {cb['state']} (failures: {cb['failure_count']})")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const breakers = await queue.listCircuitBreakers();
+for (const cb of breakers) {
+  console.log(`${cb.taskName}: ${cb.state} (failures: ${cb.failureCount})`);
+}
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+List<CircuitBreakerState> breakers = queue.listCircuitBreakers();
+for (CircuitBreakerState cb : breakers) {
+    log.info("{}: {} (failures: {})", cb.taskName, cb.state, cb.failureCount);
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+### Dashboard API
+
+<Callout type="info">
+  These endpoints sit behind the dashboard's normal auth — see each SDK's
+  dashboard guide for setup and authentication details.
+</Callout>
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```bash
+curl http://localhost:8080/api/circuit-breakers
+```
+
+```json
+[
+  {
+    "task_name": "myapp.tasks.call_external_api",
+    "state": "open",
+    "failure_count": 5,
+    "last_failure_at": 1700000010000,
+    "opened_at": 1700000010000,
+    "threshold": 5,
+    "window_ms": 60000,
+    "cooldown_ms": 120000
+  }
+]
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```bash
+curl http://localhost:8787/api/circuit-breakers
+```
+
+```json
+[
+  {
+    "task_name": "call_flaky_api",
+    "state": "open",
+    "failure_count": 5,
+    "last_failure_at": 1700000010000,
+    "opened_at": 1700000010000,
+    "threshold": 5,
+    "window_ms": 60000,
+    "cooldown_ms": 120000
+  }
+]
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```bash
+curl http://localhost:8080/api/circuit-breakers
+```
+
+```json
+[
+  {
+    "task_name": "call_flaky_api",
+    "state": "open",
+    "failure_count": 5,
+    "threshold": 5,
+    "window_ms": 60000,
+    "cooldown_ms": 120000,
+    "opened_at": 1700000010000,
+    "last_failure_at": 1700000010000,
+    "half_open_max_probes": 5,
+    "half_open_success_rate": 0.8
+  }
+]
+```
+
+<Callout type="info">
+  The Java contract includes `half_open_max_probes` and
+  `half_open_success_rate`; the Python and Node contracts don't expose those
+  two fields over the dashboard API today.
+</Callout>
+
+  </Tab>
+</CodeTabs>
+
+## When to use
+
+Circuit breakers are most useful for tasks that interact with external
+systems:
+
+- **External API calls** — prevent hammering a service that's already down
+- **Database connections** — stop retrying against an unreachable database
+- **Third-party services** — email providers, payment gateways, and similar
+  dependencies
+
+For purely internal computation tasks, circuit breakers are usually
+unnecessary — plain retries with backoff are sufficient.
+
+## Combining with retries
+
+A task can have both. Retries and the breaker are independent counters over
+the same failures: **every** failed attempt is recorded against the
+breaker's threshold — including one that's about to be retried — while the
+retry budget separately decides whether that attempt gets another try. A
+sufficiently flaky dependency can trip the breaker mid-retry, before a job's
+own retry budget is exhausted. Once open, new jobs for that task are gated
+immediately, so the retry budget stops being spent on a dependency that's
+already down.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task(
+    max_retries=3,
+    retry_backoff=2.0,
+    circuit_breaker={"threshold": 5, "window": 120, "cooldown": 600},
+)
+def send_email(to: str, subject: str, body: str):
+    smtp.send(to, subject, body)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("send_email", sendEmail, {
+  maxRetries: 3,
+  retryBackoff: { baseMs: 2_000, maxMs: 60_000 },
+  circuitBreaker: { threshold: 5, windowMs: 120_000, cooldownMs: 600_000 },
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class)
+        .maxRetries(3)
+        .retryPolicy(RetryPolicy.exponential(Duration.ofSeconds(2), Duration.ofMinutes(1)))
+        .circuitBreaker(CircuitBreakerConfig.builder(5)
+                .windowSeconds(120)
+                .cooldownSeconds(600)
+                .build());
+```
+
+  </Tab>
+</CodeTabs>
+
+See <SdkLink to="guides/reliability/retries">Retries</SdkLink> for the backoff
+curve and dead-letter behavior.
+
+## Monitoring state changes
+
+Poll `circuit_breakers()` / `listCircuitBreakers()` from a failure hook to
+alert when a breaker opens. The available hook differs by SDK: Python's
+`JOB_FAILED` event fires on every failed attempt, while Node's `job.dead`
+and Java's `EventName.DEAD` only fire once a job's retry budget is
+exhausted.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito.events import EventType
+
+def monitor_breakers(event_type: EventType, payload: dict) -> None:
+    # fires on every failed attempt, including ones that will be retried
+    open_breakers = [b for b in queue.circuit_breakers() if b["state"] == "open"]
+    if open_breakers:
+        names = ", ".join(b["task_name"] for b in open_breakers)
+        print(f"WARNING: open circuit breakers: {names}")
+
+queue.on_event(EventType.JOB_FAILED, monitor_breakers)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.on("job.dead", async () => {
+  // fires once a job's retry budget is exhausted, not on every failed attempt
+  const open = (await queue.listCircuitBreakers()).filter((cb) => cb.state === "open");
+  if (open.length > 0) {
+    console.warn("open circuit breakers:", open.map((cb) => cb.taskName));
+  }
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Worker worker = queue.worker()
+        .handle(callFlakyApi, payload -> call(payload))
+        .on(EventName.DEAD, event -> {
+            // fires once a job's retry budget is exhausted, not on every failed attempt
+            List<CircuitBreakerState> open = queue.listCircuitBreakers().stream()
+                    .filter(CircuitBreakerState::isOpen)
+                    .toList();
+            if (!open.isEmpty()) {
+                log.warn("open circuit breakers: {}", open);
+            }
+        })
+        .start();
+```
+
+  </Tab>
+</CodeTabs>

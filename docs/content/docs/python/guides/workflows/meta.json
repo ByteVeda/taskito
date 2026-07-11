@@ -6,7 +6,7 @@
     "conditions",
     "gates",
     "composition",
-    "sagas",
+    "saga",
     "caching",
     "analysis",
     "canvas"

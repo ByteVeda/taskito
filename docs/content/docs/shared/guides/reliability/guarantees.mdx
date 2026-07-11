@@ -1,0 +1,291 @@
+---
+title: Delivery Guarantees
+description: "Exactly-once dispatch, at-least-once execution, and how to design idempotent tasks."
+---
+
+Taskito gives **exactly-once dispatch**: an atomic claim in storage makes sure
+two workers never pick up the same job at once. But the system as a whole is
+**at-least-once execution** — if a worker crashes after it starts a task but
+before the result is recorded, the job is retried and the task body runs
+again. Design task code to tolerate that.
+
+## How a job is claimed
+
+Before dispatching a job, the scheduler makes an atomic claim on it — a
+guarded update only one caller can win (SQLite: `INSERT OR IGNORE`; Postgres:
+`INSERT ... ON CONFLICT DO NOTHING`; Redis: `SET NX`). If another scheduler
+instance already claimed the job, the claim fails and that instance skips it.
+
+- A job **will not be lost** — if a worker dies, the stale reaper detects the
+  abandoned claim and retries the job.
+- A job **may run twice** — if a worker crashes after starting the task but
+  before its result is recorded.
+- A job **will not be dispatched concurrently** — the atomic claim means only
+  one worker is ever handed it at a time. The narrow exception: when an
+  attempt times out, the reaper schedules a retry but cannot kill the
+  still-running task body, so the new attempt can briefly overlap the old
+  one. Idempotent task code covers this case too.
+
+<SdkOnly sdk="java">
+
+<Callout type="info" title="Coming from JMS/RabbitMQ?">
+  There's no manual ack/nack: a claimed job's redelivery is driven by the
+  claim lapsing, not by a consumer forgetting to acknowledge. You still get
+  the same at-least-once contract you'd design a JMS listener around.
+</Callout>
+
+</SdkOnly>
+
+## Crash recovery
+
+<Mermaid
+  chart={`sequenceDiagram
+    participant S as Scheduler
+    participant W as Worker
+    participant DB as Database
+
+    S->>DB: dequeue + claim
+    S->>W: dispatch job
+    W->>W: execute task
+    Note over W: Worker crashes here
+    Note over S: timeout elapses...
+    S->>DB: stale reaper detects stuck job
+    S->>DB: mark failed + schedule retry
+    S->>W: dispatch again (new attempt)
+    W->>DB: complete + clear claim`}
+/>
+
+The claim prevents **duplicate dispatch** — two workers picking up the same
+job at once. It does not prevent **duplicate execution** after a crash: the
+claim lapses once the stale reaper detects the timeout, and the job is
+dispatched again as a new attempt.
+
+## Why not exactly-once?
+
+Exactly-once *delivery* is impossible in general: a worker can run a task's
+side effect and then crash before it acknowledges completion, so the job is
+retried and the side effect runs again. No protocol closes this gap — the
+effect and the acknowledgement can't be committed atomically across separate
+systems. What you *can* get is exactly-once *effect*, by making tasks
+idempotent (dedup keys, upserts) or routing writes through a transactional
+outbox/inbox. This matches Celery, SQS, and most production job systems:
+deliver at least once, design tasks to handle duplicates.
+
+## What's not guaranteed
+
+- **Exactly-once execution** — not offered anywhere in the system (see
+  above); pair at-least-once delivery with idempotent handlers instead.
+- **Strict ordering** — within a queue, jobs dequeue by priority then age,
+  but concurrent workers run them in parallel; don't rely on one finishing
+  before another. Use a <SdkLink to="guides/workflows">workflow</SdkLink>
+  when order matters.
+
+## Writing idempotent tasks
+
+Because a job may run more than once, design task code to be safe on
+re-execution:
+
+- Upsert or use a conditional write keyed by a stable id, instead of a blind
+  insert.
+- Dedupe external calls (payments, emails, webhooks) using the job id, or a
+  stable business id, as an idempotency key with the downstream provider.
+- Collapse duplicate *enqueues* into a single job with a unique key — see
+  [Deduplicating enqueues](#deduplicating-enqueues) below.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.task()
+def create_user(email, name):
+    # UPSERT — safe to run twice
+    db.execute(
+        "INSERT INTO users (email, name) VALUES (?, ?) "
+        "ON CONFLICT (email) DO UPDATE SET name = ?",
+        (email, name, name),
+    )
+```
+
+```python
+@queue.task()
+def charge_customer(order_id, amount):
+    # Check if already charged
+    if db.execute("SELECT 1 FROM charges WHERE order_id = ?", (order_id,)).fetchone():
+        return  # Already processed
+
+    payment_provider.charge(amount, idempotency_key=f"order-{order_id}")
+    db.execute("INSERT INTO charges (order_id, amount) VALUES (?, ?)", (order_id, amount))
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { currentJob } from "@byteveda/taskito";
+
+queue.task("charge", async (orderId: string) => {
+  const job = currentJob();
+  await payments.charge(orderId, { idempotencyKey: job?.jobId });
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Worker worker = queue.worker()
+        .handle(CHARGE, order -> payments.charge(order.total(), order.id()))
+        .start();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+### Avoid unrecoverable side effects
+
+```python
+# Bad — sends duplicate emails on retry
+@queue.task()
+def notify(user_id):
+    send_email(user_id, "Your order shipped")
+
+# Good — atomically claim the send before doing it
+@queue.task()
+def notify(user_id):
+    claimed = db.execute(
+        "UPDATE orders SET notified = 1 WHERE user_id = ? AND notified = 0",
+        (user_id,),
+    )
+    if claimed.rowcount:
+        send_email(user_id, "Your order shipped")
+```
+
+The guarded `UPDATE` is atomic — two overlapping executions can't both win
+it, unlike a separate check-then-send. The trade-off: a crash between the
+claim and the send drops the email (at-most-once for that side effect). When
+the provider accepts an idempotency key, prefer that — it keeps the retry
+*and* dedupes the send, as in the `charge` example above.
+
+</SdkOnly>
+
+## Deduplicating enqueues
+
+A unique key coalesces duplicate enqueues into the same job while the first
+job for that key is still pending or running — the second call returns the
+existing job's id instead of creating a new one. It's backed by a partial
+unique index in storage, so the dedup is atomic across producers and
+processes.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+# Only one pending/running instance per key
+job1 = send_report.apply_async(args=(user_id,), unique_key=f"report-{user_id}")
+job2 = send_report.apply_async(args=(user_id,), unique_key=f"report-{user_id}")
+assert job2.id == job1.id  # coalesced onto job1 — no duplicate created
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.enqueue("welcome", [user.id], { uniqueKey: `welcome:${user.id}` });
+queue.enqueue("welcome", [user.id], { uniqueKey: `welcome:${user.id}` }); // ignored
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+EnqueueOptions once = EnqueueOptions.builder()
+        .uniqueKey("welcome:" + user.id())
+        .build();
+
+String first = queue.enqueue(WELCOME, user.id(), once);
+String second = queue.enqueue(WELCOME, user.id(), once); // same id — no new job
+```
+
+  </Tab>
+</CodeTabs>
+
+The key frees up once the job finishes — a duplicate enqueue after that
+creates a fresh job. Only a *pending* or *running* job holds the key; one
+that completed, was dead-lettered, or was cancelled no longer blocks reuse.
+
+<SdkOnly sdk="python">
+
+See <SdkLink to="guides/advanced-execution/unique-tasks">Unique Tasks</SdkLink>
+for the full `unique_key` reference.
+
+</SdkOnly>
+
+See <SdkLink to="guides/reliability/idempotency">Idempotency</SdkLink> for more
+on designing dedup keys.
+
+## Framework vs. task responsibility
+
+| Concern | Who handles it |
+|---------|-----------------|
+| Job dispatch deduplication | Framework — the atomic claim |
+| Job enqueue deduplication | Framework — the unique key |
+| Crash recovery | Framework — the stale reaper |
+| Idempotent execution | You — task code |
+| Side-effect safety | You — task code |
+
+## Comparison with other queues
+
+| Guarantee | Taskito | Celery | SQS |
+|-----------|---------|--------|-----|
+| Delivery | At-least-once | At-least-once | At-least-once |
+| Duplicate prevention | Atomic claim (dispatch-level) | Visibility timeout | Visibility timeout |
+| Deduplication | Unique key (enqueue-level) | Manual | Message dedup ID |
+| Crash recovery | Stale reaper (timeout-based) | Worker ack timeout | Visibility timeout |
+
+## Inspecting results from another process
+
+A job's result is stored durably, so any process sharing the same storage
+can look it up by job id — not just the worker that produced it. Useful when
+a web backend enqueues a job and a different process needs to poll its
+outcome.
+
+<SdkOnly sdk="python">
+
+```python
+job = queue.get_job(job_id)
+result = job.result(timeout=10)  # blocks until the job settles
+```
+
+See <SdkLink to="api-reference/queue/jobs">`queue.get_job()`</SdkLink> and
+<SdkLink to="api-reference/result">JobResult</SdkLink>.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info">
+  A completed job's result is stored and can be awaited by id from any
+  process sharing the storage — see
+  <SdkLink to="api-reference/result">result</SdkLink>.
+</Callout>
+
+> **Coming from BullMQ?** BullMQ's `QueueEvents` is a dedicated Redis Streams
+> consumer, so any process can listen for job outcomes. taskito's
+> `queue.on(event, handler)` fires inside the **worker process** handling the
+> job — it isn't a cross-process subscription. For visibility from another
+> process, poll `queue.getJob(id)` / `queue.stats()`, or use the
+> <SdkLink to="guides/operations/dashboard">dashboard</SdkLink> / REST API.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info">
+  A completed job's result is stored and can be read by id from any process
+  sharing the storage — `queue.getResult(jobId, Receipt.class)`. In tests,
+  `queue.awaitJob(jobId, timeout)` blocks until the job settles.
+</Callout>
+
+</SdkOnly>

@@ -47,3 +47,39 @@ app/
 Adding a page: drop an `.mdx` file under `content/docs/`, add it to the directory's
 `meta.json`. It is picked up, prerendered, indexed for search, and slotted into the
 sidebar automatically.
+
+## Shared content (one file, one URL per SDK)
+
+A file under `content/docs/shared/` mounts at the same path in **every** SDK tree:
+`shared/guides/operations/mesh.mdx` serves `/python/guides/operations/mesh`,
+`/node/...`, and `/java/...` from one source. Slug + fan-out logic lives in
+`app/lib/doc-slugs.ts` — the runtime loader, prerender walk, manifest plugin, and
+parity checks all resolve through it. Non-default-SDK mounts carry a
+`<link rel="canonical">` to the default-SDK URL, and `llms.txt` lists each shared
+page once.
+
+Authoring rules for shared pages:
+
+- **Prose is SDK-neutral.** Use `<SdkName/>` / `<SdkSwap python=… node=… java=…/>`
+  for language-specific words; wrap SDK-specific paragraphs in `<SdkOnly sdk="…">`.
+- **Code goes in `<CodeTabs>`** with one `<Tab sdk="…">` per SDK. CI fails a
+  shared page whose CodeTabs misses an SDK — add `data-parity-exempt` to the tag
+  only when a feature genuinely doesn't exist there (prefer `SdkOnly` instead).
+- **Frontmatter is shared** across all mounts — keep title/description
+  SDK-neutral.
+- **No `meta.json` under `shared/`.** List the page name in each SDK section's
+  `meta.json` (that's also how an SDK opts out of a topic).
+- **Collisions fail the build.** A per-SDK file at the same path as a shared file
+  is an error, never a silent override — delete the per-SDK file when migrating.
+- **Accuracy first.** Verify every per-SDK claim against that SDK's source before
+  writing it; a missing tab is better than a fabricated API.
+
+`pnpm check:parity` runs the CI gate (`scripts/parity/`): CodeTabs SDK coverage,
+slug collisions, redirect shadowing, plus an informational drift report ranking
+per-SDK topic pairs by word-count ratio — that report is the migration queue.
+Genuinely SDK-specific pages (Django/Flask/FastAPI, Express/Fastify/Nest,
+Spring/GraalVM, `postgres`, `dashboard-api`, `upgrading-0.15`, …) stay per-SDK.
+
+Future work: extracted code snippets (region-marked files compiled/tested in CI,
+inlined by a remark plugin — the `remarkPlugins` array in `vite.config.ts` is the
+seam) so examples can't rot.

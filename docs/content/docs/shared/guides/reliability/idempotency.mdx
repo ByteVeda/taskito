@@ -1,0 +1,302 @@
+---
+title: Idempotency
+description: "How the enqueue dedup key is derived, prioritized, and overridden — and where the automation stops."
+---
+
+A **unique key** on an enqueue coalesces a duplicate call onto the existing
+job instead of creating a second one — see
+<SdkLink to="guides/reliability/guarantees">Delivery guarantees</SdkLink> for
+the underlying mechanism (an atomic, storage-level dedup index) and for
+designing task bodies that are safe to re-run. This page is about the key
+itself: how to derive it, which value wins when more than one is set, and
+where the automation stops.
+
+## Deduping enqueues
+
+An explicit key works the same way in every binding — a second enqueue with
+the same key, while the first job is still pending or running, resolves to
+the **existing** job's id instead of creating a duplicate:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+job1 = charge_customer.apply_async(args=(42, 1000), unique_key="charge:42:1000")
+job2 = charge_customer.apply_async(args=(42, 1000), unique_key="charge:42:1000")
+
+assert job2.id == job1.id  # coalesced onto job1 — no duplicate created
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const first = queue.enqueue("chargeCustomer", [42, 1000], { uniqueKey: "charge:42:1000" });
+const second = queue.enqueue("chargeCustomer", [42, 1000], { uniqueKey: "charge:42:1000" });
+
+// second === first — coalesced, no duplicate created
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+EnqueueOptions once = EnqueueOptions.builder().uniqueKey("charge:42:1000").build();
+
+String first = queue.enqueue(CHARGE_CUSTOMER, order, once);
+String second = queue.enqueue(CHARGE_CUSTOMER, order, once); // same id — no new job
+```
+
+  </Tab>
+</CodeTabs>
+
+The key frees up once that job leaves the pending/running state — completed,
+dead-lettered, or cancelled — so a later call with the same key creates a
+fresh job.
+
+## Auto-derived keys
+
+Python and Java can derive this key for you instead of you building the
+string by hand: mark a task idempotent and Taskito hashes the task name and
+arguments into a dedup key on every enqueue.
+
+<SdkOnly sdk="python">
+
+```python
+@queue.task(idempotent=True)
+def charge_customer(customer_id: int, amount_cents: int) -> str:
+    return payment_provider.charge(customer_id, amount_cents)
+
+job1 = charge_customer.delay(42, 1000)
+job2 = charge_customer.delay(42, 1000)
+
+assert job1.id == job2.id  # second call coalesced into the first
+```
+
+`idempotent=True` also works as a per-call override on `apply_async()` for a
+task that wasn't registered idempotent by default.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+```java
+public static final Task<Order> CHARGE_CUSTOMER =
+        Task.of("charge_customer", Order.class).idempotent(true);
+
+String first = queue.enqueue(CHARGE_CUSTOMER, order);
+String second = queue.enqueue(CHARGE_CUSTOMER, order); // same id — coalesced into the first
+```
+
+`EnqueueOptions.Builder.idempotent(boolean)` is the same toggle as a
+per-call override on a task that isn't idempotent by default.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info" title="No built-in auto-derivation">
+  There's no `idempotent` flag on the task or the enqueue options today —
+  build a stable key yourself from whatever makes two calls "the same":
+</Callout>
+
+```ts
+queue.task("chargeCustomer", async (customerId: number, amountCents: number) => {
+  await paymentProvider.charge(customerId, amountCents);
+});
+
+function enqueueCharge(customerId: number, amountCents: number) {
+  const key = `charge:${customerId}:${amountCents}`;
+  return queue.enqueue("chargeCustomer", [customerId, amountCents], { uniqueKey: key });
+}
+
+enqueueCharge(42, 1_999);
+enqueueCharge(42, 1_999); // same key — coalesced into the first job
+```
+
+</SdkOnly>
+
+## How the key is derived
+
+The auto-derived key hashes the task name and the *serialized* arguments —
+not the pre-serialization values — so two calls only collide when the
+<SdkLink to="guides/extensibility/serializers">serializer</SdkLink> would
+emit identical bytes for both:
+
+```
+auto:<hex>
+hex = sha256(utf8(task_name) + 0x00 + payload)[:32 hex chars]
+```
+
+The `0x00` separator is a single NUL byte, not a printable delimiter, so a
+task name can never be mistaken for the start of a payload. The hash runs
+over the **pre-codec** payload — the bytes before any payload codec — so a
+nondeterministic codec (an AES-GCM nonce, for example) can't change the
+dedup key from one call to the next.
+
+<Callout type="info" title="Identical recipe across bindings">
+  Python and Java compute this exact same key for the same `(task_name,
+  payload)` pair, so idempotent enqueues from either binding dedupe against
+  each other when they share one queue.
+</Callout>
+
+<SdkOnly sdk="node">
+
+There's no `idempotent` flag to auto-derive this key for you (see above),
+but the recipe itself is public — build the same string yourself if you need
+a Node producer's key to collide with a Python or Java producer's.
+
+</SdkOnly>
+
+## Precedence and per-call overrides
+
+<SdkOnly sdk="python">
+
+`apply_async()` and `enqueue_many()` accept three overlapping inputs; the
+first one set wins:
+
+| Parameter | Effect |
+|---|---|
+| `unique_key="…"` | The literal storage key. Highest precedence — wins over everything below. |
+| `idempotency_key="…"` | Same effect as `unique_key`, kept as the more descriptive name for new code. |
+| `idempotent=True` / `idempotent=False` | Force auto-derivation on or off for this call, overriding the task's `@queue.task(idempotent=True)` default. |
+
+Precedence, high to low: `unique_key` → `idempotency_key` → auto-derivation
+(when `idempotent` is `True`, or the task default is, and no explicit key
+was given).
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`EnqueueOptions` accepts the same three overlapping inputs, resolved with
+identical precedence before the enqueue call reaches native code —
+`idempotent`/`idempotencyKey` never cross the JNI boundary themselves, only
+the resolved `uniqueKey` does:
+
+| Builder method | Effect |
+|---|---|
+| `.uniqueKey("…")` (alias `.jobId("…")`) | The literal storage key. Highest precedence. |
+| `.idempotencyKey("…")` | Same effect as `.uniqueKey`, resolved locally before enqueue. |
+| `.idempotent(true)` / `.idempotent(false)` | Force auto-derivation on or off for this call, overriding `Task.idempotent(true)`. |
+
+Precedence, high to low: `uniqueKey` → `idempotencyKey` → auto-derivation
+(when `idempotent` is `true`, or the task default is, and no explicit key
+was given).
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's only one input — `uniqueKey` — so there's no precedence to resolve.
+Omit the option to skip dedup for that call.
+
+</SdkOnly>
+
+## Bulk enqueues
+
+Batch enqueue trades the per-row dedup check for throughput, and the three
+bindings don't behave the same way when a batch contains a colliding key.
+
+<SdkOnly sdk="java">
+
+`enqueueMany` routes any job carrying a key through the same check-then-insert
+path as a single `enqueue` — a duplicate inside the batch, or one that
+collides with an already-active job, resolves to the existing job's id
+instead of failing the batch:
+
+```java
+List<String> ids = queue.enqueueMany(CHARGE_CUSTOMER, orders, once);
+// duplicates map to the already-enqueued job's id, in input order
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+<Callout type="warn" title="enqueue_many() does not coalesce">
+  Unlike `apply_async()`, `enqueue_many()` inserts the whole batch in one
+  statement without a per-row existence check. A duplicate `unique_key` (or
+  auto-derived key) *within* the same call, or one that collides with an
+  already-active job, raises a `RuntimeError` and fails the whole batch
+  instead of coalescing.
+</Callout>
+
+`enqueue_many()` still accepts `unique_keys`, `idempotency_keys`, and a
+uniform `idempotent=True` to resolve a key per row — just make sure the
+resulting keys are distinct, or don't rely on dedup for that call:
+
+```python
+queue.enqueue_many(
+    task_name="myapp.charge_customer",
+    args_list=[(42, 1000), (43, 2000)],  # pre-deduplicated by the caller
+    idempotent=True,
+)
+```
+
+When collision resilience matters more than throughput, loop `apply_async()`
+calls instead — each one goes through the coalescing check-then-insert path.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="warn" title="enqueueMany does not apply uniqueKey dedup">
+  `enqueueMany` is a plain bulk insert for throughput — it does not check
+  `uniqueKey` before inserting. A duplicate key in the batch, or one that
+  collides with an already-active job, is unsupported: don't pass `uniqueKey`
+  to a batch entry expecting it to dedupe.
+</Callout>
+
+When collision resilience matters more than throughput, loop `enqueue()`
+calls instead — each one goes through the coalescing check-then-insert path.
+
+</SdkOnly>
+
+## Pitfalls
+
+<SdkOnly sdk="python">
+
+- **Don't derive a key from a moving value.** `datetime.now()`, `uuid4()`,
+  and similar produce a different hash on every call, so auto-derived dedup
+  never triggers. Move them inside the task body or pass a stable identifier
+  instead.
+- **Argument order affects the hash.** `charge(42, 1000)` and
+  `charge(amount=1000, customer_id=42)` serialize differently and therefore
+  hash differently. Be consistent at the call site, or use an explicit
+  `idempotency_key`.
+- **Changing the serializer changes the hash.** The hash survives a codec
+  change (it's taken pre-codec) but not a *serializer* change between
+  releases — in-flight jobs from the old release won't dedupe against new
+  submissions. Use an explicit `idempotency_key` for keys that must survive
+  a deploy.
+- **`queue.test_mode()` skips dedup.** Tasks run synchronously without
+  storage in test mode, so idempotency is a no-op there.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+- **Don't derive a key from a moving value.** A timestamp, a random UUID, or
+  similar produces a different hash on every call, so auto-derived dedup
+  never triggers. Move it inside the handler or pass a stable identifier
+  instead.
+- **Argument order affects the hash.** The auto-key hashes the serialized
+  payload, so two payloads that are semantically equal but serialize
+  differently (field order in a hand-built JSON payload, for example) hash
+  differently. Use an explicit `.idempotencyKey(...)` when that risk exists.
+- **Changing the serializer changes the hash.** The hash survives a codec
+  change (it's taken pre-codec) but not a *serializer* change between
+  releases — in-flight jobs from the old release won't dedupe against new
+  submissions. Use an explicit `.idempotencyKey(...)` for keys that must
+  survive a deploy.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Whatever you build `uniqueKey` from, keep it stable for the equality you
+want — a timestamp or a random id defeats dedup entirely, since every call
+then gets its own key.
+
+</SdkOnly>

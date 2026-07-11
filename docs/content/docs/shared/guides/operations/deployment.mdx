@@ -1,0 +1,1217 @@
+---
+title: Deployment
+description: "Process model, storage location, systemd/Docker, backups, monitoring, and sizing in production."
+---
+
+This guide covers running taskito in production.
+
+<Callout type="info" title="No broker to operate">
+  Unlike Celery (which needs Redis or RabbitMQ as a message broker), taskito's
+  scheduler lives inside the worker process and reads directly from SQLite,
+  Postgres, or Redis. There's no separate broker process to run, monitor, or
+  fail over — one less moving part in production.
+</Callout>
+
+## Process model
+
+Producers and workers are separate processes that share storage. A typical
+deploy has a web/API process that enqueues jobs, and one or more worker
+processes that claim and run them:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+# myapp.py
+from taskito import Queue
+
+queue = Queue(db_path="/var/lib/myapp/taskito.db")
+
+@queue.task()
+def send_email(to: str, subject: str):
+    ...
+```
+
+```bash
+taskito worker --app myapp:queue --queues default,emails
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+// app.ts — the module `taskito run` loads
+import { Queue } from "@byteveda/taskito";
+
+export const queue = new Queue({ dbPath: "/var/lib/myapp/taskito.db" });
+
+queue.task("sendEmail", (to: string, subject: string) => {
+  // ...
+});
+```
+
+```bash
+taskito run ./app.js --queues default,emails
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+try (Taskito taskito = Taskito.builder().sqlite("/var/lib/myapp/taskito.db").open();
+        Worker worker = taskito.worker()
+                .handle(sendEmail, handlers::sendEmail)
+                .queues("default", "emails")
+                .concurrency(8) // fixed pool; 0 (default) = cached pool
+                .start()) {
+    Runtime.getRuntime().addShutdownHook(new Thread(worker::close));
+    worker.awaitShutdown();
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+With SQLite, every producer and worker must share the same file (same host or
+volume). With Postgres or Redis, they can run on separate machines.
+
+<SdkOnly sdk="python">
+
+See [Postgres deployment](#postgres-deployment) below.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/operations/backends">Backends</SdkLink>.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/operations/backends">Backends</SdkLink>.
+
+</SdkOnly>
+
+## SQLite file location
+
+Choose a persistent, backed-up location for the database:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue = Queue(db_path="/var/lib/myapp/taskito.db")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const queue = new Queue({ dbPath: "/var/lib/myapp/taskito.db" });
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Taskito taskito = Taskito.builder().sqlite("/var/lib/myapp/taskito.db").open();
+```
+
+  </Tab>
+</CodeTabs>
+
+SQLite runs in **WAL** (write-ahead logging) mode by default — see
+[WAL mode and backups](#wal-mode-and-backups) below — which appends writes to
+a separate log file instead of the main database file, letting many readers
+proceed concurrently with the one writer.
+
+**Best practices:**
+
+- Use an absolute path — relative paths depend on the working directory
+- Place the database on local storage (not NFS or network mounts) — SQLite file locking doesn't work reliably over network filesystems
+- Ensure the directory exists and the worker process has read/write permissions
+- The database file, WAL file (`taskito.db-wal`), and shared memory file (`taskito.db-shm`) must all be on the same filesystem
+
+## Running the worker as a service
+
+<SdkOnly sdk="python">
+
+Create `/etc/systemd/system/taskito-worker.service`:
+
+```ini
+[Unit]
+Description=taskito worker
+After=network.target
+
+[Service]
+Type=simple
+User=myapp
+Group=myapp
+WorkingDirectory=/opt/myapp
+ExecStart=/opt/myapp/.venv/bin/taskito worker --app myapp:queue
+Restart=always
+RestartSec=5
+
+# Graceful shutdown — taskito handles SIGINT
+KillSignal=SIGINT
+TimeoutStopSec=35
+
+# Environment
+Environment=PYTHONPATH=/opt/myapp
+
+[Install]
+WantedBy=multi-user.target
+```
+
+<Callout type="info">
+  Set `TimeoutStopSec` to slightly longer than your longest task timeout
+  (`taskito worker --drain-timeout` defaults to 30s). This gives in-flight
+  tasks time to complete before systemd force-kills the process.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Create `/etc/systemd/system/taskito-worker.service`:
+
+```ini
+[Unit]
+Description=taskito worker
+After=network.target
+
+[Service]
+Type=simple
+User=myapp
+Group=myapp
+WorkingDirectory=/opt/myapp
+ExecStart=/opt/myapp/node_modules/.bin/taskito run ./app.js --queues default,emails
+Restart=always
+RestartSec=5
+
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`taskito run` installs its own `SIGINT`/`SIGTERM` handlers, so systemd's
+default `KillSignal=SIGTERM` works without overriding it.
+
+<Callout type="warning" title="The run command's shutdown grace is short and fixed">
+  On a stop signal, `taskito run` calls `worker.stop()`, waits a **fixed
+  200ms**, then force-exits the process — it doesn't wait for long-running
+  handlers to actually finish. That's enough for typical short tasks, but if
+  your handlers can run for seconds, write your own entrypoint that calls
+  `queue.runWorker()` / `worker.stop()` directly and waits as long as you need
+  (e.g. until your own in-flight counter hits zero) before exiting.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There's no worker CLI subcommand — workers are code. Wire the shutdown hook
+shown in [Process model](#process-model) above, then run the jar as a
+systemd service:
+
+```ini
+[Unit]
+Description=taskito worker
+After=network.target
+
+[Service]
+Type=simple
+User=myapp
+Group=myapp
+WorkingDirectory=/opt/myapp
+ExecStart=/usr/bin/java --enable-native-access=ALL-UNNAMED -jar /opt/myapp/app.jar
+Restart=always
+RestartSec=5
+TimeoutStopSec=65
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`worker.close()` (wired to the shutdown hook) drains in-flight handlers for up
+to 30 seconds, then interrupts and waits 30 more — set `TimeoutStopSec` a
+little past that so systemd doesn't force-kill first.
+
+</SdkOnly>
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable taskito-worker
+sudo systemctl start taskito-worker
+
+# Check logs
+journalctl -u taskito-worker -f
+```
+
+## Docker
+
+### Dockerfile
+
+<SdkOnly sdk="python">
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Store the database in a volume
+VOLUME /data
+
+CMD ["taskito", "worker", "--app", "myapp:queue"]
+```
+
+<Callout type="warn" title="TASKITO_DB_PATH is not read automatically">
+  The `taskito` CLI and the `Queue` constructor do not read a `TASKITO_DB_PATH`
+  environment variable — that env var name is only recognized by the Flask and
+  Django integrations. If your `myapp:queue` module builds the `Queue`
+  directly, read the path yourself (and keep the `ENV TASKITO_DB_PATH=...`
+  line in the Dockerfile above), as shown below.
+</Callout>
+
+```python
+# myapp.py
+import os
+from taskito import Queue
+
+queue = Queue(db_path=os.environ.get("TASKITO_DB_PATH", "/data/taskito.db"))
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```dockerfile
+FROM node:20-slim
+
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile --prod
+
+COPY . .
+
+# Store the database in a volume
+VOLUME /data
+
+CMD ["node_modules/.bin/taskito", "run", "./app.js"]
+```
+
+<Callout type="info">
+  A prebuilt native addon ships for both glibc and musl Linux, so `node:20-slim`
+  and `node:20-alpine` both work with no extra build step — no Python or Rust
+  toolchain required in the image.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Illustrative — `shadowJar` assumes the Gradle Shadow plugin builds a fat jar
+with your app's `main` class as the entry point; swap in whatever packaging
+task your build actually uses:
+
+```dockerfile
+FROM gradle:8-jdk21 AS build
+WORKDIR /src
+COPY . .
+RUN ./gradlew --no-daemon shadowJar
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=build /src/build/libs/app.jar app.jar
+
+VOLUME /data
+ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]
+```
+
+<Callout type="info" title="Native library extraction">
+  The jar extracts the native engine to a per-user directory on first use.
+  Standard glibc-based images (`eclipse-temurin`, `debian`, `ubuntu`) work out
+  of the box. On a host where `/tmp` is `noexec`, set
+  `-Dtaskito.native.workdir=/path` to redirect extraction; set
+  `-Dtaskito.native.lib=/path/to/library` to skip extraction and load an
+  explicit binary (e.g. one built for musl).
+</Callout>
+
+On JDK 22+, the hot byte operations automatically use a Java FFM (Panama) fast
+path packaged as a multi-release-jar overlay; older JDKs transparently fall
+back to JNI — same API either way. FFM calls are "restricted native access":
+`--enable-native-access=ALL-UNNAMED` (in the `ENTRYPOINT` above) grants access
+and silences the warning.
+
+</SdkOnly>
+
+### docker-compose.yml
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```yaml
+services:
+  worker:
+    build: .
+    volumes:
+      - taskito-data:/data
+    stop_signal: SIGINT
+    stop_grace_period: 35s
+
+  dashboard:
+    build: .
+    command: taskito dashboard --app myapp:queue --host 0.0.0.0
+    volumes:
+      - taskito-data:/data
+    ports:
+      - "8080:8080"
+
+volumes:
+  taskito-data:
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```yaml
+services:
+  worker:
+    build: .
+    volumes:
+      - taskito-data:/data
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+
+  dashboard:
+    build: .
+    command: node_modules/.bin/taskito --db /data/taskito.db dashboard --host 0.0.0.0
+    volumes:
+      - taskito-data:/data
+    ports:
+      - "8787:8787"
+
+volumes:
+  taskito-data:
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```yaml
+services:
+  worker:
+    build: .
+    volumes:
+      - taskito-data:/data
+    stop_signal: SIGTERM
+    stop_grace_period: 65s
+
+  dashboard:
+    build: .
+    command: java -cp app.jar org.byteveda.taskito.cli.Cli --url /data/taskito.db dashboard --port 8080
+    volumes:
+      - taskito-data:/data
+    ports:
+      - "8080:8080"
+
+volumes:
+  taskito-data:
+```
+
+  </Tab>
+</CodeTabs>
+
+<Callout type="warn" title="Shared volumes">
+  The worker and dashboard must access the **same SQLite file**. In Docker,
+  use a named volume shared between containers. Do not use bind mounts on
+  network storage.
+</Callout>
+
+### Graceful shutdown in containers
+
+<SdkOnly sdk="python">
+
+taskito handles `SIGINT` for graceful shutdown. Configure your container
+orchestrator to send `SIGINT` (not `SIGTERM`):
+
+- **Docker Compose**: `stop_signal: SIGINT`
+- **Kubernetes**: use a `preStop` hook or configure `STOPSIGNAL` in the Dockerfile:
+
+```dockerfile
+STOPSIGNAL SIGINT
+```
+
+For Kubernetes, set `terminationGracePeriodSeconds` to match your longest
+task timeout:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 60
+  containers:
+    - name: worker
+      ...
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`taskito run` already listens for both `SIGINT` and `SIGTERM`, so the default
+signal Docker and Kubernetes send (`SIGTERM`) works without changing
+`stop_signal`/`STOPSIGNAL`. Remember the fixed ~200ms grace window called out
+above — a short `stop_grace_period` / `terminationGracePeriodSeconds` (10s is
+plenty) is fine for the CLI, but a custom entrypoint with its own drain logic
+needs a longer one to match:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 30
+  containers:
+    - name: worker
+      ...
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The shutdown hook calls `worker.close()` on `SIGTERM`, Docker's and
+Kubernetes' default signal — no `STOPSIGNAL` override needed. `close()` drains
+for up to 30 seconds, then interrupts and waits 30 more, so give the
+orchestrator enough room:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 65
+  containers:
+    - name: worker
+      ...
+```
+
+</SdkOnly>
+
+## WAL mode and backups
+
+taskito uses SQLite in WAL (write-ahead logging) mode for concurrent
+read/write access. This affects how you back up the database.
+
+**Do NOT** simply copy the `.db` file while the worker is running — you may
+get a corrupted backup if the WAL hasn't been checkpointed.
+
+**Safe backup methods**, both safe while the worker is running:
+
+```bash
+# Option 1: sqlite3 .backup command (safe, online)
+sqlite3 /var/lib/myapp/taskito.db ".backup /backups/taskito-$(date +%Y%m%d).db"
+
+# Option 2: SQLite VACUUM INTO command
+sqlite3 /var/lib/myapp/taskito.db "VACUUM INTO '/backups/taskito-$(date +%Y%m%d).db';"
+```
+
+## Postgres deployment
+
+<SdkOnly sdk="python">
+
+If you're using the [Postgres backend](/python/guides/operations/postgres),
+deployment is simpler in several ways:
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Switching to <SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink>
+removes SQLite's shared-file constraint:
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Switching to <SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink>
+removes SQLite's shared-file constraint:
+
+</SdkOnly>
+
+- **No shared-file constraints** — workers connect over the network, no need for shared volumes or local storage
+- **Multi-machine workers** — run workers on separate hosts against the same database
+- **Standard backups** — use `pg_dump` instead of `sqlite3 .backup`
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: taskito
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  worker:
+    build: .
+    environment:
+      TASKITO_BACKEND: postgres
+      TASKITO_DB_URL: postgresql://taskito:secret@postgres:5432/myapp
+    depends_on:
+      - postgres
+    stop_signal: SIGINT
+    stop_grace_period: 35s
+
+volumes:
+  pgdata:
+```
+
+<Callout type="info">
+  `TASKITO_BACKEND`/`TASKITO_DB_URL` above are only read automatically by the
+  Flask and Django integrations — if `myapp:queue` builds the `Queue` directly,
+  read them yourself, the same way the [Dockerfile](#dockerfile) section above
+  does for `TASKITO_DB_PATH`.
+</Callout>
+
+  </Tab>
+  <Tab sdk="node">
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: taskito
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  worker:
+    build: .
+    environment:
+      TASKITO_PG_URL: postgresql://taskito:secret@postgres:5432/myapp
+    depends_on:
+      - postgres
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+
+volumes:
+  pgdata:
+```
+
+<Callout type="info">
+  `TASKITO_PG_URL` above is illustrative — read it in your own entrypoint
+  (`new Queue({ backend: "postgres", dsn: process.env.TASKITO_PG_URL })`); the
+  `taskito` CLI and `runWorker()` don't read it automatically.
+</Callout>
+
+  </Tab>
+  <Tab sdk="java">
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: taskito
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  worker:
+    build: .
+    environment:
+      TASKITO_PG_URL: postgresql://taskito:secret@postgres:5432/myapp
+    depends_on:
+      - postgres
+    stop_signal: SIGTERM
+    stop_grace_period: 65s
+
+volumes:
+  pgdata:
+```
+
+<Callout type="info">
+  `TASKITO_PG_URL` above is illustrative — read it yourself (e.g.
+  `Taskito.builder().postgres(System.getenv("TASKITO_PG_URL")).open()`); the
+  builder has no automatic env-var lookup.
+</Callout>
+
+  </Tab>
+</CodeTabs>
+
+### Backups
+
+```bash
+# Dump the taskito schema
+pg_dump -h localhost -U taskito -d myapp -n taskito > backup.sql
+
+# Restore
+psql -h localhost -U taskito -d myapp < backup.sql
+```
+
+<SdkOnly sdk="python">
+
+See the [Postgres Backend guide](/python/guides/operations/postgres) for full
+configuration details.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See <SdkLink to="guides/operations/backends">Backends</SdkLink> for Redis, and
+for when to reach for Postgres over SQLite.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See <SdkLink to="guides/operations/backends">Backends</SdkLink> for Redis, and
+for when to reach for Postgres over SQLite.
+
+</SdkOnly>
+
+## Database maintenance
+
+### Auto-cleanup
+
+<SdkOnly sdk="python">
+
+Set `result_ttl` to automatically purge old completed jobs:
+
+```python
+queue = Queue(
+    db_path="/var/lib/myapp/taskito.db",
+    result_ttl=86400,  # Purge completed/dead jobs older than 24 hours
+)
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no built-in TTL option — run [manual cleanup](#manual-cleanup) on a
+schedule instead (a cron job, or a periodic task on the queue itself).
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There's no built-in TTL option — run [manual cleanup](#manual-cleanup) on a
+schedule instead (a cron job, or a periodic task on the queue itself).
+
+</SdkOnly>
+
+### Manual cleanup
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+# Purge completed jobs older than 7 days (older_than is in seconds)
+queue.purge_completed(older_than=604800)
+
+# Purge dead letters older than 30 days
+queue.purge_dead(older_than=2592000)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+// Purge completed jobs older than 7 days (olderThanMs is in milliseconds)
+await queue.purgeCompleted(7 * 24 * 60 * 60 * 1000);
+
+// Purge dead letters older than 30 days
+await queue.purgeDead(30 * 24 * 60 * 60 * 1000);
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// Purge completed jobs older than 7 days (olderThanMs is in milliseconds)
+taskito.purgeCompleted(Duration.ofDays(7).toMillis());
+
+// Purge dead letters older than 30 days
+taskito.purgeDead(Duration.ofDays(30).toMillis());
+```
+
+  </Tab>
+</CodeTabs>
+
+### Database size
+
+The database grows as jobs accumulate — roughly 1 KB per job for metadata and
+small payloads, more for large arguments or results. Without cleanup, expect
+steady growth; with regular purging (above) the database stays compact. You
+can also periodically run `VACUUM` to reclaim space:
+
+```bash
+sqlite3 /var/lib/myapp/taskito.db "VACUUM;"
+```
+
+<Callout type="info">
+  `VACUUM` rewrites the entire database and requires exclusive access. Run
+  it during low-traffic periods or during a maintenance window.
+</Callout>
+
+## Monitoring in production
+
+### Dashboard
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```bash
+taskito dashboard --app myapp:queue --host 0.0.0.0 --port 8080
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```bash
+taskito --db taskito.db dashboard --host 0.0.0.0 --port 8787
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```bash
+taskito --url taskito.db dashboard --port 8080
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+The dashboard enforces session authentication once at least one admin exists;
+until then every `/api/*` route returns `503 setup_required`. Bootstrap the
+first admin with `TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`,
+or create one through the SPA's first-run setup. Serve it over TLS — see
+[Security: Dashboard](/python/guides/operations/security#dashboard) for the
+full auth, cookie, and role model.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Auth runs **open** by default — anyone who can reach the port has full
+access. Pass a bearer token (`--token`, or `auth: { token }` to
+`serveDashboard`) for a quick gate, or mount the dashboard behind your own
+auth via the <SdkLink to="guides/integrations/express">Express</SdkLink> or
+[Fastify](/node/guides/integrations/fastify) helpers for real login/RBAC.
+Either way, put it behind TLS in production.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The dashboard enforces session authentication (with OAuth/SSO support) by
+default; pass a `token` to `start(...)`/`dashboard(...)` for the legacy
+single-credential mode instead. Bootstrap the first admin with
+`TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`, or
+through the SPA's first-run setup. See
+[Dashboard: Auth](/java/guides/operations/dashboard#auth) for the full model.
+
+</SdkOnly>
+
+Every SDK's dashboard also exposes liveness/readiness probes outside the auth
+gate, for load balancer and orchestrator health checks:
+
+```bash
+curl http://localhost:8080/health      # always public — liveness
+curl http://localhost:8080/readiness   # storage/worker/resource readiness
+```
+
+### Programmatic stats
+
+Poll queue stats and export them to your monitoring system:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+import time
+
+def export_metrics():
+    while True:
+        stats = queue.stats()
+        # Export to Prometheus, Datadog, StatsD, etc.
+        gauge("taskito.pending", stats["pending"])
+        gauge("taskito.running", stats["running"])
+        gauge("taskito.dead", stats["dead"])
+        time.sleep(15)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+async function exportMetrics() {
+  for (;;) {
+    const stats = await queue.stats();
+    // Export to Prometheus, Datadog, StatsD, etc.
+    gauge("taskito.pending", stats.pending);
+    gauge("taskito.running", stats.running);
+    gauge("taskito.dead", stats.dead);
+    await new Promise((r) => setTimeout(r, 15_000));
+  }
+}
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+void exportMetrics() throws InterruptedException {
+    while (true) {
+        QueueStats stats = taskito.stats();
+        // Export to Prometheus, Datadog, StatsD, etc.
+        gauge("taskito.pending", stats.pending);
+        gauge("taskito.running", stats.running);
+        gauge("taskito.dead", stats.dead);
+        Thread.sleep(15_000);
+    }
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+For a ready-made exporter instead of polling by hand, see
+[Prometheus](/python/guides/integrations/prometheus).
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+For a ready-made exporter instead of polling by hand, see
+[Prometheus](/node/guides/integrations/prometheus).
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+For a ready-made exporter instead of polling by hand, see
+[Micrometer](/java/guides/integrations/micrometer).
+
+</SdkOnly>
+
+### Alerting on failure
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.on_failure
+def alert_on_failure(task_name, args, kwargs, error):
+    # Fires on every raised exception, including ones that still have
+    # retries left. Send to PagerDuty, Slack, email, etc.
+    notify(f"Task {task_name} failed: {error}")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+// Fires once a job exhausts its retries and dead-letters.
+queue.on("job.dead", (event) => {
+  notify(`Task ${event.taskName} dead-lettered: ${event.error}`);
+});
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// Fires once a job exhausts its retries and dead-letters.
+taskito.worker()
+        .handle(sendEmail, handlers::sendEmail)
+        .on(EventName.DEAD, event -> notify("Task dead-lettered: " + event.error))
+        .start();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+`on_failure` fires on every attempt that raises, whether or not a retry
+follows. To alert only once a job is permanently dead-lettered, use
+`queue.on_event(EventType.JOB_DEAD, ...)` instead — see
+[Events & Webhooks](/python/guides/extensibility/events-webhooks).
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+See [Events](/node/guides/extensibility/events) for the full set
+(`job.completed`, `job.retrying`, `job.dead`, `job.cancelled`) and
+[Webhooks](/node/guides/extensibility/webhooks) to deliver them to an
+external HTTP endpoint instead of in-process.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+See [Events](/java/guides/extensibility/events) for the full set (`SUCCESS`,
+`RETRY`, `DEAD`, `CANCELLED`) and
+[Webhooks](/java/guides/extensibility/webhooks) to deliver them to an
+external HTTP endpoint instead of in-process.
+
+</SdkOnly>
+
+### Health check endpoint
+
+<SdkOnly sdk="python">
+
+```python
+from fastapi import FastAPI
+from taskito.contrib.fastapi import TaskitoRouter
+
+app = FastAPI()
+app.include_router(TaskitoRouter(queue), prefix="/tasks")
+
+# GET /tasks/stats returns queue health
+# Use this as a health check endpoint in your load balancer
+```
+
+`TaskitoRouter` has no auth of its own — mount it behind your app's existing
+auth, or stick to the dashboard's public `/health`/`/readiness` probes above.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+```ts
+import express from "express";
+import { taskitoRouter } from "@byteveda/taskito/contrib/express";
+
+const app = express();
+app.use("/tasks", taskitoRouter(queue));
+
+// GET /tasks/stats returns queue health
+// Use this as a health check endpoint in your load balancer
+```
+
+`taskitoRouter` has no auth of its own — mount it behind your app's existing
+auth, or stick to the dashboard's public `/health`/`/readiness` probes above.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There's no lightweight REST-framework helper — use the dashboard's `/health`
+and `/readiness` probes above (public by default; gate them with
+`TASKITO_DASHBOARD_METRICS_TOKEN`), or add a route in your own web framework
+that calls `taskito.stats()`.
+
+</SdkOnly>
+
+## Multiple workers
+
+<SdkOnly sdk="python">
+
+taskito is designed as a **single-process** task queue when using SQLite.
+Running multiple worker processes against the same SQLite file is possible
+(WAL mode allows concurrent access), but:
+
+- Only one process can write at a time — this limits throughput
+- SQLite lock contention increases with more writers
+- There is no distributed coordination between workers
+
+For most single-machine workloads, one worker process with multiple threads
+(the default) is sufficient:
+
+```python
+queue = Queue(
+    db_path="myapp.db",
+    workers=8,  # 8 OS threads in the worker pool
+)
+```
+
+If you need distributed workers across multiple machines, use the
+[Postgres backend](/python/guides/operations/postgres) which removes the
+single-writer constraint and supports multi-machine deployments.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no thread-pool size to tune — a Node worker dispatches jobs as
+ordinary event-loop async invocations, bounded by `channelCapacity` and
+per-task/per-queue <SdkLink to="guides/reliability/concurrency">concurrency
+caps</SdkLink>, not an OS thread count. Scaling out means running more worker
+**processes** (or hosts) against the same storage — the core claims each job
+for exactly one of them, so adding workers adds throughput without duplicate
+execution. See [Execution model](/node/guides/core/execution-model).
+
+Multiple processes against one SQLite file work (WAL mode allows concurrent
+access), but only one can write at a time — heavy concurrent writers surface
+as `SQLite database is locked` errors. Move to
+<SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink> once that
+happens.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Size the handler thread pool with `concurrency(n)`, or let
+[autoscale](/java/guides/operations/autoscaling) resize it between a min and
+max as queue depth changes:
+
+```java
+taskito.worker()
+        .handle(sendEmail, handlers::sendEmail)
+        .concurrency(8) // fixed pool; near the core count for CPU-bound work
+        .start();
+```
+
+Scaling out means running more worker **processes** (or hosts) against shared
+storage. Multiple processes against one SQLite file work (WAL mode allows
+concurrent access), but only one can write at a time — move to
+<SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink> for
+heavy concurrent writers or true multi-machine deployment.
+
+</SdkOnly>
+
+## SQLite scaling limits
+
+taskito uses SQLite as its default storage backend. Understanding its
+limitations helps you plan for production.
+
+**Single-writer constraint.** SQLite allows only one write transaction at a
+time. WAL mode lets reads proceed concurrently with writes, but all writes
+are serialized — this is the primary throughput ceiling, regardless of SDK.
+
+<SdkOnly sdk="python">
+
+**Expected throughput.** On modern hardware with an SSD, expect:
+
+- **1,000–5,000 jobs/second** for enqueue + dequeue cycles (small payloads)
+- Throughput decreases with larger payloads, complex queries, or spinning disks
+- The connection pool size is fixed at 8 for the SQLite backend — it is not
+  configurable from the Python `Queue` constructor. The `pool_size` argument
+  only takes effect on the
+  [Postgres backend](/python/guides/operations/postgres#connection-pooling)
+
+**When to upgrade to Postgres:**
+
+- You need multi-machine distributed workers
+- You consistently exceed ~5,000 jobs/second sustained throughput
+- Multiple processes contend heavily for writes (high lock wait times)
+- You need sub-millisecond dequeue latency under high load
+
+taskito's [Postgres backend](/python/guides/operations/postgres) addresses all
+of these limitations while keeping the same API.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Unlike the Python SDK, the SQLite connection pool size is configurable here
+too (default 8) — `new Queue({ poolSize: 16 })` — though the single-writer
+constraint above still caps write throughput regardless of pool size. When
+lock contention or the need for multi-machine workers shows up, move to
+<SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink>; exact
+throughput numbers depend heavily on payload size and handler duration, so
+benchmark your own workload rather than relying on a generic figure.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Unlike the Python SDK, the SQLite connection pool size is configurable here
+too (default 8) — `.poolSize(16)` on the builder — though the single-writer
+constraint above still caps write throughput regardless of pool size. When
+lock contention or the need for multi-machine workers shows up, move to
+<SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink>; exact
+throughput numbers depend heavily on payload size and handler duration, so
+benchmark your own workload rather than relying on a generic figure.
+
+</SdkOnly>
+
+## Sizing your deployment
+
+<SdkOnly sdk="python">
+
+| Throughput | Backend | Workers | Pool | Notes |
+|-----------|---------|---------|------|-------|
+| < 100 jobs/s | SQLite | 4 | thread | Default config works fine |
+| 100–1K jobs/s | SQLite | 8–16 | thread or prefork | Increase `workers`, monitor WAL size |
+| 1K–5K jobs/s | SQLite | 16 | prefork | Prefork for CPU-bound; SQLite handles this well with WAL |
+| 5K–20K jobs/s | Postgres | 16–32 | prefork | Switch to Postgres for concurrent writers |
+| 20K–50K jobs/s | Postgres | 32+ | prefork | Multiple worker processes, tune `pool_size` |
+| > 50K jobs/s | — | — | — | Consider Celery + RabbitMQ for this scale |
+
+`Pool` is the worker execution pool: `thread` (default, one process with
+multiple OS threads) or `prefork` (multiple worker subprocesses, true CPU
+parallelism). See [Prefork Workers](/python/guides/advanced-execution/prefork)
+for when and how to switch.
+
+<Callout type="info">
+  These are rough guidelines for noop tasks. Real throughput depends on task
+  duration, payload size, and I/O patterns.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no published throughput table for the Node SDK — the event-loop
+execution model (no thread-pool sizing to tune) makes it a poor fit for the
+kind of `workers`/`pool` matrix the Python SDK publishes. As a starting
+point:
+
+- CPU-bound handlers: offload to `worker_threads` and keep the event loop free
+- I/O-bound handlers: raise `channelCapacity`/`batchSize` and add worker processes
+- Once SQLite write contention shows up, move to
+  <SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink>
+
+See [Execution model](/node/guides/core/execution-model) and
+[Concurrency](/node/guides/reliability/concurrency). Benchmark your own
+handlers rather than assuming generic numbers transfer.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There's no published throughput table for the Java SDK — real-thread
+execution and `concurrency`/`autoscale` sizing don't map onto the Python
+SDK's `workers`/`pool` matrix. As a starting point:
+
+- CPU-bound handlers: size `concurrency(n)` near the core count
+- I/O-bound handlers: let the cached pool (default) or
+  [autoscale](/java/guides/operations/autoscaling) breathe with queue depth
+- Once SQLite write contention shows up, move to
+  <SdkLink to="guides/operations/backends">Postgres or Redis</SdkLink>
+
+See [Execution model](/java/guides/core/execution-model). Benchmark your own
+handlers rather than assuming generic numbers transfer.
+
+</SdkOnly>
+
+## Checklist
+
+- [ ] Use an absolute path for the SQLite file
+- [ ] Place SQLite on local (not network) storage
+- [ ] Purge old completed/dead jobs on a schedule
+      (<SdkSwap python={<><code>result_ttl</code> automates this</>} node={<>no built-in TTL — schedule <code>purgeCompleted</code>/<code>purgeDead</code></>} java={<>no built-in TTL — schedule <code>purgeCompleted</code>/<code>purgeDead</code></>} />)
+- [ ] Set a timeout on tasks to recover from worker crashes
+      (<SdkSwap python={<code>timeout=</code>} node={<code>timeoutMs</code>} java={<code>.timeout(Duration...)</code>} />)
+- [ ] Configure the process manager's stop signal correctly
+      (<SdkSwap python={<code>SIGINT</code>} node={<><code>SIGINT</code>/<code>SIGTERM</code>, mind the fixed 200ms CLI grace</>} java={<><code>SIGTERM</code> via a shutdown hook</>} />)
+- [ ] Set up failure hooks or monitoring for alerting
+- [ ] Back up the database using `sqlite3 .backup` (not file copy), or `pg_dump` for Postgres
+- [ ] Put the dashboard behind TLS
+      (<SdkSwap python="bootstrap a real admin" node="set a bearer token or your own auth" java="bootstrap a real admin, or use legacy token mode" />)

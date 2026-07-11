@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { mountsForRelPath } from "./doc-slugs";
 
 interface MdxModule {
   default: ComponentType;
@@ -9,18 +10,13 @@ interface MdxModule {
 // nav/search never pull these heavy (shiki-inflated) modules into a shared chunk.
 const LOADERS = import.meta.glob<MdxModule>("../../content/docs/**/*.mdx");
 
-function keyToSlug(key: string): string {
-  const rel = key.replace(/^.*\/content\/docs\//, "").replace(/\.mdx$/, "");
-  const parts = rel.split("/");
-  if (parts[parts.length - 1] === "index") {
-    parts.pop();
-  }
-  return `/${parts.join("/")}`.replace(/\/$/, "") || "/";
-}
-
 const BY_SLUG = new Map<string, () => Promise<MdxModule>>();
 for (const [key, loader] of Object.entries(LOADERS)) {
-  BY_SLUG.set(keyToSlug(key), loader);
+  const rel = key.replace(/^.*\/content\/docs\//, "");
+  // A shared file registers the same loader at every SDK mount (one chunk).
+  for (const mount of mountsForRelPath(rel)) {
+    BY_SLUG.set(mount.slug, loader);
+  }
 }
 
 /** The dynamic import for a doc page's compiled component, or undefined if unknown. */

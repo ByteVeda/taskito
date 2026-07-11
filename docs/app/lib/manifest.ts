@@ -7,6 +7,9 @@ export interface DocMeta {
   slug: string;
   title: string;
   description: string;
+  /** Default-SDK URL of a shared page; present only on fan-out mounts.
+   *  Kept in sync with the plugin's DocMeta across the virtual-module boundary. */
+  canonical?: string;
 }
 
 export const DOC_METAS: DocMeta[] = DOCS;

@@ -11,10 +11,6 @@ const GUIDE_OVERRIDES: Record<string, Record<string, string>> = {
     node: "/node/guides/core/streaming",
     java: "/java/guides/core/streaming",
   },
-  "/python/guides/workflows/sagas": {
-    node: "/node/guides/workflows/saga",
-    java: "/java/guides/workflows/saga",
-  },
 };
 
 /** Resolve a scenario's Python guide path to the active SDK's docs. */
@@ -330,7 +326,7 @@ saga.<span class="def">delay</span>()   <span class="cmt"># any failure → comp
       title: "Saga — compensation & rollback",
       label: "Watch the saga roll back",
     },
-    guide: { to: "/python/guides/workflows/sagas", label: "Read the guide" },
+    guide: { to: "/python/guides/workflows/saga", label: "Read the guide" },
   },
   {
     id: "worksteal",

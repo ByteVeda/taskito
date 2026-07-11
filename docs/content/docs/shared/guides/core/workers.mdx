@@ -1,0 +1,460 @@
+---
+title: Workers
+description: "Start, size, and gracefully stop the workers that execute your tasks."
+---
+
+A worker polls storage, claims due jobs, dispatches them to your registered
+task functions, and writes results back.
+
+<Callout type="info">
+  Producers and workers only share storage — enqueue from a web process (or
+  script) and run workers from a separate process pointed at the same
+  database. Nothing else needs to be shared.
+</Callout>
+
+## Starting a worker
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```bash
+taskito worker --app myapp.tasks:queue
+```
+
+```python
+# Programmatic — blocks the calling thread until shutdown
+queue.run_worker()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { Queue } from "@byteveda/taskito";
+
+const queue = new Queue({ dbPath: "tasks.db" });
+queue.task("process", (itemId: number) => {
+  // ...
+});
+
+const worker = queue.runWorker({ queues: ["default"] });
+// runWorker() returns immediately; the worker runs in the background.
+// ... later
+worker.stop();
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Worker worker = taskito.worker()
+        .handle(process, payload -> handle(payload))
+        .queues("default")
+        .start();
+// start() returns immediately; scheduling runs in the background.
+// ... later
+worker.close();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+`run_worker()` **blocks the calling thread** until the worker stops — that's
+why the CLI (`taskito worker --app ...`) is the recommended way to run one. To
+keep your own thread free, run it in a background thread or use the async
+variant:
+
+```python
+import threading
+
+t = threading.Thread(target=queue.run_worker, daemon=True)
+t.start()
+```
+
+```python
+import asyncio
+
+async def main():
+    await queue.arun_worker()  # runs the worker loop in a thread executor
+
+asyncio.run(main())
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`runWorker()` never blocks — it starts the worker on the Rust core and
+returns immediately. The bundled `taskito run ./app.js` CLI wraps this for
+you and wires `Ctrl+C` to `worker.stop()`; calling `runWorker()` from your
+own code needs no CLI at all.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info" title="Coming from Spring @Async?">
+  `@Async` runs the call inline on a Spring-managed thread pool the moment
+  it's invoked — there's no separate producer/consumer step, and queued calls
+  are lost on restart. A `Worker` is a separate, explicitly started process
+  (or thread) that polls durable storage; nothing runs until one is up, and
+  work already enqueued survives a restart because it lives in the store, not
+  in a JVM executor.
+</Callout>
+
+`start()` never blocks — scheduling runs in the background and handlers
+execute on the pool you configure. There's no CLI worker subcommand: workers
+are code, built with `taskito.worker()` in your application; wire
+`awaitShutdown()` (see [Graceful shutdown](#graceful-shutdown)) to keep the
+process alive.
+
+</SdkOnly>
+
+## Task registration
+
+<SdkOnly sdk="python">
+
+`@queue.task()` registers a task on the `Queue` object the moment its module
+is imported. `run_worker()` serves whatever's registered on `self` at call
+time — make sure task modules are imported (directly, or via the `--app`
+path) before the worker starts.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`queue.task(name, handler)` registers a task on the `Queue` instance
+immediately. `runWorker()` serves whatever's registered on that instance, so
+import your task modules before calling it.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There's no decorator or global registry — each worker only handles what it
+explicitly binds with `.handle(task, fn)` (or `.register(...)` /
+`.apply(...)` for generated handler sets). A job for a task name the builder
+never bound fails immediately with `no handler registered for task '...'`,
+which also means two workers can bind different subsets of your tasks from
+the same `Taskito` client.
+
+</SdkOnly>
+
+## Selecting queues
+
+Workers can serve a subset of queues instead of everything registered —
+useful for routing heavy jobs to dedicated workers. Omit the option and a
+worker serves <SdkSwap python="every registered queue" node="just the default queue" java="just the default queue" />.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.run_worker(queues=["emails", "reports"])
+```
+
+```bash
+taskito worker --app myapp.tasks:queue --queues emails,reports
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.runWorker({ queues: ["emails", "reports"] });
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.worker()
+        .handle(sendEmail, payload -> send(payload))
+        .queues("emails", "reports")
+        .start();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+## Worker specialization
+
+Advertise capability tags when starting a worker:
+
+```python
+queue.run_worker(tags=["gpu", "heavy"])
+```
+
+Tags are stored with the worker's registration and show up in
+`queue.workers()` and the dashboard — a lightweight way to see which machines
+have which capabilities at a glance. They're informational: the scheduler
+doesn't filter dispatch by tag, so route GPU-only or heavy-workload jobs to
+the right machines with [dedicated queues](#selecting-queues) instead.
+
+</SdkOnly>
+
+## Worker concurrency
+
+How many jobs one worker process runs at once follows the SDK's own
+execution model — a thread pool, an event loop, or a JVM thread pool.
+Configure it where you start the worker:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue = Queue(db_path="myapp.db", workers=8)  # OS threads (0 = auto-detect CPU count)
+queue.run_worker()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.runWorker({ channelCapacity: 256, batchSize: 16 }); // dispatch buffer + poll batch, not a thread count
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.worker()
+        .handle(process, payload -> handle(payload))
+        .concurrency(8) // fixed handler-thread pool; 0 (default) uses a cached pool
+        .start();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+`workers` sets the OS-thread pool size (threads share a single GIL — only one
+runs Python bytecode at a time). Swap in the
+<SdkLink to="guides/core/execution-model">prefork pool</SdkLink> for true
+CPU parallelism, or tune `async_concurrency` for `async def` tasks, which run
+on a dedicated event loop instead of the thread pool.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no worker-level thread count — handlers run concurrently on the
+single event loop, each an independent async invocation. `channelCapacity`
+bounds in-flight dispatch and `batchSize` controls how many jobs are claimed
+per poll; real concurrency caps come from per-task/queue `maxConcurrent`. See
+<SdkLink to="guides/core/execution-model">Execution model</SdkLink>.
+
+<Callout type="info" title="Coming from BullMQ?">
+  BullMQ's `new Worker(queueName, processor, { concurrency: N })` runs `N`
+  jobs at once **per worker process** — concurrency scales with how many
+  workers you start. taskito's `runWorker()` takes no processor or
+  concurrency argument (handlers come from `queue.task()`); simultaneous
+  execution is bounded by per-task/per-queue
+  <SdkLink to="guides/reliability/concurrency">maxConcurrent</SdkLink>,
+  enforced by the scheduler across *all* workers on shared storage, not per
+  process.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Jobs run on real JVM threads — no GIL, no event loop to block.
+`concurrency(n)` fixes the handler pool size; `autoscale(...)` resizes it
+with queue depth instead. See
+<SdkLink to="guides/core/execution-model">Execution model</SdkLink> for
+CPU-bound sizing guidance.
+
+</SdkOnly>
+
+## Heartbeats and worker discovery
+
+Every worker registers itself in storage on startup and heartbeats while it
+runs, so it's visible to any process pointed at the same storage — including
+the dashboard. A worker that stops heartbeating is reaped after 30 seconds.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+for w in queue.workers():
+    print(f"{w['worker_id']} on {w['hostname']} (pid {w['pid']}, {w['status']})")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const workers = await queue.listWorkers();
+// [{ workerId, hostname, pid, status, lastHeartbeat, ... }]
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+for (WorkerInfo w : taskito.listWorkers()) {
+    log.info(w.workerId + " on " + w.hostname + " (pid " + w.pid + ", " + w.status + ")");
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+Field names follow each SDK's casing convention (`worker_id` in Python,
+`workerId` in Node and Java) but describe the same worker: hostname, pid,
+status (`active`, `draining`, or already reaped), the queues it serves, and
+the timestamp of its last heartbeat.
+
+<SdkOnly sdk="python">
+
+The heartbeat runs on a background thread every 5 seconds and carries the
+current <SdkLink to="guides/resources/dependency-injection">resource
+health</SdkLink> snapshot, which is how `queue.resource_status()` sees health
+from a separate dashboard process.
+
+### Lifecycle events
+
+Subscribe to worker join/leave/health transitions:
+
+```python
+from taskito import EventType
+
+@queue.on_event(EventType.WORKER_ONLINE)
+def on_online(event_type, payload):
+    print(f"Worker {payload['worker_id']} joined")
+
+@queue.on_event(EventType.WORKER_OFFLINE)
+def on_offline(event_type, payload):
+    print(f"Worker {payload['worker_id']} went away")
+```
+
+| Event | Fires when |
+|---|---|
+| `WORKER_ONLINE` | Worker registered in storage |
+| `WORKER_OFFLINE` | Dead worker reaped (no heartbeat for 30s) |
+| `WORKER_UNHEALTHY` | A resource's health flips to unhealthy |
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+The heartbeat fires every 5 seconds and carries the current resource-health
+snapshot, so <SdkLink to="guides/resources/dependency-injection">worker
+resources</SdkLink> going unhealthy shows up in `listWorkers()` too.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Heartbeating is managed natively by the core — there's no user-facing
+interval to configure.
+
+</SdkOnly>
+
+## Graceful shutdown
+
+Stopping a worker unregisters it from storage and lets in-flight jobs finish
+before it exits; how you trigger that varies by SDK.
+
+<SdkOnly sdk="python">
+
+`run_worker()` wires `Ctrl+C` (`SIGINT`/`SIGTERM`) for you: the first signal
+starts a **warm shutdown** — stop claiming new jobs, wait up to
+`drain_timeout` seconds for in-flight ones — and a second signal force-kills
+immediately.
+
+```python
+queue = Queue(db_path="myapp.db", drain_timeout=60)  # wait up to 60s (default: 30)
+```
+
+```
+$ taskito worker --app myapp:queue
+[taskito] Starting worker...
+^C
+[taskito] Warm shutdown (waiting for running tasks to finish)...
+[taskito] Worker stopped.
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`runWorker()` doesn't wire any signal handling itself — the
+`taskito run ./app.js` CLI does that for you (`SIGINT`/`SIGTERM` →
+`worker.stop()`). Calling `runWorker()` from your own code, wire it yourself:
+
+```ts
+process.on("SIGTERM", () => worker.stop());
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+There's no automatic signal handling either — wire a shutdown hook so the
+JVM calls `close()` on exit, and block `main` on `awaitShutdown()`:
+
+```java
+Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+    worker.close();
+    taskito.close();
+}));
+worker.awaitShutdown();
+```
+
+<Callout type="warn">
+  Don't put the worker in try-with-resources *and* call `awaitShutdown()`
+  inside the block — the block can't exit to trigger `close()`, so it
+  deadlocks. Use try-with-resources for bounded work (tests), the
+  shutdown-hook pattern for services.
+</Callout>
+
+</SdkOnly>
+
+### Programmatic shutdown
+
+Trigger a shutdown from code — another thread, a signal handler, an admin
+endpoint:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+# From another thread or signal handler
+queue._inner.request_shutdown()
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+worker.stop(); // in-flight results drain before background tasks exit
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+worker.close(); // drains in-flight handlers, then frees the native worker
+// worker.stop() only halts dispatch — no drain, no teardown
+```
+
+  </Tab>
+</CodeTabs>
+
+## Related
+
+- <SdkLink to="guides/core/tasks">Tasks</SdkLink> — defining and registering
+  the functions a worker runs.
+- <SdkLink to="guides/core/execution-model">Execution model</SdkLink> — the
+  deep dive on how each SDK actually runs jobs concurrently.
+- <SdkLink to="guides/core/scheduling">Scheduling</SdkLink> — how and when
+  jobs become claimable.
+- <SdkLink to="guides/operations/mesh">Mesh scheduling</SdkLink> — gossip
+  discovery and work-stealing across a worker fleet.

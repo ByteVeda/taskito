@@ -49,6 +49,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Content parity
+        run: pnpm check:parity
+
       - name: Build
         env:
           DOCS_BASE_PATH: /taskito

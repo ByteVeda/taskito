@@ -43,6 +43,10 @@ export const REDIRECTS: Record<string, string> = {
   "/python/more/comparison": "/resources/comparison",
   "/python/more/faq": "/resources/faq",
   "/python/more/changelog": "/resources/changelog",
+  // Shared-content migration: python's old "locking" and "sagas" names
+  // normalized to the canonical "locks" / "saga" slugs shared with node/java.
+  "/python/guides/reliability/locking": "/python/guides/reliability/locks",
+  "/python/guides/workflows/sagas": "/python/guides/workflows/saga",
 };
 
 /** The destination for a moved path, or undefined if it isn't a redirect. */

@@ -1,6 +1,6 @@
 import { MDXProvider } from "@mdx-js/react";
 import { Fragment, lazy, Suspense, useEffect, useMemo } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, type MetaDescriptor, useNavigate } from "react-router";
 import { PrevNext } from "@/components/docs";
 import { mdxComponents } from "@/components/mdx";
 import { getDocLoader } from "@/lib/content";
@@ -59,10 +59,21 @@ export function meta({ params }: Route.MetaArgs) {
     ];
   }
   const meta = docMeta(path);
-  return [
+  const tags: MetaDescriptor[] = [
     { title: meta?.title ? `${meta.title} | Taskito` : "Taskito" },
     { name: "description", content: meta?.description ?? "" },
   ];
+  if (meta?.canonical) {
+    // Shared pages mount at one URL per SDK; point search engines at the
+    // default-SDK mount (self-referential there — still valid).
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    tags.push({
+      tagName: "link",
+      rel: "canonical",
+      href: `${base}${meta.canonical}`,
+    });
+  }
+  return tags;
 }
 
 /** Stub shown at a moved URL: meta-refresh handles direct hits, this handles

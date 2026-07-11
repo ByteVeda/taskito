@@ -1,0 +1,639 @@
+---
+title: Predicates
+description: "Composable gates that decide whether a job runs — from a simple boolean check to a serializable rule."
+---
+
+A **predicate** (also called a gate) is a small check evaluated before a job
+is allowed to proceed — a declarative way to say "only do this under
+condition X." What a denial does depends on the configured outcome: a reject
+or cancel outcome means no work runs, while a defer outcome schedules the job
+to try again later.
+<SdkSwap python={<>Register one with the <code>predicate=</code> option on <code>@queue.task</code>.</>} node={<>Register one with <code>queue.gate()</code>.</>} java={<>Register one with <code>taskito.predicate()</code>, or the richer <code>taskito.gate()</code>.</>} />
+
+## Quick start
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito import Queue
+
+queue = Queue()
+
+@queue.task(predicate=lambda ctx: ctx.args[0] > 0, on_false="cancel")
+def charge(amount: float):
+    settle(amount)
+
+charge.delay(50)   # ok
+charge.delay(-1)   # raises PredicateRejectedError
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.task("charge", (amount: number) => settle(amount));
+
+queue.gate("charge", ({ args }) => args[0] > 0); // never enqueue a non-positive charge
+
+queue.enqueue("charge", [50]); // ok
+queue.enqueue("charge", [-1]); // throws PredicateRejectedError
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<Integer> charge = Task.of("charge", Integer.class);
+
+taskito.predicate("charge", ctx -> (Integer) ctx.payload() > 0);
+
+taskito.enqueue(charge, 50);  // ok
+taskito.enqueue(charge, -1);  // throws PredicateRejectedException
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="node">
+
+The predicate receives the task name and the (already
+<SdkLink to="guides/resources/interception">onEnqueue</SdkLink>-rewritten)
+`args`, typed to the task's signature.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+The `PredicateContext` carries the task name and the payload — after
+`onEnqueue` <SdkLink to="guides/extensibility/middleware">middleware</SdkLink>
+has run, so gates see the rewritten payload.
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+## What predicates *do not* do
+
+Predicates are not the right place to rebuild taskito's atomic
+enforcement primitives. Use the dedicated knobs:
+
+| Goal | Use this — *not* a predicate |
+|---|---|
+| Cap concurrent executions of a task | `@queue.task(max_concurrent=N)` |
+| Cap concurrent executions of a queue | `Queue.set_queue_concurrency(name, N)` |
+| Rate-limit a task or queue | `@queue.task(rate_limit="100/m")` |
+| Trip an outage breaker | `@queue.task(circuit_breaker={...})` |
+| Drain / pause a queue | `Queue.pause(name)` / `resume(name)` |
+| Cap retry count or filter retries | `max_retries=`, `retry_on=`, `dont_retry_on=` |
+| Route to a queue | `@queue.task(queue="emails")` |
+
+Each is enforced atomically in the Rust scheduler. A Python predicate
+that races against them is weaker and harder to reason about.
+Predicates are for **gates the scheduler doesn't already provide**:
+time windows, payload-driven branching, feature flags, environment
+config, and custom Python logic.
+
+</SdkOnly>
+
+## Composition
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+allow = is_business_hours() & ~queue_paused()
+allow_or_urgent = allow | feature_flag("urgent_bypass")
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { allOf, anyOf, not } from "@byteveda/taskito";
+
+const businessHours = () => {
+  const h = new Date().getHours();
+  return h >= 9 && h < 17;
+};
+const highPriority = ({ args }) => args[0].priority === "high";
+
+queue.gate("dispatch", anyOf(businessHours, highPriority));
+queue.gate("dispatch", not(isHoliday));
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Predicate positive = ctx -> (Integer) ctx.payload() > 0;
+Predicate small = ctx -> (Integer) ctx.payload() <= 10_000;
+
+taskito.predicate("charge", Predicates.allOf(positive, small));
+taskito.predicate("dispatch", Predicates.not(isHoliday));
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+`@queue.task` accepts exactly one `predicate=` per task — compose
+everything you need with `&` / `|` / `~` before passing it in. `A & B`
+short-circuits if `A` denies; `A | B` tries both and, if neither
+allows, surfaces the more informative outcome; `~A` inverts a boolean
+result (see [Richer outcomes](#richer-outcomes-defer-cancel-skip) for
+how `Defer` / `Cancel` behave under composition).
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Registering more than one gate on the same task also composes them —
+they all must pass:
+
+```ts
+queue.gate("charge", ({ args }) => args[0] > 0);
+queue.gate("charge", ({ args }) => args[0] <= 10_000);
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Registering more than one `predicate()` (or `gate()`) on the same task
+also composes them — they run in registration order and the first
+non-allow decision wins.
+
+</SdkOnly>
+
+## Richer outcomes: defer, cancel, skip
+
+A plain boolean allow/deny is the baseline every binding supports.
+
+<SdkOnly sdk="python">
+
+`evaluate()` can also return `Defer` or `Cancel` instead of a plain
+boolean:
+
+| Outcome | Meaning |
+|---|---|
+| `True` | Allow the job to proceed. |
+| `False` | Deny. The task's `on_false` decides: `"defer"` (default) or `"cancel"`. |
+| `Defer(seconds=N)` | Skip now, retry after `N` seconds. |
+| `Cancel(reason="…")` | Permanently skip. Raises `PredicateRejectedError` at enqueue; cancels the job at dispatch. |
+
+A predicate that raises is treated as `False` (fail-closed). Errors
+are logged and counted on `PredicateMetrics`.
+
+Composition respects these richer outcomes: `A & B` short-circuits on
+the first `Defer`/`Cancel`/`False` from `A`; `A | B` evaluates both
+and, if neither allows, returns the most informative denial
+(`Cancel` > `Defer` > `False`); `~A` inverts `True`/`False` but passes
+`Defer` and `Cancel` through unchanged — they're terminal outcomes,
+not booleans.
+
+```python
+from typing import Any
+from taskito import Queue
+from taskito.predicates import Predicate, PredicateContext
+
+queue = Queue()
+
+@queue.register_predicate("tenant_quota_under")
+class TenantQuotaUnder(Predicate):
+    OP = "tenant_quota_under"
+
+    def __init__(self, limit: int = 0) -> None:
+        self.limit = limit
+
+    def evaluate(self, ctx: PredicateContext) -> bool:
+        tenant = ctx.kwargs.get("tenant")
+        return tenant is not None and quota_service.used(tenant) < self.limit
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"op": "tenant_quota_under", "limit": self.limit}
+
+    @classmethod
+    def _from_kwargs(cls, kwargs: dict[str, Any]) -> "Predicate":
+        return cls(**kwargs)
+```
+
+Once registered with `queue.register_predicate(op)`, a new op is
+usable in JSON, the string DSL, and operator composition exactly like
+a built-in recipe (see [The DSL surface](#the-dsl-surface)). Predicates
+may also be **async** — return a coroutine from `evaluate` and it will
+be awaited transparently.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info">
+  Node predicates are plain booleans — there's no built-in defer/skip
+  outcome. To react once a job is already running, use
+  <SdkLink to="guides/extensibility/middleware">middleware</SdkLink> or
+  <SdkLink to="guides/workflows/conditions">conditions</SdkLink> inside a
+  workflow.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`gate(taskName, g)` registers an `EnqueueGate`, whose `EnqueueDecision`
+can do more than pass/fail. Gates run in registration order; the first
+non-allow decision wins.
+
+```java
+taskito.gate("charge", ctx -> switch (classify(ctx.payload())) {
+    case OK        -> EnqueueDecision.allow();
+    case DUPLICATE -> EnqueueDecision.skip("already charged");
+    case TOO_EARLY -> EnqueueDecision.defer(Duration.ofHours(1));
+    case FRAUD     -> EnqueueDecision.reject("fraud check failed");
+});
+```
+
+| Decision | `enqueue` | `tryEnqueue` |
+|---|---|---|
+| `allow()` | Job created. | Job id present. |
+| `skip(reason)` | Throws `EnqueueSkippedException`. | Returns empty. |
+| `defer(delay)` | Job created, scheduled `delay` from now (overrides any delay in the options). | Job id present. |
+| `deferUntil(instant)` | Job created, scheduled at the absolute `instant` (overrides any delay in the options). | Job id present. |
+| `reject(reason)` | Throws `PredicateRejectedException`. | Throws too. |
+
+`tryEnqueue` is the gate-aware form — a skip becomes an empty
+`Optional` instead of an exception:
+
+```java
+Optional<String> id = taskito.tryEnqueue(charge, amount);
+```
+
+`predicate(taskName, p)` is sugar for a gate that only ever allows or
+rejects — use it for plain boolean checks and reach for `gate()` when
+you need skip/defer too.
+
+</SdkOnly>
+
+## Built-in recipes
+
+<SdkOnly sdk="python">
+
+All recipes are registered AST ops. Import from `taskito.predicates`.
+
+### Time
+
+| Recipe | Description |
+|---|---|
+| `is_business_hours(start=9, end=17, *, tz=None, weekdays_only=True)` | Allow during business hours; defer to the next opening otherwise. |
+| `is_weekend(*, tz=None)` | True on Sat/Sun. |
+| `in_time_window("09:00", "17:00", *, tz=None)` | Allow within `[start, end)`; defer otherwise. |
+| `after(target)` | Defer until `target` (`datetime` or ISO string). |
+| `before(target)` | Allow only strictly before `target`. |
+| `in_timezone(tz)` | No-op at runtime; validates the tz string at construction time. |
+
+### Payload
+
+| Recipe | Description |
+|---|---|
+| `payload_matches("kwargs.tenant", "acme")` | Dotted-path lookup into `{"args": …, "kwargs": …}`; compare against `expected`. |
+
+### Defensive
+
+| Recipe | Description |
+|---|---|
+| `queue_paused(name=None)` | Read pause state. Use inverted (`~queue_paused()`) as a defensive composable, not as primary enforcement (which is `Queue.pause()` / `resume()`). |
+
+### External config
+
+| Recipe | Description |
+|---|---|
+| `env_var_truthy("MY_FLAG")` | Truthy values: `1`, `true`, `t`, `yes`, `y`, `on` (case-insensitive). |
+| `feature_flag("billing", *, provider=None)` | Defaults to env-var provider reading `FF_<NAME>`. Pass a registered provider name to swap in LaunchDarkly / Statsig / etc. |
+
+#### Pluggable feature-flag provider
+
+```python
+from taskito.predicates import FeatureFlagProvider, register_feature_flag_provider
+
+class LaunchDarklyProvider:
+    def __init__(self, client) -> None:
+        self._c = client
+
+    def is_enabled(self, name, ctx) -> bool:
+        user = {"key": ctx.kwargs.get("tenant_id", "anon")}
+        return bool(self._c.variation(name, user, False))
+
+register_feature_flag_provider("launchdarkly", LaunchDarklyProvider(ldclient.get()))
+
+# Now both Python and string forms round-trip:
+p = feature_flag("billing", provider="launchdarkly")
+assert Predicate.from_dict(p.to_dict()).to_dict() == p.to_dict()
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`Recipes` ships ready-made gates for common policies — time-based ones
+defer out-of-window enqueues to the next open moment; filters skip
+silently:
+
+```java
+taskito.gate("dispatch", Recipes.businessHours(ZoneId.of("America/New_York")));
+taskito.gate("digest", Recipes.dayOfWeek(zone, DayOfWeek.MONDAY, DayOfWeek.THURSDAY));
+taskito.gate("sync", Recipes.timeWindow(zone, LocalTime.of(22, 0), LocalTime.of(6, 0)));
+taskito.gate("beta", Recipes.featureFlag("beta-export", flags));
+taskito.gate("charge", Recipes.payloadMatches(p -> ((Order) p).amount() > 0));
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no built-in recipe library yet — compose predicate functions
+directly, as in [Composition](#composition) above.
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+## The DSL surface
+
+Every predicate is a node in a closed, registered AST. Three
+equivalent authoring paths produce the same tree — Python operators
+(above), JSON, and a small string DSL:
+
+```python
+from taskito.predicates import Predicate
+
+p = Predicate.from_dict({
+    "op": "or",
+    "args": [
+        {"op": "and", "args": [
+            {"op": "is_business_hours", "tz": "US/Pacific"},
+            {"op": "not", "arg": {"op": "queue_paused"}},
+        ]},
+        {"op": "feature_flag", "flag": "new", "provider": "env"},
+    ],
+})
+```
+
+```python
+from taskito.predicates import parse
+
+p = parse(
+    'is_business_hours(tz="US/Pacific") & !queue_paused() '
+    '| feature_flag(flag="new", provider="env")'
+)
+```
+
+The string DSL supports `&` / `|` / `!` and the long forms `and` /
+`or` / `not`. Literals: strings, ints, floats, `true` / `false` /
+`null`, and `[lists, of, literals]`. Round-trip is stable:
+
+```python
+from taskito.predicates import format_predicate, parse
+
+p1 = is_business_hours() & ~queue_paused()
+s = format_predicate(p1)        # 'is_business_hours() & !queue_paused()'
+p2 = parse(s)
+assert p1.to_dict() == p2.to_dict()
+```
+
+The string form is the right surface for ops-style editing — storing
+the gate in a config file, or letting an operator tweak it through a
+dashboard textbox without a code deploy:
+
+```python
+@queue.task(predicate=parse(
+    'is_business_hours(tz="US/Pacific") & !queue_paused()'
+))
+def send_report(): ...
+```
+
+## Where predicates run
+
+A predicate registered on a task is evaluated **twice**:
+
+1. **Enqueue time** — inside `Queue.enqueue()` / `enqueue_many()`.
+   `Defer` adjusts the caller's `delay=`. `Cancel` (or `False` with
+   `on_false="cancel"`) raises `PredicateRejectedError` and the job is
+   never saved.
+2. **Worker-dispatch time** — just before the task body runs.
+   `Cancel` raises `TaskCancelledError` (the job is marked cancelled).
+   `Defer` re-enqueues a fresh job with the same payload and delay;
+   the current job is cancelled.
+
+`PredicateContext.job_id` is `None` at enqueue time, set at dispatch
+time — useful for custom predicates that need to behave differently
+across phases.
+
+## Middleware filtering
+
+`TaskMiddleware` accepts `predicate=` to gate which jobs the
+middleware applies to. The legacy contrib `task_filter=Callable[[str], bool]`
+kwarg still works and is translated internally to a predicate.
+
+```python
+from taskito.contrib.sentry import SentryMiddleware
+from taskito.predicates import payload_matches
+
+queue = Queue(middleware=[
+    SentryMiddleware(predicate=payload_matches("kwargs.env", "prod")),
+])
+```
+
+When the middleware predicate denies, **only that middleware** is
+skipped for the current job — job dispatch is unaffected.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Gates run once, on the **producer** side, at enqueue time — there's
+no worker-dispatch phase.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Predicates and gates run once, synchronously, on the **producer**
+thread at enqueue time — there's no worker-dispatch phase. Keep them
+fast and side-effect-free.
+
+</SdkOnly>
+
+## Batches
+
+<SdkSwap python={<><code>enqueue_many</code> evaluates the task's predicate</>} node={<><code>enqueueMany</code> gates each entry</>} java={<><code>enqueueMany</code> gates each payload</>} /> — a
+single rejection aborts the whole batch and no jobs are created.
+Pre-filter the batch yourself if you'd rather drop rejected entries
+silently.
+
+<SdkOnly sdk="python">
+
+Each job in the batch is evaluated independently: a `Defer` outcome
+only adjusts that job's own delay and doesn't affect the rest of the
+batch. Only a `Cancel` (or `False` with `on_false="cancel"`) aborts
+the whole call, since it raises before any job is written.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Inside `enqueueMany`, only an `Allow` decision is accepted per entry —
+a `Skip` or `Defer` also aborts the batch with
+`EnqueueSkippedException`, since the batch API can't schedule or drop
+individual entries. Use single `enqueue`/`tryEnqueue` calls for
+payloads that need skip/defer semantics.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info">
+  Gates run on the **producer** side, so they decide whether work is
+  created at all. To react once a job is already running, use
+  <SdkLink to="guides/extensibility/middleware">middleware</SdkLink> or
+  <SdkLink to="guides/workflows/conditions">conditions</SdkLink> inside
+  a workflow.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+## Persistence & inspection
+
+Every registered predicate is serialized once at decoration time. The
+JSON is reachable through:
+
+```python
+queue.list_predicates()
+# {"app.send_invoice": {"op": "and", "args": [...]}}
+
+queue.predicate_for("app.send_invoice")
+# {"op": "and", "args": [...]}
+```
+
+Bare callables (`predicate=lambda ctx: …`) appear in `list_predicates`
+with `None` as their value, since callables have no stable schema.
+
+The dashboard reads `list_predicates()` to display "gated by: …"
+beside each task. To round-trip a predicate from the inspection
+output:
+
+```python
+from taskito.predicates import Predicate
+
+blob = queue.predicate_for("app.send_invoice")
+restored = Predicate.from_dict(blob)
+# restored.format() — stable string form
+# restored.evaluate(ctx) — re-evaluate against a context
+```
+
+## Metrics & events
+
+```python
+queue._predicate_metrics.snapshot()  # internal accessor — not yet part of the stable API
+# {"allowed": 412, "denied": 3, "deferred": 8, "cancelled": 1, "errors": 0}
+```
+
+Three events fire on the queue's event bus:
+
+* `EventType.PREDICATE_DEFERRED` — payload includes `task_name`,
+  `defer_seconds`, `phase` (`"enqueue"` or `"dispatch"`).
+* `EventType.PREDICATE_CANCELLED` — worker-dispatch cancellations.
+* `EventType.PREDICATE_REJECTED` — enqueue-time rejections that raised
+  `PredicateRejectedError`.
+
+```python
+from taskito.events import EventType
+
+def on_predicate_event(event_type: EventType, payload: dict) -> None:
+    print(event_type.value, payload)
+
+for event in (
+    EventType.PREDICATE_DEFERRED,
+    EventType.PREDICATE_CANCELLED,
+    EventType.PREDICATE_REJECTED,
+):
+    queue.on_event(event, on_predicate_event)
+```
+
+## Examples
+
+### Business-hours-only report with urgent override
+
+```python
+from taskito.predicates import is_business_hours, payload_matches
+
+@queue.task(
+    predicate=is_business_hours(tz="US/Pacific")
+              | payload_matches("kwargs.urgent", True),
+)
+def send_daily_report(team_id: str, urgent: bool = False): ...
+
+send_daily_report.delay("alpha")                        # defers to 09:00 PT
+send_daily_report.delay("alpha", urgent=True)           # runs now
+```
+
+### Tenant allowlist as a custom predicate
+
+```python
+from typing import Any
+from taskito.predicates import Predicate, PredicateContext
+
+@queue.register_predicate("tenant_in")
+class TenantIn(Predicate):
+    OP = "tenant_in"
+
+    def __init__(self, *, tenants: list[str]) -> None:
+        self.tenants = list(tenants)
+
+    def evaluate(self, ctx: PredicateContext) -> bool:
+        return ctx.kwargs.get("tenant") in self.tenants
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"op": "tenant_in", "tenants": self.tenants}
+
+    @classmethod
+    def _from_kwargs(cls, kwargs: dict[str, Any]) -> "Predicate":
+        return cls(**kwargs)
+
+
+@queue.task(
+    predicate=TenantIn(tenants=["acme", "globex"]),
+    on_false="cancel",
+)
+def reindex_search(tenant: str): ...
+```
+
+### Async predicate calling an HTTP quota service
+
+```python
+import httpx
+from taskito.predicates import Defer, Predicate, PredicateContext
+
+class QuotaAvailable(Predicate):
+    OP = "quota_available"
+
+    def __init__(self, *, url: str) -> None:
+        self.url = url
+
+    async def evaluate(self, ctx: PredicateContext) -> bool | Defer:
+        async with httpx.AsyncClient(timeout=2.0) as c:
+            r = await c.get(f"{self.url}/quota/{ctx.kwargs['tenant']}")
+        if r.json()["remaining"] > 0:
+            return True
+        return Defer(seconds=60.0)
+
+
+queue.register_predicate("quota_available")(QuotaAvailable)
+
+@queue.task(predicate=QuotaAvailable(url="http://quota.internal"))
+async def index_document(tenant: str, doc_id: str): ...
+```
+
+</SdkOnly>

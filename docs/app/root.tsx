@@ -27,12 +27,19 @@ export const links: Route.LinksFunction = () => [
 // Apply the persisted theme before paint to avoid a light/dark flash.
 const THEME_INIT = `(function(){try{var t=localStorage.getItem('taskito-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
 
-// Registry ids + default as inert JSON on the <html> data attribute below.
-const SDK_CONFIG = JSON.stringify({ ids: [...SDK_IDS], def: DEFAULT_SDK });
+// Registry ids + default + deploy base as inert JSON on the <html> data
+// attribute below; the base lets the boot script find the URL's SDK segment.
+const SDK_CONFIG = JSON.stringify({
+  ids: [...SDK_IDS],
+  def: DEFAULT_SDK,
+  base: import.meta.env.BASE_URL.replace(/\/$/, ""),
+});
 
-// No-flash SDK bootstrap: query > localStorage > default, validated against the
-// data-sdk-config above. Static string (no interpolation); keeps the SSR default on error.
-const SDK_INIT = `(function(){try{var c=JSON.parse(document.documentElement.getAttribute('data-sdk-config')),ids=c.ids,def=c.def;var u=new URLSearchParams(location.search).get('sdk');var s=ids.indexOf(u)>=0?u:(localStorage.getItem('taskito-sdk')||def);if(ids.indexOf(s)<0){s=def;}document.documentElement.setAttribute('data-sdk',s);}catch(e){}})();`;
+// No-flash SDK bootstrap: URL prefix > query > localStorage > default — same
+// precedence as useActiveSdk, so shared pages (one file mounted per SDK) paint
+// the URL's SDK variants immediately. Static string (no interpolation); keeps
+// the SSR default on error.
+const SDK_INIT = `(function(){try{var c=JSON.parse(document.documentElement.getAttribute('data-sdk-config')),ids=c.ids,def=c.def;var seg=location.pathname.slice(c.base.length).split('/')[1];var u=new URLSearchParams(location.search).get('sdk');var s=ids.indexOf(seg)>=0?seg:ids.indexOf(u)>=0?u:(localStorage.getItem('taskito-sdk')||def);if(ids.indexOf(s)<0){s=def;}document.documentElement.setAttribute('data-sdk',s);}catch(e){}})();`;
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
