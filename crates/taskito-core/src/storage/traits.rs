@@ -48,6 +48,13 @@ pub trait Storage: Send + Sync + Clone {
     /// concurrency cap, channel backpressure) where the job never executed,
     /// unlike [`retry`](Self::retry) which increments `retry_count`.
     fn reschedule(&self, id: &str, next_scheduled_at: i64) -> Result<()>;
+    /// Force a `Running` job back to `Pending` and release its execution
+    /// claim atomically, so a healthy worker can re-claim it. Preserves the
+    /// retry budget (operator action, mirrors [`reschedule`](Self::reschedule))
+    /// and clears any pending cancel request. Returns `false` when the job is
+    /// missing or not `Running`. Only for confirmed-dead/hung workers: a
+    /// still-alive owner may finish the old attempt, double-executing the job.
+    fn requeue_stuck(&self, id: &str, now: i64) -> Result<bool>;
     fn cancel_job(&self, id: &str) -> Result<bool>;
     fn request_cancel(&self, id: &str) -> Result<bool>;
     fn is_cancel_requested(&self, id: &str) -> Result<bool>;

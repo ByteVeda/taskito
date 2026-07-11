@@ -676,6 +676,36 @@ macro_rules! impl_diesel_job_ops {
                 Ok(())
             }
 
+            /// Force a `Running` job back to `Pending` and delete its
+            /// execution claim in one transaction. The status filter gates
+            /// the operation (missing / not-Running rows update nothing);
+            /// the claim must be deleted, not transferred, because
+            /// `claim_execution` is insert-only and a leftover row would
+            /// block the next worker's claim. Clearing `cancel_requested`
+            /// keeps a stale cancel request from killing the fresh attempt.
+            pub fn requeue_stuck(&self, id: &str, now: i64) -> Result<bool> {
+                self.write_transaction(|conn| {
+                    let affected = diesel::update(jobs::table)
+                        .filter(jobs::id.eq(id))
+                        .filter(jobs::status.eq(JobStatus::Running as i32))
+                        .set((
+                            jobs::status.eq(JobStatus::Pending as i32),
+                            jobs::scheduled_at.eq(now),
+                            jobs::started_at.eq(None::<i64>),
+                            jobs::completed_at.eq(None::<i64>),
+                            jobs::error.eq(None::<String>),
+                            jobs::cancel_requested.eq(0),
+                        ))
+                        .execute(conn)?;
+                    if affected == 0 {
+                        return Ok(false);
+                    }
+                    diesel::delete(execution_claims::table.filter(execution_claims::job_id.eq(id)))
+                        .execute(conn)?;
+                    Ok(true)
+                })
+            }
+
             /// Cancel a pending job and cascade-cancel its dependents. The
             /// cancelled job moves from `jobs` into `archived_jobs`.
             pub fn cancel_job(&self, id: &str) -> Result<bool> {
