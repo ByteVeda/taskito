@@ -45,6 +45,7 @@ from taskito.mixins import (
     QueueOperationsMixin,
     QueueOverridesMixin,
     QueuePredicateMixin,
+    QueuePubSubMixin,
     QueueResourceMixin,
     QueueRuntimeConfigMixin,
     QueueSettingsMixin,
@@ -87,6 +88,7 @@ DEFAULT_MAX_PAYLOAD_BYTES = 1 * 1024 * 1024  # 1 MiB
 class Queue(
     QueueDecoratorMixin,
     QueuePredicateMixin,
+    QueuePubSubMixin,
     QueueRuntimeConfigMixin,
     QueueResourceMixin,
     QueueEventsMixin,
@@ -254,6 +256,7 @@ class Queue(
         self._task_configs: list[PyTaskConfig] = []
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._periodic_configs: list[dict[str, Any]] = []
+        self._subscription_configs: list[dict[str, Any]] = []
         self._hooks: dict[str, list[Callable]] = {
             "before_task": [],
             "after_task": [],
