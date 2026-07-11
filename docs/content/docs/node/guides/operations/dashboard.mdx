@@ -58,10 +58,13 @@ overrides `authEnabled`.
 serveDashboard(queue, { port: 8787, auth: { token: process.env.DASH_TOKEN! } });
 ```
 
-Requests authenticate via `Authorization: Bearer <token>`, an `X-Taskito-Token`
-header, or `?token=<token>`. Opening `/?token=<token>` once sets an httpOnly
-cookie so the SPA works for the rest of the session. The token is compared in
-constant time. You can also mount the dashboard inside an existing app behind
+API requests authenticate via `Authorization: Bearer <token>`, an
+`X-Taskito-Token` header, or the `taskito_token` cookie — a `?token=` query is
+never accepted on `/api/*` calls. Opening `/?token=<token>` once sets the
+httpOnly cookie and redirects with the token stripped from the URL, so the SPA
+works for the rest of the session without the secret leaking into browser
+history, `Referer` headers, or access logs. The token is compared in constant
+time. You can also mount the dashboard inside an existing app behind
 your own auth via the
 [Express](/node/guides/integrations/express#dashboard) or
 [Fastify](/node/guides/integrations/fastify) helpers.

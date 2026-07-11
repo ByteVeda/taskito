@@ -94,9 +94,10 @@ once at least one user exists; until then every API route returns
   `SameSite=Strict`, and `Secure`. Behind a TLS-terminating proxy that speaks
   plain HTTP to the backend you may need `serve_dashboard(secure_cookies=False)`
   or `taskito dashboard --insecure-cookies` — only on a trusted network.
-- **Metrics.** `/metrics` and `/readiness` are public by default for probes.
-  Set `TASKITO_DASHBOARD_METRICS_TOKEN` to require an
-  `Authorization: Bearer <token>` header on them; `/health` stays open.
+- **Metrics.** With auth enabled, `/metrics` and `/readiness` require a valid
+  session or the `TASKITO_DASHBOARD_METRICS_TOKEN` bearer (give scrapers the
+  token). Without auth they stay public unless that token is set; `/health`
+  is always open for liveness probes.
 - **Settings.** The settings API never exposes or accepts keys under the
   internal `auth:` namespace (password hashes, sessions, CSRF secret).
 

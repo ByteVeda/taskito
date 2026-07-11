@@ -148,10 +148,11 @@ All routes live under `/api/auth/`:
 | `POST` | `/api/auth/change-password` | Requires the current password |
 
 Every other route under `/api/` is auth-gated. Public exceptions:
-`/health`, `/readiness`, `/metrics` (Prometheus), and the static SPA
-assets. Set `TASKITO_DASHBOARD_METRICS_TOKEN` to additionally require an
-`Authorization: Bearer <token>` header on `/metrics` and `/readiness`
-(`/health` stays open for liveness probes).
+`/health` (liveness — always open) and the static SPA assets. With auth
+enabled, `/readiness` and `/metrics` (Prometheus) require either a valid
+session or the `TASKITO_DASHBOARD_METRICS_TOKEN` bearer — point scrapers
+at the token via `Authorization: Bearer <token>`. Without auth they stay
+public unless that token is set.
 
 ## Headless requests
 

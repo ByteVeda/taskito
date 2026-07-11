@@ -85,10 +85,11 @@ the public set requires a valid session.
 
 Pass `auth: { token }` instead for the **legacy token mode**: every `/api/*`
 request except `GET /api/auth/status` must present the token via
-`Authorization: Bearer <token>`, an `X-Taskito-Token` header, a `?token=`
-query, or the `taskito_token` cookie; otherwise it returns `401`. This is a
-single shared token — no per-user login or roles — and it overrides
-`authEnabled`.
+`Authorization: Bearer <token>`, an `X-Taskito-Token` header, or the
+`taskito_token` cookie; otherwise it returns `401`. A `?token=` query is only
+honoured once on a page load, where it sets the cookie and redirects with the
+token stripped. This is a single shared token — no per-user login or roles —
+and it overrides `authEnabled`.
 
 <Callout type="warning">
   Open mode means anyone who can reach the port has full control. Don't expose it
