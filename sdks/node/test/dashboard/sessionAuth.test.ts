@@ -238,6 +238,7 @@ describe("probes", () => {
   });
 
   it("accepts the metrics bearer token alongside sessions", async () => {
+    const previous = process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
     process.env.TASKITO_DASHBOARD_METRICS_TOKEN = "scrape-secret";
     try {
       const ok = await fetch(`${base}/readiness`, {
@@ -248,7 +249,11 @@ describe("probes", () => {
         (await fetch(`${base}/readiness`, { headers: { authorization: "Bearer wrong" } })).status,
       ).toBe(401);
     } finally {
-      delete process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
+      if (previous === undefined) {
+        delete process.env.TASKITO_DASHBOARD_METRICS_TOKEN;
+      } else {
+        process.env.TASKITO_DASHBOARD_METRICS_TOKEN = previous;
+      }
     }
   });
 });
