@@ -59,8 +59,8 @@ The [dashboard](/java/guides/operations/dashboard) serves **openly by
 default** — anyone who reaches the port has full control. Production
 deployments should enable session auth (`authEnabled=true` / `--auth`): on a
 fresh database every route except a small public set then returns
-`503 setup_required` until an admin exists, and every route after that needs
-a valid session (admin/viewer RBAC, CSRF on writes) or, if configured,
+`503 setup_required` until an admin exists, and every non-public route after
+that needs a valid session (admin/viewer RBAC, CSRF on writes) or, if configured,
 [OAuth/OIDC](/java/guides/operations/sso). Passing a `token` instead switches
 to legacy shared-token mode — no users, no sessions, no RBAC — kept for
 back-compat; anyone with the token has full control. Whatever the mode, bind
