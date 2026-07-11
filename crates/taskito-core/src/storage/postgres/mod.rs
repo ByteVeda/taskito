@@ -7,6 +7,7 @@ mod locks;
 mod logs;
 mod metrics;
 mod periodic;
+mod pubsub;
 mod queue_state;
 mod rate_limits;
 mod trait_impl;
