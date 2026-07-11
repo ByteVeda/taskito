@@ -1,6 +1,7 @@
 pub mod error;
 pub mod job;
 pub mod periodic;
+pub mod pubsub;
 pub mod resilience;
 pub mod scheduler;
 pub mod storage;
