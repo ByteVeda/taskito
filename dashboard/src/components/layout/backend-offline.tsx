@@ -96,7 +96,7 @@ export function BackendOffline({ error }: { error: Error }) {
           <a
             href="https://docs.byteveda.org/taskito/guide/observability/dashboard"
             target="_blank"
-            rel="noreferrer"
+            rel="noreferrer noopener"
             className="inline-flex items-center gap-1.5 text-sm text-[var(--fg-muted)] hover:text-[var(--fg)]"
           >
             Docs <ExternalLink className="size-3.5" aria-hidden />

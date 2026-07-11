@@ -91,6 +91,21 @@ _LOG_PATH_MAX = 256
 # Hard cap on the request body we'll parse for PUT/POST requests.
 _MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MiB
 
+# Defense-in-depth headers on every response. The CSP assumes a fully
+# self-contained SPA bundle (no inline scripts — the theme bootstrap ships as
+# /theme-init.js); inline style attributes need 'unsafe-inline' in style-src.
+_SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
+    (
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'self'; form-action 'self'; object-src 'none'",
+    ),
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "same-origin"),
+)
+
 
 def _safe_path(path: str) -> str:
     """Return ``path`` with control characters stripped and length capped."""
@@ -194,6 +209,13 @@ def _make_handler(
 
     class DashboardHandler(BaseHTTPRequestHandler):
         # ── Entry points ────────────────────────────────────────────
+
+        def end_headers(self) -> None:
+            # Single choke point: every response — JSON, assets, probes,
+            # redirects — carries the security headers.
+            for name, value in _SECURITY_HEADERS:
+                self.send_header(name, value)
+            super().end_headers()
 
         def do_GET(self) -> None:
             try:

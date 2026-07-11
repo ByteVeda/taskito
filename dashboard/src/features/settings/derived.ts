@@ -4,9 +4,31 @@ import { useSettings } from "./hooks";
 import { type ExternalLink, type IntegrationUrls, SETTING_KEYS } from "./types";
 
 /**
+ * Whether a configured URL may safely become an ``href``. Allows http(s)
+ * and same-origin paths only — a stored ``javascript:``/``data:`` URI would
+ * execute in the dashboard origin when clicked, so scheme filtering here is
+ * the security control (the ``type="url"`` inputs are UX only and settings
+ * can be written directly through the API).
+ */
+export function isSafeLinkUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("/")) {
+    // Reject protocol-relative (//host) and backslashes: WHATWG URL parsing
+    // normalizes "\" to "/" for http(s), so "/\evil.com" escapes the origin.
+    return !trimmed.startsWith("//") && !trimmed.includes("\\");
+  }
+  try {
+    const protocol = new URL(trimmed).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Parse the JSON-encoded ``external_links`` setting into a typed list,
  * tolerating malformed values (returns ``[]``) so a bad write never
- * breaks the page.
+ * breaks the page. Entries with unsafe URL schemes are dropped.
  */
 export function parseExternalLinks(raw: string | undefined): ExternalLink[] {
   if (!raw) return [];
@@ -19,7 +41,8 @@ export function parseExternalLinks(raw: string | undefined): ExternalLink[] {
           typeof item === "object" &&
           item !== null &&
           typeof (item as ExternalLink).label === "string" &&
-          typeof (item as ExternalLink).url === "string",
+          typeof (item as ExternalLink).url === "string" &&
+          isSafeLinkUrl((item as ExternalLink).url),
       )
       .map((item) => ({ label: item.label, url: item.url }));
   } catch {
@@ -33,13 +56,17 @@ export function useExternalLinks(): ExternalLink[] {
   return parseExternalLinks(data?.[SETTING_KEYS.externalLinks]);
 }
 
-/** Configured integration URLs, with empty/whitespace values normalized. */
+/** Configured integration URLs — normalized and dropped unless scheme-safe. */
 export function useIntegrations(): IntegrationUrls {
   const { data } = useSettings();
+  const sanitize = (raw: string | undefined): string => {
+    const value = raw?.trim() ?? "";
+    return value && isSafeLinkUrl(value) ? value : "";
+  };
   return {
-    grafana: data?.[SETTING_KEYS.integrationGrafana]?.trim() ?? "",
-    sentry: data?.[SETTING_KEYS.integrationSentry]?.trim() ?? "",
-    otel: data?.[SETTING_KEYS.integrationOtel]?.trim() ?? "",
+    grafana: sanitize(data?.[SETTING_KEYS.integrationGrafana]),
+    sentry: sanitize(data?.[SETTING_KEYS.integrationSentry]),
+    otel: sanitize(data?.[SETTING_KEYS.integrationOtel]),
   };
 }
 

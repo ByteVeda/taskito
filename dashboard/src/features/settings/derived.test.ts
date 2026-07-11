@@ -1,5 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { applyJobContext, parseExternalLinks } from "./derived";
+import { applyJobContext, isSafeLinkUrl, parseExternalLinks } from "./derived";
+
+describe("isSafeLinkUrl", () => {
+  it("allows http and https URLs", () => {
+    expect(isSafeLinkUrl("https://grafana.example.com/d/abc")).toBe(true);
+    expect(isSafeLinkUrl("http://localhost:3000")).toBe(true);
+  });
+
+  it("allows same-origin paths but not protocol-relative URLs", () => {
+    expect(isSafeLinkUrl("/jobs")).toBe(true);
+    expect(isSafeLinkUrl("//evil.com")).toBe(false);
+  });
+
+  it("rejects backslashes in paths (URL parsing folds them to slashes)", () => {
+    expect(isSafeLinkUrl("/\\evil.com")).toBe(false);
+    expect(isSafeLinkUrl("/jobs\\..\\x")).toBe(false);
+  });
+
+  it("rejects javascript:, data:, and other schemes", () => {
+    expect(isSafeLinkUrl("javascript:alert(document.cookie)")).toBe(false);
+    expect(isSafeLinkUrl("data:text/html,<script>alert(1)</script>")).toBe(false);
+    expect(isSafeLinkUrl("vbscript:x")).toBe(false);
+    expect(isSafeLinkUrl("file:///etc/passwd")).toBe(false);
+  });
+
+  it("rejects relative fragments and garbage", () => {
+    expect(isSafeLinkUrl("jobs")).toBe(false);
+    expect(isSafeLinkUrl("")).toBe(false);
+    expect(isSafeLinkUrl("   ")).toBe(false);
+  });
+
+  it("tolerates surrounding whitespace", () => {
+    expect(isSafeLinkUrl("  https://example.com  ")).toBe(true);
+    expect(isSafeLinkUrl("  javascript:alert(1)  ")).toBe(false);
+  });
+});
 
 describe("parseExternalLinks", () => {
   it("returns [] for undefined or empty input", () => {
@@ -44,6 +79,16 @@ describe("parseExternalLinks", () => {
   it("strips extra fields, keeping only label and url", () => {
     const raw = JSON.stringify([{ label: "Docs", url: "/d", danger: "<script>" }]);
     expect(parseExternalLinks(raw)).toEqual([{ label: "Docs", url: "/d" }]);
+  });
+
+  it("drops entries whose URL scheme is unsafe", () => {
+    const raw = JSON.stringify([
+      { label: "Docs", url: "https://docs.example.com" },
+      { label: "Evil", url: "javascript:alert(1)" },
+      { label: "Data", url: "data:text/html,x" },
+      { label: "Proto-relative", url: "//evil.com" },
+    ]);
+    expect(parseExternalLinks(raw)).toEqual([{ label: "Docs", url: "https://docs.example.com" }]);
   });
 });
 
