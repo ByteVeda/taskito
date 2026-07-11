@@ -1,6 +1,6 @@
 ---
 title: Pluggable Serializers
-description: "Built-in JSON, MessagePack, signed, and encrypted serializers, plus the cross-SDK payload-codec chain for compression and encryption."
+description: "Built-in JSON, MessagePack, CBOR, signed, and encrypted serializers, plus the cross-SDK payload-codec chain for compression and encryption."
 ---
 
 Task arguments and results are serialized with a pluggable `Serializer`. The
@@ -26,15 +26,16 @@ strings, numbers, booleans, `None`, tuples), with an automatic
 <SdkOnly sdk="node">
 
 The default is `JsonSerializer` — human-readable and easy to debug. Other
-built-ins: `MsgpackSerializer`, `SignedSerializer`, `EncryptedSerializer`.
+built-ins: `MsgpackSerializer`, `CborSerializer`, `SignedSerializer`,
+`EncryptedSerializer`.
 
 </SdkOnly>
 
 <SdkOnly sdk="java">
 
 The default is `JsonSerializer` — Jackson-backed, human-readable and easy to
-debug. Other built-ins: `MsgpackSerializer`, `SignedSerializer`,
-`EncryptedSerializer`.
+debug. Other built-ins: `MsgpackSerializer`, `CborSerializer`,
+`SignedSerializer`, `EncryptedSerializer`.
 
 </SdkOnly>
 
@@ -175,6 +176,77 @@ you want to spell it out in your own requirements file.
 `compileOnly` — add it to your build explicitly.
 
 </SdkOnly>
+
+### CborSerializer
+
+Binary serialization writing the `0x02` wire-envelope tag — the default
+format for tasks produced or consumed by another Taskito SDK. Unlike JSON,
+big integers, `datetime`/`Date`, `bytes`, and decimals round-trip losslessly
+across languages.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito import CborSerializer, Queue
+
+queue = Queue(serializer=CborSerializer())
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { Queue, CborSerializer } from "@byteveda/taskito";
+
+new Queue({ dbPath: "taskito.db", serializer: new CborSerializer() });
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.serialization.CborSerializer;
+
+Taskito taskito = Taskito.builder()
+        .sqlite("taskito.db")
+        .serializer(new CborSerializer())
+        .open();
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="python">
+
+`cbor2` ships as a required taskito dependency — no extra install needed. The
+default `SmartSerializer` can already *read* `0x02`-tagged CBOR payloads (for
+example one written by another Taskito SDK) without extra configuration; use
+`CborSerializer` explicitly to *write* cross-SDK payloads.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`cbor-x` ships as a core dependency — no extra install required. Integers
+beyond `Number.MAX_SAFE_INTEGER` round-trip as `BigInt`.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`CborSerializer`'s `com.fasterxml.jackson.dataformat:jackson-dataformat-cbor`
+dependency is `compileOnly` — add it to your build explicitly, same as
+`MsgpackSerializer`.
+
+</SdkOnly>
+
+<Callout type="info" title="Cross-SDK payload contract">
+  Producer and consumer of a task must configure the same wire serializer.
+  For cross-SDK tasks, prefer a single object/dict argument — it maps
+  cleanly onto every language's handler-binding model.
+</Callout>
 
 ### SignedSerializer
 
@@ -411,21 +483,23 @@ override it in a generics-aware implementation, as `JsonSerializer` does.
 
 ## Choosing a serializer
 
-|   | SmartSerializer | CloudpickleSerializer | JsonSerializer | MsgPackSerializer | EncryptedSerializer |
-|---|---|---|---|---|---|
-| **Complex objects** | Yes (cloudpickle fallback) | Yes | No | No | Depends on inner serializer |
-| **Debugging** | Binary payloads (opaque) | Binary payloads (opaque) | Human-readable JSON | Binary (opaque) | Ciphertext (opaque) |
-| **Cross-language** | Python only | Python only | Any language | Any language | Python only (by default) |
-| **Performance** | Best for plain data | Good | Good for simple types | Best | Adds encryption overhead |
-| **Security** | None | None | None | None | AES-256-GCM |
-| **Extra dependency** | No | No | No | No | `cryptography` (`taskito[encryption]`) |
-| **Default** | Yes | No | No | No | No |
+|   | SmartSerializer | CloudpickleSerializer | JsonSerializer | MsgPackSerializer | CborSerializer | EncryptedSerializer |
+|---|---|---|---|---|---|---|
+| **Complex objects** | Yes (cloudpickle fallback) | Yes | No | No | No (CBOR-representable types only) | Depends on inner serializer |
+| **Debugging** | Binary payloads (opaque) | Binary payloads (opaque) | Human-readable JSON | Binary (opaque) | Binary (opaque) | Ciphertext (opaque) |
+| **Cross-language** | Python only | Python only | Any language | Any language | Any language (cross-SDK default) | Python only (by default) |
+| **Performance** | Best for plain data | Good | Good for simple types | Best | Good | Adds encryption overhead |
+| **Security** | None | None | None | None | None | AES-256-GCM |
+| **Extra dependency** | No | No | No | No | No | `cryptography` (`taskito[encryption]`) |
+| **Default** | Yes | No | No | No | No | No |
 
 **Rule of thumb**: use the default `SmartSerializer` unless you have a
 specific reason to switch — it gets you compact MessagePack payloads for
 plain data with an automatic cloudpickle fallback for anything MessagePack
-can't encode. Use `EncryptedSerializer` when tasks carry sensitive data that
-must not be readable in the database. See
+can't encode. Use `CborSerializer` when a task is produced or consumed by
+another Taskito SDK — it's the only serializer here whose wire format is
+part of the cross-SDK contract. Use `EncryptedSerializer` when tasks carry
+sensitive data that must not be readable in the database. See
 [Architecture: Serialization](/architecture/serialization) for a shorter
 overview and what gets serialized where.
 
