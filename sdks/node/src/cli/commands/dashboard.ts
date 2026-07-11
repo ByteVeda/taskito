@@ -7,6 +7,7 @@ import { positiveIntFlag } from "../parse";
 interface DashboardFlags {
   port?: string;
   host?: string;
+  auth?: boolean;
   token?: string;
   insecureCookies?: boolean;
 }
@@ -17,6 +18,7 @@ export function registerDashboard(program: Command): void {
     .description("Serve the web dashboard")
     .option("-p, --port <n>", "port to listen on", "8787")
     .option("--host <host>", "host to bind", "127.0.0.1")
+    .option("--auth", "enable session authentication (login/setup, CSRF, roles); off by default")
     .option("--token <token>", "legacy shared-token gate (disables the login flow)")
     .option("--insecure-cookies", "drop the Secure cookie attribute for plain-HTTP dev")
     .action(async (options: DashboardFlags, command: Command) => {
@@ -30,6 +32,7 @@ export function registerDashboard(program: Command): void {
         port,
         host,
         auth: options.token ? { token: options.token } : undefined,
+        authEnabled: options.auth,
         secureCookies: options.insecureCookies ? false : undefined,
       });
       // Confirm the bind succeeded before reporting success (e.g. port in use).

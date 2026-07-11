@@ -33,7 +33,7 @@ beforeEach(async () => {
   const db = join(mkdtempSync(join(tmpdir(), "taskito-dashsess-")), "q.db");
   queue = new Queue({ dbPath: db });
   queue.task("add", (a: number, b: number) => a + b);
-  server = serveDashboard(queue, { port: 0, staticDir, secureCookies: false });
+  server = serveDashboard(queue, { port: 0, staticDir, secureCookies: false, authEnabled: true });
   await once(server, "listening");
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });

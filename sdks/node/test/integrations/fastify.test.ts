@@ -79,5 +79,5 @@ it("mounts the dashboard JSON API under a prefix", async () => {
 
   const res = await fetch(`http://127.0.0.1:${port}/admin/api/auth/status`);
   expect(res.status).toBe(200);
-  expect(await res.json()).toMatchObject({ setup_required: true });
+  expect(await res.json()).toMatchObject({ auth_enabled: false, setup_required: false });
 });

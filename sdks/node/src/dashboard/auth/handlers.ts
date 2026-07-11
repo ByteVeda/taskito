@@ -35,7 +35,7 @@ function serializeSession(session: DashboardSession) {
 
 /** Public: whether the SPA should show the first-run setup page. */
 export function authStatus(queue: Queue) {
-  return { setup_required: new AuthStore(queue).countUsers() === 0 };
+  return { auth_enabled: true, setup_required: new AuthStore(queue).countUsers() === 0 };
 }
 
 /** Create the first admin user. Only callable when zero users exist. */

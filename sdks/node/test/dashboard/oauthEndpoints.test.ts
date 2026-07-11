@@ -75,7 +75,13 @@ beforeEach(async () => {
     },
     { providers: new Map([["fake", provider]]) },
   );
-  server = serveDashboard(queue, { port: 0, staticDir, secureCookies: false, oauth: flow });
+  server = serveDashboard(queue, {
+    port: 0,
+    staticDir,
+    secureCookies: false,
+    authEnabled: true,
+    oauth: flow,
+  });
   await once(server, "listening");
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });

@@ -26,7 +26,12 @@ async function startDash(queue: Queue): Promise<{
   server: Server;
 }> {
   const { headers } = await seedAdminAndSession(queue);
-  const server = serveDashboard(queue, { port: 0, staticDir, secureCookies: false });
+  const server = serveDashboard(queue, {
+    port: 0,
+    staticDir,
+    secureCookies: false,
+    authEnabled: true,
+  });
   await once(server, "listening");
   const address = server.address() as AddressInfo;
   return { base: `http://127.0.0.1:${address.port}`, headers, server };
