@@ -76,6 +76,13 @@ describe("CborSerializer", () => {
     expect(() => s.deserializeCall(s.serialize({ not: "a call" }))).toThrow(/wire shape/);
   });
 
+  it("rejects call payloads with non-map kwargs", () => {
+    const s = new CborSerializer();
+    for (const kwargs of [null, [], "oops", 7]) {
+      expect(() => s.deserializeCall(s.serialize([[1], kwargs]))).toThrow(/wire shape/);
+    }
+  });
+
   it("encodes Map values as plain RFC 8949 maps, not tag 259", () => {
     const s = new CborSerializer();
     const bytes = s.serialize(new Map([["k", 1]]));

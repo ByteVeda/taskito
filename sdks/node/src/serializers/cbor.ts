@@ -49,11 +49,18 @@ export class CborSerializer implements Serializer {
 
   deserializeCall(bytes: Uint8Array): unknown[] {
     const decoded = this.decoder.decode(this.body(bytes));
-    if (!Array.isArray(decoded) || decoded.length !== 2 || !Array.isArray(decoded[0])) {
+    if (
+      !Array.isArray(decoded) ||
+      decoded.length !== 2 ||
+      !Array.isArray(decoded[0]) ||
+      decoded[1] === null ||
+      typeof decoded[1] !== "object" ||
+      Array.isArray(decoded[1])
+    ) {
       throw new SerializationError("CBOR call payload is not the [args, kwargs] wire shape");
     }
     const [args, kwargs] = decoded as [unknown[], Record<string, unknown>];
-    return Object.keys(kwargs ?? {}).length > 0 ? [...args, kwargs] : args;
+    return Object.keys(kwargs).length > 0 ? [...args, kwargs] : args;
   }
 
   private body(bytes: Uint8Array): Uint8Array {
