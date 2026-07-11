@@ -1,11 +1,13 @@
 """HTTP server that wires routes to a Queue instance and serves the SPA.
 
-The server enforces dashboard authentication when at least one user has been
-registered with :class:`taskito.dashboard.auth.AuthStore`. Until the first
-user is created, all API routes return ``503 setup_required`` so the SPA can
-guide the operator through one-time setup. ``TASKITO_DASHBOARD_ADMIN_USER`` /
-``TASKITO_DASHBOARD_ADMIN_PASSWORD`` environment variables bootstrap a user
-idempotently on server start.
+Authentication is opt-in via ``serve_dashboard(auth_enabled=True)``; by
+default the dashboard serves openly with the auth endpoints disabled. When
+auth is enabled and at least one user has been registered with
+:class:`taskito.dashboard.auth.AuthStore`, sessions are enforced. Until the
+first user is created, all API routes return ``503 setup_required`` so the
+SPA can guide the operator through one-time setup.
+``TASKITO_DASHBOARD_ADMIN_USER`` / ``TASKITO_DASHBOARD_ADMIN_PASSWORD``
+environment variables bootstrap a user idempotently on server start.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from taskito.dashboard.auth import (
     bootstrap_admin_from_env,
 )
 from taskito.dashboard.errors import _BadRequest, _NotFound
+from taskito.dashboard.handlers.auth import handle_auth_status
 from taskito.dashboard.handlers.oauth import (
     OAuthRedirect,
     handle_providers,
@@ -118,6 +121,7 @@ def serve_dashboard(
     static_assets: StaticAssets | None = None,
     oauth_flow: OAuthFlow | None = None,
     secure_cookies: bool = True,
+    auth_enabled: bool = False,
 ) -> None:
     """Start the dashboard HTTP server (blocking).
 
@@ -130,16 +134,20 @@ def serve_dashboard(
             customised dashboard bundle from a different location.
         oauth_flow: Configured :class:`OAuthFlow` to enable social login.
             When unset, OAuth endpoints respond 404 and the providers list
-            is empty.
+            is empty. Ignored unless ``auth_enabled`` is true.
+        auth_enabled: Enforce session auth (login/setup, CSRF, RBAC). Off
+            by default — the dashboard serves openly.
     """
-    bootstrap_admin_from_env(queue)
-    if oauth_flow is None:
-        oauth_flow = _build_oauth_flow_from_env(queue)
+    if auth_enabled:
+        bootstrap_admin_from_env(queue)
+        if oauth_flow is None:
+            oauth_flow = _build_oauth_flow_from_env(queue)
     handler = _make_handler(
         queue,
         static_assets=static_assets,
         oauth_flow=oauth_flow,
         secure_cookies=secure_cookies,
+        auth_enabled=auth_enabled,
     )
     server = ThreadingHTTPServer((host, port), handler)
     print(f"taskito dashboard → http://{host}:{port}")
@@ -178,6 +186,7 @@ def _make_handler(
     static_assets: StaticAssets | None = None,
     oauth_flow: OAuthFlow | None = None,
     secure_cookies: bool = True,
+    auth_enabled: bool = False,
 ) -> type:
     """Create a request handler class bound to the given queue."""
     assets = static_assets if static_assets is not None else _get_default_assets()
@@ -235,6 +244,14 @@ def _make_handler(
 
             ctx, denied = self._authorize(path, "GET")
             if denied:
+                return
+
+            # ── Auth status (public; reports the auth mode) ─────────
+            if path == "/api/auth/status":
+                self._dispatch_with_handler(
+                    handle_auth_status,
+                    lambda h: h(queue, qs, auth_enabled=auth_enabled),
+                )
                 return
 
             # ── OAuth flow paths (public, redirect-emitting) ────────
@@ -412,6 +429,8 @@ def _make_handler(
         def _authorize(self, path: str, method: str) -> tuple[RequestContext, bool]:
             """Return ``(ctx, denied)``. When ``denied`` is true a response
             has already been written and the caller must return."""
+            if not auth_enabled:
+                return self._authorize_open(path)
             ctx = self._build_context()
 
             # Setup-required short-circuit: before the first user is created
@@ -449,6 +468,15 @@ def _make_handler(
                 self._json_response({"error": "forbidden"}, status=403)
                 return ctx, True
 
+            return ctx, False
+
+        def _authorize_open(self, path: str) -> tuple[RequestContext, bool]:
+            """Auth disabled: allow everything, but 404 the auth endpoints
+            (except ``/api/auth/status``) so the SPA hides login affordances."""
+            ctx = build_context(self.headers, None)
+            if path.startswith("/api/auth/") and path != "/api/auth/status":
+                self._json_response({"error": "auth_disabled"}, status=404)
+                return ctx, True
             return ctx, False
 
         def _build_context(self) -> RequestContext:

@@ -5,7 +5,8 @@ JSON-serializable data. Handlers may raise
 :class:`~taskito.dashboard.errors._BadRequest` (→ 400) or
 :class:`~taskito.dashboard.errors._NotFound` (→ 404).
 
-Authentication and authorization:
+Authentication and authorization (only when the server runs with
+``auth_enabled=True``; the default is an open dashboard):
 
 - ``PUBLIC_PATHS`` — exact paths that bypass auth entirely. Used for the
   setup/login/status endpoints, health checks, and Prometheus metrics.
@@ -23,7 +24,6 @@ import re
 from typing import Any
 
 from taskito.dashboard.handlers.auth import (
-    handle_auth_status,
     handle_change_password,
     handle_login,
     handle_logout,
@@ -138,7 +138,6 @@ GET_ROUTES: dict[str, Any] = {
     "/api/stats/queues": _handle_stats_queues,
     "/api/scaler": lambda q, qs: build_scaler_response(q, queue_name=qs.get("queue", [None])[0]),
     "/api/settings": _handle_list_settings,
-    "/api/auth/status": handle_auth_status,
     "/api/webhooks": handle_list_webhooks,
     "/api/event-types": handle_list_event_types,
     "/api/tasks": handle_list_tasks,
