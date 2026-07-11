@@ -67,7 +67,7 @@ def run_worker(queue: Queue) -> Generator[threading.Thread]:
     thread = threading.Thread(target=queue.run_worker, daemon=True)
     thread.start()
     yield thread
-    queue._inner.request_shutdown()
+    queue.shutdown()
     thread.join(timeout=5)
 
 
@@ -88,7 +88,7 @@ def workflow_worker(queue: Queue) -> WorkflowWorkerFactory:
         try:
             yield thread
         finally:
-            queue._inner.request_shutdown()
+            queue.shutdown()
             thread.join(timeout=5)
 
     return _ctx

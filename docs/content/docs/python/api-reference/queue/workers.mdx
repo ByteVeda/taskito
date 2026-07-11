@@ -28,6 +28,17 @@ Start the worker loop. **Blocks** until interrupted.
 | `pool` | `str` | `"thread"` | Worker pool type: `"thread"` or `"prefork"`. |
 | `app` | `str \| None` | `None` | Import path to Queue (e.g. `"myapp:queue"`). Required when `pool="prefork"`. |
 
+### `queue.shutdown()`
+
+```python
+queue.shutdown() -> None
+```
+
+Request graceful worker shutdown — the programmatic equivalent of
+SIGINT/SIGTERM. The scheduler stops dispatching and `run_worker()` returns
+once running tasks finish (bounded by `drain_timeout`). Non-blocking, safe
+from any thread; a no-op when no worker is running.
+
 ### `queue.workers()`
 
 ```python

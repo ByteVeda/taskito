@@ -161,6 +161,14 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Force a stuck Running job back to Pending, releasing its execution
+    /// claim. Returns false when the job is missing or not Running.
+    pub fn requeue_job(&self, job_id: &str) -> PyResult<bool> {
+        self.storage
+            .requeue_stuck(job_id, now_millis())
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Purge dead letter entries older than given seconds ago.
     pub fn purge_dead(&self, older_than_seconds: i64) -> PyResult<u64> {
         let cutoff = now_millis().saturating_sub(older_than_seconds.saturating_mul(1000));

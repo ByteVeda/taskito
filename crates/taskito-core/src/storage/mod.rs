@@ -155,6 +155,9 @@ macro_rules! impl_storage {
             fn reschedule(&self, id: &str, next_scheduled_at: i64) -> $crate::error::Result<()> {
                 self.reschedule(id, next_scheduled_at)
             }
+            fn requeue_stuck(&self, id: &str, now: i64) -> $crate::error::Result<bool> {
+                self.requeue_stuck(id, now)
+            }
             fn cancel_job(&self, id: &str) -> $crate::error::Result<bool> {
                 self.cancel_job(id)
             }
@@ -734,6 +737,9 @@ impl Storage for StorageBackend {
     }
     fn reschedule(&self, id: &str, next_scheduled_at: i64) -> Result<()> {
         delegate!(self, reschedule, id, next_scheduled_at)
+    }
+    fn requeue_stuck(&self, id: &str, now: i64) -> Result<bool> {
+        delegate!(self, requeue_stuck, id, now)
     }
     fn cancel_job(&self, id: &str) -> Result<bool> {
         delegate!(self, cancel_job, id)

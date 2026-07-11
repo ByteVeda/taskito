@@ -170,6 +170,33 @@ def test_from_test_overrides() -> None:
     assert rt.resolve("cache") == "mock_cache"
 
 
+def test_reload_resources_without_worker_returns_empty(queue: Queue) -> None:
+    """queue.reload_resources() is an empty no-op when no runtime is active."""
+    assert queue.reload_resources() == {}
+
+
+def test_reload_resources_recreates_reloadable(queue: Queue) -> None:
+    """queue.reload_resources() re-runs reloadable factories in the live runtime."""
+    counter = {"n": 0}
+
+    @queue.worker_resource("svc", reloadable=True)
+    def svc() -> int:
+        counter["n"] += 1
+        return counter["n"]
+
+    queue._resource_runtime = ResourceRuntime(queue._resource_definitions)
+    queue._resource_runtime.initialize()
+    try:
+        assert queue._resource_runtime.resolve("svc") == 1
+        assert queue.reload_resources() == {"svc": True}
+        assert queue._resource_runtime.resolve("svc") == 2
+        assert queue.reload_resources(["svc"]) == {"svc": True}
+        assert queue._resource_runtime.resolve("svc") == 3
+    finally:
+        queue._resource_runtime.teardown()
+        queue._resource_runtime = None
+
+
 # ---------------------------------------------------------------------------
 # Async factory
 # ---------------------------------------------------------------------------

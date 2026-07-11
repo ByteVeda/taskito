@@ -492,6 +492,45 @@ fn test_reclaim_execution(s: &impl Storage) {
     s.complete_execution(colon_job).unwrap();
 }
 
+fn test_requeue_stuck(s: &impl Storage) {
+    // Operator rescue for a stuck Running job: back to Pending, claim
+    // released, retry budget and cancel flag reset — all atomically.
+    let q = "q-requeue-stuck";
+    let job = s.enqueue(make_job(q, "stuck_task")).unwrap();
+    let t0 = now_millis();
+    s.dequeue(q, t0, None).unwrap().unwrap(); // Running
+    assert!(s.claim_execution(&job.id, "hung-worker").unwrap());
+    assert!(s.request_cancel(&job.id).unwrap());
+
+    assert!(s.requeue_stuck(&job.id, t0).unwrap());
+
+    let requeued = s.get_job(&job.id).unwrap().unwrap();
+    assert_eq!(requeued.status, JobStatus::Pending);
+    assert_eq!(
+        requeued.retry_count, 0,
+        "operator rescue must not consume retry budget"
+    );
+    assert!(requeued.started_at.is_none());
+    assert!(
+        !s.is_cancel_requested(&job.id).unwrap(),
+        "a stale cancel request must not kill the fresh attempt"
+    );
+    // The claim was deleted, not transferred — an insert-only claim succeeds.
+    assert!(s.claim_execution(&job.id, "rescuer").unwrap());
+    // And the job is dequeuable again.
+    let redispatched = s.dequeue(q, now_millis() + 1000, None).unwrap().unwrap();
+    assert_eq!(redispatched.id, job.id);
+
+    // Not-Running and missing jobs are a no-op `false`, never an error.
+    s.complete(&job.id, None).unwrap();
+    s.complete_execution(&job.id).unwrap();
+    assert!(
+        !s.requeue_stuck(&job.id, t0).unwrap(),
+        "completed jobs are not requeueable"
+    );
+    assert!(!s.requeue_stuck("no-such-job", t0).unwrap());
+}
+
 fn test_reap_orphaned_jobs(s: &impl Storage) {
     // A running job whose claim owner is not in the live set is orphaned and
     // paired with that dead owner; a live owner or an empty set yields nothing.
@@ -876,6 +915,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);
     test_reclaim_execution(s);
+    test_requeue_stuck(s);
     test_reap_orphaned_jobs(s);
     test_dashboard_settings(s);
     test_immediate_archival(s);

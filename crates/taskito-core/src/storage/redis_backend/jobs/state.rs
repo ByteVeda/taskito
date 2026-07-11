@@ -3,6 +3,7 @@
 
 use redis::Commands;
 
+use super::dequeue_score;
 use crate::error::{QueueError, Result};
 use crate::job::{now_millis, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage};
@@ -24,6 +25,24 @@ const REQUEST_CANCEL_IF_RUNNING: &str = r#"
     if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 0 end
     redis.call('SET', KEYS[1], ARGV[2])
     redis.call('SADD', KEYS[3], ARGV[1])
+    return 1
+"#;
+
+/// Lua: move a job from Running back to Pending and release its execution
+/// claim, all-or-nothing. Guarded by Running-set membership (never decodes
+/// `job.status` in Lua) so a job archived between the Rust read and this
+/// script is a no-op. Also drops any pending cancel request so the fresh
+/// attempt isn't insta-cancelled, and clears the claim key + its time index
+/// so a healthy worker can re-claim. Returns 1 if applied, 0 otherwise.
+const REQUEUE_STUCK_IF_RUNNING: &str = r#"
+    if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 0 end
+    redis.call('SET', KEYS[1], ARGV[2])
+    redis.call('SREM', KEYS[2], ARGV[1])
+    redis.call('SADD', KEYS[3], ARGV[1])
+    redis.call('ZADD', KEYS[4], ARGV[3], ARGV[1])
+    redis.call('SREM', KEYS[5], ARGV[1])
+    redis.call('DEL', KEYS[6])
+    redis.call('ZREM', KEYS[7], ARGV[1])
     return 1
 "#;
 
@@ -106,6 +125,54 @@ impl RedisStorage {
         self.requeue_pending(&mut conn, &job, old_status)?;
 
         Ok(())
+    }
+
+    /// Force a `Running` job back to `Pending` and release its execution
+    /// claim atomically. Preserves retry budget (no `retry_count` bump) and
+    /// clears any pending cancel request. Returns `false` when the job is
+    /// missing or not `Running`.
+    pub fn requeue_stuck(&self, id: &str, now: i64) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let mut job = match self.get_job(id)? {
+            Some(j) => j,
+            None => return Ok(false),
+        };
+        if job.status != JobStatus::Running {
+            return Ok(false);
+        }
+
+        job.status = JobStatus::Pending;
+        job.scheduled_at = now;
+        job.started_at = None;
+        job.completed_at = None;
+        job.error = None;
+        job.cancel_requested = false;
+
+        let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_key = self.key(&["job", id]);
+        let running_key = self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
+        let pending_key = self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);
+        let queue_key = self.key(&["queue", &job.queue, "pending"]);
+        let cancel_set = self.key(&["jobs", "cancel_requested"]);
+        let claim_key = self.key(&["exec_claim", id]);
+        let claim_index_key = self.key(&["exec_claims", "by_time"]);
+        let score = dequeue_score(job.priority, job.scheduled_at);
+
+        let applied: i32 = redis::Script::new(REQUEUE_STUCK_IF_RUNNING)
+            .key(&job_key)
+            .key(&running_key)
+            .key(&pending_key)
+            .key(&queue_key)
+            .key(&cancel_set)
+            .key(&claim_key)
+            .key(&claim_index_key)
+            .arg(id)
+            .arg(&job_json)
+            .arg(score)
+            .invoke(&mut conn)
+            .map_err(map_err)?;
+
+        Ok(applied == 1)
     }
 
     pub fn cancel_job(&self, id: &str) -> Result<bool> {

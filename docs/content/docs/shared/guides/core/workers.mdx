@@ -426,8 +426,9 @@ endpoint:
   <Tab sdk="python">
 
 ```python
-# From another thread or signal handler
-queue._inner.request_shutdown()
+# From another thread or signal handler — non-blocking; run_worker()
+# returns once running tasks drain
+queue.shutdown()
 ```
 
   </Tab>

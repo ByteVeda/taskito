@@ -6,11 +6,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from taskito.exceptions import CircularDependencyError
+from taskito.interception import InterceptionReport
 from taskito.resources.definition import ResourceDefinition, ResourceScope
 from taskito.resources.graph import detect_cycle
 from taskito.resources.toml_config import load_resources_from_toml
 
 if TYPE_CHECKING:
+    from taskito.interception.interceptor import ArgumentInterceptor
     from taskito.interception.metrics import InterceptionMetrics
     from taskito.proxies.metrics import ProxyMetrics
     from taskito.resources.runtime import ResourceRuntime
@@ -23,6 +25,7 @@ class QueueResourceMixin:
     _resource_runtime: ResourceRuntime | None
     _proxy_metrics: ProxyMetrics
     _interception_metrics: InterceptionMetrics | None
+    _interceptor: ArgumentInterceptor | None
 
     def worker_resource(
         self,
@@ -122,6 +125,24 @@ class QueueResourceMixin:
         except Exception:
             return False
 
+    def reload_resources(self, names: list[str] | None = None) -> dict[str, bool]:
+        """Hot-reload reloadable worker resources (programmatic SIGHUP).
+
+        Tears down and re-creates each target resource in dependency order.
+
+        Args:
+            names: Resource names to reload. ``None`` reloads every resource
+                registered with ``reloadable=True``.
+
+        Returns:
+            Mapping of resource name to reload success. Empty when no worker
+            resource runtime is active in this process (no worker running).
+        """
+        runtime = self._resource_runtime
+        if runtime is None:
+            return {}
+        return runtime.reload(names)
+
     def load_resources(self, toml_path: str) -> None:
         """Load resource definitions from a TOML file.
 
@@ -142,3 +163,17 @@ class QueueResourceMixin:
         if self._interception_metrics is not None:
             return self._interception_metrics.to_dict()
         return {}
+
+    def analyze_arguments(
+        self, args: tuple = (), kwargs: dict[str, Any] | None = None
+    ) -> InterceptionReport:
+        """Dry-run the argument interceptor without enqueuing anything.
+
+        Returns an :class:`~taskito.interception.InterceptionReport` describing
+        the strategy chosen for each argument. The report is empty when the
+        queue was created with ``interception="off"`` (the default). For a
+        per-task variant, see :meth:`taskito.task.TaskWrapper.analyze`.
+        """
+        if self._interceptor is None:
+            return InterceptionReport()
+        return self._interceptor.analyze(args, kwargs or {})

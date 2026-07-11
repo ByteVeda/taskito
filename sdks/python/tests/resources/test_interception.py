@@ -401,6 +401,23 @@ class TestQueueIntegration:
         report = my_task.analyze(42)
         assert len(report.entries) == 0
 
+    def test_queue_analyze_arguments(self, tmp_path: Any) -> None:
+        q = Queue(db_path=str(tmp_path / "test.db"), interception="strict")
+        uid = uuid.uuid4()
+
+        report = q.analyze_arguments((42, uid), {"created_at": datetime.datetime.now()})
+        assert isinstance(report, InterceptionReport)
+        assert len(report.entries) == 3
+        strategies = [e.strategy for e in report.entries]
+        assert Strategy.PASS in strategies
+        assert Strategy.CONVERT in strategies
+
+    def test_queue_analyze_arguments_off_mode(self, tmp_path: Any) -> None:
+        q = Queue(db_path=str(tmp_path / "test.db"))
+
+        report = q.analyze_arguments((42,), {})
+        assert len(report.entries) == 0
+
 
 # -- Custom type registration --
 

@@ -536,7 +536,7 @@ restored = Predicate.from_dict(blob)
 ## Metrics & events
 
 ```python
-queue._predicate_metrics.snapshot()  # internal accessor — not yet part of the stable API
+queue.predicate_stats()
 # {"allowed": 412, "denied": 3, "deferred": 8, "cancelled": 1, "errors": 0}
 ```
 

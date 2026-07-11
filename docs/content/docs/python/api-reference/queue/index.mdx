@@ -78,6 +78,7 @@ Queue(
     max_retry_delay: int | None = None,
     timeout: int = 300,
     soft_timeout: float | None = None,
+    expires: float | None = None,
     priority: int = 0,
     rate_limit: str | None = None,
     queue: str = "default",
@@ -105,6 +106,7 @@ Register a function as a background task. Returns a [`TaskWrapper`](/python/api-
 | `max_retry_delay` | `int \| None` | `None` | Cap on backoff delay in seconds. Defaults to 300 s. |
 | `timeout` | `int` | `300` | Hard execution time limit in seconds. |
 | `soft_timeout` | `float \| None` | `None` | Cooperative time limit checked via `current_job.check_timeout()`. |
+| `expires` | `float \| None` | `None` | Default expiry in seconds — jobs not started within the window are skipped. Per-call `apply_async(expires=)` overrides. |
 | `priority` | `int` | `0` | Default priority (higher = more urgent). |
 | `rate_limit` | `str \| None` | `None` | Rate limit string, e.g. `"100/m"`. |
 | `queue` | `str` | `"default"` | Named queue to submit to. |

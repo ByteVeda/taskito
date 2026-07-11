@@ -192,6 +192,22 @@ hood.
   forever — nothing detects that case without a timeout.
 </Callout>
 
+<SdkOnly sdk="python">
+
+For that last case — a job neither recovery mechanism will touch — force it
+back to `pending` manually:
+
+```python
+queue.requeue_job(job_id)  # True if it was Running and is now Pending
+```
+
+`requeue_job()` releases the job's execution claim so a healthy worker can
+pick it up, and preserves the retry budget. Only use it when the owning
+worker is confirmed dead or hung: if the old attempt is actually still
+running, it may finish later and the job executes twice.
+
+</SdkOnly>
+
 ## Worker is unresponsive
 
 **Symptom**: the worker process is alive but not processing jobs; its

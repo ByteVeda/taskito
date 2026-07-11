@@ -29,6 +29,7 @@ class TaskWrapper:
         default_queue: str,
         default_max_retries: int,
         default_timeout: int,
+        default_expires: float | None = None,
         inject: list[str] | None = None,
     ):
         self._fn = fn
@@ -38,6 +39,7 @@ class TaskWrapper:
         self._default_queue = default_queue
         self._default_max_retries = default_max_retries
         self._default_timeout = default_timeout
+        self._default_expires = default_expires
         self._inject = inject or []
         self._taskito_is_async: bool = False
         self._taskito_async_fn: Callable | None = None
@@ -69,6 +71,7 @@ class TaskWrapper:
             queue=self._default_queue,
             max_retries=self._default_max_retries,
             timeout=self._default_timeout,
+            expires=self._default_expires,
         )
 
     def apply_async(
@@ -104,7 +107,8 @@ class TaskWrapper:
             notes: Structured annotations dict (≤ 15 top-level fields). See
                 :mod:`taskito.notes`.
             depends_on: Job ID or list of job IDs that must complete first.
-            expires: Seconds until the job expires (skipped if not started by then).
+            expires: Seconds until the job expires (skipped if not started by
+                then). Overrides the task's ``expires=`` default.
             result_ttl: Per-job result TTL in seconds.
             idempotency_key: Explicit dedup key. A second submission with the
                 same key while the first job is pending or running returns the
@@ -127,7 +131,7 @@ class TaskWrapper:
             metadata=metadata,
             notes=notes,
             depends_on=depends_on,
-            expires=expires,
+            expires=expires if expires is not None else self._default_expires,
             result_ttl=result_ttl,
             idempotency_key=idempotency_key,
             idempotent=idempotent,
@@ -142,6 +146,7 @@ class TaskWrapper:
             queue=self._default_queue,
             max_retries=self._default_max_retries,
             timeout=self._default_timeout,
+            expires=self._default_expires,
         )
 
     def s(self, *args: Any, **kwargs: Any) -> Signature:
