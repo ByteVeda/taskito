@@ -1,16 +1,61 @@
 ---
 title: Authentication
-description: "Session-based login, CSRF, env-var bootstrap, and the setup-required flow."
+description: "Opt-in session login, CSRF, env-var bootstrap, and the setup-required flow."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 import { Tab, Tabs } from "fumadocs-ui/components/tabs";
 
-The taskito dashboard is auth-gated by default. Until the first admin
-exists, every protected API route returns `503 setup_required` and the
-SPA shows the one-time setup form. Once an admin is registered the
+Dashboard authentication is **opt-in and off by default**. Out of the box
+the dashboard serves openly — no setup screen, no login, no CSRF or roles
+— which suits local development on a trusted machine. Production
+deployments should enable authentication (or keep the dashboard on a
+private network behind their own auth).
+
+## Enabling authentication
+
+<Tabs items={["Programmatic", "CLI", "Django"]}>
+  <Tab value="Programmatic">
+
+```python
+from taskito.dashboard import serve_dashboard
+from myapp import queue
+
+serve_dashboard(queue, auth_enabled=True)
+```
+
+  </Tab>
+  <Tab value="CLI">
+
+```bash
+taskito dashboard --app myapp:queue --auth
+```
+
+  </Tab>
+  <Tab value="Django">
+
+```bash
+python manage.py taskito_dashboard --auth
+```
+
+Or set `TASKITO_DASHBOARD_AUTH = True` in `settings.py` to make it the
+management command's default.
+
+  </Tab>
+</Tabs>
+
+With auth **disabled** (the default), every API route serves without a
+session and the auth endpoints respond `404 {"error": "auth_disabled"}` —
+except `GET /api/auth/status`, which reports
+`{"auth_enabled": false, "setup_required": false}` so the SPA skips the
+login flow entirely.
+
+With auth **enabled**, the full session flow applies. Until the first
+admin exists, every protected API route returns `503 setup_required` and
+the SPA shows the one-time setup form. Once an admin is registered the
 dashboard requires a valid session cookie on every API call and a CSRF
-token on every state-changing request.
+token on every state-changing request. Everything below this point
+describes the auth-enabled dashboard.
 
 ## How auth works
 
@@ -52,11 +97,12 @@ vars before starting the dashboard:
 ```bash
 export TASKITO_DASHBOARD_ADMIN_USER=admin
 export TASKITO_DASHBOARD_ADMIN_PASSWORD='change-me-on-first-login'
-taskito dashboard --app myapp:queue
+taskito dashboard --app myapp:queue --auth
 ```
 
 The bootstrap is **idempotent** — once a user with that name exists,
-subsequent dashboard restarts read the env vars but skip creation.
+subsequent dashboard restarts read the env vars but skip creation. The
+env vars are only read when auth is enabled.
 
 <Callout type="warn" title="Treat the env password as a one-time bootstrap">
   Rotate the password after first login (use ``POST /api/auth/change-password``
@@ -94,7 +140,7 @@ All routes live under `/api/auth/`:
 
 | Method | Path | What it does |
 |---|---|---|
-| `GET` | `/api/auth/status` | Public. Returns `{setup_required: bool}` |
+| `GET` | `/api/auth/status` | Public. Returns `{auth_enabled: bool, setup_required: bool}` |
 | `POST` | `/api/auth/setup` | Public, locks itself after the first user |
 | `POST` | `/api/auth/login` | Returns the user + session and sets cookies |
 | `POST` | `/api/auth/logout` | Invalidates the current session, clears cookies |

@@ -37,6 +37,10 @@ over them. Use it as your container entrypoint for worker processes.
 taskito --db taskito.db dashboard --port 8787
 ```
 
+Serves openly by default. `--auth` enables session authentication
+(login/setup, CSRF, roles); `--token <token>` uses the legacy shared-token
+gate instead — see [Dashboard](/node/guides/operations/dashboard).
+
 ## KEDA scaler
 
 ```bash

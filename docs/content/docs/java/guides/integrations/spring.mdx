@@ -83,7 +83,8 @@ taskito:
   dashboard:
     enabled: true
     port: 8080
-    # token: ${DASH_TOKEN:}       # omit for session auth (default); set to use legacy shared-token mode
+    # auth-enabled: true         # opt in to session auth; the dashboard serves openly by default
+    # token: ${DASH_TOKEN:}      # legacy shared-token mode; overrides auth-enabled
     # static-dir: /opt/taskito/dashboard-static
     # secure-cookies: true       # false drops the Secure cookie attribute for local HTTP
 ```
@@ -92,11 +93,13 @@ taskito:
 |---|---|---|---|
 | `taskito.dashboard.enabled` | `boolean` | `false` | Auto-start the dashboard server |
 | `taskito.dashboard.port` | `int` | `8081` | Bind port (`0` for ephemeral); defaults off Spring Boot's own `8080` |
-| `taskito.dashboard.token` | `String` | none | Legacy shared token gating `/api/*`; unset enables [session auth](/java/guides/operations/dashboard#session-auth-default) |
+| `taskito.dashboard.auth-enabled` | `boolean` | `false` | Enable [session auth](/java/guides/operations/dashboard#session-auth-opt-in) (login/setup, CSRF, roles); off means the dashboard serves openly |
+| `taskito.dashboard.token` | `String` | none | Legacy shared token gating `/api/*`; overrides `auth-enabled` |
 | `taskito.dashboard.static-dir` | `String` | auto-discovered | Directory of a prebuilt SPA, overriding the jar's extracted copy |
 | `taskito.dashboard.secure-cookies` | `boolean` | `true` | Drop the `Secure` cookie attribute for local HTTP development |
 
 OAuth/OIDC env vars (`TASKITO_DASHBOARD_OAUTH_*`, see
 [SSO](/java/guides/operations/sso)) and the admin bootstrap
 (`TASKITO_DASHBOARD_ADMIN_USER`/`_PASSWORD`) are read the same way regardless
-of Spring — they aren't Spring properties.
+of Spring — they aren't Spring properties, and they only apply when
+`auth-enabled` is set.

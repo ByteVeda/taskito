@@ -29,12 +29,13 @@ Read commands print pretty JSON, so the output pipes straight into `jq`.
 ## Serving the dashboard
 
 ```bash
-taskito --url taskito.db dashboard --port 8080 --token "$DASH_TOKEN"
+taskito --url taskito.db dashboard --port 8080 --auth
 ```
 
 Serves the bundled [dashboard](/java/guides/operations/dashboard) until
-interrupted. `--static <dir>` overrides the SPA assets; `--token` gates the
-API.
+interrupted — openly by default. `--auth` enables session authentication;
+`--token <token>` gates the API with a legacy shared token instead;
+`--static <dir>` overrides the SPA assets.
 
 ## Other backends
 

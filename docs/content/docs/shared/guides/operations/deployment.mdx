@@ -792,10 +792,11 @@ taskito --url taskito.db dashboard --port 8080
 
 <SdkOnly sdk="python">
 
-The dashboard enforces session authentication once at least one admin exists;
-until then every `/api/*` route returns `503 setup_required`. Bootstrap the
-first admin with `TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`,
-or create one through the SPA's first-run setup. Serve it over TLS — see
+The dashboard serves **openly by default** — enable session authentication
+for production with `--auth` (or `serve_dashboard(auth_enabled=True)`).
+With auth enabled, bootstrap the first admin with
+`TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`, or
+create one through the SPA's first-run setup. Serve it over TLS — see
 [Security: Dashboard](/python/guides/operations/security#dashboard) for the
 full auth, cookie, and role model.
 
@@ -804,19 +805,23 @@ full auth, cookie, and role model.
 <SdkOnly sdk="node">
 
 Auth runs **open** by default — anyone who can reach the port has full
-access. Pass a bearer token (`--token`, or `auth: { token }` to
-`serveDashboard`) for a quick gate, or mount the dashboard behind your own
-auth via the <SdkLink to="guides/integrations/express">Express</SdkLink> or
-[Fastify](/node/guides/integrations/fastify) helpers for real login/RBAC.
-Either way, put it behind TLS in production.
+access. Enable session authentication for production with `--auth` (or
+`authEnabled: true` to `serveDashboard`), pass a legacy bearer token
+(`--token`, or `auth: { token }`) for a quick gate, or mount the dashboard
+behind your own auth via the
+<SdkLink to="guides/integrations/express">Express</SdkLink> or
+[Fastify](/node/guides/integrations/fastify) helpers. Either way, put it
+behind TLS in production.
 
 </SdkOnly>
 
 <SdkOnly sdk="java">
 
-The dashboard enforces session authentication (with OAuth/SSO support) by
-default; pass a `token` to `start(...)`/`dashboard(...)` for the legacy
-single-credential mode instead. Bootstrap the first admin with
+The dashboard serves **openly by default** — enable session authentication
+(with OAuth/SSO support) for production with `--auth` (or
+`DashboardServer.start(queue, port, true)`); pass a `token` to
+`start(...)`/`dashboard(...)` for the legacy single-credential mode
+instead. With auth enabled, bootstrap the first admin with
 `TASKITO_DASHBOARD_ADMIN_USER` / `TASKITO_DASHBOARD_ADMIN_PASSWORD`, or
 through the SPA's first-run setup. See
 [Dashboard: Auth](/java/guides/operations/dashboard#auth) for the full model.
@@ -1213,5 +1218,5 @@ handlers rather than assuming generic numbers transfer.
       (<SdkSwap python={<code>SIGINT</code>} node={<><code>SIGINT</code>/<code>SIGTERM</code>, mind the fixed 200ms CLI grace</>} java={<><code>SIGTERM</code> via a shutdown hook</>} />)
 - [ ] Set up failure hooks or monitoring for alerting
 - [ ] Back up the database using `sqlite3 .backup` (not file copy), or `pg_dump` for Postgres
-- [ ] Put the dashboard behind TLS
-      (<SdkSwap python="bootstrap a real admin" node="set a bearer token or your own auth" java="bootstrap a real admin, or use legacy token mode" />)
+- [ ] Put the dashboard behind TLS and enable auth — it serves openly by default
+      (<SdkSwap python="pass --auth / auth_enabled=True" node="pass --auth / authEnabled: true, or a bearer token" java="pass --auth / authEnabled=true, or use legacy token mode" />)

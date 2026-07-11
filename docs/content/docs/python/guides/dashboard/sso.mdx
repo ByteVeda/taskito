@@ -11,7 +11,10 @@ The dashboard ships native sign-in for **Google**, **GitHub**, and any
 …). Multiple OIDC providers can run side-by-side, each rendered as its
 own button on the login screen.
 
-OAuth is **off by default**. Setting any provider's env vars turns it
+OAuth requires
+[dashboard authentication](/python/guides/dashboard/authentication) to be
+enabled (`serve_dashboard(auth_enabled=True)` / `taskito dashboard --auth`)
+and is itself **off by default**. Setting any provider's env vars turns it
 on; password login remains enabled unless you opt out explicitly.
 
 Quick glossary for the acronyms used on this page:

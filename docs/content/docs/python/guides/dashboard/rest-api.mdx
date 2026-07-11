@@ -9,26 +9,36 @@ The dashboard exposes a JSON API you can use independently of the UI.
 All endpoints return `application/json` and live under the same origin
 as the dashboard itself.
 
-<Callout type="warn" title="All API routes are auth-gated">
-  Every route requires a valid session cookie obtained from `POST
-  /api/auth/login` **except** this public set: `/api/auth/status`,
-  `/api/auth/login`, `/api/auth/setup`, `/api/auth/providers`,
-  `/api/auth/oauth/start/{slot}`, `/api/auth/oauth/callback/{slot}`,
-  `/health`, `/readiness`, and `/metrics`. State-changing requests
-  (POST/PUT/DELETE) additionally require a CSRF header. See
+<Callout type="warn" title="Auth-gated only when authentication is enabled">
+  Authentication is opt-in (`serve_dashboard(auth_enabled=True)` /
+  `taskito dashboard --auth`) — by default every route serves openly.
+  With auth enabled, every route requires a valid session cookie obtained
+  from `POST /api/auth/login` **except** this public set:
+  `/api/auth/status`, `/api/auth/login`, `/api/auth/setup`,
+  `/api/auth/providers`, `/api/auth/oauth/start/{slot}`,
+  `/api/auth/oauth/callback/{slot}`, `/health`, `/readiness`, and
+  `/metrics`. State-changing requests (POST/PUT/DELETE) additionally
+  require a CSRF header. See
   [Dashboard Authentication](/python/guides/dashboard/authentication) for
   the login flow and headless usage examples.
 </Callout>
 
 ## Auth
 
+When authentication is disabled (the default), every auth endpoint below
+**except** `GET /api/auth/status` responds `404 {"error": "auth_disabled"}`.
+
 ### `GET /api/auth/status`
 
-Public. Returns whether the dashboard needs first-run setup.
+Public. Reports whether authentication applies and whether the dashboard
+needs first-run setup.
 
 ```json
-{ "setup_required": false }
+{ "auth_enabled": true, "setup_required": false }
 ```
+
+With auth disabled it returns
+`{"auth_enabled": false, "setup_required": false}`.
 
 ### `POST /api/auth/setup`
 
@@ -577,6 +587,9 @@ runtime overrides live, all under namespaced prefixes (`auth:*`,
 `webhooks:*`, `overrides:*`, etc.).
 
 ## Using the API programmatically
+
+The login/CSRF steps below apply to an auth-enabled dashboard; with auth
+disabled (the default) plain requests work directly.
 
 ```python
 import requests

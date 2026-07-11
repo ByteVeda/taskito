@@ -20,7 +20,7 @@ dependencies required**.
   <Card
     title="Authentication"
     href="/python/guides/dashboard/authentication"
-    description="Session-based login, CSRF, env-var bootstrap, and the setup-required flow."
+    description="Opt-in session login, CSRF, env-var bootstrap, and the setup-required flow."
   />
   <Card
     title="SSO (OAuth & OIDC)"
@@ -72,6 +72,7 @@ By default the dashboard starts on `http://localhost:8080`.
 | `--app` | *required* | Module path to your `Queue` instance, e.g. `myapp:queue` |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port` | `8080` | Bind port |
+| `--auth` | off | Enable session authentication (login/setup, CSRF, roles) |
 
 ```bash
 # Bind to all interfaces on port 9000
@@ -91,9 +92,11 @@ taskito dashboard --app myapp:queue --host 0.0.0.0 --port 9000
   ```
 </Callout>
 
-<Callout type="warn" title="Authentication is required out of the box">
-  On a fresh database the dashboard refuses every API request with
-  ``503 setup_required`` until you create the first admin. See
+<Callout type="warn" title="The dashboard serves openly by default">
+  Authentication is opt-in — without it, anyone who can reach the port
+  has full control. For production, enable it with
+  `serve_dashboard(auth_enabled=True)` or `taskito dashboard --auth`, or
+  keep the dashboard on a private network. See
   [Authentication](/python/guides/dashboard/authentication) for the full
   flow, including the env-var bootstrap path useful for managed
   deployments.
@@ -158,8 +161,11 @@ hash-busted multi-file assets under `sdks/python/taskito/static/dashboard/`.
 
 ### Sign in
 
-On the first visit you'll see the setup form. After you create the
-first admin, every subsequent visit shows the sign-in form.
+By default there is no sign-in — the dashboard loads straight into the
+overview. With authentication enabled (`--auth` /
+`serve_dashboard(auth_enabled=True)`), the first visit shows the setup
+form; after you create the first admin, every subsequent visit shows the
+sign-in form.
 
 ![First-run setup form for the initial admin](/screenshots/dashboard/auth-setup.png)
 
