@@ -63,6 +63,24 @@ public final class DashboardServer implements AutoCloseable {
     private static final TaskitoLogger LOG = TaskitoLogger.create("dashboard");
     private static final String METRICS_TOKEN_ENV = "TASKITO_DASHBOARD_METRICS_TOKEN";
 
+    /**
+     * Defense-in-depth headers on every response. The CSP assumes a fully
+     * self-contained SPA bundle (no inline scripts — the theme bootstrap ships
+     * as /theme-init.js); inline style attributes need 'unsafe-inline' in
+     * style-src.
+     */
+    private static final String[][] SECURITY_HEADERS = {
+        {
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                    + "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+                    + "base-uri 'self'; form-action 'self'; object-src 'none'"
+        },
+        {"X-Content-Type-Options", "nosniff"},
+        {"X-Frame-Options", "DENY"},
+        {"Referrer-Policy", "same-origin"},
+    };
+
     private final HttpServer server;
     private final Taskito queue;
     private final Path staticDir;
@@ -214,6 +232,11 @@ public final class DashboardServer implements AutoCloseable {
 
     private void dispatch(HttpExchange exchange) throws IOException {
         try {
+            // Single choke point: every response — JSON, assets, probes,
+            // redirects — carries the security headers.
+            for (String[] header : SECURITY_HEADERS) {
+                exchange.getResponseHeaders().set(header[0], header[1]);
+            }
             String path = exchange.getRequestURI().getPath();
             if (path.equals("/health")) {
                 Http.respondJson(exchange, 200, Map.of("status", "ok"));

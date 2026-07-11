@@ -94,6 +94,37 @@ class DashboardTest {
 
     @Test
     @Timeout(30)
+    void setsSecurityHeadersOnEveryResponse(@TempDir Path dir) throws Exception {
+        try (Taskito queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
+            try (DashboardServer server = DashboardServer.start(queue, 0)) {
+                for (String path : new String[] {"/health", "/api/stats"}) {
+                    HttpResponse<String> res = get(server.port(), path);
+                    assertEquals(
+                            "nosniff",
+                            res.headers().firstValue("X-Content-Type-Options").orElse(""),
+                            path);
+                    assertEquals(
+                            "DENY", res.headers().firstValue("X-Frame-Options").orElse(""), path);
+                    assertEquals(
+                            "same-origin",
+                            res.headers().firstValue("Referrer-Policy").orElse(""),
+                            path);
+                    assertTrue(
+                            res.headers()
+                                    .firstValue("Content-Security-Policy")
+                                    .orElse("")
+                                    .contains("default-src 'self'"),
+                            path);
+                }
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void enforcesToken(@TempDir Path dir) throws Exception {
         try (Taskito queue = Taskito.builder()
                 .backend("sqlite")
