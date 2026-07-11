@@ -61,10 +61,10 @@ serveDashboard(queue, { port: 8787, auth: { token: process.env.DASH_TOKEN! } });
 API requests authenticate via `Authorization: Bearer <token>`, an
 `X-Taskito-Token` header, or the `taskito_token` cookie — a `?token=` query is
 never accepted on `/api/*` calls. Opening `/?token=<token>` once sets the
-httpOnly cookie and redirects with the token stripped from the URL, so the SPA
-works for the rest of the session without the secret leaking into browser
-history, `Referer` headers, or access logs. The token is compared in constant
-time. You can also mount the dashboard inside an existing app behind
+httpOnly cookie and redirects with the token stripped from the URL, keeping
+the secret out of subsequent browser history and `Referer` propagation; the
+bootstrap request itself still reaches server and proxy access logs, so redact
+query strings there. The token is compared in constant time. You can also mount the dashboard inside an existing app behind
 your own auth via the
 [Express](/node/guides/integrations/express#dashboard) or
 [Fastify](/node/guides/integrations/fastify) helpers.

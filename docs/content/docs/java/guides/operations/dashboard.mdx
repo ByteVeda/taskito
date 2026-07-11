@@ -100,7 +100,7 @@ and Redis.
 
 - **First-run setup.** On a fresh database every route except the public set
   (`/api/auth/status`, `/api/auth/login`, `/api/auth/setup`,
-  `/api/auth/providers`, `/health`, `/readiness`, `/metrics`) returns
+  `/api/auth/providers`, `/health`) returns
   `503 setup_required` until an admin exists. `POST /api/auth/setup` creates
   it (and signs it in); the route locks itself after the first user.
   `GET /api/auth/status` reports
@@ -169,9 +169,10 @@ DashboardServer.start(taskito, 8080, System.getenv("DASH_TOKEN"));
 API requests authenticate via `Authorization: Bearer <token>`, an
 `X-Taskito-Token` header, or the `taskito_token` cookie (compared in constant
 time). Opening `/?token=<token>` once sets the httpOnly cookie and redirects
-with the token stripped from the URL, so the SPA works for the rest of the
-session without the secret leaking into browser history, `Referer` headers, or
-access logs — a `?token=` query is never accepted on `/api/*` calls. OAuth has
+with the token stripped from the URL, keeping the secret out of subsequent
+browser history and `Referer` propagation — a `?token=` query is never
+accepted on `/api/*` calls. The bootstrap request itself still reaches server
+and proxy access logs, so redact query strings there. OAuth has
 no login UI in this mode, so it's disabled automatically —
 `start(queue, port, token, ...)` never builds an OAuth flow when `token` is
 non-null.
