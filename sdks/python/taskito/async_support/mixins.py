@@ -102,6 +102,7 @@ class AsyncQueueMixin:
         def resume(self, queue_name: str = ...) -> None: ...
         def paused_queues(self) -> list[str]: ...
         def resource_status(self) -> list[dict[str, Any]]: ...
+        def reload_resources(self, names: list[str] | None = ...) -> dict[str, bool]: ...
 
     # -----------------------------------------------------------------
 
@@ -331,3 +332,7 @@ class AsyncQueueMixin:
     async def aresource_status(self) -> list[dict[str, Any]]:
         """Async version of :meth:`resource_status`."""
         return self.resource_status()
+
+    async def areload_resources(self, names: list[str] | None = None) -> dict[str, bool]:
+        """Async version of :meth:`reload_resources`."""
+        return await self._run_sync(self.reload_resources, names)
