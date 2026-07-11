@@ -134,6 +134,9 @@
   padding: 1px 5px;
   border-radius: 5px;
   color: var(--txt);
+  /* Long identifiers (env vars, dotted paths) must break rather than widen
+     the page into a horizontal scroll on phones. */
+  overflow-wrap: anywhere;
 }
 .rel-earlier {
   margin-top: 6px;

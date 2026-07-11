@@ -398,6 +398,9 @@ body {
   padding: 1.5px 6px;
   border-radius: 5px;
   color: var(--txt);
+  /* Long identifiers (env vars, dotted paths) must break rather than widen
+     the page into a horizontal scroll on phones. */
+  overflow-wrap: anywhere;
 }
 .article a {
   color: var(--indigo-br);
