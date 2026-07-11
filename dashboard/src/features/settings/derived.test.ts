@@ -12,6 +12,11 @@ describe("isSafeLinkUrl", () => {
     expect(isSafeLinkUrl("//evil.com")).toBe(false);
   });
 
+  it("rejects backslashes in paths (URL parsing folds them to slashes)", () => {
+    expect(isSafeLinkUrl("/\\evil.com")).toBe(false);
+    expect(isSafeLinkUrl("/jobs\\..\\x")).toBe(false);
+  });
+
   it("rejects javascript:, data:, and other schemes", () => {
     expect(isSafeLinkUrl("javascript:alert(document.cookie)")).toBe(false);
     expect(isSafeLinkUrl("data:text/html,<script>alert(1)</script>")).toBe(false);

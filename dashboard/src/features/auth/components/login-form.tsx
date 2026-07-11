@@ -22,7 +22,9 @@ const ERROR_MESSAGES: Record<string, string> = {
  */
 function safeNextPath(next: unknown): string | undefined {
   if (typeof next !== "string") return undefined;
-  return next.startsWith("/") && !next.startsWith("//") ? next : undefined;
+  // Backslashes are rejected too: WHATWG URL parsing normalizes "\" to "/"
+  // for http(s), so "/\evil.com" would escape the origin.
+  return next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : undefined;
 }
 
 export function LoginForm() {

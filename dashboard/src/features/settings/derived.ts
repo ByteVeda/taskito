@@ -12,7 +12,11 @@ import { type ExternalLink, type IntegrationUrls, SETTING_KEYS } from "./types";
  */
 export function isSafeLinkUrl(value: string): boolean {
   const trimmed = value.trim();
-  if (trimmed.startsWith("/")) return !trimmed.startsWith("//");
+  if (trimmed.startsWith("/")) {
+    // Reject protocol-relative (//host) and backslashes: WHATWG URL parsing
+    // normalizes "\" to "/" for http(s), so "/\evil.com" escapes the origin.
+    return !trimmed.startsWith("//") && !trimmed.includes("\\");
+  }
   try {
     const protocol = new URL(trimmed).protocol;
     return protocol === "http:" || protocol === "https:";
