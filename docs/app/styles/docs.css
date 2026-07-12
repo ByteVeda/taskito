@@ -844,8 +844,13 @@ body {
   color: var(--txt2);
   vertical-align: top;
 }
+/* First column wraps at token boundaries so a cell listing several parameters
+   (`a` / `b` / `c` …) folds onto multiple lines instead of widening the table
+   into a horizontal scroll. Each identifier stays whole via the `td code` rule
+   below; only the ` / ` separators are break points. */
 .md-table tr td:first-child {
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: normal;
 }
 /* Inline code in cells (types like `str | None`, defaults, identifiers) must
    stay on one line: the article-wide `overflow-wrap: anywhere` otherwise breaks
