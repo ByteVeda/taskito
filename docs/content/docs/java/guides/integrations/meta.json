@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["index", "spring", "micrometer", "sentry"]
+  "pages": ["index", "spring", "micrometer", "prometheus", "sentry"]
 }

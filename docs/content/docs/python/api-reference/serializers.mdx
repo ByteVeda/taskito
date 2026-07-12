@@ -1,0 +1,99 @@
+---
+title: Serializers
+description: "SmartSerializer, JsonSerializer, CborSerializer, payload codecs, and the Serializer protocol."
+---
+
+```python
+from taskito import Queue, JsonSerializer, CborSerializer
+```
+
+The Rust core treats payloads as opaque bytes — serialization happens entirely
+Python-side. Producers and workers must use a compatible serializer.
+
+## Built-ins
+
+| Class | Description |
+|---|---|
+| `SmartSerializer` | **Default.** MsgPack for plain data, transparent cloudpickle fallback for anything MsgPack can't encode (lambdas, closures, class instances). A one-byte tag records which codec produced each payload; also reads CBOR (`0x02`) wire payloads from another SDK. |
+| `CloudpickleSerializer` | Pure cloudpickle — handles any picklable Python object. Same-language only (not cross-SDK). |
+| `JsonSerializer` | Human-readable JSON bytes. Simple, cross-language, MsgPack-native types only. |
+| `MsgPackSerializer` | Compact binary (MsgPack). MsgPack-native types only. |
+| `CborSerializer` | Binary CBOR (RFC 8949), tagged with the `0x02` wire-envelope byte — the format for tasks produced or consumed by another Taskito SDK. Round-trips big integers, `datetime` (tz-aware), `bytes`, and `Decimal` losslessly. |
+| `SignedSerializer` | Wraps another serializer with an HMAC-SHA256 tag; the worker refuses to deserialize bytes not produced with the shared key. |
+| `EncryptedSerializer` | Wraps another serializer with AES-256-GCM; confidentiality **and** integrity. |
+
+Set one queue-wide, or override per task:
+
+```python
+queue = Queue(serializer=JsonSerializer())
+
+@queue.task(serializer=CborSerializer())
+def cross_sdk_job(payload: dict) -> None: ...
+```
+
+<Callout type="info">
+  `SmartSerializer` is the default because it is fast for the common case yet
+  never fails on an exotic Python object. Reach for `CborSerializer` only when a
+  task is produced or consumed by another SDK.
+</Callout>
+
+## Signing and encryption
+
+`SignedSerializer(inner, key)` and `EncryptedSerializer(inner, key)` both wrap a
+delegate serializer. `key` must be at least 32 bytes of CSPRNG output, shared by
+every producer and worker. Signing authenticates (prevents a storage writer from
+smuggling code into a cloudpickle payload); encryption also gives
+confidentiality.
+
+```python
+import os
+from taskito import Queue, SignedSerializer, SmartSerializer
+
+key = os.urandom(32)  # share across producers and workers
+queue = Queue(serializer=SignedSerializer(SmartSerializer(), key))
+```
+
+## Payload codecs
+
+A `PayloadCodec` is a reversible byte transform layered *around* a serializer —
+compression, encryption, signing — rather than a replacement for it. Codecs
+compose: a chain encodes in list order on the producer and decodes in reverse on
+the worker. Wire formats are part of the cross-SDK contract, so a codec-framed
+payload decodes from any Taskito SDK.
+
+| Class | Wire format | Description |
+|---|---|---|
+| `GzipCodec(max_decompressed_bytes=...)` | standard gzip stream | Compresses; decompression capped at 64 MiB by default (zip-bomb guard). |
+| `HmacCodec(key)` | `[32-byte mac][body]` | HMAC-SHA256 signs; rejects tampered or wrong-key payloads. |
+| `AesGcmCodec(key)` | `[12-byte IV][ciphertext \|\| 16-byte tag]` | AES-128/192/256-GCM (by key length); confidentiality + integrity. |
+
+Apply a chain queue-wide with `Queue(codec=...)` (wraps the serializer, covers
+every payload and result), or register named codecs via `Queue(codecs=...)` and
+opt individual tasks in with `@queue.task(codecs=[...])` (payload only — results
+still use the plain serializer):
+
+```python
+from taskito import Queue, GzipCodec, HmacCodec
+
+queue = Queue(codec=[GzipCodec(), HmacCodec(hmac_key)])  # gzip, then hmac
+```
+
+<Callout type="info">
+  `CodecSerializer(delegate, codecs)` is the internal `Serializer` that layers a
+  codec chain around a delegate — `Queue(codec=...)` builds one for you, so you
+  rarely construct it directly. Nondeterministic codecs (e.g. `AesGcmCodec`) make
+  a payload's bytes non-reproducible, so avoid pairing them with content-hash
+  idempotency.
+</Callout>
+
+## `Serializer` protocol
+
+```python
+class Serializer(Protocol):
+    def dumps(self, obj: Any) -> bytes: ...
+    def loads(self, data: bytes) -> Any: ...
+```
+
+Any object with `dumps`/`loads` is a valid serializer. See the
+[Serializers guide](/python/guides/extensibility/serializers) for a custom
+implementation and the format-selection tradeoffs.

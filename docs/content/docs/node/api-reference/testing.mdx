@@ -1,0 +1,52 @@
+---
+title: Testing
+description: "mockResource — swap a real dependency for a stub in tests."
+---
+
+```ts
+import { mockResource } from "@byteveda/taskito";
+import type { MockResource } from "@byteveda/taskito";
+```
+
+The Node SDK's testing model is: run a real in-process worker against a
+throwaway queue (a temp SQLite file), enqueue, and await the result — the same
+API you run in production. See the [testing guide](/node/guides/operations/testing)
+for the full worker-in-a-test harness. This page covers the one dedicated test
+utility: `mockResource`, for swapping an injected [resource](/node/api-reference/queue/resources)
+for a stub.
+
+## `mockResource`
+
+```ts
+function mockResource<T>(value: T): MockResource<T>;
+```
+
+Builds a [`MockResource`](#mockresource-1) wrapping `value`. Register its
+`factory` with `queue.resource(name, mock.factory)` in place of the real
+factory, then assert on `mock.resolutions` to confirm the resource was built.
+
+```ts
+import { mockResource } from "@byteveda/taskito";
+
+const db = mockResource({ query: async () => [{ id: 1 }] });
+queue.resource("db", db.factory);
+
+// ...run the task under test...
+
+expect(db.resolutions).toBe(1); // the worker built the resource exactly once
+```
+
+## `MockResource`
+
+```ts
+interface MockResource<T> {
+  value: T;                 // the value the factory returns
+  factory: () => T;         // pass to queue.resource(name, mock.factory)
+  resolutions: number;      // how many times the factory was invoked
+}
+```
+
+`resolutions` increments each time the injected factory runs, so a test can
+assert a resource was (or wasn't) constructed — useful for verifying scope
+behavior, e.g. a `worker`-scoped resource builds once while a `task`-scoped one
+builds per job.

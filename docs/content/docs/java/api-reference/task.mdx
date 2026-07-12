@@ -30,6 +30,7 @@ enqueue options. The fluent option methods each return a new descriptor.
 | `delayMs(long)` / `delay(Duration)` | Schedule after a delay. |
 | `retryPolicy(RetryPolicy)` | Backoff curve — registered with the worker on `start()`. |
 | `codecs(String...)` | Named [payload codecs](/java/api-reference/serializers) applied to this task. |
+| `circuitBreaker(CircuitBreakerConfig)` | Trip the task after repeated failures; the worker registers the breaker on `start()`. |
 | `withOptions(EnqueueOptions)` | Replace the default options wholesale. |
 
 ```java
@@ -45,7 +46,10 @@ Task<EmailPayload> sendEmail = Task.of("send_email", EmailPayload.class)
 Per-enqueue overrides, built with `EnqueueOptions.builder()`; unset fields take
 core defaults. Fields: `queue`, `priority`, `maxRetries`, `timeoutMs` /
 `timeout(Duration)`, `delayMs` / `delay(Duration)`, `uniqueKey` (alias
-`jobId`) for idempotent enqueues, `metadata`, `namespace`.
+`jobId`) for idempotent enqueues, `metadata`, `namespace`, and
+`dependsOn(String... jobIds)` (this job stays pending until the listed jobs
+complete successfully; a failed or cancelled dependency cancels it — see
+[enqueue options](/java/guides/core/enqueue-options#job-dependencies)).
 
 ```java
 taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
@@ -63,6 +67,32 @@ taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
 
 The retry *budget* comes from `maxRetries`; the policy only supplies the
 timing, which the core scheduler applies durably.
+
+## `CircuitBreakerConfig`
+
+Guards a task: after `threshold` failures inside the rolling `window`, the
+breaker opens and the task is skipped for `cooldown` before probing again.
+Attach with `task.circuitBreaker(config)`; the worker registers it on `start()`.
+
+| Factory / method | Description |
+|---|---|
+| `CircuitBreakerConfig.of(int threshold)` | Open after `threshold` failures; other fields default. |
+| `CircuitBreakerConfig.builder(int threshold)` | Builder for the full config. |
+| `window(Duration)` / `windowSeconds(long)` | Rolling failure window. |
+| `cooldown(Duration)` / `cooldownSeconds(long)` | How long the breaker stays open. |
+| `halfOpenProbes(int)` | Trial jobs admitted while half-open. |
+| `halfOpenSuccessRate(double)` | Success fraction among probes needed to close. |
+
+```java
+Task<ChargePayload> charge = Task.of("charge", ChargePayload.class)
+        .circuitBreaker(CircuitBreakerConfig.builder(5)
+                .window(Duration.ofMinutes(1))
+                .cooldown(Duration.ofSeconds(30))
+                .build());
+```
+
+Inspect live breaker state with `taskito.listCircuitBreakers()`
+([workers & hooks](/java/api-reference/queue/workers#circuit-breakers)).
 
 ## Annotations
 

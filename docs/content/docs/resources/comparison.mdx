@@ -1,18 +1,39 @@
 ---
 title: Comparison
-description: "Taskito vs Celery, RQ, Dramatiq, Huey, TaskIQ — feature matrix and decision guide."
+description: "Taskito vs other task queues — feature matrix and decision guide."
 ---
 
 **TL;DR**: Taskito is <SdkSwap python="Celery" node="BullMQ" java="a task queue" /> without the
-broker (a separate server such as Redis or RabbitMQ that holds pending jobs). Rust scheduler, no Redis/RabbitMQ, lower latency, better concurrency.
-Start with SQLite, scale to Postgres when needed.
+broker (a separate server such as Redis or RabbitMQ that holds pending jobs). Rust scheduler, no broker required, lower latency, better concurrency.
+Start with SQLite; add Postgres or Redis as a backend when you scale out.
+
+## When to use taskito
+
+taskito is ideal when:
+
+- **Single-machine deployments** — no need for distributed workers across multiple servers
+- **Zero infrastructure** — you don't want to install, configure, or manage Redis or RabbitMQ
+- **Embedded applications** — CLI tools, desktop apps, or services where simplicity matters
+- **Prototyping** — get a task queue running in 5 lines, iterate fast
+- **Low-to-medium throughput** — hundreds to thousands of jobs per second is plenty
+
+## When NOT to use taskito
+
+Consider alternatives when:
+
+- **Multi-server workers** — you need workers on separate machines (taskito supports this with Postgres/Redis backends, but a broker-based queue has more mature distributed tooling)
+- **Very high throughput** — millions of jobs/sec across a cluster (use a dedicated broker such as RabbitMQ or Kafka)
+- **Existing broker infrastructure** — if Redis/RabbitMQ is already in your stack, a broker-native queue may be simpler
+- **Complex routing** — you need topic exchanges, message filtering, or fan-out patterns beyond taskito's pub/sub
+
+<SdkOnly sdk="python">
 
 ## Feature matrix
 
 | Feature | taskito | Celery | RQ | Dramatiq | Huey | TaskIQ |
 |---|---|---|---|---|---|---|
 | Broker required | **No** | Redis / RabbitMQ | Redis | Redis / RabbitMQ | Redis | Redis / RabbitMQ / Nats |
-| Core language | **Rust + <SdkSwap python="Python" node="Node.js" java="Java" />** | Python | Python | Python | Python | Python |
+| Core language | **Rust + Python** | Python | Python | Python | Python | Python |
 | Priority queues | **Yes** | Yes | No | No | Yes | Yes |
 | Rate limiting | **Yes** | Yes | No | Yes | No | No |
 | Dead letter queue | **Yes** | No | Yes | No | No | No |
@@ -38,25 +59,6 @@ Start with SQLite, scale to Postgres when needed.
 | CLI | **Yes** | Yes | Yes | Yes | Yes | Yes |
 | Result backend (where task return values are stored) | **Built-in** (SQLite) | Redis / DB / custom | Redis | Redis / custom | Redis / SQLite | Redis / custom |
 | Setup complexity | **`pip install`** | Broker + backend | Redis server | Broker | Redis server | Broker + backend |
-
-## When to use taskito
-
-taskito is ideal when:
-
-- **Single-machine deployments** — no need for distributed workers across multiple servers
-- **Zero infrastructure** — you don't want to install, configure, or manage Redis or RabbitMQ
-- **Embedded applications** — CLI tools, desktop apps, or services where simplicity matters
-- **Prototyping** — get a task queue running in 5 lines, iterate fast
-- **Low-to-medium throughput** — hundreds to thousands of jobs per second is plenty
-
-## When NOT to use taskito
-
-Consider alternatives when:
-
-- **Multi-server workers** — you need workers on separate machines (taskito supports this with Postgres/Redis backends, but Celery has more mature distributed tooling)
-- **Very high throughput** — millions of jobs/sec across a cluster (use Celery + RabbitMQ)
-- **Existing Redis infrastructure** — if Redis is already in your stack, RQ or Huey are simple choices
-- **Complex routing** — you need topic exchanges, message filtering, or pub/sub patterns (use Celery + RabbitMQ)
 
 ## Detailed comparison
 
@@ -144,3 +146,54 @@ async and already have a broker.
 
 Choose taskito if you want zero infrastructure. Choose TaskIQ if you're fully
 async and already have Redis/Nats.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+## How taskito compares
+
+Most Node task queues — **BullMQ**, **Bee-Queue**, **Bull** — require a running
+Redis instance as the broker, and **Agenda** requires MongoDB. taskito embeds
+the queue in a Rust core with a pluggable backend (SQLite, Postgres, or Redis),
+so you can start with **zero infrastructure** and add Redis only when you scale
+out.
+
+|  | taskito | BullMQ / Bee-Queue | Agenda |
+|---|---|---|---|
+| **Broker** | None (SQLite) — optional Postgres/Redis | Redis required | MongoDB required |
+| **Core** | Rust scheduler | JS + Redis Lua | JS + Mongo |
+| **Priorities / rate limits / DLQ** | Built-in | Priorities + rate limits (BullMQ); no built-in DLQ | Limited |
+| **Workflows** | Builder DAG, fan-out, sub-workflows, sagas | Flows (BullMQ) | No |
+| **Result streaming** | Yes (publish/stream) | No | No |
+
+**Choose taskito** for a broker-optional queue with a workflow engine built in.
+**Choose BullMQ** if Redis is already central to your stack and you want its
+mature ecosystem.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+## How taskito compares
+
+JVM background-job tools each specialize: **Quartz** for cron scheduling,
+**JobRunr** for background jobs (RDBMS or Redis), **Spring Batch** for
+batch/ETL pipelines. taskito is a general-purpose task queue with a Rust core:
+priorities, rate limits, dead-letter queues, workflows, and result streaming,
+backed by SQLite, Postgres, or Redis, usable standalone or via the Spring Boot
+starter.
+
+|  | taskito | Quartz | JobRunr | Spring Batch |
+|---|---|---|---|---|
+| **Focus** | Task queue + workflows | Cron scheduling | Background jobs | Batch/ETL pipelines |
+| **Backend** | SQLite / Postgres / Redis | Your RDBMS | Your RDBMS / Redis | Your RDBMS |
+| **Priorities / rate limits / DLQ** | Built-in | No | Limited | No |
+| **Workflows** | Builder DAG, fan-out, sub-workflows, sagas | No | No | Step/chunk model |
+| **Result streaming** | Yes (publish/stream) | No | No | No |
+
+**Choose taskito** for a broker-optional queue with priorities, DLQ, and a
+workflow engine. **Choose Quartz/Spring Batch** for pure cron scheduling or
+chunk-oriented batch processing tightly coupled to Spring.
+
+</SdkOnly>

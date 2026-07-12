@@ -8,11 +8,13 @@
     "task",
     "result",
     "context",
+    "serializers",
     "canvas",
     "workflows",
     "saga",
     "batching",
     "testing",
+    "errors",
     "cli"
   ]
 }
