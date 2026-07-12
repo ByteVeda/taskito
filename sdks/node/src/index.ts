@@ -75,6 +75,7 @@ export {
   type Serializer,
   SignedSerializer,
 } from "./serializers";
+export { decodeTaskError, encodeTaskError, type TaskError } from "./task-error";
 export type {
   AnyHandler,
   CircuitBreakerOptions,

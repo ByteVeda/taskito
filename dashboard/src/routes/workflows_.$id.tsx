@@ -22,6 +22,7 @@ import {
   workflowRunQuery,
 } from "@/features/workflows";
 import { WORKFLOW_STATE_LABEL, WORKFLOW_STATE_TONE } from "@/lib/status";
+import { parseTaskError, taskErrorSummary } from "@/lib/task-error";
 import { formatAbsolute, formatDuration } from "@/lib/time";
 
 export const Route = createFileRoute("/workflows_/$id")({
@@ -89,7 +90,10 @@ function WorkflowDetailPage() {
     kvItems.push({ label: "Parent run", value: data.parent_run_id, mono: true });
   }
   if (data.error) {
-    kvItems.push({ label: "Error", value: data.error });
+    // Structured task errors collapse to their headline; the KV list is
+    // one-line-per-item and can't host a traceback block.
+    const structured = parseTaskError(data.error);
+    kvItems.push({ label: "Error", value: structured ? taskErrorSummary(structured) : data.error });
   }
 
   return (

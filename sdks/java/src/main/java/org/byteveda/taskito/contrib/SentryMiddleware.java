@@ -3,6 +3,7 @@ package org.byteveda.taskito.contrib;
 import io.sentry.Sentry;
 import io.sentry.SentryLevel;
 import java.util.function.Predicate;
+import org.byteveda.taskito.errors.TaskErrors;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.middleware.Middleware;
 import org.byteveda.taskito.middleware.TaskContext;
@@ -46,7 +47,9 @@ public final class SentryMiddleware implements Middleware {
             scope.setLevel(SentryLevel.FATAL);
             scope.setTag("taskito.task", event.taskName);
             scope.setTag("taskito.job", event.jobId);
-            Sentry.captureMessage("task dead-lettered: " + (event.error == null ? "" : event.error));
+            // Stored errors may be canonical JSON; headline with "errtype: message" when so.
+            Sentry.captureMessage(
+                    "task dead-lettered: " + (event.error == null ? "" : TaskErrors.summarize(event.error)));
         });
     }
 }

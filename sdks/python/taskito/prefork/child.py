@@ -38,6 +38,7 @@ from taskito.context import (
 )
 from taskito.exceptions import TaskCancelledError
 from taskito.log_config import silence_asyncio_pipe_noise
+from taskito.task_errors import encode_task_error
 
 logger = logging.getLogger("taskito.prefork.child")
 
@@ -141,13 +142,14 @@ def _execute_job(
 
     except Exception:
         wall_time_ns = time.monotonic_ns() - start_ns
-        error_msg = traceback.format_exc()
-        logger.error("task %s[%s] failed: %s", task_name, job_id, error_msg.splitlines()[-1])
+        exc = sys.exc_info()[1]
+        error_msg = encode_task_error(exc) if exc is not None else traceback.format_exc()
+        last_line = traceback.format_exc().splitlines()[-1]
+        logger.error("task %s[%s] failed: %s", task_name, job_id, last_line)
 
         should_retry = True
         filters = queue._task_retry_filters.get(task_name)
         if filters:
-            exc = sys.exc_info()[1]
             dont_retry_on = filters.get("dont_retry_on", [])
             for cls in dont_retry_on:
                 if isinstance(exc, cls):

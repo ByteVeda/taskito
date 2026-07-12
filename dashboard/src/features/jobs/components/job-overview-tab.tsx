@@ -1,6 +1,13 @@
 import { ExternalLink as ExternalLinkIcon } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
-import { buttonVariants, Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+import {
+  buttonVariants,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  TaskErrorBlock,
+} from "@/components/ui";
 import { applyJobContext, useIntegrations } from "@/features/settings";
 import type { Job } from "@/lib/api-types";
 import { cn } from "@/lib/cn";
@@ -99,9 +106,7 @@ export function JobOverviewTab({ job }: JobOverviewTabProps) {
             <CardTitle>Last error</CardTitle>
           </CardHeader>
           <CardContent>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-danger-dim/40 p-3 font-mono text-[11px] text-danger">
-              {job.error}
-            </pre>
+            <TaskErrorBlock error={job.error} className="max-h-80 bg-danger-dim/40 p-3" />
           </CardContent>
         </Card>
       ) : null}

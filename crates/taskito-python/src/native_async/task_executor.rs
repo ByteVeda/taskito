@@ -165,19 +165,8 @@ fn run_task(py: Python<'_>, task_registry: &Py<PyAny>, job: &Job) -> PyResult<Op
     }
 }
 
-fn format_python_error(py: Python<'_>, e: &PyErr) -> String {
-    if let Ok(tb_mod) = py.import("traceback") {
-        if let Ok(formatted) = tb_mod.call_method1(
-            "format_exception",
-            (e.get_type(py), e.value(py), e.traceback(py)),
-        ) {
-            if let Ok(lines) = formatted.extract::<Vec<String>>() {
-                return lines.join("");
-            }
-        }
-    }
-    format!("{e}")
-}
+// One structured-error encoder for every worker path — see py_worker.rs.
+use crate::py_worker::format_python_error;
 
 fn is_cancelled_error(py: Python<'_>, e: &PyErr) -> bool {
     if let Ok(exceptions_mod) = py.import("taskito.exceptions") {

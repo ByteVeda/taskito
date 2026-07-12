@@ -1,6 +1,7 @@
 package org.byteveda.taskito.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
@@ -8,6 +9,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.errors.TaskError;
+import org.byteveda.taskito.errors.TaskErrors;
+import org.byteveda.taskito.model.DeadJob;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
 import org.byteveda.taskito.task.Task;
@@ -71,7 +75,13 @@ class InMemoryQueueBackendTest {
                 Job job = queue.awaitJob(id, Duration.ofSeconds(10)).orElseThrow();
                 assertEquals(JobStatus.DEAD, job.status);
                 assertEquals(2, job.retryCount);
-                assertTrue(queue.listDead(10, 0).size() >= 1);
+                List<DeadJob> dead = queue.listDead(10, 0);
+                assertTrue(dead.size() >= 1);
+                // The bridge stores the canonical structured error; parity with the JNI path.
+                TaskError error = TaskErrors.decode(dead.get(0).error);
+                assertEquals(IllegalStateException.class.getName(), error.errtype);
+                assertEquals("boom", error.message);
+                assertFalse(error.traceback.isEmpty());
             }
         }
     }

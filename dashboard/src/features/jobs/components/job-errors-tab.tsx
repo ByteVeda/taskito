@@ -1,5 +1,5 @@
 import { AlertOctagon } from "lucide-react";
-import { EmptyState, ErrorState, Skeleton } from "@/components/ui";
+import { EmptyState, ErrorState, Skeleton, TaskErrorBlock } from "@/components/ui";
 import type { JobError } from "@/lib/api-types";
 import { formatAbsolute } from "@/lib/time";
 
@@ -44,9 +44,7 @@ export function JobErrorsTab({ errors, loading, error, onRetry }: JobErrorsTabPr
               {formatAbsolute(err.failed_at)}
             </span>
           </div>
-          <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-danger-dim/30 p-3 font-mono text-[11px] text-danger">
-            {err.error}
-          </pre>
+          <TaskErrorBlock error={err.error} className="max-h-60 bg-danger-dim/30 p-3" />
         </div>
       ))}
     </div>

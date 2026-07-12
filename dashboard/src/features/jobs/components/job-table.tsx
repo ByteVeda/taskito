@@ -7,6 +7,7 @@ import {
   ErrorState,
   StatusBadge,
   TableSkeleton,
+  TaskErrorSummary,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -99,9 +100,10 @@ export function JobTable({ jobs, loading, error, onRetry }: JobTableProps) {
           const err = getValue<string | null>();
           if (!err) return <span className="text-[var(--fg-subtle)]">—</span>;
           return (
-            <span className="line-clamp-1 max-w-[320px] text-xs text-danger" title={err}>
-              {err}
-            </span>
+            <TaskErrorSummary
+              error={err}
+              className="line-clamp-1 max-w-[320px] text-xs text-danger"
+            />
           );
         },
       });

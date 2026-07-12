@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { RotateCcw, Trash2 } from "lucide-react";
-import { Badge, Button } from "@/components/ui";
+import { Badge, Button, TaskErrorBlock } from "@/components/ui";
 import type { DeadLetter } from "@/lib/api-types";
 import { formatRelative } from "@/lib/time";
 import { useDeleteDeadLetter, useRetryDeadLetter } from "../hooks";
@@ -39,9 +39,7 @@ export function DeadLetterRow({ item }: DeadLetterRowProps) {
           </span>
         </div>
         {item.error ? (
-          <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-danger-dim/30 p-2 font-mono text-[11px] text-danger">
-            {item.error}
-          </pre>
+          <TaskErrorBlock error={item.error} className="mt-2 max-h-32 bg-danger-dim/30 p-2" />
         ) : null}
       </div>
       <div className="flex gap-2">

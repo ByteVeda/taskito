@@ -30,10 +30,17 @@ const TRACEBACK_CONNECTION_ERROR = `Traceback (most recent call last):
     raise ConnectionError(f"upstream {endpoint} unreachable")
 ConnectionError: upstream /v1/users unreachable`;
 
+const STRUCTURED_ERROR =
+  '{"errtype":"BoomError","message":"it broke","traceback":["frame1","frame2"]}';
+
 describe("extractExceptionClass", () => {
   it("pulls the class name from a standard traceback", () => {
     expect(extractExceptionClass(TRACEBACK_VALUE_ERROR)).toBe("ValueError");
     expect(extractExceptionClass(TRACEBACK_CONNECTION_ERROR)).toBe("ConnectionError");
+  });
+
+  it("uses errtype for structured errors", () => {
+    expect(extractExceptionClass(STRUCTURED_ERROR)).toBe("BoomError");
   });
 
   it("handles custom exception class names", () => {
@@ -60,6 +67,13 @@ describe("extractReason", () => {
   it("placeholders null/empty", () => {
     expect(extractReason(null)).toMatch(/no error captured/i);
     expect(extractReason("   ")).toMatch(/no error captured/i);
+  });
+
+  it("uses message for structured errors", () => {
+    expect(extractReason(STRUCTURED_ERROR)).toBe("it broke");
+    expect(extractReason('{"errtype":"E","message":"","traceback":[]}')).toMatch(
+      /no error captured/i,
+    );
   });
 });
 

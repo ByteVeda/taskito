@@ -14,7 +14,9 @@ from taskito.exceptions import (
     SerializationError,
     TaskCancelledError,
     TaskFailedError,
+    TaskitoError,
 )
+from taskito.task_errors import decode_task_error
 
 if TYPE_CHECKING:
     from taskito._taskito import PyJob
@@ -29,19 +31,24 @@ _ERROR_SUMMARY_MAX = 500
 
 
 def _summarize_error(error: str | None) -> str | None:
-    """Reduce a stored traceback to its final line (exception type + message).
+    """Reduce a stored error to one ``ExceptionType: message`` line.
 
-    A Python traceback ends with the ``ExceptionType: message`` line; the
-    intervening frames carry file paths and source snippets we don't want in
-    the broadly-readable job list. Return that last non-empty line, capped.
+    Structured errors (canonical JSON, see ``taskito.task_errors``) summarize
+    from their fields; legacy plain tracebacks fall back to the last non-empty
+    line. Frames carry file paths and source snippets we don't want in the
+    broadly-readable job list, so only the summary is surfaced here.
     """
     if not error:
         return error
-    last_line = next((ln for ln in reversed(error.splitlines()) if ln.strip()), error)
-    last_line = last_line.strip()
-    if len(last_line) > _ERROR_SUMMARY_MAX:
-        last_line = last_line[:_ERROR_SUMMARY_MAX] + "…"
-    return last_line
+    decoded = decode_task_error(error)
+    if decoded is not None:
+        summary = decoded.summary()
+    else:
+        summary = next((ln for ln in reversed(error.splitlines()) if ln.strip()), error)
+    summary = summary.strip()
+    if len(summary) > _ERROR_SUMMARY_MAX:
+        summary = summary[:_ERROR_SUMMARY_MAX] + "…"
+    return summary
 
 
 class JobResult(AsyncJobResultMixin):
@@ -156,13 +163,32 @@ class JobResult(AsyncJobResultMixin):
             error_msg = self._py_job.error or "job was cancelled"
             raise TaskCancelledError(f"Job {self.id} cancelled: {error_msg}")
         if status == "dead":
-            error_msg = self._py_job.error or "max retries exceeded"
-            raise MaxRetriesExceededError(f"Job {self.id} dead-lettered: {error_msg}")
+            raise self._failure_error(
+                MaxRetriesExceededError, "dead-lettered", "max retries exceeded"
+            )
         if status == "failed":
-            error_msg = self._py_job.error or "task failed"
-            raise TaskFailedError(f"Job {self.id} failed: {error_msg}")
+            raise self._failure_error(TaskFailedError, "failed", "task failed")
 
         return status, None
+
+    def _failure_error(
+        self,
+        error_cls: type[TaskFailedError] | type[MaxRetriesExceededError],
+        verb: str,
+        default_msg: str,
+    ) -> TaskitoError:
+        """Build the outcome exception, attaching structured details when stored."""
+        raw = self._py_job.error
+        decoded = decode_task_error(raw)
+        summary = decoded.summary() if decoded is not None else (raw or default_msg)
+        error = error_cls(f"Job {self.id} {verb}: {summary}")
+        error._attach_details(
+            errtype=decoded.errtype if decoded else None,
+            traceback=decoded.traceback if decoded else None,
+            job_id=self.id,
+            raw_error=raw,
+        )
+        return error
 
     def result(
         self,

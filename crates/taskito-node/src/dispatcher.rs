@@ -119,7 +119,15 @@ async fn run_one(callback: &TaskCallback, storage: &StorageBackend, mut job: Job
                     wall_time_ns,
                 }
             } else {
-                failure(job, err.to_string(), wall_time_ns, false)
+                // `Error::to_string()` prepends the napi status ("GenericFailure, ");
+                // the bare reason is the JS error's string form, which the worker
+                // shapes into the cross-SDK structured-error JSON.
+                let reason = if err.reason.is_empty() {
+                    err.to_string()
+                } else {
+                    err.reason.clone()
+                };
+                failure(job, reason, wall_time_ns, false)
             }
         }
         Ok(Err(_)) => failure(

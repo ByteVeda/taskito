@@ -6,7 +6,6 @@ import asyncio
 import logging
 import threading
 import time
-import traceback
 from typing import TYPE_CHECKING, Any
 
 from taskito.async_support.context import clear_async_context, set_async_context
@@ -14,6 +13,7 @@ from taskito.context import current_job
 from taskito.exceptions import TaskCancelledError
 from taskito.interception.reconstruct import reconstruct_args
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
+from taskito.task_errors import encode_task_error
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -171,7 +171,7 @@ class AsyncTaskExecutor:
             except Exception as exc:
                 error = exc
                 wall_ns = time.monotonic_ns() - start_ns
-                error_msg = traceback.format_exc()
+                error_msg = encode_task_error(exc)
                 should_retry = self._check_retry(task_name, exc)
                 self._sender.report_failure(
                     job_id,

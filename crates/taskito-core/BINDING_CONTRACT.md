@@ -96,6 +96,36 @@ Scheduler.handle_result ─▶ ResultOutcome ─▶ shell emits events / middlew
 Channels: inbound `tokio::sync::mpsc::Receiver<Job>` (async); outbound
 `crossbeam_channel::Sender<JobResult>` (sync, cloneable).
 
+## Task errors (structured, cross-SDK)
+When a task raises, the shell reports the failure as a **canonical JSON object**
+serialized into `JobResult::Failure.error` (and thus into `jobs.error`,
+`job_errors.error`, `dead_letter.error` — the storage layer never interprets it):
+
+```json
+{"errtype": "ValueError", "message": "bad value 42", "traceback": ["...frame...", "..."]}
+```
+
+- `errtype` — the exception's class name, as idiomatic per language (qualified
+  where the language has a notion of it). Required.
+- `message` — the human-readable message, verbatim (keeps `error_like`
+  substring filters useful). Required, may be empty.
+- `traceback` — array of strings, best-effort per shell; `[]` when the
+  language/runtime can't provide frames. Required key.
+
+**Fallback rule (readers)**: an error string that does not parse as a JSON
+object with a `message` key is a plain legacy/system string and MUST be
+surfaced as-is. Core-generated maintenance errors (timeouts, worker-death
+recovery, expiry, cancellation) remain plain strings by design.
+
+**Retry semantics**: `retry_on`/`dont_retry_on`-style filtering matches on the
+live exception object before formatting — the stored string never drives retry
+decisions.
+
+**Test vector** (assert byte-exact in each shell's formatter):
+input errtype `BoomError`, message `it broke`, traceback `["frame1", "frame2"]` →
+`{"errtype":"BoomError","message":"it broke","traceback":["frame1","frame2"]}`
+(JSON with those three keys in that order, no extra whitespace).
+
 ## Types the shell produces / consumes
 - **`Job`** — `job.rs`. Fields incl. `id`, `queue`, `task_name`, `payload: Vec<u8>` (opaque),
   `status`, `priority`, `retry_count`, `max_retries`, `timeout_ms`, `unique_key`,

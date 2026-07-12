@@ -17,11 +17,39 @@ class TaskCancelledError(TaskitoError):
     """Raised when a running task detects it has been cancelled."""
 
 
-class TaskFailedError(TaskitoError):
+class JobErrorDetails:
+    """Structured failure details mixin for job-outcome exceptions.
+
+    ``job_id`` and ``raw_error`` are always populated. ``errtype`` and
+    ``traceback`` carry the decoded canonical task error (see
+    ``taskito.task_errors``) and are ``None`` when the stored error is a
+    legacy/system plain string.
+    """
+
+    errtype: str | None = None
+    traceback: list[str] | None = None
+    job_id: str | None = None
+    raw_error: str | None = None
+
+    def _attach_details(
+        self,
+        *,
+        errtype: str | None,
+        traceback: list[str] | None,
+        job_id: str | None,
+        raw_error: str | None,
+    ) -> None:
+        self.errtype = errtype
+        self.traceback = traceback
+        self.job_id = job_id
+        self.raw_error = raw_error
+
+
+class TaskFailedError(TaskitoError, JobErrorDetails):
     """Raised when a task has failed."""
 
 
-class MaxRetriesExceededError(TaskitoError):
+class MaxRetriesExceededError(TaskitoError, JobErrorDetails):
     """Raised when a task has exhausted all retry attempts."""
 
 
