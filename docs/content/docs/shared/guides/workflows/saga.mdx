@@ -324,7 +324,11 @@ Workflow partial = Workflow.named("partial-saga")
   on a cancelled run) and `COMPLETED_WITH_FAILURES`, covered next.
 </Callout>
 
+</SdkOnly>
+
 ## Compensating on continue-mode workflows
+
+<SdkOnly sdk="python">
 
 By default, `on_failure="continue"` workflows never trigger compensation —
 they run every step regardless of individual failures and always reach
@@ -350,6 +354,29 @@ reverse-topological order, same as a `fail_fast` saga, and the run ends
 `Compensated` or `CompensationFailed`. Without it, a `continue`-mode run
 with failures just stays `COMPLETED_WITH_FAILURES` and no compensation
 runs.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info" title="Node: no continue-mode compensation">
+  The Node builder has no run-level failure policy, so there is no
+  `compensateOnContinue` equivalent. `on_failure` here is only a per-step
+  `condition` (`"on_success"` | `"on_failure"` | `"always"`), not a
+  continue-vs-abort mode for the whole run. Saga compensation is declared
+  per step with `compensate` and runs only when the run itself fails.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info" title="Java: no continue-mode compensation">
+  The `Workflow` builder has no run-level failure policy and no
+  `compensateOnContinue`. `onFailure()` is only a per-step `condition`
+  shorthand. Compensation is declared per step with
+  `Step.Builder.compensate(...)` and rolls back only when the run fails.
+</Callout>
 
 </SdkOnly>
 
@@ -418,9 +445,9 @@ Workflow safeCheckout = Workflow.named("safe-checkout")
   </Tab>
 </CodeTabs>
 
-<SdkOnly sdk="python">
-
 ## Events
+
+<SdkOnly sdk="python">
 
 Saga lifecycle emits dedicated events on the queue's event bus, subscribed
 via `queue.on_event(event_type, callback)`:
@@ -434,6 +461,28 @@ via `queue.on_event(event_type, callback)`:
 | `NODE_COMPENSATING` | A step's compensator was enqueued |
 | `NODE_COMPENSATED` | A step's compensator finished successfully |
 | `NODE_COMPENSATION_FAILED` | A step's compensator failed after retries |
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info" title="Node: no saga events">
+  The Node SDK emits only the four job-lifecycle events — `job.completed`,
+  `job.retrying`, `job.dead`, `job.cancelled` — via `queue.on(...)`. There
+  are no `WORKFLOW_COMPENSATING` / `NODE_COMPENSATED`-style saga events. Track
+  compensation progress by polling the run handle: `handle.status()` and
+  `handle.nodes()`.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info" title="Java: no saga events">
+  Java's `EventName` enum has only the four job outcomes — `SUCCESS`, `RETRY`,
+  `DEAD`, `CANCELLED`. No workflow/saga transition events are emitted. Poll
+  `WorkflowRun` / `status.nodes` for compensation progress.
+</Callout>
 
 </SdkOnly>
 
