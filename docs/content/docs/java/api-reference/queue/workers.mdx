@@ -1,0 +1,24 @@
+---
+title: Workers & Hooks
+description: "Worker builder, middleware, and workflow control."
+---
+
+## Workers
+
+| Method | Description |
+|---|---|
+| `worker()` → `Worker.Builder` | Begin building a [worker](/java/api-reference/worker). |
+| `listWorkers()` → `List<WorkerInfo>` | Registered workers (heartbeat + identity). |
+
+## Middleware
+
+| Method | Description |
+|---|---|
+| `use(Middleware)` | Cross-cutting hooks — `onEnqueue`, `before`/`after`/`onError`, and the outcome hooks. |
+
+## Workflows
+
+| Method | Description |
+|---|---|
+| `submitWorkflow(Workflow)` / `submitWorkflow(Workflow, Map)` | Submit a [workflow](/java/api-reference/workflows) → `WorkflowRun`. |
+| `workflowStatus(runId)` / `cancelWorkflow(runId)` | Run queries and cancellation. |

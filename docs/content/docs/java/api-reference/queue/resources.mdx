@@ -1,0 +1,33 @@
+---
+title: Resources & Locking
+description: "Resources, enqueue gates, and distributed locks."
+---
+
+## Resources
+
+| Method | Description |
+|---|---|
+| `resource(...)` | Register an injectable [resource](/java/api-reference/resources). |
+| `resourceMetrics()` | Per-resource created/disposed/active counters. |
+
+## Enqueue gates
+
+| Method | Description |
+|---|---|
+| `predicate(taskName, Predicate)` / `gate(taskName, EnqueueGate)` | Enqueue-time gates: reject, skip, or defer submissions. |
+| `intercept(Interceptor)` | Pass / convert / redirect / reject each enqueue before serialization. |
+
+## Distributed locks
+
+| Method | Description |
+|---|---|
+| `lock(name, ttlMs)` / `lock(name)` | A distributed `Lock` (default 30s TTL): `acquire()`, `tryAcquire(timeout)`, `extend(ttlMs)`, `close()`. |
+| `withLock(name, ttlMs, Runnable)` | Acquire → run → release; returns whether it ran. |
+| `lockInfo(name)` (alias `getLockInfo`) | Current holder metadata, if held. |
+
+## Periodic
+
+| Method | Description |
+|---|---|
+| `registerPeriodic(PeriodicTask)` | Register (or replace) a cron task → next fire time (Unix ms). |
+| `listPeriodic()` / `deletePeriodic(name)` / `pausePeriodic(name)` / `resumePeriodic(name)` | Periodic task management. |

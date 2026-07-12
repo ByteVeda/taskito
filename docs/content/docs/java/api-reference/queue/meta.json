@@ -1,0 +1,4 @@
+{
+  "title": "Taskito",
+  "pages": ["jobs", "queues", "workers", "resources", "events", "pubsub"]
+}
