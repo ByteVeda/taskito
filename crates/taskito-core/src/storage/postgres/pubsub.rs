@@ -13,6 +13,8 @@ impl PostgresStorage {
     /// The `do_update` sets each mutable column explicitly rather than via
     /// `AsChangeset`, so re-registering with `owner_worker_id = None` writes SQL
     /// NULL (clearing a previously-ephemeral owner) instead of leaving it stale.
+    /// `active` and `created_at` are deliberately excluded: re-declaring must
+    /// not resume a paused subscription or reset its registration time.
     pub fn register_subscription(&self, sub: &NewSubscriptionRow) -> Result<()> {
         let mut conn = self.conn()?;
 
@@ -26,10 +28,8 @@ impl PostgresStorage {
             .set((
                 topic_subscriptions::task_name.eq(sub.task_name),
                 topic_subscriptions::queue.eq(sub.queue),
-                topic_subscriptions::active.eq(sub.active),
                 topic_subscriptions::durable.eq(sub.durable),
                 topic_subscriptions::owner_worker_id.eq(sub.owner_worker_id),
-                topic_subscriptions::created_at.eq(sub.created_at),
             ))
             .execute(&mut conn)?;
 

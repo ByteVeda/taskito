@@ -1514,7 +1514,9 @@ fn test_set_subscription_active_pause_resume_roundtrip() {
 #[test]
 fn test_reap_ephemeral_subscriptions_spares_durable_and_live() {
     let storage = test_storage();
-    let now = now_millis();
+    // Aged past the registration grace window so the reaper may act on them;
+    // a fresh row must survive even with a dead owner (startup race guard).
+    let now = now_millis() - crate::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS - 1_000;
 
     // Durable (owner NULL) — must never be reaped.
     storage

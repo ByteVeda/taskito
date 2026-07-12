@@ -85,8 +85,6 @@ impl RedisStorage {
             owner_worker_id: sub.owner_worker_id.map(|s| s.to_string()),
             created_at: sub.created_at,
         };
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
-
         let blob_key = self.key(&["sub", sub.topic, sub.subscription_name]);
         let by_topic = self.key(&["subs", "by_topic", sub.topic]);
         let all = self.key(&["subs", "all"]);
@@ -94,11 +92,19 @@ impl RedisStorage {
 
         // A prior row may have carried a different (or NULL) owner; drop its
         // stale by_owner entry so ownership never lingers across re-registration.
-        let prior_owner = self
-            .load_sub_by_composite(&mut conn, &composite)?
-            .and_then(|e| e.owner_worker_id);
+        // Re-declaring also must not resume a paused subscription or reset its
+        // registration time, so both survive from the prior entry.
+        let prior = self.load_sub_by_composite(&mut conn, &composite)?;
+        let prior_owner = prior.as_ref().and_then(|e| e.owner_worker_id.clone());
+        let mut entry = entry;
+        if let Some(prior) = &prior {
+            entry.active = prior.active;
+            entry.created_at = prior.created_at;
+        }
+        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
 
-        let pipe = &mut redis::pipe();
+        let pipe = redis::pipe().atomic().to_owned();
+        let mut pipe = pipe;
         pipe.set(&blob_key, &json);
         pipe.sadd(&by_topic, sub.subscription_name);
         pipe.sadd(&all, &composite);
@@ -179,7 +185,7 @@ impl RedisStorage {
         let all = self.key(&["subs", "all"]);
         let composite = Self::sub_composite(topic, subscription_name);
 
-        let pipe = &mut redis::pipe();
+        let mut pipe = redis::pipe().atomic().to_owned();
         pipe.del(&blob_key);
         pipe.srem(&by_topic, subscription_name);
         pipe.srem(&all, &composite);
@@ -218,13 +224,17 @@ impl RedisStorage {
     }
 
     /// Remove ephemeral subscriptions whose owner is not in `live_worker_ids`.
-    /// Durable rows (owner NULL) are never touched. Returns the count removed.
+    /// Durable rows (owner NULL) are never touched, and rows younger than the
+    /// registration grace window survive (a starting worker inserts its
+    /// ephemeral subscriptions before its first heartbeat lands).
+    /// Returns the count removed.
     ///
     /// Iterates the `subs:all` index set rather than a keyspace `SCAN`; each
     /// removed row is also pulled from its `by_topic` and `by_owner` sets.
     pub fn reap_ephemeral_subscriptions(&self, live_worker_ids: &[String]) -> Result<u64> {
         let mut conn = self.conn()?;
         let all = self.key(&["subs", "all"]);
+        let cutoff = crate::job::now_millis() - crate::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS;
 
         let composites: Vec<String> = conn.smembers(&all).map_err(map_err)?;
         let live: HashSet<&str> = live_worker_ids.iter().map(String::as_str).collect();
@@ -238,7 +248,7 @@ impl RedisStorage {
             let Some(owner) = entry.owner_worker_id.as_deref() else {
                 continue;
             };
-            if live.contains(owner) {
+            if live.contains(owner) || entry.created_at >= cutoff {
                 continue;
             }
 
@@ -246,7 +256,7 @@ impl RedisStorage {
             let by_topic = self.key(&["subs", "by_topic", &entry.topic]);
             let by_owner = self.key(&["subs", "by_owner", owner]);
 
-            let pipe = &mut redis::pipe();
+            let mut pipe = redis::pipe().atomic().to_owned();
             pipe.del(&blob_key);
             pipe.srem(&by_topic, &entry.subscription_name);
             pipe.srem(&all, &composite);

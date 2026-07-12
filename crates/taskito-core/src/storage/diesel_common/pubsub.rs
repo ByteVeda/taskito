@@ -72,14 +72,21 @@ macro_rules! impl_diesel_pubsub_ops {
 
             /// Remove ephemeral subscriptions whose owner is not in
             /// `live_worker_ids`. Durable rows (owner NULL) are excluded by the
-            /// `is_not_null` filter and never touched. Returns the count removed.
+            /// `is_not_null` filter and never touched. Rows younger than the
+            /// registration grace window survive: a starting worker inserts its
+            /// ephemeral subscriptions before its first heartbeat lands, and
+            /// another worker's reap tick must not race that gap.
+            /// Returns the count removed.
             pub fn reap_ephemeral_subscriptions(&self, live_worker_ids: &[String]) -> Result<u64> {
                 let mut conn = self.conn()?;
+                let cutoff =
+                    $crate::job::now_millis() - $crate::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS;
 
                 let affected = diesel::delete(
                     topic_subscriptions::table
                         .filter(topic_subscriptions::owner_worker_id.is_not_null())
-                        .filter(topic_subscriptions::owner_worker_id.ne_all(live_worker_ids)),
+                        .filter(topic_subscriptions::owner_worker_id.ne_all(live_worker_ids))
+                        .filter(topic_subscriptions::created_at.lt(cutoff)),
                 )
                 .execute(&mut conn)?;
 

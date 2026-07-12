@@ -10,13 +10,26 @@ crate::storage::diesel_common::impl_diesel_pubsub_ops!(SqliteStorage);
 impl SqliteStorage {
     /// Insert or update a subscription. Idempotent on (topic, subscription_name).
     ///
-    /// `replace_into` deletes any prior row before inserting, so re-registering
-    /// with `owner_worker_id = None` correctly clears a previously-set owner.
+    /// The update set deliberately excludes `active`: re-declaring a
+    /// subscription (every worker start does) must not resume one an operator
+    /// paused. `owner_worker_id` is written explicitly so a durable
+    /// re-registration clears a previously-ephemeral owner to SQL NULL.
     pub fn register_subscription(&self, sub: &NewSubscriptionRow) -> Result<()> {
         let mut conn = self.conn()?;
 
-        diesel::replace_into(topic_subscriptions::table)
+        diesel::insert_into(topic_subscriptions::table)
             .values(sub)
+            .on_conflict((
+                topic_subscriptions::topic,
+                topic_subscriptions::subscription_name,
+            ))
+            .do_update()
+            .set((
+                topic_subscriptions::task_name.eq(sub.task_name),
+                topic_subscriptions::queue.eq(sub.queue),
+                topic_subscriptions::durable.eq(sub.durable),
+                topic_subscriptions::owner_worker_id.eq(sub.owner_worker_id),
+            ))
             .execute(&mut conn)?;
 
         Ok(())

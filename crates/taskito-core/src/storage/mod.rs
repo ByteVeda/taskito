@@ -23,6 +23,13 @@ use crate::job::{Job, NewJob};
 /// cutoff. Kept in one place so SQLite, Postgres, and Redis can never drift.
 pub const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
+/// Ephemeral subscriptions younger than this survive the reaper even when
+/// their owner is not (yet) in the live-worker set: a starting worker inserts
+/// its ephemeral subscriptions before its first heartbeat registers it live,
+/// and another worker's reap tick must not race that gap. Twice the dead-worker
+/// threshold keeps one full failure-detection cycle of headroom.
+pub const EPHEMERAL_SUBSCRIPTION_GRACE_MS: i64 = 2 * DEAD_WORKER_THRESHOLD_MS;
+
 // ── Shared helper types ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]

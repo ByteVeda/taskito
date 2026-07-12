@@ -854,7 +854,9 @@ fn test_periodic_crud(s: &impl Storage) {
 
 fn test_topic_subscriptions_crud(s: &impl Storage) {
     use taskito_core::storage::models::NewSubscriptionRow;
-    let now = now_millis();
+    // Aged past the registration grace window so the reaper may act on the
+    // ephemeral rows created below; freshness is covered by the grace test.
+    let now = now_millis() - taskito_core::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS - 1_000;
     let sub = |topic: &'static str,
                name: &'static str,
                task_name: &'static str,
@@ -925,6 +927,37 @@ fn test_topic_subscriptions_crud(s: &impl Storage) {
         .set_subscription_active("ts-orders", "ghost", true)
         .unwrap());
     assert!(!s.unsubscribe("ts-orders", "ghost").unwrap());
+
+    // Re-registering must not resume a paused subscription.
+    assert!(s
+        .set_subscription_active("ts-orders", "emailer", false)
+        .unwrap());
+    s.register_subscription(&sub("ts-orders", "emailer", "send_email_v3", None, now))
+        .unwrap();
+    assert!(
+        !s.list_subscriptions()
+            .unwrap()
+            .iter()
+            .any(|r| r.subscription_name == "emailer" && r.active),
+        "re-registration must preserve the paused state"
+    );
+    assert!(s
+        .set_subscription_active("ts-orders", "emailer", true)
+        .unwrap());
+
+    // A fresh ephemeral row (inside the grace window) survives a reap even
+    // with a dead owner — startup registers subscriptions before the first
+    // heartbeat lands.
+    s.register_subscription(&sub(
+        "ts-live",
+        "fresh",
+        "task_a",
+        Some("ts-worker-gone"),
+        now_millis(),
+    ))
+    .unwrap();
+    assert_eq!(s.reap_ephemeral_subscriptions(&[]).unwrap(), 0);
+    assert!(s.unsubscribe("ts-live", "fresh").unwrap());
 
     // Reaper: only dead-owner ephemeral rows go; durable rows never do.
     s.register_subscription(&sub("ts-live", "live", "task_b", Some("ts-worker-1"), now))
