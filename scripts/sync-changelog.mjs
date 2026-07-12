@@ -43,6 +43,8 @@ const frontmatter = [
   "",
   "{/* AUTO-GENERATED from /CHANGELOG.md by scripts/sync-changelog.mjs — do not edit directly. */}",
   "",
+  '<Callout type="info">Code snippets below use the Python API for illustration. Every release ships all three SDKs — Python, Node, and Java — in lock-step; see each SDK\'s API reference for its exact syntax.</Callout>',
+  "",
 ].join("\n");
 
 writeFileSync(target, `${frontmatter}\n${body}\n`);
