@@ -2,8 +2,6 @@
 //! the core (`taskito_core::pubsub`); every method touches storage, so each is
 //! async and offloads the blocking I/O to the blocking pool.
 
-use std::collections::HashMap;
-
 use napi::bindgen_prelude::{spawn_blocking, Buffer, Result};
 use napi_derive::napi;
 use taskito_core::job::now_millis;
@@ -12,7 +10,7 @@ use taskito_core::storage::models::NewSubscriptionRow;
 use taskito_core::Storage;
 
 use super::JsQueue;
-use crate::config::{DeliveryDefaultsInput, PublishOptions};
+use crate::config::PublishOptions;
 use crate::convert::{
     job_to_js, subscription_to_js, JsJob, JsSubscription, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
     DEFAULT_TIMEOUT_MS,
@@ -25,6 +23,7 @@ impl JsQueue {
     /// Ephemeral subscriptions (`durable: false`) carry the owning worker's id
     /// so they can be reaped once that worker is gone.
     #[napi]
+    #[allow(clippy::too_many_arguments)]
     pub async fn register_subscription(
         &self,
         topic: String,
@@ -33,6 +32,9 @@ impl JsQueue {
         queue: String,
         durable: bool,
         owner_worker_id: Option<String>,
+        priority: Option<i32>,
+        max_retries: Option<i32>,
+        timeout_ms: Option<i64>,
     ) -> Result<()> {
         // An owner-less ephemeral row could never be reaped — reject it before
         // it reaches storage.
@@ -52,6 +54,9 @@ impl JsQueue {
                 durable,
                 owner_worker_id: owner_worker_id.as_deref(),
                 created_at: now_millis(),
+                priority,
+                max_retries,
+                timeout_ms,
             };
             storage.register_subscription(&row).map_err(to_napi_err)
         })
@@ -205,38 +210,5 @@ fn build_publish_request(
         result_ttl_ms,
         namespace,
         queue_defaults,
-        task_defaults: task_defaults(opts.task_defaults.unwrap_or_default(), queue_defaults)?,
     })
-}
-
-/// Resolve per-task delivery defaults, filling unset fields from the queue
-/// defaults so the shell never duplicates them. Entries get the same
-/// non-negative checks as the top-level options, naming the offending task.
-fn task_defaults(
-    input: HashMap<String, DeliveryDefaultsInput>,
-    queue_defaults: DeliveryDefaults,
-) -> Result<HashMap<String, DeliveryDefaults>> {
-    input
-        .into_iter()
-        .map(|(name, defaults)| {
-            let max_retries = match defaults.max_retries {
-                Some(n) => {
-                    non_negative(n as i64, &format!("taskDefaults[\"{name}\"].maxRetries"))? as i32
-                }
-                None => queue_defaults.max_retries,
-            };
-            let timeout_ms = match defaults.timeout_ms {
-                Some(n) => non_negative(n, &format!("taskDefaults[\"{name}\"].timeoutMs"))?,
-                None => queue_defaults.timeout_ms,
-            };
-            Ok((
-                name,
-                DeliveryDefaults {
-                    priority: defaults.priority.unwrap_or(queue_defaults.priority),
-                    max_retries,
-                    timeout_ms,
-                },
-            ))
-        })
-        .collect()
 }

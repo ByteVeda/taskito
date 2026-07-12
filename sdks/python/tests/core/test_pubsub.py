@@ -178,6 +178,39 @@ class TestPublish:
         assert len(deliveries) == 2
 
 
+class TestCrossProcessDeliverySettings:
+    def test_producer_without_task_applies_persisted_settings(
+        self, tmp_path: Any, queue: Queue, run_worker: threading.Thread, poll_until: PollUntil
+    ) -> None:
+        """A subscriber's own @task settings must reach deliveries even when the
+        publisher never registered the task — proving the settings persist on the
+        subscription row, not just in the publishing process's registry."""
+
+        @queue.subscriber("orders", name="picky", max_retries=7, priority=4, timeout=42)
+        def handle(order_id: int) -> None: ...
+
+        queue.declare_subscriptions()
+
+        # A separate Queue on the same DB stands in for a producer-only process:
+        # it has no task registry at all.
+        producer = Queue(db_path=str(tmp_path / "test.db"))
+        (delivery,) = producer.publish("orders", 1)
+
+        job = queue.get_job(delivery.id)
+        assert job is not None
+        assert job._py_job.max_retries == 7
+        assert job._py_job.priority == 4
+
+    def test_publish_override_beats_persisted_setting(self, queue: Queue) -> None:
+        @queue.subscriber("orders", name="picky", max_retries=7)
+        def handle(order_id: int) -> None: ...
+
+        queue.declare_subscriptions()
+        (delivery,) = queue.publish("orders", 1, max_retries=1)
+        job = queue.get_job(delivery.id)
+        assert job is not None and job._py_job.max_retries == 1
+
+
 class TestEphemeralSubscriptions:
     def test_ephemeral_registers_only_with_worker(self, queue: Queue) -> None:
         @queue.subscriber("orders", name="debug-tail", durable=False)

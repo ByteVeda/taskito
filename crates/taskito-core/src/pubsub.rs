@@ -4,16 +4,13 @@
 //! same fan-out semantics — in particular the idempotency-key salting, which
 //! silently drops deliveries if a shell gets it wrong.
 
-use std::collections::HashMap;
-
 use crate::error::Result;
 use crate::job::{Job, NewJob};
 use crate::storage::models::SubscriptionRow;
 use crate::storage::Storage;
 
-/// Per-task delivery settings a subscriber's task declared at registration.
-/// Shells pass what their task registry knows; unknown tasks fall back to
-/// the queue-level defaults.
+/// Queue-level fallback delivery settings, used when neither the publish call
+/// nor the subscription row specifies a value.
 #[derive(Clone, Copy)]
 pub struct DeliveryDefaults {
     pub priority: i32,
@@ -22,9 +19,9 @@ pub struct DeliveryDefaults {
 }
 
 /// Everything a publish shares across the jobs it fans out to. Per-subscriber
-/// routing (task name, queue) comes from the subscription registry; delivery
-/// settings resolve per field as explicit publish override, then the
-/// subscriber task's own defaults, then the queue defaults.
+/// routing (task name, queue) and delivery settings come from the subscription
+/// registry; delivery settings resolve per field as explicit publish override,
+/// then the subscription row's persisted setting, then the queue default.
 pub struct PublishRequest {
     pub topic: String,
     /// Wire-envelope payload bytes; every subscriber receives the same body.
@@ -46,7 +43,6 @@ pub struct PublishRequest {
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<String>,
     pub queue_defaults: DeliveryDefaults,
-    pub task_defaults: HashMap<String, DeliveryDefaults>,
 }
 
 /// Fan a message out to every active subscription of `topic` as ordinary
@@ -85,19 +81,28 @@ fn salted_unique_key(key: &str, topic: &str, subscription_name: &str) -> String 
 }
 
 fn delivery_job(request: &PublishRequest, sub: &SubscriptionRow) -> NewJob {
-    let task = request
-        .task_defaults
-        .get(&sub.task_name)
-        .copied()
-        .unwrap_or(request.queue_defaults);
+    // Resolve each field independently: explicit publish override, then the
+    // subscription's persisted setting, then the queue default. Persisting on
+    // the row is what lets a producer-only process apply a subscriber's own
+    // retry/timeout/priority without ever loading its task code.
+    let defaults = request.queue_defaults;
     NewJob {
         queue: sub.queue.clone(),
         task_name: sub.task_name.clone(),
         payload: request.payload.clone(),
-        priority: request.priority.unwrap_or(task.priority),
+        priority: request
+            .priority
+            .or(sub.priority)
+            .unwrap_or(defaults.priority),
         scheduled_at: request.scheduled_at,
-        max_retries: request.max_retries.unwrap_or(task.max_retries),
-        timeout_ms: request.timeout_ms.unwrap_or(task.timeout_ms),
+        max_retries: request
+            .max_retries
+            .or(sub.max_retries)
+            .unwrap_or(defaults.max_retries),
+        timeout_ms: request
+            .timeout_ms
+            .or(sub.timeout_ms)
+            .unwrap_or(defaults.timeout_ms),
         unique_key: request
             .idempotency_key
             .as_ref()
@@ -158,11 +163,23 @@ mod tests {
                 max_retries: 3,
                 timeout_ms: 300_000,
             },
-            task_defaults: HashMap::new(),
         }
     }
 
     fn subscribe(storage: &SqliteStorage, topic: &str, name: &str, task: &str) {
+        subscribe_with(storage, topic, name, task, None, None, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn subscribe_with(
+        storage: &SqliteStorage,
+        topic: &str,
+        name: &str,
+        task: &str,
+        priority: Option<i32>,
+        max_retries: Option<i32>,
+        timeout_ms: Option<i64>,
+    ) {
         storage
             .register_subscription(&NewSubscriptionRow {
                 topic,
@@ -173,6 +190,9 @@ mod tests {
                 durable: true,
                 owner_worker_id: None,
                 created_at: now_millis(),
+                priority,
+                max_retries,
+                timeout_ms,
             })
             .unwrap();
     }
@@ -227,28 +247,30 @@ mod tests {
     }
 
     #[test]
-    fn delivery_settings_resolve_override_then_task_then_queue() {
+    fn delivery_settings_resolve_override_then_subscription_then_queue() {
+        use std::collections::HashMap;
         let storage = SqliteStorage::in_memory().unwrap();
-        subscribe(&storage, "orders", "email", "send_email");
+        // send_email persisted its own settings on the subscription row;
+        // audit_log has none → queue defaults.
+        subscribe_with(
+            &storage,
+            "orders",
+            "email",
+            "send_email",
+            Some(5),
+            Some(0),
+            Some(60_000),
+        );
         subscribe(&storage, "orders", "audit", "audit_log");
 
-        let mut req = request("orders", None);
-        req.task_defaults.insert(
-            "send_email".to_string(),
-            DeliveryDefaults {
-                priority: 5,
-                max_retries: 0,
-                timeout_ms: 60_000,
-            },
-        );
-        let jobs = publish_to_topic(&storage, &req).unwrap();
+        let jobs = publish_to_topic(&storage, &request("orders", None)).unwrap();
         let by_task: HashMap<_, _> = jobs.iter().map(|j| (j.task_name.as_str(), j)).collect();
-        // send_email declared its own settings; audit_log falls back to queue defaults.
         assert_eq!(by_task["send_email"].max_retries, 0);
         assert_eq!(by_task["send_email"].priority, 5);
+        assert_eq!(by_task["send_email"].timeout_ms, 60_000);
         assert_eq!(by_task["audit_log"].max_retries, 3);
 
-        // An explicit publish-level override beats both.
+        // An explicit publish-level override beats both the row and the default.
         let mut req = request("orders", None);
         req.max_retries = Some(9);
         let jobs = publish_to_topic(&storage, &req).unwrap();

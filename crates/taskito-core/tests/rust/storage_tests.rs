@@ -870,6 +870,9 @@ fn test_topic_subscriptions_crud(s: &impl Storage) {
         durable: owner.is_none(),
         owner_worker_id: owner,
         created_at,
+        priority: None,
+        max_retries: None,
+        timeout_ms: None,
     };
 
     // Upsert idempotency: re-registering (topic, name) updates in place.

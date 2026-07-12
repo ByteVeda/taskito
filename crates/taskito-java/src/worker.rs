@@ -219,6 +219,9 @@ fn register_subscriptions(
             durable: spec.durable,
             owner_worker_id: (!spec.durable).then_some(worker_id),
             created_at,
+            priority: spec.priority,
+            max_retries: spec.max_retries,
+            timeout_ms: spec.timeout_ms,
         };
         storage.register_subscription(&row)?;
     }

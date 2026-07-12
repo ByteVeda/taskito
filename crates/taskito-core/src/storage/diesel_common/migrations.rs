@@ -275,6 +275,9 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
                 durable           {bool_true},
                 owner_worker_id   TEXT,
                 created_at        {bi} NOT NULL,
+                priority          INTEGER,
+                max_retries       INTEGER,
+                timeout_ms        {bi},
                 PRIMARY KEY (topic, subscription_name)
             )"
         ),
@@ -387,6 +390,12 @@ pub fn alter_statements(d: &Dialect) -> Vec<String> {
         format!("ALTER TABLE jobs ADD COLUMN {ife}has_deps {bool_false}"),
         // DLQ auto-retry counter: tracks how many times an entry was auto-retried
         format!("ALTER TABLE dead_letter ADD COLUMN {ife}dlq_retry_count INTEGER NOT NULL DEFAULT 0"),
+        // Per-subscription delivery settings: let publish_to_topic apply each
+        // subscriber's own retry/timeout/priority even from a producer process
+        // that never loaded the subscriber task. NULL = fall back to queue defaults.
+        format!("ALTER TABLE topic_subscriptions ADD COLUMN {ife}priority INTEGER"),
+        format!("ALTER TABLE topic_subscriptions ADD COLUMN {ife}max_retries INTEGER"),
+        format!("ALTER TABLE topic_subscriptions ADD COLUMN {ife}timeout_ms {bi}"),
     ]
 }
 

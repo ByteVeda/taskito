@@ -35,10 +35,10 @@ export interface EnqueueOptions extends Omit<NativeEnqueueOptions, "notes"> {
 
 /**
  * Per-publish options. Mirrors the native options, but `notes` is a structured
- * object here (validated and JSON-encoded before it reaches the core) and
- * `taskDefaults` is built internally from the queue's task registry.
+ * object here (validated and JSON-encoded before it reaches the core) rather
+ * than a pre-encoded string.
  */
-export interface PublishOptions extends Omit<NativePublishOptions, "notes" | "taskDefaults"> {
+export interface PublishOptions extends Omit<NativePublishOptions, "notes"> {
   /** Structured annotations stamped on every delivery (plus `topic`/`subscription`). */
   notes?: Record<string, unknown>;
 }

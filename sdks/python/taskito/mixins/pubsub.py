@@ -142,7 +142,6 @@ class QueuePubSubMixin:
             timeout=timeout,
             expires=expires,
             result_ttl=result_ttl,
-            task_defaults=self._delivery_task_defaults(),
         )
         return [JobResult(py_job=py_job, queue=self) for py_job in py_jobs]  # type: ignore[arg-type]
 
@@ -191,14 +190,18 @@ class QueuePubSubMixin:
 
     def _delivery_task_defaults(self) -> dict[str, tuple[int, int, int]]:
         """Per-task ``(priority, max_retries, timeout_ms)`` from this process's
-        task registry, so deliveries honor each subscriber's own settings.
-        Tasks registered elsewhere fall back to queue defaults."""
+        task registry. Persisted on the subscription row at registration so a
+        producer-only process (which never loads the task) still applies each
+        subscriber's own settings. Tasks not registered here get queue defaults."""
         return {
             config.name: (config.priority, config.max_retries, config.timeout * 1000)
             for config in self._task_configs  # type: ignore[attr-defined]
         }
 
     def _register_subscription(self, config: dict[str, Any], owner_worker_id: str | None) -> None:
+        priority, max_retries, timeout_ms = self._delivery_task_defaults().get(
+            config["task_name"], (None, None, None)
+        )
         self._inner.register_subscription(
             topic=config["topic"],
             subscription_name=config["subscription_name"],
@@ -206,6 +209,9 @@ class QueuePubSubMixin:
             queue=config["queue"],
             durable=config["durable"],
             owner_worker_id=owner_worker_id,
+            priority=priority,
+            max_retries=max_retries,
+            timeout_ms=timeout_ms,
         )
 
     def _declare_worker_subscriptions(self, worker_id: str) -> None:

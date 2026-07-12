@@ -184,6 +184,28 @@ class PubSubTest {
     }
 
     @Test
+    void producerOnlyPublishAppliesPersistedRowDeliverySettings(@TempDir Path dir) throws Exception {
+        String options = new ObjectMapper()
+                .writeValueAsString(
+                        Map.of("backend", "sqlite", "dsn", dir.resolve("t.db").toString()));
+        JniQueueBackend backend = JniQueueBackend.open(options);
+        try (Taskito producer = Taskito.builder().open(backend)) {
+            // A subscriber elsewhere persisted its own delivery settings on the row.
+            backend.registerSubscription("orders", "sink", SEND_EMAIL.name(), "default", true, null, 5, 7, 30_000L);
+
+            // A producer with no local knowledge of SEND_EMAIL still fans the
+            // delivery out with the subscriber's persisted settings.
+            List<Job> deliveries = producer.publish("orders", "o-1");
+            assertEquals(1, deliveries.size());
+            Job delivery = deliveries.get(0);
+            assertEquals(SEND_EMAIL.name(), delivery.taskName);
+            assertEquals(5, delivery.priority);
+            assertEquals(7, delivery.maxRetries);
+            assertEquals(30_000L, delivery.timeoutMs);
+        }
+    }
+
+    @Test
     @Timeout(30)
     void ephemeralSubscriptionRegistersWithARunningWorker(@TempDir Path dir) throws Exception {
         try (Taskito queue = open(dir)) {

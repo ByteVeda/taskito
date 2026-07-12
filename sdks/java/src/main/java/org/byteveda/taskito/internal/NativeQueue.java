@@ -136,7 +136,12 @@ public final class NativeQueue {
     public static native boolean setPeriodicEnabled(long handle, String name, boolean enabled);
 
     // ── Pub/Sub ─────────────────────────────────────────────────────
-    /** Insert or update a topic subscription (idempotent on topic + name). */
+    /**
+     * Insert or update a topic subscription (idempotent on topic + name). The
+     * subscriber task's delivery settings persist on the row; {@code priority}/
+     * {@code maxRetries} of {@link Integer#MIN_VALUE} and {@code timeoutMs} of
+     * {@link Long#MIN_VALUE} mean "unset — take the queue default".
+     */
     public static native void registerSubscription(
             long handle,
             String topic,
@@ -144,7 +149,10 @@ public final class NativeQueue {
             String taskName,
             String queue,
             boolean durable,
-            String ownerWorkerIdOrNull);
+            String ownerWorkerIdOrNull,
+            int priority,
+            int maxRetries,
+            long timeoutMs);
 
     /** A JSON array of subscriptions — all of them, or only a topic's active ones. */
     public static native String listSubscriptions(long handle, String topicOrNull);

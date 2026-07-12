@@ -98,10 +98,22 @@ it("registering an ephemeral subscription without an owner rejects", async () =>
   ).rejects.toThrow(/ephemeral subscription \(durable=false\) requires ownerWorkerId/);
 });
 
-it("publish rejects negative per-task delivery defaults naming the task", async () => {
-  const queue = newQueue();
-  queue.task("bad_task", () => undefined, { maxRetries: -1 });
-  await expect(queue.publish("orders", [1])).rejects.toThrow('taskDefaults["bad_task"].maxRetries');
+it("persists a subscriber's delivery settings for a producer-only publisher", async () => {
+  // Two Queue instances on the same DB: the consumer registers the subscriber
+  // (persisting its maxRetries on the subscription row), the producer only
+  // publishes and never registers the task — yet the delivery must honor 7.
+  const dbPath = join(mkdtempSync(join(tmpdir(), "taskito-pubsub-")), "q.db");
+  const consumer = new Queue({ dbPath });
+  consumer.subscriber("orders", "send_email", () => undefined, {
+    subscriptionName: "email",
+    maxRetries: 7,
+  });
+  await consumer.declareSubscriptions();
+
+  const producer = new Queue({ dbPath });
+  const [job] = await producer.publish("orders", [1]);
+  expect(job).toBeDefined();
+  expect(producer.getJob(job?.id ?? "")?.maxRetries).toBe(7);
 });
 
 it("unsubscribe removes the subscription and reports a missing one", async () => {

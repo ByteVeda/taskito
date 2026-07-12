@@ -472,14 +472,29 @@ public final class InMemoryQueueBackend implements QueueBackend {
             String queue,
             boolean durable,
             String ownerWorkerIdOrNull) {
+        // Reachable via either overload; nulls take the queue defaults.
+        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, null, null, null);
+    }
+
+    @Override
+    public synchronized void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull,
+            Integer priority,
+            Integer maxRetries,
+            Long timeoutMs) {
         // Mirrors the native guard: an ownerless ephemeral row would never be
         // reaped yet keep receiving deliveries.
         if (!durable && ownerWorkerIdOrNull == null) {
             throw new TaskitoException("an ephemeral subscription (durable=false) requires ownerWorkerId");
         }
-        // Upsert mirrors the core: routing (task, queue, durable, owner) is
-        // replaced while active and creation time survive — re-declaring never
-        // resumes a paused subscription or refreshes the reap grace window.
+        // Upsert mirrors the core: routing (task, queue, durable, owner) and the
+        // persisted delivery settings are replaced while active and creation time
+        // survive — re-declaring never resumes a pause or refreshes the reap grace.
         subscriptions.compute(subscriptionKey(topic, subscriptionName), (key, existing) -> {
             SubscriptionRec rec = new SubscriptionRec(
                     topic,
@@ -488,6 +503,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
                     queue,
                     durable,
                     ownerWorkerIdOrNull,
+                    priority,
+                    maxRetries,
+                    timeoutMs,
                     existing == null ? seq.incrementAndGet() : existing.createdSeq,
                     existing == null ? now() : existing.createdAt);
             if (existing != null) {
@@ -591,18 +609,19 @@ public final class InMemoryQueueBackend implements QueueBackend {
 
     /**
      * One delivery's enqueue options: routing from the subscription, delivery
-     * settings resolving publish override → the subscriber task's defaults →
-     * zero, the idempotency key salted per subscriber (the unique-key scan is
-     * global, so a raw key would dedup away all but one delivery), and the
-     * caller's notes stamped with {@code topic}/{@code subscription}.
+     * settings resolving publish override → the subscription row's persisted
+     * setting → zero (so a producer-only publish applies the subscriber's own
+     * settings without knowing the task), the idempotency key salted per
+     * subscriber (the unique-key scan is global, so a raw key would dedup away
+     * all but one delivery), and the caller's notes stamped with
+     * {@code topic}/{@code subscription}.
      */
     private static ObjectNode deliveryOptions(JsonNode opts, SubscriptionRec sub) {
-        JsonNode taskDefaults = opts == null ? null : opts.path("taskDefaults").get(sub.taskName);
         ObjectNode delivery = JSON.createObjectNode();
         delivery.put("queue", sub.queue);
-        delivery.put("priority", resolveDeliveryInt(opts, taskDefaults, "priority"));
-        delivery.put("maxRetries", resolveDeliveryInt(opts, taskDefaults, "maxRetries"));
-        delivery.put("timeoutMs", resolveDeliveryLong(opts, taskDefaults, "timeoutMs"));
+        delivery.put("priority", resolveDeliveryInt(opts, "priority", sub.priority));
+        delivery.put("maxRetries", resolveDeliveryInt(opts, "maxRetries", sub.maxRetries));
+        delivery.put("timeoutMs", resolveDeliveryLong(opts, "timeoutMs", sub.timeoutMs));
         delivery.put("delayMs", optLong(opts, "delayMs", 0));
         // Publish-level expiry and result retention pass straight through; the
         // enqueue path resolves them (expiresMs → an absolute expiry).
@@ -628,20 +647,20 @@ public final class InMemoryQueueBackend implements QueueBackend {
         }
     }
 
-    private static int resolveDeliveryInt(JsonNode opts, JsonNode taskDefaults, String field) {
+    private static int resolveDeliveryInt(JsonNode opts, String field, Integer rowSetting) {
         JsonNode override = opts == null ? null : opts.get(field);
         if (override != null && !override.isNull()) {
             return override.asInt();
         }
-        return optInt(taskDefaults, field, 0);
+        return rowSetting == null ? 0 : rowSetting;
     }
 
-    private static long resolveDeliveryLong(JsonNode opts, JsonNode taskDefaults, String field) {
+    private static long resolveDeliveryLong(JsonNode opts, String field, Long rowSetting) {
         JsonNode override = opts == null ? null : opts.get(field);
         if (override != null && !override.isNull()) {
             return override.asLong();
         }
-        return optLong(taskDefaults, field, 0);
+        return rowSetting == null ? 0L : rowSetting;
     }
 
     /** The caller's notes (if any) with {@code topic} and {@code subscription} stamped in. */
@@ -694,7 +713,10 @@ public final class InMemoryQueueBackend implements QueueBackend {
                     text(spec, "taskName"),
                     optText(spec, "queue", DEFAULT_QUEUE),
                     durable,
-                    durable ? null : workerId);
+                    durable ? null : workerId,
+                    boxedInt(spec, "priority"),
+                    boxedInt(spec, "maxRetries"),
+                    boxedLong(spec, "timeoutMs"));
         }
     }
 
@@ -965,6 +987,18 @@ public final class InMemoryQueueBackend implements QueueBackend {
         return value == null || value.isNull() ? fallback : value.asLong();
     }
 
+    /** A nullable int field — absent/null stays {@code null} so it reads as "queue default". */
+    private static Integer boxedInt(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.get(field);
+        return value == null || value.isNull() ? null : value.asInt();
+    }
+
+    /** A nullable long field — absent/null stays {@code null} so it reads as "queue default". */
+    private static Long boxedLong(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.get(field);
+        return value == null || value.isNull() ? null : value.asLong();
+    }
+
     /** A stored job. */
     private static final class JobRec {
         String id;
@@ -1001,6 +1035,10 @@ public final class InMemoryQueueBackend implements QueueBackend {
         final String queue;
         final boolean durable;
         final String ownerWorkerId;
+        // The subscriber task's persisted delivery settings; null = queue default.
+        final Integer priority;
+        final Integer maxRetries;
+        final Long timeoutMs;
         final long createdSeq;
         volatile long createdAt;
         volatile boolean active = true;
@@ -1012,6 +1050,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
                 String queue,
                 boolean durable,
                 String ownerWorkerId,
+                Integer priority,
+                Integer maxRetries,
+                Long timeoutMs,
                 long createdSeq,
                 long createdAt) {
             this.topic = topic;
@@ -1020,6 +1061,9 @@ public final class InMemoryQueueBackend implements QueueBackend {
             this.queue = queue;
             this.durable = durable;
             this.ownerWorkerId = ownerWorkerId;
+            this.priority = priority;
+            this.maxRetries = maxRetries;
+            this.timeoutMs = timeoutMs;
             this.createdSeq = createdSeq;
             this.createdAt = createdAt;
         }

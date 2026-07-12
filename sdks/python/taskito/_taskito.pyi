@@ -194,6 +194,9 @@ class PyQueue:
         queue: str = "default",
         durable: bool = True,
         owner_worker_id: str | None = None,
+        priority: int | None = None,
+        max_retries: int | None = None,
+        timeout_ms: int | None = None,
     ) -> None: ...
     def list_subscriptions(
         self, topic: str | None = None
@@ -216,7 +219,6 @@ class PyQueue:
         timeout: int | None = None,
         expires: float | None = None,
         result_ttl: int | None = None,
-        task_defaults: dict[str, tuple[int, int, int]] | None = None,
     ) -> list[PyJob]: ...
     def run_worker(
         self,

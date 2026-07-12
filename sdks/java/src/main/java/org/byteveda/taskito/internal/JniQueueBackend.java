@@ -294,9 +294,39 @@ public final class JniQueueBackend implements QueueBackend {
             String queue,
             boolean durable,
             String ownerWorkerIdOrNull) {
+        // Route the settings-less form through the full one (nulls = queue
+        // defaults) so this backend is reachable via either overload.
+        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, null, null, null);
+    }
+
+    @Override
+    public void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull,
+            Integer priority,
+            Integer maxRetries,
+            Long timeoutMs) {
+        // JNI carries primitives, not boxed nullables — a null delivery setting
+        // crosses as the MIN sentinel the native side reads as "queue default".
+        int nativePriority = priority == null ? Integer.MIN_VALUE : priority;
+        int nativeMaxRetries = maxRetries == null ? Integer.MIN_VALUE : maxRetries;
+        long nativeTimeoutMs = timeoutMs == null ? Long.MIN_VALUE : timeoutMs;
         withOpenHandle(() -> {
             NativeQueue.registerSubscription(
-                    handle, topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull);
+                    handle,
+                    topic,
+                    subscriptionName,
+                    taskName,
+                    queue,
+                    durable,
+                    ownerWorkerIdOrNull,
+                    nativePriority,
+                    nativeMaxRetries,
+                    nativeTimeoutMs);
             return null;
         });
     }

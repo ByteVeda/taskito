@@ -168,9 +168,10 @@ public interface QueueBackend extends AutoCloseable {
     String PUBSUB_UNSUPPORTED = "pub/sub not supported by this backend";
 
     /**
-     * Insert or update a topic subscription (idempotent on topic + name).
-     * Re-registering updates routing but preserves a paused state; an ephemeral
-     * subscription ({@code durable=false}) requires {@code ownerWorkerIdOrNull}.
+     * Insert or update a topic subscription with no per-subscriber delivery
+     * settings; deliveries take the queue defaults. This is the base method a
+     * backend overrides — the {@code Integer/Integer/Long} overload delegates
+     * here so a backend that only implements this form keeps working.
      */
     default void registerSubscription(
             String topic,
@@ -180,6 +181,34 @@ public interface QueueBackend extends AutoCloseable {
             boolean durable,
             String ownerWorkerIdOrNull) {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /**
+     * Insert or update a topic subscription (idempotent on topic + name).
+     * Re-registering updates routing but preserves a paused state; an ephemeral
+     * subscription ({@code durable=false}) requires {@code ownerWorkerIdOrNull}.
+     *
+     * <p>{@code priority}, {@code maxRetries}, and {@code timeoutMs} are the
+     * subscriber task's own delivery settings, persisted on the row so a
+     * producer-only process applies them without loading the task; {@code null}
+     * means "take the queue default".
+     *
+     * <p>The default drops the three settings and delegates to the six-argument
+     * form, so a backend that predates delivery-setting persistence still
+     * registers the subscription (it just takes queue defaults) instead of
+     * throwing.
+     */
+    default void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull,
+            Integer priority,
+            Integer maxRetries,
+            Long timeoutMs) {
+        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull);
     }
 
     /** A JSON array of subscriptions — all of them, or only a topic's active ones. */

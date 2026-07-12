@@ -5,7 +5,7 @@
 //! module only marshals arguments and views.
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jlong, jstring, JNI_FALSE};
+use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::publish_to_topic;
@@ -21,9 +21,13 @@ use crate::ffi::{guard, new_string, read_bytes, read_optional_string, read_strin
 use super::{borrow_queue, to_jboolean};
 
 /// `void registerSubscription(long handle, String topic, String subscriptionName,
-/// String taskName, String queue, boolean durable, String ownerWorkerIdOrNull)`
-/// — insert or update a subscription (idempotent on topic + name).
+/// String taskName, String queue, boolean durable, String ownerWorkerIdOrNull,
+/// int priority, int maxRetries, long timeoutMs)` — insert or update a
+/// subscription (idempotent on topic + name). The three delivery-setting
+/// numerics use `i32::MIN` / `i64::MIN` as the "unset → queue default" sentinel,
+/// since JNI carries primitives, not boxed nullables.
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSubscription<
     'local,
 >(
@@ -36,6 +40,9 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
     queue: JString<'local>,
     durable: jboolean,
     owner_worker_id: JString<'local>,
+    priority: jint,
+    max_retries: jint,
+    timeout_ms: jlong,
 ) {
     guard(&mut env, (), |env| {
         let queue_handle = unsafe { borrow_queue(handle) };
@@ -62,6 +69,9 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
             durable: durable != 0,
             owner_worker_id: owner_worker_id.as_deref(),
             created_at: now_millis(),
+            priority: (priority != jint::MIN).then_some(priority),
+            max_retries: (max_retries != jint::MIN).then_some(max_retries),
+            timeout_ms: (timeout_ms != jlong::MIN).then_some(timeout_ms),
         };
         queue_handle.storage.register_subscription(&row)?;
         Ok(())
