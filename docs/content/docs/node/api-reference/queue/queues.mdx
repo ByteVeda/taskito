@@ -1,0 +1,32 @@
+---
+title: Queue & Stats
+description: "Queue statistics, dead letter operations, pause/resume, and cleanup."
+---
+
+Scan-heavy calls (marked `Promise` below) run off the JS event loop on a
+background thread pool.
+
+## Statistics
+
+| Method | Description |
+|---|---|
+| `stats()` → `Promise<Stats>` / `statsByQueue(q)` → `Promise<Stats>` / `statsAllQueues()` → `Promise<Record<string, Stats>>` | Counts by status. |
+| `getMetrics(sinceMs, task?)` → `Promise<Metric[]>` | Raw per-execution metric rows recorded at or after the Unix-ms `sinceMs`. |
+
+## Dead letter
+
+| Method | Description |
+|---|---|
+| `deadLetters()` → `Promise<DeadJob[]>` / `retryDead(id)` / `deleteDead(id)` / `purgeDead(ms)` → `Promise<number>` | DLQ (dead-letter queue) ops. |
+
+## Queue control
+
+| Method | Description |
+|---|---|
+| `pauseQueue(q)` / `resumeQueue(q)` / `listPausedQueues()` | Queue control. |
+
+## Cleanup
+
+| Method | Description |
+|---|---|
+| `purgeCompleted(ms)` → `Promise<number>` | Drop old completed jobs. |
