@@ -29,6 +29,7 @@ import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.pubsub.SubscriptionConfig;
 import org.byteveda.taskito.resources.ResourceRuntime;
 import org.byteveda.taskito.serialization.PayloadCodec;
 import org.byteveda.taskito.serialization.Serializer;
@@ -184,6 +185,7 @@ public final class Worker implements AutoCloseable {
         private final Map<String, RetryPolicy> taskPolicies = new HashMap<>();
         private final Map<String, CircuitBreakerConfig> taskCircuitBreakers = new HashMap<>();
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
+        private List<SubscriptionConfig> subscriptions = List.of();
         private List<String> queues;
         private int concurrency;
         private Integer channelCapacity;
@@ -249,6 +251,16 @@ public final class Worker implements AutoCloseable {
         /** Register every handler in a {@link HandlerRegistry} (e.g. a generated {@code XxxTasks.handlers}). */
         public Builder register(HandlerRegistry registry) {
             registry.handlers().forEach(this::register);
+            return this;
+        }
+
+        /**
+         * Topic subscriptions to register at {@code start()} (wired by
+         * {@code Taskito.worker()}). Ephemeral entries bind to the started
+         * worker's id and are reaped once it stops heartbeating.
+         */
+        public Builder subscriptions(List<SubscriptionConfig> subscriptions) {
+            this.subscriptions = subscriptions;
             return this;
         }
 
@@ -418,11 +430,29 @@ public final class Worker implements AutoCloseable {
             if (mesh != null) {
                 options.put("meshConfig", mesh.toConfigJson());
             }
+            if (!subscriptions.isEmpty()) {
+                options.put("subscriptions", encodeSubscriptions());
+            }
             try {
                 return JSON.writeValueAsString(options);
             } catch (Exception e) {
                 throw new SerializationException("failed to encode worker options", e);
             }
+        }
+
+        /** Serialize the declared topic subscriptions into the wire shape the binding reads. */
+        private List<Map<String, Object>> encodeSubscriptions() {
+            List<Map<String, Object>> specs = new ArrayList<>(subscriptions.size());
+            for (SubscriptionConfig config : subscriptions) {
+                Map<String, Object> spec = new LinkedHashMap<>();
+                spec.put("topic", config.topic());
+                spec.put("subscriptionName", config.name());
+                spec.put("taskName", config.taskName());
+                spec.put("queue", config.queue());
+                spec.put("durable", config.durable());
+                specs.add(spec);
+            }
+            return specs;
         }
 
         /**

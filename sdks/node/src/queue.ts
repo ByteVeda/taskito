@@ -25,6 +25,7 @@ import { type Interception, InterceptionMetrics, type Interceptor } from "./inte
 import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
 import {
+  type DeliveryDefaultsInput,
   JsQueue,
   type EnqueueOptions as NativeEnqueueOptions,
   type NativeQueue,
@@ -59,12 +60,15 @@ import type {
   Metric,
   PeriodicOptions,
   PeriodicTask,
+  PublishOptions,
   QueueLimits,
   RegisteredTask,
   ReplayEntry,
   ResultOptions,
   Stats,
   StreamOptions,
+  SubscriberOptions,
+  Subscription,
   TaskLog,
   TaskMap,
   TaskOptions,
@@ -119,6 +123,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly serializer: Serializer;
   private readonly codecs: ReadonlyMap<string, PayloadCodec>;
   private readonly tasks = new Map<string, RegisteredTask>();
+  private readonly pendingSubscriptions: PendingSubscription[] = [];
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
   private readonly interceptors: Interceptor[] = [];
@@ -268,6 +273,51 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   }
 
   /**
+   * Register `handler` as an independent subscriber of `topic`. It becomes a
+   * normal task named `name` (so retries, DLQ, middleware, and rate limits all
+   * apply per subscriber), and the subscription is written to storage when a
+   * worker starts — or via {@link Queue.declareSubscriptions} in a
+   * producer-only process. `durable: false` ties the subscription to one
+   * worker: it only registers inside a running worker and is reaped once that
+   * worker stops heartbeating.
+   */
+  subscriber<Name extends string, Handler extends AnyHandler>(
+    topic: string,
+    name: Name,
+    handler: Handler,
+    options?: SubscriberOptions,
+  ): Queue<TTasks & Record<Name, Handler>> {
+    const { subscriptionName, queue, durable, ...taskOptions } = options ?? {};
+    // publish() encodes one shared payload with the queue serializer only, but
+    // the worker would reverse a per-task codec chain — a guaranteed decode
+    // failure, so reject it up front.
+    if (taskOptions.codecs && taskOptions.codecs.length > 0) {
+      throw new QueueError(
+        `subscriber "${name}": per-task codecs do not apply to topic deliveries — ` +
+          "published payloads use the queue-level serializer only",
+      );
+    }
+    const pending: PendingSubscription = {
+      topic,
+      subscriptionName: subscriptionName ?? name,
+      taskName: name,
+      queue: queue ?? "default",
+      durable: durable ?? true,
+    };
+    // Redeclaring the same (topic, subscriptionName) replaces the pending
+    // entry — declareSubscriptions must stay idempotent.
+    const existing = this.pendingSubscriptions.findIndex(
+      (sub) => sub.topic === topic && sub.subscriptionName === pending.subscriptionName,
+    );
+    if (existing >= 0) {
+      this.pendingSubscriptions[existing] = pending;
+    } else {
+      this.pendingSubscriptions.push(pending);
+    }
+    return this.task(name, handler, taskOptions);
+  }
+
+  /**
    * Register an injectable resource. Worker-scoped (default) values are built
    * once and shared across the worker's lifetime; task-scoped values are built
    * per job invocation; pooled values are checked out of a bounded pool per job
@@ -396,6 +446,124 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       return { payload, options };
     });
     return this.native.enqueueMany(name, prepared);
+  }
+
+  // ── Topic pub/sub ─────────────────────────────────────────────────
+
+  /**
+   * Publish a message to `topic`: every active subscription receives an
+   * independent job carrying the same serialized `args` (at-least-once per
+   * subscriber). Returns the created jobs — empty when the topic has no
+   * active subscribers, a valid pub/sub no-op. `idempotencyKey` dedupes per
+   * subscriber. Deliveries use the queue-level serializer; per-task codecs
+   * do not apply.
+   */
+  publish(topic: string, args: unknown[] = [], options?: PublishOptions): Promise<Job[]> {
+    const { notes, ...rest } = options ?? {};
+    const payload = Buffer.from(serializeCall(this.serializer, args));
+    return this.native.publish(topic, payload, {
+      ...rest,
+      notes: notes === undefined ? undefined : encodeNotes(notes),
+      taskDefaults: this.deliveryTaskDefaults(),
+    });
+  }
+
+  /**
+   * Write pending durable subscriptions to storage. Runs automatically at
+   * worker startup; call it explicitly in a producer-only process (one that
+   * registers subscribers but never runs a worker) so `publish()` sees them.
+   * Ephemeral subscriptions are skipped — they need an owning worker.
+   */
+  async declareSubscriptions(): Promise<void> {
+    for (const subscription of this.pendingSubscriptions) {
+      if (subscription.durable) {
+        await this.registerSubscription(subscription, undefined);
+      }
+    }
+  }
+
+  /** Remove a subscription. Resolves false if none matched. */
+  unsubscribe(topic: string, name: string): Promise<boolean> {
+    // Drop any matching pending entry too, so a later declareSubscriptions()
+    // or worker start doesn't resurrect the removed subscription.
+    const pending = this.pendingSubscriptions.findIndex(
+      (sub) => sub.topic === topic && sub.subscriptionName === name,
+    );
+    if (pending >= 0) {
+      this.pendingSubscriptions.splice(pending, 1);
+    }
+    return this.native.unsubscribe(topic, name);
+  }
+
+  /** Stop deliveries without unregistering. Resolves false if unknown. */
+  pauseSubscription(topic: string, name: string): Promise<boolean> {
+    return this.native.setSubscriptionActive(topic, name, false);
+  }
+
+  /** Resume a paused subscription. Resolves false if unknown. */
+  resumeSubscription(topic: string, name: string): Promise<boolean> {
+    return this.native.setSubscriptionActive(topic, name, true);
+  }
+
+  /** List subscriptions — all of them, or one topic's active ones. */
+  listSubscriptions(topic?: string): Promise<Subscription[]> {
+    return this.native.listSubscriptions(topic);
+  }
+
+  /**
+   * Drop ephemeral subscriptions whose owning worker is gone. Workers run
+   * this on their heartbeat cadence; exposed for operational tooling.
+   * Resolves to the number of subscriptions removed.
+   */
+  reapEphemeralSubscriptions(): Promise<number> {
+    return this.native.reapEphemeralSubscriptions();
+  }
+
+  /** Distinct topics that currently have at least one subscription. */
+  async listTopics(): Promise<string[]> {
+    const topics = new Set<string>();
+    for (const subscription of await this.native.listSubscriptions(undefined)) {
+      topics.add(subscription.topic);
+    }
+    return [...topics];
+  }
+
+  /** Flush every pending subscription at worker startup, owning the ephemeral ones. */
+  private async declareWorkerSubscriptions(workerId: string): Promise<void> {
+    for (const subscription of this.pendingSubscriptions) {
+      await this.registerSubscription(subscription, subscription.durable ? undefined : workerId);
+    }
+  }
+
+  private registerSubscription(
+    subscription: PendingSubscription,
+    ownerWorkerId: string | undefined,
+  ): Promise<void> {
+    return this.native.registerSubscription(
+      subscription.topic,
+      subscription.subscriptionName,
+      subscription.taskName,
+      subscription.queue,
+      subscription.durable,
+      ownerWorkerId,
+    );
+  }
+
+  /**
+   * Per-task delivery defaults from this process's task registry so a publish
+   * honors each subscriber's own registration options. Unset fields and tasks
+   * registered elsewhere fall back to queue defaults in the core.
+   */
+  private deliveryTaskDefaults(): Record<string, DeliveryDefaultsInput> {
+    const defaults: Record<string, DeliveryDefaultsInput> = {};
+    for (const [name, task] of this.tasks) {
+      const { maxRetries, timeoutMs } = task.options ?? {};
+      if (maxRetries === undefined && timeoutMs === undefined) {
+        continue;
+      }
+      defaults[name] = { maxRetries, timeoutMs };
+    }
+    return defaults;
   }
 
   /**
@@ -918,9 +1086,19 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       emitter: this.emitter,
       resources: this.resources,
       workflowTracker: this.trackerIfSupported(),
+      declareSubscriptions: (workerId) => this.declareWorkerSubscriptions(workerId),
       run: options,
     });
   }
+}
+
+/** A subscription recorded by {@link Queue.subscriber}, pending storage registration. */
+interface PendingSubscription {
+  topic: string;
+  subscriptionName: string;
+  taskName: string;
+  queue: string;
+  durable: boolean;
 }
 
 /** Log level used for published partial results (matches the cross-SDK contract). */

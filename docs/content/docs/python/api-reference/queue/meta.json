@@ -1,4 +1,4 @@
 {
   "title": "Queue",
-  "pages": ["jobs", "queues", "workers", "resources", "events"]
+  "pages": ["jobs", "queues", "workers", "resources", "events", "pubsub"]
 }

@@ -23,6 +23,13 @@ use crate::job::{Job, NewJob};
 /// cutoff. Kept in one place so SQLite, Postgres, and Redis can never drift.
 pub const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 
+/// Ephemeral subscriptions younger than this survive the reaper even when
+/// their owner is not (yet) in the live-worker set: a starting worker inserts
+/// its ephemeral subscriptions before its first heartbeat registers it live,
+/// and another worker's reap tick must not race that gap. Twice the dead-worker
+/// threshold keeps one full failure-detection cycle of headroom.
+pub const EPHEMERAL_SUBSCRIPTION_GRACE_MS: i64 = 2 * DEAD_WORKER_THRESHOLD_MS;
+
 // ── Shared helper types ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
@@ -341,6 +348,44 @@ macro_rules! impl_storage {
                 enabled: bool,
             ) -> $crate::error::Result<bool> {
                 self.set_periodic_enabled(name, enabled)
+            }
+            fn register_subscription(
+                &self,
+                sub: &$crate::storage::models::NewSubscriptionRow,
+            ) -> $crate::error::Result<()> {
+                self.register_subscription(sub)
+            }
+            fn list_subscriptions_for_topic(
+                &self,
+                topic: &str,
+            ) -> $crate::error::Result<Vec<$crate::storage::models::SubscriptionRow>> {
+                self.list_subscriptions_for_topic(topic)
+            }
+            fn list_subscriptions(
+                &self,
+            ) -> $crate::error::Result<Vec<$crate::storage::models::SubscriptionRow>> {
+                self.list_subscriptions()
+            }
+            fn unsubscribe(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+            ) -> $crate::error::Result<bool> {
+                self.unsubscribe(topic, subscription_name)
+            }
+            fn set_subscription_active(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                active: bool,
+            ) -> $crate::error::Result<bool> {
+                self.set_subscription_active(topic, subscription_name, active)
+            }
+            fn reap_ephemeral_subscriptions(
+                &self,
+                live_worker_ids: &[String],
+            ) -> $crate::error::Result<u64> {
+                self.reap_ephemeral_subscriptions(live_worker_ids)
             }
             fn record_metric(
                 &self,
@@ -875,6 +920,35 @@ impl Storage for StorageBackend {
     }
     fn set_periodic_enabled(&self, name: &str, enabled: bool) -> Result<bool> {
         delegate!(self, set_periodic_enabled, name, enabled)
+    }
+    fn register_subscription(&self, sub: &models::NewSubscriptionRow) -> Result<()> {
+        delegate!(self, register_subscription, sub)
+    }
+    fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<models::SubscriptionRow>> {
+        delegate!(self, list_subscriptions_for_topic, topic)
+    }
+    fn list_subscriptions(&self) -> Result<Vec<models::SubscriptionRow>> {
+        delegate!(self, list_subscriptions)
+    }
+    fn unsubscribe(&self, topic: &str, subscription_name: &str) -> Result<bool> {
+        delegate!(self, unsubscribe, topic, subscription_name)
+    }
+    fn set_subscription_active(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        active: bool,
+    ) -> Result<bool> {
+        delegate!(
+            self,
+            set_subscription_active,
+            topic,
+            subscription_name,
+            active
+        )
+    }
+    fn reap_ephemeral_subscriptions(&self, live_worker_ids: &[String]) -> Result<u64> {
+        delegate!(self, reap_ephemeral_subscriptions, live_worker_ids)
     }
     fn record_metric(
         &self,

@@ -1366,3 +1366,196 @@ fn test_periodic_pause_resume_and_delete() {
     // Toggling an unknown task reports nothing changed.
     assert!(!storage.set_periodic_enabled("ghost", false).unwrap());
 }
+
+// -- Topic pub/sub --
+
+fn make_sub<'a>(
+    topic: &'a str,
+    name: &'a str,
+    task_name: &'a str,
+    owner: Option<&'a str>,
+    created_at: i64,
+) -> crate::storage::models::NewSubscriptionRow<'a> {
+    crate::storage::models::NewSubscriptionRow {
+        topic,
+        subscription_name: name,
+        task_name,
+        queue: "default",
+        active: true,
+        durable: owner.is_none(),
+        owner_worker_id: owner,
+        created_at,
+    }
+}
+
+#[test]
+fn test_register_subscription_is_idempotent_upsert() {
+    let storage = test_storage();
+    let now = now_millis();
+
+    storage
+        .register_subscription(&make_sub("orders", "emailer", "send_email", None, now))
+        .unwrap();
+    // Re-registering the same (topic, name) with a different task_name updates in
+    // place rather than inserting a duplicate.
+    storage
+        .register_subscription(&make_sub("orders", "emailer", "send_email_v2", None, now))
+        .unwrap();
+
+    let subs = storage.list_subscriptions_for_topic("orders").unwrap();
+    assert_eq!(subs.len(), 1, "upsert must not duplicate the composite key");
+    assert_eq!(subs[0].task_name, "send_email_v2");
+}
+
+#[test]
+fn test_list_subscriptions_for_topic_active_only_in_order() {
+    let storage = test_storage();
+    let now = now_millis();
+
+    storage
+        .register_subscription(&make_sub("orders", "first", "task_a", None, now))
+        .unwrap();
+    storage
+        .register_subscription(&make_sub("orders", "second", "task_b", None, now + 1))
+        .unwrap();
+    storage
+        .register_subscription(&make_sub("orders", "third", "task_c", None, now + 2))
+        .unwrap();
+    // A subscription on another topic must not leak into the topic listing.
+    storage
+        .register_subscription(&make_sub("shipments", "other", "task_d", None, now))
+        .unwrap();
+
+    // Pausing "second" drops it from the active listing.
+    assert!(storage
+        .set_subscription_active("orders", "second", false)
+        .unwrap());
+
+    let names: Vec<String> = storage
+        .list_subscriptions_for_topic("orders")
+        .unwrap()
+        .into_iter()
+        .map(|s| s.subscription_name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["first".to_string(), "third".to_string()],
+        "active subscriptions only, in registration order"
+    );
+
+    // list_subscriptions returns every row across topics, active or paused.
+    assert_eq!(storage.list_subscriptions().unwrap().len(), 4);
+}
+
+#[test]
+fn test_unsubscribe_unknown_returns_false() {
+    let storage = test_storage();
+    assert!(!storage.unsubscribe("orders", "ghost").unwrap());
+
+    storage
+        .register_subscription(&make_sub(
+            "orders",
+            "emailer",
+            "send_email",
+            None,
+            now_millis(),
+        ))
+        .unwrap();
+    assert!(storage.unsubscribe("orders", "emailer").unwrap());
+    assert!(storage
+        .list_subscriptions_for_topic("orders")
+        .unwrap()
+        .is_empty());
+    // Removing it a second time reports nothing removed.
+    assert!(!storage.unsubscribe("orders", "emailer").unwrap());
+}
+
+#[test]
+fn test_set_subscription_active_pause_resume_roundtrip() {
+    let storage = test_storage();
+    storage
+        .register_subscription(&make_sub(
+            "orders",
+            "emailer",
+            "send_email",
+            None,
+            now_millis(),
+        ))
+        .unwrap();
+
+    // Pause: gone from the active listing but still registered.
+    assert!(storage
+        .set_subscription_active("orders", "emailer", false)
+        .unwrap());
+    assert!(storage
+        .list_subscriptions_for_topic("orders")
+        .unwrap()
+        .is_empty());
+    assert_eq!(storage.list_subscriptions().unwrap().len(), 1);
+
+    // Resume: back in the active listing.
+    assert!(storage
+        .set_subscription_active("orders", "emailer", true)
+        .unwrap());
+    assert_eq!(
+        storage
+            .list_subscriptions_for_topic("orders")
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // Toggling an unknown subscription reports nothing changed.
+    assert!(!storage
+        .set_subscription_active("orders", "ghost", true)
+        .unwrap());
+}
+
+#[test]
+fn test_reap_ephemeral_subscriptions_spares_durable_and_live() {
+    let storage = test_storage();
+    // Aged past the registration grace window so the reaper may act on them;
+    // a fresh row must survive even with a dead owner (startup race guard).
+    let now = now_millis() - crate::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS - 1_000;
+
+    // Durable (owner NULL) — must never be reaped.
+    storage
+        .register_subscription(&make_sub("orders", "durable", "task_a", None, now))
+        .unwrap();
+    // Ephemeral, owner alive — survives.
+    storage
+        .register_subscription(&make_sub("orders", "live", "task_b", Some("worker-1"), now))
+        .unwrap();
+    // Ephemeral, owner dead — reaped.
+    storage
+        .register_subscription(&make_sub("orders", "dead", "task_c", Some("worker-2"), now))
+        .unwrap();
+
+    let live = vec!["worker-1".to_string()];
+    let removed = storage.reap_ephemeral_subscriptions(&live).unwrap();
+    assert_eq!(removed, 1, "only the dead-owner ephemeral row is reaped");
+
+    let remaining: Vec<String> = storage
+        .list_subscriptions()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.subscription_name)
+        .collect();
+    assert!(remaining.contains(&"durable".to_string()));
+    assert!(remaining.contains(&"live".to_string()));
+    assert!(!remaining.contains(&"dead".to_string()));
+
+    // Re-reaping with the same live set removes nothing more.
+    assert_eq!(storage.reap_ephemeral_subscriptions(&live).unwrap(), 0);
+
+    // With no live workers, every ephemeral row is reaped but the durable one stays.
+    let removed = storage.reap_ephemeral_subscriptions(&[]).unwrap();
+    assert_eq!(removed, 1);
+    let names: Vec<String> = storage
+        .list_subscriptions()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.subscription_name)
+        .collect();
+    assert_eq!(names, vec!["durable".to_string()]);
+}

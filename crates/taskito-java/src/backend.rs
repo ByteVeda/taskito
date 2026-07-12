@@ -107,6 +107,19 @@ pub fn enqueue_batch_dedup(
     Ok(ids.into_iter().flatten().collect())
 }
 
+/// Drop ephemeral topic subscriptions whose owning worker is no longer in the
+/// worker registry. Durable rows and rows owned by a live worker are untouched.
+/// Callers prune dead workers first — a stale registry row keeps its
+/// subscriptions alive. Returns the count removed.
+pub fn reap_ephemeral_subscriptions(storage: &StorageBackend) -> Result<u64, BindingError> {
+    let live: Vec<String> = storage
+        .list_workers()?
+        .into_iter()
+        .map(|worker| worker.worker_id)
+        .collect();
+    Ok(storage.reap_ephemeral_subscriptions(&live)?)
+}
+
 /// Error for a backend that is unknown or whose cargo feature is not compiled in.
 fn unknown_backend(name: &str) -> BindingError {
     BindingError::new(format!(

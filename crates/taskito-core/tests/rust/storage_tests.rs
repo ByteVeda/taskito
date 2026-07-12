@@ -852,6 +852,145 @@ fn test_periodic_crud(s: &impl Storage) {
     assert!(!s.delete_periodic("pc-a").unwrap());
 }
 
+fn test_topic_subscriptions_crud(s: &impl Storage) {
+    use taskito_core::storage::models::NewSubscriptionRow;
+    // Aged past the registration grace window so the reaper may act on the
+    // ephemeral rows created below; freshness is covered by the grace test.
+    let now = now_millis() - taskito_core::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS - 1_000;
+    let sub = |topic: &'static str,
+               name: &'static str,
+               task_name: &'static str,
+               owner: Option<&'static str>,
+               created_at: i64| NewSubscriptionRow {
+        topic,
+        subscription_name: name,
+        task_name,
+        queue: "default",
+        active: true,
+        durable: owner.is_none(),
+        owner_worker_id: owner,
+        created_at,
+    };
+
+    // Upsert idempotency: re-registering (topic, name) updates in place.
+    s.register_subscription(&sub("ts-orders", "emailer", "send_email", None, now))
+        .unwrap();
+    s.register_subscription(&sub("ts-orders", "emailer", "send_email_v2", None, now))
+        .unwrap();
+    s.register_subscription(&sub("ts-orders", "analytics", "track", None, now + 1))
+        .unwrap();
+
+    let listed = s.list_subscriptions_for_topic("ts-orders").unwrap();
+    assert_eq!(
+        listed.len(),
+        2,
+        "upsert must not duplicate the composite key"
+    );
+    // Registration order (created_at, then name).
+    assert_eq!(
+        listed
+            .iter()
+            .map(|r| r.subscription_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["emailer", "analytics"]
+    );
+    assert_eq!(listed[0].task_name, "send_email_v2");
+
+    // Pausing drops from the active listing but keeps the registration.
+    assert!(s
+        .set_subscription_active("ts-orders", "emailer", false)
+        .unwrap());
+    let active_names: Vec<String> = s
+        .list_subscriptions_for_topic("ts-orders")
+        .unwrap()
+        .into_iter()
+        .map(|r| r.subscription_name)
+        .collect();
+    assert_eq!(active_names, vec!["analytics".to_string()]);
+    assert!(s
+        .list_subscriptions()
+        .unwrap()
+        .iter()
+        .any(|r| r.topic == "ts-orders" && r.subscription_name == "emailer"));
+
+    // Resuming brings it back.
+    assert!(s
+        .set_subscription_active("ts-orders", "emailer", true)
+        .unwrap());
+    assert_eq!(
+        s.list_subscriptions_for_topic("ts-orders").unwrap().len(),
+        2
+    );
+
+    // Toggling / unsubscribing an unknown row reports "not found".
+    assert!(!s
+        .set_subscription_active("ts-orders", "ghost", true)
+        .unwrap());
+    assert!(!s.unsubscribe("ts-orders", "ghost").unwrap());
+
+    // Re-registering must not resume a paused subscription.
+    assert!(s
+        .set_subscription_active("ts-orders", "emailer", false)
+        .unwrap());
+    s.register_subscription(&sub("ts-orders", "emailer", "send_email_v3", None, now))
+        .unwrap();
+    assert!(
+        !s.list_subscriptions()
+            .unwrap()
+            .iter()
+            .any(|r| r.subscription_name == "emailer" && r.active),
+        "re-registration must preserve the paused state"
+    );
+    assert!(s
+        .set_subscription_active("ts-orders", "emailer", true)
+        .unwrap());
+
+    // A fresh ephemeral row (inside the grace window) survives a reap even
+    // with a dead owner — startup registers subscriptions before the first
+    // heartbeat lands.
+    s.register_subscription(&sub(
+        "ts-live",
+        "fresh",
+        "task_a",
+        Some("ts-worker-gone"),
+        now_millis(),
+    ))
+    .unwrap();
+    assert_eq!(s.reap_ephemeral_subscriptions(&[]).unwrap(), 0);
+    assert!(s.unsubscribe("ts-live", "fresh").unwrap());
+
+    // Reaper: only dead-owner ephemeral rows go; durable rows never do.
+    s.register_subscription(&sub("ts-live", "live", "task_b", Some("ts-worker-1"), now))
+        .unwrap();
+    s.register_subscription(&sub("ts-live", "dead", "task_c", Some("ts-worker-2"), now))
+        .unwrap();
+    let removed = s
+        .reap_ephemeral_subscriptions(&["ts-worker-1".to_string()])
+        .unwrap();
+    assert_eq!(removed, 1, "only the dead-owner ephemeral row is reaped");
+    let live_topic: Vec<String> = s
+        .list_subscriptions_for_topic("ts-live")
+        .unwrap()
+        .into_iter()
+        .map(|r| r.subscription_name)
+        .collect();
+    assert_eq!(live_topic, vec!["live".to_string()]);
+    // Durable rows on ts-orders untouched by the reaper.
+    assert_eq!(
+        s.list_subscriptions_for_topic("ts-orders").unwrap().len(),
+        2
+    );
+
+    // Unsubscribe removes the row.
+    assert!(s.unsubscribe("ts-orders", "emailer").unwrap());
+    assert!(s.unsubscribe("ts-orders", "analytics").unwrap());
+    assert!(s
+        .list_subscriptions_for_topic("ts-orders")
+        .unwrap()
+        .is_empty());
+    assert!(s.unsubscribe("ts-live", "live").unwrap());
+}
+
 /// Two workers draining one queue concurrently must claim disjoint jobs — every
 /// enqueued job is handed out exactly once, never twice. Exercises the Postgres
 /// `FOR UPDATE SKIP LOCKED` dequeue path and the SQLite `BEGIN IMMEDIATE` /
@@ -911,6 +1050,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_workers(s);
     test_pause_resume_queue(s);
     test_periodic_crud(s);
+    test_topic_subscriptions_crud(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);

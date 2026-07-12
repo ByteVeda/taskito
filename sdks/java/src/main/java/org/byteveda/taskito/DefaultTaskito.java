@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,6 +39,7 @@ import org.byteveda.taskito.model.JobFilter;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
+import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
 import org.byteveda.taskito.model.WorkerInfo;
@@ -46,6 +48,9 @@ import org.byteveda.taskito.predicates.EnqueueDecision;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.predicates.PredicateContext;
+import org.byteveda.taskito.pubsub.PublishOptions;
+import org.byteveda.taskito.pubsub.SubscriptionConfig;
+import org.byteveda.taskito.pubsub.SubscriptionOptions;
 import org.byteveda.taskito.resources.PoolConfig;
 import org.byteveda.taskito.resources.ResourceContext;
 import org.byteveda.taskito.resources.ResourceDefinition;
@@ -83,6 +88,7 @@ final class DefaultTaskito implements Taskito {
     private final ResourceRuntime resources = new ResourceRuntime();
     private final Map<String, List<EnqueueGate>> gates = new ConcurrentHashMap<>();
     private final List<Interceptor> interceptors = new CopyOnWriteArrayList<>();
+    private final List<SubscriptionConfig> subscriptions = new CopyOnWriteArrayList<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer, Map<String, PayloadCodec> codecs) {
         this.backend = backend;
@@ -659,6 +665,127 @@ final class DefaultTaskito implements Taskito {
         return backend.setPeriodicEnabled(name, true);
     }
 
+    // ── Pub/Sub ─────────────────────────────────────────────────────
+
+    @Override
+    public <T> Taskito subscribe(String topic, Task<T> task) {
+        return subscribe(topic, task, SubscriptionOptions.none());
+    }
+
+    @Override
+    public <T> Taskito subscribe(String topic, Task<T> task, SubscriptionOptions options) {
+        String name = options.name() != null ? options.name() : task.name();
+        EnqueueOptions taskDefaults = task.options();
+        // A durable subscription registers now so producer-only processes see it;
+        // an ephemeral one waits for a worker start to bind to that worker's id.
+        // Register before recording locally, so a failed registration leaves no
+        // orphaned local declaration behind.
+        if (options.durable()) {
+            backend.registerSubscription(topic, name, task.name(), options.queue(), true, null);
+        }
+        // Re-declaring (topic, name) replaces the previous local entry, mirroring
+        // the backend's upsert instead of accumulating duplicates.
+        subscriptions.removeIf(
+                existing -> existing.topic().equals(topic) && existing.name().equals(name));
+        subscriptions.add(new SubscriptionConfig(
+                topic,
+                name,
+                task.name(),
+                options.queue(),
+                options.durable(),
+                taskDefaults.priority(),
+                taskDefaults.maxRetries(),
+                taskDefaults.timeoutMs()));
+        return this;
+    }
+
+    @Override
+    public List<Job> publish(String topic, Object payload) {
+        return publish(topic, payload, PublishOptions.none());
+    }
+
+    @Override
+    public List<Job> publish(String topic, Object payload, PublishOptions options) {
+        // Deliveries use the queue-level serializer: there is one payload for all
+        // subscribers, so per-task codec chains don't apply to topic tasks.
+        byte[] payloadBytes = serializer.serializeCall(payload);
+        return decodeList(backend.publishJson(topic, payloadBytes, encode(publishRequest(options))), Job.class);
+    }
+
+    /**
+     * The wire shape of a publish: the caller's options plus each locally
+     * subscribed task's own delivery settings, so deliveries honor per-task
+     * defaults. Tasks subscribed elsewhere fall back to the core defaults.
+     */
+    private Map<String, Object> publishRequest(PublishOptions options) {
+        Map<String, Object> request = new LinkedHashMap<>();
+        putIfSet(request, "idempotencyKey", options.idempotencyKey());
+        putIfSet(request, "metadata", options.metadata());
+        putIfSet(request, "notes", options.notes());
+        putIfSet(request, "priority", options.priority());
+        putIfSet(request, "delayMs", options.delayMs());
+        putIfSet(request, "maxRetries", options.maxRetries());
+        putIfSet(request, "timeoutMs", options.timeoutMs());
+        putIfSet(request, "expiresMs", options.expiresMs());
+        putIfSet(request, "resultTtlMs", options.resultTtlMs());
+        Map<String, Map<String, Object>> taskDefaults = new LinkedHashMap<>();
+        for (SubscriptionConfig config : subscriptions) {
+            Map<String, Object> defaults = new LinkedHashMap<>();
+            defaults.put("priority", config.taskPriority() == null ? 0 : config.taskPriority());
+            defaults.put("maxRetries", config.taskMaxRetries() == null ? 0 : config.taskMaxRetries());
+            defaults.put("timeoutMs", config.taskTimeoutMs() == null ? 0L : config.taskTimeoutMs());
+            taskDefaults.put(config.taskName(), defaults);
+        }
+        if (!taskDefaults.isEmpty()) {
+            request.put("taskDefaults", taskDefaults);
+        }
+        return request;
+    }
+
+    private static void putIfSet(Map<String, Object> request, String key, Object value) {
+        if (value != null) {
+            request.put(key, value);
+        }
+    }
+
+    @Override
+    public boolean unsubscribe(String topic, String name) {
+        // Drop the local declaration too, or a later worker start would
+        // re-register the subscription from the shared worker state.
+        subscriptions.removeIf(
+                config -> config.topic().equals(topic) && config.name().equals(name));
+        return backend.unsubscribe(topic, name);
+    }
+
+    @Override
+    public boolean pauseSubscription(String topic, String name) {
+        return backend.setSubscriptionActive(topic, name, false);
+    }
+
+    @Override
+    public boolean resumeSubscription(String topic, String name) {
+        return backend.setSubscriptionActive(topic, name, true);
+    }
+
+    @Override
+    public List<Subscription> listSubscriptions() {
+        return decodeList(backend.listSubscriptionsJson(null), Subscription.class);
+    }
+
+    @Override
+    public List<Subscription> listSubscriptions(String topic) {
+        return decodeList(backend.listSubscriptionsJson(topic), Subscription.class);
+    }
+
+    @Override
+    public List<String> listTopics() {
+        Set<String> topics = new LinkedHashSet<>();
+        for (Subscription subscription : listSubscriptions()) {
+            topics.add(subscription.topic);
+        }
+        return new ArrayList<>(topics);
+    }
+
     // ── Workflows ───────────────────────────────────────────────────
 
     @Override
@@ -901,7 +1028,10 @@ final class DefaultTaskito implements Taskito {
     @Override
     public Worker.Builder worker() {
         // Each worker gets its own runtime (own WORKER-scoped cache) over shared definitions.
-        return Worker.builder(backend, serializer, middleware, resources.forWorker(), codecs);
+        // The live subscription list is shared so subscribe() calls made before
+        // start() are registered under the started worker's id.
+        return Worker.builder(backend, serializer, middleware, resources.forWorker(), codecs)
+                .subscriptions(subscriptions);
     }
 
     @Override

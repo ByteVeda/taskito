@@ -1,0 +1,415 @@
+---
+title: Topic Pub/Sub
+description: "Fan a published message out to N independent subscribers — each delivered as its own ordinary job, so retries, DLQ, and middleware apply per subscriber."
+---
+
+A **topic** has any number of independent **subscribers**. A subscriber is
+nothing special — it's an ordinary task plus a registry row mapping
+`(topic, subscription name) → (task, queue)`. Publishing to a topic fans the
+message out as one ordinary job per active subscription, so every task
+feature — retries, the dead-letter queue, middleware, rate limits — applies
+independently per subscriber. A failing subscriber never affects its
+siblings, and publishing to a topic with zero subscribers is a valid no-op
+that returns an empty list.
+
+<SdkSwap python={<>Subscribe with the <code>@queue.subscriber()</code> decorator.</>} node={<>Subscribe with <code>queue.subscriber()</code>.</>} java={<>Subscribe with <code>taskito.subscribe()</code>.</>} />
+
+<Mermaid
+  chart={`flowchart LR
+    P["publish('orders', 42)"] --> T{{"Topic: orders"}}
+    T --> S1["Subscription: email"]
+    T --> S2["Subscription: analytics"]
+    S1 --> J1["Job: send_confirmation_email"]
+    S2 --> J2["Job: track_order"]`}
+/>
+
+## Quick start
+
+Register a subscriber like any other task, then publish a message to the
+topic — every active subscription gets its own delivery:
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+from taskito import Queue
+
+queue = Queue()
+
+@queue.subscriber("orders", name="email")
+def send_confirmation_email(order_id: int) -> None:
+    ...
+
+@queue.subscriber("orders", name="analytics")
+def track_order(order_id: int) -> None:
+    ...
+
+queue.declare_subscriptions()  # only needed before run_worker() has started
+queue.publish("orders", 42)    # -> [JobResult, JobResult] — one per subscriber
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+import { Queue } from "@byteveda/taskito";
+
+const queue = new Queue({ dbPath: "orders.db" });
+
+queue.subscriber("orders", "sendConfirmationEmail", (orderId: number) => {
+  // ...
+}, { subscriptionName: "email" });
+
+queue.subscriber("orders", "trackOrder", (orderId: number) => {
+  // ...
+}, { subscriptionName: "analytics" });
+
+await queue.declareSubscriptions(); // only needed before runWorker() has started
+await queue.publish("orders", [42]); // -> Job[] — one per subscriber
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.pubsub.SubscriptionOptions;
+import org.byteveda.taskito.task.Task;
+
+Task<Integer> sendConfirmationEmail = Task.of("send_confirmation_email", Integer.class);
+Task<Integer> trackOrder = Task.of("track_order", Integer.class);
+
+try (Taskito taskito = Taskito.builder().sqlite("orders.db").open()) {
+    taskito.subscribe("orders", sendConfirmationEmail,
+            SubscriptionOptions.builder().name("email").build());
+    taskito.subscribe("orders", trackOrder,
+            SubscriptionOptions.builder().name("analytics").build());
+
+    taskito.publish("orders", 42); // -> List<Job> — one per subscriber
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="java">
+
+`subscribe()` only wires the routing — it doesn't take a handler. Register the
+handler itself on the worker the same way you would for any other task:
+
+```java
+taskito.worker()
+        .handle(sendConfirmationEmail, orderId -> mailer.sendConfirmation(orderId))
+        .handle(trackOrder, orderId -> analytics.record(orderId))
+        .start();
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="python">
+
+`declare_subscriptions()` writes durable subscriptions to storage immediately —
+call it in a producer-only process (one that imports subscriber modules but
+never runs a worker) so `publish()` sees them. `run_worker()` does this
+automatically at startup, so a process that both subscribes and runs a worker
+doesn't need the explicit call.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+`declareSubscriptions()` writes durable subscriptions to storage immediately —
+call it in a producer-only process (one that registers subscribers but never
+runs a worker) so `publish()` sees them. `runWorker()` does this automatically
+at startup, so a process that both subscribes and runs a worker doesn't need
+the explicit call.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+A durable `subscribe()` call registers immediately — there's no separate
+"declare" step. A producer-only process just needs to call `subscribe()`
+before it calls `publish()`.
+
+</SdkOnly>
+
+## Subscription lifecycle
+
+### Durable vs. ephemeral
+
+Subscriptions are **durable** by default: the registry row persists until you
+unsubscribe, and a worker that's down just lets its deliveries pile up as
+ordinary pending jobs. An **ephemeral** subscription (`durable=False` /
+`durable: false` / `SubscriptionOptions.durable(false)`) ties the subscription
+to one worker process instead — it's only registered while that worker is
+running, and it's automatically reaped once that worker stops heartbeating.
+Use ephemeral subscriptions for throwaway consumers (a debug tail, a
+short-lived fan-out watcher) that shouldn't leave a stale registration behind
+if the process never comes back.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.subscriber("orders", name="debug-tail", durable=False)
+def tail(order_id: int) -> None:
+    print(f"order {order_id}")
+
+queue.run_worker()  # the subscription registers here, owned by this worker
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.subscriber("orders", "tail", (orderId: number) => {
+  console.log(`order ${orderId}`);
+}, { durable: false });
+
+queue.runWorker(); // the subscription registers here, owned by this worker
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+Task<Integer> tail = Task.of("tail", Integer.class);
+taskito.subscribe("orders", tail, SubscriptionOptions.builder().durable(false).build());
+
+// The subscription registers once a worker actually starts and handles it.
+try (Worker worker = taskito.worker().handle(tail, orderId -> log(orderId)).start()) {
+    ...
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<Callout type="info" title="Reaping is automatic">
+  Every SDK reaps ephemeral subscriptions on the worker heartbeat cadence, so
+  a crashed or stopped worker's ephemeral rows disappear without operator
+  intervention.
+</Callout>
+
+### Re-registering updates instead of duplicating
+
+Registering the same `(topic, subscription name)` again updates its routing
+target (task, queue) in place instead of creating a second row — safe to call
+on every process restart.
+
+### Pause, resume, unsubscribe
+
+Pausing stops deliveries without forgetting the subscription — useful for a
+maintenance window on one consumer while the others keep receiving messages.
+Unsubscribing removes the registry row entirely.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.pause_subscription("orders", "email")   # stop deliveries to "email"
+queue.publish("orders", 1)                    # only "analytics" is delivered
+queue.resume_subscription("orders", "email")
+
+queue.unsubscribe("orders", "email")          # remove it entirely
+queue.list_subscriptions("orders")            # active subscriptions for a topic
+queue.list_topics()                           # distinct topics with a subscriber
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+await queue.pauseSubscription("orders", "email");
+await queue.publish("orders", [1]);            // only "analytics" is delivered
+await queue.resumeSubscription("orders", "email");
+
+await queue.unsubscribe("orders", "email");    // remove it entirely
+await queue.listSubscriptions("orders");       // active subscriptions for a topic
+await queue.listTopics();                      // distinct topics with a subscriber
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.pauseSubscription("orders", "email");
+taskito.publish("orders", 1);                  // only "analytics" is delivered
+taskito.resumeSubscription("orders", "email");
+
+taskito.unsubscribe("orders", "email");        // remove it entirely
+taskito.listSubscriptions("orders");           // active subscriptions for a topic
+taskito.listTopics();                          // distinct topics with a subscriber
+```
+
+  </Tab>
+</CodeTabs>
+
+### Late-join boundary
+
+<Callout type="warn" title="No replay">
+  There's no history to replay. A subscription only receives messages
+  published **after** it was registered — publishing before a subscriber
+  exists, or while it's unsubscribed, permanently misses that subscriber. If
+  you need durable event history, that's a different problem than pub/sub
+  fan-out; this feature is about delivering *live* messages to every current
+  subscriber, each with full task semantics.
+</Callout>
+
+## Delivery semantics
+
+### At-least-once, per subscriber
+
+Each delivery is an ordinary job, so it inherits the same
+<SdkLink to="guides/reliability/guarantees">at-least-once delivery</SdkLink>
+guarantee as everything else: a delivery is never silently lost, but a crash
+between running the handler and recording the result can run it twice. A
+subscriber that exhausts its retries dead-letters **independently** — the
+`send_confirmation_email` delivery failing and dead-lettering has no effect
+on the `track_order` delivery for the same message.
+
+### Delivery settings resolve per subscriber
+
+An unset delivery setting (priority, max retries, timeout) resolves in this
+order:
+
+1. An explicit option passed to `publish()`.
+2. The subscriber task's own registered default.
+3. The queue's default.
+
+So one high-priority subscriber and one best-effort subscriber can consume
+the exact same published message, each retried and prioritized according to
+its own task registration — unless the publisher explicitly overrides a
+setting for every delivery.
+
+### Idempotency-key dedup is per subscriber
+
+`idempotency_key` / `idempotencyKey` dedupes **per subscriber**, not per
+publish call — internally it's salted with the subscription name before
+becoming the delivery's dedup key. Republishing the same key creates no new
+deliveries for subscribers that already received it, but a subscription added
+*after* the first publish still gets its own copy the next time that key (or
+any key) is published, because its salted key hasn't been used yet.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+first = queue.publish("orders", 1, idempotency_key="evt-42")   # 2 subscribers -> 2 jobs
+second = queue.publish("orders", 1, idempotency_key="evt-42")  # same jobs, no new rows
+
+@queue.subscriber("orders", name="audit")
+def audit_order(order_id: int) -> None: ...
+queue.declare_subscriptions()
+
+third = queue.publish("orders", 1, idempotency_key="evt-42")   # "audit" gets its own delivery
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const first = await queue.publish("orders", [1], { idempotencyKey: "evt-42" });  // 2 jobs
+const second = await queue.publish("orders", [1], { idempotencyKey: "evt-42" }); // same jobs
+
+queue.subscriber("orders", "auditOrder", (orderId: number) => {}, { subscriptionName: "audit" });
+await queue.declareSubscriptions();
+
+const third = await queue.publish("orders", [1], { idempotencyKey: "evt-42" }); // "audit" delivered
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+PublishOptions keyed = PublishOptions.builder().idempotencyKey("evt-42").build();
+List<Job> first = taskito.publish("orders", 1, keyed);   // 2 subscribers -> 2 jobs
+List<Job> second = taskito.publish("orders", 1, keyed);  // same jobs, no new rows
+
+Task<Integer> auditOrder = Task.of("audit_order", Integer.class);
+taskito.subscribe("orders", auditOrder, SubscriptionOptions.builder().name("audit").build());
+List<Job> third = taskito.publish("orders", 1, keyed);   // "audit" gets its own delivery
+```
+
+  </Tab>
+</CodeTabs>
+
+### Every delivery is stamped with `topic` and `subscription`
+
+Every delivery's structured notes carry the topic and the subscription name
+it was routed through, merged with any notes the publisher supplied — filter
+or group deliveries on the dashboard, or in `list_jobs()`/`listJobs()`
+queries, by which subscriber received them.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+(result,) = queue.publish("orders", 5, notes={"tenant": "acme"})
+job = queue.get_job(result.id)
+job.notes  # {"topic": "orders", "subscription": "email", "tenant": "acme"}
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+const [job] = await queue.publish("orders", [5], { notes: { tenant: "acme" } });
+JSON.parse(job.notes ?? "{}");
+// { topic: "orders", subscription: "email", tenant: "acme" }
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+List<Job> jobs = taskito.publish("orders", 5,
+        PublishOptions.builder().notes(Map.of("tenant", "acme")).build());
+Map<String, Object> notes = jobs.get(0).notesMap().orElseThrow();
+// {topic=orders, subscription=email, tenant=acme}
+```
+
+  </Tab>
+</CodeTabs>
+
+## Cross-SDK topics
+
+A publish writes exactly **one** serialized payload, shared by every
+delivery — it's encoded once with the queue-level serializer, not
+per-subscriber, so per-task serializer overrides don't apply to topic
+deliveries.
+
+<Callout type="info" title="Cross-SDK payload contract">
+  When a topic's publisher and its subscribers aren't all the same language,
+  configure the <SdkLink to="guides/extensibility/serializers">`CborSerializer`</SdkLink>
+  on every process that touches the topic — it's the wire format the
+  cross-SDK contract is built on, and it round-trips the types JSON can't
+  (big integers, `datetime`/`Date`, bytes, decimals) losslessly. A single
+  object/dict argument maps most cleanly onto every language's handler
+  signature.
+</Callout>
+
+## Operational notes
+
+- **A down durable subscriber doesn't lose messages.** Its deliveries just
+  accumulate as ordinary pending jobs in its queue until a worker resumes
+  consuming it — the same backlog you'd see from any other stalled queue, and
+  visible the same way (`stats()`, the dashboard).
+- **Retention is normal job retention.** There's no separate pub/sub log or
+  replay buffer — a delivery is purged, replayed, or expired exactly like any
+  other job, via `result_ttl`, `purge_completed()`, and the dead-letter queue.
+- **Publish multiplies writes by subscriber count.** A topic with 20 active
+  subscribers turns every `publish()` call into 20 job rows. For a high-fanout
+  topic, set an aggressive `result_ttl` on the publish (or on the subscriber
+  tasks themselves) so completed deliveries don't pile up in storage between
+  cleanup passes.
+
+## See also
+
+- <SdkLink to="guides/reliability/guarantees">Delivery guarantees</SdkLink> —
+  the at-least-once contract every delivery inherits.
+- <SdkLink to="guides/reliability/idempotency">Idempotency</SdkLink> — how
+  dedup keys are derived and prioritized for a single enqueue.
+- <SdkLink to="guides/extensibility/serializers">Serializers</SdkLink> — the
+  `CborSerializer` cross-SDK wire format used for cross-language topics.

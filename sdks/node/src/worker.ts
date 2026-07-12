@@ -53,6 +53,8 @@ export interface WorkerStartParams {
   resources: ResourceRuntime;
   /** The queue's shared tracker (undefined on addons without workflows). */
   workflowTracker?: WorkflowTracker;
+  /** Flushes the queue's pending topic subscriptions under this worker's id. */
+  declareSubscriptions?: (workerId: string) => Promise<void>;
   run?: WorkerRunOptions;
 }
 
@@ -60,6 +62,7 @@ export interface WorkerStartParams {
 export class Worker {
   private constructor(
     private readonly native: NativeWorker,
+    private readonly queue: NativeQueue,
     private readonly resources: ResourceRuntime,
     private readonly heartbeat: ReturnType<typeof setInterval>,
   ) {}
@@ -234,6 +237,30 @@ export class Worker {
     // only) — recreation of failing resources is per runtime, not per worker.
     resources.acquireWorker();
 
+    // Register this worker's topic subscriptions (ephemeral ones under its id)
+    // now that the id exists. Registration is idempotent, so a failed flush is
+    // retried whole on every heartbeat tick until it succeeds — a silently
+    // missing subscription would drop deliveries for the worker's lifetime.
+    const flushSubscriptions = params.declareSubscriptions;
+    let subscriptionsDeclared = flushSubscriptions === undefined;
+    let declarationInFlight = false;
+    const declareSubscriptions = (): void => {
+      if (subscriptionsDeclared || declarationInFlight || !flushSubscriptions) {
+        return;
+      }
+      declarationInFlight = true;
+      void flushSubscriptions(native.id)
+        .then(() => {
+          subscriptionsDeclared = true;
+        })
+        .catch((error) => {
+          log.error(() => "subscription registration failed; retrying on next heartbeat", error);
+        })
+        .finally(() => {
+          declarationInFlight = false;
+        });
+    };
+
     // Heartbeat with current resource health so inspection (and dead-worker
     // reaping) see this worker as alive. Failures are logged, never thrown —
     // the next beat retries. First beat goes out immediately.
@@ -242,16 +269,28 @@ export class Worker {
       void queue.workerHeartbeat(native.id, snapshot && JSON.stringify(snapshot)).catch((error) => {
         log.debug(() => "worker heartbeat failed", error);
       });
+      // Same cadence: prune ephemeral subscriptions whose owner is gone.
+      // Per-tick failures are swallowed like the heartbeat's — the next
+      // beat retries.
+      void queue.reapEphemeralSubscriptions().catch((error) => {
+        log.debug(() => "ephemeral subscription reap failed", error);
+      });
+      declareSubscriptions();
     };
     sendHeartbeat();
     const heartbeat = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();
 
-    return new Worker(native, resources, heartbeat);
+    return new Worker(native, queue, resources, heartbeat);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
   stop(): void {
+    // One last sweep for orphaned ephemeral subscriptions before this worker's
+    // reap cadence goes away. Best effort — stopping must never throw.
+    void this.queue.reapEphemeralSubscriptions().catch((error) => {
+      log.debug(() => "final ephemeral subscription reap failed", error);
+    });
     clearInterval(this.heartbeat);
     this.native.stop();
     // Dispose worker-scoped resources after the native worker quiesces (the

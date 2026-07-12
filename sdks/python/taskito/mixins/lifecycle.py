@@ -228,6 +228,10 @@ class QueueLifecycleMixin:
 
         # Generate worker ID and start Python-side heartbeat thread
         worker_id = str(uuid.uuid4())
+
+        # Flush topic subscriptions now that the ephemeral ones have an owner.
+        self._declare_worker_subscriptions(worker_id)  # type: ignore[attr-defined]
+
         stop_heartbeat = threading.Event()
         heartbeat_thread = threading.Thread(
             target=self._run_heartbeat,
@@ -331,6 +335,9 @@ class QueueLifecycleMixin:
                 # Emit WORKER_OFFLINE events for reaped dead workers
                 for rid in reaped_ids:
                     self._emit_event(EventType.WORKER_OFFLINE, {"worker_id": rid})  # type: ignore[attr-defined]
+                # Dead workers gone from the registry → drop their ephemeral
+                # topic subscriptions on the same cadence.
+                self._inner.reap_ephemeral_subscriptions()
             except Exception:
                 logger.debug("Heartbeat failed", exc_info=True)
 

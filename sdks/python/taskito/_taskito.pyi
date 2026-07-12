@@ -186,6 +186,38 @@ class PyQueue:
     def delete_periodic(self, name: str) -> bool: ...
     def pause_periodic(self, name: str) -> bool: ...
     def resume_periodic(self, name: str) -> bool: ...
+    def register_subscription(
+        self,
+        topic: str,
+        subscription_name: str,
+        task_name: str,
+        queue: str = "default",
+        durable: bool = True,
+        owner_worker_id: str | None = None,
+    ) -> None: ...
+    def list_subscriptions(
+        self, topic: str | None = None
+    ) -> list[tuple[str, str, str, str, bool, bool]]: ...
+    def unsubscribe(self, topic: str, subscription_name: str) -> bool: ...
+    def set_subscription_active(
+        self, topic: str, subscription_name: str, active: bool
+    ) -> bool: ...
+    def reap_ephemeral_subscriptions(self) -> int: ...
+    def publish(
+        self,
+        topic: str,
+        payload: bytes,
+        idempotency_key: str | None = None,
+        metadata: str | None = None,
+        notes: str | None = None,
+        priority: int | None = None,
+        delay_seconds: float | None = None,
+        max_retries: int | None = None,
+        timeout: int | None = None,
+        expires: float | None = None,
+        result_ttl: int | None = None,
+        task_defaults: dict[str, tuple[int, int, int]] | None = None,
+    ) -> list[PyJob]: ...
     def run_worker(
         self,
         task_registry: dict[str, Any],

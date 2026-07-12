@@ -2,6 +2,7 @@
 #![allow(clippy::useless_conversion)]
 
 mod inspection;
+mod pubsub;
 mod worker;
 #[cfg(feature = "workflows")]
 mod workflow_ops;

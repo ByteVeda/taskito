@@ -62,6 +62,22 @@ background thread pool.
 | `pauseQueue(q)` / `resumeQueue(q)` / `listPausedQueues()` | Queue control. |
 | `listWorkers()` → `Promise<WorkerInfo[]>` | Registered workers. |
 
+## Pub/Sub
+
+See [Pub/Sub](/node/guides/core/pubsub) for the full guide (delivery
+semantics, lifecycle, cross-SDK topics).
+
+| Method | Description |
+|---|---|
+| `subscriber(topic, name, fn, options?)` | Register `fn` as `name`, subscribed to `topic`. Returns the queue (chainable, like `task`). |
+| `publish(topic, args?, options?)` → `Promise<Job[]>` | Fan a message out to every active subscription — one job each. Empty array when nothing is subscribed. |
+| `declareSubscriptions()` → `Promise<void>` | Write pending durable subscriptions to storage. Call in a producer-only process; `runWorker()` does this automatically. |
+| `unsubscribe(topic, name)` → `Promise<boolean>` | Remove a subscription. |
+| `pauseSubscription(topic, name)` / `resumeSubscription(topic, name)` → `Promise<boolean>` | Stop/resume deliveries without unregistering. |
+| `listSubscriptions(topic?)` → `Promise<Subscription[]>` | All subscriptions, or one topic's active ones. |
+| `listTopics()` → `Promise<string[]>` | Distinct topics with at least one subscription. |
+| `reapEphemeralSubscriptions()` → `Promise<number>` | Drop ephemeral subscriptions whose owning worker is gone. Runs automatically on the worker heartbeat cadence; exposed for operational tooling. |
+
 ## Subsystems
 
 | Member | Description |

@@ -225,4 +225,17 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    topic_subscriptions (topic, subscription_name) {
+        topic -> Text,
+        subscription_name -> Text,
+        task_name -> Text,
+        queue -> Text,
+        active -> Bool,
+        durable -> Bool,
+        owner_worker_id -> Nullable<Text>,
+        created_at -> BigInt,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies);

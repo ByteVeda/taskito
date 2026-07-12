@@ -1,0 +1,120 @@
+---
+title: Pub/Sub
+description: "Topic subscriptions and fan-out publish. See the Pub/Sub guide for delivery semantics and lifecycle."
+---
+
+See [Pub/Sub](/python/guides/core/pubsub) for the full guide — delivery
+semantics, subscription lifecycle, and cross-SDK topics.
+
+## Subscribing
+
+### `@queue.subscriber()`
+
+```python
+@queue.subscriber(
+    topic: str,
+    name: str | None = None,
+    queue: str = "default",
+    durable: bool = True,
+    **task_kwargs: Any,
+) -> Callable[[Callable], TaskWrapper]
+```
+
+Register `fn` as an independent subscriber of `topic`. The function becomes a
+normal task — `task_kwargs` are forwarded to
+[`@queue.task()`](/python/api-reference/queue) — and the subscription is
+written to storage when `run_worker()` starts, or via
+`declare_subscriptions()` in a producer-only process.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `topic` | `str` | — | Topic to subscribe to. |
+| `name` | `str \| None` | Task name | Stable subscription identity. Re-registering the same `(topic, name)` updates the routing target instead of duplicating. |
+| `queue` | `str` | `"default"` | Queue the subscriber's delivery jobs go to. |
+| `durable` | `bool` | `True` | Persist across restarts. `False` ties the subscription to one worker process — it only registers inside `run_worker()` and is reaped once that worker stops heartbeating. |
+| `**task_kwargs` | `Any` | — | Any `@queue.task()` option (`max_retries`, `timeout`, `middleware`, `idempotent`, ...). |
+
+### `queue.declare_subscriptions()`
+
+```python
+queue.declare_subscriptions() -> None
+```
+
+Write pending durable subscriptions to storage. Called automatically at
+`run_worker()` startup — call it explicitly in a producer-only process (one
+that imports subscriber modules but never runs a worker) so `publish()` sees
+the subscriptions. Ephemeral subscriptions are skipped; they need an owning
+worker.
+
+## Publishing
+
+### `queue.publish()`
+
+```python
+queue.publish(
+    topic: str,
+    *args: Any,
+    idempotency_key: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    notes: dict[str, Any] | None = None,
+    priority: int | None = None,
+    delay_seconds: float | None = None,
+    max_retries: int | None = None,
+    timeout: int | None = None,
+    expires: float | None = None,
+    result_ttl: int | None = None,
+    **kwargs: Any,
+) -> list[JobResult]
+```
+
+Publish a message to `topic`. Every active subscription receives an
+independent job carrying the same `(args, kwargs)` payload (at-least-once
+per subscriber). Returns one [`JobResult`](/python/api-reference/result) per
+delivery — empty when the topic has no active subscribers, a valid pub/sub
+no-op.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `idempotency_key` | `str \| None` | `None` | Dedupes per subscriber — republishing the same key yields no new deliveries for a subscriber that already received it. Salted internally with the subscription name. |
+| `notes` | `dict \| None` | `None` | Structured annotations, validated against the same 15-field cap as `enqueue()`'s `notes` — `topic` and `subscription` are then stamped into every delivery's notes on top of that. |
+| `priority` / `max_retries` / `timeout` / `expires` / `result_ttl` | — | `None` | Override every delivery's setting. Unset fields resolve to the subscriber task's own registered default, then the queue default. |
+
+Unrecognized keyword arguments are forwarded as part of the task payload's
+`kwargs`, same as `enqueue()`.
+
+## Managing subscriptions
+
+### `queue.unsubscribe()`
+
+```python
+queue.unsubscribe(topic: str, name: str) -> bool
+```
+
+Remove a subscription. Returns `False` if none matched.
+
+### `queue.pause_subscription()` / `queue.resume_subscription()`
+
+```python
+queue.pause_subscription(topic: str, name: str) -> bool
+queue.resume_subscription(topic: str, name: str) -> bool
+```
+
+Stop or resume deliveries without unregistering. Returns `False` if the
+subscription is unknown.
+
+### `queue.list_subscriptions()`
+
+```python
+queue.list_subscriptions(topic: str | None = None) -> list[dict[str, Any]]
+```
+
+List subscriptions — all of them, or one topic's active ones. Each dict
+contains `topic`, `name`, `task_name`, `queue`, `active`, and `durable`.
+
+### `queue.list_topics()`
+
+```python
+queue.list_topics() -> list[str]
+```
+
+Distinct topics that currently have at least one subscription.

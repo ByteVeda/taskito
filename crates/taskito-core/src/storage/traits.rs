@@ -126,6 +126,28 @@ pub trait Storage: Send + Sync + Clone {
     /// Returns false if no task had that name.
     fn set_periodic_enabled(&self, name: &str, enabled: bool) -> Result<bool>;
 
+    // ── Topic pub/sub ───────────────────────────────────────────────
+
+    /// Insert or update a subscription. Idempotent on (topic, subscription_name).
+    fn register_subscription(&self, sub: &NewSubscriptionRow) -> Result<()>;
+    /// Active subscriptions for a topic (active = true only).
+    fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<SubscriptionRow>>;
+    /// Every registered subscription (active or paused), all topics.
+    fn list_subscriptions(&self) -> Result<Vec<SubscriptionRow>>;
+    /// Remove a subscription. Returns false if none matched.
+    fn unsubscribe(&self, topic: &str, subscription_name: &str) -> Result<bool>;
+    /// Pause/resume without removing registration. Returns false if none matched.
+    fn set_subscription_active(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        active: bool,
+    ) -> Result<bool>;
+    /// Remove ephemeral subscriptions (owner_worker_id set) whose owner is not in
+    /// `live_worker_ids`. Durable rows (owner NULL) are never touched. Returns the
+    /// count removed.
+    fn reap_ephemeral_subscriptions(&self, live_worker_ids: &[String]) -> Result<u64>;
+
     // ── Metrics operations ──────────────────────────────────────────
 
     fn record_metric(

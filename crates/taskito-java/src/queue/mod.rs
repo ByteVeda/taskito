@@ -11,6 +11,7 @@ mod inspect;
 mod locks;
 mod logs;
 mod periodic;
+mod pubsub;
 
 use jni::objects::{JByteArray, JClass, JObjectArray, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jobjectArray, jstring, JNI_FALSE, JNI_TRUE};

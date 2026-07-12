@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::schema::{
     archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
     execution_claims, job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits,
-    replay_history, task_logs, task_metrics, workers,
+    replay_history, task_logs, task_metrics, topic_subscriptions, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -399,6 +399,42 @@ pub struct DashboardSettingRow {
     pub key: String,
     pub value: String,
     pub updated_at: i64,
+}
+
+// ── Topic Subscriptions ─────────────────────────────────────────
+
+/// A row in the `topic_subscriptions` registry table.
+///
+/// The natural composite key is `(topic, subscription_name)`; there is no
+/// surrogate id, matching the `periodic_tasks` registry precedent. A NULL
+/// `owner_worker_id` marks a durable subscription that persists until an
+/// explicit unsubscribe; a set owner marks an ephemeral one that is reaped
+/// when its worker dies.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = topic_subscriptions)]
+pub struct SubscriptionRow {
+    pub topic: String,
+    pub subscription_name: String,
+    pub task_name: String,
+    pub queue: String,
+    pub active: bool,
+    pub durable: bool,
+    pub owner_worker_id: Option<String>,
+    pub created_at: i64,
+}
+
+/// Insertable/updatable struct for subscription registrations.
+#[derive(Insertable, AsChangeset, Debug)]
+#[diesel(table_name = topic_subscriptions)]
+pub struct NewSubscriptionRow<'a> {
+    pub topic: &'a str,
+    pub subscription_name: &'a str,
+    pub task_name: &'a str,
+    pub queue: &'a str,
+    pub active: bool,
+    pub durable: bool,
+    pub owner_worker_id: Option<&'a str>,
+    pub created_at: i64,
 }
 
 // ── Distributed Locks ───────────────────────────────────────────

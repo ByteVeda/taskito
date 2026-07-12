@@ -265,6 +265,19 @@ pub fn create_tables(d: &Dialect) -> Vec<String> {
                 updated_at {bi} NOT NULL
             )"
         ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS topic_subscriptions (
+                topic             TEXT NOT NULL,
+                subscription_name TEXT NOT NULL,
+                task_name         TEXT NOT NULL,
+                queue             TEXT NOT NULL DEFAULT 'default',
+                active            {bool_true},
+                durable           {bool_true},
+                owner_worker_id   TEXT,
+                created_at        {bi} NOT NULL,
+                PRIMARY KEY (topic, subscription_name)
+            )"
+        ),
     ]
 }
 
@@ -305,6 +318,10 @@ pub fn create_indexes() -> &'static [&'static str] {
         // list_archived_filtered orders by created_at; namespace filter likewise.
         "CREATE INDEX IF NOT EXISTS idx_archived_jobs_created_at ON archived_jobs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_archived_jobs_namespace ON archived_jobs(namespace)",
+        // reap_ephemeral_subscriptions scans only owner-bound (ephemeral) rows;
+        // the partial index keeps durable rows (owner NULL) out of the reaper's way.
+        "CREATE INDEX IF NOT EXISTS idx_topic_subs_owner
+                ON topic_subscriptions(owner_worker_id) WHERE owner_worker_id IS NOT NULL",
     ]
 }
 

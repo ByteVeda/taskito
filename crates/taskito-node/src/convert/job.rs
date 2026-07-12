@@ -10,8 +10,10 @@ use crate::config::EnqueueOptions;
 use crate::error::non_negative;
 
 const DEFAULT_QUEUE: &str = "default";
-const DEFAULT_MAX_RETRIES: i32 = 3;
-const DEFAULT_TIMEOUT_MS: i64 = 300_000;
+// Shared with publish fan-out (queue-level delivery defaults).
+pub(crate) const DEFAULT_PRIORITY: i32 = 0;
+pub(crate) const DEFAULT_MAX_RETRIES: i32 = 3;
+pub(crate) const DEFAULT_TIMEOUT_MS: i64 = 300_000;
 
 /// Build a [`NewJob`] from a task name, opaque payload bytes, and JS options.
 /// The core never interprets `payload` — the shell owns (de)serialization.
@@ -38,7 +40,7 @@ pub fn build_new_job(
         queue: opts.queue.unwrap_or_else(|| DEFAULT_QUEUE.to_string()),
         task_name,
         payload,
-        priority: opts.priority.unwrap_or(0),
+        priority: opts.priority.unwrap_or(DEFAULT_PRIORITY),
         // Saturate so an extreme delay can't overflow into a past schedule.
         scheduled_at: now_millis().saturating_add(delay),
         max_retries,

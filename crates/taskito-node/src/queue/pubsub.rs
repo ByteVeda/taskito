@@ -1,0 +1,242 @@
+//! Topic pub/sub methods on `JsQueue`. Fan-out and registry semantics live in
+//! the core (`taskito_core::pubsub`); every method touches storage, so each is
+//! async and offloads the blocking I/O to the blocking pool.
+
+use std::collections::HashMap;
+
+use napi::bindgen_prelude::{spawn_blocking, Buffer, Result};
+use napi_derive::napi;
+use taskito_core::job::now_millis;
+use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
+use taskito_core::storage::models::NewSubscriptionRow;
+use taskito_core::Storage;
+
+use super::JsQueue;
+use crate::config::{DeliveryDefaultsInput, PublishOptions};
+use crate::convert::{
+    job_to_js, subscription_to_js, JsJob, JsSubscription, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
+    DEFAULT_TIMEOUT_MS,
+};
+use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
+
+#[napi]
+impl JsQueue {
+    /// Insert or update a topic subscription (idempotent on topic + name).
+    /// Ephemeral subscriptions (`durable: false`) carry the owning worker's id
+    /// so they can be reaped once that worker is gone.
+    #[napi]
+    pub async fn register_subscription(
+        &self,
+        topic: String,
+        subscription_name: String,
+        task_name: String,
+        queue: String,
+        durable: bool,
+        owner_worker_id: Option<String>,
+    ) -> Result<()> {
+        // An owner-less ephemeral row could never be reaped — reject it before
+        // it reaches storage.
+        if !durable && owner_worker_id.is_none() {
+            return Err(invalid_arg(
+                "an ephemeral subscription (durable=false) requires ownerWorkerId",
+            ));
+        }
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let row = NewSubscriptionRow {
+                topic: &topic,
+                subscription_name: &subscription_name,
+                task_name: &task_name,
+                queue: &queue,
+                active: true,
+                durable,
+                owner_worker_id: owner_worker_id.as_deref(),
+                created_at: now_millis(),
+            };
+            storage.register_subscription(&row).map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// List subscriptions — all of them, or only a topic's active ones.
+    #[napi]
+    pub async fn list_subscriptions(&self, topic: Option<String>) -> Result<Vec<JsSubscription>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let rows = match topic.as_deref() {
+                Some(t) => storage.list_subscriptions_for_topic(t),
+                None => storage.list_subscriptions(),
+            }
+            .map_err(to_napi_err)?;
+            Ok(rows.into_iter().map(subscription_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Remove a subscription. Returns false if none matched.
+    #[napi]
+    pub async fn unsubscribe(&self, topic: String, subscription_name: String) -> Result<bool> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .unsubscribe(&topic, &subscription_name)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Pause (false) or resume (true) a subscription without unregistering it.
+    /// Returns false if none matched.
+    #[napi]
+    pub async fn set_subscription_active(
+        &self,
+        topic: String,
+        subscription_name: String,
+        active: bool,
+    ) -> Result<bool> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .set_subscription_active(&topic, &subscription_name, active)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Drop ephemeral subscriptions whose owning worker is gone. Prunes dead
+    /// worker rows first so the live set is current. Runs on the heartbeat
+    /// cadence. Returns the number of subscriptions removed.
+    #[napi]
+    pub async fn reap_ephemeral_subscriptions(&self) -> Result<i64> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            // Prune stale worker rows first so a crashed owner doesn't keep its
+            // ephemeral subscriptions alive; opportunistic like the heartbeat's.
+            let _ = storage.reap_dead_workers();
+            let live: Vec<String> = storage
+                .list_workers()
+                .map_err(to_napi_err)?
+                .into_iter()
+                .map(|worker| worker.worker_id)
+                .collect();
+            storage
+                .reap_ephemeral_subscriptions(&live)
+                .map(|n| n as i64)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Publish an opaque payload to a topic: one job per active subscription.
+    /// Returns the created jobs — empty when nothing is subscribed (a valid
+    /// pub/sub no-op, not an error).
+    #[napi]
+    pub async fn publish(
+        &self,
+        topic: String,
+        payload: Buffer,
+        options: Option<PublishOptions>,
+    ) -> Result<Vec<JsJob>> {
+        let request = build_publish_request(
+            topic,
+            payload.to_vec(),
+            options.unwrap_or_default(),
+            self.namespace.clone(),
+        )?;
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let jobs = publish_to_topic(&storage, &request).map_err(to_napi_err)?;
+            Ok(jobs.into_iter().map(job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+}
+
+/// Build the core [`PublishRequest`]: validate signed JS inputs (like
+/// `build_new_job` does for enqueue) and leave omitted settings `None` so the
+/// core's per-subscriber resolution applies.
+fn build_publish_request(
+    topic: String,
+    payload: Vec<u8>,
+    opts: PublishOptions,
+    namespace: Option<String>,
+) -> Result<PublishRequest> {
+    let now = now_millis();
+    let delay = non_negative(opts.delay_ms.unwrap_or(0), "delayMs")?;
+    let max_retries = match opts.max_retries {
+        Some(n) => Some(non_negative(n as i64, "maxRetries")? as i32),
+        None => None,
+    };
+    let timeout_ms = match opts.timeout_ms {
+        Some(n) => Some(non_negative(n, "timeoutMs")?),
+        None => None,
+    };
+    let expires_at = match opts.expires_ms {
+        Some(n) => Some(now.saturating_add(non_negative(n, "expiresMs")?)),
+        None => None,
+    };
+    let result_ttl_ms = match opts.result_ttl_ms {
+        Some(n) => Some(non_negative(n, "resultTtlMs")?),
+        None => None,
+    };
+    let queue_defaults = DeliveryDefaults {
+        priority: DEFAULT_PRIORITY,
+        max_retries: DEFAULT_MAX_RETRIES,
+        timeout_ms: DEFAULT_TIMEOUT_MS,
+    };
+    Ok(PublishRequest {
+        topic,
+        payload,
+        idempotency_key: opts.idempotency_key,
+        metadata: opts.metadata,
+        notes: opts.notes,
+        priority: opts.priority,
+        // Saturate so an extreme delay can't overflow into a past schedule.
+        scheduled_at: now.saturating_add(delay),
+        max_retries,
+        timeout_ms,
+        expires_at,
+        result_ttl_ms,
+        namespace,
+        queue_defaults,
+        task_defaults: task_defaults(opts.task_defaults.unwrap_or_default(), queue_defaults)?,
+    })
+}
+
+/// Resolve per-task delivery defaults, filling unset fields from the queue
+/// defaults so the shell never duplicates them. Entries get the same
+/// non-negative checks as the top-level options, naming the offending task.
+fn task_defaults(
+    input: HashMap<String, DeliveryDefaultsInput>,
+    queue_defaults: DeliveryDefaults,
+) -> Result<HashMap<String, DeliveryDefaults>> {
+    input
+        .into_iter()
+        .map(|(name, defaults)| {
+            let max_retries = match defaults.max_retries {
+                Some(n) => {
+                    non_negative(n as i64, &format!("taskDefaults[\"{name}\"].maxRetries"))? as i32
+                }
+                None => queue_defaults.max_retries,
+            };
+            let timeout_ms = match defaults.timeout_ms {
+                Some(n) => non_negative(n, &format!("taskDefaults[\"{name}\"].timeoutMs"))?,
+                None => queue_defaults.timeout_ms,
+            };
+            Ok((
+                name,
+                DeliveryDefaults {
+                    priority: defaults.priority.unwrap_or(queue_defaults.priority),
+                    max_retries,
+                    timeout_ms,
+                },
+            ))
+        })
+        .collect()
+}
