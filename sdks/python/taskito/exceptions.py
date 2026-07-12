@@ -20,9 +20,10 @@ class TaskCancelledError(TaskitoError):
 class JobErrorDetails:
     """Structured failure details mixin for job-outcome exceptions.
 
-    Populated when the stored error is a canonical structured task error
-    (see ``taskito.task_errors``); all fields default to ``None`` for
-    legacy/system plain-string errors.
+    ``job_id`` and ``raw_error`` are always populated. ``errtype`` and
+    ``traceback`` carry the decoded canonical task error (see
+    ``taskito.task_errors``) and are ``None`` when the stored error is a
+    legacy/system plain string.
     """
 
     errtype: str | None = None
