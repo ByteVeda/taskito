@@ -169,8 +169,9 @@ public interface QueueBackend extends AutoCloseable {
 
     /**
      * Insert or update a topic subscription with no per-subscriber delivery
-     * settings; deliveries take the queue defaults. Convenience form of
-     * {@link #registerSubscription(String, String, String, String, boolean, String, Integer, Integer, Long)}.
+     * settings; deliveries take the queue defaults. This is the base method a
+     * backend overrides — the {@code Integer/Integer/Long} overload delegates
+     * here so a backend that only implements this form keeps working.
      */
     default void registerSubscription(
             String topic,
@@ -179,7 +180,7 @@ public interface QueueBackend extends AutoCloseable {
             String queue,
             boolean durable,
             String ownerWorkerIdOrNull) {
-        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, null, null, null);
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
     }
 
     /**
@@ -191,6 +192,11 @@ public interface QueueBackend extends AutoCloseable {
      * subscriber task's own delivery settings, persisted on the row so a
      * producer-only process applies them without loading the task; {@code null}
      * means "take the queue default".
+     *
+     * <p>The default drops the three settings and delegates to the six-argument
+     * form, so a backend that predates delivery-setting persistence still
+     * registers the subscription (it just takes queue defaults) instead of
+     * throwing.
      */
     default void registerSubscription(
             String topic,
@@ -202,7 +208,7 @@ public interface QueueBackend extends AutoCloseable {
             Integer priority,
             Integer maxRetries,
             Long timeoutMs) {
-        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull);
     }
 
     /** A JSON array of subscriptions — all of them, or only a topic's active ones. */

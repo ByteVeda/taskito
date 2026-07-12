@@ -293,6 +293,19 @@ public final class JniQueueBackend implements QueueBackend {
             String taskName,
             String queue,
             boolean durable,
+            String ownerWorkerIdOrNull) {
+        // Route the settings-less form through the full one (nulls = queue
+        // defaults) so this backend is reachable via either overload.
+        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, null, null, null);
+    }
+
+    @Override
+    public void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
             String ownerWorkerIdOrNull,
             Integer priority,
             Integer maxRetries,

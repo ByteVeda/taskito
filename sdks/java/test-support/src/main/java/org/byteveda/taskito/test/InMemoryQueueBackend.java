@@ -471,6 +471,18 @@ public final class InMemoryQueueBackend implements QueueBackend {
             String taskName,
             String queue,
             boolean durable,
+            String ownerWorkerIdOrNull) {
+        // Reachable via either overload; nulls take the queue defaults.
+        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, null, null, null);
+    }
+
+    @Override
+    public synchronized void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
             String ownerWorkerIdOrNull,
             Integer priority,
             Integer maxRetries,
