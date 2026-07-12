@@ -14,7 +14,8 @@ from taskito import TaskitoError, ResourceNotFoundError
 try:
     result = job.result(timeout=5)
 except ResourceNotFoundError as exc:
-    reregister(exc.args[0])
+    # the message names the missing resource, e.g. "Resource 'db' is not registered"
+    print(exc)
 except TaskitoError as exc:
     report(exc)
 ```
