@@ -1,0 +1,109 @@
+---
+title: Structured Notes
+description: "Attach a bounded map of annotations to a job at enqueue time — capped at 15 fields, dashboard-rendered."
+---
+
+`notes` is a structured annotation field on every job — a small map (at most
+**15** top-level keys) you attach when enqueuing and read back from the job.
+Unlike `metadata`, which is a free-form JSON string blob, `notes` is validated
+when you build the enqueue options and rendered by the dashboard as a key/value
+table.
+
+## When to use `notes` vs `metadata`
+
+| | `notes` | `metadata` |
+|---|---|---|
+| Type at enqueue | `Map<String, ?>` | `String` (pre-encoded JSON) |
+| Top-level fields | ≤ 15 | unbounded |
+| Validation | At build time | None |
+| Dashboard render | Key/value table | Raw JSON dump |
+| Survives DLQ retry | Yes | Yes |
+| Best for | User-visible annotations | Operational/debug context |
+
+Use **`notes`** for short, user-readable annotations a human or the dashboard
+would want to scan: customer IDs, business-priority reasons, short comments. Use
+**`metadata`** when you need to attach an opaque JSON blob without size
+constraints (trace IDs, request envelopes, etc.).
+
+## Writing notes
+
+Pass a `Map` to `notes(...)` on the enqueue-options builder:
+
+```java
+import org.byteveda.taskito.task.EnqueueOptions;
+import java.util.Map;
+
+String id = taskito.enqueue(processOrder, order, EnqueueOptions.builder()
+        .notes(Map.of(
+                "customer_id", "cus_abc",
+                "tier", "gold",
+                "priority_reason", "VIP onboarding"))
+        .build());
+```
+
+Passing `null` clears any previously set notes. The map is validated and
+canonically encoded to JSON at `build()` time, so an invalid map fails fast
+before the job is enqueued.
+
+## Reading notes back
+
+`Job` carries the raw JSON string on `notes`, plus a parsed view via
+`notesMap()`:
+
+```java
+import org.byteveda.taskito.model.Job;
+import java.util.Map;
+import java.util.Optional;
+
+Optional<Map<String, Object>> notes = taskito.getJob(id)
+        .flatMap(Job::notesMap);
+
+notes.ifPresent(n -> System.out.println(n.get("customer_id")));  // cus_abc
+```
+
+`notesMap()` returns `Optional.empty()` when the job carries no notes, and the
+untouched JSON string is on `Job.notes` if you need it verbatim.
+
+## Validation rules
+
+Validation runs when the options are built (the Rust storage layer receives an
+already-encoded JSON string and stores it verbatim). The contract lives in
+`org.byteveda.taskito.serialization.Notes`:
+
+| Constraint | Default | Constant |
+|---|---|---|
+| Max top-level fields | 15 | `Notes.MAX_FIELDS` |
+| Max key length | 64 chars | `Notes.MAX_KEY_LENGTH` |
+| Max string value length | 500 chars | `Notes.MAX_VALUE_LENGTH` |
+| Max nesting depth | 3 | `Notes.MAX_DEPTH` |
+| Max encoded size | 4096 bytes | `Notes.MAX_BYTES` |
+
+Values may be any JSON primitive (string, number, boolean, null), plus nested
+`List` or `Map` within the depth cap.
+
+Violations throw `NotesValidationException`
+(`org.byteveda.taskito.errors.NotesValidationException`); the message names the
+offending key or constraint so it can be surfaced directly to end users:
+
+```java
+import org.byteveda.taskito.errors.NotesValidationException;
+
+try {
+    EnqueueOptions.builder().notes(tooManyFields).build();
+} catch (NotesValidationException e) {
+    // "notes may not have more than 15 fields, got 20"
+}
+```
+
+## Dashboard rendering
+
+Notes are surfaced on the job detail page as a fixed-size key/value table next
+to the Metadata card. Because the field is capped at 15 entries, the table is
+always small enough to scan without scrolling.
+
+## Cross-backend behavior
+
+The `notes` column lives on the `jobs`, `dead_letter`, and `archived_jobs`
+tables on SQLite and PostgreSQL, and rides along with the job's JSON
+representation on Redis. Notes survive DLQ moves and retries (the original notes
+are restored on the re-enqueued job), job replay, and archival.
