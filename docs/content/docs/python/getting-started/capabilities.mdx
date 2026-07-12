@@ -11,6 +11,7 @@ import {
   CalendarClock,
   Activity,
   Plug,
+  Network,
 } from "lucide-react";
 
 taskito ships a broad feature set out of the box. If you're evaluating it — or
@@ -66,7 +67,13 @@ These are the capabilities most often assumed absent. They aren't.
     icon={<Plug />}
     title="Extensibility"
     href="/python/guides/extensibility"
-    description="Pluggable serializers, per-task middleware, a fully async API, and Postgres or Redis backends."
+    description="Pluggable serializers, per-task middleware, enqueue predicates, argument interception, a fully async API, and Postgres or Redis backends."
+  />
+  <Card
+    icon={<Network />}
+    title="Distribution"
+    href="/python/guides/core/pubsub"
+    description="Topic pub/sub fan-out to independent subscribers, distributed locks, a decentralized work-stealing mesh, and streaming partial results."
   />
 </Cards>
 
