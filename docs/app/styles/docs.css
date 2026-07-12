@@ -847,6 +847,14 @@ body {
 .md-table tr td:first-child {
   white-space: nowrap;
 }
+/* Inline code in cells (types like `str | None`, defaults, identifiers) must
+   stay on one line: the article-wide `overflow-wrap: anywhere` otherwise breaks
+   them character-by-character when a column is squeezed by a long description.
+   Genuinely wide tokens overflow into the wrapper's horizontal scroll instead. */
+.md-table td code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 .md-table a {
   color: var(--indigo-br);
   border-bottom: 1px solid var(--indigo-line);
