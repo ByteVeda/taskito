@@ -29,7 +29,8 @@ pub struct PublishRequest {
     pub topic: String,
     /// Wire-envelope payload bytes; every subscriber receives the same body.
     pub payload: Vec<u8>,
-    /// Salted per subscription (`key::subscription_name`) before becoming a
+    /// Salted per subscription identity (topic + name, length-prefixed so
+    /// delimiter characters in either part cannot collide) before becoming a
     /// job `unique_key`: the jobs table's unique index is global, so reusing
     /// the raw key across the fan-out would dedup away all but one delivery.
     pub idempotency_key: Option<String>,
@@ -72,6 +73,17 @@ pub fn publish_to_topic<S: Storage>(storage: &S, request: &PublishRequest) -> Re
         .collect()
 }
 
+/// `key::<topic_len>:<name_len>:<topic><name>` — length prefixes make the
+/// encoding injective, so distinct (topic, name) pairs can never produce the
+/// same salted key even when the parts contain the delimiter characters.
+fn salted_unique_key(key: &str, topic: &str, subscription_name: &str) -> String {
+    format!(
+        "{key}::{}:{}:{topic}{subscription_name}",
+        topic.len(),
+        subscription_name.len()
+    )
+}
+
 fn delivery_job(request: &PublishRequest, sub: &SubscriptionRow) -> NewJob {
     let task = request
         .task_defaults
@@ -89,7 +101,7 @@ fn delivery_job(request: &PublishRequest, sub: &SubscriptionRow) -> NewJob {
         unique_key: request
             .idempotency_key
             .as_ref()
-            .map(|key| format!("{key}::{}", sub.subscription_name)),
+            .map(|key| salted_unique_key(key, &request.topic, &sub.subscription_name)),
         metadata: request.metadata.clone(),
         notes: Some(delivery_notes(request, sub)),
         depends_on: Vec::new(),
@@ -199,7 +211,10 @@ mod tests {
         assert_eq!(first.len(), 2);
         let mut keys: Vec<_> = first.iter().filter_map(|j| j.unique_key.clone()).collect();
         keys.sort_unstable();
-        assert_eq!(keys, ["evt-42::analytics", "evt-42::email"]);
+        assert_eq!(
+            keys,
+            ["evt-42::6:5:ordersemail", "evt-42::6:9:ordersanalytics"]
+        );
 
         // Same event published twice: every subscriber still has exactly one
         // delivery (per-subscriber dedup), not zero and not two.
