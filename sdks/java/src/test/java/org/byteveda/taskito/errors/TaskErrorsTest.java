@@ -75,7 +75,9 @@ class TaskErrorsTest {
         assertEquals(
                 "BoomError: it broke",
                 TaskErrors.summarize("{\"errtype\":\"BoomError\",\"message\":\"it broke\",\"traceback\":[]}"));
-        assertEquals("just text", TaskErrors.summarize("{\"message\":\"just text\"}")); // no errtype
+        // A missing errtype defaults to "Error" (cross-SDK contract), so the
+        // headline is "Error: <message>", matching every other SDK's summary.
+        assertEquals("Error: just text", TaskErrors.summarize("{\"message\":\"just text\"}"));
         assertEquals(
                 "task timed out after 5000ms", TaskErrors.summarize("task timed out after 5000ms")); // raw fallback
     }

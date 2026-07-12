@@ -52,8 +52,11 @@ public final class TaskErrors {
         if (message == null || !message.isTextual()) {
             return null;
         }
+        // Default a missing errtype to "Error" to match the cross-SDK contract
+        // (other SDKs decode it identically), so the same JSON summarizes the
+        // same way everywhere.
         JsonNode errtype = node.get("errtype");
-        String errtypeText = errtype != null && errtype.isTextual() ? errtype.asText() : "";
+        String errtypeText = errtype != null && errtype.isTextual() ? errtype.asText() : "Error";
         return new TaskError(errtypeText, message.asText(), readTraceback(node.get("traceback")), raw);
     }
 

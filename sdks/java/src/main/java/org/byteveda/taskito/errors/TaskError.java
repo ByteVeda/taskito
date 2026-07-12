@@ -28,4 +28,7 @@ public final class TaskError {
     public String summary() {
         return errtype.isEmpty() ? message : errtype + ": " + message;
     }
+
+    // errtype is empty only when a caller constructs a TaskError directly with
+    // an empty type; decode() defaults a missing wire errtype to "Error".
 }
