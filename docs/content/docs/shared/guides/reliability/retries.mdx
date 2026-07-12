@@ -149,6 +149,20 @@ retries fire immediately (no exponential fallback).
 
 </SdkOnly>
 
+<SdkOnly sdk="node">
+
+Node has no per-attempt delay list — tune the exponential curve instead via
+`retryBackoff` (`baseMs` is `B`, `maxMs` is `M` in the backoff formula above):
+
+```ts
+queue.task("flakyApiCall", handleCall, {
+  maxRetries: 5,
+  retryBackoff: { baseMs: 2000, maxMs: 300_000 }, // 2s base, 5min cap
+});
+```
+
+</SdkOnly>
+
 ## Exception filtering
 
 <SdkOnly sdk="python">
