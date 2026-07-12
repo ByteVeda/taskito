@@ -20,7 +20,9 @@ export function encodeTaskError(error: unknown): string {
   let message: string;
   let traceback: string[] = [];
   if (error instanceof Error) {
-    errtype = error.name || error.constructor.name || "Error";
+    // Prefer the runtime class name: `error.name` stays "Error" for subclasses
+    // that don't override it, collapsing distinct types to the generic value.
+    errtype = error.constructor?.name || error.name || "Error";
     message = error.message ?? String(error);
     // Keep stack lines verbatim — readers render them as-is.
     traceback = error.stack ? error.stack.split("\n") : [];
