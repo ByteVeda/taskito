@@ -82,6 +82,9 @@ impl RedisStorage {
             pipe.srem(&old_status_key, &job.id);
             pipe.sadd(&new_status_key, &job.id);
         }
+        // Mirror the status move on the pub/sub backlog indices, keyed on the
+        // job's new status (no-op for ordinary jobs). Same pipe as the move.
+        self.push_pubsub_transition(pipe, job, job.status);
         pipe.query::<()>(conn).map_err(map_err)?;
 
         Ok(())
@@ -117,6 +120,9 @@ impl RedisStorage {
             pipe.sadd(&pending_status_key, &job.id);
         }
         pipe.zadd(&queue_key, &job.id, score);
+        // Back to Pending: leave the running index and (re)enter the pending
+        // backlog index. No-op for ordinary jobs; same atomic pipe.
+        self.push_pubsub_transition(pipe, job, JobStatus::Pending);
         pipe.query::<()>(conn).map_err(map_err)?;
 
         Ok(())
@@ -183,6 +189,13 @@ impl RedisStorage {
         pipe.sadd(&archived_by_queue, &job.id).ignore();
         pipe.zadd(&archived_all, &job.id, completed_at as f64)
             .ignore();
+
+        // Mirror the terminal move on the pub/sub backlog indices (no-op for
+        // ordinary jobs). `job.status` is the terminal status the caller set:
+        // Complete/Failed/Cancelled leave the backlog; Dead (from `move_to_dlq`)
+        // also enters the sub:dead index. Same atomic pipe as the archive move,
+        // so the backlog index can never be left desynced from the archive.
+        self.push_pubsub_transition(pipe, job, job.status);
     }
 
     /// Move a terminal job out of the live indices into the archive in one

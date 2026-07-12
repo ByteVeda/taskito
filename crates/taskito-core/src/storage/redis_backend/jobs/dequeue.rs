@@ -153,6 +153,10 @@ impl RedisStorage {
             job.status = JobStatus::Running;
             job.started_at = Some(now);
             if self.claim_pending(&mut conn, &job, &queue_key)? {
+                // Best-effort pub/sub backlog reindex Pending→Running; a
+                // follow-up rather than folded into the correctness-critical
+                // claim script (see `reindex_pubsub_best_effort`).
+                self.reindex_pubsub_best_effort(&mut conn, &job, JobStatus::Running);
                 return Ok(Some(job));
             }
         }
@@ -291,6 +295,9 @@ impl RedisStorage {
             job.status = JobStatus::Running;
             job.started_at = Some(now);
             if self.claim_pending(&mut conn, &job, &queue_key)? {
+                // Best-effort pub/sub backlog reindex Pending→Running (see the
+                // single-claim `dequeue` for the rationale).
+                self.reindex_pubsub_best_effort(&mut conn, &job, JobStatus::Running);
                 claimed.push(job);
             }
         }

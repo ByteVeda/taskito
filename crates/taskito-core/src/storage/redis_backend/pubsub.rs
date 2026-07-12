@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
+use crate::job::{Job, JobStatus};
 use crate::storage::models::{NewSubscriptionRow, SubscriptionRow};
+use crate::storage::SubscriptionBacklogStats;
 
 /// JSON blob stored at `sub:<topic>:<subscription_name>`. Mirrors
 /// [`SubscriptionRow`] so the CRUD path needs no Lua — index sets alone keep
@@ -281,5 +283,156 @@ impl RedisStorage {
         }
 
         Ok(removed)
+    }
+
+    // ── Per-subscription backlog/lag indices ───────────────────────────────
+    //
+    // Three index keys per subscription mirror the live delivery backlog so
+    // `topic_backlog_stats` costs O(subscriptions), never a job scan:
+    //   sub:pending:<topic>:<name> — ZSET of job ids scored by `created_at` (ms)
+    //   sub:running:<topic>:<name> — SET of job ids
+    //   sub:dead:<topic>:<name>    — SET of (original) job ids
+    // Every write is gated on `extract_topic_subscription`, so an ordinary job
+    // never touches them: the whole feature stays zero-cost off the pub/sub path.
+
+    /// Key for a subscription's per-status backlog index. `kind` is
+    /// `"pending"`, `"running"`, or `"dead"`.
+    fn sub_index_key(&self, kind: &str, topic: &str, subscription_name: &str) -> String {
+        self.key(&["sub", kind, topic, subscription_name])
+    }
+
+    /// Append the backlog-index ops for `job` landing in status `to` onto
+    /// `pipe`, if (and only if) `job` is a pub/sub delivery. Keyed on the
+    /// *destination* status alone: every transition additionally scrubs the job
+    /// from the indices it must not be in, so the indices self-heal any drift a
+    /// best-effort claim reindex (see `reindex_pubsub_best_effort`) may leave,
+    /// on the very next state change. All ops are `.ignore()`d so the helper is
+    /// safe to fold into either a plain or a MULTI/EXEC pipeline without
+    /// disturbing the caller's result type.
+    pub(in crate::storage::redis_backend) fn push_pubsub_transition(
+        &self,
+        pipe: &mut redis::Pipeline,
+        job: &Job,
+        to: JobStatus,
+    ) {
+        let Some((topic, name)) = crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+        else {
+            return;
+        };
+        let pending = self.sub_index_key("pending", &topic, &name);
+        let running = self.sub_index_key("running", &topic, &name);
+        let dead = self.sub_index_key("dead", &topic, &name);
+        match to {
+            JobStatus::Pending => {
+                pipe.srem(&running, &job.id).ignore();
+                pipe.zadd(&pending, &job.id, job.created_at as f64).ignore();
+            }
+            JobStatus::Running => {
+                pipe.zrem(&pending, &job.id).ignore();
+                pipe.sadd(&running, &job.id).ignore();
+            }
+            JobStatus::Dead => {
+                pipe.zrem(&pending, &job.id).ignore();
+                pipe.srem(&running, &job.id).ignore();
+                pipe.sadd(&dead, &job.id).ignore();
+            }
+            // Complete / Failed / Cancelled: the delivery leaves the backlog.
+            _ => {
+                pipe.zrem(&pending, &job.id).ignore();
+                pipe.srem(&running, &job.id).ignore();
+            }
+        }
+    }
+
+    /// Append a `sub:dead` removal onto `pipe` for a dead-letter row whose
+    /// attribution comes from its persisted `notes` (retry/purge/delete paths
+    /// hold a `DeadJobEntry`, not a live `Job`). `member` is the original job id
+    /// — the value `move_to_dlq` added via [`Self::push_pubsub_transition`].
+    /// No-op for non-pub/sub rows. Keeps the `dead` count from drifting upward
+    /// after a dead-letter entry is retried or purged.
+    pub(in crate::storage::redis_backend) fn push_pubsub_dead_remove(
+        &self,
+        pipe: &mut redis::Pipeline,
+        notes: Option<&str>,
+        member: &str,
+    ) {
+        if let Some((topic, name)) = crate::pubsub::extract_topic_subscription(notes) {
+            pipe.srem(self.sub_index_key("dead", &topic, &name), member)
+                .ignore();
+        }
+    }
+
+    /// Best-effort backlog reindex for a status change committed by a bespoke,
+    /// correctness-critical Lua script we deliberately keep minimal (the
+    /// Pending→Running claim and the requeue-stuck rescue). The index move runs
+    /// in a follow-up pipe: a crash between the script and this pipe can leave a
+    /// delivery in the wrong backlog set, but that only skews a dashboard metric
+    /// — never job state — and the next transition scrubs it. A Redis error is
+    /// logged and swallowed so it cannot fail an operation that already
+    /// succeeded. No-op (and no round trip) for ordinary jobs.
+    pub(in crate::storage::redis_backend) fn reindex_pubsub_best_effort(
+        &self,
+        conn: &mut redis::Connection,
+        job: &Job,
+        to: JobStatus,
+    ) {
+        if crate::pubsub::extract_topic_subscription(job.notes.as_deref()).is_none() {
+            return;
+        }
+        let mut pipe = redis::pipe();
+        self.push_pubsub_transition(&mut pipe, job, to);
+        if let Err(e) = pipe.query::<()>(conn) {
+            log::warn!("pub/sub backlog reindex failed (metrics only): {e}");
+        }
+    }
+
+    /// Backlog/lag snapshot per registered subscription. One bounded round trip
+    /// per subscription (never a job scan): the three index cardinalities plus
+    /// the oldest pending score. `oldest_pending_age_ms` is `now - score`
+    /// floored at 0, or `None` when the subscription has no pending backlog.
+    /// Mirrors the Diesel backends' shape; counts are a direct read of the live
+    /// indices, so they cannot drift the way a maintained counter would.
+    pub fn topic_backlog_stats(&self) -> Result<Vec<SubscriptionBacklogStats>> {
+        let subs = self.list_subscriptions()?;
+        if subs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let now = crate::job::now_millis();
+
+        let mut out = Vec::with_capacity(subs.len());
+        for sub in subs {
+            let pending_key = self.sub_index_key("pending", &sub.topic, &sub.subscription_name);
+            let running_key = self.sub_index_key("running", &sub.topic, &sub.subscription_name);
+            let dead_key = self.sub_index_key("dead", &sub.topic, &sub.subscription_name);
+
+            // ZRANGE 0 0 WITHSCORES yields at most the single oldest pending job.
+            let (pending, running, dead, oldest): (i64, i64, i64, Vec<(String, f64)>) =
+                redis::pipe()
+                    .zcard(&pending_key)
+                    .scard(&running_key)
+                    .scard(&dead_key)
+                    .zrange_withscores(&pending_key, 0, 0)
+                    .query(&mut conn)
+                    .map_err(map_err)?;
+
+            let oldest_pending_age_ms = oldest
+                .first()
+                .map(|(_, score)| (now - *score as i64).max(0));
+
+            out.push(SubscriptionBacklogStats {
+                topic: sub.topic,
+                subscription_name: sub.subscription_name,
+                task_name: sub.task_name,
+                queue: sub.queue,
+                active: sub.active,
+                durable: sub.durable,
+                pending,
+                running,
+                dead,
+                oldest_pending_age_ms,
+            });
+        }
+        Ok(out)
     }
 }

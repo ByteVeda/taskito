@@ -77,6 +77,10 @@ impl RedisStorage {
             pipe.sadd(&dependents_key, &job.id);
         }
 
+        // A pub/sub delivery enters its subscription's pending backlog index
+        // (no-op for ordinary jobs). Same pipe as the job's own indices.
+        self.push_pubsub_transition(pipe, &job, JobStatus::Pending);
+
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(job)
@@ -122,6 +126,10 @@ impl RedisStorage {
                 pipe.sadd(&depends_on_key, dep_id);
                 pipe.sadd(&dependents_key, &job.id);
             }
+
+            // Pub/sub deliveries enter their subscription's pending backlog
+            // index (no-op for ordinary jobs), atomically with the batch insert.
+            self.push_pubsub_transition(pipe, job, JobStatus::Pending);
         }
 
         pipe.query::<()>(&mut conn).map_err(map_err)?;
@@ -234,6 +242,14 @@ impl RedisStorage {
                 redis.call('ZADD', all_key, -created_at, job_id)
                 redis.call('SET', unique_key, job_id)
 
+                -- Pub/sub delivery: mirror into its subscription's pending
+                -- backlog index (KEYS[8], present only for pub/sub deliveries),
+                -- scored by created_at. Folded into this atomic store so the
+                -- backlog index cannot desync from the job on a crash.
+                if KEYS[8] then
+                    redis.call('ZADD', KEYS[8], created_at, job_id)
+                end
+
                 -- Store dependencies (3 ARGVs per dep: dep_on_key, dep_id, dependents_key).
                 for i = 1, num_deps do
                     local offset = dep_args_base + (i - 1) * 3
@@ -257,8 +273,11 @@ impl RedisStorage {
             let score = dequeue_score(job.priority, job.scheduled_at);
             let job_key_prefix = self.key(&["job", ""]);
 
-            // Build keys and args vectors to avoid temporary lifetime issues
-            let keys = vec![
+            // Build keys and args vectors to avoid temporary lifetime issues.
+            // KEYS[8] (the subscription's pending backlog index) is appended
+            // only for pub/sub deliveries, so ordinary jobs pass 7 keys and the
+            // Lua's `if KEYS[8]` guard is false.
+            let mut keys = vec![
                 unique_key.clone(),
                 job_key,
                 status_key,
@@ -267,6 +286,11 @@ impl RedisStorage {
                 by_task_key,
                 all_key,
             ];
+            if let Some((topic, name)) =
+                crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+            {
+                keys.push(self.key(&["sub", "pending", &topic, &name]));
+            }
             let mut args: Vec<String> = vec![
                 job.id.clone(),
                 job_json.clone(),

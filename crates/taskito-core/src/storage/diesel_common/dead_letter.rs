@@ -25,6 +25,11 @@ macro_rules! impl_diesel_dead_letter_ops {
                     .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
                     .and_then(|v| v.get("__dlq_retry_count")?.as_i64())
                     .unwrap_or(0) as i32;
+                // Carry the delivery's subscription attribution into the DLQ so
+                // per-subscription dead-letter depth is countable.
+                let (topic, subscription_name) =
+                    $crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+                        .map_or((None, None), |(t, s)| (Some(t), Some(s)));
 
                 self.write_transaction(|conn| {
                     let dlq_row = NewDeadLetterRow {
@@ -46,6 +51,8 @@ macro_rules! impl_diesel_dead_letter_ops {
                         result_ttl_ms: job.result_ttl_ms,
                         namespace: job.namespace.as_deref(),
                         dlq_retry_count,
+                        topic: topic.as_deref(),
+                        subscription_name: subscription_name.as_deref(),
                     };
 
                     diesel::insert_into(dead_letter::table)
@@ -190,6 +197,11 @@ macro_rules! impl_diesel_dead_letter_ops {
                 };
 
                 let job = new_job.into_job();
+                // Re-attribute the resurrected delivery so it counts against the
+                // subscription's backlog again, not just its DLQ depth.
+                let (topic, subscription_name) =
+                    $crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+                        .map_or((None, None), |(t, s)| (Some(t), Some(s)));
 
                 let result = conn.transaction(|conn| {
                     let row = super::super::models::NewJobRow {
@@ -212,6 +224,8 @@ macro_rules! impl_diesel_dead_letter_ops {
                         result_ttl_ms: job.result_ttl_ms,
                         namespace: job.namespace.as_deref(),
                         has_deps: job.has_deps,
+                        topic: topic.as_deref(),
+                        subscription_name: subscription_name.as_deref(),
                     };
 
                     diesel::insert_into(jobs::table)

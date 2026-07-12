@@ -172,6 +172,12 @@ impl RedisStorage {
             .invoke(&mut conn)
             .map_err(map_err)?;
 
+        if applied == 1 {
+            // Best-effort backlog reindex Running→Pending; a follow-up rather
+            // than folded into the correctness-critical requeue-stuck script
+            // (see `reindex_pubsub_best_effort`).
+            self.reindex_pubsub_best_effort(&mut conn, &job, JobStatus::Pending);
+        }
         Ok(applied == 1)
     }
 

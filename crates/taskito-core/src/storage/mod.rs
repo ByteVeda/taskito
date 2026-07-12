@@ -42,6 +42,88 @@ pub struct QueueStats {
     pub cancelled: i64,
 }
 
+/// Per-subscription backlog/lag snapshot for the pub/sub dashboard. One entry
+/// per *registered* subscription — durable or ephemeral, active or paused —
+/// even at zero backlog, so the dashboard renders the full subscriber list
+/// from a single call. Counts are computed live off the delivery-attribution
+/// indexes; they can never drift the way a maintained counter would.
+#[derive(Debug, Clone)]
+pub struct SubscriptionBacklogStats {
+    pub topic: String,
+    pub subscription_name: String,
+    pub task_name: String,
+    pub queue: String,
+    pub active: bool,
+    pub durable: bool,
+    pub pending: i64,
+    pub running: i64,
+    pub dead: i64,
+    /// Milliseconds since the oldest still-pending delivery was created.
+    /// `None` when the subscription currently has no pending backlog.
+    pub oldest_pending_age_ms: Option<i64>,
+}
+
+/// Merge the four `topic_backlog_stats` aggregate queries into one row per
+/// registered subscription. Seeds a zeroed entry per subscription so idle
+/// subscriptions still appear, then folds in the pending/running counts,
+/// oldest-pending age (converted to a millisecond age), and dead counts.
+/// Shared by the Diesel and Redis backends.
+pub(crate) fn merge_backlog_stats(
+    subs: Vec<models::SubscriptionRow>,
+    counts: Vec<(String, String, i32, i64)>,
+    oldest: Vec<(String, String, Option<i64>)>,
+    dead: Vec<(String, String, i64)>,
+) -> Vec<SubscriptionBacklogStats> {
+    use crate::job::{now_millis, JobStatus};
+    use std::collections::HashMap;
+
+    let mut by_key: HashMap<(String, String), SubscriptionBacklogStats> = subs
+        .into_iter()
+        .map(|s| {
+            (
+                (s.topic.clone(), s.subscription_name.clone()),
+                SubscriptionBacklogStats {
+                    topic: s.topic,
+                    subscription_name: s.subscription_name,
+                    task_name: s.task_name,
+                    queue: s.queue,
+                    active: s.active,
+                    durable: s.durable,
+                    pending: 0,
+                    running: 0,
+                    dead: 0,
+                    oldest_pending_age_ms: None,
+                },
+            )
+        })
+        .collect();
+
+    for (topic, name, status, count) in counts {
+        if let Some(stats) = by_key.get_mut(&(topic, name)) {
+            if status == JobStatus::Pending as i32 {
+                stats.pending = count;
+            } else if status == JobStatus::Running as i32 {
+                stats.running = count;
+            }
+        }
+    }
+
+    let now = now_millis();
+    for (topic, name, oldest_created) in oldest {
+        if let (Some(stats), Some(created)) = (by_key.get_mut(&(topic, name)), oldest_created) {
+            stats.oldest_pending_age_ms = Some((now - created).max(0));
+        }
+    }
+
+    for (topic, name, count) in dead {
+        if let Some(stats) = by_key.get_mut(&(topic, name)) {
+            stats.dead = count;
+        }
+    }
+
+    by_key.into_values().collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct DeadJob {
     pub id: String,
@@ -386,6 +468,11 @@ macro_rules! impl_storage {
                 live_worker_ids: &[String],
             ) -> $crate::error::Result<u64> {
                 self.reap_ephemeral_subscriptions(live_worker_ids)
+            }
+            fn topic_backlog_stats(
+                &self,
+            ) -> $crate::error::Result<Vec<$crate::storage::SubscriptionBacklogStats>> {
+                self.topic_backlog_stats()
             }
             fn record_metric(
                 &self,
@@ -949,6 +1036,9 @@ impl Storage for StorageBackend {
     }
     fn reap_ephemeral_subscriptions(&self, live_worker_ids: &[String]) -> Result<u64> {
         delegate!(self, reap_ephemeral_subscriptions, live_worker_ids)
+    }
+    fn topic_backlog_stats(&self) -> Result<Vec<SubscriptionBacklogStats>> {
+        delegate!(self, topic_backlog_stats)
     }
     fn record_metric(
         &self,

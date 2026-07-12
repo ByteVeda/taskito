@@ -325,6 +325,13 @@ pub fn create_indexes() -> &'static [&'static str] {
         // the partial index keeps durable rows (owner NULL) out of the reaper's way.
         "CREATE INDEX IF NOT EXISTS idx_topic_subs_owner
                 ON topic_subscriptions(owner_worker_id) WHERE owner_worker_id IS NOT NULL",
+        // Backlog/lag aggregation groups pub/sub deliveries by (topic, subscription,
+        // status). Partial so only the small set of pub/sub jobs is indexed — the
+        // dashboard query never touches the mass of ordinary jobs.
+        "CREATE INDEX IF NOT EXISTS idx_jobs_subscription_status
+                ON jobs(topic, subscription_name, status) WHERE subscription_name IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_dead_letter_subscription
+                ON dead_letter(topic, subscription_name) WHERE subscription_name IS NOT NULL",
     ]
 }
 
@@ -396,6 +403,14 @@ pub fn alter_statements(d: &Dialect) -> Vec<String> {
         format!("ALTER TABLE topic_subscriptions ADD COLUMN {ife}priority INTEGER"),
         format!("ALTER TABLE topic_subscriptions ADD COLUMN {ife}max_retries INTEGER"),
         format!("ALTER TABLE topic_subscriptions ADD COLUMN {ife}timeout_ms {bi}"),
+        // Pub/sub delivery attribution: publish stamps the topic + subscription
+        // onto each delivery job (and its dead_letter row) so backlog/lag stats
+        // aggregate off an index instead of scanning the notes JSON. NULL for
+        // every non-pub/sub job, so the partial indexes stay small.
+        format!("ALTER TABLE jobs ADD COLUMN {ife}topic TEXT"),
+        format!("ALTER TABLE jobs ADD COLUMN {ife}subscription_name TEXT"),
+        format!("ALTER TABLE dead_letter ADD COLUMN {ife}topic TEXT"),
+        format!("ALTER TABLE dead_letter ADD COLUMN {ife}subscription_name TEXT"),
     ]
 }
 

@@ -162,6 +162,11 @@ macro_rules! impl_diesel_job_ops {
                         Self::validate_dependency(conn, dep_id)?;
                     }
 
+                    // Attribute pub/sub deliveries to their subscription so
+                    // backlog stats index by it; `None` for ordinary jobs.
+                    let (topic, subscription_name) =
+                        $crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+                            .map_or((None, None), |(t, s)| (Some(t), Some(s)));
                     let row = NewJobRow {
                         id: &job.id,
                         queue: &job.queue,
@@ -182,6 +187,8 @@ macro_rules! impl_diesel_job_ops {
                         result_ttl_ms: job.result_ttl_ms,
                         namespace: job.namespace.as_deref(),
                         has_deps: job.has_deps,
+                        topic: topic.as_deref(),
+                        subscription_name: subscription_name.as_deref(),
                     };
 
                     diesel::insert_into(jobs::table)
@@ -224,10 +231,21 @@ macro_rules! impl_diesel_job_ops {
 
                 let jobs: Vec<Job> = new_jobs.into_iter().map(|nj| nj.into_job()).collect();
 
+                // Pre-compute subscription attribution so the owned strings
+                // outlive the borrowing rows built below.
+                let attribution: Vec<(Option<String>, Option<String>)> = jobs
+                    .iter()
+                    .map(|job| {
+                        $crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+                            .map_or((None, None), |(t, s)| (Some(t), Some(s)))
+                    })
+                    .collect();
+
                 self.write_transaction(|conn| {
                     let rows: Vec<NewJobRow> = jobs
                         .iter()
-                        .map(|job| NewJobRow {
+                        .zip(&attribution)
+                        .map(|(job, (topic, subscription_name))| NewJobRow {
                             id: &job.id,
                             queue: &job.queue,
                             task_name: &job.task_name,
@@ -247,6 +265,8 @@ macro_rules! impl_diesel_job_ops {
                             result_ttl_ms: job.result_ttl_ms,
                             namespace: job.namespace.as_deref(),
                             has_deps: job.has_deps,
+                            topic: topic.as_deref(),
+                            subscription_name: subscription_name.as_deref(),
                         })
                         .collect();
 
@@ -299,6 +319,9 @@ macro_rules! impl_diesel_job_ops {
                             Self::validate_dependency(conn, dep_id)?;
                         }
 
+                        let (topic, subscription_name) =
+                            $crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+                                .map_or((None, None), |(t, s)| (Some(t), Some(s)));
                         let row = NewJobRow {
                             id: &job.id,
                             queue: &job.queue,
@@ -319,6 +342,8 @@ macro_rules! impl_diesel_job_ops {
                             result_ttl_ms: job.result_ttl_ms,
                             namespace: job.namespace.as_deref(),
                             has_deps: job.has_deps,
+                            topic: topic.as_deref(),
+                            subscription_name: subscription_name.as_deref(),
                         };
 
                         diesel::insert_into(jobs::table)

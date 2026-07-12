@@ -93,6 +93,10 @@ pub struct NewJobRow<'a> {
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<&'a str>,
     pub has_deps: bool,
+    /// Set on pub/sub deliveries (derived from `notes`) so backlog/lag stats
+    /// index by subscription; `None` for ordinary jobs.
+    pub topic: Option<&'a str>,
+    pub subscription_name: Option<&'a str>,
 }
 
 /// A row in the `dead_letter` table.
@@ -137,6 +141,8 @@ pub struct NewDeadLetterRow<'a> {
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<&'a str>,
     pub dlq_retry_count: i32,
+    pub topic: Option<&'a str>,
+    pub subscription_name: Option<&'a str>,
 }
 
 /// A row in the `rate_limits` table.

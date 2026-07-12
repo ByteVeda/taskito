@@ -12,6 +12,22 @@ use crate::py_job::PyJob;
 /// `(topic, subscription_name, task_name, queue, active, durable)`.
 type SubscriptionTuple = (String, String, String, String, bool, bool);
 
+/// Per-subscription backlog snapshot surfaced to Python:
+/// `(topic, subscription, task_name, queue, active, durable, pending, running,
+/// dead, oldest_pending_age_ms)`.
+type SubscriptionBacklogTuple = (
+    String,
+    String,
+    String,
+    String,
+    bool,
+    bool,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+);
+
 #[pymethods]
 impl PyQueue {
     /// Insert or update a topic subscription (idempotent on topic + name).
@@ -98,6 +114,31 @@ impl PyQueue {
         self.storage
             .set_subscription_active(topic, subscription_name, active)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Backlog/lag snapshot per subscription:
+    /// `(topic, subscription, task_name, queue, active, durable, pending,
+    /// running, dead, oldest_pending_age_ms)`.
+    pub fn topic_backlog_stats(&self) -> PyResult<Vec<SubscriptionBacklogTuple>> {
+        self.storage
+            .topic_backlog_stats()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            .into_iter()
+            .map(|s| {
+                Ok((
+                    s.topic,
+                    s.subscription_name,
+                    s.task_name,
+                    s.queue,
+                    s.active,
+                    s.durable,
+                    s.pending,
+                    s.running,
+                    s.dead,
+                    s.oldest_pending_age_ms,
+                ))
+            })
+            .collect()
     }
 
     /// Drop ephemeral subscriptions whose owning worker is gone. Runs on the

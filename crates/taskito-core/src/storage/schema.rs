@@ -24,6 +24,8 @@ diesel::table! {
         result_ttl_ms -> Nullable<BigInt>,
         namespace -> Nullable<Text>,
         has_deps -> Bool,
+        topic -> Nullable<Text>,
+        subscription_name -> Nullable<Text>,
     }
 }
 
@@ -45,6 +47,8 @@ diesel::table! {
         result_ttl_ms -> Nullable<BigInt>,
         namespace -> Nullable<Text>,
         dlq_retry_count -> Integer,
+        topic -> Nullable<Text>,
+        subscription_name -> Nullable<Text>,
     }
 }
 

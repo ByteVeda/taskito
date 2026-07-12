@@ -188,6 +188,31 @@ class QueuePubSubMixin:
             seen.setdefault(row[0], None)
         return list(seen)
 
+    def topic_stats(self, topic: str | None = None) -> list[dict[str, Any]]:
+        """Backlog/lag snapshot per subscription, optionally filtered to a topic.
+
+        Each entry: ``topic``, ``subscription``, ``task_name``, ``queue``,
+        ``active``, ``durable``, ``pending``, ``running``, ``dead``, and
+        ``oldest_pending_age_ms`` (``None`` when the subscription has no pending
+        backlog). Computed live off indexed columns — safe to poll.
+        """
+        stats = [
+            {
+                "topic": row[0],
+                "subscription": row[1],
+                "task_name": row[2],
+                "queue": row[3],
+                "active": row[4],
+                "durable": row[5],
+                "pending": row[6],
+                "running": row[7],
+                "dead": row[8],
+                "oldest_pending_age_ms": row[9],
+            }
+            for row in self._inner.topic_backlog_stats()
+        ]
+        return stats if topic is None else [s for s in stats if s["topic"] == topic]
+
     def _delivery_task_defaults(self) -> dict[str, tuple[int, int, int]]:
         """Per-task ``(priority, max_retries, timeout_ms)`` from this process's
         task registry. Persisted on the subscription row at registration so a

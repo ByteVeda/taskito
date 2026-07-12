@@ -116,6 +116,18 @@ fn delivery_job(request: &PublishRequest, sub: &SubscriptionRow) -> NewJob {
     }
 }
 
+/// Inverse of [`delivery_notes`]: pull `topic`/`subscription` back out of a
+/// job's notes JSON when both are present. Feeds the indexed
+/// `jobs.topic`/`jobs.subscription_name` columns (and their `dead_letter`
+/// mirrors) at insert time, so backlog/lag aggregation runs off an index
+/// instead of a JSON scan — without adding pub/sub-only fields to `NewJob`.
+pub fn extract_topic_subscription(notes: Option<&str>) -> Option<(String, String)> {
+    let obj: serde_json::Map<String, serde_json::Value> = serde_json::from_str(notes?).ok()?;
+    let topic = obj.get("topic")?.as_str()?.to_string();
+    let subscription = obj.get("subscription")?.as_str()?.to_string();
+    Some((topic, subscription))
+}
+
 /// Stamp `topic` and `subscription` into the caller's notes object so every
 /// delivery is filterable per subscriber without a schema change.
 fn delivery_notes(request: &PublishRequest, sub: &SubscriptionRow) -> String {

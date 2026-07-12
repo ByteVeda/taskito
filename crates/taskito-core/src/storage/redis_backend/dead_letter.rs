@@ -207,7 +207,9 @@ impl RedisStorage {
         // ids whose entry matches `task_name`.
         let ids: Vec<String> = conn.zrevrange(&dlq_all, 0, -1).map_err(map_err)?;
 
-        let mut to_delete = Vec::new();
+        // (dlq_id, notes, original_job_id) — notes + original id let the
+        // sub:dead index shrink with the purge (no-op for non-pub/sub rows).
+        let mut to_delete: Vec<(String, Option<String>, String)> = Vec::new();
         for id in ids {
             let dlq_key = self.key(&["dlq", &id]);
             let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
@@ -217,7 +219,7 @@ impl RedisStorage {
                 let entry: DeadJobEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
                 if entry.task_name == task_name {
-                    to_delete.push(id);
+                    to_delete.push((id, entry.notes, entry.original_job_id));
                 }
             }
         }
@@ -227,9 +229,10 @@ impl RedisStorage {
         }
 
         let pipe = &mut redis::pipe();
-        for id in &to_delete {
+        for (id, notes, member) in &to_delete {
             pipe.del(self.key(&["dlq", id]));
             pipe.zrem(&dlq_all, id.as_str());
+            self.push_pubsub_dead_remove(pipe, notes.as_deref(), member);
         }
         pipe.query::<()>(&mut conn).map_err(map_err)?;
         Ok(to_delete.len() as u64)
@@ -248,6 +251,12 @@ impl RedisStorage {
 
         let entry: DeadJobEntry =
             serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+
+        // Attribution + original job id for the sub:dead removal below, captured
+        // before `entry`'s fields are moved into `new_job`. The re-enqueue below
+        // re-attributes the fresh job into sub:pending via its carried notes.
+        let dead_notes = entry.notes.clone();
+        let dead_member = entry.original_job_id.clone();
 
         let retry_metadata = {
             let next_count = entry.dlq_retry_count + 1;
@@ -284,11 +293,13 @@ impl RedisStorage {
 
         let job = self.enqueue(new_job)?;
 
-        // Remove from DLQ
+        // Remove from DLQ, and drop it from its subscription's sub:dead index
+        // so the dead count doesn't keep the retried delivery (no-op otherwise).
         let dlq_all = self.key(&["dlq", "all"]);
         let pipe = &mut redis::pipe();
         pipe.del(&dlq_key);
         pipe.zrem(&dlq_all, dead_id);
+        self.push_pubsub_dead_remove(pipe, dead_notes.as_deref(), &dead_member);
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(job.id)
@@ -307,11 +318,24 @@ impl RedisStorage {
             return Ok(0);
         }
 
+        // Load blobs to attribute each dead row to its subscription so the
+        // sub:dead index shrinks with the purge (no-op for non-pub/sub rows).
+        let blob_keys: Vec<String> = ids.iter().map(|id| self.key(&["dlq", id])).collect();
+        let blobs: Vec<Option<String>> = conn.mget(&blob_keys).map_err(map_err)?;
+
         let pipe = &mut redis::pipe();
-        for id in &ids {
-            let dlq_key = self.key(&["dlq", id]);
-            pipe.del(&dlq_key);
-            pipe.zrem(&dlq_all, id);
+        for (id, blob) in ids.iter().zip(&blobs) {
+            pipe.del(self.key(&["dlq", id]));
+            pipe.zrem(&dlq_all, id.as_str());
+            if let Some(d) = blob {
+                if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(d) {
+                    self.push_pubsub_dead_remove(
+                        pipe,
+                        entry.notes.as_deref(),
+                        &entry.original_job_id,
+                    );
+                }
+            }
         }
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
@@ -323,14 +347,19 @@ impl RedisStorage {
         let dlq_key = self.key(&["dlq", dead_id]);
         let dlq_all = self.key(&["dlq", "all"]);
 
-        let existed: bool = conn.exists(&dlq_key).map_err(map_err)?;
-        if !existed {
+        // Load the row (rather than a bare EXISTS) so its subscription
+        // attribution is known and the sub:dead index shrinks with the delete.
+        let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+        let Some(d) = data else {
             return Ok(false);
-        }
+        };
+        let entry: DeadJobEntry =
+            serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
 
         let pipe = &mut redis::pipe();
         pipe.del(&dlq_key);
         pipe.zrem(&dlq_all, dead_id);
+        self.push_pubsub_dead_remove(pipe, entry.notes.as_deref(), &entry.original_job_id);
         pipe.query::<()>(&mut conn).map_err(map_err)?;
         Ok(true)
     }
@@ -344,7 +373,9 @@ impl RedisStorage {
             .zrangebyscore(&dlq_all, "-inf", "+inf")
             .map_err(map_err)?;
 
-        let mut to_delete = Vec::new();
+        // (dlq_id, notes, original_job_id) — keeps the sub:dead index in step
+        // with the TTL purge (no-op for non-pub/sub rows).
+        let mut to_delete: Vec<(String, Option<String>, String)> = Vec::new();
         for id in &ids {
             let dlq_key = self.key(&["dlq", id]);
             let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
@@ -355,7 +386,7 @@ impl RedisStorage {
                         None => entry.failed_at < global_cutoff_ms,
                     };
                     if expired {
-                        to_delete.push(id.clone());
+                        to_delete.push((id.clone(), entry.notes, entry.original_job_id));
                     }
                 }
             }
@@ -366,9 +397,10 @@ impl RedisStorage {
         }
 
         let pipe = &mut redis::pipe();
-        for id in &to_delete {
+        for (id, notes, member) in &to_delete {
             pipe.del(self.key(&["dlq", id]));
             pipe.zrem(&dlq_all, id.as_str());
+            self.push_pubsub_dead_remove(pipe, notes.as_deref(), member);
         }
         pipe.query::<()>(&mut conn).map_err(map_err)?;
         Ok(to_delete.len() as u64)

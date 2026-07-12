@@ -211,6 +211,60 @@ class TestCrossProcessDeliverySettings:
         assert job is not None and job._py_job.max_retries == 1
 
 
+class TestTopicStats:
+    def test_backlog_counts_and_zero_rows(self, queue: Queue) -> None:
+        @queue.subscriber("orders", name="email")
+        def email(order_id: int) -> None: ...
+
+        @queue.subscriber("orders", name="analytics")
+        def track(order_id: int) -> None: ...
+
+        queue.declare_subscriptions()
+        queue.publish("orders", 1)
+        queue.publish("orders", 2)
+
+        stats = {s["subscription"]: s for s in queue.topic_stats("orders")}
+        # Both registered subscriptions appear, each with 2 pending deliveries.
+        assert set(stats) == {"email", "analytics"}
+        assert stats["email"]["pending"] == 2
+        assert stats["analytics"]["pending"] == 2
+        assert stats["email"]["dead"] == 0
+        assert stats["email"]["oldest_pending_age_ms"] is not None
+        assert stats["email"]["oldest_pending_age_ms"] >= 0
+
+    def test_idle_subscription_reports_zeros(self, queue: Queue) -> None:
+        @queue.subscriber("orders", name="email")
+        def email(order_id: int) -> None: ...
+
+        queue.declare_subscriptions()
+        (stat,) = queue.topic_stats("orders")
+        assert stat["pending"] == stat["running"] == stat["dead"] == 0
+        assert stat["oldest_pending_age_ms"] is None
+
+    def test_failed_delivery_counts_as_dead(
+        self, queue: Queue, run_worker: threading.Thread, poll_until: PollUntil
+    ) -> None:
+        @queue.subscriber("orders", name="flaky", max_retries=0)
+        def flaky(order_id: int) -> None:
+            raise RuntimeError("boom")
+
+        queue.declare_subscriptions()
+        queue.publish("orders", 1)
+
+        def dead_counted() -> bool:
+            stats = queue.topic_stats("orders")
+            return bool(stats) and stats[0]["dead"] == 1 and stats[0]["pending"] == 0
+
+        poll_until(dead_counted, message="failed delivery should count as dead")
+
+    def test_non_pubsub_jobs_are_invisible(self, queue: Queue) -> None:
+        @queue.task()
+        def plain() -> None: ...
+
+        plain.delay()
+        assert queue.topic_stats() == []
+
+
 class TestEphemeralSubscriptions:
     def test_ephemeral_registers_only_with_worker(self, queue: Queue) -> None:
         @queue.subscriber("orders", name="debug-tail", durable=False)
