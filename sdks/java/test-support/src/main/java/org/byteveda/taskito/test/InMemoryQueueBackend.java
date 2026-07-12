@@ -31,6 +31,14 @@ public final class InMemoryQueueBackend implements QueueBackend {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String DEFAULT_QUEUE = "default";
 
+    /**
+     * Reap grace for freshly registered ephemeral rows, mirroring the core's
+     * {@code EPHEMERAL_SUBSCRIPTION_GRACE_MS}: a starting worker writes its
+     * subscriptions before its liveness is visible everywhere, and a concurrent
+     * reap must not race that gap.
+     */
+    private static final long EPHEMERAL_SUBSCRIPTION_GRACE_MS = 60_000;
+
     private final Map<String, JobRec> jobs = new ConcurrentHashMap<>();
     private final Map<String, String> settings = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Object>> periodics = new ConcurrentHashMap<>();
@@ -93,6 +101,14 @@ public final class InMemoryQueueBackend implements QueueBackend {
         long createdAt = now();
         job.createdAt = createdAt;
         job.scheduledAt = createdAt + optLong(opts, "delayMs", 0);
+        JsonNode expiresMs = opts == null ? null : opts.get("expiresMs");
+        if (expiresMs != null && !expiresMs.isNull()) {
+            job.expiresAt = createdAt + Math.max(0, expiresMs.asLong());
+        }
+        JsonNode resultTtlMs = opts == null ? null : opts.get("resultTtlMs");
+        if (resultTtlMs != null && !resultTtlMs.isNull()) {
+            job.resultTtlMs = resultTtlMs.asLong();
+        }
         jobs.put(job.id, job);
         return job.id;
     }
@@ -106,7 +122,15 @@ public final class InMemoryQueueBackend implements QueueBackend {
     @Override
     public Optional<byte[]> getResult(String jobId) {
         JobRec job = jobs.get(jobId);
-        return job == null ? Optional.empty() : Optional.ofNullable(job.result);
+        if (job == null || resultExpired(job)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(job.result);
+    }
+
+    /** Whether the job's result outlived its retention TTL (no TTL = kept). */
+    private static boolean resultExpired(JobRec job) {
+        return job.resultTtlMs != null && job.completedAt != null && job.completedAt + job.resultTtlMs < now();
     }
 
     // synchronized so a pending→cancelled transition can't race claimNext's
@@ -448,12 +472,29 @@ public final class InMemoryQueueBackend implements QueueBackend {
             String queue,
             boolean durable,
             String ownerWorkerIdOrNull) {
-        // Full replacement mirrors the core's upsert: re-registering updates the
-        // routing target and clears any previously set owner.
-        subscriptions.put(
-                subscriptionKey(topic, subscriptionName),
-                new SubscriptionRec(
-                        topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, seq.incrementAndGet()));
+        // Mirrors the native guard: an ownerless ephemeral row would never be
+        // reaped yet keep receiving deliveries.
+        if (!durable && ownerWorkerIdOrNull == null) {
+            throw new TaskitoException("an ephemeral subscription (durable=false) requires ownerWorkerId");
+        }
+        // Upsert mirrors the core: routing (task, queue, durable, owner) is
+        // replaced while active and creation time survive — re-declaring never
+        // resumes a paused subscription or refreshes the reap grace window.
+        subscriptions.compute(subscriptionKey(topic, subscriptionName), (key, existing) -> {
+            SubscriptionRec rec = new SubscriptionRec(
+                    topic,
+                    subscriptionName,
+                    taskName,
+                    queue,
+                    durable,
+                    ownerWorkerIdOrNull,
+                    existing == null ? seq.incrementAndGet() : existing.createdSeq,
+                    existing == null ? now() : existing.createdAt);
+            if (existing != null) {
+                rec.active = existing.active;
+            }
+            return rec;
+        });
     }
 
     @Override
@@ -485,14 +526,28 @@ public final class InMemoryQueueBackend implements QueueBackend {
 
     @Override
     public long reapEphemeralSubscriptions() {
+        long cutoff = now() - EPHEMERAL_SUBSCRIPTION_GRACE_MS;
         long removed = 0;
         for (Map.Entry<String, SubscriptionRec> entry : subscriptions.entrySet()) {
-            String owner = entry.getValue().ownerWorkerId;
-            if (owner != null && !liveWorkers.contains(owner) && subscriptions.remove(entry.getKey()) != null) {
+            SubscriptionRec sub = entry.getValue();
+            if (sub.ownerWorkerId == null || liveWorkers.contains(sub.ownerWorkerId) || sub.createdAt >= cutoff) {
+                continue;
+            }
+            // Conditional removal: a replacement registered under the same key
+            // after this scan must survive the reap.
+            if (subscriptions.remove(entry.getKey(), sub)) {
                 removed++;
             }
         }
         return removed;
+    }
+
+    /** Test seam: age a subscription past the reap grace window. */
+    void backdateSubscription(String topic, String subscriptionName, long ageMs) {
+        SubscriptionRec sub = subscriptions.get(subscriptionKey(topic, subscriptionName));
+        if (sub != null) {
+            sub.createdAt -= ageMs;
+        }
     }
 
     @Override
@@ -549,6 +604,10 @@ public final class InMemoryQueueBackend implements QueueBackend {
         delivery.put("maxRetries", resolveDeliveryInt(opts, taskDefaults, "maxRetries"));
         delivery.put("timeoutMs", resolveDeliveryLong(opts, taskDefaults, "timeoutMs"));
         delivery.put("delayMs", optLong(opts, "delayMs", 0));
+        // Publish-level expiry and result retention pass straight through; the
+        // enqueue path resolves them (expiresMs → an absolute expiry).
+        copyIfSet(opts, delivery, "expiresMs");
+        copyIfSet(opts, delivery, "resultTtlMs");
         String idempotencyKey = text(opts, "idempotencyKey");
         if (idempotencyKey != null) {
             delivery.put("uniqueKey", idempotencyKey + "::" + sub.name);
@@ -559,6 +618,14 @@ public final class InMemoryQueueBackend implements QueueBackend {
         }
         delivery.put("notes", deliveryNotes(text(opts, "notes"), sub));
         return delivery;
+    }
+
+    /** Copy a field from the publish options into the delivery, when present. */
+    private static void copyIfSet(JsonNode opts, ObjectNode delivery, String field) {
+        JsonNode value = opts == null ? null : opts.get(field);
+        if (value != null && !value.isNull()) {
+            delivery.put(field, value.asLong());
+        }
     }
 
     private static int resolveDeliveryInt(JsonNode opts, JsonNode taskDefaults, String field) {
@@ -597,8 +664,16 @@ public final class InMemoryQueueBackend implements QueueBackend {
     public WorkerControl startWorker(WorkerBridge bridge, String optionsJson) {
         JsonNode options = readNode(optionsJson);
         String workerId = "im-worker-" + seq.incrementAndGet();
-        registerWorkerSubscriptions(workerId, options);
+        // Mark the worker live before its ephemeral subscriptions exist (like
+        // the native path), so a concurrent reap never sees an owned row
+        // without a live owner. Roll back liveness if registration fails.
         liveWorkers.add(workerId);
+        try {
+            registerWorkerSubscriptions(workerId, options);
+        } catch (RuntimeException e) {
+            liveWorkers.remove(workerId);
+            throw e;
+        }
         InMemoryWorker worker = new InMemoryWorker(bridge, parseQueues(optionsJson), workerId);
         workers.add(worker);
         worker.start();
@@ -740,6 +815,14 @@ public final class InMemoryQueueBackend implements QueueBackend {
         JobRec best = null;
         for (JobRec job : jobs.values()) {
             if (!"pending".equals(job.status) || job.scheduledAt > now || paused.contains(job.queue)) {
+                continue;
+            }
+            // Skip expired jobs, cancelling them — mirrors the core's dequeue,
+            // which archives an expired candidate as cancelled.
+            if (job.expiresAt != null && now > job.expiresAt) {
+                job.status = "cancelled";
+                job.completedAt = now;
+                job.error = "expired before execution";
                 continue;
             }
             // Honor the worker's queue filter; empty filter = every queue.
@@ -901,6 +984,8 @@ public final class InMemoryQueueBackend implements QueueBackend {
         long timeoutMs;
         Integer progress;
         String error;
+        Long expiresAt;
+        Long resultTtlMs;
         String uniqueKey;
         String namespace;
         String metadata;
@@ -917,6 +1002,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
         final boolean durable;
         final String ownerWorkerId;
         final long createdSeq;
+        volatile long createdAt;
         volatile boolean active = true;
 
         SubscriptionRec(
@@ -926,7 +1012,8 @@ public final class InMemoryQueueBackend implements QueueBackend {
                 String queue,
                 boolean durable,
                 String ownerWorkerId,
-                long createdSeq) {
+                long createdSeq,
+                long createdAt) {
             this.topic = topic;
             this.name = name;
             this.taskName = taskName;
@@ -934,6 +1021,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
             this.durable = durable;
             this.ownerWorkerId = ownerWorkerId;
             this.createdSeq = createdSeq;
+            this.createdAt = createdAt;
         }
     }
 
@@ -1033,10 +1121,17 @@ public final class InMemoryQueueBackend implements QueueBackend {
             if (loop != null) {
                 loop.interrupt();
             }
-            // This worker just went away: its ephemeral subscriptions are now
-            // dead-owned, so reap immediately (mirrors the native shutdown path).
             liveWorkers.remove(workerId);
-            reapEphemeralSubscriptions();
+            // A graceful stop removes its own ephemeral subscriptions directly:
+            // unlike the generic reap, the owner is known-dead here, so the
+            // fresh-row registration grace does not apply. Conditional removal
+            // spares a row re-registered under a new owner meanwhile.
+            for (Map.Entry<String, SubscriptionRec> entry : subscriptions.entrySet()) {
+                SubscriptionRec sub = entry.getValue();
+                if (workerId.equals(sub.ownerWorkerId)) {
+                    subscriptions.remove(entry.getKey(), sub);
+                }
+            }
         }
 
         @Override

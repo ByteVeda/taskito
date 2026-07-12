@@ -676,6 +676,17 @@ final class DefaultTaskito implements Taskito {
     public <T> Taskito subscribe(String topic, Task<T> task, SubscriptionOptions options) {
         String name = options.name() != null ? options.name() : task.name();
         EnqueueOptions taskDefaults = task.options();
+        // A durable subscription registers now so producer-only processes see it;
+        // an ephemeral one waits for a worker start to bind to that worker's id.
+        // Register before recording locally, so a failed registration leaves no
+        // orphaned local declaration behind.
+        if (options.durable()) {
+            backend.registerSubscription(topic, name, task.name(), options.queue(), true, null);
+        }
+        // Re-declaring (topic, name) replaces the previous local entry, mirroring
+        // the backend's upsert instead of accumulating duplicates.
+        subscriptions.removeIf(
+                existing -> existing.topic().equals(topic) && existing.name().equals(name));
         subscriptions.add(new SubscriptionConfig(
                 topic,
                 name,
@@ -685,11 +696,6 @@ final class DefaultTaskito implements Taskito {
                 taskDefaults.priority(),
                 taskDefaults.maxRetries(),
                 taskDefaults.timeoutMs()));
-        // A durable subscription registers now so producer-only processes see it;
-        // an ephemeral one waits for a worker start to bind to that worker's id.
-        if (options.durable()) {
-            backend.registerSubscription(topic, name, task.name(), options.queue(), true, null);
-        }
         return this;
     }
 
@@ -744,6 +750,10 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public boolean unsubscribe(String topic, String name) {
+        // Drop the local declaration too, or a later worker start would
+        // re-register the subscription from the shared worker state.
+        subscriptions.removeIf(
+                config -> config.topic().equals(topic) && config.name().equals(name));
         return backend.unsubscribe(topic, name);
     }
 

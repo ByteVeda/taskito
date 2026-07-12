@@ -2,6 +2,7 @@ package org.byteveda.taskito.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.internal.JniQueueBackend;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
@@ -206,7 +208,7 @@ class PubSubTest {
 
     @Test
     @Timeout(30)
-    void reapRemovesDeadOwnedSubscriptionsOnly(@TempDir Path dir) throws Exception {
+    void reapSparesFreshEphemeralRowsWithinTheRegistrationGrace(@TempDir Path dir) throws Exception {
         String options = new ObjectMapper()
                 .writeValueAsString(
                         Map.of("backend", "sqlite", "dsn", dir.resolve("t.db").toString()));
@@ -218,13 +220,63 @@ class PubSubTest {
                 backend.registerSubscription("orders", "ghost", SEND_EMAIL.name(), "default", false, "gone-worker");
                 backend.registerSubscription("orders", "durable", SEND_EMAIL.name(), "default", true, null);
 
-                // The running worker's own heartbeat may reap concurrently, so
-                // assert the converged state rather than this call's count.
-                backend.reapEphemeralSubscriptions();
+                // Even the dead-owned row is inside the core's registration
+                // grace window, so nothing is eligible yet — a starting
+                // worker's rows must not be raced away before its liveness
+                // becomes visible. (Post-grace reaping is covered by the
+                // core's storage tests, which can backdate rows.)
+                assertEquals(0, backend.reapEphemeralSubscriptions());
                 List<String> names = new ArrayList<>();
                 queue.listSubscriptions("orders").forEach(sub -> names.add(sub.name));
                 Collections.sort(names);
-                assertEquals(List.of("durable", "live"), names);
+                assertEquals(List.of("durable", "ghost", "live"), names);
+            }
+        }
+    }
+
+    @Test
+    void ephemeralRegistrationWithoutAnOwnerIsRejected(@TempDir Path dir) throws Exception {
+        String options = new ObjectMapper()
+                .writeValueAsString(
+                        Map.of("backend", "sqlite", "dsn", dir.resolve("t.db").toString()));
+        JniQueueBackend backend = JniQueueBackend.open(options);
+        try (Taskito queue = Taskito.builder().open(backend)) {
+            TaskitoException rejected = assertThrows(
+                    TaskitoException.class,
+                    () -> backend.registerSubscription("orders", "sink", SEND_EMAIL.name(), "default", false, null));
+            assertTrue(rejected.getMessage().contains("requires ownerWorkerId"));
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void pauseSurvivesRedeclareAndWorkerStart(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+            assertTrue(queue.pauseSubscription("orders", SEND_EMAIL.name()));
+
+            // Re-declaring must not resume the paused subscription.
+            queue.subscribe("orders", SEND_EMAIL);
+            assertTrue(queue.publish("orders", "o-1").isEmpty());
+
+            // Neither must a worker start re-registering the declaration.
+            try (Worker worker =
+                    queue.worker().handle(SEND_EMAIL, payload -> payload).start()) {
+                assertTrue(queue.publish("orders", "o-2").isEmpty());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void unsubscribeDropsTheLocalDeclarationSoWorkerStartDoesNotResurrectIt(@TempDir Path dir) {
+        try (Taskito queue = open(dir)) {
+            queue.subscribe("orders", SEND_EMAIL);
+            assertTrue(queue.unsubscribe("orders", SEND_EMAIL.name()));
+            try (Worker worker =
+                    queue.worker().handle(SEND_EMAIL, payload -> payload).start()) {
+                assertTrue(queue.listSubscriptions("orders").isEmpty());
+                assertTrue(queue.publish("orders", "o-1").isEmpty());
             }
         }
     }

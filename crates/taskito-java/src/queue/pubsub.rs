@@ -44,11 +44,20 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
         let task_name = read_string(env, &task_name)?;
         let queue = read_string(env, &queue)?;
         let owner_worker_id = read_optional_string(env, &owner_worker_id)?;
+        // An ownerless ephemeral row would never be reaped (the reaper matches
+        // on owner) yet keeps receiving deliveries — reject it up front.
+        if durable == 0 && owner_worker_id.is_none() {
+            return Err(crate::error::BindingError::new(
+                "an ephemeral subscription (durable=false) requires ownerWorkerId",
+            ));
+        }
         let row = NewSubscriptionRow {
             topic: &topic,
             subscription_name: &subscription_name,
             task_name: &task_name,
             queue: &queue,
+            // Insert default only: the core upsert preserves an existing row's
+            // `active` (and `created_at`), so re-declaring never resumes a pause.
             active: true,
             durable: durable != 0,
             owner_worker_id: owner_worker_id.as_deref(),

@@ -85,14 +85,19 @@ fn start_worker(
     #[cfg(feature = "mesh")]
     let mesh_worker_id = worker_id.clone();
 
-    // Write topic subscriptions before the scheduler starts, so its first poll
-    // can already see deliveries. A registration failure aborts the start —
-    // a silently missing subscription would drop deliveries.
+    // Create the live worker row before its ephemeral subscriptions exist:
+    // the reaper only spares owned rows whose owner is registered, so this
+    // ordering (plus the core's registration grace window) keeps a concurrent
+    // reap from racing the start. Then write topic subscriptions before the
+    // scheduler starts, so its first poll can already see deliveries. Either
+    // failure aborts the start — a silently missing subscription would drop
+    // deliveries.
+    register_live_worker(&lifecycle_storage, &worker_id, &queues_csv, capacity)?;
     register_subscriptions(&storage, &worker_id, options.subscriptions.take())?;
 
     let mut scheduler = Scheduler::new(storage, queues, config, namespace);
     // Claim execution under this worker's id so dead-worker recovery can
-    // attribute orphaned jobs (matches the register_worker id below).
+    // attribute orphaned jobs (matches the worker id registered above).
     scheduler.set_claim_owner(worker_id.clone());
     register_task_policies(&mut scheduler, options.task_configs);
     let scheduler = Arc::new(scheduler);
@@ -147,13 +152,11 @@ fn start_worker(
     let drain_callbacks = callbacks;
     runtime.spawn_blocking(move || drain_results(result_rx, drain_scheduler, drain_callbacks));
 
-    // Lifecycle loop: register, heartbeat, unregister.
+    // Lifecycle loop: heartbeat until stopped, then unregister.
     spawn_lifecycle(
         &runtime,
         lifecycle_storage,
         worker_id,
-        queues_csv,
-        capacity,
         heartbeat_stop.clone(),
     );
 
@@ -167,9 +170,36 @@ fn start_worker(
     })
 }
 
+/// Create this worker's registry row. Runs before the worker's ephemeral
+/// subscriptions are written, and a failure aborts the start: those rows bind
+/// to this id, so a missing registry row would leave them reap-able as soon
+/// as the registration grace window lapses.
+fn register_live_worker(
+    storage: &StorageBackend,
+    worker_id: &str,
+    queues_csv: &str,
+    capacity: usize,
+) -> Result<(), crate::error::BindingError> {
+    let hostname = gethostname::gethostname().to_string_lossy().to_string();
+    let pid = std::process::id() as i32;
+    storage.register_worker(
+        worker_id,
+        queues_csv,
+        None,
+        None,
+        None,
+        capacity as i32,
+        Some(&hostname),
+        Some(pid),
+        Some("java"),
+    )?;
+    Ok(())
+}
+
 /// Register the worker's declared topic subscriptions. Durable rows carry no
 /// owner; ephemeral rows bind to this worker's id and are reaped once the
-/// worker leaves the registry.
+/// worker leaves the registry. `active` is an insert default — the core upsert
+/// preserves an existing row's paused state across a restart.
 fn register_subscriptions(
     storage: &StorageBackend,
     worker_id: &str,
@@ -355,30 +385,15 @@ fn describe(outcome: &ResultOutcome) -> (&str, &str, &str, Option<&str>, i32, bo
     }
 }
 
-/// Register the worker, heartbeat every 5s until stopped, then unregister.
+/// Heartbeat the already-registered worker every 5s until stopped, then
+/// unregister it. Registration itself happens synchronously at start (see
+/// [`register_live_worker`]) so ephemeral subscriptions never precede it.
 fn spawn_lifecycle(
     runtime: &tokio::runtime::Runtime,
     storage: StorageBackend,
     worker_id: String,
-    queues_csv: String,
-    capacity: usize,
     stop: Arc<Notify>,
 ) {
-    let hostname = gethostname::gethostname().to_string_lossy().to_string();
-    let pid = std::process::id() as i32;
-    if let Err(e) = storage.register_worker(
-        &worker_id,
-        &queues_csv,
-        None,
-        None,
-        None,
-        capacity as i32,
-        Some(&hostname),
-        Some(pid),
-        Some("java"),
-    ) {
-        log::warn!("[taskito-java] worker registration failed: {e}");
-    }
     runtime.spawn(async move {
         loop {
             tokio::select! {

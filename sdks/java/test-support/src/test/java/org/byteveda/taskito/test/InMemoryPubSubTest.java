@@ -2,12 +2,14 @@ package org.byteveda.taskito.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.byteveda.taskito.Taskito;
+import org.byteveda.taskito.TaskitoException;
 import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobStatus;
 import org.byteveda.taskito.model.Subscription;
@@ -55,6 +57,7 @@ class InMemoryPubSubTest {
     }
 
     @Test
+    @Timeout(20)
     void redeclareUpsertsOnTopicAndName() {
         try (Taskito queue = InMemoryTaskito.open()) {
             queue.subscribe(
@@ -64,6 +67,14 @@ class InMemoryPubSubTest {
             List<Subscription> subs = queue.listSubscriptions("orders");
             assertEquals(1, subs.size());
             assertEquals(AUDIT.name(), subs.get(0).taskName);
+
+            // The redeclare replaced (not appended to) the local declaration:
+            // a worker start re-registers exactly one subscription.
+            try (Worker worker =
+                    queue.worker().handle(AUDIT, payload -> payload).start()) {
+                assertEquals(1, queue.listSubscriptions("orders").size());
+                assertEquals(1, queue.publish("orders", "o-1").size());
+            }
         }
     }
 
@@ -73,6 +84,20 @@ class InMemoryPubSubTest {
             queue.subscribe("orders", EMAIL);
             assertTrue(queue.unsubscribe("orders", EMAIL.name()));
             assertFalse(queue.unsubscribe("orders", EMAIL.name()));
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void unsubscribeDropsTheLocalDeclarationSoWorkerStartDoesNotResurrectIt() {
+        try (Taskito queue = InMemoryTaskito.open()) {
+            queue.subscribe("orders", EMAIL);
+            assertTrue(queue.unsubscribe("orders", EMAIL.name()));
+            try (Worker worker =
+                    queue.worker().handle(EMAIL, payload -> payload).start()) {
+                assertTrue(queue.listSubscriptions("orders").isEmpty());
+                assertTrue(queue.publish("orders", "o-1").isEmpty());
+            }
         }
     }
 
@@ -91,6 +116,25 @@ class InMemoryPubSubTest {
 
             assertTrue(queue.resumeSubscription("orders", AUDIT.name()));
             assertEquals(2, queue.publish("orders", "o-2").size());
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void pauseSurvivesRedeclareAndWorkerStart() {
+        try (Taskito queue = InMemoryTaskito.open()) {
+            queue.subscribe("orders", EMAIL);
+            assertTrue(queue.pauseSubscription("orders", EMAIL.name()));
+
+            // Re-declaring must not resume the paused subscription.
+            queue.subscribe("orders", EMAIL);
+            assertTrue(queue.publish("orders", "o-1").isEmpty());
+
+            // Neither must a worker start re-registering the declaration.
+            try (Worker worker =
+                    queue.worker().handle(EMAIL, payload -> payload).start()) {
+                assertTrue(queue.publish("orders", "o-2").isEmpty());
+            }
         }
     }
 
@@ -165,14 +209,81 @@ class InMemoryPubSubTest {
     }
 
     @Test
-    void reapRemovesDeadOwnedSubscriptionsOnly() {
+    void reapRemovesDeadOwnedSubscriptionsOnlyAfterTheRegistrationGrace() {
         InMemoryQueueBackend backend = new InMemoryQueueBackend();
         backend.registerSubscription("orders", "ghost", EMAIL.name(), "default", false, "gone-worker");
         backend.registerSubscription("orders", "durable", EMAIL.name(), "default", true, null);
 
+        // A just-registered dead-owned row is inside the grace window: the
+        // owner's liveness may simply not be visible yet, so nothing is reaped.
+        assertEquals(0, backend.reapEphemeralSubscriptions());
+        assertTrue(backend.listSubscriptionsJson("orders").contains("ghost"));
+
+        backend.backdateSubscription("orders", "ghost", 61_000);
         assertEquals(1, backend.reapEphemeralSubscriptions());
         assertEquals(0, backend.reapEphemeralSubscriptions());
         assertTrue(backend.listSubscriptionsJson("orders").contains("durable"));
         assertFalse(backend.listSubscriptionsJson("orders").contains("ghost"));
+    }
+
+    @Test
+    void redeclareDoesNotRefreshTheReapGraceWindow() {
+        InMemoryQueueBackend backend = new InMemoryQueueBackend();
+        backend.registerSubscription("orders", "ghost", EMAIL.name(), "default", false, "gone-worker");
+        backend.backdateSubscription("orders", "ghost", 61_000);
+
+        // The upsert preserves creation time, so re-declaring an aged
+        // dead-owned row leaves it eligible for the very next reap.
+        backend.registerSubscription("orders", "ghost", AUDIT.name(), "default", false, "gone-worker");
+        assertEquals(1, backend.reapEphemeralSubscriptions());
+    }
+
+    @Test
+    void ephemeralRegistrationWithoutAnOwnerIsRejected() {
+        InMemoryQueueBackend backend = new InMemoryQueueBackend();
+        TaskitoException rejected = assertThrows(
+                TaskitoException.class,
+                () -> backend.registerSubscription("orders", "sink", EMAIL.name(), "default", false, null));
+        assertTrue(rejected.getMessage().contains("requires ownerWorkerId"));
+    }
+
+    @Test
+    @Timeout(20)
+    void publishExpiryCancelsDeliveriesThatOutliveIt() throws Exception {
+        try (Taskito queue = InMemoryTaskito.open()) {
+            queue.subscribe("orders", EMAIL);
+            List<Job> deliveries = queue.publish(
+                    "orders", "o-1", PublishOptions.builder().expiresMs(1L).build());
+            assertEquals(1, deliveries.size());
+            Thread.sleep(15);
+
+            try (Worker worker =
+                    queue.worker().handle(EMAIL, payload -> payload).start()) {
+                Job done = queue.awaitJob(deliveries.get(0).id, Duration.ofSeconds(10))
+                        .orElseThrow();
+                assertEquals(JobStatus.CANCELLED, done.status);
+                assertEquals("expired before execution", done.error);
+            }
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void publishResultTtlExpiresStoredResults() throws Exception {
+        try (Taskito queue = InMemoryTaskito.open()) {
+            queue.subscribe("orders", EMAIL);
+            List<Job> deliveries = queue.publish(
+                    "orders", "o-1", PublishOptions.builder().resultTtlMs(1L).build());
+            assertEquals(1, deliveries.size());
+
+            try (Worker worker =
+                    queue.worker().handle(EMAIL, payload -> payload).start()) {
+                Job done = queue.awaitJob(deliveries.get(0).id, Duration.ofSeconds(10))
+                        .orElseThrow();
+                assertEquals(JobStatus.COMPLETE, done.status);
+                Thread.sleep(15);
+                assertTrue(queue.getResult(done.id, String.class).isEmpty());
+            }
+        }
     }
 }

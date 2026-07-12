@@ -167,7 +167,11 @@ public interface QueueBackend extends AutoCloseable {
     // compiling and fail explicitly only when pub/sub is actually used.
     String PUBSUB_UNSUPPORTED = "pub/sub not supported by this backend";
 
-    /** Insert or update a topic subscription (idempotent on topic + name). */
+    /**
+     * Insert or update a topic subscription (idempotent on topic + name).
+     * Re-registering updates routing but preserves a paused state; an ephemeral
+     * subscription ({@code durable=false}) requires {@code ownerWorkerIdOrNull}.
+     */
     default void registerSubscription(
             String topic,
             String subscriptionName,
