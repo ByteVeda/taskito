@@ -133,8 +133,14 @@ queue.task("charge", async (orderId: string) => {
   <Tab sdk="java">
 
 ```java
+// Java handlers receive only the payload, so idempotency comes from a
+// natural key in it — here order.id().
 Worker worker = queue.worker()
-        .handle(CHARGE, order -> payments.charge(order.total(), order.id()))
+        .handle(CHARGE, order -> {
+            if (charges.exists(order.id())) return;      // already processed on a prior attempt
+            payments.charge(order.total(), order.id());   // key also dedupes at the provider
+            charges.record(order.id(), order.total());
+        })
         .start();
 ```
 
