@@ -16,6 +16,12 @@ description: "Worker builder, middleware, and workflow control."
 |---|---|
 | `use(Middleware)` | Cross-cutting hooks — `onEnqueue`, `before`/`after`/`onError`, and the outcome hooks. |
 
+## Circuit breakers
+
+| Method | Description |
+|---|---|
+| `listCircuitBreakers()` → `List<CircuitBreakerState>` | Live state of every registered [circuit breaker](/java/api-reference/task#circuitbreakerconfig) — open/closed/half-open, failure counts, next-probe time. |
+
 ## Workflows
 
 | Method | Description |
