@@ -5,9 +5,17 @@ description: "Structured task logs, webhooks, and the autoscaler."
 
 ## Logs
 
+Durable, per-job structured log rows in shared storage. Beyond diagnostics they
+carry **streaming partial results**: a running task writes partials at level
+`"result"` and a consumer polls them live (see the
+[streaming guide](/java/guides/core/streaming)).
+
 | Method | Description |
 |---|---|
-| `writeTaskLog(...)` / `getTaskLogs(id)` | Structured task-log lines for a job. |
+| `writeTaskLog(jobId, taskName, level, message)` | Append a log row. An overload adds a String `extra` payload. |
+| `getTaskLogs(jobId)` → `List<TaskLog>` | Every row for a job, oldest first. |
+| `getTaskLogsAfter(jobId, afterId)` → `List<TaskLog>` | Rows after a cursor id — poll this to stream new partials without rescanning. |
+| `queryTaskLogs(taskName, level, sinceMs, limit)` → `List<TaskLog>` | Cross-job query by task and level (e.g. every `"result"` line since a timestamp). |
 
 ## Webhooks & autoscaler
 
