@@ -1030,6 +1030,81 @@ fn test_concurrent_dequeue_no_double_claim(s: &impl Storage) {
     );
 }
 
+fn test_topic_backlog_stats(s: &impl Storage) {
+    use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
+    use taskito_core::storage::models::NewSubscriptionRow;
+
+    let sub = |name: &'static str, task: &'static str| NewSubscriptionRow {
+        topic: "tbs-orders",
+        subscription_name: name,
+        task_name: task,
+        queue: "default",
+        active: true,
+        durable: true,
+        owner_worker_id: None,
+        created_at: now_millis(),
+        priority: None,
+        max_retries: None,
+        timeout_ms: None,
+    };
+    s.register_subscription(&sub("tbs-email", "tbs_send"))
+        .unwrap();
+    s.register_subscription(&sub("tbs-analytics", "tbs_track"))
+        .unwrap();
+
+    let request = |topic: &str| PublishRequest {
+        topic: topic.to_string(),
+        payload: vec![0x02, 0xf5],
+        idempotency_key: None,
+        metadata: None,
+        notes: None,
+        priority: None,
+        scheduled_at: now_millis(),
+        max_retries: None,
+        timeout_ms: None,
+        expires_at: None,
+        result_ttl_ms: None,
+        namespace: None,
+        queue_defaults: DeliveryDefaults {
+            priority: 0,
+            max_retries: 3,
+            timeout_ms: 300_000,
+        },
+    };
+    publish_to_topic(s, &request("tbs-orders")).unwrap();
+    publish_to_topic(s, &request("tbs-orders")).unwrap();
+
+    let stats = s.topic_backlog_stats().unwrap();
+    let by_name: std::collections::HashMap<_, _> = stats
+        .iter()
+        .filter(|st| st.topic == "tbs-orders")
+        .map(|st| (st.subscription_name.as_str(), st))
+        .collect();
+    assert_eq!(by_name.len(), 2, "both subscriptions appear in the stats");
+    assert_eq!(by_name["tbs-email"].pending, 2);
+    assert_eq!(by_name["tbs-analytics"].pending, 2);
+    assert_eq!(by_name["tbs-email"].running, 0);
+    assert_eq!(by_name["tbs-email"].dead, 0);
+    assert!(
+        by_name["tbs-email"].oldest_pending_age_ms.is_some(),
+        "a pending backlog yields an oldest-pending age"
+    );
+
+    // A dequeued delivery moves from pending to running.
+    let claimed = s.dequeue("default", now_millis(), None).unwrap().unwrap();
+    let stats = s.topic_backlog_stats().unwrap();
+    let claimed_sub = stats
+        .iter()
+        .find(|st| st.running == 1)
+        .expect("one delivery is now running");
+    assert_eq!(
+        claimed_sub.pending, 1,
+        "its backlog dropped by the claimed one"
+    );
+    // The claimed job belongs to one of our subscriptions.
+    assert!(claimed.task_name == "tbs_send" || claimed.task_name == "tbs_track");
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -1054,6 +1129,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_pause_resume_queue(s);
     test_periodic_crud(s);
     test_topic_subscriptions_crud(s);
+    test_topic_backlog_stats(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);

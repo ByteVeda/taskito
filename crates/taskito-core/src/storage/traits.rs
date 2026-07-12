@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::job::{Job, NewJob};
 use crate::storage::models::*;
-use crate::storage::{DeadJob, QueueStats};
+use crate::storage::{DeadJob, QueueStats, SubscriptionBacklogStats};
 
 /// Trait abstracting the storage backend for the task queue.
 ///
@@ -147,6 +147,11 @@ pub trait Storage: Send + Sync + Clone {
     /// `live_worker_ids`. Durable rows (owner NULL) are never touched. Returns the
     /// count removed.
     fn reap_ephemeral_subscriptions(&self, live_worker_ids: &[String]) -> Result<u64>;
+
+    /// Backlog/lag snapshot for every registered subscription across all topics.
+    /// Bounded by the pub/sub-tagged rows (partial index), never a full `jobs`
+    /// table scan — safe to poll on a dashboard cadence.
+    fn topic_backlog_stats(&self) -> Result<Vec<SubscriptionBacklogStats>>;
 
     // ── Metrics operations ──────────────────────────────────────────
 

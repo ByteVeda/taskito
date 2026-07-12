@@ -92,6 +92,64 @@ macro_rules! impl_diesel_pubsub_ops {
 
                 Ok(affected as u64)
             }
+
+            /// Backlog/lag snapshot per registered subscription. Four bounded,
+            /// index-backed queries (subscription skeleton + pending/running
+            /// counts + oldest-pending age + dead counts) merged in Rust — the
+            /// same live+aggregate shape as `stats_all_queues`, never a full
+            /// table scan. Counts are always a direct read of real state, so
+            /// they cannot drift the way a maintained counter would.
+            pub fn topic_backlog_stats(
+                &self,
+            ) -> Result<Vec<$crate::storage::SubscriptionBacklogStats>> {
+                use $crate::job::JobStatus;
+                use $crate::storage::schema::{dead_letter, jobs};
+                let mut conn = self.conn()?;
+
+                let subs = topic_subscriptions::table
+                    .select($crate::storage::models::SubscriptionRow::as_select())
+                    .load::<$crate::storage::models::SubscriptionRow>(&mut conn)?;
+
+                // Pending + running counts, scoped to pub/sub-tagged rows only.
+                let counts: Vec<(String, String, i32, i64)> = jobs::table
+                    .filter(jobs::subscription_name.is_not_null())
+                    .filter(
+                        jobs::status.eq_any([JobStatus::Pending as i32, JobStatus::Running as i32]),
+                    )
+                    .group_by((jobs::topic, jobs::subscription_name, jobs::status))
+                    .select((
+                        jobs::topic.assume_not_null(),
+                        jobs::subscription_name.assume_not_null(),
+                        jobs::status,
+                        diesel::dsl::count(jobs::id),
+                    ))
+                    .load(&mut conn)?;
+
+                let oldest: Vec<(String, String, Option<i64>)> = jobs::table
+                    .filter(jobs::subscription_name.is_not_null())
+                    .filter(jobs::status.eq(JobStatus::Pending as i32))
+                    .group_by((jobs::topic, jobs::subscription_name))
+                    .select((
+                        jobs::topic.assume_not_null(),
+                        jobs::subscription_name.assume_not_null(),
+                        diesel::dsl::min(jobs::created_at),
+                    ))
+                    .load(&mut conn)?;
+
+                let dead: Vec<(String, String, i64)> = dead_letter::table
+                    .filter(dead_letter::subscription_name.is_not_null())
+                    .group_by((dead_letter::topic, dead_letter::subscription_name))
+                    .select((
+                        dead_letter::topic.assume_not_null(),
+                        dead_letter::subscription_name.assume_not_null(),
+                        diesel::dsl::count(dead_letter::id),
+                    ))
+                    .load(&mut conn)?;
+
+                Ok($crate::storage::merge_backlog_stats(
+                    subs, counts, oldest, dead,
+                ))
+            }
         }
     };
 }

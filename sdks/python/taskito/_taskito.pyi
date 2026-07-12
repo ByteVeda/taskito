@@ -206,6 +206,9 @@ class PyQueue:
         self, topic: str, subscription_name: str, active: bool
     ) -> bool: ...
     def reap_ephemeral_subscriptions(self) -> int: ...
+    def topic_backlog_stats(
+        self,
+    ) -> list[tuple[str, str, str, str, bool, bool, int, int, int, int | None]]: ...
     def publish(
         self,
         topic: str,
