@@ -4,8 +4,8 @@ description: "Taskito vs other task queues — feature matrix and decision guide
 ---
 
 **TL;DR**: Taskito is <SdkSwap python="Celery" node="BullMQ" java="a task queue" /> without the
-broker (a separate server such as Redis or RabbitMQ that holds pending jobs). Rust scheduler, no Redis/RabbitMQ, lower latency, better concurrency.
-Start with SQLite, scale to Postgres when needed.
+broker (a separate server such as Redis or RabbitMQ that holds pending jobs). Rust scheduler, no broker required, lower latency, better concurrency.
+Start with SQLite; add Postgres or Redis as a backend when you scale out.
 
 ## When to use taskito
 
@@ -177,11 +177,12 @@ mature ecosystem.
 
 ## How taskito compares
 
-JVM job schedulers — **Quartz**, **JobRunr**, **Spring Batch** — focus on cron
-scheduling and batch orchestration and lean on your existing relational
-database. taskito is a general-purpose task queue with a Rust core: priorities,
-rate limits, dead-letter queues, workflows, and result streaming, backed by
-SQLite, Postgres, or Redis, usable standalone or via the Spring Boot starter.
+JVM background-job tools each specialize: **Quartz** for cron scheduling,
+**JobRunr** for background jobs (RDBMS or Redis), **Spring Batch** for
+batch/ETL pipelines. taskito is a general-purpose task queue with a Rust core:
+priorities, rate limits, dead-letter queues, workflows, and result streaming,
+backed by SQLite, Postgres, or Redis, usable standalone or via the Spring Boot
+starter.
 
 |  | taskito | Quartz | JobRunr | Spring Batch |
 |---|---|---|---|---|
