@@ -46,6 +46,7 @@ from taskito.dashboard.request_context import (
 from taskito.dashboard.routes import (
     AUTH_CONTEXT_GET_PATHS,
     AUTH_CONTEXT_POST_PATHS,
+    DELETE_PARAM2_ROUTES,
     DELETE_PARAM_ROUTES,
     GET_CTX_ROUTES,
     GET_PARAM2_ROUTES,
@@ -443,6 +444,15 @@ def _make_handler(
                 if m:
                     g1 = unquote(m.group(1))
                     self._dispatch_with_handler(param_handler, lambda h, g1=g1: h(queue, g1))
+                    return
+            for pattern, param_handler in DELETE_PARAM2_ROUTES:
+                m = pattern.match(path)
+                if m:
+                    g1, g2 = unquote(m.group(1)), unquote(m.group(2))
+                    self._dispatch_with_handler(
+                        param_handler,
+                        lambda h, g1=g1, g2=g2: h(queue, (g1, g2)),
+                    )
                     return
             self._json_response({"error": "Not found"}, status=404)
 

@@ -244,6 +244,29 @@ export interface WorkflowRun {
   created_at: number;
 }
 
+export interface TopicSummary {
+  topic: string;
+  subscription_count: number;
+  /** Sum of pending + running across every subscription. */
+  backlog: number;
+  /** Sum of dead-lettered deliveries across every subscription. */
+  dead: number;
+}
+
+export interface SubscriptionBacklog {
+  topic: string;
+  subscription: string;
+  task_name: string;
+  queue: string;
+  active: boolean;
+  durable: boolean;
+  pending: number;
+  running: number;
+  dead: number;
+  /** Age of the oldest pending delivery in ms; null when no pending backlog. */
+  oldest_pending_age_ms: number | null;
+}
+
 export interface WorkflowNode {
   node_name: string;
   status: WorkflowNodeStatus;

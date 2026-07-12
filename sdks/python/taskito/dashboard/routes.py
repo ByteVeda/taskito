@@ -62,6 +62,13 @@ from taskito.dashboard.handlers.settings import (
     _handle_list_settings,
     _handle_set_setting,
 )
+from taskito.dashboard.handlers.topics import (
+    _handle_pause_subscription,
+    _handle_resume_subscription,
+    _handle_topic_detail,
+    _handle_topics,
+    _handle_unsubscribe,
+)
 from taskito.dashboard.handlers.webhook_deliveries import (
     handle_get_delivery,
     handle_list_deliveries,
@@ -144,6 +151,7 @@ GET_ROUTES: dict[str, Any] = {
     "/api/queues": handle_list_queues,
     "/api/middleware": handle_list_middleware,
     "/api/workflows/runs": _handle_list_workflow_runs,
+    "/api/topics": _handle_topics,
 }
 
 # ── Parameterized GET routes: regex → handler(queue, qs, captured_id) ──
@@ -169,6 +177,9 @@ GET_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (re.compile(r"^/api/workflows/runs/([^/]+)/dag$"), _handle_get_workflow_dag),
     (re.compile(r"^/api/workflows/runs/([^/]+)/children$"), _handle_get_workflow_children),
     (re.compile(r"^/api/workflows/runs/([^/]+)$"), _handle_get_workflow_run),
+    # Distinct ``/api/topics/`` prefix — neither shadows nor is shadowed by
+    # the patterns above.
+    (re.compile(r"^/api/topics/([^/]+)$"), _handle_topic_detail),
 ]
 
 # GET routes with 2 captured groups (handler signature: queue, qs, (g1, g2))
@@ -233,6 +244,14 @@ POST_PARAM2_ROUTES: list[tuple[re.Pattern, Any]] = [
         re.compile(r"^/api/webhooks/([^/]+)/deliveries/([^/]+)/replay$"),
         handle_replay_delivery,
     ),
+    (
+        re.compile(r"^/api/topics/([^/]+)/subscriptions/([^/]+)/pause$"),
+        _handle_pause_subscription,
+    ),
+    (
+        re.compile(r"^/api/topics/([^/]+)/subscriptions/([^/]+)/resume$"),
+        _handle_resume_subscription,
+    ),
 ]
 
 # ── Parameterized PUT routes: regex → handler(queue, body, captured_id) ──
@@ -261,6 +280,14 @@ DELETE_PARAM_ROUTES: list[tuple[re.Pattern, Any]] = [
     (
         re.compile(r"^/api/dead-letters/([^/]+)$"),
         lambda q, did: {"deleted": q.delete_dead(did)},
+    ),
+]
+
+# DELETE routes with 2 captured groups (handler signature: queue, (g1, g2)).
+DELETE_PARAM2_ROUTES: list[tuple[re.Pattern, Any]] = [
+    (
+        re.compile(r"^/api/topics/([^/]+)/subscriptions/([^/]+)$"),
+        _handle_unsubscribe,
     ),
 ]
 
