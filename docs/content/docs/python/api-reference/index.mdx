@@ -10,9 +10,13 @@ import {
   ListTodo,
   CheckCircle2,
   Variable,
+  Binary,
   GitFork,
   Workflow,
+  Undo2,
+  Boxes,
   TestTube,
+  AlertTriangle,
   Terminal,
 } from "lucide-react";
 
@@ -51,6 +55,12 @@ signature, parameters, return values, and a short example.
     description="current_job — progress, logging, cancellation, timeouts inside a task."
   />
   <Card
+    icon={<Binary />}
+    title="Serializers"
+    href="/python/api-reference/serializers"
+    description="SmartSerializer, JSON/CBOR, payload codecs, signing and encryption."
+  />
+  <Card
     icon={<GitFork />}
     title="Canvas"
     href="/python/api-reference/canvas"
@@ -63,10 +73,28 @@ signature, parameters, return values, and a short example.
     description="The DAG builder — fan-out, fan-in, gates, conditions, sub-workflows."
   />
   <Card
+    icon={<Undo2 />}
+    title="Saga"
+    href="/python/api-reference/saga"
+    description="Compensating workflows — rollback steps that undo completed work on failure."
+  />
+  <Card
+    icon={<Boxes />}
+    title="Batching"
+    href="/python/api-reference/batching"
+    description="Coalesce many enqueues into a single batched job."
+  />
+  <Card
     icon={<TestTube />}
     title="Testing"
     href="/python/api-reference/testing"
     description="test_mode, MockResource, fixtures for synchronous in-process verification."
+  />
+  <Card
+    icon={<AlertTriangle />}
+    title="Errors"
+    href="/python/api-reference/errors"
+    description="The TaskitoError exception hierarchy — catch by type or by the base."
   />
   <Card
     icon={<Terminal />}

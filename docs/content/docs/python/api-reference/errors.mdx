@@ -1,0 +1,62 @@
+---
+title: Errors
+description: "The taskito exception hierarchy — catch by specific type or by the TaskitoError base."
+---
+
+Almost every exception taskito raises extends `TaskitoError`, so a single
+`except` can scope them; the specific subclasses let you branch on what went
+wrong. Two exceptions sit outside the tree (noted below) — a blanket
+`except TaskitoError` will not catch them.
+
+```python
+from taskito import TaskitoError, ResourceNotFoundError
+
+try:
+    result = job.result(timeout=5)
+except ResourceNotFoundError as exc:
+    reregister(exc.args[0])
+except TaskitoError as exc:
+    report(exc)
+```
+
+## Hierarchy
+
+| Class | Extends | Raised when |
+|---|---|---|
+| `TaskitoError` | `Exception` | Base — never raised directly. |
+| `TaskTimeoutError` | `TaskitoError` | A task exceeds its hard timeout. |
+| `SoftTimeoutError` | `TaskitoError` | A task exceeds its soft timeout (checked cooperatively via the context). |
+| `TaskCancelledError` | `TaskitoError` | A running task detects it has been cancelled. |
+| `TaskFailedError` | `TaskitoError` | Awaiting a job that failed or dead-lettered. Carries `errtype`, `traceback`, `job_id`, `raw_error`. |
+| `MaxRetriesExceededError` | `TaskitoError` | A task exhausts all retry attempts. Same failure details as `TaskFailedError`. |
+| `SerializationError` | `TaskitoError` | Serialization / deserialization or payload-integrity failure (e.g. a bad `SignedSerializer` signature). |
+| `CryptoError` | `SerializationError` | A [payload codec](/python/api-reference/serializers) (`HmacCodec`, `AesGcmCodec`) fails to decrypt or verify. |
+| `InterceptionError` | `SerializationError` | An [argument interceptor](/python/guides/resources/proxies) rejects or misbehaves. |
+| `CircuitBreakerOpenError` | `TaskitoError` | A task's circuit breaker is open. |
+| `RateLimitExceededError` | `TaskitoError` | A task's rate limit is exceeded. |
+| `JobNotFoundError` | `TaskitoError`, `KeyError` | A job ID isn't found in storage. |
+| `QueueError` | `TaskitoError` | A queue-level operational error. |
+| `NotesValidationError` | `TaskitoError`, `ValueError` | A `notes` dict breaks the contract (>15 fields, >4 KiB, …). |
+| `PredicateRejectedError` | `TaskitoError` | An enqueue-time [predicate](/python/guides/core/predicates) cancelled the submission. Carries `task_name`, `reason`. |
+| `BatchPartialFailureError` | `TaskFailedError` | A batch task where some items failed. |
+| `ResourceError` | `TaskitoError` | Base for resource dependency-injection errors. |
+| `ResourceInitError` | `ResourceError` | A resource factory fails during initialization. |
+| `ResourceUnavailableError` | `ResourceError` | A resource is permanently unhealthy and can't be resolved. |
+| `CircularDependencyError` | `ResourceError` | Resource dependencies form a cycle. |
+| `ResourceNotFoundError` | `ResourceError`, `KeyError` | Resolving a resource name that was never registered. |
+| `ProxyReconstructionError` | `ResourceError` | A proxy handler fails to reconstruct an object from its recipe. |
+| `ProxyCleanupError` | `ResourceError` | A proxy handler fails during cleanup. |
+
+## Outside the `TaskitoError` tree
+
+| Class | Extends | Import from | Raised when |
+|---|---|---|---|
+| `LockNotAcquiredError` | `Exception` | `taskito.locks` | `queue.lock(...)` can't acquire a held lock. |
+| `BatchResultTypeError` | `TypeError` | `taskito` | A batch result is read as the wrong type. |
+
+The `KeyError` / `ValueError` / `TypeError` mix-ins keep existing
+`except KeyError` / `except ValueError` clauses working when these are raised
+inside enqueue or lookup paths.
+
+See [error handling](/python/guides/reliability/error-handling) for retry /
+timeout / dead-letter behavior around a failing task.
