@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ListTree,
   type LucideIcon,
+  Radio,
   ScrollText,
   Server,
   Settings2,
@@ -39,6 +40,7 @@ export const NAV: NavGroup[] = [
       { to: "/metrics", label: "Metrics", icon: BarChart3 },
       { to: "/logs", label: "Logs", icon: ScrollText },
       { to: "/workflows", label: "Workflows", icon: GitBranch },
+      { to: "/topics", label: "Topics", icon: Radio },
     ],
   },
   {
