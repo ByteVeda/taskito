@@ -60,17 +60,31 @@ class QueuePubSubMixin:
                 ``timeout``, ``middleware``, ``idempotent``, ...).
         """
 
+        if "codecs" in task_kwargs:
+            raise ValueError(
+                "subscriber() does not accept per-task codecs: publish() encodes one "
+                "shared payload with the queue serializer, so a per-subscriber codec "
+                "chain could never be applied on the producer side"
+            )
+
         def decorator(fn: Callable[..., Any]) -> TaskWrapper:
             wrapper: TaskWrapper = self.task(queue=queue, **task_kwargs)(fn)  # type: ignore[attr-defined]
-            self._subscription_configs.append(
-                {
-                    "topic": topic,
-                    "subscription_name": name or wrapper.name,
-                    "task_name": wrapper.name,
-                    "queue": queue,
-                    "durable": durable,
-                }
-            )
+            config = {
+                "topic": topic,
+                "subscription_name": name or wrapper.name,
+                "task_name": wrapper.name,
+                "queue": queue,
+                "durable": durable,
+            }
+            # Replace, don't append: re-decorating the same (topic, name) (module
+            # reloads, test fixtures) must not accumulate stale declarations.
+            identity = (config["topic"], config["subscription_name"])
+            self._subscription_configs[:] = [
+                c
+                for c in self._subscription_configs
+                if (c["topic"], c["subscription_name"]) != identity
+            ]
+            self._subscription_configs.append(config)
             return wrapper
 
         return decorator
@@ -133,7 +147,16 @@ class QueuePubSubMixin:
         return [JobResult(py_job=py_job, queue=self) for py_job in py_jobs]  # type: ignore[arg-type]
 
     def unsubscribe(self, topic: str, name: str) -> bool:
-        """Remove a subscription. Returns False if none matched."""
+        """Remove a subscription. Returns False if none matched.
+
+        Also drops any matching local declaration so a later worker start
+        doesn't re-register what was just removed.
+        """
+        self._subscription_configs[:] = [
+            c
+            for c in self._subscription_configs
+            if (c["topic"], c["subscription_name"]) != (topic, name)
+        ]
         return self._inner.unsubscribe(topic, name)
 
     def pause_subscription(self, topic: str, name: str) -> bool:

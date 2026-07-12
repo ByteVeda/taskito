@@ -27,6 +27,13 @@ impl PyQueue {
         durable: bool,
         owner_worker_id: Option<&str>,
     ) -> PyResult<()> {
+        // An unowned ephemeral row could never be reaped (cleanup keys off
+        // live worker ids), so it would stay active forever.
+        if !durable && owner_worker_id.is_none() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "an ephemeral subscription (durable=false) requires owner_worker_id",
+            ));
+        }
         let row = NewSubscriptionRow {
             topic,
             subscription_name,

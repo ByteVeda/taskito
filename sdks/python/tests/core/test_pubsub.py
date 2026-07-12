@@ -3,6 +3,8 @@
 import threading
 from typing import Any
 
+import pytest
+
 from taskito import Queue
 
 PollUntil = Any  # the conftest fixture's runtime type
@@ -184,7 +186,12 @@ class TestEphemeralSubscriptions:
         queue.declare_subscriptions()
         assert queue.list_subscriptions("orders") == []
 
-    def test_reap_removes_dead_owner_subscriptions(self, queue: Queue) -> None:
+    def test_fresh_ephemeral_rows_survive_reap_grace_window(self, queue: Queue) -> None:
+        """A just-registered ephemeral row must survive the reaper even with a
+        dead owner: workers insert subscriptions before their first heartbeat
+        lands, and another worker's reap tick must not race that gap. Aged-row
+        reaping is covered by the Rust storage tests (created_at is not
+        settable through the public API)."""
         queue._inner.register_subscription(
             topic="orders",
             subscription_name="ghost",
@@ -196,6 +203,39 @@ class TestEphemeralSubscriptions:
             topic="orders", subscription_name="durable", task_name="some.task"
         )
 
-        assert queue._inner.reap_ephemeral_subscriptions() == 1
+        assert queue._inner.reap_ephemeral_subscriptions() == 0
         names = {s["name"] for s in queue.list_subscriptions("orders")}
-        assert names == {"durable"}
+        assert names == {"ghost", "durable"}
+
+    def test_ephemeral_registration_requires_owner(self, queue: Queue) -> None:
+        with pytest.raises(ValueError, match="owner_worker_id"):
+            queue._inner.register_subscription(
+                topic="orders",
+                subscription_name="unowned",
+                task_name="some.task",
+                durable=False,
+            )
+
+    def test_subscriber_rejects_codecs(self, queue: Queue) -> None:
+        with pytest.raises(ValueError, match="codecs"):
+
+            @queue.subscriber("orders", name="bad", codecs=["gzip"])
+            def handler(order_id: int) -> None: ...
+
+    def test_redeclare_after_pause_stays_paused(self, queue: Queue) -> None:
+        @queue.subscriber("orders", name="email")
+        def send_email(order_id: int) -> None: ...
+
+        queue.declare_subscriptions()
+        assert queue.pause_subscription("orders", "email") is True
+        queue.declare_subscriptions()
+        assert queue.publish("orders", 1) == []
+
+    def test_unsubscribe_drops_local_declaration(self, queue: Queue) -> None:
+        @queue.subscriber("orders", name="email")
+        def send_email(order_id: int) -> None: ...
+
+        queue.declare_subscriptions()
+        assert queue.unsubscribe("orders", "email") is True
+        queue.declare_subscriptions()
+        assert queue.list_subscriptions("orders") == []
