@@ -369,9 +369,9 @@ Map<String, QueueStats> all = taskito.statsAllQueues();
   </Tab>
 </CodeTabs>
 
-<SdkOnly sdk="python">
-
 ## Queue-level defaults
+
+<SdkOnly sdk="python">
 
 Configure defaults for every task at the `Queue` level; individual
 `@queue.task()` decorators override them:
@@ -383,6 +383,37 @@ queue = Queue(
     default_retry=3,       # default max retries
     default_timeout=300,   # default timeout in seconds
 )
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+There's no queue-level defaults object. Retry and timeout defaults are set
+**per task** on `queue.task(...)` via `maxRetries` and `timeoutMs`; a per-call
+`enqueue()` override still wins. `priority` has no default — it's enqueue-only
+(see [Default priority](#default-priority) above). `configureQueue()` only sets
+a queue's `rateLimit` / `maxConcurrent`.
+
+```ts
+queue.task("resize", (id: string) => { /* ... */ }, {
+  maxRetries: 3, // default retry budget for this task
+  timeoutMs: 300_000, // default per-job timeout (ms)
+});
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Java has no queue-level defaults object — defaults live on the **task
+descriptor**, and a per-enqueue `EnqueueOptions` still overrides them:
+
+```java
+Task<ResizePayload> resize = Task.of("resize", ResizePayload.class)
+        .priority(0)                       // default priority
+        .maxRetries(3)                     // default retry budget
+        .timeout(Duration.ofSeconds(300)); // default per-job timeout
 ```
 
 </SdkOnly>
