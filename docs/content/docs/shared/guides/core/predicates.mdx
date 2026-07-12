@@ -452,7 +452,9 @@ skipped for the current job — job dispatch is unaffected.
 <SdkOnly sdk="node">
 
 Gates run once, on the **producer** side, at enqueue time — there's
-no worker-dispatch phase.
+no worker-dispatch phase. Gates are in-process functions only: there's no
+serializable predicate DSL (no JSON/string form, no config-file or dashboard
+round-trip).
 
 </SdkOnly>
 
@@ -460,7 +462,8 @@ no worker-dispatch phase.
 
 Predicates and gates run once, synchronously, on the **producer**
 thread at enqueue time — there's no worker-dispatch phase. Keep them
-fast and side-effect-free.
+fast and side-effect-free. Gates are in-process lambdas — there's no
+serializable predicate DSL (no JSON or string form).
 
 </SdkOnly>
 
@@ -502,9 +505,9 @@ payloads that need skip/defer semantics.
 
 </SdkOnly>
 
-<SdkOnly sdk="python">
-
 ## Persistence & inspection
+
+<SdkOnly sdk="python">
 
 Every registered predicate is serialized once at decoration time. The
 JSON is reachable through:
@@ -533,7 +536,26 @@ restored = Predicate.from_dict(blob)
 # restored.evaluate(ctx) — re-evaluate against a context
 ```
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Node has no predicate inspection API — gates are opaque closures held on the
+queue; there's no `listPredicates()` equivalent and the dashboard shows no
+"gated by" schema for Node.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Java exposes no predicate inspection API — registered gates are opaque and
+there is no `listPredicates()` equivalent.
+
+</SdkOnly>
+
 ## Metrics & events
+
+<SdkOnly sdk="python">
 
 ```python
 queue.predicate_stats()
@@ -562,7 +584,26 @@ for event in (
     queue.on_event(event, on_predicate_event)
 ```
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Node emits no predicate metrics or events. The event bus covers job lifecycle
+only (`job.completed`, `job.retrying`, `job.dead`, `job.cancelled`) — there is
+no `predicateStats()` and no deferred/rejected event.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Java emits no predicate metrics or events — no `predicateStats()`, and the
+event enum carries no deferred/rejected predicate signals.
+
+</SdkOnly>
+
 ## Examples
+
+<SdkOnly sdk="python">
 
 ### Business-hours-only report with urgent override
 
@@ -634,6 +675,71 @@ queue.register_predicate("quota_available")(QuotaAvailable)
 
 @queue.task(predicate=QuotaAvailable(url="http://quota.internal"))
 async def index_document(tenant: str, doc_id: str): ...
+```
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+### Tenant allowlist (deny rejects the enqueue)
+
+```ts
+const allowed = new Set(["acme", "globex"]);
+
+queue.gate("reindexSearch", ({ args }) => allowed.has(args[0] as string));
+
+queue.enqueue("reindexSearch", ["acme"]); // ok
+queue.enqueue("reindexSearch", ["evilcorp"]); // throws PredicateRejectedError
+```
+
+### Business-hours + urgent override (booleans, no defer)
+
+```ts
+import { anyOf } from "@byteveda/taskito";
+
+const businessHours = () => {
+  const h = new Date().getHours();
+  return h >= 9 && h < 17;
+};
+const urgent = ({ args }: { args: readonly unknown[] }) => args[1] === true;
+
+queue.gate("sendDailyReport", anyOf(businessHours, urgent));
+
+queue.enqueue("sendDailyReport", ["alpha"]); // outside 09–17: throws (rejected, not deferred)
+queue.enqueue("sendDailyReport", ["alpha", true]); // urgent bypass: always enqueues
+```
+
+Unlike Python's `is_business_hours` (which *defers* to opening time), a Node
+gate that returns `false` **rejects** the enqueue — Node has no defer outcome.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+### Business-hours + urgent override (recipe defers, urgent allows now)
+
+```java
+EnqueueGate hours = Recipes.businessHours(ZoneId.of("America/Los_Angeles"));
+
+taskito.gate("sendDailyReport", ctx ->
+    ((Report) ctx.payload()).urgent() ? EnqueueDecision.allow() : hours.decide(ctx));
+
+taskito.enqueue(sendReport, new Report("alpha", false)); // defers to next 09:00 PT
+taskito.enqueue(sendReport, new Report("alpha", true));  // runs now
+```
+
+### Tenant allowlist (skip vs reject, gate-aware `tryEnqueue`)
+
+```java
+Set<String> allowed = Set.of("acme", "globex");
+
+taskito.gate("reindexSearch", ctx ->
+    allowed.contains(((Reindex) ctx.payload()).tenant())
+        ? EnqueueDecision.allow()
+        : EnqueueDecision.reject("tenant not allowed"));
+
+Optional<String> id = taskito.tryEnqueue(reindex, new Reindex("acme")); // present
+taskito.enqueue(reindex, new Reindex("evilcorp"));   // throws PredicateRejectedException
 ```
 
 </SdkOnly>

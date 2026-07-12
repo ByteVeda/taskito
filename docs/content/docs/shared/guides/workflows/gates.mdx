@@ -320,9 +320,9 @@ is cancelled if the gate is resolved manually first.
 
 </SdkOnly>
 
-<SdkOnly sdk="python">
-
 ## Gate conditions
+
+<SdkOnly sdk="python">
 
 Gates respect the same `condition` DSL as regular steps, evaluated against
 the gate's predecessors *before* it's entered:
@@ -336,10 +336,24 @@ wf.step("deploy", deploy_task, after="approve")
 If `test` fails, the gate is skipped (its condition isn't met) — and
 `deploy`, the gate's successor, is skipped too.
 
-<Callout type="info">
-  Node's `.gate()` step options and Java's `GateConfig`/`Workflow.gate()`
-  don't expose a condition on the gate node itself — only Python's
-  `Workflow.gate()` takes one directly.
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info" title="Node: gate conditions are Python-only">
+  A Node gate node has no entry condition — `.gate()` options cover only the
+  predecessor(s), `timeoutMs`, `onTimeout`, and `message`. To make a gate
+  conditional, put the `condition` on the step(s) around it instead.
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info" title="Java: gate conditions are Python-only">
+  A Java gate node has no entry condition — `GateConfig` covers only `timeout`,
+  `onTimeout`, and `message`. To make a gate conditional, put the condition on
+  the step(s) around it instead.
 </Callout>
 
 </SdkOnly>
@@ -381,9 +395,9 @@ rejection branch.
 
 </SdkOnly>
 
-<SdkOnly sdk="python">
-
 ## Events
+
+<SdkOnly sdk="python">
 
 When a gate enters `WAITING_APPROVAL`, a `WORKFLOW_GATE_REACHED` event fires
 in the process that reached it — the same process whose tracker owns the run
@@ -402,6 +416,29 @@ queue.on_event(EventType.WORKFLOW_GATE_REACHED, notify_team)
 
 The payload carries `run_id`, `node_name`, and `message` (the gate's
 `message`, or `None` if it wasn't set).
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+<Callout type="info" title="Node: no gate events">
+  There is no gate/workflow event in Node — `queue.on(...)` delivers only
+  job-outcome events (`job.completed`, `job.retrying`, `job.dead`,
+  `job.cancelled`). To react to a gate being reached, notify from the resolver
+  side (the endpoint that calls `approveGate` / `rejectGate`), or poll node
+  status for `waiting_approval` (see "Resolving a gate").
+</Callout>
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+<Callout type="info" title="Java: no gate events">
+  There is no gate/workflow event in Java — the worker's event listeners
+  deliver only job outcomes (`SUCCESS`, `RETRY`, `DEAD`, `CANCELLED`). To react
+  to a gate being reached, notify from the resolver side, or poll node status
+  for `WAITING_APPROVAL` (see "Resolving a gate").
+</Callout>
 
 </SdkOnly>
 

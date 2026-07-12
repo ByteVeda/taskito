@@ -7,14 +7,58 @@ Taskito exports Prometheus metrics through two pieces — a middleware that
 records per-task execution counters and a duration histogram, and a stats
 collector that polls queue depth and dead-letter size onto gauges on an
 interval. Both write into the same
-<SdkSwap python={<code>prometheus-client</code>} node={<code>prom-client</code>} />
+<SdkSwap python={<code>prometheus-client</code>} node={<code>prom-client</code>} java={<code>Micrometer</code>} />
 registry, so one HTTP endpoint can serve everything.
 
 <SdkOnly sdk="java">
 
-Java has no Prometheus contrib — metrics come from
-[Micrometer](/java/guides/integrations/micrometer) instead, which yields a
-timer (and a trace span) from one instrumentation.
+Java has no Prometheus contrib. Metrics come from Micrometer: the
+`TaskitoObservation` middleware wraps each task execution in a Micrometer
+`Observation`, which a `PrometheusMeterRegistry` turns into a timer (and, if you
+add a tracing bridge, a span). See the dedicated
+[Micrometer guide](/java/guides/integrations/micrometer) for the full API.
+
+## Setup
+
+The SDK compiles against `io.micrometer:micrometer-observation` as `compileOnly`,
+so add it plus a Prometheus registry to your build:
+
+- `io.micrometer:micrometer-observation`
+- `io.micrometer:micrometer-registry-prometheus` (brings `micrometer-core`, which
+  provides `DefaultMeterObservationHandler` and `PrometheusMeterRegistry`)
+
+```java
+import io.micrometer.core.instrument.observation.DefaultMeterObservationHandler;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import org.byteveda.taskito.contrib.TaskitoObservation;
+
+PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+ObservationRegistry observations = ObservationRegistry.create();
+observations.observationConfig()
+        .observationHandler(new DefaultMeterObservationHandler(prometheus));
+
+taskito.use(new TaskitoObservation(observations));
+```
+
+## What's emitted
+
+Each execution attempt starts an observation named `taskito.task` (customizable
+via `new TaskitoObservation(registry, name, taskFilter)`) tagged with
+`taskito.task` = the task name. Micrometer's meter handler converts it into a
+timer on the Prometheus registry; the exposed series name and suffixes follow
+Micrometer's Prometheus naming convention (dots become underscores, a `_seconds`
+suffix is added), not a fixed `taskito_*` name from the contrib. Retries are
+separate attempts, each producing its own observation.
+
+## Exposing metrics
+
+Serve `prometheus.scrape()` from any HTTP endpoint, or use Spring Boot Actuator's
+`/actuator/prometheus`, which wires the registry for you. The `taskito_jobs_total`
+/ `taskito_dlq_size` names and the polled queue-depth gauges below are Python/Node
+only — build Java dashboards and alerts on the timer series your
+Micrometer→Prometheus registry emits.
 
 </SdkOnly>
 

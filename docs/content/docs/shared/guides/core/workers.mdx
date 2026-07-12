@@ -179,9 +179,9 @@ taskito.worker()
   </Tab>
 </CodeTabs>
 
-<SdkOnly sdk="python">
-
 ## Worker specialization
+
+<SdkOnly sdk="python">
 
 Advertise capability tags when starting a worker:
 
@@ -194,6 +194,30 @@ Tags are stored with the worker's registration and show up in
 have which capabilities at a glance. They're informational: the scheduler
 doesn't filter dispatch by tag, so route GPU-only or heavy-workload jobs to
 the right machines with [dedicated queues](#selecting-queues) instead.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Node workers can't advertise capability tags — `runWorker()` has no `tags`
+option. Route capability-specific work with [dedicated queues](#selecting-queues)
+instead: give GPU or heavy jobs their own queue and start a worker with
+`runWorker({ queues: ["gpu"] })`.
+
+`listWorkers()` rows include a `tags` field, but only SDKs that can set it
+populate it — it stays empty for Node-started workers.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`taskito.worker()` has no `tags(...)` builder method — Java workers can't
+advertise capability tags. Route capability-specific work with
+[dedicated queues](#selecting-queues) instead
+(`taskito.worker().queues("gpu").start()`).
+
+`WorkerInfo.tags` exists on `listWorkers()` rows, but only SDKs that support
+tag advertisement set it; it's null for Java-started workers.
 
 </SdkOnly>
 
@@ -348,12 +372,28 @@ The heartbeat fires every 5 seconds and carries the current resource-health
 snapshot, so <SdkLink to="guides/resources/dependency-injection">worker
 resources</SdkLink> going unhealthy shows up in `listWorkers()` too.
 
+### Lifecycle events
+
+Node has no worker-lifecycle events. `queue.on(event, handler)` fires only the
+four job-outcome events (`job.completed`, `job.retrying`, `job.dead`,
+`job.cancelled`) — there's no `WORKER_ONLINE` / `OFFLINE` / `UNHEALTHY`. Observe
+worker presence and health by polling `listWorkers()`, whose rows carry
+`status` and a per-resource `resourceHealth` snapshot from the last heartbeat.
+
 </SdkOnly>
 
 <SdkOnly sdk="java">
 
 Heartbeating is managed natively by the core — there's no user-facing
 interval to configure.
+
+### Lifecycle events
+
+Java has no worker-lifecycle events. `.on(EventName, ...)` fires only the four
+job-outcome events (`SUCCESS`, `RETRY`, `DEAD`, `CANCELLED`) — there's no
+`WORKER_ONLINE` / `OFFLINE` / `UNHEALTHY`. Observe worker presence and health by
+polling `taskito.listWorkers()`, whose `WorkerInfo` rows carry `status` and a
+`resourceHealth` snapshot from the last heartbeat.
 
 </SdkOnly>
 
