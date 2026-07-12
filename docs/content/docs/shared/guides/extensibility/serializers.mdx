@@ -505,6 +505,44 @@ overview and what gets serialized where.
 
 </SdkOnly>
 
+<SdkOnly sdk="node">
+
+## Choosing a serializer
+
+| Serializer | When to use | Cross-SDK? |
+|---|---|---|
+| `JsonSerializer` | The default — human-readable, debuggable payloads for Node↔Node work. Leave it unless you have a reason to switch. | No — portable format, same-SDK payloads |
+| `MsgpackSerializer` | Node↔Node work where you want compact binary payloads instead of JSON text. | No — portable format, same-SDK payloads |
+| `CborSerializer` | A task is produced or consumed by another Taskito SDK. The only serializer whose wire format (the `0x02` envelope tag) is part of the cross-SDK contract; round-trips big integers as `BigInt`. | Yes — cross-SDK wire format |
+| `SignedSerializer(secret, inner?)` | Payloads must be tamper-evident but not hidden — prefixes an HMAC-SHA256 tag and rejects mismatches. Authentication, not encryption. | Same-SDK by default (wraps `JsonSerializer`) |
+| `EncryptedSerializer(secret, inner?)` | Tasks carry sensitive data that must not be readable in the database — AES-256-GCM confidentiality **and** integrity. | Same-SDK by default (wraps `JsonSerializer`) |
+
+**Rule of thumb**: keep the default `JsonSerializer` unless you have a specific
+reason to switch. Use `MsgpackSerializer` for more compact Node↔Node payloads,
+`CborSerializer` when a task crosses SDK boundaries, and `EncryptedSerializer`
+when payloads must not be readable in storage.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+## Choosing a serializer
+
+| Serializer | When to use | Cross-SDK? |
+|---|---|---|
+| `JsonSerializer` | The default — JSON via Jackson, accepts a custom `ObjectMapper`. Human-readable and debuggable for Java↔Java work. | No — portable format, same-SDK payloads |
+| `MsgpackSerializer` | Java↔Java work where you want compact binary payloads. Its `jackson-dataformat-msgpack` dependency is `compileOnly` — add it to your build. | No — portable format, same-SDK payloads |
+| `CborSerializer` | A task is produced or consumed by another Taskito SDK. The only serializer whose wire format (the `0x02` envelope tag) is part of the cross-SDK contract. `jackson-dataformat-cbor` is `compileOnly`. | Yes — cross-SDK wire format |
+| `SignedSerializer(delegate, key)` | Payloads must be tamper-evident but not hidden — prefixes an HMAC-SHA256 tag with constant-time verification. Authentication, not encryption. | Same-SDK by default (depends on `delegate`) |
+| `EncryptedSerializer(delegate, key)` | Tasks carry sensitive data that must not be readable in the database — AES-GCM confidentiality **and** integrity. Key must be 16, 24, or 32 bytes. | Same-SDK by default (depends on `delegate`) |
+
+**Rule of thumb**: keep the default `JsonSerializer` unless you have a specific
+reason to switch. Use `MsgpackSerializer` for more compact Java↔Java payloads,
+`CborSerializer` when a task crosses SDK boundaries, and `EncryptedSerializer`
+when payloads must not be readable in storage.
+
+</SdkOnly>
+
 ## Payload codecs
 
 A `PayloadCodec` is a reversible byte-to-byte transform layered *around* a
