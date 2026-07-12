@@ -48,7 +48,8 @@ core defaults. Fields: `queue`, `priority`, `maxRetries`, `timeoutMs` /
 `timeout(Duration)`, `delayMs` / `delay(Duration)`, `uniqueKey` (alias
 `jobId`) for idempotent enqueues, `metadata`, `namespace`, and
 `dependsOn(String... jobIds)` (this job stays pending until the listed jobs
-finish — see [enqueue options](/java/guides/core/enqueue-options#job-dependencies)).
+complete successfully; a failed or cancelled dependency cancels it — see
+[enqueue options](/java/guides/core/enqueue-options#job-dependencies)).
 
 ```java
 taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
