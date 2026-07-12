@@ -1,0 +1,38 @@
+---
+title: Queue & Stats
+description: "Statistics, dead letters, queue control, and settings."
+---
+
+## Statistics
+
+| Method | Description |
+|---|---|
+| `stats()` / `statsByQueue(q)` / `statsAllQueues()` | `QueueStats` counts by status. |
+| `metrics(taskName, sinceMs)` → `List<TaskMetric>` | Per-execution metrics (null task = all). |
+
+## Dead letter
+
+| Method | Description |
+|---|---|
+| `listDead(limit, offset)` / `listDeadByTask(task, limit, offset)` | Dead-letter entries. |
+| `retryDead(deadId)` (alias `retry`) / `deleteDead(deadId)` | Re-enqueue / drop an entry. |
+| `purgeDead(olderThanMs)` / `purgeDeadByTask(task)` | Bulk DLQ cleanup → count removed. |
+
+## Queue control
+
+| Method | Description |
+|---|---|
+| `queue(name)` → `Queue` | A named-queue handle: `name()`, `pause()`, `resume()`, `isPaused()`. |
+| `listPausedQueues()` | Names of every paused queue. |
+
+## Settings
+
+| Method | Description |
+|---|---|
+| `getSetting` / `setSetting` / `deleteSetting` / `listSettings` | Shared key–value settings in the store. |
+
+## Cleanup
+
+| Method | Description |
+|---|---|
+| `purgeCompleted(olderThanMs)` | Drop old completed jobs. |

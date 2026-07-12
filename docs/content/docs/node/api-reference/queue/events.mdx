@@ -1,0 +1,19 @@
+---
+title: Events & Logs
+description: "Webhook delivery and structured task logs."
+---
+
+## Events & webhooks
+
+Event subscription (`on(event, handler)`) lives on
+[Workers & Hooks](/node/api-reference/queue/workers).
+
+| Member | Description |
+|---|---|
+| `webhooks` | [Webhooks](/node/guides/extensibility/webhooks) manager. |
+
+## Logs
+
+| Method | Description |
+|---|---|
+| `taskLogs(id)` | Raw task-log entries for a job. |

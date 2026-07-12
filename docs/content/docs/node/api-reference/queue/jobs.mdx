@@ -1,0 +1,26 @@
+---
+title: Job Management
+description: "Fetching jobs, awaiting results, streaming partials, cancellation, listing, and errors."
+---
+
+## Results & cancellation
+
+| Method | Description |
+|---|---|
+| `getJob(id)` → `Job \| null` | Fetch a job's current state. |
+| `getResult(id)` | Deserialized result of a completed job, or `undefined` if not yet ready. |
+| `result(id, { timeoutMs?, pollMs? })` | Await a job's terminal result; rejects on failure/cancellation/timeout. |
+| `stream(id, { timeoutMs?, pollMs? })` | Async-iterate a job's [published partials](/node/guides/core/streaming). |
+| `requestCancel(id)` | Request cooperative cancellation of a running job. |
+| `isCancelRequested(id)` | Whether cancellation has been requested for a job. |
+| `cancelJob(id)` | Cancel a pending job. |
+
+## Job listing & errors
+
+Scan-heavy calls (marked `Promise` below) run off the JS event loop on a
+background thread pool.
+
+| Method | Description |
+|---|---|
+| `listJobs(filter)` → `Promise<Job[]>` | List jobs. |
+| `getJobErrors(id)` → `Promise<JobError[]>` | Per-attempt error history. |

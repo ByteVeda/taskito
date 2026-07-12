@@ -1,0 +1,18 @@
+---
+title: Workers & Hooks
+description: "Run workers, list registered workers, event hooks, and middleware."
+---
+
+## Workers
+
+| Method | Description |
+|---|---|
+| `runWorker(options?)` | Start a [worker](/node/api-reference/worker). |
+| `listWorkers()` → `Promise<WorkerInfo[]>` | Registered workers. |
+
+## Hooks & middleware
+
+| Member | Description |
+|---|---|
+| `on(event, handler)` | [Events](/node/guides/extensibility/events). |
+| `use(middleware)` | [Middleware](/node/guides/extensibility/middleware) (incl. the `onEnqueue` [interception](/node/guides/resources/interception) hook). |

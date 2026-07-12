@@ -1,0 +1,22 @@
+---
+title: Job Management
+description: "Job results, cancellation, listing, and error history."
+---
+
+## Results & cancellation
+
+| Method | Description |
+|---|---|
+| `getJob(id)` → `Optional<Job>` | A job snapshot (status, progress, timestamps). |
+| `awaitJob(id, Duration)` → `Optional<Job>` | Block until terminal; throws on timeout. |
+| `getResult(id)` → `Optional<byte[]>` / `getResult(id, Class<R>)` → `Optional<R>` | The job's result, raw or [deserialized](/java/api-reference/result). |
+| `cancel(id)` | Cancel a pending job. |
+| `requestCancel(id)` / `isCancelRequested(id)` | Cooperative cancellation of a running job. |
+| `setProgress(id, int)` | Record 0–100 progress for inspection / the dashboard. |
+
+## Listing & errors
+
+| Method | Description |
+|---|---|
+| `listJobs(JobFilter)` | List jobs — filter by status/queue/task with limit/offset. |
+| `jobErrors(id)` → `List<JobError>` | Per-attempt error history. |

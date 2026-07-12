@@ -1,0 +1,51 @@
+---
+title: Queue
+description: "Construct a queue and the full producer/admin API."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info" title="Sub-pages">
+  The Queue API is split across several pages for readability:
+
+  - **[Job Management](/node/api-reference/queue/jobs)** — fetch jobs, await results, stream partials, cancel
+  - **[Queue & Stats](/node/api-reference/queue/queues)** — statistics, dead letters, pause/resume, cleanup
+  - **[Workers & Hooks](/node/api-reference/queue/workers)** — run workers, list workers, event hooks, middleware
+  - **[Resources & Locking](/node/api-reference/queue/resources)** — resources, enqueue gates, distributed locks, periodic tasks
+  - **[Events & Logs](/node/api-reference/queue/events)** — webhooks, task logs
+  - **[Pub/Sub](/node/api-reference/queue/pubsub)** — topic subscriptions, fan-out publish
+</Callout>
+
+```ts
+import { Queue } from "@byteveda/taskito";
+
+const queue = new Queue(options);
+```
+
+## Constructor options
+
+| Option | Type | Description |
+|---|---|---|
+| `dbPath` | `string` | SQLite file path (default backend). |
+| `backend` | `"sqlite" \| "postgres" \| "redis"` | Storage backend. |
+| `dsn` | `string` | Connection string for postgres/redis. |
+| `poolSize` | `number` | Connection pool size (sqlite/postgres). |
+| `schema` | `string` | Postgres schema (default `taskito`). |
+| `prefix` | `string` | Redis key prefix. |
+| `namespace` | `string` | Namespace applied to enqueued jobs + the worker scheduler. |
+| `serializer` | `Serializer` | Arg/result serializer (default `JsonSerializer`). |
+| `codec` | `PayloadCodec \| PayloadCodec[]` | Global codec chain wrapping the serializer — covers every payload and result. See [Serializers](/node/api-reference/serializers). |
+| `codecs` | `Record<string, PayloadCodec>` | Named codec registry for per-task `codecs` (payload only). |
+
+## Tasks & enqueue
+
+| Method | Description |
+|---|---|
+| `task(name, fn, config?)` | Register a task. See [Task](/node/api-reference/task). |
+| `configureQueue(name, config)` | Set per-queue rate limit / concurrency. |
+| `enqueue(task, args?, options?)` | Enqueue a job → job id. |
+| `enqueueMany(task, jobs[])` | Batch-enqueue `{ args?, options? }[]` → job ids (no dedup). |
+
+## Related
+
+- [`workflows`](/node/api-reference/workflows) — Workflow builder + queries, exposed as `queue.workflows`.
