@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { Queue, type Worker } from "../../src/index";
+import type { NativeQueue } from "../../src/native";
 
 let worker: Worker | undefined;
 afterEach(() => {
@@ -64,6 +65,45 @@ it("redeclaring updates the subscription instead of duplicating", async () => {
   expect(subs[0]?.queue).toBe("mail");
 });
 
+it("re-registering the same (topic, name) replaces the pending entry", async () => {
+  const queue = newQueue();
+  queue.subscriber("orders", "send_email", () => undefined, {
+    subscriptionName: "email",
+    queue: "mail",
+  });
+  queue.subscriber("orders", "send_email_v2", () => undefined, {
+    subscriptionName: "email",
+    queue: "mail-v2",
+  });
+  await queue.declareSubscriptions();
+
+  const subs = await queue.listSubscriptions("orders");
+  expect(subs).toHaveLength(1);
+  expect(subs[0]?.taskName).toBe("send_email_v2");
+  expect(subs[0]?.queue).toBe("mail-v2");
+});
+
+it("subscriber rejects per-task codecs", () => {
+  const queue = newQueue();
+  expect(() =>
+    queue.subscriber("orders", "send_email", () => undefined, { codecs: ["gzip"] }),
+  ).toThrow(/per-task codecs do not apply/);
+});
+
+it("registering an ephemeral subscription without an owner rejects", async () => {
+  const queue = newQueue();
+  const native = (queue as unknown as { native: NativeQueue }).native;
+  await expect(
+    native.registerSubscription("orders", "eph", "eph_task", "default", false, undefined),
+  ).rejects.toThrow(/ephemeral subscription \(durable=false\) requires ownerWorkerId/);
+});
+
+it("publish rejects negative per-task delivery defaults naming the task", async () => {
+  const queue = newQueue();
+  queue.task("bad_task", () => undefined, { maxRetries: -1 });
+  await expect(queue.publish("orders", [1])).rejects.toThrow('taskDefaults["bad_task"].maxRetries');
+});
+
 it("unsubscribe removes the subscription and reports a missing one", async () => {
   const queue = newQueue();
   queue.subscriber("orders", "send_email", () => undefined, { subscriptionName: "email" });
@@ -72,6 +112,26 @@ it("unsubscribe removes the subscription and reports a missing one", async () =>
   expect(await queue.unsubscribe("orders", "email")).toBe(true);
   expect(await queue.unsubscribe("orders", "email")).toBe(false);
   expect(await queue.listSubscriptions("orders")).toEqual([]);
+});
+
+it("a later declareSubscriptions does not resurrect an unsubscribed subscriber", async () => {
+  const queue = newQueue();
+  queue.subscriber("orders", "send_email", () => undefined, { subscriptionName: "email" });
+  await queue.declareSubscriptions();
+
+  expect(await queue.unsubscribe("orders", "email")).toBe(true);
+  await queue.declareSubscriptions();
+  expect(await queue.listSubscriptions("orders")).toEqual([]);
+});
+
+it("redeclaring keeps a paused subscription paused", async () => {
+  const queue = newQueue();
+  queue.subscriber("orders", "send_email", () => undefined, { subscriptionName: "email" });
+  await queue.declareSubscriptions();
+
+  expect(await queue.pauseSubscription("orders", "email")).toBe(true);
+  await queue.declareSubscriptions();
+  expect(await queue.publish("orders", [1])).toEqual([]);
 });
 
 it("pause blocks deliveries and resume restores them", async () => {
@@ -173,7 +233,7 @@ it("declareSubscriptions skips ephemeral subscriptions", async () => {
   expect(subs.map((s) => s.subscriptionName)).toEqual(["durable_task"]);
 });
 
-it("reapEphemeralSubscriptions removes dead-owner rows only", async () => {
+it("reapEphemeralSubscriptions spares fresh rows even with a dead owner", async () => {
   const queue = newQueue();
   queue.subscriber("orders", "durable_task", () => undefined);
   queue.subscriber("orders", "ephemeral_task", () => undefined, { durable: false });
@@ -186,12 +246,17 @@ it("reapEphemeralSubscriptions removes dead-owner rows only", async () => {
   // Owner alive: the reap must not touch its ephemeral subscription.
   expect(await queue.reapEphemeralSubscriptions()).toBe(0);
 
-  // Stop the worker (unregisters it) — the orphaned ephemeral row is reaped.
+  // Stop the worker (unregisters it). The orphaned row is younger than the
+  // startup grace window, so it survives — a starting worker inserts its
+  // ephemeral subscriptions before its first heartbeat, and another worker's
+  // reap tick must not race that gap. Aged reaping is covered in core tests.
   worker.stop();
   worker = undefined;
   expect(await waitFor(async () => (await queue.listWorkers()).length === 0)).toBe(true);
-  expect(await queue.reapEphemeralSubscriptions()).toBe(1);
+  expect(await queue.reapEphemeralSubscriptions()).toBe(0);
 
   const remaining = await queue.listSubscriptions("orders");
-  expect(remaining.map((s) => s.subscriptionName)).toEqual(["durable_task"]);
+  expect(new Set(remaining.map((s) => s.subscriptionName))).toEqual(
+    new Set(["durable_task", "ephemeral_task"]),
+  );
 });

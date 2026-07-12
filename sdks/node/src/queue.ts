@@ -288,13 +288,32 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     options?: SubscriberOptions,
   ): Queue<TTasks & Record<Name, Handler>> {
     const { subscriptionName, queue, durable, ...taskOptions } = options ?? {};
-    this.pendingSubscriptions.push({
+    // publish() encodes one shared payload with the queue serializer only, but
+    // the worker would reverse a per-task codec chain — a guaranteed decode
+    // failure, so reject it up front.
+    if (taskOptions.codecs && taskOptions.codecs.length > 0) {
+      throw new QueueError(
+        `subscriber "${name}": per-task codecs do not apply to topic deliveries — ` +
+          "published payloads use the queue-level serializer only",
+      );
+    }
+    const pending: PendingSubscription = {
       topic,
       subscriptionName: subscriptionName ?? name,
       taskName: name,
       queue: queue ?? "default",
       durable: durable ?? true,
-    });
+    };
+    // Redeclaring the same (topic, subscriptionName) replaces the pending
+    // entry — declareSubscriptions must stay idempotent.
+    const existing = this.pendingSubscriptions.findIndex(
+      (sub) => sub.topic === topic && sub.subscriptionName === pending.subscriptionName,
+    );
+    if (existing >= 0) {
+      this.pendingSubscriptions[existing] = pending;
+    } else {
+      this.pendingSubscriptions.push(pending);
+    }
     return this.task(name, handler, taskOptions);
   }
 
@@ -465,6 +484,14 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
 
   /** Remove a subscription. Resolves false if none matched. */
   unsubscribe(topic: string, name: string): Promise<boolean> {
+    // Drop any matching pending entry too, so a later declareSubscriptions()
+    // or worker start doesn't resurrect the removed subscription.
+    const pending = this.pendingSubscriptions.findIndex(
+      (sub) => sub.topic === topic && sub.subscriptionName === name,
+    );
+    if (pending >= 0) {
+      this.pendingSubscriptions.splice(pending, 1);
+    }
     return this.native.unsubscribe(topic, name);
   }
 

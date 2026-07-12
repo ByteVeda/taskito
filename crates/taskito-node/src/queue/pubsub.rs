@@ -17,7 +17,7 @@ use crate::convert::{
     job_to_js, subscription_to_js, JsJob, JsSubscription, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
     DEFAULT_TIMEOUT_MS,
 };
-use crate::error::{join_to_napi_err, non_negative, to_napi_err};
+use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
 #[napi]
 impl JsQueue {
@@ -34,6 +34,13 @@ impl JsQueue {
         durable: bool,
         owner_worker_id: Option<String>,
     ) -> Result<()> {
+        // An owner-less ephemeral row could never be reaped — reject it before
+        // it reaches storage.
+        if !durable && owner_worker_id.is_none() {
+            return Err(invalid_arg(
+                "an ephemeral subscription (durable=false) requires ownerWorkerId",
+            ));
+        }
         let storage = self.storage.clone();
         spawn_blocking(move || {
             let row = NewSubscriptionRow {
@@ -100,13 +107,16 @@ impl JsQueue {
         .map_err(join_to_napi_err)?
     }
 
-    /// Drop ephemeral subscriptions whose owning worker is gone. Runs on the
-    /// heartbeat cadence, after dead workers have been reaped. Returns the
-    /// number of subscriptions removed.
+    /// Drop ephemeral subscriptions whose owning worker is gone. Prunes dead
+    /// worker rows first so the live set is current. Runs on the heartbeat
+    /// cadence. Returns the number of subscriptions removed.
     #[napi]
     pub async fn reap_ephemeral_subscriptions(&self) -> Result<i64> {
         let storage = self.storage.clone();
         spawn_blocking(move || {
+            // Prune stale worker rows first so a crashed owner doesn't keep its
+            // ephemeral subscriptions alive; opportunistic like the heartbeat's.
+            let _ = storage.reap_dead_workers();
             let live: Vec<String> = storage
                 .list_workers()
                 .map_err(to_napi_err)?
@@ -195,27 +205,38 @@ fn build_publish_request(
         result_ttl_ms,
         namespace,
         queue_defaults,
-        task_defaults: task_defaults(opts.task_defaults.unwrap_or_default(), queue_defaults),
+        task_defaults: task_defaults(opts.task_defaults.unwrap_or_default(), queue_defaults)?,
     })
 }
 
 /// Resolve per-task delivery defaults, filling unset fields from the queue
-/// defaults so the shell never duplicates them.
+/// defaults so the shell never duplicates them. Entries get the same
+/// non-negative checks as the top-level options, naming the offending task.
 fn task_defaults(
     input: HashMap<String, DeliveryDefaultsInput>,
     queue_defaults: DeliveryDefaults,
-) -> HashMap<String, DeliveryDefaults> {
+) -> Result<HashMap<String, DeliveryDefaults>> {
     input
         .into_iter()
         .map(|(name, defaults)| {
-            (
+            let max_retries = match defaults.max_retries {
+                Some(n) => {
+                    non_negative(n as i64, &format!("taskDefaults[\"{name}\"].maxRetries"))? as i32
+                }
+                None => queue_defaults.max_retries,
+            };
+            let timeout_ms = match defaults.timeout_ms {
+                Some(n) => non_negative(n, &format!("taskDefaults[\"{name}\"].timeoutMs"))?,
+                None => queue_defaults.timeout_ms,
+            };
+            Ok((
                 name,
                 DeliveryDefaults {
                     priority: defaults.priority.unwrap_or(queue_defaults.priority),
-                    max_retries: defaults.max_retries.unwrap_or(queue_defaults.max_retries),
-                    timeout_ms: defaults.timeout_ms.unwrap_or(queue_defaults.timeout_ms),
+                    max_retries,
+                    timeout_ms,
                 },
-            )
+            ))
         })
         .collect()
 }

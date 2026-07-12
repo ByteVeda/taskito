@@ -43,7 +43,8 @@ export interface PublishOptions extends Omit<NativePublishOptions, "notes" | "ta
   notes?: Record<string, unknown>;
 }
 
-/** Options for {@link Queue.subscriber}: task options plus subscription routing. */
+/** Options for {@link Queue.subscriber}: task options plus subscription routing.
+ *  `codecs` is not supported — published payloads use the queue-level serializer. */
 export interface SubscriberOptions extends TaskOptions {
   /** Stable subscription identity — re-registering the same `(topic, name)`
    *  updates the routing target instead of duplicating. Defaults to the task name. */
