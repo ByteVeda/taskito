@@ -26,6 +26,7 @@ taskito.enqueue(sendEmail, payload, EnqueueOptions.builder()
 | `uniqueKey` | Idempotency key — a duplicate enqueue is a no-op while the first job is pending/running. |
 | `metadata` | Free-form string stored with the job (surfaces on the dashboard / inspection). |
 | `namespace` | Partition the store — jobs are only visible to clients/workers in the same namespace. |
+| `dependsOn(String... jobIds)` | Gate this job on other jobs — it stays pending until they all finish ([below](#job-dependencies)). |
 
 `toBuilder()` derives a modified copy from an existing instance, and the fluent
 `Task` methods ([tasks](/java/guides/core/tasks#per-task-defaults)) cover the
@@ -57,3 +58,20 @@ List<String> ids = taskito.enqueueMany(resize, List.of(a, b, c),
 A `uniqueKey` on the batch dedupes there too: a payload whose key already has
 an active job resolves to the existing job's id instead of failing the batch.
 `enqueueAll` is an alias of `enqueueMany`.
+
+## Job dependencies
+
+`dependsOn(jobId...)` makes a job wait for other jobs before it becomes eligible
+to run — a lightweight per-job DAG, distinct from the
+[workflow builder](/java/guides/workflows). The job stays pending until every
+listed job completes successfully.
+
+```java
+String extract = taskito.enqueue(extractTask, source);
+String transform = taskito.enqueue(transformTask, config,
+        EnqueueOptions.builder().dependsOn(extract).build());
+```
+
+Enqueue is rejected if a listed job id is missing or already dead, cancelled, or
+failed. If a dependency later fails or is cancelled, the dependent is cancelled
+too — the cancellation cascades down the chain.
