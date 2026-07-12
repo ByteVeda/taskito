@@ -235,6 +235,9 @@ diesel::table! {
         durable -> Bool,
         owner_worker_id -> Nullable<Text>,
         created_at -> BigInt,
+        priority -> Nullable<Integer>,
+        max_retries -> Nullable<Integer>,
+        timeout_ms -> Nullable<BigInt>,
     }
 }
 

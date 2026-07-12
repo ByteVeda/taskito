@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use pyo3::prelude::*;
 
 use taskito_core::job::now_millis;
@@ -17,7 +15,12 @@ type SubscriptionTuple = (String, String, String, String, bool, bool);
 #[pymethods]
 impl PyQueue {
     /// Insert or update a topic subscription (idempotent on topic + name).
-    #[pyo3(signature = (topic, subscription_name, task_name, queue="default", durable=true, owner_worker_id=None))]
+    ///
+    /// `priority`/`max_retries`/`timeout_ms` (already in milliseconds) persist
+    /// the subscriber task's own delivery settings so a producer-only process
+    /// can apply them without loading the task.
+    #[pyo3(signature = (topic, subscription_name, task_name, queue="default", durable=true, owner_worker_id=None, priority=None, max_retries=None, timeout_ms=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn register_subscription(
         &self,
         topic: &str,
@@ -26,6 +29,9 @@ impl PyQueue {
         queue: &str,
         durable: bool,
         owner_worker_id: Option<&str>,
+        priority: Option<i32>,
+        max_retries: Option<i32>,
+        timeout_ms: Option<i64>,
     ) -> PyResult<()> {
         // An unowned ephemeral row could never be reaped (cleanup keys off
         // live worker ids), so it would stay active forever.
@@ -43,6 +49,9 @@ impl PyQueue {
             durable,
             owner_worker_id,
             created_at: now_millis(),
+            priority,
+            max_retries,
+            timeout_ms,
         };
         self.storage
             .register_subscription(&row)
@@ -108,7 +117,7 @@ impl PyQueue {
 
     /// Publish a payload to a topic: one job per active subscription.
     /// Returns the created jobs — empty when nothing is subscribed.
-    #[pyo3(signature = (topic, payload, idempotency_key=None, metadata=None, notes=None, priority=None, delay_seconds=None, max_retries=None, timeout=None, expires=None, result_ttl=None, task_defaults=None))]
+    #[pyo3(signature = (topic, payload, idempotency_key=None, metadata=None, notes=None, priority=None, delay_seconds=None, max_retries=None, timeout=None, expires=None, result_ttl=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn publish(
         &self,
@@ -123,7 +132,6 @@ impl PyQueue {
         timeout: Option<i64>,
         expires: Option<f64>,
         result_ttl: Option<i64>,
-        task_defaults: Option<HashMap<String, (i32, i32, i64)>>,
     ) -> PyResult<Vec<PyJob>> {
         let now = now_millis();
         let scheduled_at = match delay_seconds {
@@ -185,20 +193,6 @@ impl PyQueue {
                 max_retries: self.default_retry,
                 timeout_ms: self.default_timeout.saturating_mul(1000),
             },
-            task_defaults: task_defaults
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(name, (priority, max_retries, timeout_ms))| {
-                    (
-                        name,
-                        DeliveryDefaults {
-                            priority,
-                            max_retries,
-                            timeout_ms,
-                        },
-                    )
-                })
-                .collect(),
         };
         let jobs = publish_to_topic(&self.storage, &request)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;

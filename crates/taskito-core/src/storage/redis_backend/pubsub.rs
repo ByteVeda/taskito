@@ -20,6 +20,14 @@ struct SubEntry {
     durable: bool,
     owner_worker_id: Option<String>,
     created_at: i64,
+    // Older blobs (registered before per-subscription settings) lack these;
+    // default to None so they resolve to queue defaults, matching prior behavior.
+    #[serde(default)]
+    priority: Option<i32>,
+    #[serde(default)]
+    max_retries: Option<i32>,
+    #[serde(default)]
+    timeout_ms: Option<i64>,
 }
 
 impl From<SubEntry> for SubscriptionRow {
@@ -33,6 +41,9 @@ impl From<SubEntry> for SubscriptionRow {
             durable: e.durable,
             owner_worker_id: e.owner_worker_id,
             created_at: e.created_at,
+            priority: e.priority,
+            max_retries: e.max_retries,
+            timeout_ms: e.timeout_ms,
         }
     }
 }
@@ -84,6 +95,9 @@ impl RedisStorage {
             durable: sub.durable,
             owner_worker_id: sub.owner_worker_id.map(|s| s.to_string()),
             created_at: sub.created_at,
+            priority: sub.priority,
+            max_retries: sub.max_retries,
+            timeout_ms: sub.timeout_ms,
         };
         let blob_key = self.key(&["sub", sub.topic, sub.subscription_name]);
         let by_topic = self.key(&["subs", "by_topic", sub.topic]);

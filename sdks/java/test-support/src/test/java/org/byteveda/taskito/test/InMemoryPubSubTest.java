@@ -182,6 +182,26 @@ class InMemoryPubSubTest {
     }
 
     @Test
+    void producerOnlyPublishAppliesPersistedRowDeliverySettings() {
+        // A subscriber (in another process) persisted its own delivery settings
+        // on the subscription row, as a durable subscribe() does.
+        InMemoryQueueBackend backend = new InMemoryQueueBackend();
+        backend.registerSubscription("orders", "sink", AUDIT.name(), "default", true, null, 5, 7, 30_000L);
+
+        // A producer that never registered AUDIT publishes with no local task
+        // knowledge; the delivery still carries the subscriber's own settings.
+        try (Taskito producer = Taskito.builder().open(backend)) {
+            List<Job> deliveries = producer.publish("orders", "o-1");
+            assertEquals(1, deliveries.size());
+            Job delivery = deliveries.get(0);
+            assertEquals(AUDIT.name(), delivery.taskName);
+            assertEquals(5, delivery.priority);
+            assertEquals(7, delivery.maxRetries);
+            assertEquals(30_000L, delivery.timeoutMs);
+        }
+    }
+
+    @Test
     @Timeout(20)
     void ephemeralSubscriptionBindsToAWorkerAndIsReapedWhenItStops() {
         try (Taskito queue = InMemoryTaskito.open()) {

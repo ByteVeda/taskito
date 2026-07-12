@@ -1385,6 +1385,9 @@ fn make_sub<'a>(
         durable: owner.is_none(),
         owner_worker_id: owner,
         created_at,
+        priority: None,
+        max_retries: None,
+        timeout_ms: None,
     }
 }
 

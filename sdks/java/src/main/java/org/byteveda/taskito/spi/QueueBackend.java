@@ -168,9 +168,9 @@ public interface QueueBackend extends AutoCloseable {
     String PUBSUB_UNSUPPORTED = "pub/sub not supported by this backend";
 
     /**
-     * Insert or update a topic subscription (idempotent on topic + name).
-     * Re-registering updates routing but preserves a paused state; an ephemeral
-     * subscription ({@code durable=false}) requires {@code ownerWorkerIdOrNull}.
+     * Insert or update a topic subscription with no per-subscriber delivery
+     * settings; deliveries take the queue defaults. Convenience form of
+     * {@link #registerSubscription(String, String, String, String, boolean, String, Integer, Integer, Long)}.
      */
     default void registerSubscription(
             String topic,
@@ -179,6 +179,29 @@ public interface QueueBackend extends AutoCloseable {
             String queue,
             boolean durable,
             String ownerWorkerIdOrNull) {
+        registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull, null, null, null);
+    }
+
+    /**
+     * Insert or update a topic subscription (idempotent on topic + name).
+     * Re-registering updates routing but preserves a paused state; an ephemeral
+     * subscription ({@code durable=false}) requires {@code ownerWorkerIdOrNull}.
+     *
+     * <p>{@code priority}, {@code maxRetries}, and {@code timeoutMs} are the
+     * subscriber task's own delivery settings, persisted on the row so a
+     * producer-only process applies them without loading the task; {@code null}
+     * means "take the queue default".
+     */
+    default void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull,
+            Integer priority,
+            Integer maxRetries,
+            Long timeoutMs) {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
     }
 

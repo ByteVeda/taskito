@@ -3,8 +3,6 @@
 //! Option and filter structs cross as JSON strings (decoded here); opaque job
 //! payloads cross as raw `byte[]` and are never interpreted by the core.
 
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
 use taskito_core::pubsub::{DeliveryDefaults, PublishRequest};
@@ -103,18 +101,6 @@ pub struct PublishOptions {
     pub timeout_ms: Option<i64>,
     pub expires_ms: Option<i64>,
     pub result_ttl_ms: Option<i64>,
-    /// Per-task delivery settings from the SDK's task registry, keyed by task name.
-    pub task_defaults: Option<HashMap<String, TaskDeliveryDefaults>>,
-}
-
-/// A subscriber task's own delivery settings. Absent fields mirror
-/// [`build_new_job`]'s zero defaults so a delivery resolves like a plain enqueue.
-#[derive(Deserialize, Default, Clone, Copy)]
-#[serde(rename_all = "camelCase", default)]
-pub struct TaskDeliveryDefaults {
-    pub priority: i32,
-    pub max_retries: i32,
-    pub timeout_ms: i64,
 }
 
 /// Build a core [`PublishRequest`] from a publish call. The queue-level
@@ -146,21 +132,6 @@ pub fn build_publish_request(
             max_retries: 0,
             timeout_ms: 0,
         },
-        task_defaults: options
-            .task_defaults
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(name, task)| {
-                (
-                    name,
-                    DeliveryDefaults {
-                        priority: task.priority,
-                        max_retries: task.max_retries,
-                        timeout_ms: task.timeout_ms,
-                    },
-                )
-            })
-            .collect(),
     }
 }
 
@@ -326,6 +297,8 @@ pub struct WorkerOptions {
 }
 
 /// One topic subscription declared by the SDK, registered at worker start.
+/// Delivery settings (from the subscriber task's own config) are persisted on
+/// the row so a producer-only process applies them without loading the task.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionSpec {
@@ -334,6 +307,12 @@ pub struct SubscriptionSpec {
     pub task_name: String,
     pub queue: String,
     pub durable: bool,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub max_retries: Option<i32>,
+    #[serde(default)]
+    pub timeout_ms: Option<i64>,
 }
 
 /// A task's retry-backoff curve. Fields left unset fall back to the core's

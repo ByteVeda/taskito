@@ -421,6 +421,11 @@ pub struct SubscriptionRow {
     pub durable: bool,
     pub owner_worker_id: Option<String>,
     pub created_at: i64,
+    /// Per-subscription delivery settings persisted at registration so
+    /// `publish_to_topic` applies them cross-process. `None` = queue default.
+    pub priority: Option<i32>,
+    pub max_retries: Option<i32>,
+    pub timeout_ms: Option<i64>,
 }
 
 /// Insertable/updatable struct for subscription registrations.
@@ -435,6 +440,9 @@ pub struct NewSubscriptionRow<'a> {
     pub durable: bool,
     pub owner_worker_id: Option<&'a str>,
     pub created_at: i64,
+    pub priority: Option<i32>,
+    pub max_retries: Option<i32>,
+    pub timeout_ms: Option<i64>,
 }
 
 // ── Distributed Locks ───────────────────────────────────────────

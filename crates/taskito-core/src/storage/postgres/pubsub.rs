@@ -30,6 +30,9 @@ impl PostgresStorage {
                 topic_subscriptions::queue.eq(sub.queue),
                 topic_subscriptions::durable.eq(sub.durable),
                 topic_subscriptions::owner_worker_id.eq(sub.owner_worker_id),
+                topic_subscriptions::priority.eq(sub.priority),
+                topic_subscriptions::max_retries.eq(sub.max_retries),
+                topic_subscriptions::timeout_ms.eq(sub.timeout_ms),
             ))
             .execute(&mut conn)?;
 

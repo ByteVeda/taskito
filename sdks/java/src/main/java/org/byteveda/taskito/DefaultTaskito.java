@@ -681,7 +681,16 @@ final class DefaultTaskito implements Taskito {
         // Register before recording locally, so a failed registration leaves no
         // orphaned local declaration behind.
         if (options.durable()) {
-            backend.registerSubscription(topic, name, task.name(), options.queue(), true, null);
+            backend.registerSubscription(
+                    topic,
+                    name,
+                    task.name(),
+                    options.queue(),
+                    true,
+                    null,
+                    taskDefaults.priority(),
+                    taskDefaults.maxRetries(),
+                    taskDefaults.timeoutMs());
         }
         // Re-declaring (topic, name) replaces the previous local entry, mirroring
         // the backend's upsert instead of accumulating duplicates.
@@ -713,11 +722,11 @@ final class DefaultTaskito implements Taskito {
     }
 
     /**
-     * The wire shape of a publish: the caller's options plus each locally
-     * subscribed task's own delivery settings, so deliveries honor per-task
-     * defaults. Tasks subscribed elsewhere fall back to the core defaults.
+     * The wire shape of a publish: just the caller's own options. Per-subscriber
+     * delivery defaults are persisted on each subscription row (see
+     * {@link #subscribe}), so the core resolves them without the producer's help.
      */
-    private Map<String, Object> publishRequest(PublishOptions options) {
+    private static Map<String, Object> publishRequest(PublishOptions options) {
         Map<String, Object> request = new LinkedHashMap<>();
         putIfSet(request, "idempotencyKey", options.idempotencyKey());
         putIfSet(request, "metadata", options.metadata());
@@ -728,17 +737,6 @@ final class DefaultTaskito implements Taskito {
         putIfSet(request, "timeoutMs", options.timeoutMs());
         putIfSet(request, "expiresMs", options.expiresMs());
         putIfSet(request, "resultTtlMs", options.resultTtlMs());
-        Map<String, Map<String, Object>> taskDefaults = new LinkedHashMap<>();
-        for (SubscriptionConfig config : subscriptions) {
-            Map<String, Object> defaults = new LinkedHashMap<>();
-            defaults.put("priority", config.taskPriority() == null ? 0 : config.taskPriority());
-            defaults.put("maxRetries", config.taskMaxRetries() == null ? 0 : config.taskMaxRetries());
-            defaults.put("timeoutMs", config.taskTimeoutMs() == null ? 0L : config.taskTimeoutMs());
-            taskDefaults.put(config.taskName(), defaults);
-        }
-        if (!taskDefaults.isEmpty()) {
-            request.put("taskDefaults", taskDefaults);
-        }
         return request;
     }
 

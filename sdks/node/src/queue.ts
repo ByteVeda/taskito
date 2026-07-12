@@ -25,7 +25,6 @@ import { type Interception, InterceptionMetrics, type Interceptor } from "./inte
 import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
 import {
-  type DeliveryDefaultsInput,
   JsQueue,
   type EnqueueOptions as NativeEnqueueOptions,
   type NativeQueue,
@@ -464,7 +463,6 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     return this.native.publish(topic, payload, {
       ...rest,
       notes: notes === undefined ? undefined : encodeNotes(notes),
-      taskDefaults: this.deliveryTaskDefaults(),
     });
   }
 
@@ -539,6 +537,11 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     subscription: PendingSubscription,
     ownerWorkerId: string | undefined,
   ): Promise<void> {
+    // Persist the subscriber's own delivery settings on the subscription row so
+    // a producer-only process — which never registers the task — still applies
+    // them when it publishes. There is no per-task priority option, so priority
+    // stays undefined and falls back to the queue default in the core.
+    const options = this.tasks.get(subscription.taskName)?.options;
     return this.native.registerSubscription(
       subscription.topic,
       subscription.subscriptionName,
@@ -546,24 +549,10 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       subscription.queue,
       subscription.durable,
       ownerWorkerId,
+      undefined,
+      options?.maxRetries,
+      options?.timeoutMs,
     );
-  }
-
-  /**
-   * Per-task delivery defaults from this process's task registry so a publish
-   * honors each subscriber's own registration options. Unset fields and tasks
-   * registered elsewhere fall back to queue defaults in the core.
-   */
-  private deliveryTaskDefaults(): Record<string, DeliveryDefaultsInput> {
-    const defaults: Record<string, DeliveryDefaultsInput> = {};
-    for (const [name, task] of this.tasks) {
-      const { maxRetries, timeoutMs } = task.options ?? {};
-      if (maxRetries === undefined && timeoutMs === undefined) {
-        continue;
-      }
-      defaults[name] = { maxRetries, timeoutMs };
-    }
-    return defaults;
   }
 
   /**

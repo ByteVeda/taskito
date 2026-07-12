@@ -440,7 +440,11 @@ public final class Worker implements AutoCloseable {
             }
         }
 
-        /** Serialize the declared topic subscriptions into the wire shape the binding reads. */
+        /**
+         * Serialize the declared topic subscriptions into the wire shape the binding reads.
+         * The subscriber task's delivery settings are emitted only when set, so an unset
+         * one is persisted as "take the queue default" rather than a spurious zero.
+         */
         private List<Map<String, Object>> encodeSubscriptions() {
             List<Map<String, Object>> specs = new ArrayList<>(subscriptions.size());
             for (SubscriptionConfig config : subscriptions) {
@@ -450,6 +454,15 @@ public final class Worker implements AutoCloseable {
                 spec.put("taskName", config.taskName());
                 spec.put("queue", config.queue());
                 spec.put("durable", config.durable());
+                if (config.taskPriority() != null) {
+                    spec.put("priority", config.taskPriority());
+                }
+                if (config.taskMaxRetries() != null) {
+                    spec.put("maxRetries", config.taskMaxRetries());
+                }
+                if (config.taskTimeoutMs() != null) {
+                    spec.put("timeoutMs", config.taskTimeoutMs());
+                }
                 specs.add(spec);
             }
             return specs;
