@@ -540,9 +540,9 @@ return a plain `Workflow`, and `Workflow.named(...).step(...)` exposes a
 
 </SdkOnly>
 
-<SdkOnly sdk="python">
-
 ## chunks / starmap
+
+<SdkOnly sdk="python">
 
 ```python
 from taskito import chunks, starmap
@@ -560,7 +560,57 @@ result = chord(
 results = starmap(add, [(1, 2), (3, 4), (5, 6)]).apply(queue)
 ```
 
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Node has no `chunks` / `starmap` helper — both are just a `group` of pre-sized
+steps. Build the batches in JS and hand them to `.group()`:
+
+```ts
+// chunks: split items into batches of 100
+const size = 100;
+const batches = Array.from({ length: Math.ceil(items.length / size) }, (_, i) =>
+  items.slice(i * size, (i + 1) * size),
+);
+queue.workflows
+  .define("batch")
+  .group(batches.map((b, i) => ({ name: `chunk-${i}`, task: "processBatch", args: [b] })))
+  .submit();
+
+// starmap: one step per arg tuple
+queue.workflows
+  .define("pairs")
+  .group([[1, 2], [3, 4]].map(([a, b], i) => ({ name: `add-${i}`, task: "add", args: [a, b] })))
+  .submit();
+```
+
+For dynamic batching driven by an upstream result, use `fanOut` / `fanIn`.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+Java has no `chunks` / `starmap` shortcut — they are a `group` of fixed steps.
+Slice in Java and pass the links to `Canvas.group`:
+
+```java
+List<Canvas.Link> links = new ArrayList<>();
+for (int i = 0; i < items.size(); i += 100) {
+    List<Item> batch = items.subList(i, Math.min(i + 100, items.size()));
+    links.add(Canvas.link("chunk-" + (i / 100), processBatch, batch));
+}
+Workflow wf = Canvas.group("batch", links.toArray(new Canvas.Link[0]));
+queue.submitWorkflow(wf);
+```
+
+For dynamic per-item fan-out, use `Step.Builder.fanOut(...)` / `.fanIn(...)`.
+
+</SdkOnly>
+
 ## Canvas vs DAG workflows
+
+<SdkOnly sdk="python">
 
 | Feature | Canvas | DAG Workflows |
 |---------|--------|---------------|
@@ -580,5 +630,22 @@ Use canvas for quick one-off pipelines. Use
 <SdkLink to="guides/workflows/building">DAG workflows</SdkLink> for
 production pipelines that need monitoring, conditions, or complex
 topologies.
+
+</SdkOnly>
+
+<SdkOnly sdk="node">
+
+Canvas is not a separate engine in Node — `chain` / `group` / `chord` are
+methods on `WorkflowBuilder` that produce an ordinary DAG workflow. Reach for
+conditions, gates, or sub-workflows on the same builder when you need them; see
+<SdkLink to="guides/workflows">Workflows</SdkLink>.
+
+</SdkOnly>
+
+<SdkOnly sdk="java">
+
+`Canvas.chain` / `group` / `chord` return a plain `Workflow` you can keep
+extending with the builder (conditions, gates, sub-workflows) — canvas and DAG
+are the same object. See <SdkLink to="guides/workflows">Workflows</SdkLink>.
 
 </SdkOnly>
