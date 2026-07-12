@@ -249,8 +249,8 @@ after a period of queue emptiness.
 
 The mesh does **not** modify the [`Scheduler`](/architecture/scheduler)
 struct or the [`WorkerDispatcher`](/architecture/worker-pool) trait.
-Instead, `run_worker` (in `crates/taskito-python/src/py_queue/worker.rs`)
-spawns a **mesh bridge** — an intermediate `tokio::sync::mpsc` channel
+Instead, the per-SDK worker entrypoint spawns a **mesh bridge** — an
+intermediate `tokio::sync::mpsc` channel
 between the scheduler and dispatcher:
 
 The `run_mesh_bridge()` function:
