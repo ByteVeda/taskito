@@ -1,17 +1,11 @@
-//! Ordered registry of code-first workflow schema migrations.
+//! Auto-discovered workflow schema migrations.
 //!
-//! Recorded in a dedicated `workflow_schema_migrations` ledger so their version
-//! numbers never collide with the core storage migrations on a shared database.
-
-mod m0001_workflow_initial;
-mod m0002_workflow_indexes;
+//! `build.rs` scans this directory at compile time and generates the module
+//! declarations and the `all()` registry — drop a new `mXXXX_*.rs` file here
+//! and it is picked up automatically. Recorded in a dedicated
+//! `workflow_schema_migrations` ledger so versions never collide with the core
+//! migrations on a shared database.
 
 use taskito_core::storage::migrate::Migration;
 
-/// Every workflow migration, oldest first.
-pub fn all() -> Vec<Box<dyn Migration>> {
-    vec![
-        Box::new(m0001_workflow_initial::M0001WorkflowInitial),
-        Box::new(m0002_workflow_indexes::M0002WorkflowIndexes),
-    ]
-}
+include!(concat!(env!("OUT_DIR"), "/migrations_generated.rs"));

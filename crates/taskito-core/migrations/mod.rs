@@ -1,19 +1,11 @@
-//! Ordered registry of code-first schema migrations for the core storage.
+//! Auto-discovered schema migrations.
 //!
-//! These files live at the crate root (`crates/taskito-core/migrations/`) and
-//! are pulled into the crate from `src/storage/mod.rs` via `#[path]`. Each
-//! module defines one [`Migration`](crate::storage::migrate::Migration); add a
-//! new numbered module and append it to [`all`] to extend the schema.
-
-mod m0001_initial;
-mod m0002_scaling_indexes;
+//! `build.rs` scans this directory at compile time and generates the module
+//! declarations and the `all()` registry — drop a new `mXXXX_*.rs` file here
+//! and it is picked up automatically, no manual edits. Identity is each
+//! migration's own `version()` (never the filename); the migrator applies them
+//! in ascending `version()` order.
 
 use crate::storage::migrate::Migration;
 
-/// Every core migration, oldest first.
-pub fn all() -> Vec<Box<dyn Migration>> {
-    vec![
-        Box::new(m0001_initial::M0001Initial),
-        Box::new(m0002_scaling_indexes::M0002ScalingIndexes),
-    ]
-}
+include!(concat!(env!("OUT_DIR"), "/migrations_generated.rs"));

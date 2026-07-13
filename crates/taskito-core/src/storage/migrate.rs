@@ -211,7 +211,23 @@ fn run_generic<C: MigrationConn>(
         .into_iter()
         .collect();
 
-    for migration in migrations {
+    // Apply in ascending `version()` order regardless of the order build.rs
+    // discovered them in — `version()` is the authoritative key (Alembic-style
+    // in-file identity), not the filename. A shared key between two files is a
+    // registration bug, not a valid history, so fail loudly.
+    let mut ordered: Vec<&dyn Migration> = migrations.iter().map(Box::as_ref).collect();
+    ordered.sort_by(|a, b| a.version().cmp(b.version()));
+    if let Some(dup) = ordered
+        .windows(2)
+        .find(|w| w[0].version() == w[1].version())
+    {
+        return Err(QueueError::Config(format!(
+            "duplicate migration version: {}",
+            dup[0].version()
+        )));
+    }
+
+    for migration in ordered {
         if applied.contains(migration.version()) {
             continue;
         }
