@@ -5,6 +5,7 @@ use tokio::sync::mpsc::error::TrySendError;
 
 use crate::error::Result;
 use crate::job::{now_millis, Job};
+use crate::resilience::retry::desync_delay;
 use crate::storage::Storage;
 
 use super::Scheduler;
@@ -144,7 +145,10 @@ impl Scheduler {
             // fast orphan-recovery path and would sit stuck until the slow
             // timeout sweep. Return it to `Pending` now.
             ClaimOutcome::Errored => {
-                self.rollback_claim_and_reschedule(&job.id, now + CLAIM_ERROR_RETRY_DELAY_MS)?;
+                self.rollback_claim_and_reschedule(
+                    &job.id,
+                    now + desync_delay(CLAIM_ERROR_RETRY_DELAY_MS),
+                )?;
                 return Ok(false);
             }
         }
@@ -158,7 +162,10 @@ impl Scheduler {
         // If we exceed the cap, roll back: clear the claim row and reset
         // status to `Pending` so the job can be dispatched again later.
         if !self.check_post_claim_concurrency(&job)? {
-            self.rollback_claim_and_reschedule(&job.id, now + CONCURRENCY_RETRY_DELAY_MS)?;
+            self.rollback_claim_and_reschedule(
+                &job.id,
+                now + desync_delay(CONCURRENCY_RETRY_DELAY_MS),
+            )?;
             return Ok(false);
         }
 
@@ -173,7 +180,7 @@ impl Scheduler {
                 warn!("worker channel full; rescheduling job {job_id} (worker pool is behind)",);
                 self.rollback_claim_and_reschedule(
                     &job_id,
-                    now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS,
+                    now + desync_delay(CHANNEL_BACKPRESSURE_RETRY_DELAY_MS),
                 )?;
                 Ok(false)
             }
@@ -183,7 +190,7 @@ impl Scheduler {
                 );
                 self.rollback_claim_and_reschedule(
                     &job_id,
-                    now + CHANNEL_BACKPRESSURE_RETRY_DELAY_MS,
+                    now + desync_delay(CHANNEL_BACKPRESSURE_RETRY_DELAY_MS),
                 )?;
                 Ok(false)
             }
@@ -230,7 +237,7 @@ impl Scheduler {
                 let key = format!("queue:{}", job.queue);
                 if !self.rate_limiter.try_acquire(&key, rl_config)? {
                     self.storage
-                        .reschedule(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
+                        .reschedule(&job.id, now + desync_delay(RATE_LIMIT_RETRY_DELAY_MS))?;
                     return Ok(false);
                 }
             }
@@ -239,14 +246,14 @@ impl Scheduler {
         if let Some(config) = self.task_configs.get(&job.task_name) {
             if config.circuit_breaker.is_some() && !self.circuit_breaker.allow(&job.task_name)? {
                 self.storage
-                    .reschedule(&job.id, now + CIRCUIT_BREAKER_RETRY_DELAY_MS)?;
+                    .reschedule(&job.id, now + desync_delay(CIRCUIT_BREAKER_RETRY_DELAY_MS))?;
                 return Ok(false);
             }
 
             if let Some(ref rl_config) = config.rate_limit {
                 if !self.rate_limiter.try_acquire(&job.task_name, rl_config)? {
                     self.storage
-                        .reschedule(&job.id, now + RATE_LIMIT_RETRY_DELAY_MS)?;
+                        .reschedule(&job.id, now + desync_delay(RATE_LIMIT_RETRY_DELAY_MS))?;
                     return Ok(false);
                 }
             }
