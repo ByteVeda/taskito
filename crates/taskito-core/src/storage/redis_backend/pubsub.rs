@@ -79,6 +79,30 @@ impl RedisStorage {
         }
     }
 
+    /// Pipeline-load the entries for many `(topic, name)` pairs in a single
+    /// round trip. Stale index members whose blob is gone are dropped (their
+    /// `GET` returns nil). Replaces the per-member `GET` loop that made every
+    /// list/reap/stats call O(N) round trips against Redis.
+    fn load_subs_pipelined(
+        &self,
+        conn: &mut redis::Connection,
+        pairs: &[(String, String)],
+    ) -> Result<Vec<SubEntry>> {
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut pipe = redis::pipe();
+        for (topic, name) in pairs {
+            pipe.get(self.key(&["sub", topic, name]));
+        }
+        let blobs: Vec<Option<String>> = pipe.query(conn).map_err(map_err)?;
+        blobs
+            .into_iter()
+            .flatten()
+            .map(|d| serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string())))
+            .collect()
+    }
+
     /// Insert or update a subscription. Idempotent on (topic, subscription_name).
     ///
     /// Maintains three index sets — `subs:by_topic:<topic>`, `subs:all`, and
@@ -144,19 +168,17 @@ impl RedisStorage {
         let by_topic = self.key(&["subs", "by_topic", topic]);
 
         let names: Vec<String> = conn.smembers(&by_topic).map_err(map_err)?;
+        let pairs: Vec<(String, String)> = names
+            .into_iter()
+            .map(|name| (topic.to_string(), name))
+            .collect();
 
-        let mut rows = Vec::new();
-        for name in names {
-            let blob_key = self.key(&["sub", topic, &name]);
-            let data: Option<String> = conn.get(&blob_key).map_err(map_err)?;
-            if let Some(d) = data {
-                let entry: SubEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                if entry.active {
-                    rows.push(SubscriptionRow::from(entry));
-                }
-            }
-        }
+        let mut rows: Vec<SubscriptionRow> = self
+            .load_subs_pipelined(&mut conn, &pairs)?
+            .into_iter()
+            .filter(|entry| entry.active)
+            .map(SubscriptionRow::from)
+            .collect();
 
         rows.sort_by(|a, b| {
             a.created_at
@@ -173,15 +195,27 @@ impl RedisStorage {
         let all = self.key(&["subs", "all"]);
 
         let composites: Vec<String> = conn.smembers(&all).map_err(map_err)?;
+        let pairs = Self::composites_to_pairs(&composites);
 
-        let mut rows = Vec::new();
-        for composite in composites {
-            if let Some(entry) = self.load_sub_by_composite(&mut conn, &composite)? {
-                rows.push(SubscriptionRow::from(entry));
-            }
-        }
+        let rows = self
+            .load_subs_pipelined(&mut conn, &pairs)?
+            .into_iter()
+            .map(SubscriptionRow::from)
+            .collect();
 
         Ok(rows)
+    }
+
+    /// Split `topic|name` composite index members into `(topic, name)` pairs,
+    /// dropping any malformed member (matching `load_sub_by_composite`).
+    fn composites_to_pairs(composites: &[String]) -> Vec<(String, String)> {
+        composites
+            .iter()
+            .filter_map(|c| {
+                c.split_once('|')
+                    .map(|(t, n)| (t.to_string(), n.to_string()))
+            })
+            .collect()
     }
 
     /// Remove a subscription. Returns false if none matched.
@@ -253,13 +287,15 @@ impl RedisStorage {
         let cutoff = crate::job::now_millis() - crate::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS;
 
         let composites: Vec<String> = conn.smembers(&all).map_err(map_err)?;
+        let pairs = Self::composites_to_pairs(&composites);
+        let entries = self.load_subs_pipelined(&mut conn, &pairs)?;
         let live: HashSet<&str> = live_worker_ids.iter().map(String::as_str).collect();
 
+        // Decide in memory, then remove every doomed row in one atomic pipe
+        // rather than a MULTI/EXEC round trip per row.
+        let mut pipe = redis::pipe().atomic().to_owned();
         let mut removed = 0u64;
-        for composite in composites {
-            let Some(entry) = self.load_sub_by_composite(&mut conn, &composite)? else {
-                continue;
-            };
+        for entry in &entries {
             // Durable rows (owner NULL) and live-owned rows survive.
             let Some(owner) = entry.owner_worker_id.as_deref() else {
                 continue;
@@ -268,18 +304,19 @@ impl RedisStorage {
                 continue;
             }
 
-            let blob_key = self.key(&["sub", &entry.topic, &entry.subscription_name]);
-            let by_topic = self.key(&["subs", "by_topic", &entry.topic]);
-            let by_owner = self.key(&["subs", "by_owner", owner]);
-
-            let mut pipe = redis::pipe().atomic().to_owned();
-            pipe.del(&blob_key);
-            pipe.srem(&by_topic, &entry.subscription_name);
+            let composite = Self::sub_composite(&entry.topic, &entry.subscription_name);
+            pipe.del(self.key(&["sub", &entry.topic, &entry.subscription_name]));
+            pipe.srem(
+                self.key(&["subs", "by_topic", &entry.topic]),
+                &entry.subscription_name,
+            );
             pipe.srem(&all, &composite);
-            pipe.srem(&by_owner, &composite);
-            pipe.query::<()>(&mut conn).map_err(map_err)?;
-
+            pipe.srem(self.key(&["subs", "by_owner", owner]), &composite);
             removed += 1;
+        }
+
+        if removed > 0 {
+            pipe.query::<()>(&mut conn).map_err(map_err)?;
         }
 
         Ok(removed)
@@ -400,39 +437,48 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let now = crate::job::now_millis();
 
-        let mut out = Vec::with_capacity(subs.len());
-        for sub in subs {
+        // Batch every subscription's index reads instead of one MULTI/EXEC per
+        // subscription. Two homogeneous pipes keep the reply types clean: the
+        // three cardinalities (i64) in one, the oldest-pending score (a
+        // heterogeneous ZRANGE reply) in another. Both are O(1) round trips.
+        let mut counts_pipe = redis::pipe();
+        let mut oldest_pipe = redis::pipe();
+        for sub in &subs {
             let pending_key = self.sub_index_key("pending", &sub.topic, &sub.subscription_name);
             let running_key = self.sub_index_key("running", &sub.topic, &sub.subscription_name);
             let dead_key = self.sub_index_key("dead", &sub.topic, &sub.subscription_name);
-
+            counts_pipe
+                .zcard(&pending_key)
+                .scard(&running_key)
+                .scard(&dead_key);
             // ZRANGE 0 0 WITHSCORES yields at most the single oldest pending job.
-            let (pending, running, dead, oldest): (i64, i64, i64, Vec<(String, f64)>) =
-                redis::pipe()
-                    .zcard(&pending_key)
-                    .scard(&running_key)
-                    .scard(&dead_key)
-                    .zrange_withscores(&pending_key, 0, 0)
-                    .query(&mut conn)
-                    .map_err(map_err)?;
-
-            let oldest_pending_age_ms = oldest
-                .first()
-                .map(|(_, score)| (now - *score as i64).max(0));
-
-            out.push(SubscriptionBacklogStats {
-                topic: sub.topic,
-                subscription_name: sub.subscription_name,
-                task_name: sub.task_name,
-                queue: sub.queue,
-                active: sub.active,
-                durable: sub.durable,
-                pending,
-                running,
-                dead,
-                oldest_pending_age_ms,
-            });
+            oldest_pipe.zrange_withscores(&pending_key, 0, 0);
         }
+        let counts: Vec<i64> = counts_pipe.query(&mut conn).map_err(map_err)?;
+        let oldest: Vec<Vec<(String, f64)>> = oldest_pipe.query(&mut conn).map_err(map_err)?;
+
+        let out = subs
+            .into_iter()
+            .enumerate()
+            .map(|(i, sub)| {
+                let oldest_pending_age_ms = oldest
+                    .get(i)
+                    .and_then(|v| v.first())
+                    .map(|(_, score)| (now - *score as i64).max(0));
+                SubscriptionBacklogStats {
+                    topic: sub.topic,
+                    subscription_name: sub.subscription_name,
+                    task_name: sub.task_name,
+                    queue: sub.queue,
+                    active: sub.active,
+                    durable: sub.durable,
+                    pending: counts[i * 3],
+                    running: counts[i * 3 + 1],
+                    dead: counts[i * 3 + 2],
+                    oldest_pending_age_ms,
+                }
+            })
+            .collect();
         Ok(out)
     }
 }
