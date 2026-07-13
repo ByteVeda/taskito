@@ -1,5 +1,28 @@
 use crate::job::now_millis;
 
+/// Full Jitter (AWS "Exponential Backoff and Jitter"): a uniform random delay
+/// in `[0, cap_ms]`. Drawing the *whole* delay from the range — rather than
+/// adding a fixed jitter on top of a deterministic backoff — is what actually
+/// spreads a wave of clients retrying the same failed downstream, because the
+/// spread grows with the backoff instead of staying a fixed width. Returns 0
+/// when `cap_ms <= 0`.
+pub fn full_jitter(cap_ms: i64) -> i64 {
+    if cap_ms <= 0 {
+        return 0;
+    }
+    (rand::random::<u64>() % (cap_ms as u64 + 1)) as i64
+}
+
+/// A reschedule delay of `base_ms` with additive desync jitter on top
+/// (`base_ms + [0, base_ms/2]`). Unlike [`full_jitter`], this keeps `base_ms`
+/// as a floor — a gated job never re-attempts *sooner* than intended, so it
+/// can't hammer the rate limiter / concurrency cap it just bounced off — while
+/// still spreading many simultaneously-gated jobs so they don't retry in
+/// lockstep on the next tick.
+pub fn desync_delay(base_ms: i64) -> i64 {
+    base_ms.saturating_add(full_jitter(base_ms / 2))
+}
+
 /// Configuration for retry behavior.
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
@@ -27,35 +50,25 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     /// Calculate the next retry timestamp given the current retry count.
-    /// Uses exponential backoff with jitter:
-    ///   delay = min(max_delay, base_delay * 2^retry_count) + jitter
-    /// where jitter is uniform in [0, base_delay).
+    ///
+    /// Explicit `custom_delays_ms` are honored exactly — the caller asked for a
+    /// specific schedule. Otherwise uses Full Jitter exponential backoff:
+    ///   delay = uniform(0, min(max_delay, base_delay * 2^retry_count))
+    /// so many jobs retrying the same failed downstream spread out instead of
+    /// re-attempting in a synchronized wave. The cap still grows exponentially.
     pub fn next_retry_at(&self, retry_count: i32) -> i64 {
-        // Use custom delay if available for this retry attempt
-        let delay = if let Some(ref delays) = self.custom_delays_ms {
+        if let Some(ref delays) = self.custom_delays_ms {
             if let Some(&custom) = delays.get(retry_count as usize) {
-                custom
-            } else {
-                // Fall back to exponential backoff if no custom delay for this attempt
-                let exp = self
-                    .base_delay_ms
-                    .saturating_mul(1i64 << retry_count.min(30));
-                exp.min(self.max_delay_ms)
+                return now_millis() + custom;
             }
-        } else {
-            let exp = self
-                .base_delay_ms
-                .saturating_mul(1i64 << retry_count.min(30));
-            exp.min(self.max_delay_ms)
-        };
+        }
 
-        let jitter = if self.base_delay_ms > 0 {
-            (rand::random::<u64>() % self.base_delay_ms as u64) as i64
-        } else {
-            0
-        };
+        let cap = self
+            .base_delay_ms
+            .saturating_mul(1i64 << retry_count.min(30))
+            .min(self.max_delay_ms);
 
-        now_millis() + delay + jitter
+        now_millis() + full_jitter(cap)
     }
 
     /// Whether the job should be retried (retry_count < max_retries).
@@ -81,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn test_next_retry_at_increases() {
+    fn test_next_retry_at_bounded_by_growing_cap() {
         let policy = RetryPolicy {
             base_delay_ms: 1000,
             max_delay_ms: 60_000,
@@ -89,20 +102,23 @@ mod tests {
             custom_delays_ms: None,
         };
 
-        // Retry 0 should give ~1s, retry 3 should give ~8s
-        // We can't test exact values due to jitter, but we can test
-        // that the delay grows and is bounded
-        let now = now_millis();
-        let t0 = policy.next_retry_at(0);
-        let t3 = policy.next_retry_at(3);
-
-        // Both should be in the future
-        assert!(t0 > now);
-        assert!(t3 > now);
-
-        // t3's base delay (8s) should be larger than t0's base (1s)
-        // But with jitter, we check a wider range
-        assert!(t3 - now >= 8_000); // at least base_delay * 2^3
+        // Full Jitter: each delay is in [0, cap(n)] where cap grows as
+        // base * 2^n. We can't assert exact values, but every sample must
+        // stay within its (exponentially growing) cap. Sample repeatedly so
+        // the randomness is actually exercised.
+        for _ in 0..1000 {
+            let now = now_millis();
+            let d0 = policy.next_retry_at(0) - now;
+            let d3 = policy.next_retry_at(3) - now;
+            assert!(
+                (0..=1_000).contains(&d0),
+                "retry 0 delay {d0} out of [0,1000]"
+            );
+            assert!(
+                (0..=8_000).contains(&d3),
+                "retry 3 delay {d3} out of [0,8000]"
+            );
+        }
     }
 
     #[test]
@@ -114,9 +130,53 @@ mod tests {
             custom_delays_ms: None,
         };
 
+        // Full Jitter is capped at max_delay (5s) — never overshoots it.
+        for _ in 0..1000 {
+            let now = now_millis();
+            let d = policy.next_retry_at(15) - now;
+            assert!((0..=5_000).contains(&d), "capped delay {d} out of [0,5000]");
+        }
+    }
+
+    #[test]
+    fn test_custom_delays_honored_exactly() {
+        let policy = RetryPolicy {
+            base_delay_ms: 1000,
+            max_delay_ms: 60_000,
+            max_retries: 5,
+            custom_delays_ms: Some(vec![2_000, 7_000]),
+        };
+        // Custom delays are exact (no jitter) — the caller asked for them.
         let now = now_millis();
-        let t = policy.next_retry_at(15);
-        // Should be capped at max_delay (5s) + jitter (up to 1s)
-        assert!(t - now <= 6_100);
+        assert_eq!(policy.next_retry_at(0) - now, 2_000);
+        assert_eq!(policy.next_retry_at(1) - now, 7_000);
+        // Past the custom list, fall back to jittered exponential backoff.
+        let d2 = policy.next_retry_at(2) - now_millis();
+        assert!(
+            (0..=4_000).contains(&d2),
+            "fallback delay {d2} out of [0,4000]"
+        );
+    }
+
+    #[test]
+    fn test_full_jitter_bounds() {
+        assert_eq!(full_jitter(0), 0);
+        assert_eq!(full_jitter(-5), 0);
+        for _ in 0..1000 {
+            assert!((0..=100).contains(&full_jitter(100)));
+        }
+    }
+
+    #[test]
+    fn test_desync_delay_keeps_floor() {
+        // Never sooner than base, never more than base * 1.5.
+        for _ in 0..1000 {
+            let d = desync_delay(1000);
+            assert!(
+                (1000..=1500).contains(&d),
+                "desync delay {d} out of [1000,1500]"
+            );
+        }
+        assert_eq!(desync_delay(0), 0);
     }
 }
