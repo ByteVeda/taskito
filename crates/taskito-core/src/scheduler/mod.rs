@@ -241,8 +241,9 @@ impl Scheduler {
     /// to the worker pool via the provided channel.
     ///
     /// Uses adaptive polling: starts at `poll_interval`, backs off
-    /// exponentially (up to 1s) when no jobs are found, resets immediately
-    /// when a job is dispatched.
+    /// exponentially (up to `max_interval`, 200ms) when no jobs are found,
+    /// resets immediately when a job is dispatched. Each wake drains all ready
+    /// work before sleeping again.
     pub async fn run(&self, job_tx: tokio::sync::mpsc::Sender<Job>) {
         // Push-dispatch: if a wake source was configured, run the event-driven
         // loop. Otherwise (and always when the feature is off) fall through to
@@ -264,8 +265,20 @@ impl Scheduler {
                 _ = tokio::time::sleep(current_interval) => {}
             }
 
-            let had_work = self.tick(&job_tx, &mut counters);
-            if had_work {
+            // Drain all ready work in one wake rather than dispatching a single
+            // batch and sleeping again. Otherwise throughput is hard-capped at
+            // `batch_size / poll_interval` (with defaults, 1 job / 50ms = 20
+            // jobs/sec) no matter how deep the backlog or how many workers are
+            // idle. `tick_dispatch` stops on its own when there's nothing ready
+            // or the worker channel back-pressures, so this can't spin. Mirrors
+            // the drain already done by the push-dispatch loop.
+            let mut dispatched = false;
+            while self.tick_dispatch(&job_tx) {
+                dispatched = true;
+            }
+            // Maintenance stays on the per-wake cadence (unchanged from before).
+            let had_maintenance = self.tick_maintenance(&mut counters);
+            if dispatched || had_maintenance {
                 current_interval = base_interval;
             } else {
                 current_interval = (current_interval * 2).min(max_interval);
@@ -273,9 +286,9 @@ impl Scheduler {
         }
     }
 
-    /// Execute one iteration of the scheduler loop.
-    /// Returns true if any work was done (job dispatched or periodic task enqueued),
-    /// which resets the adaptive poll interval.
+    /// Test helper: one dispatch round + maintenance, like the old combined
+    /// tick. Production loops drain dispatch fully instead (see [`Scheduler::run`]).
+    #[cfg(test)]
     fn tick(&self, job_tx: &tokio::sync::mpsc::Sender<Job>, counters: &mut TickCounters) -> bool {
         let dispatched = self.tick_dispatch(job_tx);
         let had_maintenance = self.tick_maintenance(counters);
@@ -283,8 +296,8 @@ impl Scheduler {
     }
 
     /// Run one dispatch round (batch or single). Returns true if a job was
-    /// dispatched. Pulled out of [`Scheduler::tick`] so the push loop can run
-    /// dispatch independently of the maintenance cadence.
+    /// dispatched. Pulled out so the push loop can run dispatch independently
+    /// of the maintenance cadence.
     fn tick_dispatch(&self, job_tx: &tokio::sync::mpsc::Sender<Job>) -> bool {
         let dispatch_result = if self.config.batch_size > 1 {
             self.try_dispatch_batch(job_tx)
@@ -852,6 +865,38 @@ mod tests {
             rx.try_recv().is_ok(),
             "the single allowed concurrent job must dispatch"
         );
+    }
+
+    #[test]
+    fn test_dispatch_drains_all_ready_jobs_in_one_wake() {
+        // Regression (S01): each poll wake drains all ready work. Before, one
+        // tick dispatched a single batch (batch_size=1 → one job) then slept,
+        // capping throughput at batch_size / poll_interval regardless of how
+        // deep the backlog was. `run` now drains until empty per wake.
+        let scheduler = test_scheduler(); // batch_size default = 1
+        for _ in 0..5 {
+            scheduler.storage.enqueue(make_job("bulk")).unwrap();
+        }
+        let (tx, mut rx) = make_channel(16);
+
+        // A single dispatch round moves exactly one job (batch_size = 1)...
+        assert!(scheduler.tick_dispatch(&tx));
+        // ...but draining until empty (what `run` does) clears the rest in the
+        // same wake instead of one-per-sleep.
+        let mut drained = 1;
+        while scheduler.tick_dispatch(&tx) {
+            drained += 1;
+        }
+        assert_eq!(
+            drained, 5,
+            "drain loop must dispatch every ready job in one wake"
+        );
+
+        let mut received = 0;
+        while rx.try_recv().is_ok() {
+            received += 1;
+        }
+        assert_eq!(received, 5);
     }
 
     #[test]
