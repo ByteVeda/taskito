@@ -241,6 +241,15 @@ class Workflow:
         else:
             raise TypeError("compensates= must be a TaskWrapper, task-name string, or None")
 
+        # Inherit the task's own ``max_retries`` when the step doesn't override
+        # it. Without this a step silently defaults to 3 retries even for a task
+        # declared ``@queue.task(max_retries=0)`` — the queue then retries a
+        # failed step while the workflow is already failing/compensating it,
+        # racing the two into a double execution of the same job.
+        resolved_max_retries = (
+            max_retries if max_retries is not None else getattr(task, "default_max_retries", None)
+        )
+
         self._steps[name] = _Step(
             name=name,
             task_name=task_name,
@@ -248,7 +257,7 @@ class Workflow:
             args=args,
             kwargs=kwargs or {},
             queue=queue,
-            max_retries=max_retries,
+            max_retries=resolved_max_retries,
             timeout_ms=timeout_ms,
             priority=priority,
             fan_out=fan_out,
