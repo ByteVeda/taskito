@@ -23,11 +23,27 @@ const CONCURRENCY_RETRY_DELAY_MS: i64 = 500;
 /// catches up on the next tick rather than waiting for the stale-job reaper.
 const CHANNEL_BACKPRESSURE_RETRY_DELAY_MS: i64 = 100;
 
+/// Delay before retrying a job whose execution claim errored transiently
+/// (storage hiccup, pool exhaustion). Short — the job never actually ran, so
+/// get it back to `Pending` quickly rather than waiting out the stale reaper.
+const CLAIM_ERROR_RETRY_DELAY_MS: i64 = 250;
+
 /// Default execution-claim owner when the binding has not set the worker's id
 /// (tests / embedders that don't register a worker). Production bindings call
 /// [`Scheduler::set_claim_owner`] with the real `worker_id` so dead-worker
 /// recovery can attribute claims.
 pub(super) const SCHEDULER_CLAIM_OWNER: &str = "scheduler";
+
+/// Result of attempting to claim a job for dispatch. Each outcome needs
+/// distinct handling, so they can't collapse to a bool.
+enum ClaimOutcome {
+    /// This scheduler now owns the claim — proceed to dispatch.
+    Claimed,
+    /// Another scheduler already holds the claim — leave the job to its owner.
+    AlreadyClaimed,
+    /// The claim attempt errored — roll the job back to `Pending`.
+    Errored,
+}
 
 impl Scheduler {
     pub(super) fn try_dispatch(&self, job_tx: &tokio::sync::mpsc::Sender<Job>) -> Result<bool> {
@@ -117,8 +133,20 @@ impl Scheduler {
 
         // Claim exactly-once execution. After this point, the job is reserved
         // for this scheduler instance.
-        if !self.claim_for_dispatch(&job)? {
-            return Ok(false);
+        match self.claim_for_dispatch(&job) {
+            ClaimOutcome::Claimed => {}
+            // Another scheduler already owns the claim; it will dispatch the
+            // job. Leave it alone — rolling back here would clear the owner's
+            // claim and race its dispatch.
+            ClaimOutcome::AlreadyClaimed => return Ok(false),
+            // The claim errored, but the dequeue already flipped the job to
+            // `Running` with no claim row written — so it's invisible to the
+            // fast orphan-recovery path and would sit stuck until the slow
+            // timeout sweep. Return it to `Pending` now.
+            ClaimOutcome::Errored => {
+                self.rollback_claim_and_reschedule(&job.id, now + CLAIM_ERROR_RETRY_DELAY_MS)?;
+                return Ok(false);
+            }
         }
 
         // Post-claim hard gate: concurrency caps must be checked AFTER the
@@ -227,21 +255,21 @@ impl Scheduler {
         Ok(true)
     }
 
-    /// Try to claim exactly-once execution. Returns `Ok(true)` only if the
-    /// claim was actually taken; `Ok(false)` if it was already claimed by
-    /// another scheduler **or** the claim attempt errored.
-    fn claim_for_dispatch(&self, job: &Job) -> Result<bool> {
+    /// Try to claim exactly-once execution. The three outcomes are handled
+    /// differently by the caller — an error must roll the job back to
+    /// `Pending`, whereas an already-claimed job must be left for its owner.
+    fn claim_for_dispatch(&self, job: &Job) -> ClaimOutcome {
         match self.storage.claim_execution(&job.id, &self.claim_owner) {
-            Ok(true) => Ok(true),
-            Ok(false) => Ok(false),
+            Ok(true) => ClaimOutcome::Claimed,
+            Ok(false) => ClaimOutcome::AlreadyClaimed,
             Err(e) => {
-                // Treat a claim error as "not claimed" and skip this tick. The
-                // job stays Running and the stale-reaper will requeue it. The
-                // previous behaviour (dispatch anyway) caused duplicate
-                // execution when several schedulers hit a transient storage
-                // error at once, since no claim row actually guarded the job.
-                warn!("claim_execution error for job {}; skipping: {e}", job.id);
-                Ok(false)
+                // Dispatching anyway would double-execute (no claim row guards
+                // the job); the caller instead rolls it back to Pending.
+                warn!(
+                    "claim_execution error for job {}; rolling back to Pending: {e}",
+                    job.id
+                );
+                ClaimOutcome::Errored
             }
         }
     }
