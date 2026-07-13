@@ -6,10 +6,14 @@
 //! new numbered module and append it to [`all`] to extend the schema.
 
 mod m0001_initial;
+mod m0002_scaling_indexes;
 
 use crate::storage::migrate::Migration;
 
 /// Every core migration, oldest first.
 pub fn all() -> Vec<Box<dyn Migration>> {
-    vec![Box::new(m0001_initial::M0001Initial)]
+    vec![
+        Box::new(m0001_initial::M0001Initial),
+        Box::new(m0002_scaling_indexes::M0002ScalingIndexes),
+    ]
 }
