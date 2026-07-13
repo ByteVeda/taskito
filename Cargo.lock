@@ -1335,6 +1335,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "sea-query"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d190cfb3bcceb8a8d7d04dee5a0c77f60c7627979cdcb47fdcb8934f009badf"
+
+[[package]]
 name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1495,6 +1501,7 @@ dependencies = [
  "pq-sys",
  "rand 0.10.2",
  "redis",
+ "sea-query",
  "serde",
  "serde_json",
  "tempfile",
@@ -1584,6 +1591,7 @@ dependencies = [
  "diesel",
  "log",
  "redis",
+ "sea-query",
  "serde",
  "serde_json",
  "taskito-core",

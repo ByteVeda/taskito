@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-postgres = ["diesel/postgres", "pq-sys", "openssl-sys"]
+postgres = ["diesel/postgres", "pq-sys", "openssl-sys", "sea-query/backend-postgres"]
 redis = ["dep:redis"]
 # Event-driven scheduler wakeups. OFF by default — the shipped wheel keeps
 # polling. Opt-in for source builds that want lower dispatch latency.
@@ -28,6 +28,7 @@ cron = { workspace = true }
 chrono-tz = { workspace = true }
 log = { workspace = true }
 async-trait = { workspace = true }
+sea-query = { workspace = true }
 redis = { workspace = true, optional = true }
 
 [dev-dependencies]
