@@ -21,16 +21,6 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 
 use crate::error::Result;
-use crate::storage::diesel_common::migrations as common_migrations;
-
-/// Run an ALTER TABLE migration. Postgres statements use `ADD COLUMN IF NOT
-/// EXISTS`, so the already-applied case succeeds silently and any error is a
-/// genuine failure (locked table, permissions, disk) that must be propagated
-/// rather than leaving the schema missing a column.
-fn migration_alter(conn: &mut PgConnection, sql: &str) -> Result<()> {
-    diesel::sql_query(sql).execute(conn)?;
-    Ok(())
-}
 
 type PgPool = Pool<ConnectionManager<PgConnection>>;
 
@@ -146,27 +136,11 @@ impl PostgresStorage {
         ))
         .execute(&mut conn)?;
 
-        for sql in common_migrations::create_tables(&common_migrations::POSTGRES) {
-            diesel::sql_query(&sql).execute(&mut conn)?;
-        }
-        // Alters run before indexes: some indexed columns (e.g. `namespace`) are
-        // added here, so the index DDL must see the fully-widened tables.
-        for sql in common_migrations::alter_statements(&common_migrations::POSTGRES) {
-            migration_alter(&mut conn, &sql)?;
-        }
-        for sql in common_migrations::create_indexes() {
-            diesel::sql_query(*sql).execute(&mut conn)?;
-        }
-        // Data backfills must fail loudly — a swallowed failure would leave
-        // has_deps wrong and let dequeue bypass dependency enforcement.
-        for sql in common_migrations::backfill_statements() {
-            diesel::sql_query(*sql).execute(&mut conn)?;
-        }
-        // Drop legacy tables (e.g. the old `job_payloads` side table). `IF EXISTS`
-        // keeps it idempotent, so run it directly rather than via `migration_alter`.
-        for sql in common_migrations::drop_legacy_tables() {
-            diesel::sql_query(*sql).execute(&mut conn)?;
-        }
+        crate::storage::migrate::run_postgres(
+            &mut conn,
+            "schema_migrations",
+            &crate::storage::migrations::all(),
+        )?;
         drop(conn);
 
         // Drain any pre-existing terminal jobs left in `jobs` by older

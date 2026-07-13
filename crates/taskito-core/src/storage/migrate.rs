@@ -1,0 +1,344 @@
+//! Code-first schema migrations.
+//!
+//! DDL is built with `sea-query` (no hand-written SQL) and rendered to a
+//! dialect-correct string that is executed through the existing Diesel
+//! connection — no second database driver. A per-tracking-table `version`
+//! ledger records applied migrations so each runs exactly once.
+//!
+//! The baseline migration (`m0001`) is written idempotently (every
+//! `CREATE TABLE`/`CREATE INDEX` uses `IF NOT EXISTS`, and the historical
+//! `ADD COLUMN`s use Postgres `ADD COLUMN IF NOT EXISTS` / the SQLite
+//! dup-column swallow). On a pre-existing database — which has no ledger row —
+//! it runs once as a harmless no-op pass and is then recorded, so live
+//! databases carry no cutover risk. Later migrations can be plain one-shot DDL.
+
+use std::collections::HashSet;
+
+use diesel::prelude::*;
+use diesel::sqlite::SqliteConnection;
+use sea_query::{Alias, ColumnDef, Query, SchemaStatementBuilder, SqliteQueryBuilder, Table};
+
+#[cfg(feature = "postgres")]
+use diesel::pg::PgConnection;
+#[cfg(feature = "postgres")]
+use sea_query::PostgresQueryBuilder;
+
+use crate::error::{QueueError, Result};
+use crate::job::now_millis;
+
+/// The SQL dialect a migration renders for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Backend {
+    Sqlite,
+    Postgres,
+}
+
+/// One rendered statement plus whether a SQLite "duplicate column" error should
+/// be swallowed. SQLite has no `ADD COLUMN IF NOT EXISTS`, so an already-present
+/// column is signalled by that error and treated as success — mirroring the
+/// backend's historical `migration_alter` behaviour.
+pub struct Stmt {
+    sql: String,
+    swallow_dup_column: bool,
+}
+
+/// A single schema version. `up` returns the rendered statements to apply.
+pub trait Migration {
+    /// Stable, unique version key recorded in the ledger (e.g. `"0001_initial"`).
+    fn version(&self) -> &'static str;
+    /// Statements to run for this migration on the given backend, in order.
+    fn up(&self, backend: Backend) -> Vec<Stmt>;
+}
+
+/// Render a schema statement (`CREATE TABLE`/`CREATE INDEX`/`DROP`) to a plain
+/// DDL string. Ordinary statement — an existing object is a hard error unless
+/// the statement itself is idempotent (`.if_not_exists()`).
+pub fn ddl<S: SchemaStatementBuilder>(backend: Backend, stmt: &S) -> Stmt {
+    Stmt {
+        sql: render_schema(stmt, backend),
+        swallow_dup_column: false,
+    }
+}
+
+/// Render an `ALTER TABLE … ADD COLUMN` that must be idempotent. Postgres emits
+/// `ADD COLUMN IF NOT EXISTS`; SQLite emits a plain `ADD COLUMN` whose
+/// duplicate-column error is swallowed at execution time.
+pub fn add_column(backend: Backend, table: &str, column: &mut ColumnDef) -> Stmt {
+    let mut alter = Table::alter();
+    alter.table(Alias::new(table));
+    match backend {
+        Backend::Sqlite => alter.add_column(column),
+        Backend::Postgres => alter.add_column_if_not_exists(column),
+    };
+    Stmt {
+        sql: render_schema(&alter, backend),
+        swallow_dup_column: true,
+    }
+}
+
+/// Render a data statement (the `has_deps` backfill `UPDATE`). Literals are
+/// inlined by sea-query; only trusted, code-defined values reach here.
+pub fn dml(backend: Backend, stmt: &sea_query::UpdateStatement) -> Stmt {
+    Stmt {
+        sql: match backend {
+            Backend::Sqlite => stmt.to_string(SqliteQueryBuilder),
+            #[cfg(feature = "postgres")]
+            Backend::Postgres => stmt.to_string(PostgresQueryBuilder),
+            #[cfg(not(feature = "postgres"))]
+            Backend::Postgres => unreachable!("Postgres migrations require the `postgres` feature"),
+        },
+        swallow_dup_column: false,
+    }
+}
+
+fn render_schema<S: SchemaStatementBuilder>(stmt: &S, backend: Backend) -> String {
+    match backend {
+        Backend::Sqlite => stmt.to_string(SqliteQueryBuilder),
+        #[cfg(feature = "postgres")]
+        Backend::Postgres => stmt.to_string(PostgresQueryBuilder),
+        #[cfg(not(feature = "postgres"))]
+        Backend::Postgres => unreachable!("Postgres migrations require the `postgres` feature"),
+    }
+}
+
+/// Column name of the `version` ledger, factored out so the tracking-table DDL
+/// and the applied-versions read agree.
+const VERSION_COL: &str = "version";
+const APPLIED_AT_COL: &str = "applied_at";
+
+fn create_ledger_sql(table: &str, backend: Backend) -> String {
+    render_schema(
+        Table::create()
+            .table(Alias::new(table))
+            .if_not_exists()
+            .col(
+                ColumnDef::new(Alias::new(VERSION_COL))
+                    .text()
+                    .not_null()
+                    .primary_key(),
+            )
+            .col(
+                ColumnDef::new(Alias::new(APPLIED_AT_COL))
+                    .big_integer()
+                    .not_null(),
+            ),
+        backend,
+    )
+}
+
+fn select_versions_sql(table: &str, backend: Backend) -> String {
+    let stmt = Query::select()
+        .column(Alias::new(VERSION_COL))
+        .from(Alias::new(table))
+        .to_owned();
+    match backend {
+        Backend::Sqlite => stmt.to_string(SqliteQueryBuilder),
+        #[cfg(feature = "postgres")]
+        Backend::Postgres => stmt.to_string(PostgresQueryBuilder),
+        #[cfg(not(feature = "postgres"))]
+        Backend::Postgres => unreachable!("Postgres migrations require the `postgres` feature"),
+    }
+}
+
+fn record_version_sql(table: &str, version: &str, now: i64, backend: Backend) -> String {
+    let stmt = Query::insert()
+        .into_table(Alias::new(table))
+        .columns([Alias::new(VERSION_COL), Alias::new(APPLIED_AT_COL)])
+        .values_panic([version.into(), now.into()])
+        .to_owned();
+    match backend {
+        Backend::Sqlite => stmt.to_string(SqliteQueryBuilder),
+        #[cfg(feature = "postgres")]
+        Backend::Postgres => stmt.to_string(PostgresQueryBuilder),
+        #[cfg(not(feature = "postgres"))]
+        Backend::Postgres => unreachable!("Postgres migrations require the `postgres` feature"),
+    }
+}
+
+/// Row shape for reading the ledger back through Diesel.
+#[derive(diesel::QueryableByName)]
+struct VersionRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    version: String,
+}
+
+/// Connection operations the migrator needs, abstracted over the two Diesel
+/// backends so the driver-generic runner stays one code path.
+trait MigrationConn {
+    fn exec(&mut self, sql: &str, swallow_dup_column: bool) -> Result<()>;
+    fn load_versions(&mut self, select_sql: &str) -> Result<Vec<String>>;
+}
+
+impl MigrationConn for SqliteConnection {
+    fn exec(&mut self, sql: &str, swallow_dup_column: bool) -> Result<()> {
+        match diesel::sql_query(sql).execute(self) {
+            Ok(_) => Ok(()),
+            Err(e) if swallow_dup_column && e.to_string().contains("duplicate column") => Ok(()),
+            Err(e) => Err(QueueError::Storage(e)),
+        }
+    }
+
+    fn load_versions(&mut self, select_sql: &str) -> Result<Vec<String>> {
+        let rows: Vec<VersionRow> = diesel::sql_query(select_sql).load(self)?;
+        Ok(rows.into_iter().map(|r| r.version).collect())
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl MigrationConn for PgConnection {
+    fn exec(&mut self, sql: &str, _swallow_dup_column: bool) -> Result<()> {
+        // Postgres alters use `ADD COLUMN IF NOT EXISTS`, so nothing to swallow —
+        // every error here is genuine and must propagate.
+        diesel::sql_query(sql).execute(self)?;
+        Ok(())
+    }
+
+    fn load_versions(&mut self, select_sql: &str) -> Result<Vec<String>> {
+        let rows: Vec<VersionRow> = diesel::sql_query(select_sql).load(self)?;
+        Ok(rows.into_iter().map(|r| r.version).collect())
+    }
+}
+
+fn run_generic<C: MigrationConn>(
+    conn: &mut C,
+    backend: Backend,
+    tracking_table: &str,
+    migrations: &[Box<dyn Migration>],
+) -> Result<()> {
+    conn.exec(&create_ledger_sql(tracking_table, backend), false)?;
+    let applied: HashSet<String> = conn
+        .load_versions(&select_versions_sql(tracking_table, backend))?
+        .into_iter()
+        .collect();
+
+    for migration in migrations {
+        if applied.contains(migration.version()) {
+            continue;
+        }
+        for stmt in migration.up(backend) {
+            conn.exec(&stmt.sql, stmt.swallow_dup_column)?;
+        }
+        conn.exec(
+            &record_version_sql(tracking_table, migration.version(), now_millis(), backend),
+            false,
+        )?;
+    }
+    Ok(())
+}
+
+/// Apply pending `migrations` to a SQLite database, recording each in
+/// `tracking_table`.
+pub fn run_sqlite(
+    conn: &mut SqliteConnection,
+    tracking_table: &str,
+    migrations: &[Box<dyn Migration>],
+) -> Result<()> {
+    run_generic(conn, Backend::Sqlite, tracking_table, migrations)
+}
+
+/// Apply pending `migrations` to a Postgres database, recording each in
+/// `tracking_table`.
+#[cfg(feature = "postgres")]
+pub fn run_postgres(
+    conn: &mut PgConnection,
+    tracking_table: &str,
+    migrations: &[Box<dyn Migration>],
+) -> Result<()> {
+    run_generic(conn, Backend::Postgres, tracking_table, migrations)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diesel::Connection;
+    use sea_query::{Alias, ColumnDef, Query, SqliteQueryBuilder, Table};
+
+    fn mem() -> SqliteConnection {
+        SqliteConnection::establish(":memory:").expect("open in-memory sqlite")
+    }
+
+    fn applied(conn: &mut SqliteConnection) -> Vec<String> {
+        conn.load_versions(&select_versions_sql("schema_migrations", Backend::Sqlite))
+            .expect("read ledger")
+    }
+
+    #[test]
+    fn fresh_db_applies_all_migrations_and_is_idempotent() {
+        let mut conn = mem();
+        let migrations = crate::storage::migrations::all();
+
+        run_sqlite(&mut conn, "schema_migrations", &migrations).expect("first run");
+        let first = applied(&mut conn);
+        assert!(first.iter().any(|v| v == "0001_initial"));
+        assert!(first.iter().any(|v| v == "0002_scaling_indexes"));
+
+        // Re-running is a clean no-op: no error, no duplicate ledger rows.
+        run_sqlite(&mut conn, "schema_migrations", &migrations).expect("second run");
+        assert_eq!(applied(&mut conn), first);
+    }
+
+    #[test]
+    fn existing_partial_db_gets_missing_columns() {
+        let mut conn = mem();
+
+        // Simulate a database created by an older version: a `jobs` table that
+        // predates the `namespace` column. Built with sea-query — no raw SQL.
+        let old_jobs = Table::create()
+            .table(Alias::new("jobs"))
+            .if_not_exists()
+            .col(
+                ColumnDef::new(Alias::new("id"))
+                    .text()
+                    .not_null()
+                    .primary_key(),
+            )
+            .col(ColumnDef::new(Alias::new("payload")).blob().not_null())
+            .col(
+                ColumnDef::new(Alias::new("status"))
+                    .integer()
+                    .not_null()
+                    .default(0),
+            )
+            .col(
+                ColumnDef::new(Alias::new("created_at"))
+                    .big_integer()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(Alias::new("scheduled_at"))
+                    .big_integer()
+                    .not_null(),
+            )
+            .to_owned();
+        conn.exec(&old_jobs.to_string(SqliteQueryBuilder), false)
+            .expect("seed old jobs table");
+
+        // The baseline's CREATE TABLE IF NOT EXISTS is a no-op here, but its
+        // ADD COLUMN backfills must still widen the table.
+        run_sqlite(
+            &mut conn,
+            "schema_migrations",
+            &crate::storage::migrations::all(),
+        )
+        .expect("upgrade existing db");
+
+        // Prove `namespace` now exists: selecting it parses only if the column
+        // is present (empty result set is fine).
+        #[derive(diesel::QueryableByName)]
+        struct Ns {
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            #[allow(dead_code)]
+            namespace: Option<String>,
+        }
+        let select = Query::select()
+            .column(Alias::new("namespace"))
+            .from(Alias::new("jobs"))
+            .to_owned()
+            .to_string(SqliteQueryBuilder);
+        let _rows: Vec<Ns> = diesel::sql_query(select)
+            .load(&mut conn)
+            .expect("namespace column was added by the baseline backfill");
+
+        assert!(applied(&mut conn).iter().any(|v| v == "0001_initial"));
+    }
+}

@@ -1,4 +1,9 @@
 mod diesel_common;
+pub mod migrate;
+/// Code-first schema migrations. The files live at the crate root
+/// (`crates/taskito-core/migrations/`) but compile as part of this crate.
+#[path = "../../migrations/mod.rs"]
+pub mod migrations;
 pub mod models;
 #[cfg(feature = "push-dispatch")]
 pub mod notify;
