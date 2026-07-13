@@ -1105,6 +1105,40 @@ fn test_topic_backlog_stats(s: &impl Storage) {
     assert!(claimed.task_name == "tbs_send" || claimed.task_name == "tbs_track");
 }
 
+fn test_enqueue_unique_batch(s: &impl Storage) {
+    let q = "q-eub";
+    let keyed = |uk: &str| {
+        let mut j = make_job(q, "eub_task");
+        j.unique_key = Some(uk.to_string());
+        j
+    };
+
+    // First fan-out: three distinct keys → three fresh jobs, one transaction.
+    let first = s
+        .enqueue_unique_batch(vec![keyed("uk-a"), keyed("uk-b"), keyed("uk-c")])
+        .unwrap();
+    assert_eq!(first.len(), 3);
+    assert_eq!(s.stats_by_queue(q).unwrap().pending, 3);
+
+    // Replay the same keys: each active job is returned in place (dedup), and
+    // no duplicate rows are created.
+    let replay = s
+        .enqueue_unique_batch(vec![keyed("uk-a"), keyed("uk-b"), keyed("uk-c")])
+        .unwrap();
+    assert_eq!(replay.len(), 3);
+    for (a, b) in first.iter().zip(&replay) {
+        assert_eq!(
+            a.id, b.id,
+            "replay must return the existing job, not a new one"
+        );
+    }
+    assert_eq!(
+        s.stats_by_queue(q).unwrap().pending,
+        3,
+        "replay must not create duplicate deliveries"
+    );
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -1119,6 +1153,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_unique_key_dedup(s);
     test_enqueue_unique_validates_deps(s);
     test_enqueue_batch(s);
+    test_enqueue_unique_batch(s);
     test_dead_letter_queue(s);
     test_dead_letter_by_task(s);
     test_delete_dead(s);

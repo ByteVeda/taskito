@@ -49,9 +49,9 @@ pub struct PublishRequest {
 /// jobs. Returns the created jobs — empty when the topic has no active
 /// subscriptions (a valid pub/sub no-op, not an error).
 ///
-/// Keyed publishes go through `enqueue_unique` per delivery so a re-published
-/// event dedups per subscriber instead of failing the whole batch on the
-/// unique index; unkeyed publishes use one batch insert.
+/// Keyed publishes go through `enqueue_unique_batch` (one transaction) so a
+/// re-published event dedups per subscriber instead of failing the whole batch
+/// on the unique index; unkeyed publishes use one batch insert.
 pub fn publish_to_topic<S: Storage>(storage: &S, request: &PublishRequest) -> Result<Vec<Job>> {
     let subscriptions = storage.list_subscriptions_for_topic(&request.topic)?;
     if subscriptions.is_empty() {
@@ -64,9 +64,9 @@ pub fn publish_to_topic<S: Storage>(storage: &S, request: &PublishRequest) -> Re
     if request.idempotency_key.is_none() {
         return storage.enqueue_batch(jobs);
     }
-    jobs.into_iter()
-        .map(|job| storage.enqueue_unique(job))
-        .collect()
+    // Keyed fan-out: one transaction dedupe-inserting every delivery, instead
+    // of one write transaction per subscriber (N database-wide write locks).
+    storage.enqueue_unique_batch(jobs)
 }
 
 /// `key::<topic_len>:<name_len>:<topic><name>` — length prefixes make the

@@ -14,6 +14,7 @@ pub trait Storage: Send + Sync + Clone {
     fn enqueue(&self, new_job: NewJob) -> Result<Job>;
     fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>>;
     fn enqueue_unique(&self, new_job: NewJob) -> Result<Job>;
+    fn enqueue_unique_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>>;
     fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>>;
     fn dequeue_from(
         &self,

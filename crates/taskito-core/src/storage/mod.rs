@@ -194,6 +194,12 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<$crate::job::Job> {
                 self.enqueue_unique(new_job)
             }
+            fn enqueue_unique_batch(
+                &self,
+                new_jobs: Vec<$crate::job::NewJob>,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.enqueue_unique_batch(new_jobs)
+            }
             fn dequeue(
                 &self,
                 queue_name: &str,
@@ -828,6 +834,17 @@ impl Storage for StorageBackend {
         #[cfg(feature = "push-dispatch")]
         self.notify_if_ready(job.scheduled_at);
         Ok(job)
+    }
+    fn enqueue_unique_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
+        let jobs = delegate!(self, enqueue_unique_batch, new_jobs)?;
+        #[cfg(feature = "push-dispatch")]
+        if jobs
+            .iter()
+            .any(|j| j.scheduled_at <= crate::job::now_millis())
+        {
+            self.notify_if_ready(0);
+        }
+        Ok(jobs)
     }
     fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
         delegate!(self, dequeue, queue_name, now, namespace)
