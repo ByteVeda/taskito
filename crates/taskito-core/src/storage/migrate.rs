@@ -16,7 +16,9 @@ use std::collections::HashSet;
 
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use sea_query::{Alias, ColumnDef, Query, SchemaStatementBuilder, SqliteQueryBuilder, Table};
+use sea_query::{
+    Alias, ColumnDef, OnConflict, Query, SchemaStatementBuilder, SqliteQueryBuilder, Table,
+};
 
 #[cfg(feature = "postgres")]
 use diesel::pg::PgConnection;
@@ -145,6 +147,15 @@ fn record_version_sql(table: &str, version: &str, now: i64, backend: Backend) ->
         .into_table(Alias::new(table))
         .columns([Alias::new(VERSION_COL), Alias::new(APPLIED_AT_COL)])
         .values_panic([version.into(), now.into()])
+        // Two processes booting at once can both apply a migration and then race
+        // to record it; without this the loser hits a primary-key violation and
+        // fails *after* the schema already converged. The version is what matters,
+        // not which racer's `applied_at` wins.
+        .on_conflict(
+            OnConflict::column(Alias::new(VERSION_COL))
+                .do_nothing()
+                .to_owned(),
+        )
         .to_owned();
     match backend {
         Backend::Sqlite => stmt.to_string(SqliteQueryBuilder),
@@ -199,7 +210,7 @@ impl MigrationConn for PgConnection {
     }
 }
 
-fn run_generic<C: MigrationConn>(
+fn run_generic<C: MigrationConn + Connection>(
     conn: &mut C,
     backend: Backend,
     tracking_table: &str,
@@ -231,13 +242,19 @@ fn run_generic<C: MigrationConn>(
         if applied.contains(migration.version()) {
             continue;
         }
-        for stmt in migration.up(backend) {
-            conn.exec(&stmt.sql, stmt.swallow_dup_column)?;
-        }
-        conn.exec(
-            &record_version_sql(tracking_table, migration.version(), now_millis(), backend),
-            false,
-        )?;
+        // Apply the migration's statements and record its version in one
+        // transaction: an interruption between the two would otherwise leave an
+        // applied change untracked, so the next boot re-runs it — safe for the
+        // idempotent baseline, but not for later one-shot DDL.
+        conn.transaction::<_, QueueError, _>(|conn| {
+            for stmt in migration.up(backend) {
+                conn.exec(&stmt.sql, stmt.swallow_dup_column)?;
+            }
+            conn.exec(
+                &record_version_sql(tracking_table, migration.version(), now_millis(), backend),
+                false,
+            )
+        })?;
     }
     Ok(())
 }
