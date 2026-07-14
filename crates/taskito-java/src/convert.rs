@@ -283,6 +283,10 @@ pub struct WorkerOptions {
     pub queues: Option<Vec<String>>,
     pub channel_capacity: Option<u32>,
     pub batch_size: Option<u32>,
+    /// Worker execution parallelism (Java thread-pool size). Bounds the
+    /// scheduler's in-flight dispatch so it never claims more than the pool can
+    /// run and starves peers sharing the DB.
+    pub concurrency: Option<u32>,
     /// Per-task retry-backoff policies, registered with the scheduler at start.
     /// The core owns the retry engine; this only feeds it the backoff curve.
     pub task_configs: Option<Vec<TaskRetryConfig>>,

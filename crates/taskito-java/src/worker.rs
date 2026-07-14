@@ -75,6 +75,12 @@ fn start_worker(
     if let Some(batch) = options.batch_size {
         config.batch_size = batch.max(1) as usize;
     }
+    // Bound in-flight work to the worker's execution parallelism so a
+    // drain-until-empty poll can't claim more than the pool runs and starve
+    // peer workers sharing the database.
+    if let Some(concurrency) = options.concurrency {
+        config.max_in_flight = Some((concurrency.max(1)) as usize);
+    }
 
     let registry = Arc::new(Registry::default());
     let dispatcher_storage = storage.clone();
