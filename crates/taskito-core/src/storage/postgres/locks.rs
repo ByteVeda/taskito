@@ -99,27 +99,35 @@ impl PostgresStorage {
 
         let now = now_millis();
         let mut conn = self.conn()?;
-        let mut claimed: std::collections::HashSet<String> =
-            std::collections::HashSet::with_capacity(job_ids.len());
 
-        for chunk in job_ids.chunks(CLAIM_BATCH_CHUNK) {
-            let rows: Vec<NewExecutionClaimRow> = chunk
-                .iter()
-                .map(|job_id| NewExecutionClaimRow {
-                    job_id,
-                    worker_id,
-                    claimed_at: now,
-                })
-                .collect();
+        // One transaction across all chunks: a later chunk error must roll back
+        // the earlier claims, otherwise they'd stay committed while the method
+        // returns `Err`, the poller falls back to per-job dispatch, and those
+        // jobs come back `AlreadyClaimed` — stranded `Running` with no owner
+        // dispatching them. Matches the SQLite path's single-transaction claim.
+        let claimed: std::collections::HashSet<String> = conn
+            .transaction::<_, crate::error::QueueError, _>(|conn| {
+                let mut claimed = std::collections::HashSet::with_capacity(job_ids.len());
+                for chunk in job_ids.chunks(CLAIM_BATCH_CHUNK) {
+                    let rows: Vec<NewExecutionClaimRow> = chunk
+                        .iter()
+                        .map(|job_id| NewExecutionClaimRow {
+                            job_id,
+                            worker_id,
+                            claimed_at: now,
+                        })
+                        .collect();
 
-            let won: Vec<String> = diesel::insert_into(execution_claims::table)
-                .values(&rows)
-                .on_conflict(execution_claims::job_id)
-                .do_nothing()
-                .returning(execution_claims::job_id)
-                .get_results(&mut conn)?;
-            claimed.extend(won);
-        }
+                    let won: Vec<String> = diesel::insert_into(execution_claims::table)
+                        .values(&rows)
+                        .on_conflict(execution_claims::job_id)
+                        .do_nothing()
+                        .returning(execution_claims::job_id)
+                        .get_results(conn)?;
+                    claimed.extend(won);
+                }
+                Ok(claimed)
+            })?;
 
         Ok(job_ids.iter().map(|id| claimed.contains(*id)).collect())
     }
