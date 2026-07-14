@@ -37,6 +37,18 @@ pub trait WorkflowStorage: Send + Sync {
         offset: i64,
     ) -> Result<Vec<WorkflowRun>>;
 
+    /// Keyset-paginated `list_workflow_runs`, ordered by `(created_at, id)`
+    /// descending. `after` is the `(created_at, id)` of the previous page's
+    /// last run; the caller derives the next cursor from the returned rows'
+    /// last element. O(page) at any depth, stable under concurrent inserts.
+    fn list_workflow_runs_after(
+        &self,
+        definition_name: Option<&str>,
+        state: Option<WorkflowState>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+    ) -> Result<Vec<WorkflowRun>>;
+
     // ── Nodes ──────────────────────────────────────────────────────
 
     fn create_workflow_node(&self, node: &WorkflowNode) -> Result<()>;

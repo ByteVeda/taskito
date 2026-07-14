@@ -244,6 +244,48 @@ fn case_list_runs_by_state(s: &impl WorkflowStorage) {
     assert_eq!(pending.len(), 1);
 }
 
+fn case_list_runs_after(s: &impl WorkflowStorage) {
+    let def = make_definition("keyset_runs");
+    s.create_workflow_definition(&def).unwrap();
+
+    let total = 12;
+    for _ in 0..total {
+        s.create_workflow_run(&make_run(&def.id)).unwrap();
+    }
+
+    // Page through in threes; every run appears exactly once, newest first.
+    let page_size = 3;
+    let mut seen: Vec<String> = Vec::new();
+    let mut cursor: Option<(i64, String)> = None;
+    loop {
+        let after = cursor.as_ref().map(|(k, id)| (*k, id.as_str()));
+        let page = s
+            .list_workflow_runs_after(Some("keyset_runs"), None, page_size, after)
+            .unwrap();
+        if page.is_empty() {
+            break;
+        }
+        for w in page.windows(2) {
+            assert!(
+                (w[0].created_at, &w[0].id) > (w[1].created_at, &w[1].id),
+                "page must be strictly descending by (created_at, id)"
+            );
+        }
+        let last = page.last().unwrap();
+        cursor = Some((last.created_at, last.id.clone()));
+        for r in &page {
+            seen.push(r.id.clone());
+        }
+        if page.len() < page_size as usize {
+            break;
+        }
+    }
+
+    assert_eq!(seen.len(), total, "keyset must page every run once");
+    let unique: std::collections::HashSet<&String> = seen.iter().collect();
+    assert_eq!(unique.len(), total, "keyset must never duplicate a run");
+}
+
 fn case_create_and_get_node(s: &impl WorkflowStorage) {
     let def = make_definition("node_test");
     s.create_workflow_definition(&def).unwrap();
@@ -645,6 +687,7 @@ fn run_contract(s: &impl WorkflowStorage) {
     case_set_run_started_and_completed(s);
     case_list_runs(s);
     case_list_runs_by_state(s);
+    case_list_runs_after(s);
     case_create_and_get_node(s);
     case_create_nodes_batch(s);
     case_update_node_status(s);

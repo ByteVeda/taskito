@@ -127,6 +127,23 @@ impl WorkflowStorage for WorkflowStorageBackend {
         )
     }
 
+    fn list_workflow_runs_after(
+        &self,
+        definition_name: Option<&str>,
+        state: Option<WorkflowState>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+    ) -> Result<Vec<WorkflowRun>> {
+        delegate!(
+            self,
+            list_workflow_runs_after,
+            definition_name,
+            state,
+            limit,
+            after
+        )
+    }
+
     fn create_workflow_node(&self, node: &WorkflowNode) -> Result<()> {
         delegate!(self, create_workflow_node, node)
     }

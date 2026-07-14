@@ -416,6 +416,87 @@ macro_rules! impl_workflow_diesel_ops {
                     .collect())
             }
 
+            fn list_workflow_runs_after(
+                &self,
+                definition_name: Option<&str>,
+                state: Option<$crate::WorkflowState>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+            ) -> ::taskito_core::error::Result<Vec<$crate::WorkflowRun>> {
+                let mut conn = self.inner.conn()?;
+
+                // No cursor → sentinel `(i64::MAX, "")`: `created_at < MAX` holds
+                // for every real timestamp, so the keyset clause matches all rows
+                // and the first page is returned. Keeps one SQL per filter combo.
+                let (cursor_created_at, cursor_id) = after.unwrap_or((i64::MAX, ""));
+
+                let rows: Vec<$crate::diesel_common::RunRow> = match (definition_name, state) {
+                    (Some(name), Some(st)) => ::diesel::sql_query(
+                        &$prep_sql("SELECT r.id, r.definition_id, r.params, r.state, r.started_at,
+                                r.completed_at, r.error, r.parent_run_id, r.parent_node_name,
+                                r.created_at
+                         FROM workflow_runs r
+                         JOIN workflow_definitions d ON r.definition_id = d.id
+                         WHERE d.name = ? AND r.state = ?
+                           AND (r.created_at < ? OR (r.created_at = ? AND r.id < ?))
+                         ORDER BY r.created_at DESC, r.id DESC LIMIT ?"),
+                    )
+                    .bind::<::diesel::sql_types::Text, _>(name)
+                    .bind::<::diesel::sql_types::Text, _>(st.as_str())
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::Text, _>(cursor_id)
+                    .bind::<::diesel::sql_types::BigInt, _>(limit)
+                    .load(&mut *conn)?,
+                    (Some(name), None) => ::diesel::sql_query(
+                        &$prep_sql("SELECT r.id, r.definition_id, r.params, r.state, r.started_at,
+                                r.completed_at, r.error, r.parent_run_id, r.parent_node_name,
+                                r.created_at
+                         FROM workflow_runs r
+                         JOIN workflow_definitions d ON r.definition_id = d.id
+                         WHERE d.name = ?
+                           AND (r.created_at < ? OR (r.created_at = ? AND r.id < ?))
+                         ORDER BY r.created_at DESC, r.id DESC LIMIT ?"),
+                    )
+                    .bind::<::diesel::sql_types::Text, _>(name)
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::Text, _>(cursor_id)
+                    .bind::<::diesel::sql_types::BigInt, _>(limit)
+                    .load(&mut *conn)?,
+                    (None, Some(st)) => ::diesel::sql_query(
+                        &$prep_sql("SELECT id, definition_id, params, state, started_at, completed_at,
+                                error, parent_run_id, parent_node_name, created_at
+                         FROM workflow_runs WHERE state = ?
+                           AND (created_at < ? OR (created_at = ? AND id < ?))
+                         ORDER BY created_at DESC, id DESC LIMIT ?"),
+                    )
+                    .bind::<::diesel::sql_types::Text, _>(st.as_str())
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::Text, _>(cursor_id)
+                    .bind::<::diesel::sql_types::BigInt, _>(limit)
+                    .load(&mut *conn)?,
+                    (None, None) => ::diesel::sql_query(
+                        &$prep_sql("SELECT id, definition_id, params, state, started_at, completed_at,
+                                error, parent_run_id, parent_node_name, created_at
+                         FROM workflow_runs
+                         WHERE (created_at < ? OR (created_at = ? AND id < ?))
+                         ORDER BY created_at DESC, id DESC LIMIT ?"),
+                    )
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::BigInt, _>(cursor_created_at)
+                    .bind::<::diesel::sql_types::Text, _>(cursor_id)
+                    .bind::<::diesel::sql_types::BigInt, _>(limit)
+                    .load(&mut *conn)?,
+                };
+
+                Ok(rows
+                    .into_iter()
+                    .map($crate::diesel_common::run_from_row)
+                    .collect())
+            }
+
             fn create_workflow_node(
                 &self,
                 node: &$crate::WorkflowNode,
