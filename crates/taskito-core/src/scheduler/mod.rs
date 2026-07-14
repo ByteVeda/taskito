@@ -274,15 +274,18 @@ impl Scheduler {
     /// refill. Only ids this scheduler dispatched are tracked, so results for
     /// recovered or foreign jobs (e.g. from maintenance) are a harmless no-op.
     fn release_in_flight(&self, job_id: &str) {
-        if self.config.max_in_flight.is_none() {
+        let Some(max) = self.config.max_in_flight else {
             return;
-        }
-        let freed = self
-            .in_flight
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(job_id);
-        if freed {
+        };
+        let mut in_flight = self.in_flight.lock().unwrap_or_else(|p| p.into_inner());
+        // Only wake the poller when the pool was saturated — that's the only time
+        // it's parked on the cap. Below the cap it's already dispatching on its
+        // normal cadence, so an extra wake per completion just adds needless
+        // dequeue contention with everything else touching the database.
+        let was_full = in_flight.len() >= max;
+        let freed = in_flight.remove(job_id);
+        drop(in_flight);
+        if freed && was_full {
             self.dispatch_wake.notify_one();
         }
     }
