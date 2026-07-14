@@ -839,6 +839,61 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_dispatch_respects_per_task_concurrency() {
+        // S09: the batch path claims the whole batch in one round-trip, then
+        // enforces the per-task cap with a per-batch running-count cache. With
+        // `max_concurrent = 2` and a 5-job batch exactly two dispatch; the other
+        // three roll back to Pending with their claim rows cleared — proving the
+        // cache decrements as jobs are rejected instead of re-querying per job.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            batch_size: 8,
+            ..SchedulerConfig::default()
+        };
+        let mut scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+        scheduler.register_task(
+            "batch_conc".to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy::default(),
+                rate_limit: None,
+                circuit_breaker: None,
+                max_concurrent: Some(2),
+            },
+        );
+
+        for _ in 0..5 {
+            scheduler.storage.enqueue(make_job("batch_conc")).unwrap();
+        }
+
+        let (tx, mut rx) = make_channel(16);
+        let mut counters = TickCounters::default();
+        scheduler.tick(&tx, &mut counters);
+
+        let mut dispatched = 0;
+        while rx.try_recv().is_ok() {
+            dispatched += 1;
+        }
+        assert_eq!(dispatched, 2, "batch path must honor max_concurrent");
+
+        let pending = scheduler
+            .storage
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
+            .unwrap();
+        assert_eq!(pending.len(), 3, "over-cap jobs must return to Pending");
+
+        let claims = scheduler
+            .storage
+            .list_claims_by_worker("scheduler")
+            .unwrap();
+        assert_eq!(
+            claims.len(),
+            2,
+            "rolled-back jobs must not keep a stale claim row"
+        );
+    }
+
+    #[test]
     fn test_try_dispatch_per_task_max_one_dispatches_one() {
         // Regression: `max_concurrent = 1` must allow exactly one job to
         // run. With the pre-fix `>=` check the running-count (which already

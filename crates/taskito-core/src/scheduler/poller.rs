@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use log::warn;
@@ -46,6 +47,36 @@ enum ClaimOutcome {
     Errored,
 }
 
+/// Per-dispatch-cycle cache of the running-job counts the post-claim
+/// concurrency gate consults. A same-task batch used to re-query
+/// `count_running_by_task` once per job; here the count is read from storage
+/// once, then served from memory for the rest of the batch. A job that is
+/// rolled back after being provisionally counted calls [`GateCounts::release`]
+/// to free its slot so later jobs in the batch observe it. The single-dispatch
+/// path uses a fresh cache per call, so it loads at most once — identical to
+/// the old per-job query. The cross-scheduler view can be one batch stale,
+/// which is acceptable: the hard exactly-once guarantee is the execution claim,
+/// not this best-effort cap.
+#[derive(Default)]
+struct GateCounts {
+    task_running: HashMap<String, i64>,
+    queue_running: HashMap<String, i64>,
+}
+
+impl GateCounts {
+    /// Drop a provisionally-counted job from the cached counts after it was
+    /// rolled back, so its slot is available to the rest of the batch. A no-op
+    /// for a key not yet loaded — the next load reads the already-updated DB.
+    fn release(&mut self, task_name: &str, queue: &str) {
+        if let Some(n) = self.task_running.get_mut(task_name) {
+            *n -= 1;
+        }
+        if let Some(n) = self.queue_running.get_mut(queue) {
+            *n -= 1;
+        }
+    }
+}
+
 impl Scheduler {
     pub(super) fn try_dispatch(&self, job_tx: &tokio::sync::mpsc::Sender<Job>) -> Result<bool> {
         let now = now_millis();
@@ -63,14 +94,17 @@ impl Scheduler {
             None => return Ok(false),
         };
 
-        self.gate_and_dispatch(job, now, job_tx)
+        // A fresh cache for a single job loads each count at most once — the
+        // same one query the old code issued.
+        let mut counts = GateCounts::default();
+        self.gate_and_dispatch(job, now, &mut counts, job_tx)
     }
 
-    /// Batch variant of [`try_dispatch`]. Claims up to `batch_size` jobs in a
-    /// single round-trip, then runs the exact same per-job gate/claim/
-    /// concurrency/dispatch logic the single path uses. The pre-sized batch is
-    /// advisory only — the hard per-task and per-queue caps are still enforced
-    /// per job after the claim, rolling back any job that exceeds a limit.
+    /// Batch variant of [`try_dispatch`]. Dequeues up to `batch_size` jobs,
+    /// claims the whole batch in one round-trip, then runs the shared post-claim
+    /// gate/concurrency/dispatch tail per job. The pre-sized batch is advisory —
+    /// the hard per-task and per-queue caps are still enforced per job after the
+    /// claim, rolling back any job that exceeds a limit.
     pub(super) fn try_dispatch_batch(
         &self,
         job_tx: &tokio::sync::mpsc::Sender<Job>,
@@ -98,37 +132,70 @@ impl Scheduler {
             return Ok(false);
         }
 
-        // Every job in `jobs` is already claimed (Running). Isolate per-job
-        // failures so one error doesn't strand the rest of the batch in
-        // Running until the reaper times them out.
+        // Claim the entire batch in one round-trip instead of one per job. A
+        // storage error leaves the batch claim atomic-nothing (failed statement
+        // / rolled-back txn), so degrade to the proven single-job path where
+        // each job claims and error-handles itself.
+        let ids: Vec<&str> = jobs.iter().map(|job| job.id.as_str()).collect();
+        let claimed = match self.storage.claim_execution_batch(&ids, &self.claim_owner) {
+            Ok(flags) => flags,
+            Err(e) => {
+                warn!("batch claim failed; dispatching per job: {e}");
+                let mut counts = GateCounts::default();
+                let mut dispatched_any = false;
+                for job in jobs {
+                    match self.gate_and_dispatch(job, now, &mut counts, job_tx) {
+                        Ok(true) => dispatched_any = true,
+                        Ok(false) => {}
+                        Err(e) => warn!("batch dispatch failed for a claimed job: {e}"),
+                    }
+                }
+                return Ok(dispatched_any);
+            }
+        };
+
+        // One shared cache spans the whole batch so a same-task run queries its
+        // concurrency count once. Isolate per-job failures so one error doesn't
+        // strand the rest of the batch in Running until the reaper times it out.
+        let mut counts = GateCounts::default();
         let mut dispatched_any = false;
-        for job in jobs {
-            match self.gate_and_dispatch(job, now, job_tx) {
+        for (job, won) in jobs.into_iter().zip(claimed) {
+            // A lost claim means another scheduler owns the job; leave it to
+            // that owner, exactly like the single path's `AlreadyClaimed`. The
+            // job stays legitimately Running, so its concurrency slot stands.
+            if !won {
+                continue;
+            }
+            match self.dispatch_claimed(job, now, &mut counts, job_tx) {
                 Ok(true) => dispatched_any = true,
                 Ok(false) => {}
-                Err(e) => log::warn!("batch dispatch failed for a claimed job: {e}"),
+                Err(e) => warn!("batch dispatch failed for a claimed job: {e}"),
             }
         }
         Ok(dispatched_any)
     }
 
-    /// Run the post-dequeue pipeline for a single already-claimed (Running)
-    /// job: soft pre-claim gates, exactly-once claim, hard concurrency caps,
-    /// and hand-off to the worker pool. Returns `Ok(true)` if the job was
-    /// dispatched, `Ok(false)` if it was gated/rolled back. Shared by both the
-    /// single and batch dispatch paths so limit enforcement never drifts.
+    /// Run the post-dequeue pipeline for a single job: soft pre-claim gates,
+    /// exactly-once claim, then the shared post-claim tail. Returns `Ok(true)`
+    /// if the job was dispatched, `Ok(false)` if it was gated/rolled back. Used
+    /// by the single-dispatch path and as the batch path's per-job fallback.
     fn gate_and_dispatch(
         &self,
         job: Job,
         now: i64,
+        counts: &mut GateCounts,
         job_tx: &tokio::sync::mpsc::Sender<Job>,
     ) -> Result<bool> {
         // Pre-claim soft gates: rate limits and circuit breaker.
         //
         // These don't need to be atomic with the claim — if two schedulers
         // both pass these gates, the gate semantics still hold (each
-        // consumes its own token / observes the breaker independently).
-        if !self.check_pre_claim_gates(&job, now)? {
+        // consumes its own token / observes the breaker independently). No
+        // claim row exists yet, so a rejection just reschedules.
+        if let Some(delay_ms) = self.check_pre_claim_gates(&job)? {
+            self.storage
+                .reschedule(&job.id, now + desync_delay(delay_ms))?;
+            counts.release(&job.task_name, &job.queue);
             return Ok(false);
         }
 
@@ -145,6 +212,7 @@ impl Scheduler {
             // fast orphan-recovery path and would sit stuck until the slow
             // timeout sweep. Return it to `Pending` now.
             ClaimOutcome::Errored => {
+                counts.release(&job.task_name, &job.queue);
                 self.rollback_claim_and_reschedule(
                     &job.id,
                     now + desync_delay(CLAIM_ERROR_RETRY_DELAY_MS),
@@ -153,15 +221,47 @@ impl Scheduler {
             }
         }
 
-        // Post-claim hard gate: concurrency caps must be checked AFTER the
-        // claim so two schedulers cannot both pass the cap. Status was
-        // already transitioned to `Running` by the dequeue, so the
-        // running-count includes this job — use strict `>` to allow exactly
-        // `max_concurrent` jobs.
-        //
-        // If we exceed the cap, roll back: clear the claim row and reset
-        // status to `Pending` so the job can be dispatched again later.
-        if !self.check_post_claim_concurrency(&job)? {
+        self.finish_dispatch(job, now, counts, job_tx)
+    }
+
+    /// Dispatch a job this scheduler has *already* claimed (its claim row is
+    /// written — the batch path claims the whole batch up front). Runs the same
+    /// soft gates and post-claim tail as [`Self::gate_and_dispatch`] but skips
+    /// the claim step; because a claim already exists, every rejection clears it
+    /// rather than merely rescheduling.
+    fn dispatch_claimed(
+        &self,
+        job: Job,
+        now: i64,
+        counts: &mut GateCounts,
+        job_tx: &tokio::sync::mpsc::Sender<Job>,
+    ) -> Result<bool> {
+        if let Some(delay_ms) = self.check_pre_claim_gates(&job)? {
+            counts.release(&job.task_name, &job.queue);
+            self.rollback_claim_and_reschedule(&job.id, now + desync_delay(delay_ms))?;
+            return Ok(false);
+        }
+
+        self.finish_dispatch(job, now, counts, job_tx)
+    }
+
+    /// Post-claim tail shared by the single and batch paths: enforce the hard
+    /// concurrency cap on the already-claimed job, then hand it to the worker
+    /// pool. Either rejection clears the claim and reschedules so the job never
+    /// sits stranded in `Running`.
+    fn finish_dispatch(
+        &self,
+        job: Job,
+        now: i64,
+        counts: &mut GateCounts,
+        job_tx: &tokio::sync::mpsc::Sender<Job>,
+    ) -> Result<bool> {
+        // Concurrency caps must be checked AFTER the claim so two schedulers
+        // cannot both pass the cap. Status was already transitioned to
+        // `Running` by the dequeue, so the running-count includes this job —
+        // the cache's strict `>` allows exactly `max_concurrent` jobs.
+        if !self.check_post_claim_concurrency(&job, counts)? {
+            counts.release(&job.task_name, &job.queue);
             self.rollback_claim_and_reschedule(
                 &job.id,
                 now + desync_delay(CONCURRENCY_RETRY_DELAY_MS),
@@ -176,18 +276,20 @@ impl Scheduler {
         let job_id = job.id.clone();
         match job_tx.try_send(job) {
             Ok(()) => Ok(true),
-            Err(TrySendError::Full(_)) => {
+            Err(TrySendError::Full(job)) => {
                 warn!("worker channel full; rescheduling job {job_id} (worker pool is behind)",);
+                counts.release(&job.task_name, &job.queue);
                 self.rollback_claim_and_reschedule(
                     &job_id,
                     now + desync_delay(CHANNEL_BACKPRESSURE_RETRY_DELAY_MS),
                 )?;
                 Ok(false)
             }
-            Err(TrySendError::Closed(_)) => {
+            Err(TrySendError::Closed(job)) => {
                 warn!(
                     "worker channel closed; rescheduling job {job_id} (worker pool shutting down)",
                 );
+                counts.release(&job.task_name, &job.queue);
                 self.rollback_claim_and_reschedule(
                     &job_id,
                     now + desync_delay(CHANNEL_BACKPRESSURE_RETRY_DELAY_MS),
@@ -228,38 +330,34 @@ impl Scheduler {
         }
     }
 
-    /// Apply the pre-claim soft gates (queue rate limit, task circuit
-    /// breaker, task rate limit). Returns `Ok(true)` if the job may proceed
-    /// to claim, `Ok(false)` if it was rescheduled.
-    fn check_pre_claim_gates(&self, job: &Job, now: i64) -> Result<bool> {
+    /// Evaluate the pre-claim soft gates (queue rate limit, task circuit
+    /// breaker, task rate limit) without side effects. Returns `Some(delay_ms)`
+    /// naming the reschedule delay when a gate rejects the job, or `None` when
+    /// it may proceed. The caller performs the reschedule — and, when a claim
+    /// already exists (batch path), also clears it.
+    fn check_pre_claim_gates(&self, job: &Job) -> Result<Option<i64>> {
         if let Some(qcfg) = self.queue_configs.get(&job.queue) {
             if let Some(ref rl_config) = qcfg.rate_limit {
                 let key = format!("queue:{}", job.queue);
                 if !self.rate_limiter.try_acquire(&key, rl_config)? {
-                    self.storage
-                        .reschedule(&job.id, now + desync_delay(RATE_LIMIT_RETRY_DELAY_MS))?;
-                    return Ok(false);
+                    return Ok(Some(RATE_LIMIT_RETRY_DELAY_MS));
                 }
             }
         }
 
         if let Some(config) = self.task_configs.get(&job.task_name) {
             if config.circuit_breaker.is_some() && !self.circuit_breaker.allow(&job.task_name)? {
-                self.storage
-                    .reschedule(&job.id, now + desync_delay(CIRCUIT_BREAKER_RETRY_DELAY_MS))?;
-                return Ok(false);
+                return Ok(Some(CIRCUIT_BREAKER_RETRY_DELAY_MS));
             }
 
             if let Some(ref rl_config) = config.rate_limit {
                 if !self.rate_limiter.try_acquire(&job.task_name, rl_config)? {
-                    self.storage
-                        .reschedule(&job.id, now + desync_delay(RATE_LIMIT_RETRY_DELAY_MS))?;
-                    return Ok(false);
+                    return Ok(Some(RATE_LIMIT_RETRY_DELAY_MS));
                 }
             }
         }
 
-        Ok(true)
+        Ok(None)
     }
 
     /// Try to claim exactly-once execution. The three outcomes are handled
@@ -285,11 +383,10 @@ impl Scheduler {
     /// caps). Returns `Ok(true)` if the job may proceed to dispatch,
     /// `Ok(false)` if the cap is exceeded — caller is responsible for
     /// rolling back the claim.
-    fn check_post_claim_concurrency(&self, job: &Job) -> Result<bool> {
+    fn check_post_claim_concurrency(&self, job: &Job, counts: &mut GateCounts) -> Result<bool> {
         if let Some(qcfg) = self.queue_configs.get(&job.queue) {
             if let Some(max_conc) = qcfg.max_concurrent {
-                let stats = self.storage.stats_by_queue(&job.queue)?;
-                if stats.running > max_conc as i64 {
+                if self.cached_queue_running(counts, &job.queue)? > max_conc as i64 {
                     return Ok(false);
                 }
             }
@@ -297,14 +394,36 @@ impl Scheduler {
 
         if let Some(config) = self.task_configs.get(&job.task_name) {
             if let Some(max_conc) = config.max_concurrent {
-                let running = self.storage.count_running_by_task(&job.task_name)?;
-                if running > max_conc as i64 {
+                if self.cached_task_running(counts, &job.task_name)? > max_conc as i64 {
                     return Ok(false);
                 }
             }
         }
 
         Ok(true)
+    }
+
+    /// Running-job count for a task, read from storage once per dispatch cycle
+    /// then served from [`GateCounts`]. The stored count already includes every
+    /// job the current batch flipped to `Running`, matching the strict `>`
+    /// comparison the caller uses.
+    fn cached_task_running(&self, counts: &mut GateCounts, task_name: &str) -> Result<i64> {
+        if let Some(&n) = counts.task_running.get(task_name) {
+            return Ok(n);
+        }
+        let n = self.storage.count_running_by_task(task_name)?;
+        counts.task_running.insert(task_name.to_string(), n);
+        Ok(n)
+    }
+
+    /// Running-job count for a queue, cached exactly like [`Self::cached_task_running`].
+    fn cached_queue_running(&self, counts: &mut GateCounts, queue: &str) -> Result<i64> {
+        if let Some(&n) = counts.queue_running.get(queue) {
+            return Ok(n);
+        }
+        let n = self.storage.stats_by_queue(queue)?.running;
+        counts.queue_running.insert(queue.to_string(), n);
+        Ok(n)
     }
 
     /// Reverse a successful `claim_execution` and reschedule the job. Used
