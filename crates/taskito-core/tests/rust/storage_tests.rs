@@ -492,6 +492,33 @@ fn test_reclaim_execution(s: &impl Storage) {
     s.complete_execution(colon_job).unwrap();
 }
 
+fn test_claim_execution_batch(s: &impl Storage) {
+    // Batch claim returns one flag per id, in order, and matches single-claim
+    // semantics: an id already claimed (by any owner) comes back `false`.
+    let pre = "batch-claim-pre"; // already held before the batch runs
+    assert!(s.claim_execution(pre, "other").unwrap());
+
+    let ids = ["batch-claim-a", pre, "batch-claim-c"];
+    let won = s.claim_execution_batch(&ids, "batch-worker").unwrap();
+    assert_eq!(won, vec![true, false, true]);
+
+    // The won claims are now real: a follow-up single claim is rejected, and the
+    // one we lost is still owned by the original holder (also rejected).
+    assert!(!s.claim_execution("batch-claim-a", "batch-worker").unwrap());
+    assert!(!s.claim_execution("batch-claim-c", "batch-worker").unwrap());
+    assert!(!s.claim_execution(pre, "batch-worker").unwrap());
+
+    // Empty input is a no-op, not an error.
+    assert!(s
+        .claim_execution_batch(&[], "batch-worker")
+        .unwrap()
+        .is_empty());
+
+    for id in ["batch-claim-a", "batch-claim-c", pre] {
+        s.complete_execution(id).unwrap();
+    }
+}
+
 fn test_requeue_stuck(s: &impl Storage) {
     // Operator rescue for a stuck Running job: back to Pending, claim
     // released, retry budget and cancel flag reset — all atomically.
@@ -1169,6 +1196,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);
     test_reclaim_execution(s);
+    test_claim_execution_batch(s);
     test_requeue_stuck(s);
     test_reap_orphaned_jobs(s);
     test_dashboard_settings(s);

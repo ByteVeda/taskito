@@ -83,4 +83,44 @@ impl PostgresStorage {
 
         Ok(result > 0)
     }
+
+    /// Batch variant of [`Self::claim_execution`]. Postgres supports multi-row
+    /// `INSERT ... ON CONFLICT DO NOTHING RETURNING`, so every free claim is
+    /// taken in one statement and the returned job ids are exactly the ones this
+    /// worker won — any id whose claim already existed is reported `false`.
+    pub fn claim_execution_batch(&self, job_ids: &[&str], worker_id: &str) -> Result<Vec<bool>> {
+        if job_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Postgres tolerates tens of thousands of bound params; chunk anyway so
+        // a pathologically large batch can't blow the 65535 parameter ceiling
+        // (3 columns/row).
+        const CLAIM_BATCH_CHUNK: usize = 5000;
+
+        let now = now_millis();
+        let mut conn = self.conn()?;
+        let mut claimed: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(job_ids.len());
+
+        for chunk in job_ids.chunks(CLAIM_BATCH_CHUNK) {
+            let rows: Vec<NewExecutionClaimRow> = chunk
+                .iter()
+                .map(|job_id| NewExecutionClaimRow {
+                    job_id,
+                    worker_id,
+                    claimed_at: now,
+                })
+                .collect();
+
+            let won: Vec<String> = diesel::insert_into(execution_claims::table)
+                .values(&rows)
+                .on_conflict(execution_claims::job_id)
+                .do_nothing()
+                .returning(execution_claims::job_id)
+                .get_results(&mut conn)?;
+            claimed.extend(won);
+        }
+
+        Ok(job_ids.iter().map(|id| claimed.contains(*id)).collect())
+    }
 }

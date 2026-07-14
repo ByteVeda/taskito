@@ -259,6 +259,11 @@ pub trait Storage: Send + Sync + Clone {
     // ── Execution claims (exactly-once) ────────────────────────
 
     fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool>;
+    /// Batch variant of [`Storage::claim_execution`]: attempt to claim every
+    /// `job_id` for `worker_id` in as few round trips as the backend allows.
+    /// Returns one flag per input id, in order — `true` if this worker won the
+    /// claim, `false` if a claim already existed.
+    fn claim_execution_batch(&self, job_ids: &[&str], worker_id: &str) -> Result<Vec<bool>>;
     fn complete_execution(&self, job_id: &str) -> Result<()>;
     fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64>;
     /// Atomically transfer an existing claim from `expected_owner` to

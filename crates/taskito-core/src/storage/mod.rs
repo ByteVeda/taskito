@@ -690,6 +690,13 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<bool> {
                 self.claim_execution(job_id, worker_id)
             }
+            fn claim_execution_batch(
+                &self,
+                job_ids: &[&str],
+                worker_id: &str,
+            ) -> $crate::error::Result<Vec<bool>> {
+                self.claim_execution_batch(job_ids, worker_id)
+            }
             fn complete_execution(&self, job_id: &str) -> $crate::error::Result<()> {
                 self.complete_execution(job_id)
             }
@@ -1243,6 +1250,9 @@ impl Storage for StorageBackend {
     }
     fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool> {
         delegate!(self, claim_execution, job_id, worker_id)
+    }
+    fn claim_execution_batch(&self, job_ids: &[&str], worker_id: &str) -> Result<Vec<bool>> {
+        delegate!(self, claim_execution_batch, job_ids, worker_id)
     }
     fn complete_execution(&self, job_id: &str) -> Result<()> {
         delegate!(self, complete_execution, job_id)
