@@ -424,9 +424,12 @@ public final class Worker implements AutoCloseable {
             if (batchSize != null) {
                 options.put("batchSize", batchSize);
             }
-            // Only a fixed-size pool has a bounded parallelism to cap in-flight
-            // dispatch against; a cached pool (concurrency == 0) stays unbounded.
-            if (concurrency > 0) {
+            // Cap in-flight dispatch by the pool's execution ceiling: the
+            // autoscaler's max when autoscaling, otherwise a fixed pool's size.
+            // A plain cached pool (concurrency == 0, no autoscale) stays unbounded.
+            if (autoscale != null) {
+                options.put("concurrency", autoscale.maxWorkers());
+            } else if (concurrency > 0) {
                 options.put("concurrency", concurrency);
             }
             if (!taskPolicies.isEmpty() || !taskCircuitBreakers.isEmpty()) {
