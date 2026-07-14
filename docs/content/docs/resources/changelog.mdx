@@ -12,6 +12,46 @@ All notable changes to taskito are documented here. The format is based on
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). All SDKs (Python, Node, Java) and the
 underlying Rust crates are released together, in lock-step.
 
+## 0.20.0
+
+Scaling release: the queue survives higher task ingest/dispatch and pub/sub fan-out rates, and
+schema management moves to code-first migrations. Worker dispatch now respects each pool's
+execution capacity, so a worker no longer claims more than it can run and starve its peers.
+
+### Added
+
+- **Code-first migrations.** All schema DDL is built programmatically with `sea-query` (no raw
+  SQL) and applied by a versioned migrator with path-based auto-discovery — dropping a
+  `migrations/mXXXX_*.rs` file registers it automatically. Migration recording is atomic and
+  idempotent, so concurrent startups and interruptions are safe. New scaling indexes ship as
+  part of the baseline.
+- **Batching.** Keyed pub/sub fan-out is committed in a single transaction, Redis subscription
+  reads are pipelined to constant round trips, execution claims are taken per batch, and
+  successful results are finalized together — cutting round trips under load across all SDKs.
+- **Bounded in-flight dispatch.** A scheduler now caps how many jobs it keeps in flight at the
+  worker pool's execution parallelism, freeing a slot (and refilling immediately) as each job
+  finishes.
+
+### Changed
+
+- **Drain-until-empty polling.** Each poll wake dispatches all ready work instead of one job per
+  tick, removing the throughput ceiling imposed by the poll interval.
+- **Jittered backoff.** Retry backoff uses full jitter, and the poller's gate-reschedule delays
+  are jittered, to avoid retry stampedes.
+- Topic fan-out releases the GIL during publish/reap/backlog work (Python).
+
+### Fixed
+
+- **Worker fairness.** Under drain-until-empty, one worker could claim a whole backlog and
+  strand it `Running` on itself while peers sharing the database sat idle; in-flight dispatch is
+  now bounded to the pool size.
+- **Workflow step double-execution.** A step now honors the task's `max_retries`, and the
+  tracker reacts only to a node's terminal job failure — closing an exactly-once violation under
+  load.
+- Jobs stranded by a transient claim error return to `Pending` immediately rather than waiting
+  out the stale-job reaper.
+- Postgres batch claims run in one transaction (no partially-committed claims on error).
+
 ## 0.19.0
 
 Parity release: the Java SDK reaches feature parity with the other SDKs (and its baseline moves
