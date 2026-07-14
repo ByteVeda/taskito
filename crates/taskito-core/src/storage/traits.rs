@@ -42,6 +42,13 @@ pub trait Storage: Send + Sync + Clone {
         max: usize,
     ) -> Result<Vec<Job>>;
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()>;
+
+    /// Persist many successful completions at once. Each entry archives the
+    /// completed job, clears its execution claim, and records its metric — the
+    /// Diesel backends do so in one transaction. See [`JobCompletion`].
+    ///
+    /// [`JobCompletion`]: crate::job::JobCompletion
+    fn complete_batch(&self, completions: &[crate::job::JobCompletion]) -> Result<()>;
     fn fail(&self, id: &str, error: &str) -> Result<()>;
     fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()>;
     /// Re-schedule a job back to `Pending` **without** consuming its retry

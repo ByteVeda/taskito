@@ -7,7 +7,7 @@
 //! Each test function uses a unique queue name to avoid cross-contamination
 //! when all tests share a single storage instance.
 
-use taskito_core::job::{now_millis, JobStatus, NewJob};
+use taskito_core::job::{now_millis, JobCompletion, JobStatus, NewJob};
 use taskito_core::storage::Storage;
 use taskito_core::SqliteStorage;
 
@@ -517,6 +517,45 @@ fn test_claim_execution_batch(s: &impl Storage) {
     for id in ["batch-claim-a", "batch-claim-c", pre] {
         s.complete_execution(id).unwrap();
     }
+}
+
+fn test_complete_batch(s: &impl Storage) {
+    // Batch completion archives every job, clears its claim, and records a
+    // success metric — the same effect as N single `complete` calls, in one txn.
+    let q = "q-complete-batch";
+    let task = "complete_batch_task";
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let job = s.enqueue(make_job(q, task)).unwrap();
+        s.dequeue(q, now_millis(), None).unwrap().unwrap(); // -> Running
+        assert!(s.claim_execution(&job.id, "cb-worker").unwrap());
+        ids.push(job.id);
+    }
+
+    let completions: Vec<JobCompletion> = ids
+        .iter()
+        .map(|id| JobCompletion {
+            job_id: id.clone(),
+            result: Some(vec![7, 7]),
+            task_name: task.to_string(),
+            wall_time_ns: 42,
+        })
+        .collect();
+    s.complete_batch(&completions).unwrap();
+
+    let claims = s.list_claims_by_worker("cb-worker").unwrap();
+    for id in &ids {
+        let job = s.get_job(id).unwrap().unwrap();
+        assert_eq!(job.status, JobStatus::Complete);
+        assert_eq!(job.result, Some(vec![7, 7]));
+        assert!(!claims.contains(id), "claim row must be cleared");
+    }
+
+    let metrics = s.get_metrics(Some(task), 0).unwrap();
+    assert_eq!(metrics.len(), 3, "one success metric per completed job");
+
+    // Empty input is a no-op, not an error.
+    s.complete_batch(&[]).unwrap();
 }
 
 fn test_requeue_stuck(s: &impl Storage) {
@@ -1197,6 +1236,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_reap_stale_jobs(s);
     test_reclaim_execution(s);
     test_claim_execution_batch(s);
+    test_complete_batch(s);
     test_requeue_stuck(s);
     test_reap_orphaned_jobs(s);
     test_dashboard_settings(s);

@@ -192,6 +192,18 @@ impl Job {
     }
 }
 
+/// A successful job outcome to persist. Batches the three writes the success
+/// path makes per job — archive the completed job, clear its execution claim,
+/// record its metric — so [`Storage::complete_batch`] can commit many at once.
+///
+/// [`Storage::complete_batch`]: crate::storage::Storage::complete_batch
+pub struct JobCompletion {
+    pub job_id: String,
+    pub result: Option<Vec<u8>>,
+    pub task_name: String,
+    pub wall_time_ns: i64,
+}
+
 /// Parameters for creating a new job.
 pub struct NewJob {
     pub queue: String,

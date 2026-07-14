@@ -246,6 +246,12 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<()> {
                 self.complete(id, result_bytes)
             }
+            fn complete_batch(
+                &self,
+                completions: &[$crate::job::JobCompletion],
+            ) -> $crate::error::Result<()> {
+                self.complete_batch(completions)
+            }
             fn fail(&self, id: &str, error: &str) -> $crate::error::Result<()> {
                 self.fail(id, error)
             }
@@ -889,6 +895,9 @@ impl Storage for StorageBackend {
     }
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
         delegate!(self, complete, id, result_bytes)
+    }
+    fn complete_batch(&self, completions: &[crate::job::JobCompletion]) -> Result<()> {
+        delegate!(self, complete_batch, completions)
     }
     fn fail(&self, id: &str, error: &str) -> Result<()> {
         delegate!(self, fail, id, error)

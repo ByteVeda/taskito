@@ -743,6 +743,59 @@ macro_rules! impl_diesel_job_ops {
                 })
             }
 
+            /// Persist many successful completions in one transaction. Per job
+            /// this does exactly what the success path did one-at-a-time —
+            /// archive the completed row, clear its execution claim, record its
+            /// metric — but coalesces what were three writes × N jobs across N
+            /// transactions into a single commit (one fsync). If any job is not
+            /// `Running` the whole batch rolls back with `JobNotFound`, so the
+            /// caller can fall back to per-job handling.
+            pub fn complete_batch(&self, completions: &[$crate::job::JobCompletion]) -> Result<()> {
+                if completions.is_empty() {
+                    return Ok(());
+                }
+                let now = now_millis();
+
+                self.write_transaction(|conn| {
+                    for c in completions {
+                        let mut row: JobRow = match jobs::table
+                            .find(&c.job_id)
+                            .filter(jobs::status.eq(JobStatus::Running as i32))
+                            .select(JobRow::as_select())
+                            .first(conn)
+                            .optional()?
+                        {
+                            Some(row) => row,
+                            None => return Err(QueueError::JobNotFound(c.job_id.clone())),
+                        };
+
+                        row.status = JobStatus::Complete as i32;
+                        row.completed_at = Some(now);
+                        row.result = c.result.clone();
+                        Self::archive_job_row(conn, &row)?;
+
+                        diesel::delete(
+                            execution_claims::table.filter(execution_claims::job_id.eq(&c.job_id)),
+                        )
+                        .execute(conn)?;
+
+                        let metric_id = uuid::Uuid::now_v7().to_string();
+                        diesel::insert_into(task_metrics::table)
+                            .values(&NewTaskMetricRow {
+                                id: &metric_id,
+                                task_name: &c.task_name,
+                                job_id: &c.job_id,
+                                wall_time_ns: c.wall_time_ns,
+                                memory_bytes: 0,
+                                succeeded: true,
+                                recorded_at: now,
+                            })
+                            .execute(conn)?;
+                    }
+                    Ok(())
+                })
+            }
+
             /// Mark a job as failed with the given error message. The job moves
             /// from `jobs` into `archived_jobs` in a single transaction.
             pub fn fail(&self, id: &str, error: &str) -> Result<()> {
