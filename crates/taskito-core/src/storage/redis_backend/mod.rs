@@ -120,6 +120,11 @@ fn map_err(e: redis::RedisError) -> QueueError {
     QueueError::Other(e.to_string())
 }
 
+/// Batch size for the bounded history scans (SSCAN/ZSCAN COUNT hint and the
+/// ZRANGEBYSCORE LIMIT window). Caps how many ids a purge/list holds in memory
+/// per round trip so a sweep over millions of rows never loads the whole set.
+const SCAN_BATCH: isize = 500;
+
 /// Drop the `payload`/`result` blobs from a job before it enters a listing.
 /// Redis loads the whole job JSON in one read, so this saves no I/O; it exists
 /// only to match the Diesel backends' narrow-projection contract — list results

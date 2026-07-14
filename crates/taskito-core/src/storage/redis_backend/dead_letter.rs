@@ -1,7 +1,7 @@
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 
-use super::{map_err, strip_dead_blob, RedisStorage};
+use super::{map_err, strip_dead_blob, RedisStorage, SCAN_BATCH};
 use crate::error::{QueueError, Result};
 use crate::job::{now_millis, Job, JobStatus, NewJob};
 use crate::storage::DeadJob;
@@ -312,38 +312,48 @@ impl RedisStorage {
     pub fn purge_dead(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let dlq_all = self.key(&["dlq", "all"]);
+        let mut total = 0u64;
 
-        // Get all DLQ IDs with scores <= older_than_ms
-        let ids: Vec<String> = conn
-            .zrangebyscore(&dlq_all, "-inf", older_than_ms as f64)
-            .map_err(map_err)?;
+        // Every id in the `-inf..=cutoff` score window is eligible, and each
+        // batch is deleted before the next query, so re-reading the window
+        // drains the expired rows in bounded chunks instead of loading the
+        // entire below-cutoff set at once.
+        loop {
+            let ids: Vec<String> = conn
+                .zrangebyscore_limit(&dlq_all, "-inf", older_than_ms as f64, 0, SCAN_BATCH)
+                .map_err(map_err)?;
+            if ids.is_empty() {
+                break;
+            }
 
-        if ids.is_empty() {
-            return Ok(0);
-        }
+            // Load blobs to attribute each dead row to its subscription so the
+            // sub:dead index shrinks with the purge (no-op for non-pub/sub rows).
+            let blob_keys: Vec<String> = ids.iter().map(|id| self.key(&["dlq", id])).collect();
+            let blobs: Vec<Option<String>> = conn.mget(&blob_keys).map_err(map_err)?;
 
-        // Load blobs to attribute each dead row to its subscription so the
-        // sub:dead index shrinks with the purge (no-op for non-pub/sub rows).
-        let blob_keys: Vec<String> = ids.iter().map(|id| self.key(&["dlq", id])).collect();
-        let blobs: Vec<Option<String>> = conn.mget(&blob_keys).map_err(map_err)?;
-
-        let pipe = &mut redis::pipe();
-        for (id, blob) in ids.iter().zip(&blobs) {
-            pipe.del(self.key(&["dlq", id]));
-            pipe.zrem(&dlq_all, id.as_str());
-            if let Some(d) = blob {
-                if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(d) {
-                    self.push_pubsub_dead_remove(
-                        pipe,
-                        entry.notes.as_deref(),
-                        &entry.original_job_id,
-                    );
+            let pipe = &mut redis::pipe();
+            for (id, blob) in ids.iter().zip(&blobs) {
+                pipe.del(self.key(&["dlq", id]));
+                pipe.zrem(&dlq_all, id.as_str());
+                if let Some(d) = blob {
+                    if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(d) {
+                        self.push_pubsub_dead_remove(
+                            pipe,
+                            entry.notes.as_deref(),
+                            &entry.original_job_id,
+                        );
+                    }
                 }
             }
-        }
-        pipe.query::<()>(&mut conn).map_err(map_err)?;
+            pipe.query::<()>(&mut conn).map_err(map_err)?;
 
-        Ok(ids.len() as u64)
+            total += ids.len() as u64;
+            if (ids.len() as isize) < SCAN_BATCH {
+                break;
+            }
+        }
+
+        Ok(total)
     }
 
     pub fn delete_dead(&self, dead_id: &str) -> Result<bool> {
@@ -372,42 +382,57 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let dlq_all = self.key(&["dlq", "all"]);
         let now = now_millis();
+        let mut total = 0u64;
 
-        let ids: Vec<String> = conn
-            .zrangebyscore(&dlq_all, "-inf", "+inf")
-            .map_err(map_err)?;
+        // Per-entry TTL lives in the blob, so every row must be inspected — but
+        // ZSCAN walks the set in bounded batches instead of loading every id at
+        // once. Each batch's expired rows are deleted before the next step.
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, flat): (u64, Vec<String>) = redis::cmd("ZSCAN")
+                .arg(&dlq_all)
+                .arg(cursor)
+                .arg("COUNT")
+                .arg(SCAN_BATCH)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            cursor = next;
 
-        // (dlq_id, notes, original_job_id) — keeps the sub:dead index in step
-        // with the TTL purge (no-op for non-pub/sub rows).
-        let mut to_delete: Vec<(String, Option<String>, String)> = Vec::new();
-        for id in &ids {
-            let dlq_key = self.key(&["dlq", id]);
-            let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
-            if let Some(d) = data {
-                if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
-                    let expired = match entry.result_ttl_ms {
-                        Some(ttl) => entry.failed_at + ttl <= now,
-                        None => entry.failed_at < global_cutoff_ms,
-                    };
-                    if expired {
-                        to_delete.push((id.clone(), entry.notes, entry.original_job_id));
+            // ZSCAN returns a flat [member, score, member, score, ...] list.
+            let mut to_delete: Vec<(String, Option<String>, String)> = Vec::new();
+            for id in flat.iter().step_by(2) {
+                let dlq_key = self.key(&["dlq", id]);
+                let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+                if let Some(d) = data {
+                    if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
+                        let expired = match entry.result_ttl_ms {
+                            Some(ttl) => entry.failed_at + ttl <= now,
+                            None => entry.failed_at < global_cutoff_ms,
+                        };
+                        if expired {
+                            to_delete.push((id.clone(), entry.notes, entry.original_job_id));
+                        }
                     }
                 }
             }
+
+            if !to_delete.is_empty() {
+                let pipe = &mut redis::pipe();
+                for (id, notes, member) in &to_delete {
+                    pipe.del(self.key(&["dlq", id]));
+                    pipe.zrem(&dlq_all, id.as_str());
+                    self.push_pubsub_dead_remove(pipe, notes.as_deref(), member);
+                }
+                pipe.query::<()>(&mut conn).map_err(map_err)?;
+                total += to_delete.len() as u64;
+            }
+
+            if cursor == 0 {
+                break;
+            }
         }
 
-        if to_delete.is_empty() {
-            return Ok(0);
-        }
-
-        let pipe = &mut redis::pipe();
-        for (id, notes, member) in &to_delete {
-            pipe.del(self.key(&["dlq", id]));
-            pipe.zrem(&dlq_all, id.as_str());
-            self.push_pubsub_dead_remove(pipe, notes.as_deref(), member);
-        }
-        pipe.query::<()>(&mut conn).map_err(map_err)?;
-        Ok(to_delete.len() as u64)
+        Ok(total)
     }
 
     pub fn list_dead_for_retry(

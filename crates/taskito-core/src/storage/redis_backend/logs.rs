@@ -1,7 +1,7 @@
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 
-use super::{map_err, RedisStorage};
+use super::{map_err, RedisStorage, SCAN_BATCH};
 use crate::error::{QueueError, Result};
 use crate::job::now_millis;
 use crate::storage::models::TaskLogRow;
@@ -137,6 +137,34 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);
 
+        // Fast path: with no task/level filter the page is exactly the newest
+        // `limit` ids at or after `since_ms`, so bound the fetch server-side
+        // (`logs:all` is scored by logged_at) instead of loading every id since
+        // the cutoff and truncating in memory.
+        if task_name.is_none() && level.is_none() {
+            let ids: Vec<String> = if limit >= 0 {
+                conn.zrevrangebyscore_limit(&all_key, "+inf", since_ms as f64, 0, limit as isize)
+                    .map_err(map_err)?
+            } else {
+                conn.zrevrangebyscore(&all_key, "+inf", since_ms as f64)
+                    .map_err(map_err)?
+            };
+            let mut rows = Vec::with_capacity(ids.len());
+            for id in ids {
+                let log_key = self.key(&["log", &id]);
+                let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
+                if let Some(d) = data {
+                    let entry: LogEntry =
+                        serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                    rows.push(TaskLogRow::from(entry));
+                }
+            }
+            // ZREVRANGEBYSCORE already yields newest-first (logged_at desc).
+            return Ok(rows);
+        }
+
+        // Filtered path: task_name/level are not indexed, so scan the cutoff
+        // range and filter in memory.
         let ids: Vec<String> = conn
             .zrangebyscore(&all_key, since_ms as f64, "+inf")
             .map_err(map_err)?;
@@ -175,31 +203,41 @@ impl RedisStorage {
     pub fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);
+        let mut total = 0u64;
 
-        let ids: Vec<String> = conn
-            .zrangebyscore(&all_key, "-inf", older_than_ms as f64)
-            .map_err(map_err)?;
-
-        if ids.is_empty() {
-            return Ok(0);
-        }
-
-        let pipe = &mut redis::pipe();
-        for id in &ids {
-            let log_key = self.key(&["log", id]);
-            // Load to get job_id for by_job cleanup
-            let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
-            if let Some(d) = data {
-                if let Ok(entry) = serde_json::from_str::<LogEntry>(&d) {
-                    let by_job_key = self.key(&["logs", "by_job", &entry.job_id]);
-                    pipe.zrem(&by_job_key, id);
-                }
+        // Every id in the `-inf..=cutoff` window is expired and gets deleted, so
+        // re-reading the window drains old logs in bounded batches rather than
+        // loading the whole below-cutoff set in one shot.
+        loop {
+            let ids: Vec<String> = conn
+                .zrangebyscore_limit(&all_key, "-inf", older_than_ms as f64, 0, SCAN_BATCH)
+                .map_err(map_err)?;
+            if ids.is_empty() {
+                break;
             }
-            pipe.del(&log_key);
-            pipe.zrem(&all_key, id);
-        }
-        pipe.query::<()>(&mut conn).map_err(map_err)?;
 
-        Ok(ids.len() as u64)
+            let pipe = &mut redis::pipe();
+            for id in &ids {
+                let log_key = self.key(&["log", id]);
+                // Load to get job_id for by_job cleanup.
+                let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
+                if let Some(d) = data {
+                    if let Ok(entry) = serde_json::from_str::<LogEntry>(&d) {
+                        let by_job_key = self.key(&["logs", "by_job", &entry.job_id]);
+                        pipe.zrem(&by_job_key, id);
+                    }
+                }
+                pipe.del(&log_key);
+                pipe.zrem(&all_key, id);
+            }
+            pipe.query::<()>(&mut conn).map_err(map_err)?;
+
+            total += ids.len() as u64;
+            if (ids.len() as isize) < SCAN_BATCH {
+                break;
+            }
+        }
+
+        Ok(total)
     }
 }

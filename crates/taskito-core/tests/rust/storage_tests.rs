@@ -1385,6 +1385,30 @@ fn redis_storage_tests() {
     redis_update_progress_never_resurrects_archived(&storage);
     redis_move_to_dlq_leaves_consistent_state(&storage);
     redis_move_to_dlq_skips_already_archived(&storage);
+    redis_purge_dead_drains_across_batches(&storage);
+}
+
+/// S15: the batched `purge_dead` must drain more than one SCAN_BATCH (500) of
+/// expired entries in a single call — proving the LIMIT-window loop iterates and
+/// clears the remainder, not just the first batch.
+#[cfg(feature = "redis")]
+fn redis_purge_dead_drains_across_batches(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-purge-batches";
+    for _ in 0..550 {
+        let job = s.enqueue(make_job(q, "purge_batch_task")).unwrap();
+        s.move_to_dlq(&job, "boom", None).unwrap();
+    }
+
+    // Cutoff far in the future so every dead entry is eligible.
+    let removed = s.purge_dead(now_millis() + 3_600_000).unwrap();
+    assert!(
+        removed >= 550,
+        "batched purge_dead must remove all >500 eligible entries, got {removed}"
+    );
+    assert!(
+        s.list_dead(10_000, 0).unwrap().is_empty(),
+        "batched purge_dead must fully drain the DLQ"
+    );
 }
 
 /// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
