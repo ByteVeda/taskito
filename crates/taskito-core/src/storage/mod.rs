@@ -1,3 +1,4 @@
+pub mod cursor;
 mod diesel_common;
 pub mod migrate;
 /// Code-first schema migrations. The files live at the crate root
@@ -329,6 +330,17 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::job::Job>> {
                 self.list_jobs(status, queue_name, task_name, limit, offset, namespace)
             }
+            fn list_jobs_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.list_jobs_after(status, queue_name, task_name, limit, after, namespace)
+            }
             fn get_job(&self, id: &str) -> $crate::error::Result<Option<$crate::job::Job>> {
                 self.get_job(id)
             }
@@ -385,6 +397,13 @@ macro_rules! impl_storage {
                 offset: i64,
             ) -> $crate::error::Result<Vec<$crate::storage::DeadJob>> {
                 self.list_dead(limit, offset)
+            }
+            fn list_dead_after(
+                &self,
+                limit: i64,
+                after: Option<(i64, &str)>,
+            ) -> $crate::error::Result<Vec<$crate::storage::DeadJob>> {
+                self.list_dead_after(limit, after)
             }
             fn list_dead_by_task(
                 &self,
@@ -683,6 +702,13 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::job::Job>> {
                 self.list_archived(limit, offset)
             }
+            fn list_archived_after(
+                &self,
+                limit: i64,
+                after: Option<(i64, &str)>,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.list_archived_after(limit, after)
+            }
             fn acquire_lock(
                 &self,
                 lock_name: &str,
@@ -787,6 +813,32 @@ macro_rules! impl_storage {
                     created_before,
                     limit,
                     offset,
+                    namespace,
+                )
+            }
+            fn list_jobs_filtered_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.list_jobs_filtered_after(
+                    status,
+                    queue_name,
+                    task_name,
+                    metadata_like,
+                    error_like,
+                    created_after,
+                    created_before,
+                    limit,
+                    after,
                     namespace,
                 )
             }
@@ -972,6 +1024,26 @@ impl Storage for StorageBackend {
     ) -> Result<Vec<Job>> {
         delegate!(self, list_jobs, status, queue_name, task_name, limit, offset, namespace)
     }
+    fn list_jobs_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>> {
+        delegate!(
+            self,
+            list_jobs_after,
+            status,
+            queue_name,
+            task_name,
+            limit,
+            after,
+            namespace
+        )
+    }
     fn get_job(&self, id: &str) -> Result<Option<Job>> {
         delegate!(self, get_job, id)
     }
@@ -1008,6 +1080,9 @@ impl Storage for StorageBackend {
     }
     fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
         delegate!(self, list_dead, limit, offset)
+    }
+    fn list_dead_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<DeadJob>> {
+        delegate!(self, list_dead_after, limit, after)
     }
     fn list_dead_by_task(&self, task_name: &str, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
         delegate!(self, list_dead_by_task, task_name, limit, offset)
@@ -1268,6 +1343,9 @@ impl Storage for StorageBackend {
     fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>> {
         delegate!(self, list_archived, limit, offset)
     }
+    fn list_archived_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<Job>> {
+        delegate!(self, list_archived_after, limit, after)
+    }
     fn acquire_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool> {
         delegate!(self, acquire_lock, lock_name, owner_id, ttl_ms)
     }
@@ -1337,6 +1415,35 @@ impl Storage for StorageBackend {
             created_before,
             limit,
             offset,
+            namespace
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn list_jobs_filtered_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        metadata_like: Option<&str>,
+        error_like: Option<&str>,
+        created_after: Option<i64>,
+        created_before: Option<i64>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>> {
+        delegate!(
+            self,
+            list_jobs_filtered_after,
+            status,
+            queue_name,
+            task_name,
+            metadata_like,
+            error_like,
+            created_after,
+            created_before,
+            limit,
+            after,
             namespace
         )
     }

@@ -1104,6 +1104,21 @@ macro_rules! impl_diesel_job_ops {
                 )
             }
 
+            /// Keyset-paginated `list_jobs` — see [`list_jobs_filtered_after`].
+            pub fn list_jobs_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                self.list_jobs_filtered_after(
+                    status, queue_name, task_name, None, None, None, None, limit, after, namespace,
+                )
+            }
+
             /// True when `status` is a terminal status whose rows now live in
             /// `archived_jobs` rather than the live `jobs` table.
             fn is_terminal_status(status: i32) -> bool {
@@ -1316,6 +1331,87 @@ macro_rules! impl_diesel_job_ops {
                 }
             }
 
+            /// Keyset-paginated `list_jobs_filtered`, ordered by
+            /// `(created_at, id)` descending. Additive twin of the offset form.
+            #[allow(clippy::too_many_arguments)]
+            pub fn list_jobs_filtered_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                match status {
+                    Some(s) if Self::is_terminal_status(s) => self.list_archived_filtered_after(
+                        Some(s),
+                        queue_name,
+                        task_name,
+                        metadata_like,
+                        error_like,
+                        created_after,
+                        created_before,
+                        limit,
+                        after,
+                        namespace,
+                    ),
+                    Some(_) => self.list_live_filtered_after(
+                        status,
+                        queue_name,
+                        task_name,
+                        metadata_like,
+                        error_like,
+                        created_after,
+                        created_before,
+                        limit,
+                        after,
+                        namespace,
+                    ),
+                    None => {
+                        // Ask each table for its own top `limit` under the SAME
+                        // cursor. Any row in the true merged top-`limit` has at
+                        // most `limit-1` rows from its own table ahead of it, so
+                        // it is already in that table's top-`limit` — no offset
+                        // compensation is needed.
+                        let mut live = self.list_live_filtered_after(
+                            None,
+                            queue_name,
+                            task_name,
+                            metadata_like,
+                            error_like,
+                            created_after,
+                            created_before,
+                            limit,
+                            after,
+                            namespace,
+                        )?;
+                        let archived = self.list_archived_filtered_after(
+                            None,
+                            queue_name,
+                            task_name,
+                            metadata_like,
+                            error_like,
+                            created_after,
+                            created_before,
+                            limit,
+                            after,
+                            namespace,
+                        )?;
+                        live.extend(archived);
+                        // Same `(created_at, id)` descending order the SQL uses,
+                        // so the merged cursor advances monotonically.
+                        live.sort_by(|a, b| (b.created_at, &b.id).cmp(&(a.created_at, &a.id)));
+                        live.truncate(limit.max(0) as usize);
+                        Ok(live)
+                    }
+                }
+            }
+
             /// Query the live `jobs` table with the shared filter set.
             #[allow(clippy::too_many_arguments)]
             fn list_live_filtered(
@@ -1366,6 +1462,73 @@ macro_rules! impl_diesel_job_ops {
                 let rows: Vec<NarrowJobRow> = query
                     .limit(limit)
                     .offset(offset)
+                    .select(NarrowJobRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows
+                    .into_iter()
+                    .map(|r| Job::from_narrow(r, Vec::new(), None))
+                    .collect())
+            }
+
+            /// Keyset twin of `list_live_filtered`, ordered by
+            /// `(created_at, id)` descending with a `(created_at, id) < cursor`
+            /// bound instead of an offset.
+            #[allow(clippy::too_many_arguments)]
+            fn list_live_filtered_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                let mut conn = self.conn()?;
+
+                let mut query = jobs::table
+                    .into_boxed()
+                    .order((jobs::created_at.desc(), jobs::id.desc()));
+
+                if let Some(s) = status {
+                    query = query.filter(jobs::status.eq(s));
+                }
+                if let Some(q) = queue_name {
+                    query = query.filter(jobs::queue.eq(q));
+                }
+                if let Some(t) = task_name {
+                    query = query.filter(jobs::task_name.eq(t));
+                }
+                if let Some(m) = metadata_like {
+                    query = query.filter(jobs::metadata.like(format!("%{m}%")));
+                }
+                if let Some(e) = error_like {
+                    query = query.filter(jobs::error.like(format!("%{e}%")));
+                }
+                if let Some(after) = created_after {
+                    query = query.filter(jobs::created_at.ge(after));
+                }
+                if let Some(before) = created_before {
+                    query = query.filter(jobs::created_at.le(before));
+                }
+                if let Some(ns) = namespace {
+                    query = query.filter(jobs::namespace.eq(ns));
+                }
+                if let Some((cursor_created_at, cursor_id)) = after {
+                    let cursor_id = cursor_id.to_string();
+                    query = query.filter(
+                        jobs::created_at.lt(cursor_created_at).or(jobs::created_at
+                            .eq(cursor_created_at)
+                            .and(jobs::id.lt(cursor_id))),
+                    );
+                }
+
+                let rows: Vec<NarrowJobRow> = query
+                    .limit(limit)
                     .select(NarrowJobRow::as_select())
                     .load(&mut conn)?;
 
@@ -1426,6 +1589,73 @@ macro_rules! impl_diesel_job_ops {
                 let rows: Vec<NarrowArchivedJobRow> = query
                     .limit(limit)
                     .offset(offset)
+                    .select(NarrowArchivedJobRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows.into_iter().map(Job::from_narrow_archived).collect())
+            }
+
+            /// Keyset twin of `list_archived_filtered`, ordered by
+            /// `(created_at, id)` descending. Used by the status=None merge, so
+            /// it must page on `created_at` (matching the live side), NOT on
+            /// `completed_at` (which `list_archived_after` uses).
+            #[allow(clippy::too_many_arguments)]
+            fn list_archived_filtered_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                let mut conn = self.conn()?;
+
+                let mut query = archived_jobs::table
+                    .into_boxed()
+                    .order((archived_jobs::created_at.desc(), archived_jobs::id.desc()));
+
+                if let Some(s) = status {
+                    query = query.filter(archived_jobs::status.eq(s));
+                }
+                if let Some(q) = queue_name {
+                    query = query.filter(archived_jobs::queue.eq(q));
+                }
+                if let Some(t) = task_name {
+                    query = query.filter(archived_jobs::task_name.eq(t));
+                }
+                if let Some(m) = metadata_like {
+                    query = query.filter(archived_jobs::metadata.like(format!("%{m}%")));
+                }
+                if let Some(e) = error_like {
+                    query = query.filter(archived_jobs::error.like(format!("%{e}%")));
+                }
+                if let Some(a) = created_after {
+                    query = query.filter(archived_jobs::created_at.ge(a));
+                }
+                if let Some(before) = created_before {
+                    query = query.filter(archived_jobs::created_at.le(before));
+                }
+                if let Some(ns) = namespace {
+                    query = query.filter(archived_jobs::namespace.eq(ns));
+                }
+                if let Some((cursor_created_at, cursor_id)) = after {
+                    let cursor_id = cursor_id.to_string();
+                    query = query.filter(
+                        archived_jobs::created_at.lt(cursor_created_at).or(
+                            archived_jobs::created_at
+                                .eq(cursor_created_at)
+                                .and(archived_jobs::id.lt(cursor_id)),
+                        ),
+                    );
+                }
+
+                let rows: Vec<NarrowArchivedJobRow> = query
+                    .limit(limit)
                     .select(NarrowArchivedJobRow::as_select())
                     .load(&mut conn)?;
 

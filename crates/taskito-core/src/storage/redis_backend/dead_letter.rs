@@ -159,6 +159,30 @@ impl RedisStorage {
         Ok(results)
     }
 
+    /// Keyset-paginated `list_dead`, ordered by `(failed_at, id)` descending.
+    /// `dlq:all` is scored by `failed_at`, so the cursor maps straight onto the
+    /// ZSET keyset.
+    pub fn list_dead_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<DeadJob>> {
+        let mut conn = self.conn()?;
+        let dlq_all = self.key(&["dlq", "all"]);
+        let ids = super::zset_keyset_page(&mut conn, &dlq_all, after, limit)?;
+
+        let mut results = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let dlq_key = self.key(&["dlq", id]);
+            let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
+            if let Some(d) = data {
+                let entry: DeadJobEntry =
+                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let mut dead = DeadJob::from(entry);
+                strip_dead_blob(&mut dead);
+                results.push(dead);
+            }
+        }
+
+        Ok(results)
+    }
+
     pub fn list_dead_by_task(
         &self,
         task_name: &str,

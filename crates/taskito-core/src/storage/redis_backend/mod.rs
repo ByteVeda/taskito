@@ -139,3 +139,50 @@ fn strip_list_blobs(job: &mut crate::job::Job) {
 fn strip_dead_blob(dead: &mut crate::storage::DeadJob) {
     dead.payload = Vec::new();
 }
+
+/// Keyset page of member ids from a ZSET scored so that a higher score is newer
+/// (e.g. `archived:all` by `completed_at`, `dlq:all` by `failed_at`), in
+/// `(score, member)` **descending** order. `after` is the `(score, id)` of the
+/// previous page's last row. Matches the Diesel `(sort_key, id) < cursor`
+/// keyset: Redis orders equal-score members by reverse-lexicographic id under
+/// `ZREVRANGEBYSCORE`, which is exactly `id DESC`.
+fn zset_keyset_page(
+    conn: &mut redis::Connection,
+    zkey: &str,
+    after: Option<(i64, &str)>,
+    limit: i64,
+) -> Result<Vec<String>> {
+    use redis::Commands;
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+    let Some((score, cursor_id)) = after else {
+        // First page: the newest `limit` members overall.
+        return conn
+            .zrevrangebyscore_limit(zkey, "+inf", "-inf", 0, limit as isize)
+            .map_err(map_err);
+    };
+
+    // Tie bucket first (same score, id < cursor_id), newest id first. Bounded by
+    // how many rows share one exact-millisecond score.
+    let same_score: Vec<String> = conn
+        .zrangebyscore(zkey, score as f64, score as f64)
+        .map_err(map_err)?;
+    let mut page: Vec<String> = same_score
+        .into_iter()
+        .filter(|m| m.as_str() < cursor_id)
+        .collect();
+    page.reverse(); // ascending lex → descending id
+    page.truncate(limit as usize);
+
+    // Then rows strictly below the cursor score, newest first.
+    if (page.len() as i64) < limit {
+        let remaining = limit - page.len() as i64;
+        let lower: Vec<String> = conn
+            .zrevrangebyscore_limit(zkey, format!("({score}"), "-inf", 0, remaining as isize)
+            .map_err(map_err)?;
+        page.extend(lower);
+    }
+
+    Ok(page)
+}

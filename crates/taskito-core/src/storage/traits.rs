@@ -85,6 +85,20 @@ pub trait Storage: Send + Sync + Clone {
         offset: i64,
         namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
+    /// Keyset-paginated `list_jobs`, ordered by `(created_at, id)` descending.
+    /// `after` is the `(created_at, id)` of the previous page's last row; the
+    /// caller derives the next cursor from the returned rows' last element.
+    /// O(page) at any depth, and stable under concurrent inserts (unlike the
+    /// offset form). Rows are blob-free like every listing.
+    fn list_jobs_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>>;
     fn get_job(&self, id: &str) -> Result<Option<Job>>;
     fn stats(&self) -> Result<QueueStats>;
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64>;
@@ -103,6 +117,9 @@ pub trait Storage: Send + Sync + Clone {
 
     fn move_to_dlq(&self, job: &Job, error: &str, metadata: Option<&str>) -> Result<()>;
     fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
+    /// Keyset-paginated `list_dead`, ordered by `(failed_at, id)` descending.
+    /// See [`Storage::list_jobs_after`] for the cursor contract.
+    fn list_dead_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<DeadJob>>;
     /// Dead-letter entries for one task, newest first, paginated.
     fn list_dead_by_task(&self, task_name: &str, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
     /// Delete every dead-letter entry for a task. Returns the number removed.
@@ -259,6 +276,9 @@ pub trait Storage: Send + Sync + Clone {
 
     fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64>;
     fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>>;
+    /// Keyset-paginated `list_archived`, ordered by `(completed_at, id)`
+    /// descending. See [`Storage::list_jobs_after`] for the cursor contract.
+    fn list_archived_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<Job>>;
 
     // ── Distributed locking ────────────────────────────────────
 
@@ -312,6 +332,23 @@ pub trait Storage: Send + Sync + Clone {
         created_before: Option<i64>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>>;
+
+    /// Keyset-paginated `list_jobs_filtered`, ordered by `(created_at, id)`
+    /// descending. See [`Storage::list_jobs_after`] for the cursor contract.
+    #[allow(clippy::too_many_arguments)]
+    fn list_jobs_filtered_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        metadata_like: Option<&str>,
+        error_like: Option<&str>,
+        created_after: Option<i64>,
+        created_before: Option<i64>,
+        limit: i64,
+        after: Option<(i64, &str)>,
         namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
 

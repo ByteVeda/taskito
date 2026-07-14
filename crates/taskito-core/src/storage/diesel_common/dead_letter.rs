@@ -101,6 +101,38 @@ macro_rules! impl_diesel_dead_letter_ops {
                 Ok(rows.into_iter().map(DeadJob::from_narrow).collect())
             }
 
+            /// Keyset-paginated `list_dead`, ordered by `(failed_at, id)`
+            /// descending with a `(failed_at, id) < cursor` bound.
+            pub fn list_dead_after(
+                &self,
+                limit: i64,
+                after: Option<(i64, &str)>,
+            ) -> Result<Vec<DeadJob>> {
+                let mut conn = self.conn()?;
+
+                let mut query = dead_letter::table
+                    .into_boxed()
+                    .order((dead_letter::failed_at.desc(), dead_letter::id.desc()));
+
+                if let Some((cursor_failed_at, cursor_id)) = after {
+                    let cursor_id = cursor_id.to_string();
+                    query = query.filter(
+                        dead_letter::failed_at
+                            .lt(cursor_failed_at)
+                            .or(dead_letter::failed_at
+                                .eq(cursor_failed_at)
+                                .and(dead_letter::id.lt(cursor_id))),
+                    );
+                }
+
+                let rows: Vec<NarrowDeadLetterRow> = query
+                    .limit(limit)
+                    .select(NarrowDeadLetterRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows.into_iter().map(DeadJob::from_narrow).collect())
+            }
+
             /// List dead letter entries for a single task, newest first.
             pub fn list_dead_by_task(
                 &self,
