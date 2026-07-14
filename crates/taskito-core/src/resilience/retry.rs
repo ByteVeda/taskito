@@ -103,20 +103,23 @@ mod tests {
         };
 
         // Full Jitter: each delay is in [0, cap(n)] where cap grows as
-        // base * 2^n. We can't assert exact values, but every sample must
-        // stay within its (exponentially growing) cap. Sample repeatedly so
-        // the randomness is actually exercised.
+        // base * 2^n. `next_retry_at` reads its own clock, so bound the returned
+        // deadline between timestamps captured either side of the call (plus the
+        // cap) rather than assuming the clock didn't tick — otherwise a
+        // millisecond rollover flakes the check. Sample repeatedly so the
+        // randomness is actually exercised.
         for _ in 0..1000 {
-            let now = now_millis();
-            let d0 = policy.next_retry_at(0) - now;
-            let d3 = policy.next_retry_at(3) - now;
+            let before = now_millis();
+            let deadline0 = policy.next_retry_at(0);
+            let deadline3 = policy.next_retry_at(3);
+            let after = now_millis();
             assert!(
-                (0..=1_000).contains(&d0),
-                "retry 0 delay {d0} out of [0,1000]"
+                (before..=after + 1_000).contains(&deadline0),
+                "retry 0 deadline {deadline0} outside [{before}, {after}+1000]"
             );
             assert!(
-                (0..=8_000).contains(&d3),
-                "retry 3 delay {d3} out of [0,8000]"
+                (before..=after + 8_000).contains(&deadline3),
+                "retry 3 deadline {deadline3} outside [{before}, {after}+8000]"
             );
         }
     }
@@ -130,11 +133,17 @@ mod tests {
             custom_delays_ms: None,
         };
 
-        // Full Jitter is capped at max_delay (5s) — never overshoots it.
+        // Full Jitter is capped at max_delay (5s) — never overshoots it. Bound
+        // the deadline between before/after timestamps plus the cap so a clock
+        // tick between the caller's read and the internal one can't flake it.
         for _ in 0..1000 {
-            let now = now_millis();
-            let d = policy.next_retry_at(15) - now;
-            assert!((0..=5_000).contains(&d), "capped delay {d} out of [0,5000]");
+            let before = now_millis();
+            let deadline = policy.next_retry_at(15);
+            let after = now_millis();
+            assert!(
+                (before..=after + 5_000).contains(&deadline),
+                "capped deadline {deadline} outside [{before}, {after}+5000]"
+            );
         }
     }
 
@@ -146,15 +155,29 @@ mod tests {
             max_retries: 5,
             custom_delays_ms: Some(vec![2_000, 7_000]),
         };
-        // Custom delays are exact (no jitter) — the caller asked for them.
-        let now = now_millis();
-        assert_eq!(policy.next_retry_at(0) - now, 2_000);
-        assert_eq!(policy.next_retry_at(1) - now, 7_000);
-        // Past the custom list, fall back to jittered exponential backoff.
-        let d2 = policy.next_retry_at(2) - now_millis();
+        // Custom delays are exact (no jitter) — the caller asked for them. The
+        // deadline is `internal_now + delay`, so it must fall in the window
+        // [before + delay, after + delay]; asserting exact equality against a
+        // single `now` flakes when the clock ticks mid-call.
+        let before = now_millis();
+        let deadline0 = policy.next_retry_at(0);
+        let deadline1 = policy.next_retry_at(1);
+        let after = now_millis();
         assert!(
-            (0..=4_000).contains(&d2),
-            "fallback delay {d2} out of [0,4000]"
+            (before + 2_000..=after + 2_000).contains(&deadline0),
+            "custom delay 0 deadline {deadline0} outside [{before}+2000, {after}+2000]"
+        );
+        assert!(
+            (before + 7_000..=after + 7_000).contains(&deadline1),
+            "custom delay 1 deadline {deadline1} outside [{before}+7000, {after}+7000]"
+        );
+        // Past the custom list, fall back to jittered exponential backoff.
+        let before2 = now_millis();
+        let deadline2 = policy.next_retry_at(2);
+        let after2 = now_millis();
+        assert!(
+            (before2..=after2 + 4_000).contains(&deadline2),
+            "fallback deadline {deadline2} outside [{before2}, {after2}+4000]"
         );
     }
 
