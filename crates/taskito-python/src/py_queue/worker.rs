@@ -283,6 +283,9 @@ impl PyQueue {
             cleanup_interval: self.scheduler_cleanup_interval,
             result_ttl_ms: self.result_ttl_ms,
             batch_size: self.scheduler_batch_size,
+            // Bound in-flight work to the pool size so this worker never claims
+            // more than it can run and starve peers sharing the DB.
+            max_in_flight: Some(self.num_workers),
             dlq_auto_retry_delay_ms: self.dlq_auto_retry_delay_ms,
             dlq_auto_retry_max: self.dlq_auto_retry_max,
             ..SchedulerConfig::default()
