@@ -554,6 +554,64 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_results_batches_successes_in_order() {
+        // S10: a drained batch of results yields one outcome per input, in
+        // order. Successes are finalized together (complete_batch); a failure
+        // interleaved among them still takes the per-result DLQ path.
+        let scheduler = test_scheduler();
+        let s0 = enqueue_and_run(&scheduler, "s0");
+        let f0 = enqueue_and_run(&scheduler, "f0");
+        let s1 = enqueue_and_run(&scheduler, "s1");
+
+        let mk_success = |id: &str, task: &str| JobResult::Success {
+            job_id: id.to_string(),
+            result: Some(vec![1]),
+            task_name: task.to_string(),
+            wall_time_ns: 1,
+        };
+        let results = vec![
+            mk_success(&s0.id, "s0"),
+            JobResult::Failure {
+                job_id: f0.id.clone(),
+                error: "boom".to_string(),
+                retry_count: 0,
+                max_retries: 0,
+                task_name: "f0".to_string(),
+                wall_time_ns: 1,
+                should_retry: false,
+                timed_out: false,
+            },
+            mk_success(&s1.id, "s1"),
+        ];
+
+        let outcomes = scheduler.handle_results(results);
+        assert_eq!(outcomes.len(), 3);
+        assert!(matches!(
+            outcomes[0].as_ref().unwrap(),
+            ResultOutcome::Success { .. }
+        ));
+        assert!(matches!(
+            outcomes[1].as_ref().unwrap(),
+            ResultOutcome::DeadLettered { .. }
+        ));
+        assert!(matches!(
+            outcomes[2].as_ref().unwrap(),
+            ResultOutcome::Success { .. }
+        ));
+
+        // Both successes are archived Complete; their claim rows are cleared.
+        for job in [&s0, &s1] {
+            let done = scheduler.storage.get_job(&job.id).unwrap().unwrap();
+            assert_eq!(done.status, JobStatus::Complete);
+        }
+        let claims = scheduler
+            .storage
+            .list_claims_by_worker("scheduler")
+            .unwrap();
+        assert!(!claims.contains(&s0.id) && !claims.contains(&s1.id));
+    }
+
+    #[test]
     fn test_handle_failure_with_retry() {
         let mut scheduler = test_scheduler();
         scheduler.register_task(

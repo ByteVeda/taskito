@@ -1,6 +1,7 @@
 use log::{error, warn};
 
 use crate::error::Result;
+use crate::job::JobCompletion;
 use crate::storage::Storage;
 
 use super::{JobResult, ResultOutcome, Scheduler};
@@ -15,32 +16,14 @@ impl Scheduler {
             JobResult::Success {
                 job_id,
                 result,
-                ref task_name,
+                task_name,
                 wall_time_ns,
-            } => {
-                self.storage.complete(&job_id, result)?;
-
-                // Clear execution claim
-                if let Err(e) = self.storage.complete_execution(&job_id) {
-                    error!("failed to clear execution claim for job {job_id}: {e}");
-                }
-
-                if let Err(e) =
-                    self.storage
-                        .record_metric(task_name, &job_id, wall_time_ns, 0, true)
-                {
-                    error!("failed to record metric for job {job_id}: {e}");
-                }
-
-                if let Err(e) = self.circuit_breaker.record_success(task_name) {
-                    error!("circuit breaker error for {task_name}: {e}");
-                }
-
-                Ok(ResultOutcome::Success {
-                    job_id,
-                    task_name: task_name.clone(),
-                })
-            }
+            } => self.finalize_success(&JobCompletion {
+                job_id,
+                result,
+                task_name,
+                wall_time_ns,
+            }),
             JobResult::Failure {
                 job_id,
                 error,
@@ -166,5 +149,99 @@ impl Scheduler {
                 })
             }
         }
+    }
+
+    /// Handle a batch of results drained from the worker channel in one wake.
+    ///
+    /// Successful completions are persisted together via a single
+    /// [`Storage::complete_batch`] (one transaction / fsync instead of three
+    /// writes × N jobs across N transactions); failures and cancellations keep
+    /// the branchy per-result path. Returns one outcome per input result, in the
+    /// same order, so the caller still dispatches middleware and events exactly
+    /// once per job. On a batch-write error the successes fall back to the
+    /// proven single-job finalize, so one bad row never drops the whole batch.
+    pub fn handle_results(&self, results: Vec<JobResult>) -> Vec<Result<ResultOutcome>> {
+        let mut outcomes: Vec<Option<Result<ResultOutcome>>> =
+            (0..results.len()).map(|_| None).collect();
+        let mut completions: Vec<JobCompletion> = Vec::new();
+        let mut success_idx: Vec<usize> = Vec::new();
+
+        for (i, result) in results.into_iter().enumerate() {
+            match result {
+                JobResult::Success {
+                    job_id,
+                    result,
+                    task_name,
+                    wall_time_ns,
+                } => {
+                    success_idx.push(i);
+                    completions.push(JobCompletion {
+                        job_id,
+                        result,
+                        task_name,
+                        wall_time_ns,
+                    });
+                }
+                // Failures and cancellations branch (retry vs DLQ, queue
+                // lookups); batching them buys little, so keep the per-result path.
+                other => outcomes[i] = Some(self.handle_result(other)),
+            }
+        }
+
+        if !completions.is_empty() {
+            match self.storage.complete_batch(&completions) {
+                Ok(()) => {
+                    for (&idx, c) in success_idx.iter().zip(&completions) {
+                        if let Err(e) = self.circuit_breaker.record_success(&c.task_name) {
+                            error!("circuit breaker error for {}: {e}", c.task_name);
+                        }
+                        outcomes[idx] = Some(Ok(ResultOutcome::Success {
+                            job_id: c.job_id.clone(),
+                            task_name: c.task_name.clone(),
+                        }));
+                    }
+                }
+                Err(e) => {
+                    warn!("batch complete failed; finalizing successes per job: {e}");
+                    for (&idx, c) in success_idx.iter().zip(&completions) {
+                        outcomes[idx] = Some(self.finalize_success(c));
+                    }
+                }
+            }
+        }
+
+        // Every slot was filled — non-success inline, success in the batch step.
+        outcomes
+            .into_iter()
+            .map(|o| o.expect("every result yields an outcome"))
+            .collect()
+    }
+
+    /// Persist one successful completion and return its outcome. Shared by the
+    /// single-result path and by [`Self::handle_results`]' per-job fallback so
+    /// the success-finalize logic lives in exactly one place.
+    fn finalize_success(&self, c: &JobCompletion) -> Result<ResultOutcome> {
+        self.storage.complete(&c.job_id, c.result.clone())?;
+
+        // Clear execution claim
+        if let Err(e) = self.storage.complete_execution(&c.job_id) {
+            error!("failed to clear execution claim for job {}: {e}", c.job_id);
+        }
+
+        if let Err(e) = self
+            .storage
+            .record_metric(&c.task_name, &c.job_id, c.wall_time_ns, 0, true)
+        {
+            error!("failed to record metric for job {}: {e}", c.job_id);
+        }
+
+        if let Err(e) = self.circuit_breaker.record_success(&c.task_name) {
+            error!("circuit breaker error for {}: {e}", c.task_name);
+        }
+
+        Ok(ResultOutcome::Success {
+            job_id: c.job_id.clone(),
+            task_name: c.task_name.clone(),
+        })
     }
 }
