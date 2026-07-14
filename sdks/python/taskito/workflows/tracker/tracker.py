@@ -63,7 +63,13 @@ class WorkflowTracker:
 
     def _install_listeners(self) -> None:
         self._event_bus.on(EventType.JOB_COMPLETED, self._on_success)
-        self._event_bus.on(EventType.JOB_FAILED, self._on_failure)
+        # React only to a node's *terminal* failure. JOB_FAILED fires
+        # synchronously in the worker thread on every exception — before the
+        # scheduler has decided retry-vs-dead — so subscribing to it too would
+        # run the node/saga handler a second time for the one terminal failure
+        # (JOB_FAILED then JOB_DEAD), flapping the run state. A retriable
+        # failure surfaces as JOB_RETRYING and is correctly ignored until the
+        # job is finally dead-lettered.
         self._event_bus.on(EventType.JOB_DEAD, self._on_failure)
         self._event_bus.on(EventType.JOB_CANCELLED, self._on_cancelled)
         # Sub-workflow completion events.

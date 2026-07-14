@@ -7,7 +7,7 @@
 //! Each test function uses a unique queue name to avoid cross-contamination
 //! when all tests share a single storage instance.
 
-use taskito_core::job::{now_millis, JobStatus, NewJob};
+use taskito_core::job::{now_millis, JobCompletion, JobStatus, NewJob};
 use taskito_core::storage::Storage;
 use taskito_core::SqliteStorage;
 
@@ -490,6 +490,72 @@ fn test_reclaim_execution(s: &impl Storage) {
         .reclaim_execution(colon_job, "host:42", "rescuer")
         .unwrap());
     s.complete_execution(colon_job).unwrap();
+}
+
+fn test_claim_execution_batch(s: &impl Storage) {
+    // Batch claim returns one flag per id, in order, and matches single-claim
+    // semantics: an id already claimed (by any owner) comes back `false`.
+    let pre = "batch-claim-pre"; // already held before the batch runs
+    assert!(s.claim_execution(pre, "other").unwrap());
+
+    let ids = ["batch-claim-a", pre, "batch-claim-c"];
+    let won = s.claim_execution_batch(&ids, "batch-worker").unwrap();
+    assert_eq!(won, vec![true, false, true]);
+
+    // The won claims are now real: a follow-up single claim is rejected, and the
+    // one we lost is still owned by the original holder (also rejected).
+    assert!(!s.claim_execution("batch-claim-a", "batch-worker").unwrap());
+    assert!(!s.claim_execution("batch-claim-c", "batch-worker").unwrap());
+    assert!(!s.claim_execution(pre, "batch-worker").unwrap());
+
+    // Empty input is a no-op, not an error.
+    assert!(s
+        .claim_execution_batch(&[], "batch-worker")
+        .unwrap()
+        .is_empty());
+
+    for id in ["batch-claim-a", "batch-claim-c", pre] {
+        s.complete_execution(id).unwrap();
+    }
+}
+
+fn test_complete_batch(s: &impl Storage) {
+    // Batch completion archives every job, clears its claim, and records a
+    // success metric — the same effect as N single `complete` calls, in one txn.
+    let q = "q-complete-batch";
+    let task = "complete_batch_task";
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let job = s.enqueue(make_job(q, task)).unwrap();
+        s.dequeue(q, now_millis(), None).unwrap().unwrap(); // -> Running
+        assert!(s.claim_execution(&job.id, "cb-worker").unwrap());
+        ids.push(job.id);
+    }
+
+    let completions: Vec<JobCompletion> = ids
+        .iter()
+        .map(|id| JobCompletion {
+            job_id: id.clone(),
+            result: Some(vec![7, 7]),
+            task_name: task.to_string(),
+            wall_time_ns: 42,
+        })
+        .collect();
+    s.complete_batch(&completions).unwrap();
+
+    let claims = s.list_claims_by_worker("cb-worker").unwrap();
+    for id in &ids {
+        let job = s.get_job(id).unwrap().unwrap();
+        assert_eq!(job.status, JobStatus::Complete);
+        assert_eq!(job.result, Some(vec![7, 7]));
+        assert!(!claims.contains(id), "claim row must be cleared");
+    }
+
+    let metrics = s.get_metrics(Some(task), 0).unwrap();
+    assert_eq!(metrics.len(), 3, "one success metric per completed job");
+
+    // Empty input is a no-op, not an error.
+    s.complete_batch(&[]).unwrap();
 }
 
 fn test_requeue_stuck(s: &impl Storage) {
@@ -1105,6 +1171,40 @@ fn test_topic_backlog_stats(s: &impl Storage) {
     assert!(claimed.task_name == "tbs_send" || claimed.task_name == "tbs_track");
 }
 
+fn test_enqueue_unique_batch(s: &impl Storage) {
+    let q = "q-eub";
+    let keyed = |uk: &str| {
+        let mut j = make_job(q, "eub_task");
+        j.unique_key = Some(uk.to_string());
+        j
+    };
+
+    // First fan-out: three distinct keys → three fresh jobs, one transaction.
+    let first = s
+        .enqueue_unique_batch(vec![keyed("uk-a"), keyed("uk-b"), keyed("uk-c")])
+        .unwrap();
+    assert_eq!(first.len(), 3);
+    assert_eq!(s.stats_by_queue(q).unwrap().pending, 3);
+
+    // Replay the same keys: each active job is returned in place (dedup), and
+    // no duplicate rows are created.
+    let replay = s
+        .enqueue_unique_batch(vec![keyed("uk-a"), keyed("uk-b"), keyed("uk-c")])
+        .unwrap();
+    assert_eq!(replay.len(), 3);
+    for (a, b) in first.iter().zip(&replay) {
+        assert_eq!(
+            a.id, b.id,
+            "replay must return the existing job, not a new one"
+        );
+    }
+    assert_eq!(
+        s.stats_by_queue(q).unwrap().pending,
+        3,
+        "replay must not create duplicate deliveries"
+    );
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
@@ -1119,6 +1219,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_unique_key_dedup(s);
     test_enqueue_unique_validates_deps(s);
     test_enqueue_batch(s);
+    test_enqueue_unique_batch(s);
     test_dead_letter_queue(s);
     test_dead_letter_by_task(s);
     test_delete_dead(s);
@@ -1134,6 +1235,8 @@ fn run_storage_tests(s: &impl Storage) {
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);
     test_reclaim_execution(s);
+    test_claim_execution_batch(s);
+    test_complete_batch(s);
     test_requeue_stuck(s);
     test_reap_orphaned_jobs(s);
     test_dashboard_settings(s);

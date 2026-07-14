@@ -14,6 +14,7 @@ pub trait Storage: Send + Sync + Clone {
     fn enqueue(&self, new_job: NewJob) -> Result<Job>;
     fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>>;
     fn enqueue_unique(&self, new_job: NewJob) -> Result<Job>;
+    fn enqueue_unique_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>>;
     fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>>;
     fn dequeue_from(
         &self,
@@ -41,6 +42,13 @@ pub trait Storage: Send + Sync + Clone {
         max: usize,
     ) -> Result<Vec<Job>>;
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()>;
+
+    /// Persist many successful completions at once. Each entry archives the
+    /// completed job, clears its execution claim, and records its metric — the
+    /// Diesel backends do so in one transaction. See [`JobCompletion`].
+    ///
+    /// [`JobCompletion`]: crate::job::JobCompletion
+    fn complete_batch(&self, completions: &[crate::job::JobCompletion]) -> Result<()>;
     fn fail(&self, id: &str, error: &str) -> Result<()>;
     fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()>;
     /// Re-schedule a job back to `Pending` **without** consuming its retry
@@ -258,6 +266,11 @@ pub trait Storage: Send + Sync + Clone {
     // ── Execution claims (exactly-once) ────────────────────────
 
     fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool>;
+    /// Batch variant of [`Storage::claim_execution`]: attempt to claim every
+    /// `job_id` for `worker_id` in as few round trips as the backend allows.
+    /// Returns one flag per input id, in order — `true` if this worker won the
+    /// claim, `false` if a claim already existed.
+    fn claim_execution_batch(&self, job_ids: &[&str], worker_id: &str) -> Result<Vec<bool>>;
     fn complete_execution(&self, job_id: &str) -> Result<()>;
     fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64>;
     /// Atomically transfer an existing claim from `expected_owner` to

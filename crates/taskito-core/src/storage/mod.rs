@@ -1,4 +1,9 @@
 mod diesel_common;
+pub mod migrate;
+/// Code-first schema migrations. The files live at the crate root
+/// (`crates/taskito-core/migrations/`) but compile as part of this crate.
+#[path = "../../migrations/mod.rs"]
+pub mod migrations;
 pub mod models;
 #[cfg(feature = "push-dispatch")]
 pub mod notify;
@@ -194,6 +199,12 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<$crate::job::Job> {
                 self.enqueue_unique(new_job)
             }
+            fn enqueue_unique_batch(
+                &self,
+                new_jobs: Vec<$crate::job::NewJob>,
+            ) -> $crate::error::Result<Vec<$crate::job::Job>> {
+                self.enqueue_unique_batch(new_jobs)
+            }
             fn dequeue(
                 &self,
                 queue_name: &str,
@@ -234,6 +245,12 @@ macro_rules! impl_storage {
                 result_bytes: Option<Vec<u8>>,
             ) -> $crate::error::Result<()> {
                 self.complete(id, result_bytes)
+            }
+            fn complete_batch(
+                &self,
+                completions: &[$crate::job::JobCompletion],
+            ) -> $crate::error::Result<()> {
+                self.complete_batch(completions)
             }
             fn fail(&self, id: &str, error: &str) -> $crate::error::Result<()> {
                 self.fail(id, error)
@@ -679,6 +696,13 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<bool> {
                 self.claim_execution(job_id, worker_id)
             }
+            fn claim_execution_batch(
+                &self,
+                job_ids: &[&str],
+                worker_id: &str,
+            ) -> $crate::error::Result<Vec<bool>> {
+                self.claim_execution_batch(job_ids, worker_id)
+            }
             fn complete_execution(&self, job_id: &str) -> $crate::error::Result<()> {
                 self.complete_execution(job_id)
             }
@@ -829,6 +853,17 @@ impl Storage for StorageBackend {
         self.notify_if_ready(job.scheduled_at);
         Ok(job)
     }
+    fn enqueue_unique_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
+        let jobs = delegate!(self, enqueue_unique_batch, new_jobs)?;
+        #[cfg(feature = "push-dispatch")]
+        if jobs
+            .iter()
+            .any(|j| j.scheduled_at <= crate::job::now_millis())
+        {
+            self.notify_if_ready(0);
+        }
+        Ok(jobs)
+    }
     fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>> {
         delegate!(self, dequeue, queue_name, now, namespace)
     }
@@ -860,6 +895,9 @@ impl Storage for StorageBackend {
     }
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
         delegate!(self, complete, id, result_bytes)
+    }
+    fn complete_batch(&self, completions: &[crate::job::JobCompletion]) -> Result<()> {
+        delegate!(self, complete_batch, completions)
     }
     fn fail(&self, id: &str, error: &str) -> Result<()> {
         delegate!(self, fail, id, error)
@@ -1221,6 +1259,9 @@ impl Storage for StorageBackend {
     }
     fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool> {
         delegate!(self, claim_execution, job_id, worker_id)
+    }
+    fn claim_execution_batch(&self, job_ids: &[&str], worker_id: &str) -> Result<Vec<bool>> {
+        delegate!(self, claim_execution_batch, job_ids, worker_id)
     }
     fn complete_execution(&self, job_id: &str) -> Result<()> {
         delegate!(self, complete_execution, job_id)

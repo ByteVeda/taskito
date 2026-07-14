@@ -51,6 +51,35 @@ def test_linear_three_step_workflow(queue: Queue, workflow_worker: WorkflowWorke
     assert set(final.nodes.keys()) == {"a", "b", "c"}
 
 
+def test_workflow_step_honors_task_max_retries_zero(
+    queue: Queue, workflow_worker: WorkflowWorkerFactory
+) -> None:
+    """Regression: a step referencing a ``max_retries=0`` task runs exactly once.
+
+    Previously steps ignored the task's ``max_retries`` and defaulted to 3, so a
+    failing step was queue-retried — racing the workflow's own failure handling
+    into a double execution of the same job.
+    """
+    calls = {"n": 0}
+
+    @queue.task(max_retries=0)
+    def always_fails() -> None:
+        calls["n"] += 1
+        raise RuntimeError("boom")
+
+    wf = Workflow(name="no_retry_step")
+    wf.step("x", always_fails)
+
+    with workflow_worker():
+        run = queue.submit_workflow(wf)
+        # Generous timeout: this asserts a *count*, so it must not itself flake
+        # on a slow/loaded runner before the single step has finished.
+        final = run.wait(timeout=30)
+
+    assert final.state == WorkflowState.FAILED
+    assert calls["n"] == 1, f"max_retries=0 step must run once, ran {calls['n']}x"
+
+
 def test_workflow_with_args_and_kwargs(
     queue: Queue, workflow_worker: WorkflowWorkerFactory
 ) -> None:

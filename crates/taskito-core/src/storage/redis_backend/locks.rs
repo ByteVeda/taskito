@@ -213,6 +213,51 @@ impl RedisStorage {
         Ok(acquired)
     }
 
+    /// Batch variant of `claim_execution`. Issues all NX sets in one pipeline,
+    /// then mirrors only the won claims into the by-time index in a second
+    /// pipeline — two round trips regardless of batch size. Returns one flag per
+    /// input id, in order: `true` if this worker won the claim.
+    pub fn claim_execution_batch(&self, job_ids: &[&str], worker_id: &str) -> Result<Vec<bool>> {
+        if job_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let now = now_millis();
+        let index_key = self.key(&["exec_claims", "by_time"]);
+
+        // One pipeline of NX sets; each reply is the "OK" status on a win or Nil
+        // when a claim already existed. Decoding as Option maps that to Some/None.
+        let mut set_pipe = redis::pipe();
+        for job_id in job_ids {
+            let ckey = self.key(&["exec_claim", job_id]);
+            set_pipe
+                .cmd("SET")
+                .arg(ckey)
+                .arg(format!("{worker_id}:{now}"))
+                .arg("NX")
+                .arg("PX")
+                .arg(86_400_000i64); // 24 hours in milliseconds
+        }
+        let outcomes: Vec<Option<String>> = set_pipe.query(&mut conn).map_err(map_err)?;
+        let claimed: Vec<bool> = outcomes.iter().map(Option::is_some).collect();
+
+        // Mirror the won claims into the time-indexed set so the maintenance
+        // loop can range-purge stale claims, exactly as `claim_execution` does.
+        let mut index_pipe = redis::pipe();
+        let mut any_won = false;
+        for (job_id, won) in job_ids.iter().zip(&claimed) {
+            if *won {
+                any_won = true;
+                index_pipe.zadd(&index_key, *job_id, now as f64);
+            }
+        }
+        if any_won {
+            index_pipe.query::<()>(&mut conn).map_err(map_err)?;
+        }
+
+        Ok(claimed)
+    }
+
     pub fn complete_execution(&self, job_id: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let ckey = self.key(&["exec_claim", job_id]);

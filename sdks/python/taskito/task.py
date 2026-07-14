@@ -50,6 +50,12 @@ class TaskWrapper:
         return self._task_name
 
     @property
+    def default_max_retries(self) -> int:
+        """The task's configured ``max_retries`` (used when a workflow step
+        that references this task doesn't override it)."""
+        return self._default_max_retries
+
+    @property
     def inject(self) -> list[str]:
         """Resource names this task requests via dependency injection."""
         return self._inject

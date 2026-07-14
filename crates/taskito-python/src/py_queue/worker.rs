@@ -283,6 +283,9 @@ impl PyQueue {
             cleanup_interval: self.scheduler_cleanup_interval,
             result_ttl_ms: self.result_ttl_ms,
             batch_size: self.scheduler_batch_size,
+            // Bound in-flight work to the pool size so this worker never claims
+            // more than it can run and starve peers sharing the DB.
+            max_in_flight: Some(self.num_workers),
             dlq_auto_retry_delay_ms: self.dlq_auto_retry_delay_ms,
             dlq_auto_retry_max: self.dlq_auto_retry_max,
             ..SchedulerConfig::default()
@@ -670,12 +673,19 @@ impl PyQueue {
 
                         match drain_action {
                             PollAction::Result(result) => {
-                                let outcome =
-                                    py.detach(|| scheduler_for_results.handle_result(result));
-                                match outcome {
-                                    Ok(ref o) => dispatch_outcome(py, o),
-                                    Err(e) => {
-                                        log::error!("[taskito] result handling error: {e}")
+                                let outcomes = py.detach(|| {
+                                    let mut batch = vec![result];
+                                    while let Ok(more) = result_rx.try_recv() {
+                                        batch.push(more);
+                                    }
+                                    scheduler_for_results.handle_results(batch)
+                                });
+                                for outcome in &outcomes {
+                                    match outcome {
+                                        Ok(o) => dispatch_outcome(py, o),
+                                        Err(e) => {
+                                            log::error!("[taskito] result handling error: {e}")
+                                        }
                                     }
                                 }
                             }
@@ -687,10 +697,21 @@ impl PyQueue {
                     break;
                 }
                 PollAction::Result(result) => {
-                    let outcome = py.detach(|| scheduler_for_results.handle_result(result));
-                    match outcome {
-                        Ok(ref o) => dispatch_outcome(py, o),
-                        Err(e) => log::error!("[taskito] result handling error: {e}"),
+                    // Drain every result already queued and finalize them in one
+                    // batched transaction instead of one-per-wake. The channel is
+                    // bounded, so the drain is naturally capped.
+                    let outcomes = py.detach(|| {
+                        let mut batch = vec![result];
+                        while let Ok(more) = result_rx.try_recv() {
+                            batch.push(more);
+                        }
+                        scheduler_for_results.handle_results(batch)
+                    });
+                    for outcome in &outcomes {
+                        match outcome {
+                            Ok(o) => dispatch_outcome(py, o),
+                            Err(e) => log::error!("[taskito] result handling error: {e}"),
+                        }
                     }
                 }
                 PollAction::Continue => continue,

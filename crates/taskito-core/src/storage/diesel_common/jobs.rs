@@ -406,6 +406,120 @@ macro_rules! impl_diesel_job_ops {
                 ))
             }
 
+            /// Batch variant of [`enqueue_unique`]: dedupe-insert many jobs in a
+            /// single transaction instead of one transaction per job. Used by
+            /// pub/sub keyed fan-out, where a publish creates one uniquely-keyed
+            /// job per subscriber — previously N separate write transactions
+            /// (N database-wide write locks on SQLite). Within one call the
+            /// salted keys are all distinct, so a `UniqueViolation` can only come
+            /// from a concurrent publish; on one, the whole batch retries
+            /// (bounded) and any concurrent winner is returned in place.
+            pub fn enqueue_unique_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
+                const MAX_ENQUEUE_ATTEMPTS: usize = 3;
+
+                // Precompute owned jobs, dependency lists, and pub/sub attribution
+                // once so the per-attempt closure only borrows.
+                type Prepared = (Job, Vec<String>, Option<String>, Option<String>);
+                let prepared: Vec<Prepared> = new_jobs
+                    .into_iter()
+                    .map(|nj| {
+                        let depends_on = nj.depends_on.clone();
+                        let job = nj.into_job();
+                        let (topic, subscription_name) =
+                            $crate::pubsub::extract_topic_subscription(job.notes.as_deref())
+                                .map_or((None, None), |(t, s)| (Some(t), Some(s)));
+                        (job, depends_on, topic, subscription_name)
+                    })
+                    .collect();
+
+                for _ in 0..MAX_ENQUEUE_ATTEMPTS {
+                    let result = self.write_transaction(|conn| {
+                        let mut out = Vec::with_capacity(prepared.len());
+                        for (job, depends_on, topic, subscription_name) in &prepared {
+                            // Return any existing active job with the same key.
+                            if let Some(ref uk) = job.unique_key {
+                                let existing: Option<JobRow> = jobs::table
+                                    .filter(jobs::unique_key.eq(uk))
+                                    .filter(jobs::status.eq_any([
+                                        JobStatus::Pending as i32,
+                                        JobStatus::Running as i32,
+                                    ]))
+                                    .select(JobRow::as_select())
+                                    .first(conn)
+                                    .optional()?;
+                                if let Some(row) = existing {
+                                    out.push(Job::from(row));
+                                    continue;
+                                }
+                            }
+
+                            for dep_id in depends_on {
+                                Self::validate_dependency(conn, dep_id)?;
+                            }
+
+                            let row = NewJobRow {
+                                id: &job.id,
+                                queue: &job.queue,
+                                task_name: &job.task_name,
+                                payload: &job.payload,
+                                status: job.status as i32,
+                                priority: job.priority,
+                                created_at: job.created_at,
+                                scheduled_at: job.scheduled_at,
+                                retry_count: job.retry_count,
+                                max_retries: job.max_retries,
+                                timeout_ms: job.timeout_ms,
+                                unique_key: job.unique_key.as_deref(),
+                                metadata: job.metadata.as_deref(),
+                                notes: job.notes.as_deref(),
+                                cancel_requested: 0,
+                                expires_at: job.expires_at,
+                                result_ttl_ms: job.result_ttl_ms,
+                                namespace: job.namespace.as_deref(),
+                                has_deps: job.has_deps,
+                                topic: topic.as_deref(),
+                                subscription_name: subscription_name.as_deref(),
+                            };
+                            diesel::insert_into(jobs::table)
+                                .values(&row)
+                                .execute(conn)?;
+
+                            for dep_id in depends_on {
+                                let dep_row = NewJobDependencyRow {
+                                    id: &uuid::Uuid::now_v7().to_string(),
+                                    job_id: &job.id,
+                                    depends_on_job_id: dep_id,
+                                };
+                                diesel::insert_into(job_dependencies::table)
+                                    .values(&dep_row)
+                                    .execute(conn)?;
+                            }
+
+                            out.push(job.clone());
+                        }
+                        Ok(out)
+                    });
+
+                    match result {
+                        Ok(v) => return Ok(v),
+                        Err(QueueError::Storage(diesel::result::Error::DatabaseError(
+                            diesel::result::DatabaseErrorKind::UniqueViolation,
+                            _,
+                        ))) => continue,
+                        Err(QueueError::Storage(diesel::result::Error::RollbackTransaction)) => {
+                            return Err(QueueError::DependencyNotFound(
+                                "dependency not found or already dead/cancelled".to_string(),
+                            ));
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+
+                Err(QueueError::Other(
+                    "enqueue_unique_batch: unique key contended across retries".to_string(),
+                ))
+            }
+
             /// Atomically dequeue the highest-priority ready job from the given queue.
             /// Skips expired jobs. When `namespace` is `Some`, only jobs in that
             /// namespace are considered; when `None`, only jobs with no namespace.
@@ -625,6 +739,59 @@ macro_rules! impl_diesel_job_ops {
                     row.completed_at = Some(now);
                     row.result = result_bytes;
                     Self::archive_job_row(conn, &row)?;
+                    Ok(())
+                })
+            }
+
+            /// Persist many successful completions in one transaction. Per job
+            /// this does exactly what the success path did one-at-a-time —
+            /// archive the completed row, clear its execution claim, record its
+            /// metric — but coalesces what were three writes × N jobs across N
+            /// transactions into a single commit (one fsync). If any job is not
+            /// `Running` the whole batch rolls back with `JobNotFound`, so the
+            /// caller can fall back to per-job handling.
+            pub fn complete_batch(&self, completions: &[$crate::job::JobCompletion]) -> Result<()> {
+                if completions.is_empty() {
+                    return Ok(());
+                }
+                let now = now_millis();
+
+                self.write_transaction(|conn| {
+                    for c in completions {
+                        let mut row: JobRow = match jobs::table
+                            .find(&c.job_id)
+                            .filter(jobs::status.eq(JobStatus::Running as i32))
+                            .select(JobRow::as_select())
+                            .first(conn)
+                            .optional()?
+                        {
+                            Some(row) => row,
+                            None => return Err(QueueError::JobNotFound(c.job_id.clone())),
+                        };
+
+                        row.status = JobStatus::Complete as i32;
+                        row.completed_at = Some(now);
+                        row.result = c.result.clone();
+                        Self::archive_job_row(conn, &row)?;
+
+                        diesel::delete(
+                            execution_claims::table.filter(execution_claims::job_id.eq(&c.job_id)),
+                        )
+                        .execute(conn)?;
+
+                        let metric_id = uuid::Uuid::now_v7().to_string();
+                        diesel::insert_into(task_metrics::table)
+                            .values(&NewTaskMetricRow {
+                                id: &metric_id,
+                                task_name: &c.task_name,
+                                job_id: &c.job_id,
+                                wall_time_ns: c.wall_time_ns,
+                                memory_bytes: 0,
+                                succeeded: true,
+                                recorded_at: now,
+                            })
+                            .execute(conn)?;
+                    }
                     Ok(())
                 })
             }

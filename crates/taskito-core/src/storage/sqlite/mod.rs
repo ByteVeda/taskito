@@ -17,21 +17,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool};
 use diesel::sqlite::SqliteConnection;
 
-use crate::error::{QueueError, Result};
-use crate::storage::diesel_common::migrations as common_migrations;
-
-/// Run an ALTER TABLE migration. SQLite has no `ADD COLUMN IF NOT EXISTS`, so a
-/// "duplicate column" error means the column already exists and is ignored;
-/// every other failure (locked DB, disk full, bad type) is propagated — a
-/// silently-skipped ALTER would leave the schema missing a column and surface
-/// later as a confusing query error far from the cause.
-fn migration_alter(conn: &mut SqliteConnection, sql: &str) -> Result<()> {
-    match diesel::sql_query(sql).execute(conn) {
-        Ok(_) => Ok(()),
-        Err(e) if e.to_string().contains("duplicate column") => Ok(()),
-        Err(e) => Err(QueueError::Storage(e)),
-    }
-}
+use crate::error::Result;
 
 type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -133,28 +119,11 @@ impl SqliteStorage {
 
     fn run_migrations(&self) -> Result<()> {
         let mut conn = self.conn()?;
-
-        for sql in common_migrations::create_tables(&common_migrations::SQLITE) {
-            diesel::sql_query(&sql).execute(&mut conn)?;
-        }
-        // Alters run before indexes: some indexed columns (e.g. `namespace`) are
-        // added here, so the index DDL must see the fully-widened tables.
-        for sql in common_migrations::alter_statements(&common_migrations::SQLITE) {
-            migration_alter(&mut conn, &sql)?;
-        }
-        for sql in common_migrations::create_indexes() {
-            diesel::sql_query(*sql).execute(&mut conn)?;
-        }
-        // Data backfills must fail loudly — a swallowed failure would leave
-        // has_deps wrong and let dequeue bypass dependency enforcement.
-        for sql in common_migrations::backfill_statements() {
-            diesel::sql_query(*sql).execute(&mut conn)?;
-        }
-        // Drop legacy tables (e.g. the old `job_payloads` side table). `IF EXISTS`
-        // keeps it idempotent, so run it directly rather than via `migration_alter`.
-        for sql in common_migrations::drop_legacy_tables() {
-            diesel::sql_query(*sql).execute(&mut conn)?;
-        }
+        crate::storage::migrate::run_sqlite(
+            &mut conn,
+            "schema_migrations",
+            &crate::storage::migrations::all(),
+        )?;
         drop(conn);
 
         // Drain any pre-existing terminal jobs left in `jobs` by older

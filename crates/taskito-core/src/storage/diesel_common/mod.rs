@@ -9,7 +9,6 @@ mod jobs;
 mod locks;
 mod logs;
 mod metrics;
-pub(crate) mod migrations;
 mod pubsub;
 mod workers;
 

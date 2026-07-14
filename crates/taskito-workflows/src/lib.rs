@@ -2,6 +2,10 @@ pub(crate) mod common;
 mod definition;
 pub(crate) mod diesel_common;
 mod error;
+/// Code-first workflow schema migrations. Files live at the crate root
+/// (`crates/taskito-workflows/migrations/`) but compile as part of this crate.
+#[path = "../migrations/mod.rs"]
+mod migrations;
 mod node;
 #[cfg(feature = "postgres")]
 pub mod postgres_store;

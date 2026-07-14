@@ -119,9 +119,10 @@ impl PyQueue {
     /// Backlog/lag snapshot per subscription:
     /// `(topic, subscription, task_name, queue, active, durable, pending,
     /// running, dead, oldest_pending_age_ms)`.
-    pub fn topic_backlog_stats(&self) -> PyResult<Vec<SubscriptionBacklogTuple>> {
-        self.storage
-            .topic_backlog_stats()
+    pub fn topic_backlog_stats(&self, py: Python<'_>) -> PyResult<Vec<SubscriptionBacklogTuple>> {
+        let storage = &self.storage;
+        // Release the GIL: aggregation groups over every pub/sub delivery.
+        py.detach(|| storage.topic_backlog_stats())
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
             .into_iter()
             .map(|s| {
@@ -143,17 +144,19 @@ impl PyQueue {
 
     /// Drop ephemeral subscriptions whose owning worker is gone. Runs on the
     /// heartbeat cadence, after `reap_dead_workers` has pruned the registry.
-    pub fn reap_ephemeral_subscriptions(&self) -> PyResult<u64> {
-        let live: Vec<String> = self
-            .storage
-            .list_workers()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
-            .into_iter()
-            .map(|w| w.worker_id)
-            .collect();
-        self.storage
-            .reap_ephemeral_subscriptions(&live)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    pub fn reap_ephemeral_subscriptions(&self, py: Python<'_>) -> PyResult<u64> {
+        let storage = &self.storage;
+        // Release the GIL: the reap scans every worker + subscription, which
+        // must not freeze other Python threads while it runs.
+        py.detach(|| {
+            let live: Vec<String> = storage
+                .list_workers()?
+                .into_iter()
+                .map(|w| w.worker_id)
+                .collect();
+            storage.reap_ephemeral_subscriptions(&live)
+        })
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Publish a payload to a topic: one job per active subscription.
@@ -162,6 +165,7 @@ impl PyQueue {
     #[allow(clippy::too_many_arguments)]
     pub fn publish(
         &self,
+        py: Python<'_>,
         topic: &str,
         payload: Vec<u8>,
         idempotency_key: Option<String>,
@@ -235,7 +239,11 @@ impl PyQueue {
                 timeout_ms: self.default_timeout.saturating_mul(1000),
             },
         };
-        let jobs = publish_to_topic(&self.storage, &request)
+        let storage = &self.storage;
+        // Release the GIL: fan-out can create one job per subscription, which
+        // must not block every other Python thread for the duration.
+        let jobs = py
+            .detach(|| publish_to_topic(storage, &request))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         Ok(jobs.into_iter().map(PyJob::from).collect())
     }

@@ -72,6 +72,19 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Persist many successful completions. Redis has no cross-key transaction
+    /// to coalesce (each job's archive spans several keys), so this loops the
+    /// single-job path — the batching win is in the Diesel backends. If any job
+    /// is not `Running`, its `complete` errors and the caller falls back.
+    pub fn complete_batch(&self, completions: &[crate::job::JobCompletion]) -> Result<()> {
+        for c in completions {
+            self.complete(&c.job_id, c.result.clone())?;
+            self.complete_execution(&c.job_id)?;
+            self.record_metric(&c.task_name, &c.job_id, c.wall_time_ns, 0, true)?;
+        }
+        Ok(())
+    }
+
     pub fn fail(&self, id: &str, error: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;

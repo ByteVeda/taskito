@@ -136,6 +136,18 @@ impl RedisStorage {
         Ok(jobs)
     }
 
+    /// Batch variant of [`enqueue_unique`]. Redis has no database-wide write
+    /// lock (each op is atomic and cheap), so looping the single-delivery path
+    /// is correct and avoids a bespoke multi-delivery Lua script — the batch
+    /// API's real win is on the Diesel backends. Salted keys are distinct
+    /// within one publish, so deliveries never dedupe against each other.
+    pub fn enqueue_unique_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
+        new_jobs
+            .into_iter()
+            .map(|job| self.enqueue_unique(job))
+            .collect()
+    }
+
     pub fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
         let mut conn = self.conn()?;
 
