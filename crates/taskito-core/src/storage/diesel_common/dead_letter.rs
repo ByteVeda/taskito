@@ -90,14 +90,15 @@ macro_rules! impl_diesel_dead_letter_ops {
             pub fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
                 let mut conn = self.conn()?;
 
-                let rows: Vec<DeadLetterRow> = dead_letter::table
+                // Narrow projection: DLQ listings never render the arg blob.
+                let rows: Vec<NarrowDeadLetterRow> = dead_letter::table
                     .order(dead_letter::failed_at.desc())
                     .limit(limit)
                     .offset(offset)
-                    .select(DeadLetterRow::as_select())
+                    .select(NarrowDeadLetterRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(DeadJob::from).collect())
+                Ok(rows.into_iter().map(DeadJob::from_narrow).collect())
             }
 
             /// List dead letter entries for a single task, newest first.
@@ -117,15 +118,15 @@ macro_rules! impl_diesel_dead_letter_ops {
 
                 let mut conn = self.conn()?;
 
-                let rows: Vec<DeadLetterRow> = dead_letter::table
+                let rows: Vec<NarrowDeadLetterRow> = dead_letter::table
                     .filter(dead_letter::task_name.eq(task_name))
                     .order(dead_letter::failed_at.desc())
                     .limit(limit)
                     .offset(offset)
-                    .select(DeadLetterRow::as_select())
+                    .select(NarrowDeadLetterRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(DeadJob::from).collect())
+                Ok(rows.into_iter().map(DeadJob::from_narrow).collect())
             }
 
             /// Delete every dead letter entry for a task. Returns the count removed.
@@ -321,13 +322,16 @@ macro_rules! impl_diesel_dead_letter_ops {
                     None => query = query.filter(dead_letter::namespace.is_null()),
                 }
 
-                let rows: Vec<DeadLetterRow> = query
+                // Narrow projection: the auto-retry loop reads only `id`/
+                // `dlq_retry_count`; `retry_dead(id)` re-reads the full row to
+                // rebuild the payload, so listing never needs the arg blob.
+                let rows: Vec<NarrowDeadLetterRow> = query
                     .order(dead_letter::failed_at.asc())
                     .limit(limit)
-                    .select(DeadLetterRow::as_select())
+                    .select(NarrowDeadLetterRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(DeadJob::from).collect())
+                Ok(rows.into_iter().map(DeadJob::from_narrow).collect())
             }
         }
     };

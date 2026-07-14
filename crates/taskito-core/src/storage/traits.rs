@@ -71,6 +71,11 @@ pub trait Storage: Send + Sync + Clone {
     fn get_dependencies(&self, job_id: &str) -> Result<Vec<String>>;
     fn get_dependents(&self, job_id: &str) -> Result<Vec<String>>;
     fn update_progress(&self, id: &str, progress: i32) -> Result<()>;
+    /// List jobs by filter. Rows are **blob-free** on every backend: the
+    /// `payload`/`result` blobs come back empty (Diesel selects a narrow
+    /// projection; Redis strips them post-load). Fetch the full job — blobs
+    /// included — with [`Storage::get_job`]. The same contract holds for every
+    /// listing method (`list_jobs_filtered`, `list_archived`, `list_dead*`).
     fn list_jobs(
         &self,
         status: Option<i32>,

@@ -1,7 +1,7 @@
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 
-use super::{map_err, RedisStorage};
+use super::{map_err, strip_dead_blob, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::{now_millis, Job, JobStatus, NewJob};
 use crate::storage::DeadJob;
@@ -150,7 +150,9 @@ impl RedisStorage {
             if let Some(d) = data {
                 let entry: DeadJobEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                results.push(DeadJob::from(entry));
+                let mut dead = DeadJob::from(entry);
+                strip_dead_blob(&mut dead);
+                results.push(dead);
             }
         }
 
@@ -186,7 +188,9 @@ impl RedisStorage {
                 let entry: DeadJobEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
                 if entry.task_name == task_name {
-                    matches.push(DeadJob::from(entry));
+                    let mut dead = DeadJob::from(entry);
+                    strip_dead_blob(&mut dead);
+                    matches.push(dead);
                     // Stop once we have enough matches to satisfy this page.
                     // saturating: offset/limit are public i64 inputs.
                     if matches.len() >= offset.saturating_add(limit) {
@@ -436,7 +440,9 @@ impl RedisStorage {
                         && entry.namespace.as_deref() == namespace
                         && queues.iter().any(|q| q == &entry.queue)
                     {
-                        results.push(DeadJob::from(entry));
+                        let mut dead = DeadJob::from(entry);
+                        strip_dead_blob(&mut dead);
+                        results.push(dead);
                     }
                 }
             }

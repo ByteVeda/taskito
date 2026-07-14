@@ -121,6 +121,30 @@ pub struct DeadLetterRow {
     pub dlq_retry_count: i32,
 }
 
+/// A `dead_letter` row without the `payload` blob. Listing paths select this so
+/// paging the DLQ never drags each entry's arg blob off overflow pages/TOAST;
+/// the blob is loaded (via the full [`DeadLetterRow`]) only when a single entry
+/// is requeued by id.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = dead_letter)]
+pub struct NarrowDeadLetterRow {
+    pub id: String,
+    pub original_job_id: String,
+    pub queue: String,
+    pub task_name: String,
+    pub error: Option<String>,
+    pub retry_count: i32,
+    pub failed_at: i64,
+    pub metadata: Option<String>,
+    pub notes: Option<String>,
+    pub priority: i32,
+    pub max_retries: i32,
+    pub timeout_ms: i64,
+    pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
+    pub dlq_retry_count: i32,
+}
+
 /// Insertable struct for dead letter entries.
 #[derive(Insertable, Debug)]
 #[diesel(table_name = dead_letter)]
@@ -507,6 +531,36 @@ pub struct ArchivedJobRow {
     pub retry_count: i32,
     pub max_retries: i32,
     pub result: Option<Vec<u8>>,
+    pub error: Option<String>,
+    pub timeout_ms: i64,
+    pub unique_key: Option<String>,
+    pub progress: Option<i32>,
+    pub metadata: Option<String>,
+    pub notes: Option<String>,
+    pub cancel_requested: i32,
+    pub expires_at: Option<i64>,
+    pub result_ttl_ms: Option<i64>,
+    pub namespace: Option<String>,
+}
+
+/// An `archived_jobs` row without the `payload`/`result` blobs. Terminal-status
+/// listings select this so paging the archive never reads the arg/result blobs;
+/// they are loaded (via the full [`ArchivedJobRow`]) only by a `get_job` detail
+/// lookup. Mirrors [`NarrowJobRow`] for the archive table.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = archived_jobs)]
+pub struct NarrowArchivedJobRow {
+    pub id: String,
+    pub queue: String,
+    pub task_name: String,
+    pub status: i32,
+    pub priority: i32,
+    pub created_at: i64,
+    pub scheduled_at: i64,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub retry_count: i32,
+    pub max_retries: i32,
     pub error: Option<String>,
     pub timeout_ms: i64,
     pub unique_key: Option<String>,

@@ -172,6 +172,32 @@ impl From<models::DeadLetterRow> for DeadJob {
     }
 }
 
+impl DeadJob {
+    /// Build a [`DeadJob`] from a blob-free [`NarrowDeadLetterRow`]. Listing
+    /// paths use this so paging the DLQ never loads the `payload` blob; it
+    /// comes back empty and is only read when a single entry is requeued by id.
+    pub fn from_narrow(row: models::NarrowDeadLetterRow) -> Self {
+        Self {
+            id: row.id,
+            original_job_id: row.original_job_id,
+            queue: row.queue,
+            task_name: row.task_name,
+            payload: Vec::new(),
+            error: row.error,
+            retry_count: row.retry_count,
+            failed_at: row.failed_at,
+            metadata: row.metadata,
+            notes: row.notes,
+            priority: row.priority,
+            max_retries: row.max_retries,
+            timeout_ms: row.timeout_ms,
+            result_ttl_ms: row.result_ttl_ms,
+            namespace: row.namespace,
+            dlq_retry_count: row.dlq_retry_count,
+        }
+    }
+}
+
 // ── impl_storage! macro ───────────────────────────────────────────────
 //
 // Every concrete backend (Sqlite, Postgres, Redis) has inherent methods

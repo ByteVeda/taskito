@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use super::super::models::ArchivedJobRow;
+use super::super::models::NarrowArchivedJobRow;
 use super::super::schema::archived_jobs;
 use super::SqliteStorage;
 use crate::error::Result;

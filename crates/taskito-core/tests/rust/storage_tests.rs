@@ -841,8 +841,9 @@ fn test_payload_roundtrip(s: &impl Storage) {
 
 /// A job run to completion is archived: its blobs move into `archived_jobs` and
 /// the live `jobs` row is removed. `get_job` must still resolve the full payload
-/// and result from the archive, and a terminal-status list must carry the
-/// blobs. Redis passes trivially.
+/// and result from the archive. Listing (S13) returns a blob-free narrow
+/// projection: the row is present with its metadata, but `payload`/`result`
+/// come back empty on every backend (fetch the full job via `get_job`).
 fn test_archived_job_payload_resolves(s: &impl Storage) {
     let q = "q-archived-payload-resolves";
     let mut nj = make_job(q, "archived_payload_task");
@@ -852,19 +853,67 @@ fn test_archived_job_payload_resolves(s: &impl Storage) {
     s.dequeue(q, now_millis() + 1000, None).unwrap();
     s.complete(&job.id, Some(vec![0x11, 0x22])).unwrap();
 
-    // The job now lives only in `archived_jobs`; the side-table row is gone.
+    // Detail lookup: the job now lives only in `archived_jobs`; the side-table
+    // row is gone, yet `get_job` still resolves the full payload and result.
     let fetched = s.get_job(&job.id).unwrap().unwrap();
     assert_eq!(fetched.status, JobStatus::Complete);
     assert_eq!(fetched.payload, vec![0xCA, 0xFE, 0xBA, 0xBE]);
     assert_eq!(fetched.result, Some(vec![0x11, 0x22]));
 
-    // Listing by the terminal status reads the archive and still carries blobs.
+    // Listing by the terminal status reads the archive but drops the blobs:
+    // the row is there with its non-blob columns, payload/result are empty.
     let listed = s
         .list_jobs(Some(JobStatus::Complete as i32), Some(q), None, 50, 0, None)
         .unwrap();
     let row = listed.iter().find(|j| j.id == job.id).unwrap();
-    assert_eq!(row.payload, vec![0xCA, 0xFE, 0xBA, 0xBE]);
-    assert_eq!(row.result, Some(vec![0x11, 0x22]));
+    assert_eq!(row.task_name, "archived_payload_task");
+    assert_eq!(row.status, JobStatus::Complete);
+    assert!(
+        row.payload.is_empty(),
+        "listing must not carry the arg blob"
+    );
+    assert!(
+        row.result.is_none(),
+        "listing must not carry the result blob"
+    );
+}
+
+/// S13 for the live and DLQ tables: `list_jobs` on a live status and `list_dead`
+/// both return blob-free rows, while `get_job` still resolves the full payload.
+fn test_listing_is_blob_free(s: &impl Storage) {
+    // Live path: a pending job lists without its arg blob but resolves in full.
+    let q = "q-blob-free-listing";
+    let mut nj = make_job(q, "blob_free_task");
+    nj.payload = vec![0xAB, 0xCD, 0xEF];
+    let job = s.enqueue(nj).unwrap();
+
+    let listed = s
+        .list_jobs(Some(JobStatus::Pending as i32), Some(q), None, 50, 0, None)
+        .unwrap();
+    let row = listed.iter().find(|j| j.id == job.id).unwrap();
+    assert_eq!(row.task_name, "blob_free_task");
+    assert!(
+        row.payload.is_empty(),
+        "live listing must drop the arg blob"
+    );
+    assert_eq!(
+        s.get_job(&job.id).unwrap().unwrap().payload,
+        vec![0xAB, 0xCD, 0xEF],
+        "get_job must still resolve the full payload"
+    );
+
+    // DLQ path: a dead-lettered entry lists without its arg blob.
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+    s.move_to_dlq(&running, "boom", None).unwrap();
+
+    let dead = s.list_dead(10, 0).unwrap();
+    let entry = dead.iter().find(|d| d.original_job_id == job.id).unwrap();
+    assert_eq!(entry.task_name, "blob_free_task");
+    assert!(
+        entry.payload.is_empty(),
+        "DLQ listing must drop the arg blob"
+    );
 }
 
 fn due_periodic_names(s: &impl Storage) -> Vec<String> {
@@ -1245,6 +1294,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_dependent_blocked_by_cancelled_parent(s);
     test_payload_roundtrip(s);
     test_archived_job_payload_resolves(s);
+    test_listing_is_blob_free(s);
     test_concurrent_dequeue_no_double_claim(s);
     test_rate_limit_token_exhaustion(s);
     test_task_logs_after_cursor(s);

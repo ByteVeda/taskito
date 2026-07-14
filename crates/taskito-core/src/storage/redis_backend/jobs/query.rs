@@ -4,7 +4,7 @@ use redis::Commands;
 
 use crate::error::Result;
 use crate::job::{Job, JobStatus};
-use crate::storage::redis_backend::{map_err, RedisStorage};
+use crate::storage::redis_backend::{map_err, strip_list_blobs, RedisStorage};
 use crate::storage::QueueStats;
 
 impl RedisStorage {
@@ -74,7 +74,8 @@ impl RedisStorage {
     fn load_live_jobs(&self, conn: &mut redis::Connection, ids: &[String]) -> Result<Vec<Job>> {
         let mut jobs = Vec::new();
         for id in ids {
-            if let Some(job) = self.load_job(conn, id)? {
+            if let Some(mut job) = self.load_job(conn, id)? {
+                strip_list_blobs(&mut job);
                 jobs.push(job);
             }
         }
@@ -84,7 +85,8 @@ impl RedisStorage {
     fn load_archived_jobs(&self, conn: &mut redis::Connection, ids: &[String]) -> Result<Vec<Job>> {
         let mut jobs = Vec::new();
         for id in ids {
-            if let Some(job) = self.load_archived_job(conn, id)? {
+            if let Some(mut job) = self.load_archived_job(conn, id)? {
+                strip_list_blobs(&mut job);
                 jobs.push(job);
             }
         }

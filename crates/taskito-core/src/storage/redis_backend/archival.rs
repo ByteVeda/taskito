@@ -1,6 +1,6 @@
 use redis::Commands;
 
-use super::{map_err, RedisStorage};
+use super::{map_err, strip_list_blobs, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
 
@@ -54,8 +54,9 @@ impl RedisStorage {
             let archived_key = self.key(&["archived", &id]);
             let data: Option<String> = conn.get(&archived_key).map_err(map_err)?;
             if let Some(d) = data {
-                let job: Job =
+                let mut job: Job =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                strip_list_blobs(&mut job);
                 jobs.push(job);
             }
         }

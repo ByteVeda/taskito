@@ -119,3 +119,18 @@ impl crate::storage::notify::StorageNotifier for RedisStorage {
 fn map_err(e: redis::RedisError) -> QueueError {
     QueueError::Other(e.to_string())
 }
+
+/// Drop the `payload`/`result` blobs from a job before it enters a listing.
+/// Redis loads the whole job JSON in one read, so this saves no I/O; it exists
+/// only to match the Diesel backends' narrow-projection contract — list results
+/// are blob-free on every backend (fetch the full job via `get_job`).
+fn strip_list_blobs(job: &mut crate::job::Job) {
+    job.payload = Vec::new();
+    job.result = None;
+}
+
+/// DLQ analogue of [`strip_list_blobs`]: a dead-letter entry carries only the
+/// `payload` blob, dropped from listings (requeue re-reads the entry by id).
+fn strip_dead_blob(dead: &mut crate::storage::DeadJob) {
+    dead.payload = Vec::new();
+}

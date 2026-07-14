@@ -1348,13 +1348,19 @@ macro_rules! impl_diesel_job_ops {
                     query = query.filter(jobs::namespace.eq(ns));
                 }
 
-                let rows: Vec<JobRow> = query
+                // Listings never render the arg/result blobs, so select the
+                // narrow projection: the blobs stay on SQLite overflow pages /
+                // Postgres TOAST and are read only by a `get_job` detail lookup.
+                let rows: Vec<NarrowJobRow> = query
                     .limit(limit)
                     .offset(offset)
-                    .select(JobRow::as_select())
+                    .select(NarrowJobRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(Job::from).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| Job::from_narrow(r, Vec::new(), None))
+                    .collect())
             }
 
             /// Query the `archived_jobs` table with the shared filter set.
@@ -1403,13 +1409,15 @@ macro_rules! impl_diesel_job_ops {
                     query = query.filter(archived_jobs::namespace.eq(ns));
                 }
 
-                let rows: Vec<ArchivedJobRow> = query
+                // Narrow projection: terminal listings never render blobs, so
+                // leave `payload`/`result` on TOAST/overflow pages.
+                let rows: Vec<NarrowArchivedJobRow> = query
                     .limit(limit)
                     .offset(offset)
-                    .select(ArchivedJobRow::as_select())
+                    .select(NarrowArchivedJobRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(Job::from).collect())
+                Ok(rows.into_iter().map(Job::from_narrow_archived).collect())
             }
 
             /// Purge completed jobs older than the given timestamp. Terminal
