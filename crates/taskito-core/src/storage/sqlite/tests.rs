@@ -898,6 +898,48 @@ fn test_purge_completed_respects_per_job_ttl() {
     assert!(storage.get_job(&kept.id).unwrap().is_some());
 }
 
+#[test]
+fn test_purge_completed_drains_across_batches() {
+    // 550 completed rows exceed one PURGE_BATCH (500): the batched purge loop
+    // must drain every row across iterations, not stop after the first batch.
+    let storage = test_storage();
+    let now = now_millis();
+    for _ in 0..550 {
+        storage.enqueue(make_job("purge_batch")).unwrap();
+    }
+    for _ in 0..550 {
+        let job = storage
+            .dequeue("default", now + 1000, None)
+            .unwrap()
+            .unwrap();
+        storage.complete(&job.id, None).unwrap();
+    }
+
+    let removed = storage.purge_completed(now_millis() + 10_000).unwrap();
+    assert_eq!(removed, 550, "batched purge must drain every completed row");
+    assert!(storage.list_archived(1000, 0).unwrap().is_empty());
+}
+
+#[test]
+fn test_cancel_pending_by_queue_drains_across_batches() {
+    // 550 pending rows exceed one MASS_ARCHIVE_BATCH (500): the batched cancel
+    // loop must archive every pending row across iterations.
+    let storage = test_storage();
+    for _ in 0..550 {
+        storage.enqueue(make_job("cancel_batch")).unwrap();
+    }
+
+    let cancelled = storage.cancel_pending_by_queue("default").unwrap();
+    assert_eq!(
+        cancelled, 550,
+        "batched cancel must drain every pending row"
+    );
+    assert!(storage
+        .list_jobs(Some(JobStatus::Pending as i32), None, None, 1000, 0, None)
+        .unwrap()
+        .is_empty());
+}
+
 // ── Immediate terminal-job archival ──────────────────────────────────
 
 /// Count rows in the live `jobs` table for a given id.
