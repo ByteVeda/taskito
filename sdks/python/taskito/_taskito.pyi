@@ -138,6 +138,15 @@ class PyQueue:
         offset: int = 0,
         namespace: str | None = None,
     ) -> list[PyJob]: ...
+    def list_jobs_after(
+        self,
+        status: str | None = None,
+        queue: str | None = None,
+        task_name: str | None = None,
+        limit: int = 50,
+        after: str | None = None,
+        namespace: str | None = None,
+    ) -> tuple[list[PyJob], str | None]: ...
     def get_job(self, job_id: str) -> PyJob | None: ...
     def get_job_errors(self, job_id: str) -> list[dict[str, Any]]: ...
     def cancel_job(self, job_id: str) -> bool: ...
@@ -163,7 +172,23 @@ class PyQueue:
         offset: int = 0,
         namespace: str | None = None,
     ) -> list[PyJob]: ...
+    def list_jobs_filtered_after(
+        self,
+        status: str | None = None,
+        queue: str | None = None,
+        task_name: str | None = None,
+        metadata_like: str | None = None,
+        error_like: str | None = None,
+        created_after: int | None = None,
+        created_before: int | None = None,
+        limit: int = 50,
+        after: str | None = None,
+        namespace: str | None = None,
+    ) -> tuple[list[PyJob], str | None]: ...
     def dead_letters(self, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]: ...
+    def dead_letters_after(
+        self, limit: int = 10, after: str | None = None
+    ) -> tuple[list[dict[str, Any]], str | None]: ...
     def dead_letters_by_task(
         self, task_name: str, limit: int = 10, offset: int = 0
     ) -> list[dict[str, Any]]: ...
@@ -256,6 +281,9 @@ class PyQueue:
     def list_settings(self) -> dict[str, str]: ...
     def archive_old_jobs(self, older_than_seconds: int) -> int: ...
     def list_archived(self, limit: int = 50, offset: int = 0) -> list[PyJob]: ...
+    def list_archived_after(
+        self, limit: int = 50, after: str | None = None
+    ) -> tuple[list[PyJob], str | None]: ...
     def get_metrics(
         self,
         task_name: str | None = None,
@@ -317,6 +345,13 @@ class PyQueue:
         limit: int = 50,
         offset: int = 0,
     ) -> list[PyWorkflowRun]: ...
+    def list_workflow_runs_after(
+        self,
+        definition_name: str | None = None,
+        state: str | None = None,
+        limit: int = 50,
+        after: str | None = None,
+    ) -> tuple[list[PyWorkflowRun], str | None]: ...
     def get_workflow_run_detail(
         self, run_id: str
     ) -> tuple[PyWorkflowRun, list[PyWorkflowRunNode]]: ...

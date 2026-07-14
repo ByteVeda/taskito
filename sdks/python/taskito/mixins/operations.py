@@ -6,6 +6,7 @@ from typing import Any
 
 from taskito.context import LogLevel
 from taskito.events import EventType
+from taskito.pagination import Page
 from taskito.result import JobResult
 
 
@@ -19,6 +20,15 @@ class QueueOperationsMixin:
     def dead_letters(self, limit: int = 10, offset: int = 0) -> list[dict]:
         """List dead letter queue entries."""
         return self._inner.dead_letters(limit=limit, offset=offset)  # type: ignore[no-any-return]
+
+    def dead_letters_after(self, limit: int = 10, after: str | None = None) -> Page[dict]:
+        """Keyset-paginated :meth:`dead_letters`.
+
+        Returns a :class:`~taskito.pagination.Page` of entry dicts; pass its
+        ``next_cursor`` back as ``after`` for the next page.
+        """
+        entries, next_cursor = self._inner.dead_letters_after(limit=limit, after=after)
+        return Page(items=entries, next_cursor=next_cursor)
 
     def retry_dead(self, dead_id: str) -> str:
         """Re-enqueue a dead letter job. Returns new job ID."""
@@ -125,3 +135,9 @@ class QueueOperationsMixin:
         """List archived jobs with pagination."""
         py_jobs = self._inner.list_archived(limit=limit, offset=offset)
         return [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
+
+    def list_archived_after(self, limit: int = 50, after: str | None = None) -> Page[JobResult]:
+        """Keyset-paginated :meth:`list_archived`."""
+        py_jobs, next_cursor = self._inner.list_archived_after(limit=limit, after=after)
+        items = [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
+        return Page(items=items, next_cursor=next_cursor)

@@ -48,12 +48,31 @@ def _node_to_dict(node: Any) -> dict[str, Any]:
 
 
 def _handle_list_workflow_runs(queue: Queue, qs: dict) -> dict[str, Any]:
-    """``GET /api/workflows/runs`` — paginated list with optional filters."""
+    """``GET /api/workflows/runs`` — paginated list with optional filters.
+
+    Supports both offset (``limit``/``offset``) and keyset (``after``)
+    pagination; when ``after`` is present it takes precedence and the response
+    carries a ``next_cursor`` to pass back as the next ``after``.
+    """
     definition_name = qs.get("definition_name", [None])[0]
     state = qs.get("state", [None])[0]
     limit = _parse_int_qs(qs, "limit", 50)
-    offset = _parse_int_qs(qs, "offset", 0)
+    after = qs.get("after", [None])[0]
 
+    if after is not None:
+        runs, next_cursor = queue._inner.list_workflow_runs_after(
+            definition_name=definition_name,
+            state=state,
+            limit=limit,
+            after=after,
+        )
+        return {
+            "runs": [_run_to_dict(r) for r in runs],
+            "limit": limit,
+            "next_cursor": next_cursor,
+        }
+
+    offset = _parse_int_qs(qs, "offset", 0)
     runs = queue._inner.list_workflow_runs(
         definition_name=definition_name,
         state=state,

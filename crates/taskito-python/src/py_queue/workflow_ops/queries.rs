@@ -114,6 +114,46 @@ impl PyQueue {
         result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Keyset-paginated `list_workflow_runs`. Returns `(runs, next_cursor)`;
+    /// pass `next_cursor` back as `after`. `limit` is clamped to `[1, 500]`.
+    #[pyo3(signature = (definition_name=None, state=None, limit=50, after=None))]
+    pub fn list_workflow_runs_after(
+        &self,
+        py: Python<'_>,
+        definition_name: Option<&str>,
+        state: Option<&str>,
+        limit: i64,
+        after: Option<&str>,
+    ) -> PyResult<(Vec<PyWorkflowRun>, Option<String>)> {
+        let wf_storage = workflow_storage(self)?;
+        let limit = limit.clamp(1, 500);
+        let definition_owned = definition_name.map(|s| s.to_string());
+        let state_parsed = match state {
+            Some(s) => Some(
+                WorkflowState::from_str_val(s)
+                    .ok_or_else(|| PyValueError::new_err(format!("invalid workflow state: {s}")))?,
+            ),
+            None => None,
+        };
+        let cursor = after
+            .map(taskito_core::storage::cursor::decode_cursor)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let result: CoreResult<(Vec<PyWorkflowRun>, Option<String>)> = py.detach(|| {
+            let runs = wf_storage.list_workflow_runs_after(
+                definition_owned.as_deref(),
+                state_parsed,
+                limit,
+                cursor,
+            )?;
+            let next = crate::py_queue::next_cursor(&runs, limit, |r| (r.created_at, &r.id));
+            Ok((runs.into_iter().map(PyWorkflowRun::from).collect(), next))
+        });
+
+        result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Fetch a workflow run with full per-node detail including compensation fields.
     ///
     /// Used by the dashboard ``/api/workflows/runs/{run_id}`` endpoint. Unlike
