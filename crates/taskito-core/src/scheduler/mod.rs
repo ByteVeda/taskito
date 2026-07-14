@@ -39,6 +39,13 @@ pub struct SchedulerConfig {
     /// preserves the original one-job-per-round-trip behavior; values above
     /// `1` enable batch claiming for higher throughput.
     pub batch_size: usize,
+    /// Upper bound on jobs this scheduler keeps in flight (dispatched to the
+    /// worker channel but not yet finished). Set it to the worker pool's
+    /// execution parallelism so a single scheduler never claims more work than
+    /// its workers can run — otherwise a drain-until-empty poll would mark a
+    /// deep backlog `Running` on one worker and starve peers sharing the DB.
+    /// `None` (the default) leaves dispatch unbounded (legacy behavior).
+    pub max_in_flight: Option<usize>,
     /// Minimum age (ms) before a DLQ entry is auto-retried. `None` disables.
     pub dlq_auto_retry_delay_ms: Option<i64>,
     /// Max DLQ auto-retries per entry before giving up.
@@ -57,6 +64,7 @@ impl Default for SchedulerConfig {
             cleanup_interval: 1200,
             result_ttl_ms: None,
             batch_size: 1,
+            max_in_flight: None,
             dlq_auto_retry_delay_ms: None,
             dlq_auto_retry_max: 1,
             dlq_auto_retry_interval: 60,
@@ -87,6 +95,17 @@ pub enum JobResult {
         task_name: String,
         wall_time_ns: i64,
     },
+}
+
+impl JobResult {
+    /// The id of the job this result is for.
+    pub fn job_id(&self) -> &str {
+        match self {
+            JobResult::Success { job_id, .. }
+            | JobResult::Failure { job_id, .. }
+            | JobResult::Cancelled { job_id, .. } => job_id,
+        }
+    }
 }
 
 /// Outcome of processing a job result, returned to the caller (the binding)
@@ -153,6 +172,15 @@ pub struct Scheduler {
     /// binding sets it to the process `worker_id` so dead-worker recovery can
     /// attribute orphaned claims. See [`Self::set_claim_owner`].
     claim_owner: String,
+    /// Ids of jobs dispatched to the worker channel but not yet finished, used
+    /// only when `config.max_in_flight` is set. Its length is the current
+    /// in-flight count; the poller stops dispatching once it hits the cap, and
+    /// [`Self::handle_result`] removes an id as each job finishes.
+    in_flight: Mutex<HashSet<String>>,
+    /// Signalled when a finished job frees an in-flight slot, so the poll loop
+    /// can refill immediately instead of waiting out its backoff — keeping
+    /// throughput up despite the in-flight cap.
+    dispatch_wake: Arc<Notify>,
     /// Wake source for push-dispatch, installed before `run()`. Taken (moved
     /// out) once when the loop starts. `None` means the loop polls as today.
     #[cfg(feature = "push-dispatch")]
@@ -197,6 +225,8 @@ impl Scheduler {
             paused_cache: Mutex::new((HashSet::new(), Instant::now())),
             namespace,
             claim_owner: poller::SCHEDULER_CLAIM_OWNER.to_string(),
+            in_flight: Mutex::new(HashSet::new()),
+            dispatch_wake: Arc::new(Notify::new()),
             #[cfg(feature = "push-dispatch")]
             wake_source: Mutex::new(None),
             #[cfg(feature = "push-dispatch")]
@@ -214,6 +244,47 @@ impl Scheduler {
     /// `register_worker`/`heartbeat`.
     pub fn set_claim_owner(&mut self, worker_id: String) {
         self.claim_owner = worker_id;
+    }
+
+    /// Free in-flight slots remaining before the dispatch cap, or `None` when
+    /// no cap is configured (unbounded dispatch — legacy behavior).
+    fn in_flight_remaining(&self) -> Option<usize> {
+        self.config.max_in_flight.map(|max| {
+            let used = self
+                .in_flight
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .len();
+            max.saturating_sub(used)
+        })
+    }
+
+    /// Record a job as in flight once it is handed to the worker channel.
+    /// No-op when dispatch is unbounded.
+    fn track_in_flight(&self, job_id: &str) {
+        if self.config.max_in_flight.is_some() {
+            self.in_flight
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(job_id.to_string());
+        }
+    }
+
+    /// Release a job's in-flight slot when it finishes and wake the poller to
+    /// refill. Only ids this scheduler dispatched are tracked, so results for
+    /// recovered or foreign jobs (e.g. from maintenance) are a harmless no-op.
+    fn release_in_flight(&self, job_id: &str) {
+        if self.config.max_in_flight.is_none() {
+            return;
+        }
+        let freed = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(job_id);
+        if freed {
+            self.dispatch_wake.notify_one();
+        }
     }
 
     pub fn shutdown_handle(&self) -> Arc<Notify> {
@@ -262,6 +333,9 @@ impl Scheduler {
         loop {
             tokio::select! {
                 _ = self.shutdown.notified() => break,
+                // A finished job freed an in-flight slot — refill now instead of
+                // waiting out the backoff, so the cap doesn't cost throughput.
+                _ = self.dispatch_wake.notified() => {}
                 _ = tokio::time::sleep(current_interval) => {}
             }
 
@@ -948,6 +1022,56 @@ mod tests {
             claims.len(),
             2,
             "rolled-back jobs must not keep a stale claim row"
+        );
+    }
+
+    #[test]
+    fn test_max_in_flight_bounds_dispatch_and_refills_on_completion() {
+        // A scheduler capped at one in-flight job must not drain a deeper
+        // backlog into its own channel (which would strand the surplus Running
+        // and starve peers). Finishing a job frees the slot for exactly one more.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            max_in_flight: Some(1),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+        for _ in 0..3 {
+            scheduler.storage.enqueue(make_job("capped")).unwrap();
+        }
+
+        let (tx, mut rx) = make_channel(16);
+
+        // Draining stops at the cap even though three jobs are ready.
+        let mut dispatched = 0;
+        while scheduler.tick_dispatch(&tx) {
+            dispatched += 1;
+        }
+        assert_eq!(dispatched, 1, "in-flight cap limits the drain to one job");
+        let job1 = rx.try_recv().expect("one job dispatched");
+        assert!(
+            rx.try_recv().is_err(),
+            "no second job dispatched past the cap"
+        );
+
+        // Finishing the job frees its slot; the next drain admits exactly one more.
+        scheduler
+            .handle_result(JobResult::Success {
+                job_id: job1.id.clone(),
+                result: None,
+                task_name: "capped".to_string(),
+                wall_time_ns: 1,
+            })
+            .unwrap();
+
+        let mut dispatched_after = 0;
+        while scheduler.tick_dispatch(&tx) {
+            dispatched_after += 1;
+        }
+        assert_eq!(
+            dispatched_after, 1,
+            "a freed slot admits exactly one more job"
         );
     }
 

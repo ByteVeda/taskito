@@ -86,6 +86,13 @@ impl Scheduler {
             return Ok(false);
         }
 
+        // Stop dispatching once this scheduler has as many jobs in flight as its
+        // workers can run — claiming more would only strand them `Running` and
+        // starve peers sharing the DB. A freed slot re-wakes the poll loop.
+        if self.in_flight_remaining() == Some(0) {
+            return Ok(false);
+        }
+
         let job = match self
             .storage
             .dequeue_from(&active_queues, now, self.namespace.as_deref())?
@@ -120,7 +127,16 @@ impl Scheduler {
         // more jobs than the channel can immediately accept. `try_send` still
         // guards each hand-off, but pre-sizing avoids needless claim/rollback
         // churn. Always claim at least one.
-        let budget = self.config.batch_size.min(job_tx.capacity().max(1));
+        let mut budget = self.config.batch_size.min(job_tx.capacity().max(1));
+
+        // Never claim past the in-flight cap: a drained batch that outran the
+        // workers would mark the surplus `Running` and starve peer schedulers.
+        if let Some(remaining) = self.in_flight_remaining() {
+            if remaining == 0 {
+                return Ok(false);
+            }
+            budget = budget.min(remaining);
+        }
 
         let jobs = self.storage.dequeue_batch_from(
             &active_queues,
@@ -275,7 +291,10 @@ impl Scheduler {
         // metrics and middleware (wrong outcome for a job that never ran).
         let job_id = job.id.clone();
         match job_tx.try_send(job) {
-            Ok(()) => Ok(true),
+            Ok(()) => {
+                self.track_in_flight(&job_id);
+                Ok(true)
+            }
             Err(TrySendError::Full(job)) => {
                 warn!("worker channel full; rescheduling job {job_id} (worker pool is behind)",);
                 counts.release(&job.task_name, &job.queue);

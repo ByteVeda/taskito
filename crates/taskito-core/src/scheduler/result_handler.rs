@@ -12,6 +12,9 @@ impl Scheduler {
     /// Returns a [`ResultOutcome`] describing the action taken, so the
     /// caller (the binding) can dispatch its middleware hooks and events.
     pub fn handle_result(&self, result: JobResult) -> Result<ResultOutcome> {
+        // A dispatched job finished — free its in-flight slot (no-op for jobs
+        // this scheduler didn't dispatch, e.g. maintenance-recovered orphans).
+        self.release_in_flight(result.job_id());
         match result {
             JobResult::Success {
                 job_id,
@@ -186,6 +189,12 @@ impl Scheduler {
                 // lookups); batching them buys little, so keep the per-result path.
                 other => outcomes[i] = Some(self.handle_result(other)),
             }
+        }
+
+        // Each success is a finished job — free its in-flight slot. Non-success
+        // results already released theirs via `handle_result` above.
+        for c in &completions {
+            self.release_in_flight(&c.job_id);
         }
 
         if !completions.is_empty() {
