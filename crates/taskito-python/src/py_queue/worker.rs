@@ -277,15 +277,22 @@ impl PyQueue {
         let queues = queues.unwrap_or_else(|| vec!["default".to_string()]);
         let queues_str = queues.join(",");
 
+        // Bound in-flight work to what this worker can actually run, so it never
+        // claims more and starves peers sharing the DB. Sync and async dispatch have
+        // separate budgets (blocking threads vs coroutines) and share one in-flight
+        // set, so the cap is their sum — a max() would let either starve the other.
+        #[cfg(feature = "native-async")]
+        let max_in_flight = self.num_workers + async_concurrency.max(1) as usize;
+        #[cfg(not(feature = "native-async"))]
+        let max_in_flight = self.num_workers;
+
         let scheduler_config = SchedulerConfig {
             poll_interval: std::time::Duration::from_millis(self.scheduler_poll_interval_ms),
             reap_interval: self.scheduler_reap_interval,
             cleanup_interval: self.scheduler_cleanup_interval,
             result_ttl_ms: self.result_ttl_ms,
             batch_size: self.scheduler_batch_size,
-            // Bound in-flight work to the pool size so this worker never claims
-            // more than it can run and starve peers sharing the DB.
-            max_in_flight: Some(self.num_workers),
+            max_in_flight: Some(max_in_flight),
             dlq_auto_retry_delay_ms: self.dlq_auto_retry_delay_ms,
             dlq_auto_retry_max: self.dlq_auto_retry_max,
             ..SchedulerConfig::default()
@@ -424,8 +431,13 @@ impl PyQueue {
 
         let shutdown = scheduler.shutdown_handle();
 
-        let (job_tx, job_rx) = tokio::sync::mpsc::channel(self.num_workers * 2);
-        let (result_tx, result_rx) = crossbeam_channel::bounded(self.num_workers * 2);
+        // Size both channels to the in-flight cap: it bounds how many jobs can be
+        // dispatched and how many results can be outstanding. Sizing them below it
+        // would make the channels — not the cheap pre-claim `max_in_flight` gate —
+        // the binding constraint, and the channel-full path claims before it rolls
+        // back, so it churns storage where the gate does not.
+        let (job_tx, job_rx) = tokio::sync::mpsc::channel(max_in_flight);
+        let (result_tx, result_rx) = crossbeam_channel::bounded(max_in_flight);
 
         let registry_arc = Arc::new(task_registry);
         let filters_arc: Arc<Py<PyAny>> = Arc::new(retry_filters.into());
@@ -498,6 +510,7 @@ impl PyQueue {
                 let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> =
                     Arc::new(crate::native_async::NativeAsyncPool::new(
                         num_workers,
+                        async_concurrency.max(1) as usize,
                         registry_arc.clone(),
                         filters_arc.clone(),
                         async_executor,
