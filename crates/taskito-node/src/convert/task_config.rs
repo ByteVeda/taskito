@@ -41,6 +41,8 @@ pub fn task_config(input: &TaskConfigInput) -> Result<TaskConfig> {
             .as_ref()
             .map(circuit_breaker_config)
             .transpose()?,
+        // Not surfaced on this SDK yet; retries stay bounded per job.
+        retry_budget: None,
         max_concurrent: input.max_concurrent,
         // Not surfaced on this SDK yet; the whole pool stays available.
         max_in_flight_per_task: None,

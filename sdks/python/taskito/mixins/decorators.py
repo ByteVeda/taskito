@@ -385,10 +385,11 @@ class QueueDecoratorMixin:
         on_false: str = "defer",
         predicate_extras: dict[str, Any] | None = None,
         default_defer_seconds: float = 60.0,
-        # Appended, not slotted next to `max_concurrent`: this signature is not
-        # keyword-only, so inserting mid-list would silently rebind the positional
-        # arguments after it.
+        # Appended, not slotted next to their related options: this signature is
+        # not keyword-only, so inserting mid-list would silently rebind the
+        # positional arguments after it.
         max_in_flight_per_task: int | None = None,
+        retry_budget: str | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -430,6 +431,13 @@ class QueueDecoratorMixin:
                 starve the others. Unlike ``max_concurrent`` (a cluster-wide cap
                 that costs a database read), this is in-process and free.
                 ``None`` lets the task use the whole pool.
+            retry_budget: Cap on how fast this task may *retry*, across all of its
+                jobs — same syntax as ``rate_limit`` (e.g. ``"100/m"``). Once the
+                budget is spent, further failures dead-letter instead of retrying,
+                which stops a broken dependency turning into a retry storm.
+                Distinct from ``max_retries``, which bounds one job rather than the
+                rate, and from ``circuit_breaker``, which trips on hard failure
+                rather than aggregate retry rate. ``None`` means no cap.
             compensates: Optional reference to a task that compensates this
                 one. When this task runs as part of a workflow saga and a
                 later step fails, the framework enqueues the compensation
@@ -633,6 +641,7 @@ class QueueDecoratorMixin:
                 circuit_breaker_half_open_probes=cb_half_open_probes,
                 circuit_breaker_half_open_success_rate=cb_half_open_success_rate,
                 max_in_flight_per_task=max_in_flight_per_task,
+                retry_budget=retry_budget,
             )
             self._task_configs.append(config)
 

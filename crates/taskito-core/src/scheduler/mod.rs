@@ -145,6 +145,11 @@ pub struct TaskConfig {
     pub retry_policy: RetryPolicy,
     pub rate_limit: Option<crate::resilience::rate_limiter::RateLimitConfig>,
     pub circuit_breaker: Option<CircuitBreakerConfig>,
+    /// Cap on how fast this task may *retry*, across every job of the task.
+    /// Nothing else catches sustained retry storms: the circuit breaker trips on
+    /// hard failure, not on aggregate retry rate, and per-job `max_retries` is a
+    /// per-job budget, not a rate. Exhausting it dead-letters instead of retrying.
+    pub retry_budget: Option<crate::resilience::rate_limiter::RateLimitConfig>,
     pub max_concurrent: Option<i32>,
     /// Cap on this task's share of *this worker's* in-flight slots, so one slow
     /// task cannot occupy the whole pool and starve every other task. Complements
@@ -325,6 +330,35 @@ impl Scheduler {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .count_for(task_name)
+    }
+
+    /// Take a token from this task's retry budget. `true` when the retry may go
+    /// ahead — including when no budget is configured, which is the default.
+    ///
+    /// Keyed per namespace so tenants sharing a database cannot spend each
+    /// other's budget. The bucket is created on first use, so nothing needs
+    /// registering. A storage error must not strand the job, so it fails open:
+    /// the per-job `max_retries` still bounds the retry.
+    fn retry_budget_allows(&self, task_name: &str) -> bool {
+        let Some(config) = self
+            .task_configs
+            .get(task_name)
+            .and_then(|c| c.retry_budget.as_ref())
+        else {
+            return true;
+        };
+        let key = format!(
+            "retry::{}::{}",
+            self.namespace.as_deref().unwrap_or(""),
+            task_name
+        );
+        match self.rate_limiter.try_acquire(&key, config) {
+            Ok(allowed) => allowed,
+            Err(e) => {
+                error!("retry budget check failed for {task_name}: {e}");
+                true
+            }
+        }
     }
 
     /// Release a job's in-flight slot when it finishes and wake the poller to
@@ -759,6 +793,7 @@ mod tests {
                 },
                 rate_limit: None,
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: None,
                 max_in_flight_per_task: None,
             },
@@ -800,6 +835,7 @@ mod tests {
                 },
                 rate_limit: None,
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: None,
                 max_in_flight_per_task: None,
             },
@@ -902,6 +938,7 @@ mod tests {
                     refill_rate: 0.0,
                 }),
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: None,
                 max_in_flight_per_task: None,
             },
@@ -947,6 +984,7 @@ mod tests {
                 retry_policy: RetryPolicy::default(),
                 rate_limit: None,
                 circuit_breaker: Some(cb_config),
+                retry_budget: None,
                 max_concurrent: None,
                 max_in_flight_per_task: None,
             },
@@ -986,6 +1024,7 @@ mod tests {
                 retry_policy: RetryPolicy::default(),
                 rate_limit: None,
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: Some(2),
                 max_in_flight_per_task: None,
             },
@@ -1055,6 +1094,7 @@ mod tests {
                 retry_policy: RetryPolicy::default(),
                 rate_limit: None,
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: Some(2),
                 max_in_flight_per_task: None,
             },
@@ -1156,6 +1196,7 @@ mod tests {
                 retry_policy: RetryPolicy::default(),
                 rate_limit: None,
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: None,
                 max_in_flight_per_task: Some(per_task),
             },
@@ -1277,6 +1318,7 @@ mod tests {
                 retry_policy: RetryPolicy::default(),
                 rate_limit: None,
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: Some(1),
                 max_in_flight_per_task: None,
             },
@@ -1442,6 +1484,7 @@ mod tests {
                 },
                 rate_limit: None,
                 circuit_breaker: None,
+                retry_budget: None,
                 max_concurrent: None,
                 max_in_flight_per_task: None,
             },
@@ -1479,6 +1522,7 @@ mod tests {
             },
             rate_limit: None,
             circuit_breaker: None,
+            retry_budget: None,
             max_concurrent: None,
             max_in_flight_per_task: None,
         }
@@ -1521,6 +1565,140 @@ mod tests {
 
     /// A scheduler must never orphan its OWN in-flight jobs (self-rescue guard),
     /// even before its first heartbeat row exists.
+    /// A task whose retries are capped at `budget` per minute.
+    fn budgeted_scheduler(task_name: &str, budget: &str) -> Scheduler {
+        let mut scheduler = test_scheduler();
+        let mut config = retry_task_config(5);
+        config.retry_budget = Some(RateLimitConfig::parse(budget).expect("valid rate"));
+        scheduler.register_task(task_name.to_string(), config);
+        scheduler
+    }
+
+    /// Fail `job_id` once and report what the scheduler decided.
+    fn fail_once(scheduler: &Scheduler, job_id: &str, task_name: &str) -> ResultOutcome {
+        scheduler
+            .handle_result(JobResult::Failure {
+                job_id: job_id.to_string(),
+                error: "boom".to_string(),
+                retry_count: 0,
+                max_retries: 5,
+                task_name: task_name.to_string(),
+                wall_time_ns: 1,
+                should_retry: true,
+                timed_out: false,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn test_retry_budget_dead_letters_once_exhausted() {
+        // S18: the per-job max_retries is not a rate cap, so a broken dependency
+        // can retry forever across jobs. Two tokens, three failures: the third
+        // must dead-letter instead of retrying.
+        let scheduler = budgeted_scheduler("budgeted", "2/m");
+
+        let mut outcomes = Vec::new();
+        for _ in 0..3 {
+            let job = scheduler.storage.enqueue(make_job("budgeted")).unwrap();
+            outcomes.push(fail_once(&scheduler, &job.id, "budgeted"));
+        }
+
+        assert!(
+            matches!(outcomes[0], ResultOutcome::Retry { .. }),
+            "first failure is within budget"
+        );
+        assert!(
+            matches!(outcomes[1], ResultOutcome::Retry { .. }),
+            "second failure is within budget"
+        );
+        assert!(
+            matches!(outcomes[2], ResultOutcome::DeadLettered { .. }),
+            "third failure exceeds the budget and must dead-letter, got {:?}",
+            outcomes[2]
+        );
+    }
+
+    #[test]
+    fn test_retry_budget_marks_why_it_dead_lettered() {
+        // ResultOutcome can't say why, so the DLQ metadata is what distinguishes
+        // a budget kill from ordinary retry exhaustion.
+        let scheduler = budgeted_scheduler("marked", "1/m");
+        for _ in 0..2 {
+            let job = scheduler.storage.enqueue(make_job("marked")).unwrap();
+            fail_once(&scheduler, &job.id, "marked");
+        }
+
+        let dead = scheduler.storage.list_dead(10, 0).unwrap();
+        assert_eq!(dead.len(), 1);
+        assert_eq!(
+            dead[0].metadata.as_deref(),
+            Some(super::result_handler::RETRY_BUDGET_EXHAUSTED)
+        );
+    }
+
+    #[test]
+    fn test_retry_budget_is_per_task() {
+        // One task draining its budget must not stop another from retrying.
+        let mut scheduler = budgeted_scheduler("greedy", "1/m");
+        scheduler.register_task("innocent".to_string(), retry_task_config(5));
+
+        for _ in 0..2 {
+            let job = scheduler.storage.enqueue(make_job("greedy")).unwrap();
+            fail_once(&scheduler, &job.id, "greedy");
+        }
+
+        let job = scheduler.storage.enqueue(make_job("innocent")).unwrap();
+        let outcome = fail_once(&scheduler, &job.id, "innocent");
+        assert!(
+            matches!(outcome, ResultOutcome::Retry { .. }),
+            "an unbudgeted task must be unaffected, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_retry_budget_configured_never_blocks() {
+        // The budget is opt-in; the default must keep retrying to max_retries.
+        let mut scheduler = test_scheduler();
+        scheduler.register_task("unbudgeted".to_string(), retry_task_config(5));
+        for _ in 0..5 {
+            let job = scheduler.storage.enqueue(make_job("unbudgeted")).unwrap();
+            let outcome = fail_once(&scheduler, &job.id, "unbudgeted");
+            assert!(matches!(outcome, ResultOutcome::Retry { .. }));
+        }
+    }
+
+    #[test]
+    fn test_retry_budget_not_spent_by_jobs_that_cannot_retry() {
+        // A job at its retry ceiling was never going to retry, so it must not
+        // take a token — otherwise it drains the budget for its siblings.
+        let scheduler = budgeted_scheduler("ceiling", "1/m");
+
+        let exhausted = scheduler.storage.enqueue(make_job("ceiling")).unwrap();
+        let outcome = scheduler
+            .handle_result(JobResult::Failure {
+                job_id: exhausted.id.clone(),
+                error: "boom".to_string(),
+                retry_count: 3,
+                max_retries: 3, // already at the ceiling
+                task_name: "ceiling".to_string(),
+                wall_time_ns: 1,
+                should_retry: true,
+                timed_out: false,
+            })
+            .unwrap();
+        assert!(matches!(outcome, ResultOutcome::DeadLettered { .. }));
+
+        // The single token must still be there for a job that can retry.
+        let fresh = scheduler.storage.enqueue(make_job("ceiling")).unwrap();
+        assert!(
+            matches!(
+                fail_once(&scheduler, &fresh.id, "ceiling"),
+                ResultOutcome::Retry { .. }
+            ),
+            "retry-exhausted job must not spend a budget token"
+        );
+    }
+
     #[test]
     fn test_recover_orphaned_jobs_skips_own_claims() {
         let mut scheduler = test_scheduler();

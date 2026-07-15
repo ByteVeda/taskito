@@ -6,6 +6,11 @@ use crate::storage::Storage;
 
 use super::{JobResult, ResultOutcome, Scheduler};
 
+/// Dead-letter metadata marking a job the retry budget refused. `ResultOutcome`
+/// has no room to say *why* a job was dead-lettered, so this is what tells a
+/// budget kill apart from ordinary retry exhaustion when reading the DLQ.
+pub const RETRY_BUDGET_EXHAUSTED: &str = "retry_budget_exhausted";
+
 impl Scheduler {
     /// Handle a completed or failed job result from a worker.
     ///
@@ -62,19 +67,20 @@ impl Scheduler {
                 let job = self.storage.get_job(&job_id)?;
                 let queue = job.as_ref().map(|j| j.queue.clone()).unwrap_or_default();
 
-                let move_to_dlq = |job: Option<&crate::job::Job>| -> Result<()> {
-                    match job {
-                        Some(j) => self.dlq.move_to_dlq(j, &error, None),
-                        None => {
-                            warn!("job {job_id} disappeared before DLQ move");
-                            Ok(())
+                let move_to_dlq =
+                    |job: Option<&crate::job::Job>, metadata: Option<&str>| -> Result<()> {
+                        match job {
+                            Some(j) => self.dlq.move_to_dlq(j, &error, metadata),
+                            None => {
+                                warn!("job {job_id} disappeared before DLQ move");
+                                Ok(())
+                            }
                         }
-                    }
-                };
+                    };
 
                 // If should_retry is false (exception filtering), skip straight to DLQ
                 if !should_retry {
-                    move_to_dlq(job.as_ref())?;
+                    move_to_dlq(job.as_ref(), None)?;
                     return Ok(ResultOutcome::DeadLettered {
                         job_id,
                         task_name,
@@ -97,6 +103,20 @@ impl Scheduler {
                 let effective_max = max_retries;
 
                 if retry_count < effective_max {
+                    // Checked here, not before the per-job budget: a job that was
+                    // never going to retry must not spend a token, or a task at
+                    // its retry ceiling would drain the budget for its siblings.
+                    if !self.retry_budget_allows(&task_name) {
+                        warn!("retry budget exhausted for {task_name}; dead-lettering {job_id}");
+                        move_to_dlq(job.as_ref(), Some(RETRY_BUDGET_EXHAUSTED))?;
+                        return Ok(ResultOutcome::DeadLettered {
+                            job_id,
+                            task_name,
+                            queue,
+                            error,
+                            timed_out,
+                        });
+                    }
                     let next_at = policy.next_retry_at(retry_count);
                     self.storage.retry(&job_id, next_at)?;
                     #[cfg(feature = "push-dispatch")]
@@ -110,7 +130,7 @@ impl Scheduler {
                         timed_out,
                     })
                 } else {
-                    move_to_dlq(job.as_ref())?;
+                    move_to_dlq(job.as_ref(), None)?;
                     Ok(ResultOutcome::DeadLettered {
                         job_id,
                         task_name,
