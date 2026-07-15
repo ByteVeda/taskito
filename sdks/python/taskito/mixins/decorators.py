@@ -590,6 +590,14 @@ class QueueDecoratorMixin:
 
             # Wrap the function with hooks, middleware, and context
             wrapped = self._wrap_task(fn, task_name, soft_timeout)
+
+            # NOTE: `_taskito_is_async` is deliberately NOT set on `wrapped`.
+            # The pool reads that flag off this registry entry to choose native
+            # dispatch, so setting it here activates the native path — and that
+            # path reimplements the task lifecycle and still lacks this wrapper's
+            # queue hooks, saga compensation context, soft_timeout and per-item
+            # batch handling. Async tasks therefore run through this blocking
+            # wrapper (via run_maybe_async) until those gaps are closed.
             self._task_registry[task_name] = wrapped
 
             cb_threshold = None
