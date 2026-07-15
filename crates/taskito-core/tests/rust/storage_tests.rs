@@ -8,7 +8,7 @@
 //! when all tests share a single storage instance.
 
 use taskito_core::job::{now_millis, JobCompletion, JobStatus, NewJob};
-use taskito_core::storage::Storage;
+use taskito_core::storage::{DeadJob, Storage};
 use taskito_core::SqliteStorage;
 
 fn make_job(queue: &str, task_name: &str) -> NewJob {
@@ -1377,45 +1377,56 @@ fn test_keyset_pagination_jobs(s: &impl Storage) {
 fn test_keyset_pagination_dlq_and_archive(s: &impl Storage) {
     let q = "q-keyset-terminal";
     let total = 15;
+    let mut dead_job_ids = Vec::new();
     for _ in 0..total {
         let job = s.enqueue(make_job(q, "keyset_terminal")).unwrap();
         s.dequeue(q, now_millis() + 1000, None).unwrap();
         let running = s.get_job(&job.id).unwrap().unwrap();
         s.move_to_dlq(&running, "boom", None).unwrap();
+        dead_job_ids.push(job.id);
     }
 
-    // DLQ paging.
-    let dlq_ids = page_all_dead(s, 6);
-    let dlq_from_this_q: Vec<&String> = dlq_ids.iter().collect();
-    assert!(
-        dlq_from_this_q.len() >= total,
-        "keyset DLQ paging must cover every dead row"
-    );
-    let unique: std::collections::HashSet<&String> = dlq_ids.iter().collect();
-    assert_eq!(unique.len(), dlq_ids.len(), "DLQ keyset must not duplicate");
+    // DLQ paging. Assert against the rows this test created: a `>= total` count
+    // over the whole table would let rows from earlier cases mask a skipped one.
+    let dlq = page_all_dead(s, 6);
+    let paged_originals: Vec<&String> = dlq.iter().map(|d| &d.original_job_id).collect();
+    for job_id in &dead_job_ids {
+        assert_eq!(
+            paged_originals.iter().filter(|o| **o == job_id).count(),
+            1,
+            "keyset DLQ paging must yield every dead row exactly once"
+        );
+    }
+    let unique: std::collections::HashSet<&String> = dlq.iter().map(|d| &d.id).collect();
+    assert_eq!(unique.len(), dlq.len(), "DLQ keyset must not duplicate");
 
     // Archive paging: complete a fresh batch so archived rows exist.
     let qa = "q-keyset-archive";
+    let mut archived_job_ids = Vec::new();
     for _ in 0..total {
         let job = s.enqueue(make_job(qa, "keyset_archive")).unwrap();
         s.dequeue(qa, now_millis() + 1000, None).unwrap();
         s.complete(&job.id, None).unwrap();
+        archived_job_ids.push(job.id);
     }
     let arch_ids = page_all_archived(s, 6);
+    for job_id in &archived_job_ids {
+        assert_eq!(
+            arch_ids.iter().filter(|id| *id == job_id).count(),
+            1,
+            "keyset archive paging must yield every archived row exactly once"
+        );
+    }
     let unique: std::collections::HashSet<&String> = arch_ids.iter().collect();
     assert_eq!(
         unique.len(),
         arch_ids.len(),
         "archive keyset must not duplicate"
     );
-    assert!(
-        arch_ids.len() >= total,
-        "keyset archive paging must cover every archived row"
-    );
 }
 
-/// Page the whole DLQ via `list_dead_after`, returning every dead id seen.
-fn page_all_dead(s: &impl Storage, page_size: i64) -> Vec<String> {
+/// Page the whole DLQ via `list_dead_after`, returning every row seen.
+fn page_all_dead(s: &impl Storage, page_size: i64) -> Vec<DeadJob> {
     let mut seen = Vec::new();
     let mut cursor: Option<(i64, String)> = None;
     loop {
@@ -1426,10 +1437,9 @@ fn page_all_dead(s: &impl Storage, page_size: i64) -> Vec<String> {
         }
         let last = page.last().unwrap();
         cursor = Some((last.failed_at, last.id.clone()));
-        for d in &page {
-            seen.push(d.id.clone());
-        }
-        if page.len() < page_size as usize {
+        let page_len = page.len();
+        seen.extend(page);
+        if page_len < page_size as usize {
             break;
         }
     }
