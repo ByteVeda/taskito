@@ -100,6 +100,12 @@ export interface TaskOptions {
   timeoutMs?: number;
   /** Cap on concurrently-running jobs of this task. */
   maxConcurrent?: number;
+  /**
+   * Cap on this task's share of one worker's in-flight slots, so a slow task
+   * cannot occupy the pool and starve the others. Unlike {@link maxConcurrent}
+   * (the cluster-wide cap, which costs a database read) this one is in-process.
+   */
+  maxInFlightPerTask?: number;
   /** Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`. */
   rateLimit?: RateLimit;
   /** Trip the task's circuit breaker after repeated failures. */

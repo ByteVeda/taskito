@@ -109,6 +109,10 @@ pub struct TaskConfigInput {
     pub retry_base_delay_ms: Option<i64>,
     pub retry_max_delay_ms: Option<i64>,
     pub max_concurrent: Option<i32>,
+    /// Cap on this task's share of one worker's in-flight slots, so a slow task
+    /// cannot occupy the pool and starve the others. Unlike `maxConcurrent` (the
+    /// cluster-wide cap, which costs a database read) this one is in-process.
+    pub max_in_flight_per_task: Option<i32>,
     /// Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`.
     pub rate_limit: Option<String>,
     pub circuit_breaker: Option<CircuitBreakerInput>,

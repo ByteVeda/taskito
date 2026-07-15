@@ -278,7 +278,10 @@ fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRet
                 rate_limit: None,
                 circuit_breaker,
                 max_concurrent: None,
-                // Not surfaced on this SDK yet; the whole pool stays available.
+                // Neither concurrency cap is surfaced here: this struct carries
+                // retry policy, and the in-process bulkhead only makes sense
+                // alongside max_concurrent, its cluster-wide counterpart. Both
+                // belong to a task-config surface this SDK does not have yet.
                 max_in_flight_per_task: None,
             },
         );

@@ -318,6 +318,7 @@ function buildTaskConfigs(tasks: ReadonlyMap<string, RegisteredTask>): TaskConfi
       (options.maxRetries === undefined &&
         options.retryBackoff === undefined &&
         options.maxConcurrent === undefined &&
+        options.maxInFlightPerTask === undefined &&
         options.rateLimit === undefined &&
         options.circuitBreaker === undefined)
     ) {
@@ -329,6 +330,7 @@ function buildTaskConfigs(tasks: ReadonlyMap<string, RegisteredTask>): TaskConfi
       retryBaseDelayMs: options.retryBackoff?.baseMs,
       retryMaxDelayMs: options.retryBackoff?.maxMs,
       maxConcurrent: options.maxConcurrent,
+      maxInFlightPerTask: options.maxInFlightPerTask,
       rateLimit: options.rateLimit,
       circuitBreaker: options.circuitBreaker,
     });
