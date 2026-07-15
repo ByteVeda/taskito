@@ -163,8 +163,21 @@ fn zset_keyset_page(
             .map_err(map_err);
     };
 
-    // Tie bucket first (same score, id < cursor_id), newest id first. Bounded by
-    // how many rows share one exact-millisecond score.
+    // Seek by rank while the cursor row is still indexed. `ZREVRANK` orders by
+    // (score DESC, member DESC) — exactly the page order — so the next page is
+    // the `limit` members that follow it, read in one bounded range. The rank is
+    // re-derived every call, so concurrent inserts shift it without skipping or
+    // repeating rows below the cursor.
+    let rank: Option<isize> = conn.zrevrank(zkey, cursor_id).map_err(map_err)?;
+    if let Some(rank) = rank {
+        return conn
+            .zrevrange(zkey, rank + 1, rank + limit as isize)
+            .map_err(map_err);
+    }
+
+    // The cursor row was purged between pages, so there is no rank to seek from.
+    // Fall back to the score bounds: the tie bucket (same score, id < cursor_id)
+    // first, then everything strictly below that score.
     let same_score: Vec<String> = conn
         .zrangebyscore(zkey, score as f64, score as f64)
         .map_err(map_err)?;
@@ -175,7 +188,6 @@ fn zset_keyset_page(
     page.reverse(); // ascending lex → descending id
     page.truncate(limit as usize);
 
-    // Then rows strictly below the cursor score, newest first.
     if (page.len() as i64) < limit {
         let remaining = limit - page.len() as i64;
         let lower: Vec<String> = conn
