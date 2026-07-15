@@ -6,10 +6,12 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from taskito.async_support.context import clear_async_context, set_async_context
 from taskito.context import current_job
+from taskito.events import EventType
 from taskito.exceptions import TaskCancelledError
 from taskito.interception.reconstruct import reconstruct_args
 from taskito.proxies import cleanup_proxies, reconstruct_proxies
@@ -19,6 +21,10 @@ if TYPE_CHECKING:
     from taskito.app import Queue
 
 logger = logging.getLogger("taskito.async")
+
+# Backoff bounds for handing a result to Rust while the result channel is full.
+_REPORT_BACKOFF_START_S = 0.001
+_REPORT_BACKOFF_MAX_S = 0.05
 
 
 class AsyncTaskExecutor:
@@ -63,14 +69,47 @@ class AsyncTaskExecutor:
         retry_count: int,
         max_retries: int,
         queue_name: str,
+        permit: Any = None,
     ) -> None:
-        """Submit an async job for execution. Called from Rust — brief GIL hold."""
+        """Submit an async job for execution. Called from Rust — brief GIL hold.
+
+        ``permit`` is the dispatch slot the pool acquired for this job; holding it on
+        the coroutine frame is what releases it on every exit path. It is optional so
+        the executor can also be driven directly, without a pool.
+        """
         if self._loop is None:
             raise RuntimeError("AsyncTaskExecutor not started")
         asyncio.run_coroutine_threadsafe(
-            self._execute(job_id, task_name, payload, retry_count, max_retries, queue_name),
+            self._execute(
+                job_id, task_name, payload, retry_count, max_retries, queue_name, permit
+            ),
             self._loop,
         )
+
+    async def _hand_off(self, send: Callable[[], bool]) -> None:
+        """Push a result to Rust, backing off while the result channel is full.
+
+        Never drops a result — a dropped one strands the job ``Running`` until the
+        reaper mislabels it a timeout. Awaiting between attempts is what keeps the
+        event loop responsive: a blocking send would freeze every other coroutine on
+        this thread, and would deadlock against the drain loop, which re-acquires the
+        GIL each iteration and so could never drain the channel being waited on.
+        """
+        delay = _REPORT_BACKOFF_START_S
+        while not send():
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, _REPORT_BACKOFF_MAX_S)
+
+    def _hand_off_now(self, send: Callable[[], bool], job_id: str) -> None:
+        """Single best-effort hand-off for a coroutine already being torn down.
+
+        The cancellation path cannot use :meth:`_hand_off`: awaiting inside a
+        ``CancelledError`` handler risks being cancelled again on a loop that may be
+        stopping. The channel is drained continuously, so a full one is rare here; the
+        stale-job reaper remains the backstop if this does drop.
+        """
+        if not send():
+            logger.warning("result channel full while cancelling %s; job left to reaper", job_id)
 
     async def _execute(
         self,
@@ -80,8 +119,31 @@ class AsyncTaskExecutor:
         retry_count: int,
         max_retries: int,
         queue_name: str,
+        permit: Any = None,
     ) -> None:
         """Execute a single async task with full lifecycle support."""
+        assert self._semaphore is not None
+        try:
+            await self._run_job(
+                job_id, task_name, payload_bytes, retry_count, max_retries, queue_name
+            )
+        finally:
+            # Hand the dispatch slot back as soon as the job is done rather than
+            # waiting for the frame to be collected. Dropping the handle is the
+            # backstop for paths that never reach here.
+            if permit is not None:
+                permit.release()
+
+    async def _run_job(
+        self,
+        job_id: str,
+        task_name: str,
+        payload_bytes: bytes,
+        retry_count: int,
+        max_retries: int,
+        queue_name: str,
+    ) -> None:
+        """Run one job: gate on the concurrency backstop, execute, report."""
         assert self._semaphore is not None
         async with self._semaphore:
             start_ns = time.monotonic_ns()
@@ -91,6 +153,11 @@ class AsyncTaskExecutor:
             result: Any = None
             error: Exception | None = None
             completed_mw: list[Any] = []
+            # Set before the hand-off so a raising send can't also fire report_failure
+            # for the same job — the scheduler would then see two results for one job.
+            reported = False
+            # Cancellation has its own event, emitted by the Rust outcome loop.
+            cancelled = False
 
             try:
                 queue = self._queue_ref
@@ -161,27 +228,55 @@ class AsyncTaskExecutor:
                     queue._serialize_result(task_name, result) if result is not None else None
                 )
                 wall_ns = time.monotonic_ns() - start_ns
-                self._sender.report_success(job_id, task_name, result_bytes, wall_ns)
+                reported = True
+                await self._hand_off(
+                    lambda: self._sender.try_report_success(
+                        job_id, task_name, result_bytes, wall_ns
+                    )
+                )
 
             except TaskCancelledError:
                 error = None  # Don't treat cancellation as an error for middleware
-                wall_ns = time.monotonic_ns() - start_ns
-                self._sender.report_cancelled(job_id, task_name, wall_ns)
+                cancelled = True
+                if not reported:
+                    wall_ns = time.monotonic_ns() - start_ns
+                    reported = True
+                    await self._hand_off(
+                        lambda: self._sender.try_report_cancelled(job_id, task_name, wall_ns)
+                    )
+
+            except asyncio.CancelledError:
+                # CancelledError is a BaseException, so `except Exception` misses it and
+                # the job would sit Running until the reaper mislabelled it a timeout.
+                # Report, then re-raise — swallowing a cancellation breaks loop shutdown.
+                cancelled = True
+                if not reported:
+                    wall_ns = time.monotonic_ns() - start_ns
+                    reported = True
+                    self._hand_off_now(
+                        lambda: self._sender.try_report_cancelled(job_id, task_name, wall_ns),
+                        job_id,
+                    )
+                raise
 
             except Exception as exc:
                 error = exc
-                wall_ns = time.monotonic_ns() - start_ns
-                error_msg = encode_task_error(exc)
-                should_retry = self._check_retry(task_name, exc)
-                self._sender.report_failure(
-                    job_id,
-                    task_name,
-                    error_msg,
-                    retry_count,
-                    max_retries,
-                    wall_ns,
-                    should_retry,
-                )
+                if not reported:
+                    wall_ns = time.monotonic_ns() - start_ns
+                    reported = True
+                    error_msg = encode_task_error(exc)
+                    should_retry = self._check_retry(task_name, exc)
+                    await self._hand_off(
+                        lambda: self._sender.try_report_failure(
+                            job_id,
+                            task_name,
+                            error_msg,
+                            retry_count,
+                            max_retries,
+                            wall_ns,
+                            should_retry,
+                        )
+                    )
 
             finally:
                 # Release task/request-scoped resources
@@ -201,7 +296,35 @@ class AsyncTaskExecutor:
                     except Exception:
                         logger.exception("middleware after() error")
 
+                # Emit job lifecycle events. The Rust outcome loop deliberately
+                # skips Success — the blocking wrapper emits it — and native
+                # dispatch bypasses that wrapper, so it has to emit here too or
+                # nothing downstream (workflow tracker, subscribers) ever learns
+                # the job finished. Cancellation is the exception — that outcome
+                # does have a Rust-side event.
+                if not cancelled:
+                    self._emit_lifecycle_event(job_id, task_name, queue_name, error)
+
                 clear_async_context(token)
+
+    def _emit_lifecycle_event(
+        self, job_id: str, task_name: str, queue_name: str, error: Exception | None
+    ) -> None:
+        """Emit JOB_COMPLETED/JOB_FAILED, mirroring the blocking task wrapper."""
+        payload: dict[str, Any] = {
+            "task_name": task_name,
+            "job_id": job_id,
+            "queue": queue_name,
+        }
+        if error is not None:
+            payload["error"] = str(error)
+        try:
+            self._queue_ref._emit_event(
+                EventType.JOB_FAILED if error is not None else EventType.JOB_COMPLETED,
+                payload,
+            )
+        except Exception:
+            logger.exception("job lifecycle event error")
 
     def _check_retry(self, task_name: str, exc: Exception) -> bool:
         """Check retry filters to decide if this exception should be retried."""

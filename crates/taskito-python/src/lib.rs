@@ -36,7 +36,10 @@ fn _taskito(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyJob>()?;
     m.add_class::<PyTaskConfig>()?;
     #[cfg(feature = "native-async")]
-    m.add_class::<native_async::PyResultSender>()?;
+    {
+        m.add_class::<native_async::PyResultSender>()?;
+        m.add_class::<native_async::PyJobPermit>()?;
+    }
     #[cfg(feature = "workflows")]
     {
         m.add_class::<py_workflow::PyWorkflowBuilder>()?;

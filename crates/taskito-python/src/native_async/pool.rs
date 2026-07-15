@@ -11,12 +11,16 @@ use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
 use taskito_core::worker::WorkerDispatcher;
 
+use super::permit::PyJobPermit;
 use super::task_executor::execute_sync_task;
 
 /// Dual-dispatch worker pool: async tasks run natively on a Python event loop,
-/// sync tasks use `spawn_blocking` (bounded by a semaphore).
+/// sync tasks use `spawn_blocking`. Each branch is bounded by its own semaphore —
+/// `num_workers` blocking threads, `async_concurrency` coroutines — so neither can
+/// starve the other out of a shared budget.
 pub struct NativeAsyncPool {
     num_workers: usize,
+    async_concurrency: usize,
     task_registry: Arc<Py<PyAny>>,
     retry_filters: Arc<Py<PyAny>>,
     async_executor: Arc<Py<PyAny>>,
@@ -26,12 +30,14 @@ pub struct NativeAsyncPool {
 impl NativeAsyncPool {
     pub fn new(
         num_workers: usize,
+        async_concurrency: usize,
         task_registry: Arc<Py<PyAny>>,
         retry_filters: Arc<Py<PyAny>>,
         async_executor: Arc<Py<PyAny>>,
     ) -> Self {
         Self {
             num_workers,
+            async_concurrency,
             task_registry,
             retry_filters,
             async_executor,
@@ -47,7 +53,8 @@ impl WorkerDispatcher for NativeAsyncPool {
         mut job_rx: tokio::sync::mpsc::Receiver<Job>,
         result_tx: Sender<JobResult>,
     ) {
-        let semaphore = Arc::new(Semaphore::new(self.num_workers));
+        let sync_semaphore = Arc::new(Semaphore::new(self.num_workers));
+        let async_semaphore = Arc::new(Semaphore::new(self.async_concurrency));
 
         while let Some(job) = job_rx.recv().await {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -68,22 +75,39 @@ impl WorkerDispatcher for NativeAsyncPool {
             });
 
             if is_async {
+                // Take the slot before submitting, not inside the coroutine: dispatch
+                // returns as soon as the job is queued, so without this the loop would
+                // pull jobs from `job_rx` without bound and pile up Running-but-not-yet-
+                // executing work. Blocking here is the point — it is what bounds the
+                // in-flight count. The permit rides with the coroutine and is released
+                // when it finishes (or is collected).
+                let permit = match async_semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
                 // Submit to the Python async executor — brief GIL hold, non-blocking
                 let executor = self.async_executor.clone();
                 Python::attach(|py| {
                     let exec = executor.bind(py);
                     let payload = PyBytes::new(py, &job.payload);
-                    if let Err(e) = exec.call_method1(
-                        "submit_job",
-                        (
-                            &job.id,
-                            &job.task_name,
-                            payload,
-                            job.retry_count,
-                            job.max_retries,
-                            &job.queue,
-                        ),
-                    ) {
+                    // Either failure drops the permit handle, returning the slot.
+                    let submitted = Py::new(py, PyJobPermit::new(permit)).and_then(|handle| {
+                        exec.call_method1(
+                            "submit_job",
+                            (
+                                &job.id,
+                                &job.task_name,
+                                payload,
+                                job.retry_count,
+                                job.max_retries,
+                                &job.queue,
+                                handle,
+                            ),
+                        )
+                        .map(|_| ())
+                    });
+                    if let Err(e) = submitted {
                         log::error!(
                             "[taskito] Failed to submit async task {}[{}]: {e}",
                             job.task_name,
@@ -103,7 +127,7 @@ impl WorkerDispatcher for NativeAsyncPool {
                 });
             } else {
                 // Sync path: spawn_blocking bounded by semaphore
-                let permit = match semaphore.clone().acquire_owned().await {
+                let permit = match sync_semaphore.clone().acquire_owned().await {
                     Ok(p) => p,
                     Err(_) => break,
                 };

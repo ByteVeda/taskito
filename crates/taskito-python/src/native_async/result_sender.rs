@@ -1,13 +1,18 @@
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Sender, TrySendError};
 use pyo3::prelude::*;
 
 use taskito_core::scheduler::JobResult;
 
 /// Python-accessible sender for reporting task results back to the Rust scheduler.
 ///
-/// The `AsyncTaskExecutor` on the Python side calls `report_success`, `report_failure`,
-/// or `report_cancelled` to push `JobResult` values into the same crossbeam channel
-/// that sync tasks use.
+/// The `AsyncTaskExecutor` on the Python side calls `try_report_success`,
+/// `try_report_failure`, or `try_report_cancelled` to push `JobResult` values into the
+/// same crossbeam channel that sync tasks use.
+///
+/// Async callers must use the `try_report_*` variants. The blocking `report_*` methods
+/// park the caller when the channel is full while still holding the GIL — fatal on the
+/// executor's single event-loop thread, because the result drain loop re-acquires the GIL
+/// each iteration and could never drain the channel that the sender is waiting on.
 #[pyclass]
 pub struct PyResultSender {
     tx: Sender<JobResult>,
@@ -17,31 +22,37 @@ impl PyResultSender {
     pub fn new(tx: Sender<JobResult>) -> Self {
         Self { tx }
     }
+
+    /// `true` when the result was handed off (or the channel is gone, so retrying is
+    /// futile); `false` only when the channel is full and the caller should back off.
+    fn try_hand_off(&self, result: JobResult) -> bool {
+        !matches!(self.tx.try_send(result), Err(TrySendError::Full(_)))
+    }
 }
 
 #[pymethods]
 impl PyResultSender {
-    /// Report a successful task execution.
+    /// Report a successful task execution. `false` means "channel full, retry".
     #[pyo3(signature = (job_id, task_name, result, wall_time_ns))]
-    fn report_success(
+    fn try_report_success(
         &self,
         job_id: String,
         task_name: String,
         result: Option<Vec<u8>>,
         wall_time_ns: i64,
-    ) {
-        let _ = self.tx.send(JobResult::Success {
+    ) -> bool {
+        self.try_hand_off(JobResult::Success {
             job_id,
             result,
             task_name,
             wall_time_ns,
-        });
+        })
     }
 
-    /// Report a failed task execution.
+    /// Report a failed task execution. `false` means "channel full, retry".
     #[pyo3(signature = (job_id, task_name, error, retry_count, max_retries, wall_time_ns, should_retry))]
     #[allow(clippy::too_many_arguments)]
-    fn report_failure(
+    fn try_report_failure(
         &self,
         job_id: String,
         task_name: String,
@@ -50,8 +61,8 @@ impl PyResultSender {
         max_retries: i32,
         wall_time_ns: i64,
         should_retry: bool,
-    ) {
-        let _ = self.tx.send(JobResult::Failure {
+    ) -> bool {
+        self.try_hand_off(JobResult::Failure {
             job_id,
             error,
             retry_count,
@@ -60,16 +71,16 @@ impl PyResultSender {
             wall_time_ns,
             should_retry,
             timed_out: false,
-        });
+        })
     }
 
-    /// Report a cancelled task.
+    /// Report a cancelled task. `false` means "channel full, retry".
     #[pyo3(signature = (job_id, task_name, wall_time_ns))]
-    fn report_cancelled(&self, job_id: String, task_name: String, wall_time_ns: i64) {
-        let _ = self.tx.send(JobResult::Cancelled {
+    fn try_report_cancelled(&self, job_id: String, task_name: String, wall_time_ns: i64) -> bool {
+        self.try_hand_off(JobResult::Cancelled {
             job_id,
             task_name,
             wall_time_ns,
-        });
+        })
     }
 }

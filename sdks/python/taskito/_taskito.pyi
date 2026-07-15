@@ -24,6 +24,7 @@ class PyTaskConfig:
     max_concurrent: int | None
     circuit_breaker_half_open_probes: int | None
     circuit_breaker_half_open_success_rate: float | None
+    max_in_flight_per_task: int | None
 
     def __init__(
         self,
@@ -42,6 +43,7 @@ class PyTaskConfig:
         max_concurrent: int | None = None,
         circuit_breaker_half_open_probes: int | None = None,
         circuit_breaker_half_open_success_rate: float | None = None,
+        max_in_flight_per_task: int | None = None,
     ) -> None: ...
 
 class PyJob:
@@ -524,14 +526,14 @@ class PyResultSender:
     Only available when built with the ``native-async`` feature.
     """
 
-    def report_success(
+    def try_report_success(
         self,
         job_id: str,
         task_name: str,
         result: bytes | None,
         wall_time_ns: int,
-    ) -> None: ...
-    def report_failure(
+    ) -> bool: ...
+    def try_report_failure(
         self,
         job_id: str,
         task_name: str,
@@ -540,13 +542,13 @@ class PyResultSender:
         max_retries: int,
         wall_time_ns: int,
         should_retry: bool,
-    ) -> None: ...
-    def report_cancelled(
+    ) -> bool: ...
+    def try_report_cancelled(
         self,
         job_id: str,
         task_name: str,
         wall_time_ns: int,
-    ) -> None: ...
+    ) -> bool: ...
 
 def _init_rust_logging() -> None:
     """Activate the Rust → Python `logging` bridge (idempotent)."""

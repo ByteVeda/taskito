@@ -167,11 +167,11 @@ def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
 
     payload = cloudpickle.dumps(((2, 3), {}))
     executor.submit_job("job-1", "test_mod.my_task", payload, 0, 3, "default")
-    poll_until(lambda: sender.report_success.called, message="job-1 result not reported")
+    poll_until(lambda: sender.try_report_success.called, message="job-1 result not reported")
     executor.stop()
 
-    sender.report_success.assert_called_once()
-    call_args = sender.report_success.call_args
+    sender.try_report_success.assert_called_once()
+    call_args = sender.try_report_success.call_args
     assert call_args[0][0] == "job-1"
     assert call_args[0][1] == "test_mod.my_task"
     result = cloudpickle.loads(call_args[0][2])
@@ -211,11 +211,11 @@ def test_async_exception_reported(poll_until: PollUntil) -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("job-2", "mod.failing_task", payload, 0, 3, "default")
-    poll_until(lambda: sender.report_failure.called, message="job-2 failure not reported")
+    poll_until(lambda: sender.try_report_failure.called, message="job-2 failure not reported")
     executor.stop()
 
-    sender.report_failure.assert_called_once()
-    call_args = sender.report_failure.call_args
+    sender.try_report_failure.assert_called_once()
+    call_args = sender.try_report_failure.call_args
     assert call_args[0][0] == "job-2"
     assert "boom" in call_args[0][2]
     assert call_args[0][6] is True  # should_retry
@@ -254,11 +254,13 @@ def test_async_cancellation(poll_until: PollUntil) -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("job-3", "mod.cancelling_task", payload, 0, 3, "default")
-    poll_until(lambda: sender.report_cancelled.called, message="job-3 cancellation not reported")
+    poll_until(
+        lambda: sender.try_report_cancelled.called, message="job-3 cancellation not reported"
+    )
     executor.stop()
 
-    sender.report_cancelled.assert_called_once()
-    assert sender.report_cancelled.call_args[0][0] == "job-3"
+    sender.try_report_cancelled.assert_called_once()
+    assert sender.try_report_cancelled.call_args[0][0] == "job-3"
 
 
 def test_async_retry_filter(poll_until: PollUntil) -> None:
@@ -297,11 +299,11 @@ def test_async_retry_filter(poll_until: PollUntil) -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("job-4", "mod.flaky_task", payload, 0, 3, "default")
-    poll_until(lambda: sender.report_failure.called, message="job-4 failure not reported")
+    poll_until(lambda: sender.try_report_failure.called, message="job-4 failure not reported")
     executor.stop()
 
-    sender.report_failure.assert_called_once()
-    assert sender.report_failure.call_args[0][6] is False  # should_retry = False
+    sender.try_report_failure.assert_called_once()
+    assert sender.try_report_failure.call_args[0][6] is False  # should_retry = False
 
 
 def test_async_concurrency_limit(poll_until: PollUntil) -> None:
@@ -350,14 +352,14 @@ def test_async_concurrency_limit(poll_until: PollUntil) -> None:
         executor.submit_job(f"job-{i}", "mod.slow_task", payload, 0, 3, "default")
 
     poll_until(
-        lambda: sender.report_success.call_count >= 5,
+        lambda: sender.try_report_success.call_count >= 5,
         timeout=10,
         message="not all 5 slow_task jobs reported success",
     )
     executor.stop()
 
     assert max_concurrent <= 2
-    assert sender.report_success.call_count == 5
+    assert sender.try_report_success.call_count == 5
 
 
 def test_async_middleware_hooks(poll_until: PollUntil) -> None:
@@ -449,11 +451,11 @@ def test_async_task_with_injection(poll_until: PollUntil) -> None:
 
     payload = cloudpickle.dumps(((), {}))
     executor.submit_job("inj-job", "mod.db_task", payload, 0, 3, "default")
-    poll_until(lambda: sender.report_success.called, message="inj-job result not reported")
+    poll_until(lambda: sender.try_report_success.called, message="inj-job result not reported")
     executor.stop()
 
-    sender.report_success.assert_called_once()
-    result = cloudpickle.loads(sender.report_success.call_args[0][2])
+    sender.try_report_success.assert_called_once()
+    result = cloudpickle.loads(sender.try_report_success.call_args[0][2])
     assert result == "got-fake-conn"
 
 
@@ -548,10 +550,245 @@ def test_async_executor_honors_per_task_serializer(poll_until: PollUntil) -> Non
 
     payload = serializer.dumps(([2, 3], {}))
     executor.submit_job("ser-job", "mod.add", payload, 0, 3, "default")
-    poll_until(lambda: sender.report_success.called, message="ser-job result not reported")
+    poll_until(lambda: sender.try_report_success.called, message="ser-job result not reported")
     executor.stop()
 
     queue_ref._deserialize_payload.assert_called_once_with("mod.add", payload)
     queue_ref._serialize_result.assert_called_once_with("mod.add", 5)
-    result = serializer.loads(sender.report_success.call_args[0][2])
+    result = serializer.loads(sender.try_report_success.call_args[0][2])
     assert result == 5
+
+
+# ── Backpressure: permits, result hand-off, cancellation (S16/S17) ──
+
+
+class FakePermit:
+    """Stands in for the Rust PyJobPermit handle the pool hands to the executor."""
+
+    def __init__(self) -> None:
+        self.releases = 0
+
+    def release(self) -> None:
+        self.releases += 1
+
+
+def _backpressure_executor(sender: Any, fn: Any, task_name: str) -> Any:
+    """An executor wired to a single async `fn`, with everything else mocked out."""
+    import cloudpickle
+
+    from taskito.async_support.executor import AsyncTaskExecutor
+
+    class FakeWrapper:
+        _taskito_async_fn = staticmethod(fn)
+
+    queue_ref = MagicMock()
+    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
+    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
+    queue_ref._interceptor = None
+    queue_ref._proxy_registry = None
+    queue_ref._test_mode_active = False
+    queue_ref._resource_runtime = None
+    queue_ref._task_inject_map = {}
+    queue_ref._task_retry_filters = {}
+    queue_ref._get_middleware_chain.return_value = []
+    queue_ref._proxy_metrics = None
+
+    executor = AsyncTaskExecutor(sender, {task_name: FakeWrapper()}, queue_ref, max_concurrency=10)
+    executor.start()
+    return executor
+
+
+def _payload() -> bytes:
+    import cloudpickle
+
+    payload: bytes = cloudpickle.dumps(((), {}))
+    return payload
+
+
+def test_cancelled_coroutine_reports_cancelled(poll_until: PollUntil) -> None:
+    """asyncio.CancelledError is a BaseException, so `except Exception` misses it.
+
+    Unreported, the job sits Running until the reaper mislabels it a timeout.
+    """
+    sender = MagicMock()
+    sender.try_report_cancelled.return_value = True
+
+    async def cancelled_task() -> None:
+        raise asyncio.CancelledError
+
+    executor = _backpressure_executor(sender, cancelled_task, "mod.cancelled_task")
+    executor.submit_job("job-c", "mod.cancelled_task", _payload(), 0, 3, "default")
+    poll_until(
+        lambda: sender.try_report_cancelled.called,
+        message="asyncio.CancelledError was not reported",
+    )
+    executor.stop()
+
+    assert sender.try_report_cancelled.call_args[0][0] == "job-c"
+    assert not sender.try_report_failure.called, "a cancellation is not a failure"
+
+
+def test_no_double_report_when_report_raises(poll_until: PollUntil) -> None:
+    """A raising success hand-off must not also fire a failure for the same job."""
+    sender = MagicMock()
+    sender.try_report_success.side_effect = RuntimeError("channel exploded")
+    sender.try_report_failure.return_value = True
+
+    async def ok_task() -> int:
+        return 1
+
+    executor = _backpressure_executor(sender, ok_task, "mod.ok_task")
+    executor.submit_job("job-d", "mod.ok_task", _payload(), 0, 3, "default")
+    poll_until(lambda: sender.try_report_success.called, message="success never attempted")
+    executor.stop()
+
+    assert not sender.try_report_failure.called, "one job must yield at most one result"
+
+
+def test_permit_released_on_success(poll_until: PollUntil) -> None:
+    sender = MagicMock()
+    sender.try_report_success.return_value = True
+    permit = FakePermit()
+
+    async def ok_task() -> int:
+        return 1
+
+    executor = _backpressure_executor(sender, ok_task, "mod.ok_task")
+    executor.submit_job("job-p", "mod.ok_task", _payload(), 0, 3, "default", permit)
+    poll_until(lambda: permit.releases == 1, message="permit not released on success")
+    executor.stop()
+
+
+def test_permit_released_on_exception(poll_until: PollUntil) -> None:
+    sender = MagicMock()
+    sender.try_report_failure.return_value = True
+    permit = FakePermit()
+
+    async def boom_task() -> None:
+        raise ValueError("boom")
+
+    executor = _backpressure_executor(sender, boom_task, "mod.boom_task")
+    executor.submit_job("job-p", "mod.boom_task", _payload(), 0, 3, "default", permit)
+    poll_until(lambda: permit.releases == 1, message="permit not released on exception")
+    executor.stop()
+
+
+def test_permit_released_on_cancellation(poll_until: PollUntil) -> None:
+    """The path that leaks a slot forever if release rides on the result report."""
+    sender = MagicMock()
+    sender.try_report_cancelled.return_value = True
+    permit = FakePermit()
+
+    async def cancelled_task() -> None:
+        raise asyncio.CancelledError
+
+    executor = _backpressure_executor(sender, cancelled_task, "mod.cancelled_task")
+    executor.submit_job("job-p", "mod.cancelled_task", _payload(), 0, 3, "default", permit)
+    poll_until(lambda: permit.releases == 1, message="permit not released on cancellation")
+    executor.stop()
+
+
+def test_report_retries_when_channel_full_without_stalling_the_loop(
+    poll_until: PollUntil,
+) -> None:
+    """A full result channel must back off, not block — and never drop the result.
+
+    `job-a` is refused until `job-b` reports, so `job-b` can only get through if the
+    event loop stayed responsive while `job-a` was backing off. A blocking send would
+    wedge both and time this test out.
+    """
+    sender = MagicMock()
+    reported_b = threading.Event()
+
+    def send(job_id: str, task_name: str, result: Any, wall_ns: int) -> bool:
+        if job_id == "job-b":
+            reported_b.set()
+            return True
+        return reported_b.is_set()
+
+    sender.try_report_success.side_effect = send
+
+    async def ok_task() -> int:
+        return 1
+
+    executor = _backpressure_executor(sender, ok_task, "mod.ok_task")
+    executor.submit_job("job-a", "mod.ok_task", _payload(), 0, 3, "default")
+    executor.submit_job("job-b", "mod.ok_task", _payload(), 0, 3, "default")
+
+    poll_until(
+        lambda: (
+            sum(1 for c in sender.try_report_success.call_args_list if c[0][0] == "job-a") > 1
+            and reported_b.is_set()
+        ),
+        message="job-a never retried, or job-b starved behind it",
+    )
+    executor.stop()
+
+    a_calls = [c for c in sender.try_report_success.call_args_list if c[0][0] == "job-a"]
+    assert len(a_calls) > 1, "job-a must retry rather than drop its result"
+
+
+def test_native_dispatch_emits_job_completed(poll_until: PollUntil) -> None:
+    """Native dispatch must emit JOB_COMPLETED itself.
+
+    The Rust outcome loop skips Success on the grounds that the blocking task
+    wrapper emits it — but native dispatch bypasses that wrapper. Without this,
+    nothing downstream (notably the workflow tracker) ever learns the job
+    finished, and a workflow with an async step hangs in `running` forever.
+    """
+    from taskito.events import EventType
+
+    sender = MagicMock()
+    sender.try_report_success.return_value = True
+
+    async def ok_task() -> int:
+        return 1
+
+    executor = _backpressure_executor(sender, ok_task, "mod.ok_task")
+    queue_ref = executor._queue_ref
+    executor.submit_job("job-e", "mod.ok_task", _payload(), 0, 3, "default")
+    poll_until(lambda: queue_ref._emit_event.called, message="no lifecycle event emitted")
+    executor.stop()
+
+    event_type, payload = queue_ref._emit_event.call_args[0]
+    assert event_type == EventType.JOB_COMPLETED
+    assert payload["job_id"] == "job-e"
+    assert payload["task_name"] == "mod.ok_task"
+    assert payload["queue"] == "default"
+
+
+def test_native_dispatch_emits_job_failed(poll_until: PollUntil) -> None:
+    from taskito.events import EventType
+
+    sender = MagicMock()
+    sender.try_report_failure.return_value = True
+
+    async def boom_task() -> None:
+        raise ValueError("boom")
+
+    executor = _backpressure_executor(sender, boom_task, "mod.boom_task")
+    queue_ref = executor._queue_ref
+    executor.submit_job("job-f", "mod.boom_task", _payload(), 0, 3, "default")
+    poll_until(lambda: queue_ref._emit_event.called, message="no lifecycle event emitted")
+    executor.stop()
+
+    event_type, payload = queue_ref._emit_event.call_args[0]
+    assert event_type == EventType.JOB_FAILED
+    assert payload["error"] == "boom"
+
+
+def test_native_dispatch_does_not_emit_completed_on_cancel(poll_until: PollUntil) -> None:
+    """Cancellation has its own Rust-side event; emitting COMPLETED would be a lie."""
+    sender = MagicMock()
+    sender.try_report_cancelled.return_value = True
+
+    async def cancelling_task() -> None:
+        raise TaskCancelledError("nope")
+
+    executor = _backpressure_executor(sender, cancelling_task, "mod.cancelling_task")
+    queue_ref = executor._queue_ref
+    executor.submit_job("job-g", "mod.cancelling_task", _payload(), 0, 3, "default")
+    poll_until(lambda: sender.try_report_cancelled.called, message="cancellation not reported")
+    executor.stop()
+
+    assert not queue_ref._emit_event.called, "a cancelled job did not complete"

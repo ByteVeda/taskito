@@ -277,15 +277,29 @@ impl PyQueue {
         let queues = queues.unwrap_or_else(|| vec!["default".to_string()]);
         let queues_str = queues.join(",");
 
+        // Clamp once for every consumer: 0 would leave `asyncio.Semaphore(0)` holding
+        // every native async job forever, and a negative raises inside `start()`.
+        #[allow(unused_variables)]
+        let async_concurrency = async_concurrency.max(1) as usize;
+
+        // Bound in-flight work to what this worker can actually run, so it never
+        // claims more and starves peers sharing the DB.
+        //
+        // Only the sync branch runs today: native async dispatch is dormant (see
+        // the note in decorators.py), so async tasks reach the pool as sync work
+        // and every job is bounded by `num_workers`. Adding `async_concurrency`
+        // here would claim jobs nothing can execute — they would sit Running in
+        // the channel waiting for a blocking thread. Widen this to the sum of the
+        // two budgets in the change that activates native dispatch, not before.
+        let max_in_flight = self.num_workers;
+
         let scheduler_config = SchedulerConfig {
             poll_interval: std::time::Duration::from_millis(self.scheduler_poll_interval_ms),
             reap_interval: self.scheduler_reap_interval,
             cleanup_interval: self.scheduler_cleanup_interval,
             result_ttl_ms: self.result_ttl_ms,
             batch_size: self.scheduler_batch_size,
-            // Bound in-flight work to the pool size so this worker never claims
-            // more than it can run and starve peers sharing the DB.
-            max_in_flight: Some(self.num_workers),
+            max_in_flight: Some(max_in_flight),
             dlq_auto_retry_delay_ms: self.dlq_auto_retry_delay_ms,
             dlq_auto_retry_max: self.dlq_auto_retry_max,
             ..SchedulerConfig::default()
@@ -369,6 +383,7 @@ impl PyQueue {
                     rate_limit,
                     circuit_breaker,
                     max_concurrent: tc.max_concurrent,
+                    max_in_flight_per_task: tc.max_in_flight_per_task.map(|n| n.max(1) as usize),
                 },
             );
         }
@@ -424,6 +439,9 @@ impl PyQueue {
 
         let shutdown = scheduler.shutdown_handle();
 
+        // Headroom over the in-flight cap, so the cheap pre-claim gate binds before
+        // the channel does: the channel-full path claims and then rolls back, which
+        // churns storage where the gate does not.
         let (job_tx, job_rx) = tokio::sync::mpsc::channel(self.num_workers * 2);
         let (result_tx, result_rx) = crossbeam_channel::bounded(self.num_workers * 2);
 
@@ -498,6 +516,7 @@ impl PyQueue {
                 let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> =
                     Arc::new(crate::native_async::NativeAsyncPool::new(
                         num_workers,
+                        async_concurrency,
                         registry_arc.clone(),
                         filters_arc.clone(),
                         async_executor,

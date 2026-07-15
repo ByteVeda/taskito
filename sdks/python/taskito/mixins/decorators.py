@@ -385,6 +385,10 @@ class QueueDecoratorMixin:
         on_false: str = "defer",
         predicate_extras: dict[str, Any] | None = None,
         default_defer_seconds: float = 60.0,
+        # Appended, not slotted next to `max_concurrent`: this signature is not
+        # keyword-only, so inserting mid-list would silently rebind the positional
+        # arguments after it.
+        max_in_flight_per_task: int | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 
@@ -421,6 +425,11 @@ class QueueDecoratorMixin:
                 (5 minutes) if not set.
             max_concurrent: Maximum number of concurrent running instances of
                 this task. ``None`` means no limit.
+            max_in_flight_per_task: Cap on this task's share of a single worker's
+                dispatch slots, so one slow task cannot occupy the whole pool and
+                starve the others. Unlike ``max_concurrent`` (a cluster-wide cap
+                that costs a database read), this is in-process and free.
+                ``None`` lets the task use the whole pool.
             compensates: Optional reference to a task that compensates this
                 one. When this task runs as part of a workflow saga and a
                 later step fails, the framework enqueues the compensation
@@ -584,6 +593,14 @@ class QueueDecoratorMixin:
 
             # Wrap the function with hooks, middleware, and context
             wrapped = self._wrap_task(fn, task_name, soft_timeout)
+
+            # NOTE: `_taskito_is_async` is deliberately NOT set on `wrapped`.
+            # The pool reads that flag off this registry entry to choose native
+            # dispatch, so setting it here activates the native path — and that
+            # path reimplements the task lifecycle and still lacks this wrapper's
+            # queue hooks, saga compensation context, soft_timeout and per-item
+            # batch handling. Async tasks therefore run through this blocking
+            # wrapper (via run_maybe_async) until those gaps are closed.
             self._task_registry[task_name] = wrapped
 
             cb_threshold = None
@@ -615,6 +632,7 @@ class QueueDecoratorMixin:
                 max_concurrent=max_concurrent,
                 circuit_breaker_half_open_probes=cb_half_open_probes,
                 circuit_breaker_half_open_success_rate=cb_half_open_success_rate,
+                max_in_flight_per_task=max_in_flight_per_task,
             )
             self._task_configs.append(config)
 

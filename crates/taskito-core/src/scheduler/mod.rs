@@ -146,6 +146,55 @@ pub struct TaskConfig {
     pub rate_limit: Option<crate::resilience::rate_limiter::RateLimitConfig>,
     pub circuit_breaker: Option<CircuitBreakerConfig>,
     pub max_concurrent: Option<i32>,
+    /// Cap on this task's share of *this worker's* in-flight slots, so one slow
+    /// task cannot occupy the whole pool and starve every other task. Complements
+    /// `max_concurrent`, which is the cluster-wide cap and costs a database read;
+    /// this one is in-process and free. `None` lets the task use the whole pool.
+    pub max_in_flight_per_task: Option<usize>,
+}
+
+/// In-flight bookkeeping behind the dispatch caps: which jobs are out, and how many
+/// of each task. Per-task counts are maintained alongside rather than derived so the
+/// per-task gate stays O(1) — the poller consults it on every dispatch, and the map
+/// is as large as `max_in_flight`.
+#[derive(Default)]
+struct InFlight {
+    task_by_job: HashMap<String, String>,
+    count_by_task: HashMap<String, usize>,
+}
+
+impl InFlight {
+    fn len(&self) -> usize {
+        self.task_by_job.len()
+    }
+
+    fn count_for(&self, task_name: &str) -> usize {
+        self.count_by_task.get(task_name).copied().unwrap_or(0)
+    }
+
+    fn insert(&mut self, job_id: &str, task_name: &str) {
+        if self
+            .task_by_job
+            .insert(job_id.to_string(), task_name.to_string())
+            .is_none()
+        {
+            *self.count_by_task.entry(task_name.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    /// `true` if the job was tracked here (so a slot was actually freed).
+    fn remove(&mut self, job_id: &str) -> bool {
+        let Some(task_name) = self.task_by_job.remove(job_id) else {
+            return false;
+        };
+        if let Some(count) = self.count_by_task.get_mut(&task_name) {
+            *count -= 1;
+            if *count == 0 {
+                self.count_by_task.remove(&task_name);
+            }
+        }
+        true
+    }
 }
 
 /// Per-queue configuration for rate limiting and concurrency caps.
@@ -172,11 +221,11 @@ pub struct Scheduler {
     /// binding sets it to the process `worker_id` so dead-worker recovery can
     /// attribute orphaned claims. See [`Self::set_claim_owner`].
     claim_owner: String,
-    /// Ids of jobs dispatched to the worker channel but not yet finished, used
-    /// only when `config.max_in_flight` is set. Its length is the current
-    /// in-flight count; the poller stops dispatching once it hits the cap, and
-    /// [`Self::handle_result`] removes an id as each job finishes.
-    in_flight: Mutex<HashSet<String>>,
+    /// Jobs dispatched to the worker channel but not yet finished, used only when
+    /// `config.max_in_flight` is set. Its length is the current in-flight count;
+    /// the poller stops dispatching once it hits the cap, and [`Self::handle_result`]
+    /// removes a job as it finishes.
+    in_flight: Mutex<InFlight>,
     /// Signalled when a finished job frees an in-flight slot, so the poll loop
     /// can refill immediately instead of waiting out its backoff — keeping
     /// throughput up despite the in-flight cap.
@@ -225,7 +274,7 @@ impl Scheduler {
             paused_cache: Mutex::new((HashSet::new(), Instant::now())),
             namespace,
             claim_owner: poller::SCHEDULER_CLAIM_OWNER.to_string(),
-            in_flight: Mutex::new(HashSet::new()),
+            in_flight: Mutex::new(InFlight::default()),
             dispatch_wake: Arc::new(Notify::new()),
             #[cfg(feature = "push-dispatch")]
             wake_source: Mutex::new(None),
@@ -261,13 +310,21 @@ impl Scheduler {
 
     /// Record a job as in flight once it is handed to the worker channel.
     /// No-op when dispatch is unbounded.
-    fn track_in_flight(&self, job_id: &str) {
+    fn track_in_flight(&self, job_id: &str, task_name: &str) {
         if self.config.max_in_flight.is_some() {
             self.in_flight
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .insert(job_id.to_string());
+                .insert(job_id, task_name);
         }
+    }
+
+    /// How many of this task's jobs this worker currently has in flight.
+    fn task_in_flight(&self, task_name: &str) -> usize {
+        self.in_flight
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .count_for(task_name)
     }
 
     /// Release a job's in-flight slot when it finishes and wake the poller to
@@ -703,6 +760,7 @@ mod tests {
                 rate_limit: None,
                 circuit_breaker: None,
                 max_concurrent: None,
+                max_in_flight_per_task: None,
             },
         );
 
@@ -743,6 +801,7 @@ mod tests {
                 rate_limit: None,
                 circuit_breaker: None,
                 max_concurrent: None,
+                max_in_flight_per_task: None,
             },
         );
 
@@ -844,6 +903,7 @@ mod tests {
                 }),
                 circuit_breaker: None,
                 max_concurrent: None,
+                max_in_flight_per_task: None,
             },
         );
 
@@ -888,6 +948,7 @@ mod tests {
                 rate_limit: None,
                 circuit_breaker: Some(cb_config),
                 max_concurrent: None,
+                max_in_flight_per_task: None,
             },
         );
 
@@ -926,6 +987,7 @@ mod tests {
                 rate_limit: None,
                 circuit_breaker: None,
                 max_concurrent: Some(2),
+                max_in_flight_per_task: None,
             },
         );
 
@@ -994,6 +1056,7 @@ mod tests {
                 rate_limit: None,
                 circuit_breaker: None,
                 max_concurrent: Some(2),
+                max_in_flight_per_task: None,
             },
         );
 
@@ -1078,6 +1141,129 @@ mod tests {
         );
     }
 
+    /// Scheduler with an in-flight cap and a per-task bulkhead on `task_name`.
+    fn bulkhead_scheduler(max_in_flight: usize, task_name: &str, per_task: usize) -> Scheduler {
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            max_in_flight: Some(max_in_flight),
+            ..SchedulerConfig::default()
+        };
+        let mut scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+        scheduler.register_task(
+            task_name.to_string(),
+            TaskConfig {
+                retry_policy: RetryPolicy::default(),
+                rate_limit: None,
+                circuit_breaker: None,
+                max_concurrent: None,
+                max_in_flight_per_task: Some(per_task),
+            },
+        );
+        scheduler
+    }
+
+    #[test]
+    fn test_per_task_in_flight_cap_rejects_and_reschedules() {
+        // S19: a task capped at one in-flight job must not take a second slot
+        // even though the pool has room. The surplus rolls back to Pending with
+        // its claim cleared, rather than stranding Running.
+        let scheduler = bulkhead_scheduler(8, "hog", 1);
+        for _ in 0..3 {
+            scheduler.storage.enqueue(make_job("hog")).unwrap();
+        }
+
+        let (tx, mut rx) = make_channel(16);
+        while scheduler.tick_dispatch(&tx) {}
+
+        let mut dispatched = 0;
+        while rx.try_recv().is_ok() {
+            dispatched += 1;
+        }
+        assert_eq!(dispatched, 1, "per-task bulkhead limits dispatch to one");
+
+        let pending = scheduler
+            .storage
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
+            .unwrap();
+        assert_eq!(pending.len(), 2, "over-cap jobs must return to Pending");
+
+        let claims = scheduler
+            .storage
+            .list_claims_by_worker("scheduler")
+            .unwrap();
+        assert_eq!(
+            claims.len(),
+            1,
+            "rejected jobs must not keep a stale claim row"
+        );
+    }
+
+    #[test]
+    fn test_per_task_cap_does_not_block_other_tasks() {
+        // S19's whole point: the bulkhead is scoped to the task that tripped it.
+        // A saturated `hog` must not consume slots that `free` could use — the
+        // starvation a global semaphore (or a blocking per-task acquire on the
+        // dispatch loop) would cause.
+        let scheduler = bulkhead_scheduler(8, "hog", 1);
+        let (tx, mut rx) = make_channel(16);
+
+        scheduler.storage.enqueue(make_job("hog")).unwrap();
+        while scheduler.tick_dispatch(&tx) {}
+        assert_eq!(scheduler.task_in_flight("hog"), 1, "hog is at its bulkhead");
+
+        // With hog saturated, an unrelated task still dispatches up to the pool cap.
+        for _ in 0..3 {
+            scheduler.storage.enqueue(make_job("free")).unwrap();
+        }
+        while scheduler.tick_dispatch(&tx) {}
+
+        let mut hog = 0;
+        let mut free = 0;
+        while let Ok(job) = rx.try_recv() {
+            match job.task_name.as_str() {
+                "hog" => hog += 1,
+                "free" => free += 1,
+                other => panic!("unexpected task {other}"),
+            }
+        }
+        assert_eq!(hog, 1, "capped task is held to its bulkhead");
+        assert_eq!(free, 3, "uncapped task dispatches past the saturated one");
+    }
+
+    #[test]
+    fn test_release_in_flight_frees_per_task_slot() {
+        // The per-task count must decrement as jobs finish, or the bulkhead would
+        // leak slots and wedge the task at its cap forever.
+        let scheduler = bulkhead_scheduler(8, "hog", 1);
+        let (tx, mut rx) = make_channel(16);
+
+        scheduler.storage.enqueue(make_job("hog")).unwrap();
+        while scheduler.tick_dispatch(&tx) {}
+        let first = rx.try_recv().expect("one job dispatched");
+        assert_eq!(scheduler.task_in_flight("hog"), 1);
+
+        scheduler
+            .handle_result(JobResult::Success {
+                job_id: first.id.clone(),
+                result: None,
+                task_name: "hog".to_string(),
+                wall_time_ns: 1,
+            })
+            .unwrap();
+        assert_eq!(
+            scheduler.task_in_flight("hog"),
+            0,
+            "slot released on finish"
+        );
+
+        // The freed slot admits the next job of the same task.
+        scheduler.storage.enqueue(make_job("hog")).unwrap();
+        while scheduler.tick_dispatch(&tx) {}
+        assert!(rx.try_recv().is_ok(), "freed slot admits the next job");
+        assert_eq!(scheduler.task_in_flight("hog"), 1);
+    }
+
     #[test]
     fn test_try_dispatch_per_task_max_one_dispatches_one() {
         // Regression: `max_concurrent = 1` must allow exactly one job to
@@ -1092,6 +1278,7 @@ mod tests {
                 rate_limit: None,
                 circuit_breaker: None,
                 max_concurrent: Some(1),
+                max_in_flight_per_task: None,
             },
         );
 
@@ -1256,6 +1443,7 @@ mod tests {
                 rate_limit: None,
                 circuit_breaker: None,
                 max_concurrent: None,
+                max_in_flight_per_task: None,
             },
         );
 
@@ -1292,6 +1480,7 @@ mod tests {
             rate_limit: None,
             circuit_breaker: None,
             max_concurrent: None,
+            max_in_flight_per_task: None,
         }
     }
 
