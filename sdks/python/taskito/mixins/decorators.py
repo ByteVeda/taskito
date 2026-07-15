@@ -378,6 +378,7 @@ class QueueDecoratorMixin:
         codecs: list[str] | None = None,
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
+        max_in_flight_per_task: int | None = None,
         idempotent: bool = False,
         compensates: TaskWrapper | str | None = None,
         batch: bool | dict[str, Any] | None = None,
@@ -421,6 +422,11 @@ class QueueDecoratorMixin:
                 (5 minutes) if not set.
             max_concurrent: Maximum number of concurrent running instances of
                 this task. ``None`` means no limit.
+            max_in_flight_per_task: Cap on this task's share of a single worker's
+                dispatch slots, so one slow task cannot occupy the whole pool and
+                starve the others. Unlike ``max_concurrent`` (a cluster-wide cap
+                that costs a database read), this is in-process and free.
+                ``None`` lets the task use the whole pool.
             compensates: Optional reference to a task that compensates this
                 one. When this task runs as part of a workflow saga and a
                 later step fails, the framework enqueues the compensation
@@ -615,6 +621,7 @@ class QueueDecoratorMixin:
                 max_concurrent=max_concurrent,
                 circuit_breaker_half_open_probes=cb_half_open_probes,
                 circuit_breaker_half_open_success_rate=cb_half_open_success_rate,
+                max_in_flight_per_task=max_in_flight_per_task,
             )
             self._task_configs.append(config)
 

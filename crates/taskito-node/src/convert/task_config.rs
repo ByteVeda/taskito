@@ -42,6 +42,8 @@ pub fn task_config(input: &TaskConfigInput) -> Result<TaskConfig> {
             .map(circuit_breaker_config)
             .transpose()?,
         max_concurrent: input.max_concurrent,
+        // Not surfaced on this SDK yet; the whole pool stays available.
+        max_in_flight_per_task: None,
     })
 }
 

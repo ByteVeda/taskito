@@ -376,6 +376,7 @@ impl PyQueue {
                     rate_limit,
                     circuit_breaker,
                     max_concurrent: tc.max_concurrent,
+                    max_in_flight_per_task: tc.max_in_flight_per_task.map(|n| n.max(1) as usize),
                 },
             );
         }
