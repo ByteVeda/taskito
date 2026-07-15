@@ -163,40 +163,53 @@ impl RedisStorage {
             return Ok(rows);
         }
 
-        // Filtered path: task_name/level are not indexed, so scan the cutoff
-        // range and filter in memory.
-        let ids: Vec<String> = conn
-            .zrangebyscore(&all_key, since_ms as f64, "+inf")
-            .map_err(map_err)?;
-
+        // Filtered path: task_name/level are not indexed, so the cutoff range is
+        // walked newest-first in bounded windows and filtered in memory. Each
+        // window is hydrated in one pipelined round trip and the walk stops as
+        // soon as `limit` rows match, so neither memory nor round trips scale
+        // with the log history.
         let mut rows = Vec::new();
-        for id in ids {
-            let log_key = self.key(&["log", &id]);
-            let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
-            if let Some(d) = data {
-                let entry: LogEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+        let mut offset: isize = 0;
+        loop {
+            let ids: Vec<String> = conn
+                .zrevrangebyscore_limit(&all_key, "+inf", since_ms as f64, offset, SCAN_BATCH)
+                .map_err(map_err)?;
+            if ids.is_empty() {
+                break;
+            }
+            offset += ids.len() as isize;
 
-                if let Some(n) = task_name {
-                    if entry.task_name != n {
-                        continue;
-                    }
+            let log_keys: Vec<String> = ids.iter().map(|id| self.key(&["log", id])).collect();
+            let mut pipe = redis::pipe();
+            for key in &log_keys {
+                pipe.get(key);
+            }
+            let entries: Vec<Option<String>> = pipe.query(&mut conn).map_err(map_err)?;
+
+            for data in entries.into_iter().flatten() {
+                let entry: LogEntry =
+                    serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+
+                if task_name.is_some_and(|n| entry.task_name != n) {
+                    continue;
                 }
-                if let Some(l) = level {
-                    if entry.level != l {
-                        continue;
-                    }
+                if level.is_some_and(|l| entry.level != l) {
+                    continue;
                 }
 
                 rows.push(TaskLogRow::from(entry));
+                if limit >= 0 && rows.len() as i64 == limit {
+                    return Ok(rows);
+                }
+            }
+
+            if (ids.len() as isize) < SCAN_BATCH {
+                break;
             }
         }
 
-        // Sort by logged_at desc
-        rows.sort_by_key(|r| std::cmp::Reverse(r.logged_at));
-        if limit >= 0 {
-            rows.truncate(limit as usize);
-        }
+        // ZREVRANGEBYSCORE walks newest-first, so the rows are already
+        // logged_at desc.
         Ok(rows)
     }
 
