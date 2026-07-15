@@ -429,8 +429,13 @@ impl RedisStorage {
                 let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
                 if let Some(d) = data {
                     if let Ok(entry) = serde_json::from_str::<DeadJobEntry>(&d) {
+                        // An overflowing TTL is treated as never expiring, as in
+                        // the completed-job purge.
                         let expired = match entry.result_ttl_ms {
-                            Some(ttl) => entry.failed_at + ttl <= now,
+                            Some(ttl) => entry
+                                .failed_at
+                                .checked_add(ttl)
+                                .is_some_and(|expiry| expiry <= now),
                             None => entry.failed_at < global_cutoff_ms,
                         };
                         if expired {
