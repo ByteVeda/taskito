@@ -87,6 +87,42 @@ def test_list_workflow_runs_returns_paginated_list(
     assert isinstance(run["created_at"], int)
 
 
+def test_list_workflow_runs_cursor_mode_starts_without_a_cursor(
+    workflows_dashboard: tuple[AuthedClient, Queue],
+) -> None:
+    """``paginate=cursor`` opens keyset mode at the first page.
+
+    Clients have no cursor to send for page one, so without this they could
+    never enter cursor mode at all.
+    """
+    client, _ = workflows_dashboard
+    data = client.get("/api/workflows/runs?paginate=cursor")
+    assert "next_cursor" in data, "cursor mode must echo a next_cursor"
+    assert "offset" not in data, "cursor mode does not page by offset"
+    assert len(data["runs"]) >= 1
+
+
+def test_list_workflow_runs_cursor_pages_every_run_once(
+    workflows_dashboard: tuple[AuthedClient, Queue],
+) -> None:
+    """Walking from the first cursor page reaches every run exactly once."""
+    client, q = workflows_dashboard
+    expected = {r.id for r in q._inner.list_workflow_runs(limit=100, offset=0)}
+
+    seen: list[str] = []
+    query = "/api/workflows/runs?limit=1&paginate=cursor"
+    while True:
+        data = client.get(query)
+        seen.extend(r["id"] for r in data["runs"])
+        cursor = data["next_cursor"]
+        if cursor is None:
+            break
+        query = f"/api/workflows/runs?limit=1&after={cursor}"
+
+    assert len(seen) == len(set(seen)), "no run may appear on two pages"
+    assert set(seen) == expected
+
+
 def test_list_workflow_runs_respects_limit_offset(
     workflows_dashboard: tuple[AuthedClient, Queue],
 ) -> None:
