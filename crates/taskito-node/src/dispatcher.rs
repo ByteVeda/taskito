@@ -5,6 +5,7 @@
 //! `Promise<Buffer>`, and reports a [`JobResult`] back to the scheduler. This is
 //! the Node mirror of the Python shell's worker pool.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
@@ -14,7 +15,7 @@ use taskito_core::job::Job;
 use taskito_core::scheduler::JobResult;
 use taskito_core::worker::WorkerDispatcher;
 use taskito_core::{Storage, StorageBackend};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Semaphore};
 
 use crate::convert::JsTaskInvocation;
 
@@ -25,11 +26,18 @@ type TaskCallback = ThreadsafeFunction<JsTaskInvocation, ErrorStrategy::Fatal>;
 pub struct NodeDispatcher {
     callback: TaskCallback,
     storage: StorageBackend,
+    /// Caps jobs running at once. Without it the loop spawns every job it is
+    /// handed and immediately takes the next, so nothing bounds concurrency.
+    concurrency: Arc<Semaphore>,
 }
 
 impl NodeDispatcher {
-    pub fn new(callback: TaskCallback, storage: StorageBackend) -> Self {
-        Self { callback, storage }
+    pub fn new(callback: TaskCallback, storage: StorageBackend, max_in_flight: usize) -> Self {
+        Self {
+            callback,
+            storage,
+            concurrency: Arc::new(Semaphore::new(max_in_flight.max(1))),
+        }
     }
 }
 
@@ -41,13 +49,22 @@ impl WorkerDispatcher for NodeDispatcher {
         result_tx: Sender<JobResult>,
     ) {
         // Run jobs concurrently — each invocation is independent and the JS
-        // side may be async. The scheduler bounds in-flight work via the
-        // channel capacity and per-task/queue concurrency gates.
+        // side may be async — but take a permit first. Spawning unconditionally
+        // drains the job channel as fast as the scheduler fills it, so the
+        // channel applies no backpressure and in-flight work is unbounded: the
+        // worker claims jobs it cannot run, stranding them Running and starving
+        // peers on the same database. Blocking here is what bounds it; the
+        // permit rides with the job and is released when the task finishes.
         while let Some(job) = job_rx.recv().await {
+            let permit = match self.concurrency.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
             let callback = self.callback.clone();
             let storage = self.storage.clone();
             let result_tx = result_tx.clone();
             spawn(async move {
+                let _permit = permit;
                 let job_id = job.id.clone();
                 let result = run_one(&callback, &storage, job).await;
                 // A full bounded channel parks the sender — do it on the

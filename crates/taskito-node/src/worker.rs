@@ -90,6 +90,11 @@ pub fn start_worker(
     if let Some(batch) = options.batch_size {
         config.batch_size = batch.max(1) as usize;
     }
+    // Bound in-flight work to what the dispatcher will actually run at once, so
+    // this worker never claims more than it can execute and starve peers sharing
+    // the database. `channel_capacity` is documented as the in-flight bound, and
+    // the dispatcher is gated on the same number.
+    config.max_in_flight = Some(capacity);
 
     // The dispatcher reads cancel flags, and the lifecycle loop registers/heartbeats
     // — both need their own storage handle before `storage` moves into the scheduler.
@@ -178,7 +183,7 @@ pub fn start_worker(
     }
 
     // Dispatcher loop: execute each job in JS, report results on `result_tx`.
-    let dispatcher = NodeDispatcher::new(callback, dispatcher_storage);
+    let dispatcher = NodeDispatcher::new(callback, dispatcher_storage, capacity);
     spawn(async move {
         dispatcher.run(job_rx, result_tx).await;
     });
