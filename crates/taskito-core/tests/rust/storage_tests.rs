@@ -1554,6 +1554,32 @@ fn redis_storage_tests() {
     redis_move_to_dlq_leaves_consistent_state(&storage);
     redis_move_to_dlq_skips_already_archived(&storage);
     redis_purge_dead_drains_across_batches(&storage);
+    redis_keyset_pages_a_large_tie_bucket(&storage);
+}
+
+/// S12: `cancel_pending_by_queue` archives a whole batch under a single `now`,
+/// so every one of these rows lands in `archived:all` with the *same* score.
+/// Paging must still yield each exactly once — the tie bucket is not bounded by
+/// the clock, so a page that reads it whole would degrade with the batch size.
+#[cfg(feature = "redis")]
+fn redis_keyset_pages_a_large_tie_bucket(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-tie-bucket";
+    let total = 600;
+    let mut created = Vec::new();
+    for _ in 0..total {
+        created.push(s.enqueue(make_job(q, "tie_task")).unwrap().id);
+    }
+    // One `now` for the whole batch → 600 archived rows sharing one score.
+    assert_eq!(s.cancel_pending_by_queue(q).unwrap(), total as u64);
+
+    let paged = page_all_archived(s, 50);
+    for job_id in &created {
+        assert_eq!(
+            paged.iter().filter(|id| *id == job_id).count(),
+            1,
+            "every row of a same-score batch must be paged exactly once"
+        );
+    }
 }
 
 /// S15: the batched `purge_dead` must drain more than one SCAN_BATCH (500) of
