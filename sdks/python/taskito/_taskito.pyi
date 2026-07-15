@@ -24,6 +24,7 @@ class PyTaskConfig:
     max_concurrent: int | None
     circuit_breaker_half_open_probes: int | None
     circuit_breaker_half_open_success_rate: float | None
+    max_in_flight_per_task: int | None
 
     def __init__(
         self,
@@ -42,6 +43,7 @@ class PyTaskConfig:
         max_concurrent: int | None = None,
         circuit_breaker_half_open_probes: int | None = None,
         circuit_breaker_half_open_success_rate: float | None = None,
+        max_in_flight_per_task: int | None = None,
     ) -> None: ...
 
 class PyJob:

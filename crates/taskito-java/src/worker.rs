@@ -278,6 +278,8 @@ fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRet
                 rate_limit: None,
                 circuit_breaker,
                 max_concurrent: None,
+                // Not surfaced on this SDK yet; the whole pool stays available.
+                max_in_flight_per_task: None,
             },
         );
     }

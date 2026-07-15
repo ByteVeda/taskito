@@ -290,9 +290,10 @@ impl Scheduler {
         // the stale-reaper times it out, which surfaces as a *timeout* in
         // metrics and middleware (wrong outcome for a job that never ran).
         let job_id = job.id.clone();
+        let task_name = job.task_name.clone();
         match job_tx.try_send(job) {
             Ok(()) => {
-                self.track_in_flight(&job_id);
+                self.track_in_flight(&job_id, &task_name);
                 Ok(true)
             }
             Err(TrySendError::Full(job)) => {
@@ -414,6 +415,16 @@ impl Scheduler {
         if let Some(config) = self.task_configs.get(&job.task_name) {
             if let Some(max_conc) = config.max_concurrent {
                 if self.cached_task_running(counts, &job.task_name)? > max_conc as i64 {
+                    return Ok(false);
+                }
+            }
+
+            // In-process bulkhead: keep one task from taking every slot in this
+            // worker's pool. Unlike the running-count above, the in-flight map does
+            // not yet include this job — it's only tracked once the send succeeds —
+            // so this compares with `>=` where that one uses a strict `>`.
+            if let Some(max_in_flight) = config.max_in_flight_per_task {
+                if self.task_in_flight(&job.task_name) >= max_in_flight {
                     return Ok(false);
                 }
             }
