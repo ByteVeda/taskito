@@ -108,6 +108,9 @@ macro_rules! impl_diesel_dead_letter_ops {
                 limit: i64,
                 after: Option<(i64, &str)>,
             ) -> Result<Vec<DeadJob>> {
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
                 let mut conn = self.conn()?;
 
                 let mut query = dead_letter::table

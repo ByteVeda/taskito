@@ -1347,6 +1347,12 @@ macro_rules! impl_diesel_job_ops {
                 after: Option<(i64, &str)>,
                 namespace: Option<&str>,
             ) -> Result<Vec<Job>> {
+                // A non-positive limit yields no page on every backend. SQLite
+                // reads a negative LIMIT as unbounded, which would turn a paged
+                // call into a full scan.
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
                 match status {
                     Some(s) if Self::is_terminal_status(s) => self.list_archived_filtered_after(
                         Some(s),

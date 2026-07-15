@@ -30,6 +30,9 @@ macro_rules! impl_diesel_archival_ops {
                 limit: i64,
                 after: Option<(i64, &str)>,
             ) -> Result<Vec<Job>> {
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
                 let mut conn = self.conn()?;
 
                 let mut query = archived_jobs::table
