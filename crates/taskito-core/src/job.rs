@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-use crate::storage::models::{ArchivedJobRow, JobRow, NarrowJobRow};
+use crate::storage::models::{ArchivedJobRow, JobRow, NarrowArchivedJobRow, NarrowJobRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(i32)]
@@ -188,6 +188,39 @@ impl Job {
             result_ttl_ms: narrow.result_ttl_ms,
             namespace: narrow.namespace,
             has_deps: narrow.has_deps,
+        }
+    }
+
+    /// Assemble a terminal [`Job`] from a blob-free [`NarrowArchivedJobRow`].
+    /// Listing paths use this so paging the archive never loads `payload`/
+    /// `result`; both come back empty (fetch the full job via `get_job`).
+    /// Archived jobs are terminal and never re-dequeued, so `has_deps` is false.
+    pub fn from_narrow_archived(narrow: NarrowArchivedJobRow) -> Self {
+        Self {
+            id: narrow.id,
+            queue: narrow.queue,
+            task_name: narrow.task_name,
+            payload: Vec::new(),
+            status: JobStatus::from_i32(narrow.status).unwrap_or(JobStatus::Pending),
+            priority: narrow.priority,
+            created_at: narrow.created_at,
+            scheduled_at: narrow.scheduled_at,
+            started_at: narrow.started_at,
+            completed_at: narrow.completed_at,
+            retry_count: narrow.retry_count,
+            max_retries: narrow.max_retries,
+            result: None,
+            error: narrow.error,
+            timeout_ms: narrow.timeout_ms,
+            unique_key: narrow.unique_key,
+            progress: narrow.progress,
+            metadata: narrow.metadata,
+            notes: narrow.notes,
+            cancel_requested: narrow.cancel_requested != 0,
+            expires_at: narrow.expires_at,
+            result_ttl_ms: narrow.result_ttl_ms,
+            namespace: narrow.namespace,
+            has_deps: false,
         }
     }
 }

@@ -37,6 +37,24 @@ pub trait WorkflowStorage: Send + Sync {
         offset: i64,
     ) -> Result<Vec<WorkflowRun>>;
 
+    /// Keyset-paginated `list_workflow_runs`, ordered by `(created_at, id)`
+    /// descending. `after` is the `(created_at, id)` of the previous page's
+    /// last run; the caller derives the next cursor from the returned rows'
+    /// last element. Stable under concurrent inserts, and O(page) at any depth
+    /// on the Diesel backends.
+    ///
+    /// **Redis exception:** the `by_state` index is re-scored to the transition
+    /// timestamp on every state change, so its order is not `created_at` and
+    /// cannot be seeked. Redis applies the keyset in memory over the candidate
+    /// set — correct and stable, but O(matching runs) rather than O(page).
+    fn list_workflow_runs_after(
+        &self,
+        definition_name: Option<&str>,
+        state: Option<WorkflowState>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+    ) -> Result<Vec<WorkflowRun>>;
+
     // ── Nodes ──────────────────────────────────────────────────────
 
     fn create_workflow_node(&self, node: &WorkflowNode) -> Result<()>;

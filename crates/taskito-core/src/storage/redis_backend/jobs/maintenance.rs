@@ -5,59 +5,71 @@ use redis::Commands;
 
 use crate::error::Result;
 use crate::job::{now_millis, Job, JobStatus};
-use crate::storage::redis_backend::{map_err, RedisStorage};
+use crate::storage::redis_backend::{map_err, RedisStorage, SCAN_BATCH};
 
 impl RedisStorage {
-    pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
-        let mut conn = self.conn()?;
-        // Completed jobs are terminal and live in the archive.
-        let status_key = self.key(&[
+    /// Key of the completed-archive index SET (`archived:status:2`).
+    fn completed_archive_key(&self) -> String {
+        self.key(&[
             "archived",
             "status",
             &(JobStatus::Complete as i32).to_string(),
-        ]);
-        let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
+        ])
+    }
 
+    pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
+        self.purge_completed_scan(|job| {
+            job.completed_at
+                .is_some_and(|completed| completed < older_than_ms)
+        })
+    }
+
+    pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+        let now = now_millis();
+        self.purge_completed_scan(|job| match (job.completed_at, job.result_ttl_ms) {
+            (Some(completed), Some(ttl)) => completed
+                .checked_add(ttl)
+                .is_some_and(|expiry| expiry < now),
+            (Some(completed), None) => completed < global_cutoff_ms,
+            _ => false,
+        })
+    }
+
+    /// Walk the completed-archive index in bounded SSCAN batches, deleting
+    /// every job the `should_purge` predicate accepts. SSCAN bounds memory to
+    /// one batch of ids (plus one loaded job at a time) rather than loading the
+    /// whole completed set, and tolerates the concurrent deletes so nothing
+    /// still-eligible is skipped.
+    fn purge_completed_scan<F>(&self, should_purge: F) -> Result<u64>
+    where
+        F: Fn(&Job) -> bool,
+    {
+        let mut conn = self.conn()?;
+        let status_key = self.completed_archive_key();
+        let mut cursor: u64 = 0;
         let mut count = 0u64;
-        for id in &job_ids {
-            if let Some(job) = self.load_archived_job(&mut conn, id)? {
-                if let Some(completed_at) = job.completed_at {
-                    if completed_at < older_than_ms {
+
+        loop {
+            let (next, ids): (u64, Vec<String>) = redis::cmd("SSCAN")
+                .arg(&status_key)
+                .arg(cursor)
+                .arg("COUNT")
+                .arg(SCAN_BATCH)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            cursor = next;
+
+            for id in &ids {
+                if let Some(job) = self.load_archived_job(&mut conn, id)? {
+                    if should_purge(&job) {
                         self.delete_archived_job(&mut conn, &job)?;
                         count += 1;
                     }
                 }
             }
-        }
 
-        Ok(count)
-    }
-
-    pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
-        let now = now_millis();
-        let mut conn = self.conn()?;
-        // Completed jobs are terminal and live in the archive.
-        let status_key = self.key(&[
-            "archived",
-            "status",
-            &(JobStatus::Complete as i32).to_string(),
-        ]);
-        let job_ids: Vec<String> = conn.smembers(&status_key).map_err(map_err)?;
-
-        let mut count = 0u64;
-        for id in &job_ids {
-            if let Some(job) = self.load_archived_job(&mut conn, id)? {
-                let should_purge = match (job.completed_at, job.result_ttl_ms) {
-                    (Some(completed), Some(ttl)) => completed
-                        .checked_add(ttl)
-                        .is_some_and(|expiry| expiry < now),
-                    (Some(completed), None) => completed < global_cutoff_ms,
-                    _ => false,
-                };
-                if should_purge {
-                    self.delete_archived_job(&mut conn, &job)?;
-                    count += 1;
-                }
+            if cursor == 0 {
+                break;
             }
         }
 

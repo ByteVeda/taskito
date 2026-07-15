@@ -5,32 +5,44 @@
 macro_rules! impl_diesel_job_ops {
     ($storage_type:ty, $conn_type:ty) => {
         impl $storage_type {
+            /// Max archived rows deleted per txn in the batched purge loops —
+            /// bounds the SQLite writer-lock hold time and the `IN (...)` bind
+            /// count so a purge of millions of rows never stalls other writers.
+            const PURGE_BATCH: i64 = 500;
+            /// Max pending rows archived per txn in the batched cancel/expire
+            /// loops — same lock-hold bound for the mass-mutation paths.
+            const MASS_ARCHIVE_BATCH: i64 = 500;
+
             fn delete_job_children(
                 conn: &mut $conn_type,
                 job_ids: &[String],
             ) -> diesel::result::QueryResult<()> {
-                if job_ids.is_empty() {
-                    return Ok(());
-                }
+                // Chunk the id list so the bind count stays under SQLite's 999
+                // parameter limit even for a mass purge. The job_dependencies
+                // delete binds the ids twice (job_id OR depends_on_job_id), so
+                // cap at 450 → ≤ 900 params per statement.
+                const DELETE_ID_CHUNK: usize = 450;
 
-                diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(job_ids)))
+                for chunk in job_ids.chunks(DELETE_ID_CHUNK) {
+                    diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(chunk)))
+                        .execute(conn)?;
+                    diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(chunk)))
+                        .execute(conn)?;
+                    diesel::delete(task_metrics::table.filter(task_metrics::job_id.eq_any(chunk)))
+                        .execute(conn)?;
+                    diesel::delete(
+                        job_dependencies::table.filter(
+                            job_dependencies::job_id
+                                .eq_any(chunk)
+                                .or(job_dependencies::depends_on_job_id.eq_any(chunk)),
+                        ),
+                    )
                     .execute(conn)?;
-                diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(job_ids)))
+                    diesel::delete(
+                        replay_history::table.filter(replay_history::original_job_id.eq_any(chunk)),
+                    )
                     .execute(conn)?;
-                diesel::delete(task_metrics::table.filter(task_metrics::job_id.eq_any(job_ids)))
-                    .execute(conn)?;
-                diesel::delete(
-                    job_dependencies::table.filter(
-                        job_dependencies::job_id
-                            .eq_any(job_ids)
-                            .or(job_dependencies::depends_on_job_id.eq_any(job_ids)),
-                    ),
-                )
-                .execute(conn)?;
-                diesel::delete(
-                    replay_history::table.filter(replay_history::original_job_id.eq_any(job_ids)),
-                )
-                .execute(conn)?;
+                }
 
                 Ok(())
             }
@@ -1092,6 +1104,21 @@ macro_rules! impl_diesel_job_ops {
                 )
             }
 
+            /// Keyset-paginated `list_jobs` — see [`list_jobs_filtered_after`].
+            pub fn list_jobs_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                self.list_jobs_filtered_after(
+                    status, queue_name, task_name, None, None, None, None, limit, after, namespace,
+                )
+            }
+
             /// True when `status` is a terminal status whose rows now live in
             /// `archived_jobs` rather than the live `jobs` table.
             fn is_terminal_status(status: i32) -> bool {
@@ -1304,6 +1331,93 @@ macro_rules! impl_diesel_job_ops {
                 }
             }
 
+            /// Keyset-paginated `list_jobs_filtered`, ordered by
+            /// `(created_at, id)` descending. Additive twin of the offset form.
+            #[allow(clippy::too_many_arguments)]
+            pub fn list_jobs_filtered_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                // A non-positive limit yields no page on every backend. SQLite
+                // reads a negative LIMIT as unbounded, which would turn a paged
+                // call into a full scan.
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
+                match status {
+                    Some(s) if Self::is_terminal_status(s) => self.list_archived_filtered_after(
+                        Some(s),
+                        queue_name,
+                        task_name,
+                        metadata_like,
+                        error_like,
+                        created_after,
+                        created_before,
+                        limit,
+                        after,
+                        namespace,
+                    ),
+                    Some(_) => self.list_live_filtered_after(
+                        status,
+                        queue_name,
+                        task_name,
+                        metadata_like,
+                        error_like,
+                        created_after,
+                        created_before,
+                        limit,
+                        after,
+                        namespace,
+                    ),
+                    None => {
+                        // Ask each table for its own top `limit` under the SAME
+                        // cursor. Any row in the true merged top-`limit` has at
+                        // most `limit-1` rows from its own table ahead of it, so
+                        // it is already in that table's top-`limit` — no offset
+                        // compensation is needed.
+                        let mut live = self.list_live_filtered_after(
+                            None,
+                            queue_name,
+                            task_name,
+                            metadata_like,
+                            error_like,
+                            created_after,
+                            created_before,
+                            limit,
+                            after,
+                            namespace,
+                        )?;
+                        let archived = self.list_archived_filtered_after(
+                            None,
+                            queue_name,
+                            task_name,
+                            metadata_like,
+                            error_like,
+                            created_after,
+                            created_before,
+                            limit,
+                            after,
+                            namespace,
+                        )?;
+                        live.extend(archived);
+                        // Same `(created_at, id)` descending order the SQL uses,
+                        // so the merged cursor advances monotonically.
+                        live.sort_by(|a, b| (b.created_at, &b.id).cmp(&(a.created_at, &a.id)));
+                        live.truncate(limit.max(0) as usize);
+                        Ok(live)
+                    }
+                }
+            }
+
             /// Query the live `jobs` table with the shared filter set.
             #[allow(clippy::too_many_arguments)]
             fn list_live_filtered(
@@ -1348,13 +1462,86 @@ macro_rules! impl_diesel_job_ops {
                     query = query.filter(jobs::namespace.eq(ns));
                 }
 
-                let rows: Vec<JobRow> = query
+                // Listings never render the arg/result blobs, so select the
+                // narrow projection: the blobs stay on SQLite overflow pages /
+                // Postgres TOAST and are read only by a `get_job` detail lookup.
+                let rows: Vec<NarrowJobRow> = query
                     .limit(limit)
                     .offset(offset)
-                    .select(JobRow::as_select())
+                    .select(NarrowJobRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(Job::from).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| Job::from_narrow(r, Vec::new(), None))
+                    .collect())
+            }
+
+            /// Keyset twin of `list_live_filtered`, ordered by
+            /// `(created_at, id)` descending with a `(created_at, id) < cursor`
+            /// bound instead of an offset.
+            #[allow(clippy::too_many_arguments)]
+            fn list_live_filtered_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                let mut conn = self.conn()?;
+
+                let mut query = jobs::table
+                    .into_boxed()
+                    .order((jobs::created_at.desc(), jobs::id.desc()));
+
+                if let Some(s) = status {
+                    query = query.filter(jobs::status.eq(s));
+                }
+                if let Some(q) = queue_name {
+                    query = query.filter(jobs::queue.eq(q));
+                }
+                if let Some(t) = task_name {
+                    query = query.filter(jobs::task_name.eq(t));
+                }
+                if let Some(m) = metadata_like {
+                    query = query.filter(jobs::metadata.like(format!("%{m}%")));
+                }
+                if let Some(e) = error_like {
+                    query = query.filter(jobs::error.like(format!("%{e}%")));
+                }
+                if let Some(after) = created_after {
+                    query = query.filter(jobs::created_at.ge(after));
+                }
+                if let Some(before) = created_before {
+                    query = query.filter(jobs::created_at.le(before));
+                }
+                if let Some(ns) = namespace {
+                    query = query.filter(jobs::namespace.eq(ns));
+                }
+                if let Some((cursor_created_at, cursor_id)) = after {
+                    let cursor_id = cursor_id.to_string();
+                    query = query.filter(
+                        jobs::created_at.lt(cursor_created_at).or(jobs::created_at
+                            .eq(cursor_created_at)
+                            .and(jobs::id.lt(cursor_id))),
+                    );
+                }
+
+                let rows: Vec<NarrowJobRow> = query
+                    .limit(limit)
+                    .select(NarrowJobRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows
+                    .into_iter()
+                    .map(|r| Job::from_narrow(r, Vec::new(), None))
+                    .collect())
             }
 
             /// Query the `archived_jobs` table with the shared filter set.
@@ -1403,75 +1590,179 @@ macro_rules! impl_diesel_job_ops {
                     query = query.filter(archived_jobs::namespace.eq(ns));
                 }
 
-                let rows: Vec<ArchivedJobRow> = query
+                // Narrow projection: terminal listings never render blobs, so
+                // leave `payload`/`result` on TOAST/overflow pages.
+                let rows: Vec<NarrowArchivedJobRow> = query
                     .limit(limit)
                     .offset(offset)
-                    .select(ArchivedJobRow::as_select())
+                    .select(NarrowArchivedJobRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(Job::from).collect())
+                Ok(rows.into_iter().map(Job::from_narrow_archived).collect())
+            }
+
+            /// Keyset twin of `list_archived_filtered`, ordered by
+            /// `(created_at, id)` descending. Used by the status=None merge, so
+            /// it must page on `created_at` (matching the live side), NOT on
+            /// `completed_at` (which `list_archived_after` uses).
+            #[allow(clippy::too_many_arguments)]
+            fn list_archived_filtered_after(
+                &self,
+                status: Option<i32>,
+                queue_name: Option<&str>,
+                task_name: Option<&str>,
+                metadata_like: Option<&str>,
+                error_like: Option<&str>,
+                created_after: Option<i64>,
+                created_before: Option<i64>,
+                limit: i64,
+                after: Option<(i64, &str)>,
+                namespace: Option<&str>,
+            ) -> Result<Vec<Job>> {
+                let mut conn = self.conn()?;
+
+                let mut query = archived_jobs::table
+                    .into_boxed()
+                    .order((archived_jobs::created_at.desc(), archived_jobs::id.desc()));
+
+                if let Some(s) = status {
+                    query = query.filter(archived_jobs::status.eq(s));
+                }
+                if let Some(q) = queue_name {
+                    query = query.filter(archived_jobs::queue.eq(q));
+                }
+                if let Some(t) = task_name {
+                    query = query.filter(archived_jobs::task_name.eq(t));
+                }
+                if let Some(m) = metadata_like {
+                    query = query.filter(archived_jobs::metadata.like(format!("%{m}%")));
+                }
+                if let Some(e) = error_like {
+                    query = query.filter(archived_jobs::error.like(format!("%{e}%")));
+                }
+                if let Some(a) = created_after {
+                    query = query.filter(archived_jobs::created_at.ge(a));
+                }
+                if let Some(before) = created_before {
+                    query = query.filter(archived_jobs::created_at.le(before));
+                }
+                if let Some(ns) = namespace {
+                    query = query.filter(archived_jobs::namespace.eq(ns));
+                }
+                if let Some((cursor_created_at, cursor_id)) = after {
+                    let cursor_id = cursor_id.to_string();
+                    query = query.filter(
+                        archived_jobs::created_at.lt(cursor_created_at).or(
+                            archived_jobs::created_at
+                                .eq(cursor_created_at)
+                                .and(archived_jobs::id.lt(cursor_id)),
+                        ),
+                    );
+                }
+
+                let rows: Vec<NarrowArchivedJobRow> = query
+                    .limit(limit)
+                    .select(NarrowArchivedJobRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows.into_iter().map(Job::from_narrow_archived).collect())
+            }
+
+            /// Delete one already-selected batch of archived jobs (their child
+            /// rows first, then the archive rows) inside the caller's txn.
+            fn purge_archived_id_batch(
+                conn: &mut $conn_type,
+                ids: &[String],
+            ) -> diesel::result::QueryResult<u64> {
+                if ids.is_empty() {
+                    return Ok(0);
+                }
+                Self::delete_job_children(conn, ids)?;
+                let affected =
+                    diesel::delete(archived_jobs::table.filter(archived_jobs::id.eq_any(ids)))
+                        .execute(conn)?;
+                Ok(affected as u64)
             }
 
             /// Purge completed jobs older than the given timestamp. Terminal
             /// jobs live in `archived_jobs`, so the purge targets that table.
+            ///
+            /// Deletes in bounded batches, each its own `BEGIN IMMEDIATE` txn,
+            /// so a purge of millions of rows never holds the single writer lock
+            /// for the whole sweep (SQLite) and never builds an unbounded
+            /// `IN (...)` list.
             pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
-                self.write_transaction(|conn| {
-                    let job_ids: Vec<String> = archived_jobs::table
-                        .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
-                        .filter(archived_jobs::completed_at.lt(older_than_ms))
-                        .select(archived_jobs::id)
-                        .load(conn)?;
-
-                    Self::delete_job_children(conn, &job_ids)?;
-
-                    let affected = diesel::delete(
-                        archived_jobs::table.filter(archived_jobs::id.eq_any(&job_ids)),
-                    )
-                    .execute(conn)?;
-
-                    Ok(affected as u64)
-                })
+                let mut total = 0u64;
+                loop {
+                    let removed = self.write_transaction(|conn| {
+                        let ids: Vec<String> = archived_jobs::table
+                            .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
+                            .filter(archived_jobs::completed_at.lt(older_than_ms))
+                            .select(archived_jobs::id)
+                            .limit(Self::PURGE_BATCH)
+                            .load(conn)?;
+                        Ok(Self::purge_archived_id_batch(conn, &ids)?)
+                    })?;
+                    total += removed;
+                    if removed < Self::PURGE_BATCH as u64 {
+                        break;
+                    }
+                }
+                Ok(total)
             }
 
             /// Purge completed jobs respecting per-job result_ttl_ms. Terminal
             /// jobs live in `archived_jobs`, so the purge targets that table.
+            /// Batched like [`Self::purge_completed`]; the global-TTL and
+            /// per-job-TTL rows are swept in two independent bounded loops.
             pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
                 let now = now_millis();
+                let mut total = 0u64;
 
-                self.write_transaction(|conn| {
-                    let global_ids: Vec<String> = archived_jobs::table
-                        .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
-                        .filter(archived_jobs::result_ttl_ms.is_null())
-                        .filter(archived_jobs::completed_at.lt(global_cutoff_ms))
-                        .select(archived_jobs::id)
-                        .load(conn)?;
+                // Rows with no per-job TTL fall back to the global cutoff.
+                loop {
+                    let removed = self.write_transaction(|conn| {
+                        let ids: Vec<String> = archived_jobs::table
+                            .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
+                            .filter(archived_jobs::result_ttl_ms.is_null())
+                            .filter(archived_jobs::completed_at.lt(global_cutoff_ms))
+                            .select(archived_jobs::id)
+                            .limit(Self::PURGE_BATCH)
+                            .load(conn)?;
+                        Ok(Self::purge_archived_id_batch(conn, &ids)?)
+                    })?;
+                    total += removed;
+                    if removed < Self::PURGE_BATCH as u64 {
+                        break;
+                    }
+                }
 
-                    // Push the per-job `completed_at + result_ttl_ms < now`
-                    // check into SQL and select only the id — avoids loading
-                    // full rows (payload + result blobs) just to filter them.
-                    let per_job_ids: Vec<String> = archived_jobs::table
-                        .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
-                        .filter(archived_jobs::result_ttl_ms.is_not_null())
-                        .filter(archived_jobs::completed_at.is_not_null())
-                        .filter(
-                            (archived_jobs::completed_at.assume_not_null()
-                                + archived_jobs::result_ttl_ms.assume_not_null())
-                            .lt(now),
-                        )
-                        .select(archived_jobs::id)
-                        .load(conn)?;
+                // Rows with a per-job TTL: `completed_at + result_ttl_ms < now`.
+                // The check is pushed into SQL, selecting only the id so no
+                // payload/result blob is loaded just to filter it.
+                loop {
+                    let removed = self.write_transaction(|conn| {
+                        let ids: Vec<String> = archived_jobs::table
+                            .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
+                            .filter(archived_jobs::result_ttl_ms.is_not_null())
+                            .filter(archived_jobs::completed_at.is_not_null())
+                            .filter(
+                                (archived_jobs::completed_at.assume_not_null()
+                                    + archived_jobs::result_ttl_ms.assume_not_null())
+                                .lt(now),
+                            )
+                            .select(archived_jobs::id)
+                            .limit(Self::PURGE_BATCH)
+                            .load(conn)?;
+                        Ok(Self::purge_archived_id_batch(conn, &ids)?)
+                    })?;
+                    total += removed;
+                    if removed < Self::PURGE_BATCH as u64 {
+                        break;
+                    }
+                }
 
-                    let all_ids: Vec<String> = global_ids.into_iter().chain(per_job_ids).collect();
-
-                    Self::delete_job_children(conn, &all_ids)?;
-
-                    let affected = diesel::delete(
-                        archived_jobs::table.filter(archived_jobs::id.eq_any(&all_ids)),
-                    )
-                    .execute(conn)?;
-
-                    Ok(affected as u64)
-                })
+                Ok(total)
             }
 
             /// Find stale running jobs that exceeded their timeout.
@@ -1598,47 +1889,71 @@ macro_rules! impl_diesel_job_ops {
                 Ok(count)
             }
 
+            /// Archive matching pending jobs in bounded batches. `select_batch`
+            /// loads up to `limit` pending rows to cancel; each batch runs in
+            /// its own txn, so cancelling a huge pending backlog never holds the
+            /// SQLite writer lock (or the full row set in memory) at once. The
+            /// archive removes each row from `jobs`, so the same filter drains
+            /// toward empty across iterations.
+            fn archive_pending_in_batches<S>(
+                &self,
+                now: i64,
+                error: &str,
+                select_batch: S,
+            ) -> Result<u64>
+            where
+                S: Fn(&mut $conn_type, i64) -> diesel::result::QueryResult<Vec<JobRow>>,
+            {
+                let mut total = 0u64;
+                loop {
+                    let archived = self.write_transaction(|conn| {
+                        let rows = select_batch(conn, Self::MASS_ARCHIVE_BATCH)?;
+                        Ok(Self::archive_pending_rows(conn, rows, now, error)?)
+                    })?;
+                    total += archived;
+                    if archived < Self::MASS_ARCHIVE_BATCH as u64 {
+                        break;
+                    }
+                }
+                Ok(total)
+            }
+
             /// Expire pending jobs that have passed their expires_at.
             pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
-                self.write_transaction(|conn| {
-                    let rows: Vec<JobRow> = jobs::table
+                self.archive_pending_in_batches(now, "expired", |conn, limit| {
+                    jobs::table
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
                         .filter(jobs::expires_at.is_not_null())
                         .filter(jobs::expires_at.lt(now))
                         .select(JobRow::as_select())
-                        .load(conn)?;
-
-                    Ok(Self::archive_pending_rows(conn, rows, now, "expired")?)
+                        .limit(limit)
+                        .load(conn)
                 })
             }
 
             /// Cancel all pending jobs in a specific queue.
             pub fn cancel_pending_by_queue(&self, queue: &str) -> Result<u64> {
                 let now = now_millis();
-
-                self.write_transaction(|conn| {
-                    let rows: Vec<JobRow> = jobs::table
+                self.archive_pending_in_batches(now, "purged", |conn, limit| {
+                    jobs::table
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
                         .filter(jobs::queue.eq(queue))
                         .select(JobRow::as_select())
-                        .load(conn)?;
-
-                    Ok(Self::archive_pending_rows(conn, rows, now, "purged")?)
+                        .limit(limit)
+                        .load(conn)
                 })
             }
 
             /// Cancel all pending jobs for a specific task name.
             pub fn cancel_pending_by_task(&self, task_name: &str) -> Result<u64> {
                 let now = now_millis();
-
-                self.write_transaction(|conn| {
-                    let rows: Vec<JobRow> = jobs::table
+                self.archive_pending_in_batches(now, "revoked", |conn, limit| {
+                    jobs::table
                         .filter(jobs::status.eq(JobStatus::Pending as i32))
                         .filter(jobs::task_name.eq(task_name))
                         .select(JobRow::as_select())
-                        .load(conn)?;
-
-                    Ok(Self::archive_pending_rows(conn, rows, now, "revoked")?)
+                        .limit(limit)
+                        .load(conn)
                 })
             }
 

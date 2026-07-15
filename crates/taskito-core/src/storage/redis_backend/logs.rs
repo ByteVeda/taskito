@@ -1,7 +1,7 @@
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 
-use super::{map_err, RedisStorage};
+use super::{map_err, RedisStorage, SCAN_BATCH};
 use crate::error::{QueueError, Result};
 use crate::job::now_millis;
 use crate::storage::models::TaskLogRow;
@@ -137,69 +137,120 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);
 
-        let ids: Vec<String> = conn
-            .zrangebyscore(&all_key, since_ms as f64, "+inf")
-            .map_err(map_err)?;
-
-        let mut rows = Vec::new();
-        for id in ids {
-            let log_key = self.key(&["log", &id]);
-            let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
-            if let Some(d) = data {
-                let entry: LogEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-
-                if let Some(n) = task_name {
-                    if entry.task_name != n {
-                        continue;
-                    }
+        // Fast path: with no task/level filter the page is exactly the newest
+        // `limit` ids at or after `since_ms`, so bound the fetch server-side
+        // (`logs:all` is scored by logged_at) instead of loading every id since
+        // the cutoff and truncating in memory.
+        if task_name.is_none() && level.is_none() {
+            let ids: Vec<String> = if limit >= 0 {
+                conn.zrevrangebyscore_limit(&all_key, "+inf", since_ms as f64, 0, limit as isize)
+                    .map_err(map_err)?
+            } else {
+                conn.zrevrangebyscore(&all_key, "+inf", since_ms as f64)
+                    .map_err(map_err)?
+            };
+            let mut rows = Vec::with_capacity(ids.len());
+            for id in ids {
+                let log_key = self.key(&["log", &id]);
+                let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
+                if let Some(d) = data {
+                    let entry: LogEntry =
+                        serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                    rows.push(TaskLogRow::from(entry));
                 }
-                if let Some(l) = level {
-                    if entry.level != l {
-                        continue;
-                    }
+            }
+            // ZREVRANGEBYSCORE already yields newest-first (logged_at desc).
+            return Ok(rows);
+        }
+
+        // Filtered path: task_name/level are not indexed, so the cutoff range is
+        // walked newest-first in bounded windows and filtered in memory. Each
+        // window is hydrated in one pipelined round trip and the walk stops as
+        // soon as `limit` rows match, so neither memory nor round trips scale
+        // with the log history.
+        let mut rows = Vec::new();
+        let mut offset: isize = 0;
+        loop {
+            let ids: Vec<String> = conn
+                .zrevrangebyscore_limit(&all_key, "+inf", since_ms as f64, offset, SCAN_BATCH)
+                .map_err(map_err)?;
+            if ids.is_empty() {
+                break;
+            }
+            offset += ids.len() as isize;
+
+            let log_keys: Vec<String> = ids.iter().map(|id| self.key(&["log", id])).collect();
+            let mut pipe = redis::pipe();
+            for key in &log_keys {
+                pipe.get(key);
+            }
+            let entries: Vec<Option<String>> = pipe.query(&mut conn).map_err(map_err)?;
+
+            for data in entries.into_iter().flatten() {
+                let entry: LogEntry =
+                    serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+
+                if task_name.is_some_and(|n| entry.task_name != n) {
+                    continue;
+                }
+                if level.is_some_and(|l| entry.level != l) {
+                    continue;
                 }
 
                 rows.push(TaskLogRow::from(entry));
+                if limit >= 0 && rows.len() as i64 == limit {
+                    return Ok(rows);
+                }
+            }
+
+            if (ids.len() as isize) < SCAN_BATCH {
+                break;
             }
         }
 
-        // Sort by logged_at desc
-        rows.sort_by_key(|r| std::cmp::Reverse(r.logged_at));
-        if limit >= 0 {
-            rows.truncate(limit as usize);
-        }
+        // ZREVRANGEBYSCORE walks newest-first, so the rows are already
+        // logged_at desc.
         Ok(rows)
     }
 
     pub fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);
+        let mut total = 0u64;
 
-        let ids: Vec<String> = conn
-            .zrangebyscore(&all_key, "-inf", older_than_ms as f64)
-            .map_err(map_err)?;
-
-        if ids.is_empty() {
-            return Ok(0);
-        }
-
-        let pipe = &mut redis::pipe();
-        for id in &ids {
-            let log_key = self.key(&["log", id]);
-            // Load to get job_id for by_job cleanup
-            let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
-            if let Some(d) = data {
-                if let Ok(entry) = serde_json::from_str::<LogEntry>(&d) {
-                    let by_job_key = self.key(&["logs", "by_job", &entry.job_id]);
-                    pipe.zrem(&by_job_key, id);
-                }
+        // Every id in the `-inf..=cutoff` window is expired and gets deleted, so
+        // re-reading the window drains old logs in bounded batches rather than
+        // loading the whole below-cutoff set in one shot.
+        loop {
+            let ids: Vec<String> = conn
+                .zrangebyscore_limit(&all_key, "-inf", older_than_ms as f64, 0, SCAN_BATCH)
+                .map_err(map_err)?;
+            if ids.is_empty() {
+                break;
             }
-            pipe.del(&log_key);
-            pipe.zrem(&all_key, id);
-        }
-        pipe.query::<()>(&mut conn).map_err(map_err)?;
 
-        Ok(ids.len() as u64)
+            let pipe = &mut redis::pipe();
+            for id in &ids {
+                let log_key = self.key(&["log", id]);
+                // Load to get job_id for by_job cleanup.
+                let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
+                if let Some(d) = data {
+                    if let Ok(entry) = serde_json::from_str::<LogEntry>(&d) {
+                        let by_job_key = self.key(&["logs", "by_job", &entry.job_id]);
+                        pipe.zrem(&by_job_key, id);
+                    }
+                }
+                pipe.del(&log_key);
+                pipe.zrem(&all_key, id);
+            }
+            pipe.query::<()>(&mut conn).map_err(map_err)?;
+
+            total += ids.len() as u64;
+            if (ids.len() as isize) < SCAN_BATCH {
+                break;
+            }
+        }
+
+        Ok(total)
     }
 }

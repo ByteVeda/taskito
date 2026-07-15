@@ -26,6 +26,23 @@ use taskito_core::worker::WorkerDispatcher;
 
 use crate::py_job::PyJob;
 
+/// Build the next-page cursor from a returned page. `None` when the page is the
+/// last one (fewer rows than `limit`), so callers can loop `while cursor`.
+/// Shared by every `*_after` binding across the `py_queue` submodules.
+pub(crate) fn next_cursor<T>(
+    rows: &[T],
+    limit: i64,
+    key: impl Fn(&T) -> (i64, &str),
+) -> Option<String> {
+    if (rows.len() as i64) < limit {
+        return None;
+    }
+    rows.last().map(|r| {
+        let (sort_key, id) = key(r);
+        taskito_core::storage::cursor::encode_cursor(sort_key, id)
+    })
+}
+
 /// The core queue engine exposed to Python.
 #[pyclass]
 pub struct PyQueue {
@@ -624,6 +641,34 @@ impl PyQueue {
             .list_archived(limit, offset)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         Ok(jobs.into_iter().map(PyJob::from).collect())
+    }
+
+    /// Keyset-paginated `list_archived`, ordered by completed time. Returns
+    /// `(jobs, next_cursor)`; pass `next_cursor` back as `after`.
+    #[pyo3(signature = (limit=50, after=None))]
+    pub fn list_archived_after(
+        &self,
+        limit: i64,
+        after: Option<&str>,
+    ) -> PyResult<(Vec<PyJob>, Option<String>)> {
+        if limit < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit must be non-negative",
+            ));
+        }
+        let cursor = after
+            .map(taskito_core::storage::cursor::decode_cursor)
+            .transpose()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let jobs = self
+            .storage
+            .list_archived_after(limit, cursor)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        // Archived rows always have `completed_at`; fall back to created_at.
+        let next = next_cursor(&jobs, limit, |j| {
+            (j.completed_at.unwrap_or(j.created_at), &j.id)
+        });
+        Ok((jobs.into_iter().map(PyJob::from).collect(), next))
     }
 
     /// Register a periodic task schedule.

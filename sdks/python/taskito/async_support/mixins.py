@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from concurrent.futures import Executor
 
     from taskito.context import LogLevel
+    from taskito.pagination import Page
     from taskito.result import JobResult
 
 logger = logging.getLogger("taskito")
@@ -79,6 +80,32 @@ class AsyncQueueMixin:
             limit: int = ...,
         ) -> list[dict]: ...
         def dead_letters(self, limit: int = ..., offset: int = ...) -> list[dict]: ...
+        def list_jobs_after(
+            self,
+            status: str | None = ...,
+            queue: str | None = ...,
+            task_name: str | None = ...,
+            limit: int = ...,
+            after: str | None = ...,
+            namespace: Any = ...,
+        ) -> Page[JobResult]: ...
+        def list_jobs_filtered_after(
+            self,
+            status: str | None = ...,
+            queue: str | None = ...,
+            task_name: str | None = ...,
+            metadata_like: str | None = ...,
+            error_like: str | None = ...,
+            created_after: int | None = ...,
+            created_before: int | None = ...,
+            limit: int = ...,
+            after: str | None = ...,
+            namespace: Any = ...,
+        ) -> Page[JobResult]: ...
+        def dead_letters_after(self, limit: int = ..., after: str | None = ...) -> Page[dict]: ...
+        def list_archived_after(
+            self, limit: int = ..., after: str | None = ...
+        ) -> Page[JobResult]: ...
         def retry_dead(self, dead_id: str) -> str: ...
         def requeue_job(self, job_id: str) -> bool: ...
         def delete_dead(self, dead_id: str) -> bool: ...
@@ -175,6 +202,24 @@ class AsyncQueueMixin:
     async def alist_jobs_filtered(self, **kwargs: Any) -> list[JobResult]:
         """Async version of :meth:`list_jobs_filtered`."""
         return await self._run_sync(self.list_jobs_filtered, **kwargs)
+
+    async def alist_jobs_after(self, **kwargs: Any) -> Page[JobResult]:
+        """Async version of :meth:`list_jobs_after`."""
+        return await self._run_sync(self.list_jobs_after, **kwargs)
+
+    async def alist_jobs_filtered_after(self, **kwargs: Any) -> Page[JobResult]:
+        """Async version of :meth:`list_jobs_filtered_after`."""
+        return await self._run_sync(self.list_jobs_filtered_after, **kwargs)
+
+    async def adead_letters_after(self, limit: int = 10, after: str | None = None) -> Page[dict]:
+        """Async version of :meth:`dead_letters_after`."""
+        return await self._run_sync(self.dead_letters_after, limit=limit, after=after)
+
+    async def alist_archived_after(
+        self, limit: int = 50, after: str | None = None
+    ) -> Page[JobResult]:
+        """Async version of :meth:`list_archived_after`."""
+        return await self._run_sync(self.list_archived_after, limit=limit, after=after)
 
     async def ajob_dag(self, job_id: str) -> dict[str, Any]:
         """Async version of :meth:`job_dag`."""

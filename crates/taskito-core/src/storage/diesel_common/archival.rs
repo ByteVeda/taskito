@@ -9,14 +9,53 @@ macro_rules! impl_diesel_archival_ops {
             pub fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>> {
                 let mut conn = self.conn()?;
 
-                let rows: Vec<ArchivedJobRow> = archived_jobs::table
+                // Narrow projection: archive listings never render the
+                // arg/result blobs, so leave them on TOAST/overflow pages.
+                let rows: Vec<NarrowArchivedJobRow> = archived_jobs::table
                     .order(archived_jobs::completed_at.desc())
                     .limit(limit)
                     .offset(offset)
-                    .select(ArchivedJobRow::as_select())
+                    .select(NarrowArchivedJobRow::as_select())
                     .load(&mut conn)?;
 
-                Ok(rows.into_iter().map(Job::from).collect())
+                Ok(rows.into_iter().map(Job::from_narrow_archived).collect())
+            }
+
+            /// Keyset-paginated `list_archived`, ordered by
+            /// `(completed_at, id)` descending. `completed_at` is nullable in
+            /// the schema (always set for a terminal row), so the cursor bound
+            /// compares against `Some(..)`.
+            pub fn list_archived_after(
+                &self,
+                limit: i64,
+                after: Option<(i64, &str)>,
+            ) -> Result<Vec<Job>> {
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
+                let mut conn = self.conn()?;
+
+                let mut query = archived_jobs::table
+                    .into_boxed()
+                    .order((archived_jobs::completed_at.desc(), archived_jobs::id.desc()));
+
+                if let Some((cursor_completed_at, cursor_id)) = after {
+                    let cursor_id = cursor_id.to_string();
+                    query = query.filter(
+                        archived_jobs::completed_at
+                            .lt(Some(cursor_completed_at))
+                            .or(archived_jobs::completed_at
+                                .eq(Some(cursor_completed_at))
+                                .and(archived_jobs::id.lt(cursor_id))),
+                    );
+                }
+
+                let rows: Vec<NarrowArchivedJobRow> = query
+                    .limit(limit)
+                    .select(NarrowArchivedJobRow::as_select())
+                    .load(&mut conn)?;
+
+                Ok(rows.into_iter().map(Job::from_narrow_archived).collect())
             }
         }
     };

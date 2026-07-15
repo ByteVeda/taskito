@@ -37,3 +37,8 @@ tempfile = "3"
 # state and assert on internal index keys. Only used by `#[cfg(feature = "redis")]`
 # tests; harmless when the feature is off.
 redis = { workspace = true }
+# Raw connection access in the Postgres contract test to reset the `taskito`
+# schema up front, so the count-exact assertions are deterministic on a
+# persistent test DB (the Postgres analogue of the Redis suite's FLUSHDB). Only
+# used by `#[cfg(feature = "postgres")]` tests.
+diesel = { workspace = true }

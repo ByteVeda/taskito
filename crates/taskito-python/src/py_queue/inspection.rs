@@ -4,7 +4,7 @@ use pyo3::types::PyDict;
 use taskito_core::job::{now_millis, NewJob};
 use taskito_core::storage::Storage;
 
-use super::PyQueue;
+use super::{next_cursor, PyQueue};
 use crate::py_job::PyJob;
 
 #[pymethods]
@@ -34,6 +34,36 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         Ok(jobs.into_iter().map(PyJob::from).collect())
+    }
+
+    /// Keyset-paginated `list_jobs`. Returns `(jobs, next_cursor)`; pass
+    /// `next_cursor` back as `after` for the following page (`None` when the
+    /// page was the last). O(page) at any depth, stable under inserts.
+    #[pyo3(signature = (status=None, queue=None, task_name=None, limit=50, after=None, namespace=None))]
+    pub fn list_jobs_after(
+        &self,
+        status: Option<&str>,
+        queue: Option<&str>,
+        task_name: Option<&str>,
+        limit: i64,
+        after: Option<&str>,
+        namespace: Option<&str>,
+    ) -> PyResult<(Vec<PyJob>, Option<String>)> {
+        if limit < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit must be non-negative",
+            ));
+        }
+        let status_int = parse_status(status)?;
+        let cursor = decode_after(after)?;
+
+        let jobs = self
+            .storage
+            .list_jobs_after(status_int, queue, task_name, limit, cursor, namespace)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        let next = next_cursor(&jobs, limit, |j| (j.created_at, &j.id));
+        Ok((jobs.into_iter().map(PyJob::from).collect(), next))
     }
 
     /// List jobs with extended filters.
@@ -78,6 +108,50 @@ impl PyQueue {
         Ok(jobs.into_iter().map(PyJob::from).collect())
     }
 
+    /// Keyset-paginated `list_jobs_filtered`. Returns `(jobs, next_cursor)`.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (status=None, queue=None, task_name=None, metadata_like=None, error_like=None, created_after=None, created_before=None, limit=50, after=None, namespace=None))]
+    pub fn list_jobs_filtered_after(
+        &self,
+        status: Option<&str>,
+        queue: Option<&str>,
+        task_name: Option<&str>,
+        metadata_like: Option<&str>,
+        error_like: Option<&str>,
+        created_after: Option<i64>,
+        created_before: Option<i64>,
+        limit: i64,
+        after: Option<&str>,
+        namespace: Option<&str>,
+    ) -> PyResult<(Vec<PyJob>, Option<String>)> {
+        if limit < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit must be non-negative",
+            ));
+        }
+        let status_int = parse_status(status)?;
+        let cursor = decode_after(after)?;
+
+        let jobs = self
+            .storage
+            .list_jobs_filtered_after(
+                status_int,
+                queue,
+                task_name,
+                metadata_like,
+                error_like,
+                created_after,
+                created_before,
+                limit,
+                cursor,
+                namespace,
+            )
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        let next = next_cursor(&jobs, limit, |j| (j.created_at, &j.id));
+        Ok((jobs.into_iter().map(PyJob::from).collect(), next))
+    }
+
     /// List dead letter queue entries.
     #[pyo3(signature = (limit=10, offset=0))]
     pub fn dead_letters(&self, limit: i64, offset: i64) -> PyResult<Vec<Py<PyAny>>> {
@@ -107,6 +181,45 @@ impl PyQueue {
                 result.push(dict.into());
             }
             Ok(result)
+        })
+    }
+
+    /// Keyset-paginated `dead_letters`. Returns `(entries, next_cursor)`.
+    #[pyo3(signature = (limit=10, after=None))]
+    pub fn dead_letters_after(
+        &self,
+        limit: i64,
+        after: Option<&str>,
+    ) -> PyResult<(Vec<Py<PyAny>>, Option<String>)> {
+        if limit < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "limit must be non-negative",
+            ));
+        }
+        let cursor = decode_after(after)?;
+        let dead = self
+            .storage
+            .list_dead_after(limit, cursor)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        let next = next_cursor(&dead, limit, |d| (d.failed_at, &d.id));
+
+        Python::attach(|py| {
+            let mut result = Vec::with_capacity(dead.len());
+            for d in dead {
+                let dict = PyDict::new(py);
+                dict.set_item("id", d.id)?;
+                dict.set_item("original_job_id", d.original_job_id)?;
+                dict.set_item("queue", d.queue)?;
+                dict.set_item("task_name", d.task_name)?;
+                dict.set_item("error", d.error)?;
+                dict.set_item("retry_count", d.retry_count)?;
+                dict.set_item("failed_at", d.failed_at)?;
+                dict.set_item("metadata", d.metadata)?;
+                dict.set_item("dlq_retry_count", d.dlq_retry_count)?;
+                result.push(dict.into());
+            }
+            Ok((result, next))
         })
     }
 
@@ -502,6 +615,14 @@ impl PyQueue {
             None => Ok(None),
         }
     }
+}
+
+/// Decode an opaque `after` cursor string into a `(sort_key, id)` keyset bound.
+fn decode_after(after: Option<&str>) -> PyResult<Option<(i64, &str)>> {
+    after
+        .map(taskito_core::storage::cursor::decode_cursor)
+        .transpose()
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
 }
 
 fn parse_status(status: Option<&str>) -> PyResult<Option<i32>> {

@@ -8,7 +8,7 @@
 //! when all tests share a single storage instance.
 
 use taskito_core::job::{now_millis, JobCompletion, JobStatus, NewJob};
-use taskito_core::storage::Storage;
+use taskito_core::storage::{DeadJob, Storage};
 use taskito_core::SqliteStorage;
 
 fn make_job(queue: &str, task_name: &str) -> NewJob {
@@ -841,8 +841,9 @@ fn test_payload_roundtrip(s: &impl Storage) {
 
 /// A job run to completion is archived: its blobs move into `archived_jobs` and
 /// the live `jobs` row is removed. `get_job` must still resolve the full payload
-/// and result from the archive, and a terminal-status list must carry the
-/// blobs. Redis passes trivially.
+/// and result from the archive. Listing (S13) returns a blob-free narrow
+/// projection: the row is present with its metadata, but `payload`/`result`
+/// come back empty on every backend (fetch the full job via `get_job`).
 fn test_archived_job_payload_resolves(s: &impl Storage) {
     let q = "q-archived-payload-resolves";
     let mut nj = make_job(q, "archived_payload_task");
@@ -852,19 +853,67 @@ fn test_archived_job_payload_resolves(s: &impl Storage) {
     s.dequeue(q, now_millis() + 1000, None).unwrap();
     s.complete(&job.id, Some(vec![0x11, 0x22])).unwrap();
 
-    // The job now lives only in `archived_jobs`; the side-table row is gone.
+    // Detail lookup: the job now lives only in `archived_jobs`; the side-table
+    // row is gone, yet `get_job` still resolves the full payload and result.
     let fetched = s.get_job(&job.id).unwrap().unwrap();
     assert_eq!(fetched.status, JobStatus::Complete);
     assert_eq!(fetched.payload, vec![0xCA, 0xFE, 0xBA, 0xBE]);
     assert_eq!(fetched.result, Some(vec![0x11, 0x22]));
 
-    // Listing by the terminal status reads the archive and still carries blobs.
+    // Listing by the terminal status reads the archive but drops the blobs:
+    // the row is there with its non-blob columns, payload/result are empty.
     let listed = s
         .list_jobs(Some(JobStatus::Complete as i32), Some(q), None, 50, 0, None)
         .unwrap();
     let row = listed.iter().find(|j| j.id == job.id).unwrap();
-    assert_eq!(row.payload, vec![0xCA, 0xFE, 0xBA, 0xBE]);
-    assert_eq!(row.result, Some(vec![0x11, 0x22]));
+    assert_eq!(row.task_name, "archived_payload_task");
+    assert_eq!(row.status, JobStatus::Complete);
+    assert!(
+        row.payload.is_empty(),
+        "listing must not carry the arg blob"
+    );
+    assert!(
+        row.result.is_none(),
+        "listing must not carry the result blob"
+    );
+}
+
+/// S13 for the live and DLQ tables: `list_jobs` on a live status and `list_dead`
+/// both return blob-free rows, while `get_job` still resolves the full payload.
+fn test_listing_is_blob_free(s: &impl Storage) {
+    // Live path: a pending job lists without its arg blob but resolves in full.
+    let q = "q-blob-free-listing";
+    let mut nj = make_job(q, "blob_free_task");
+    nj.payload = vec![0xAB, 0xCD, 0xEF];
+    let job = s.enqueue(nj).unwrap();
+
+    let listed = s
+        .list_jobs(Some(JobStatus::Pending as i32), Some(q), None, 50, 0, None)
+        .unwrap();
+    let row = listed.iter().find(|j| j.id == job.id).unwrap();
+    assert_eq!(row.task_name, "blob_free_task");
+    assert!(
+        row.payload.is_empty(),
+        "live listing must drop the arg blob"
+    );
+    assert_eq!(
+        s.get_job(&job.id).unwrap().unwrap().payload,
+        vec![0xAB, 0xCD, 0xEF],
+        "get_job must still resolve the full payload"
+    );
+
+    // DLQ path: a dead-lettered entry lists without its arg blob.
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+    s.move_to_dlq(&running, "boom", None).unwrap();
+
+    let dead = s.list_dead(10, 0).unwrap();
+    let entry = dead.iter().find(|d| d.original_job_id == job.id).unwrap();
+    assert_eq!(entry.task_name, "blob_free_task");
+    assert!(
+        entry.payload.is_empty(),
+        "DLQ listing must drop the arg blob"
+    );
 }
 
 fn due_periodic_names(s: &impl Storage) -> Vec<String> {
@@ -1245,9 +1294,178 @@ fn run_storage_tests(s: &impl Storage) {
     test_dependent_blocked_by_cancelled_parent(s);
     test_payload_roundtrip(s);
     test_archived_job_payload_resolves(s);
+    test_listing_is_blob_free(s);
     test_concurrent_dequeue_no_double_claim(s);
     test_rate_limit_token_exhaustion(s);
     test_task_logs_after_cursor(s);
+    test_keyset_pagination_jobs(s);
+    test_keyset_pagination_dlq_and_archive(s);
+}
+
+/// S12: keyset-paginated `list_jobs_after` must page through every row exactly
+/// once, in `(created_at, id)` descending order, and stay stable when new rows
+/// are inserted mid-pagination (the property offset pagination lacks).
+fn test_keyset_pagination_jobs(s: &impl Storage) {
+    let q = "q-keyset-jobs";
+    let total = 25;
+    for _ in 0..total {
+        s.enqueue(make_job(q, "keyset_task")).unwrap();
+    }
+
+    let page_size = 10;
+    let mut seen: Vec<String> = Vec::new();
+    let mut cursor: Option<(i64, String)> = None;
+    let mut inserted_extra = false;
+    loop {
+        let after = cursor.as_ref().map(|(k, id)| (*k, id.as_str()));
+        let page = s
+            .list_jobs_after(
+                Some(JobStatus::Pending as i32),
+                Some(q),
+                None,
+                page_size,
+                after,
+                None,
+            )
+            .unwrap();
+        if page.is_empty() {
+            break;
+        }
+
+        // Order within the page is strictly descending by (created_at, id).
+        for w in page.windows(2) {
+            assert!(
+                (w[0].created_at, &w[0].id) > (w[1].created_at, &w[1].id),
+                "page must be strictly descending by (created_at, id)"
+            );
+        }
+
+        for j in &page {
+            seen.push(j.id.clone());
+        }
+        let last = page.last().unwrap();
+        cursor = Some((last.created_at, last.id.clone()));
+
+        // Insert rows mid-pagination: keyset must not skip or duplicate the
+        // rows already paged past. The new rows are newer, so they sort ahead
+        // of the cursor and are correctly excluded from later pages.
+        if !inserted_extra {
+            for _ in 0..5 {
+                s.enqueue(make_job(q, "keyset_task")).unwrap();
+            }
+            inserted_extra = true;
+        }
+
+        if page.len() < page_size as usize {
+            break;
+        }
+    }
+
+    // Every original row seen exactly once (the mid-pagination inserts are
+    // newer than the cursor, so they never appear).
+    assert_eq!(
+        seen.len(),
+        total,
+        "keyset must page every original row once"
+    );
+    let unique: std::collections::HashSet<&String> = seen.iter().collect();
+    assert_eq!(unique.len(), total, "keyset must never duplicate a row");
+}
+
+/// S12 for the DLQ and archive tables: `list_dead_after` / `list_archived_after`
+/// page through every row exactly once.
+fn test_keyset_pagination_dlq_and_archive(s: &impl Storage) {
+    let q = "q-keyset-terminal";
+    let total = 15;
+    let mut dead_job_ids = Vec::new();
+    for _ in 0..total {
+        let job = s.enqueue(make_job(q, "keyset_terminal")).unwrap();
+        s.dequeue(q, now_millis() + 1000, None).unwrap();
+        let running = s.get_job(&job.id).unwrap().unwrap();
+        s.move_to_dlq(&running, "boom", None).unwrap();
+        dead_job_ids.push(job.id);
+    }
+
+    // DLQ paging. Assert against the rows this test created: a `>= total` count
+    // over the whole table would let rows from earlier cases mask a skipped one.
+    let dlq = page_all_dead(s, 6);
+    let paged_originals: Vec<&String> = dlq.iter().map(|d| &d.original_job_id).collect();
+    for job_id in &dead_job_ids {
+        assert_eq!(
+            paged_originals.iter().filter(|o| **o == job_id).count(),
+            1,
+            "keyset DLQ paging must yield every dead row exactly once"
+        );
+    }
+    let unique: std::collections::HashSet<&String> = dlq.iter().map(|d| &d.id).collect();
+    assert_eq!(unique.len(), dlq.len(), "DLQ keyset must not duplicate");
+
+    // Archive paging: complete a fresh batch so archived rows exist.
+    let qa = "q-keyset-archive";
+    let mut archived_job_ids = Vec::new();
+    for _ in 0..total {
+        let job = s.enqueue(make_job(qa, "keyset_archive")).unwrap();
+        s.dequeue(qa, now_millis() + 1000, None).unwrap();
+        s.complete(&job.id, None).unwrap();
+        archived_job_ids.push(job.id);
+    }
+    let arch_ids = page_all_archived(s, 6);
+    for job_id in &archived_job_ids {
+        assert_eq!(
+            arch_ids.iter().filter(|id| *id == job_id).count(),
+            1,
+            "keyset archive paging must yield every archived row exactly once"
+        );
+    }
+    let unique: std::collections::HashSet<&String> = arch_ids.iter().collect();
+    assert_eq!(
+        unique.len(),
+        arch_ids.len(),
+        "archive keyset must not duplicate"
+    );
+}
+
+/// Page the whole DLQ via `list_dead_after`, returning every row seen.
+fn page_all_dead(s: &impl Storage, page_size: i64) -> Vec<DeadJob> {
+    let mut seen = Vec::new();
+    let mut cursor: Option<(i64, String)> = None;
+    loop {
+        let after = cursor.as_ref().map(|(k, id)| (*k, id.as_str()));
+        let page = s.list_dead_after(page_size, after).unwrap();
+        if page.is_empty() {
+            break;
+        }
+        let last = page.last().unwrap();
+        cursor = Some((last.failed_at, last.id.clone()));
+        let page_len = page.len();
+        seen.extend(page);
+        if page_len < page_size as usize {
+            break;
+        }
+    }
+    seen
+}
+
+/// Page the whole archive via `list_archived_after`, returning every id seen.
+fn page_all_archived(s: &impl Storage, page_size: i64) -> Vec<String> {
+    let mut seen = Vec::new();
+    let mut cursor: Option<(i64, String)> = None;
+    loop {
+        let after = cursor.as_ref().map(|(k, id)| (*k, id.as_str()));
+        let page = s.list_archived_after(page_size, after).unwrap();
+        if page.is_empty() {
+            break;
+        }
+        let last = page.last().unwrap();
+        cursor = Some((last.completed_at.unwrap_or(0), last.id.clone()));
+        for j in &page {
+            seen.push(j.id.clone());
+        }
+        if page.len() < page_size as usize {
+            break;
+        }
+    }
+    seen
 }
 
 fn test_task_logs_after_cursor(s: &impl Storage) {
@@ -1335,6 +1553,56 @@ fn redis_storage_tests() {
     redis_update_progress_never_resurrects_archived(&storage);
     redis_move_to_dlq_leaves_consistent_state(&storage);
     redis_move_to_dlq_skips_already_archived(&storage);
+    redis_purge_dead_drains_across_batches(&storage);
+    redis_keyset_pages_a_large_tie_bucket(&storage);
+}
+
+/// S12: `cancel_pending_by_queue` archives a whole batch under a single `now`,
+/// so every one of these rows lands in `archived:all` with the *same* score.
+/// Paging must still yield each exactly once — the tie bucket is not bounded by
+/// the clock, so a page that reads it whole would degrade with the batch size.
+#[cfg(feature = "redis")]
+fn redis_keyset_pages_a_large_tie_bucket(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-tie-bucket";
+    let total = 600;
+    let mut created = Vec::new();
+    for _ in 0..total {
+        created.push(s.enqueue(make_job(q, "tie_task")).unwrap().id);
+    }
+    // One `now` for the whole batch → 600 archived rows sharing one score.
+    assert_eq!(s.cancel_pending_by_queue(q).unwrap(), total as u64);
+
+    let paged = page_all_archived(s, 50);
+    for job_id in &created {
+        assert_eq!(
+            paged.iter().filter(|id| *id == job_id).count(),
+            1,
+            "every row of a same-score batch must be paged exactly once"
+        );
+    }
+}
+
+/// S15: the batched `purge_dead` must drain more than one SCAN_BATCH (500) of
+/// expired entries in a single call — proving the LIMIT-window loop iterates and
+/// clears the remainder, not just the first batch.
+#[cfg(feature = "redis")]
+fn redis_purge_dead_drains_across_batches(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-purge-batches";
+    for _ in 0..550 {
+        let job = s.enqueue(make_job(q, "purge_batch_task")).unwrap();
+        s.move_to_dlq(&job, "boom", None).unwrap();
+    }
+
+    // Cutoff far in the future so every dead entry is eligible.
+    let removed = s.purge_dead(now_millis() + 3_600_000).unwrap();
+    assert!(
+        removed >= 550,
+        "batched purge_dead must remove all >500 eligible entries, got {removed}"
+    );
+    assert!(
+        s.list_dead(10_000, 0).unwrap().is_empty(),
+        "batched purge_dead must fully drain the DLQ"
+    );
 }
 
 /// Build a raw key under the storage's prefix, matching `RedisStorage::key`.
@@ -1592,6 +1860,8 @@ fn redis_purge_preserves_reused_unique_key(s: &taskito_core::RedisStorage) {
 #[cfg(feature = "postgres")]
 #[test]
 fn postgres_storage_tests() {
+    use diesel::connection::SimpleConnection;
+    use diesel::{Connection, PgConnection};
     use taskito_core::PostgresStorage;
 
     let url = match std::env::var("TASKITO_POSTGRES_TEST_URL") {
@@ -1601,6 +1871,15 @@ fn postgres_storage_tests() {
             return;
         }
     };
+
+    // Reset the `taskito` schema so the count-exact contract is deterministic on
+    // a persistent test DB (the Postgres analogue of the Redis suite's FLUSHDB).
+    // `PostgresStorage::new` recreates the schema and re-runs migrations. Harmless
+    // on a fresh CI database.
+    if let Ok(mut conn) = PgConnection::establish(&url) {
+        conn.batch_execute("DROP SCHEMA IF EXISTS taskito CASCADE")
+            .expect("reset taskito schema");
+    }
 
     let storage = match PostgresStorage::new(&url) {
         Ok(s) => s,

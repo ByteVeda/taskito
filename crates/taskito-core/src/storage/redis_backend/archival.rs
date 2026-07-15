@@ -1,6 +1,6 @@
 use redis::Commands;
 
-use super::{map_err, RedisStorage};
+use super::{map_err, strip_list_blobs, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
 
@@ -49,17 +49,36 @@ impl RedisStorage {
             )
             .map_err(map_err)?;
 
-        let mut jobs = Vec::new();
+        self.load_archived_by_ids(&mut conn, &ids)
+    }
+
+    /// Keyset-paginated `list_archived`, ordered by `(completed_at, id)`
+    /// descending. `archived:all` is scored by `completed_at`, so the cursor
+    /// maps straight onto the ZSET keyset.
+    pub fn list_archived_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<Job>> {
+        let mut conn = self.conn()?;
+        let archived_all = self.key(&["archived", "all"]);
+        let ids = super::zset_keyset_page(&mut conn, &archived_all, after, limit)?;
+        self.load_archived_by_ids(&mut conn, &ids)
+    }
+
+    /// Load the given archived-job ids into blob-free [`Job`]s, preserving order.
+    fn load_archived_by_ids(
+        &self,
+        conn: &mut redis::Connection,
+        ids: &[String],
+    ) -> Result<Vec<Job>> {
+        let mut jobs = Vec::with_capacity(ids.len());
         for id in ids {
-            let archived_key = self.key(&["archived", &id]);
+            let archived_key = self.key(&["archived", id]);
             let data: Option<String> = conn.get(&archived_key).map_err(map_err)?;
             if let Some(d) = data {
-                let job: Job =
+                let mut job: Job =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                strip_list_blobs(&mut job);
                 jobs.push(job);
             }
         }
-
         Ok(jobs)
     }
 }

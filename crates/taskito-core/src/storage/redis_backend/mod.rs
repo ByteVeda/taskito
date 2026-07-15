@@ -119,3 +119,82 @@ impl crate::storage::notify::StorageNotifier for RedisStorage {
 fn map_err(e: redis::RedisError) -> QueueError {
     QueueError::Other(e.to_string())
 }
+
+/// Batch size for the bounded history scans (SSCAN/ZSCAN COUNT hint and the
+/// ZRANGEBYSCORE LIMIT window). Caps how many ids a purge/list holds in memory
+/// per round trip so a sweep over millions of rows never loads the whole set.
+const SCAN_BATCH: isize = 500;
+
+/// Drop the `payload`/`result` blobs from a job before it enters a listing.
+/// Redis loads the whole job JSON in one read, so this saves no I/O; it exists
+/// only to match the Diesel backends' narrow-projection contract — list results
+/// are blob-free on every backend (fetch the full job via `get_job`).
+fn strip_list_blobs(job: &mut crate::job::Job) {
+    job.payload = Vec::new();
+    job.result = None;
+}
+
+/// DLQ analogue of [`strip_list_blobs`]: a dead-letter entry carries only the
+/// `payload` blob, dropped from listings (requeue re-reads the entry by id).
+fn strip_dead_blob(dead: &mut crate::storage::DeadJob) {
+    dead.payload = Vec::new();
+}
+
+/// Keyset page of member ids from a ZSET scored so that a higher score is newer
+/// (e.g. `archived:all` by `completed_at`, `dlq:all` by `failed_at`), in
+/// `(score, member)` **descending** order. `after` is the `(score, id)` of the
+/// previous page's last row. Matches the Diesel `(sort_key, id) < cursor`
+/// keyset: Redis orders equal-score members by reverse-lexicographic id under
+/// `ZREVRANGEBYSCORE`, which is exactly `id DESC`.
+fn zset_keyset_page(
+    conn: &mut redis::Connection,
+    zkey: &str,
+    after: Option<(i64, &str)>,
+    limit: i64,
+) -> Result<Vec<String>> {
+    use redis::Commands;
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+    let Some((score, cursor_id)) = after else {
+        // First page: the newest `limit` members overall.
+        return conn
+            .zrevrangebyscore_limit(zkey, "+inf", "-inf", 0, limit as isize)
+            .map_err(map_err);
+    };
+
+    // Seek by rank while the cursor row is still indexed. `ZREVRANK` orders by
+    // (score DESC, member DESC) — exactly the page order — so the next page is
+    // the `limit` members that follow it, read in one bounded range. The rank is
+    // re-derived every call, so concurrent inserts shift it without skipping or
+    // repeating rows below the cursor.
+    let rank: Option<isize> = conn.zrevrank(zkey, cursor_id).map_err(map_err)?;
+    if let Some(rank) = rank {
+        return conn
+            .zrevrange(zkey, rank + 1, rank + limit as isize)
+            .map_err(map_err);
+    }
+
+    // The cursor row was purged between pages, so there is no rank to seek from.
+    // Fall back to the score bounds: the tie bucket (same score, id < cursor_id)
+    // first, then everything strictly below that score.
+    let same_score: Vec<String> = conn
+        .zrangebyscore(zkey, score as f64, score as f64)
+        .map_err(map_err)?;
+    let mut page: Vec<String> = same_score
+        .into_iter()
+        .filter(|m| m.as_str() < cursor_id)
+        .collect();
+    page.reverse(); // ascending lex → descending id
+    page.truncate(limit as usize);
+
+    if (page.len() as i64) < limit {
+        let remaining = limit - page.len() as i64;
+        let lower: Vec<String> = conn
+            .zrevrangebyscore_limit(zkey, format!("({score}"), "-inf", 0, remaining as isize)
+            .map_err(map_err)?;
+        page.extend(lower);
+    }
+
+    Ok(page)
+}

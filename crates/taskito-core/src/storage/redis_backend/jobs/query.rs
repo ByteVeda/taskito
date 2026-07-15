@@ -4,7 +4,7 @@ use redis::Commands;
 
 use crate::error::Result;
 use crate::job::{Job, JobStatus};
-use crate::storage::redis_backend::{map_err, RedisStorage};
+use crate::storage::redis_backend::{map_err, strip_list_blobs, RedisStorage};
 use crate::storage::QueueStats;
 
 impl RedisStorage {
@@ -60,6 +60,65 @@ impl RedisStorage {
         Ok(jobs[start..end].to_vec())
     }
 
+    /// Keyset-paginated `list_jobs`. The live/archived status indexes are plain
+    /// SETs (and the None-merge spans two differently-scored ZSETs), so there is
+    /// no ZSET to seek — this loads the same candidate set `list_jobs` does and
+    /// applies the `(created_at, id) < cursor` keyset in memory. Correct and
+    /// stable across inserts; it does not add the Big-O win the Diesel backends
+    /// get (Redis `list_jobs` is already O(N) regardless of pagination).
+    pub fn list_jobs_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>> {
+        let mut conn = self.conn()?;
+        let mut jobs = self.load_status_candidates(&mut conn, status)?;
+        jobs.retain(|job| {
+            // Re-check the status against the hydrated job: the index is read
+            // before each job, so a job can change status in between.
+            status.is_none_or(|s| job.status as i32 == s)
+                && queue_name.is_none_or(|q| job.queue == q)
+                && task_name.is_none_or(|t| job.task_name == t)
+                && namespace.is_none_or(|ns| job.namespace.as_deref() == Some(ns))
+        });
+        Ok(keyset_take(jobs, after, limit))
+    }
+
+    /// Load the candidate jobs for a status filter (terminal → archive, live →
+    /// active sets, None → both), shared by the keyset listing paths.
+    fn load_status_candidates(
+        &self,
+        conn: &mut redis::Connection,
+        status: Option<i32>,
+    ) -> Result<Vec<Job>> {
+        match status {
+            Some(s) if Self::is_terminal_status(s) => {
+                let key = self.key(&["archived", "status", &s.to_string()]);
+                let ids: Vec<String> = conn.smembers(&key).map_err(map_err)?;
+                self.load_archived_jobs(conn, &ids)
+            }
+            Some(s) => {
+                let key = self.key(&["jobs", "status", &s.to_string()]);
+                let ids: Vec<String> = conn.smembers(&key).map_err(map_err)?;
+                self.load_live_jobs(conn, &ids)
+            }
+            None => {
+                let live_key = self.key(&["jobs", "all"]);
+                let live_ids: Vec<String> = conn.zrange(&live_key, 0, -1).map_err(map_err)?;
+                let mut all = self.load_live_jobs(conn, &live_ids)?;
+                let archived_key = self.key(&["archived", "all"]);
+                let archived_ids: Vec<String> =
+                    conn.zrange(&archived_key, 0, -1).map_err(map_err)?;
+                all.extend(self.load_archived_jobs(conn, &archived_ids)?);
+                Ok(all)
+            }
+        }
+    }
+
     /// True when `status` is a terminal status whose jobs live in the archive.
     fn is_terminal_status(status: i32) -> bool {
         matches!(
@@ -74,7 +133,8 @@ impl RedisStorage {
     fn load_live_jobs(&self, conn: &mut redis::Connection, ids: &[String]) -> Result<Vec<Job>> {
         let mut jobs = Vec::new();
         for id in ids {
-            if let Some(job) = self.load_job(conn, id)? {
+            if let Some(mut job) = self.load_job(conn, id)? {
+                strip_list_blobs(&mut job);
                 jobs.push(job);
             }
         }
@@ -84,7 +144,8 @@ impl RedisStorage {
     fn load_archived_jobs(&self, conn: &mut redis::Connection, ids: &[String]) -> Result<Vec<Job>> {
         let mut jobs = Vec::new();
         for id in ids {
-            if let Some(job) = self.load_archived_job(conn, id)? {
+            if let Some(mut job) = self.load_archived_job(conn, id)? {
+                strip_list_blobs(&mut job);
                 jobs.push(job);
             }
         }
@@ -341,4 +402,75 @@ impl RedisStorage {
         let end = start.saturating_add(limit.max(0) as usize).min(jobs.len());
         Ok(jobs[start..end].to_vec())
     }
+
+    /// Keyset-paginated `list_jobs_filtered` — same in-memory keyset approach
+    /// and caveats as [`Self::list_jobs_after`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_jobs_filtered_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        metadata_like: Option<&str>,
+        error_like: Option<&str>,
+        created_after: Option<i64>,
+        created_before: Option<i64>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>> {
+        let mut conn = self.conn()?;
+        let candidates = self.load_status_candidates(&mut conn, status)?;
+
+        let mut jobs = Vec::new();
+        for job in candidates {
+            if status.is_some_and(|s| job.status as i32 != s) {
+                continue;
+            }
+            if queue_name.is_some_and(|q| job.queue != q) {
+                continue;
+            }
+            if task_name.is_some_and(|t| job.task_name != t) {
+                continue;
+            }
+            if let Some(m) = metadata_like {
+                if !job.metadata.as_deref().is_some_and(|meta| meta.contains(m)) {
+                    continue;
+                }
+            }
+            if let Some(e) = error_like {
+                if !job.error.as_deref().is_some_and(|err| err.contains(e)) {
+                    continue;
+                }
+            }
+            if created_after.is_some_and(|a| job.created_at < a) {
+                continue;
+            }
+            if created_before.is_some_and(|b| job.created_at > b) {
+                continue;
+            }
+            if namespace.is_some_and(|ns| job.namespace.as_deref() != Some(ns)) {
+                continue;
+            }
+            jobs.push(job);
+        }
+
+        Ok(keyset_take(jobs, after, limit))
+    }
+}
+
+/// Sort `jobs` by `(created_at, id)` descending, keep only rows strictly after
+/// the `after` cursor in that order, and take the first `limit`. The in-memory
+/// equivalent of the Diesel `(created_at, id) < cursor` keyset.
+fn keyset_take(mut jobs: Vec<Job>, after: Option<(i64, &str)>, limit: i64) -> Vec<Job> {
+    jobs.sort_by(|a, b| (b.created_at, &b.id).cmp(&(a.created_at, &a.id)));
+    jobs.into_iter()
+        .filter(|j| match after {
+            Some((cursor_created_at, cursor_id)) => {
+                (j.created_at, j.id.as_str()) < (cursor_created_at, cursor_id)
+            }
+            None => true,
+        })
+        .take(limit.max(0) as usize)
+        .collect()
 }

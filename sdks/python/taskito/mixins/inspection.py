@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import Any
 
 from taskito.mixins._shared import _UNSET
+from taskito.pagination import Page
 from taskito.result import JobResult
 
 
@@ -80,6 +81,63 @@ class QueueInspectionMixin:
             namespace=ns,
         )
         return [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
+
+    def list_jobs_after(
+        self,
+        status: str | None = None,
+        queue: str | None = None,
+        task_name: str | None = None,
+        limit: int = 50,
+        after: str | None = None,
+        namespace: Any = _UNSET,
+    ) -> Page[JobResult]:
+        """Keyset-paginated :meth:`list_jobs`.
+
+        Returns a :class:`~taskito.pagination.Page`; pass its ``next_cursor``
+        back as ``after`` to fetch the next page. O(page) at any depth and
+        stable under concurrent inserts, unlike offset pagination.
+        """
+        ns = self._namespace if namespace is _UNSET else namespace
+        py_jobs, next_cursor = self._inner.list_jobs_after(
+            status=status,
+            queue=queue,
+            task_name=task_name,
+            limit=limit,
+            after=after,
+            namespace=ns,
+        )
+        items = [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
+        return Page(items=items, next_cursor=next_cursor)
+
+    def list_jobs_filtered_after(
+        self,
+        status: str | None = None,
+        queue: str | None = None,
+        task_name: str | None = None,
+        metadata_like: str | None = None,
+        error_like: str | None = None,
+        created_after: int | None = None,
+        created_before: int | None = None,
+        limit: int = 50,
+        after: str | None = None,
+        namespace: Any = _UNSET,
+    ) -> Page[JobResult]:
+        """Keyset-paginated :meth:`list_jobs_filtered`."""
+        ns = self._namespace if namespace is _UNSET else namespace
+        py_jobs, next_cursor = self._inner.list_jobs_filtered_after(
+            status=status,
+            queue=queue,
+            task_name=task_name,
+            metadata_like=metadata_like,
+            error_like=error_like,
+            created_after=created_after,
+            created_before=created_before,
+            limit=limit,
+            after=after,
+            namespace=ns,
+        )
+        items = [JobResult(py_job=pj, queue=self) for pj in py_jobs]  # type: ignore[arg-type]
+        return Page(items=items, next_cursor=next_cursor)
 
     def stats(self) -> dict[str, int]:
         """Get queue statistics as a dict of status counts."""

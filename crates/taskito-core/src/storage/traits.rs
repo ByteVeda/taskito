@@ -71,6 +71,11 @@ pub trait Storage: Send + Sync + Clone {
     fn get_dependencies(&self, job_id: &str) -> Result<Vec<String>>;
     fn get_dependents(&self, job_id: &str) -> Result<Vec<String>>;
     fn update_progress(&self, id: &str, progress: i32) -> Result<()>;
+    /// List jobs by filter. Rows are **blob-free** on every backend: the
+    /// `payload`/`result` blobs come back empty (Diesel selects a narrow
+    /// projection; Redis strips them post-load). Fetch the full job — blobs
+    /// included — with [`Storage::get_job`]. The same contract holds for every
+    /// listing method (`list_jobs_filtered`, `list_archived`, `list_dead*`).
     fn list_jobs(
         &self,
         status: Option<i32>,
@@ -78,6 +83,28 @@ pub trait Storage: Send + Sync + Clone {
         task_name: Option<&str>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>>;
+    /// Keyset-paginated `list_jobs`, ordered by `(created_at, id)` descending.
+    /// `after` is the `(created_at, id)` of the previous page's last row; the
+    /// caller derives the next cursor from the returned rows' last element.
+    /// Stable under concurrent inserts (unlike the offset form), and O(page) at
+    /// any depth on the Diesel backends. Rows are blob-free like every listing.
+    ///
+    /// **Redis exception:** the job status indexes are plain SETs with no
+    /// ordering to seek, so this applies the keyset in memory over the same
+    /// candidate set the offset form loads — correct and stable, but O(matching
+    /// rows) rather than O(page). Redis `list_jobs` is already O(N), so this is
+    /// no worse; a seekable index requires a backfill migration of pre-existing
+    /// rows. `list_archived_after` and `list_dead_after` are seekable on Redis
+    /// and carry no such exception.
+    fn list_jobs_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        limit: i64,
+        after: Option<(i64, &str)>,
         namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
     fn get_job(&self, id: &str) -> Result<Option<Job>>;
@@ -98,6 +125,9 @@ pub trait Storage: Send + Sync + Clone {
 
     fn move_to_dlq(&self, job: &Job, error: &str, metadata: Option<&str>) -> Result<()>;
     fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
+    /// Keyset-paginated `list_dead`, ordered by `(failed_at, id)` descending.
+    /// See [`Storage::list_jobs_after`] for the cursor contract.
+    fn list_dead_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<DeadJob>>;
     /// Dead-letter entries for one task, newest first, paginated.
     fn list_dead_by_task(&self, task_name: &str, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
     /// Delete every dead-letter entry for a task. Returns the number removed.
@@ -254,6 +284,9 @@ pub trait Storage: Send + Sync + Clone {
 
     fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64>;
     fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>>;
+    /// Keyset-paginated `list_archived`, ordered by `(completed_at, id)`
+    /// descending. See [`Storage::list_jobs_after`] for the cursor contract.
+    fn list_archived_after(&self, limit: i64, after: Option<(i64, &str)>) -> Result<Vec<Job>>;
 
     // ── Distributed locking ────────────────────────────────────
 
@@ -307,6 +340,23 @@ pub trait Storage: Send + Sync + Clone {
         created_before: Option<i64>,
         limit: i64,
         offset: i64,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Job>>;
+
+    /// Keyset-paginated `list_jobs_filtered`, ordered by `(created_at, id)`
+    /// descending. See [`Storage::list_jobs_after`] for the cursor contract.
+    #[allow(clippy::too_many_arguments)]
+    fn list_jobs_filtered_after(
+        &self,
+        status: Option<i32>,
+        queue_name: Option<&str>,
+        task_name: Option<&str>,
+        metadata_like: Option<&str>,
+        error_like: Option<&str>,
+        created_after: Option<i64>,
+        created_before: Option<i64>,
+        limit: i64,
+        after: Option<(i64, &str)>,
         namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
 

@@ -537,6 +537,65 @@ impl WorkflowStorage for WorkflowRedisStorage {
         Ok(runs)
     }
 
+    fn list_workflow_runs_after(
+        &self,
+        definition_name: Option<&str>,
+        state: Option<WorkflowState>,
+        limit: i64,
+        after: Option<(i64, &str)>,
+    ) -> Result<Vec<WorkflowRun>> {
+        let mut conn = self.conn()?;
+
+        let def_id_for_filter: Option<String> = match definition_name {
+            Some(name) => {
+                let by_name = k_def_by_name(&self.prefix, name);
+                let ids: Vec<String> = conn.zrevrange(&by_name, 0, 0).map_err(into_other)?;
+                match ids.into_iter().next() {
+                    Some(id) => Some(id),
+                    None => return Ok(Vec::new()),
+                }
+            }
+            None => None,
+        };
+
+        let index_key = match (def_id_for_filter.as_deref(), state) {
+            (Some(def_id), _) => k_runs_by_def(&self.prefix, def_id),
+            (None, Some(st)) => k_runs_by_state(&self.prefix, st.as_str()),
+            (None, None) => k_runs_all(&self.prefix),
+        };
+
+        // The `by_state` index is re-scored to the transition timestamp on every
+        // state change, so its score is not `created_at` — the keyset must run
+        // on the loaded run's real `created_at`, in memory. (Workflow-run counts
+        // are modest; the Big-O win the Diesel backends get is not attempted
+        // here, matching the Redis job listings.)
+        let candidate_ids: Vec<String> = conn.zrevrange(&index_key, 0, -1).map_err(into_other)?;
+
+        let mut runs = Vec::new();
+        for id in candidate_ids {
+            if let Some(run) = self.get_workflow_run(&id)? {
+                if let Some(st) = state {
+                    if run.state != st {
+                        continue;
+                    }
+                }
+                runs.push(run);
+            }
+        }
+
+        runs.sort_by(|a, b| (b.created_at, &b.id).cmp(&(a.created_at, &a.id)));
+        Ok(runs
+            .into_iter()
+            .filter(|r| match after {
+                Some((cursor_created_at, cursor_id)) => {
+                    (r.created_at, r.id.as_str()) < (cursor_created_at, cursor_id)
+                }
+                None => true,
+            })
+            .take(limit.max(0) as usize)
+            .collect())
+    }
+
     fn create_workflow_node(&self, node: &WorkflowNode) -> Result<()> {
         let mut conn = self.conn()?;
         write_node_pipeline(&self.prefix, node, &mut conn)
