@@ -378,7 +378,6 @@ class QueueDecoratorMixin:
         codecs: list[str] | None = None,
         max_retry_delay: int | None = None,
         max_concurrent: int | None = None,
-        max_in_flight_per_task: int | None = None,
         idempotent: bool = False,
         compensates: TaskWrapper | str | None = None,
         batch: bool | dict[str, Any] | None = None,
@@ -386,6 +385,10 @@ class QueueDecoratorMixin:
         on_false: str = "defer",
         predicate_extras: dict[str, Any] | None = None,
         default_defer_seconds: float = 60.0,
+        # Appended, not slotted next to `max_concurrent`: this signature is not
+        # keyword-only, so inserting mid-list would silently rebind the positional
+        # arguments after it.
+        max_in_flight_per_task: int | None = None,
     ) -> Callable[[Callable[..., Any]], TaskWrapper]:
         """Decorator to register a function as a background task.
 

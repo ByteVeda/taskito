@@ -277,6 +277,11 @@ impl PyQueue {
         let queues = queues.unwrap_or_else(|| vec!["default".to_string()]);
         let queues_str = queues.join(",");
 
+        // Clamp once for every consumer: 0 would leave `asyncio.Semaphore(0)` holding
+        // every native async job forever, and a negative raises inside `start()`.
+        #[allow(unused_variables)]
+        let async_concurrency = async_concurrency.max(1) as usize;
+
         // Bound in-flight work to what this worker can actually run, so it never
         // claims more and starves peers sharing the DB.
         //
@@ -511,7 +516,7 @@ impl PyQueue {
                 let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> =
                     Arc::new(crate::native_async::NativeAsyncPool::new(
                         num_workers,
-                        async_concurrency.max(1) as usize,
+                        async_concurrency,
                         registry_arc.clone(),
                         filters_arc.clone(),
                         async_executor,
