@@ -78,7 +78,10 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let mut jobs = self.load_status_candidates(&mut conn, status)?;
         jobs.retain(|job| {
-            queue_name.is_none_or(|q| job.queue == q)
+            // Re-check the status against the hydrated job: the index is read
+            // before each job, so a job can change status in between.
+            status.is_none_or(|s| job.status as i32 == s)
+                && queue_name.is_none_or(|q| job.queue == q)
                 && task_name.is_none_or(|t| job.task_name == t)
                 && namespace.is_none_or(|ns| job.namespace.as_deref() == Some(ns))
         });
