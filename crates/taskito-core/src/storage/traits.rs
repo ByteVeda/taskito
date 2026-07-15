@@ -88,8 +88,16 @@ pub trait Storage: Send + Sync + Clone {
     /// Keyset-paginated `list_jobs`, ordered by `(created_at, id)` descending.
     /// `after` is the `(created_at, id)` of the previous page's last row; the
     /// caller derives the next cursor from the returned rows' last element.
-    /// O(page) at any depth, and stable under concurrent inserts (unlike the
-    /// offset form). Rows are blob-free like every listing.
+    /// Stable under concurrent inserts (unlike the offset form), and O(page) at
+    /// any depth on the Diesel backends. Rows are blob-free like every listing.
+    ///
+    /// **Redis exception:** the job status indexes are plain SETs with no
+    /// ordering to seek, so this applies the keyset in memory over the same
+    /// candidate set the offset form loads — correct and stable, but O(matching
+    /// rows) rather than O(page). Redis `list_jobs` is already O(N), so this is
+    /// no worse; a seekable index requires a backfill migration of pre-existing
+    /// rows. `list_archived_after` and `list_dead_after` are seekable on Redis
+    /// and carry no such exception.
     fn list_jobs_after(
         &self,
         status: Option<i32>,
