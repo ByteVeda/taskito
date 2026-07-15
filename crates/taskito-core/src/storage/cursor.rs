@@ -23,6 +23,11 @@ pub fn decode_cursor(cursor: &str) -> Result<(i64, &str)> {
     let sort_key: i64 = key
         .parse()
         .map_err(|_| QueueError::Other(format!("invalid cursor: {cursor}")))?;
+    // A cursor this crate did not encode: sort keys are non-negative millis and
+    // every row has an id. Reject rather than page from a position no row holds.
+    if sort_key < 0 || id.is_empty() {
+        return Err(QueueError::Other(format!("invalid cursor: {cursor}")));
+    }
     Ok((sort_key, id))
 }
 
@@ -42,5 +47,7 @@ mod tests {
     fn rejects_malformed() {
         assert!(decode_cursor("nocolon").is_err());
         assert!(decode_cursor("notanint:abc").is_err());
+        assert!(decode_cursor("-1:abc").is_err());
+        assert!(decode_cursor("1:").is_err());
     }
 }
