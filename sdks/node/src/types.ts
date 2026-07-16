@@ -160,8 +160,18 @@ export interface RegisteredTask {
 export interface WorkerRunOptions {
   /** Queues to consume (default `["default"]`). */
   queues?: string[];
-  /** In-flight channel capacity (default 128). */
+  /**
+   * Buffer size for job hand-offs, and the capacity this worker advertises
+   * (default 128). This does **not** bound how many jobs run at once — see
+   * {@link WorkerRunOptions.concurrency}.
+   */
   channelCapacity?: number;
+  /**
+   * Jobs this worker runs at once. Unset leaves it unbounded, so the worker can
+   * claim more than it can run, stranding the surplus `running` while peers
+   * sharing the database skip it. Set this on any worker sharing a database.
+   */
+  concurrency?: number;
   /** Jobs claimed per scheduler poll (default 1). */
   batchSize?: number;
   /**

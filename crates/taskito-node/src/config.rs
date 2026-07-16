@@ -160,6 +160,10 @@ pub struct MeshWorkerConfig {
 pub struct WorkerOptions {
     pub queues: Option<Vec<String>>,
     pub channel_capacity: Option<u32>,
+    /// Jobs this worker runs at once. Unset leaves in-flight work unbounded,
+    /// which is the historical behaviour — a worker then claims jobs it cannot
+    /// run yet, stranding them Running and starving peers on the same database.
+    pub concurrency: Option<u32>,
     /// Jobs claimed per scheduler poll (default 1).
     pub batch_size: Option<u32>,
     pub task_configs: Option<Vec<TaskConfigInput>>,

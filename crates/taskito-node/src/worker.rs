@@ -86,10 +86,20 @@ pub fn start_worker(
         .map(|c| (c as usize).max(1))
         .unwrap_or(DEFAULT_CHANNEL_CAPACITY);
 
+    // Jobs this worker runs at once. Separate from `channel_capacity`, which
+    // buffers hand-offs and advertises the worker's capacity — matching Java,
+    // where the two are distinct options.
+    let concurrency = options.concurrency.map(|c| (c as usize).max(1));
+
     let mut config = SchedulerConfig::default();
     if let Some(batch) = options.batch_size {
         config.batch_size = batch.max(1) as usize;
     }
+    // Bound in-flight work to what this worker will actually run, so it never
+    // claims more and strands the surplus Running while peers sharing the
+    // database skip it. Left unbounded when unset, so an existing worker does
+    // not silently acquire a cap it never asked for.
+    config.max_in_flight = concurrency;
 
     // The dispatcher reads cancel flags, and the lifecycle loop registers/heartbeats
     // — both need their own storage handle before `storage` moves into the scheduler.
@@ -178,7 +188,7 @@ pub fn start_worker(
     }
 
     // Dispatcher loop: execute each job in JS, report results on `result_tx`.
-    let dispatcher = NodeDispatcher::new(callback, dispatcher_storage);
+    let dispatcher = NodeDispatcher::new(callback, dispatcher_storage, concurrency);
     spawn(async move {
         dispatcher.run(job_rx, result_tx).await;
     });

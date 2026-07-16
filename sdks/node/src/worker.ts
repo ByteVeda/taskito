@@ -225,6 +225,7 @@ export class Worker {
     const nativeOptions: NativeWorkerOptions = {
       queues: run?.queues,
       channelCapacity: run?.channelCapacity,
+      concurrency: run?.concurrency,
       batchSize: run?.batchSize,
       taskConfigs: applyTaskOverrides(
         buildTaskConfigs(tasks),
