@@ -51,6 +51,7 @@ import type {
   AnyHandler,
   CircuitBreaker,
   DeadJob,
+  DetailedJobFilter,
   EnqueueOptions,
   Job,
   JobDag,
@@ -824,6 +825,19 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** List jobs, optionally filtered and paginated. */
   listJobs(filter?: JobFilter): Promise<Job[]> {
     return this.native.listJobs(filter);
+  }
+
+  /**
+   * List jobs on the wider filter: everything {@link Queue.listJobs} matches on,
+   * plus metadata/error substrings and a created-at range.
+   */
+  listJobsFiltered(filter?: DetailedJobFilter): Promise<Job[]> {
+    return this.native.listJobsFiltered(filter);
+  }
+
+  /** List archived (completed and moved out of the live table) jobs, newest first. */
+  listArchived(limit?: number, offset?: number): Promise<Job[]> {
+    return this.native.listArchived(limit, offset);
   }
 
   /** Error history for a job (one entry per failed attempt). */

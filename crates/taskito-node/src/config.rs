@@ -88,6 +88,28 @@ pub struct JobFilter {
     pub offset: Option<i64>,
 }
 
+/// Filter for [`crate::queue::JsQueue::list_jobs_filtered`]: everything
+/// [`JobFilter`] matches on, plus substring and created-at-range predicates.
+/// All fields optional.
+#[napi(object)]
+#[derive(Default)]
+pub struct DetailedJobFilter {
+    /// Lowercase status (`"pending"`, `"running"`, `"complete"`, `"failed"`, `"dead"`, `"cancelled"`).
+    pub status: Option<String>,
+    pub queue: Option<String>,
+    pub task: Option<String>,
+    /// Substring matched against the job's metadata.
+    pub metadata_like: Option<String>,
+    /// Substring matched against the job's error.
+    pub error_like: Option<String>,
+    /// Only jobs created at or after this Unix-millisecond timestamp.
+    pub created_after: Option<i64>,
+    /// Only jobs created at or before this Unix-millisecond timestamp.
+    pub created_before: Option<i64>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 /// Circuit-breaker config for a task: trip after `threshold` failures within
 /// `windowMs`, stay open for `cooldownMs`, then probe before fully closing.
 #[napi(object)]

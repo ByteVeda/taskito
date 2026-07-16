@@ -9,7 +9,7 @@ use napi_derive::napi;
 use taskito_core::Storage;
 
 use super::JsQueue;
-use crate::config::JobFilter;
+use crate::config::{DetailedJobFilter, JobFilter};
 use crate::convert::{
     circuit_breaker_to_js, job_error_to_js, job_to_js, log_to_js, metric_to_js, replay_to_js,
     stats_to_js, status_code, worker_to_js, JsCircuitBreaker, JsDagEdge, JsJob, JsJobDag,
@@ -18,6 +18,17 @@ use crate::convert::{
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
 const DEFAULT_LIMIT: i64 = 50;
+
+/// Resolve a lowercase status name to its code. An unrecognized status would
+/// otherwise silently widen the result set to every job, so a typo fails loudly.
+fn parse_status_filter(status: Option<&str>) -> Result<Option<i32>> {
+    match status {
+        Some(s) => status_code(s)
+            .map(Some)
+            .ok_or_else(|| invalid_arg(format!("unknown status filter '{s}'"))),
+        None => Ok(None),
+    }
+}
 
 #[napi]
 impl JsQueue {
@@ -60,15 +71,7 @@ impl JsQueue {
     #[napi]
     pub async fn list_jobs(&self, filter: Option<JobFilter>) -> Result<Vec<JsJob>> {
         let filter = filter.unwrap_or_default();
-        // An unrecognized status would otherwise silently widen the result set
-        // to every job; reject it so a typo fails loudly.
-        let status = match filter.status.as_deref() {
-            Some(s) => Some(
-                status_code(s)
-                    .ok_or_else(|| invalid_arg(format!("unknown status filter '{s}'")))?,
-            ),
-            None => None,
-        };
+        let status = parse_status_filter(filter.status.as_deref())?;
         let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
         let offset = non_negative(filter.offset.unwrap_or(0), "offset")?;
         let storage = self.storage.clone();
@@ -84,6 +87,58 @@ impl JsQueue {
                     namespace.as_deref(),
                 )
                 .map_err(to_napi_err)?;
+            Ok(jobs.into_iter().map(job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// List jobs on the wider filter: everything [`JsQueue::list_jobs`] matches
+    /// on, plus metadata/error substrings and a created-at range.
+    #[napi]
+    pub async fn list_jobs_filtered(
+        &self,
+        filter: Option<DetailedJobFilter>,
+    ) -> Result<Vec<JsJob>> {
+        let filter = filter.unwrap_or_default();
+        let status = parse_status_filter(filter.status.as_deref())?;
+        let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let offset = non_negative(filter.offset.unwrap_or(0), "offset")?;
+        let storage = self.storage.clone();
+        let namespace = self.namespace.clone();
+        spawn_blocking(move || {
+            let jobs = storage
+                .list_jobs_filtered(
+                    status,
+                    filter.queue.as_deref(),
+                    filter.task.as_deref(),
+                    filter.metadata_like.as_deref(),
+                    filter.error_like.as_deref(),
+                    filter.created_after,
+                    filter.created_before,
+                    limit,
+                    offset,
+                    namespace.as_deref(),
+                )
+                .map_err(to_napi_err)?;
+            Ok(jobs.into_iter().map(job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// List archived (completed, moved out of the live table) jobs, newest first.
+    #[napi]
+    pub async fn list_archived(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<JsJob>> {
+        let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let offset = non_negative(offset.unwrap_or(0), "offset")?;
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let jobs = storage.list_archived(limit, offset).map_err(to_napi_err)?;
             Ok(jobs.into_iter().map(job_to_js).collect())
         })
         .await

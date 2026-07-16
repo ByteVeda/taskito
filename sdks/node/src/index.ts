@@ -80,6 +80,7 @@ export type {
   AnyHandler,
   CircuitBreakerOptions,
   DeadJob,
+  DetailedJobFilter,
   EnqueueOptions,
   Job,
   JobError,

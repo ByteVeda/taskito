@@ -7,6 +7,7 @@ import type {
 
 export type {
   CircuitBreakerInput as CircuitBreakerOptions,
+  DetailedJobFilter,
   JobFilter,
   JsCircuitBreaker as CircuitBreaker,
   JsDagEdge as DagEdge,
