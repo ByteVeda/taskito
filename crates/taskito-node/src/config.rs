@@ -109,8 +109,14 @@ pub struct TaskConfigInput {
     pub retry_base_delay_ms: Option<i64>,
     pub retry_max_delay_ms: Option<i64>,
     pub max_concurrent: Option<i32>,
+    /// Cap on this task's share of one worker's dispatch slots, so a slow task
+    /// cannot occupy the whole pool. In-process, unlike `max_concurrent`.
+    pub max_in_flight_per_task: Option<i32>,
     /// Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`.
     pub rate_limit: Option<String>,
+    /// Cap on how fast this task may *retry*, across all of its jobs. Same spec
+    /// as `rate_limit`; once spent, failures dead-letter instead of retrying.
+    pub retry_budget: Option<String>,
     pub circuit_breaker: Option<CircuitBreakerInput>,
 }
 
@@ -160,6 +166,10 @@ pub struct MeshWorkerConfig {
 pub struct WorkerOptions {
     pub queues: Option<Vec<String>>,
     pub channel_capacity: Option<u32>,
+    /// Jobs this worker runs at once. Unset leaves in-flight work unbounded,
+    /// which is the historical behaviour — a worker then claims jobs it cannot
+    /// run yet, stranding them Running and starving peers on the same database.
+    pub concurrency: Option<u32>,
     /// Jobs claimed per scheduler poll (default 1).
     pub batch_size: Option<u32>,
     pub task_configs: Option<Vec<TaskConfigInput>>,

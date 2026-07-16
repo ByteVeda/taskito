@@ -98,10 +98,26 @@ export interface TaskOptions {
   retryBackoff?: { baseMs?: number; maxMs?: number };
   /** Per-job timeout default (ms); enforced by the worker. */
   timeoutMs?: number;
-  /** Cap on concurrently-running jobs of this task. */
+  /** Cap on concurrently-running jobs of this task, across the cluster. */
   maxConcurrent?: number;
+  /**
+   * Cap on this task's share of a single worker's dispatch slots, so one slow
+   * task cannot occupy the whole pool and starve the others. In-process and
+   * free, unlike {@link TaskOptions.maxConcurrent}, which is cluster-wide and
+   * costs a database read.
+   */
+  maxInFlightPerTask?: number;
   /** Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`. */
   rateLimit?: RateLimit;
+  /**
+   * Cap on how fast this task may **retry**, across all of its jobs — same spec
+   * as {@link TaskOptions.rateLimit}. Once spent, failures dead-letter instead
+   * of retrying, so a broken dependency cannot become a retry storm. Distinct
+   * from {@link TaskOptions.maxRetries}, which bounds one job rather than the
+   * rate, and from {@link TaskOptions.circuitBreaker}, which trips on hard
+   * failure rather than aggregate retry rate.
+   */
+  retryBudget?: RateLimit;
   /** Trip the task's circuit breaker after repeated failures. */
   circuitBreaker?: CircuitBreakerInput;
   /**
@@ -160,8 +176,18 @@ export interface RegisteredTask {
 export interface WorkerRunOptions {
   /** Queues to consume (default `["default"]`). */
   queues?: string[];
-  /** In-flight channel capacity (default 128). */
+  /**
+   * Buffer size for job hand-offs, and the capacity this worker advertises
+   * (default 128). This does **not** bound how many jobs run at once — see
+   * {@link WorkerRunOptions.concurrency}.
+   */
   channelCapacity?: number;
+  /**
+   * Jobs this worker runs at once. Unset leaves it unbounded, so the worker can
+   * claim more than it can run, stranding the surplus `running` while peers
+   * sharing the database skip it. Set this on any worker sharing a database.
+   */
+  concurrency?: number;
   /** Jobs claimed per scheduler poll (default 1). */
   batchSize?: number;
   /**

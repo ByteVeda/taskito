@@ -8,11 +8,9 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -182,8 +180,14 @@ public final class Worker implements AutoCloseable {
         private final ResourceRuntime resources;
         private final Map<String, PayloadCodec> codecs;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
-        private final Map<String, RetryPolicy> taskPolicies = new HashMap<>();
-        private final Map<String, CircuitBreakerConfig> taskCircuitBreakers = new HashMap<>();
+        /**
+         * Tasks carrying policy the worker must register, keyed by name. Holding the
+         * task itself rather than a map per knob keeps {@link #encodeTaskConfigs}
+         * reading from one source: a new knob is then encoded in one place instead of
+         * needing its own map, its own capture, and its own arm of a name union.
+         */
+        private final Map<String, Task<?>> taskPolicies = new LinkedHashMap<>();
+
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
         private List<SubscriptionConfig> subscriptions = List.of();
         private List<String> queues;
@@ -236,16 +240,21 @@ public final class Worker implements AutoCloseable {
             return this;
         }
 
-        /** Remember a task's retry-backoff curve and circuit breaker so {@code start()} registers them. */
+        /** Remember a task's policy — retries, breaker, throttling, caps — so {@code start()} registers it. */
         private void capturePolicy(Task<?> task) {
-            RetryPolicy policy = task.retryPolicy();
-            if (policy != null) {
-                taskPolicies.put(task.name(), policy);
+            if (hasPolicy(task)) {
+                taskPolicies.put(task.name(), task);
             }
-            CircuitBreakerConfig breaker = task.circuitBreaker();
-            if (breaker != null) {
-                taskCircuitBreakers.put(task.name(), breaker);
-            }
+        }
+
+        /** Whether a task sets anything the scheduler needs registering. */
+        private static boolean hasPolicy(Task<?> task) {
+            return task.retryPolicy() != null
+                    || task.circuitBreaker() != null
+                    || task.rateLimit() != null
+                    || task.retryBudget() != null
+                    || task.maxConcurrent() != null
+                    || task.maxInFlightPerTask() != null;
         }
 
         /** Register every handler in a {@link HandlerRegistry} (e.g. a generated {@code XxxTasks.handlers}). */
@@ -432,7 +441,7 @@ public final class Worker implements AutoCloseable {
             } else if (concurrency > 0) {
                 options.put("concurrency", concurrency);
             }
-            if (!taskPolicies.isEmpty() || !taskCircuitBreakers.isEmpty()) {
+            if (!taskPolicies.isEmpty()) {
                 options.put("taskConfigs", encodeTaskConfigs());
             }
             if (mesh != null) {
@@ -481,38 +490,55 @@ public final class Worker implements AutoCloseable {
          * wire shape the binding reads — one entry per task, merging both sources by name.
          */
         private List<Map<String, Object>> encodeTaskConfigs() {
-            Set<String> names = new LinkedHashSet<>(taskPolicies.keySet());
-            names.addAll(taskCircuitBreakers.keySet());
-            List<Map<String, Object>> configs = new ArrayList<>(names.size());
-            for (String name : names) {
+            List<Map<String, Object>> configs = new ArrayList<>(taskPolicies.size());
+            for (Task<?> task : taskPolicies.values()) {
                 Map<String, Object> config = new LinkedHashMap<>();
-                config.put("name", name);
-                RetryPolicy policy = taskPolicies.get(name);
-                if (policy != null) {
-                    if (policy.baseDelay() != null) {
-                        config.put("baseDelayMs", policy.baseDelay().toMillis());
-                    }
-                    if (policy.maxDelay() != null) {
-                        config.put("maxDelayMs", policy.maxDelay().toMillis());
-                    }
-                    if (!policy.customDelays().isEmpty()) {
-                        List<Long> delaysMs =
-                                new ArrayList<>(policy.customDelays().size());
-                        policy.customDelays().forEach(delay -> delaysMs.add(delay.toMillis()));
-                        config.put("customDelaysMs", delaysMs);
-                    }
+                config.put("name", task.name());
+                encodeRetryPolicy(task.retryPolicy(), config);
+                encodeCircuitBreaker(task.circuitBreaker(), config);
+                if (task.rateLimit() != null) {
+                    config.put("rateLimit", task.rateLimit());
                 }
-                CircuitBreakerConfig breaker = taskCircuitBreakers.get(name);
-                if (breaker != null) {
-                    config.put("circuitBreakerThreshold", breaker.threshold());
-                    config.put("circuitBreakerWindowMs", breaker.window().toMillis());
-                    config.put("circuitBreakerCooldownMs", breaker.cooldown().toMillis());
-                    config.put("circuitBreakerHalfOpenProbes", breaker.halfOpenProbes());
-                    config.put("circuitBreakerHalfOpenSuccessRate", breaker.halfOpenSuccessRate());
+                if (task.retryBudget() != null) {
+                    config.put("retryBudget", task.retryBudget());
+                }
+                if (task.maxConcurrent() != null) {
+                    config.put("maxConcurrent", task.maxConcurrent());
+                }
+                if (task.maxInFlightPerTask() != null) {
+                    config.put("maxInFlightPerTask", task.maxInFlightPerTask());
                 }
                 configs.add(config);
             }
             return configs;
+        }
+
+        private static void encodeRetryPolicy(RetryPolicy policy, Map<String, Object> config) {
+            if (policy == null) {
+                return;
+            }
+            if (policy.baseDelay() != null) {
+                config.put("baseDelayMs", policy.baseDelay().toMillis());
+            }
+            if (policy.maxDelay() != null) {
+                config.put("maxDelayMs", policy.maxDelay().toMillis());
+            }
+            if (!policy.customDelays().isEmpty()) {
+                List<Long> delaysMs = new ArrayList<>(policy.customDelays().size());
+                policy.customDelays().forEach(delay -> delaysMs.add(delay.toMillis()));
+                config.put("customDelaysMs", delaysMs);
+            }
+        }
+
+        private static void encodeCircuitBreaker(CircuitBreakerConfig breaker, Map<String, Object> config) {
+            if (breaker == null) {
+                return;
+            }
+            config.put("circuitBreakerThreshold", breaker.threshold());
+            config.put("circuitBreakerWindowMs", breaker.window().toMillis());
+            config.put("circuitBreakerCooldownMs", breaker.cooldown().toMillis());
+            config.put("circuitBreakerHalfOpenProbes", breaker.halfOpenProbes());
+            config.put("circuitBreakerHalfOpenSuccessRate", breaker.halfOpenSuccessRate());
         }
 
         @SuppressWarnings("unchecked")

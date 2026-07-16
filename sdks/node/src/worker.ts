@@ -21,7 +21,7 @@ import type {
 import { type ResourceRuntime, runWithResolver } from "./resources";
 import { deserializeCall, type PayloadCodec, type Serializer } from "./serializers";
 import { encodeTaskError } from "./task-error";
-import type { QueueLimits, RegisteredTask, WorkerRunOptions } from "./types";
+import type { QueueLimits, RegisteredTask, TaskOptions, WorkerRunOptions } from "./types";
 import { createLogger } from "./utils";
 import type { WorkflowTracker } from "./workflows";
 import { CACHE_TASK } from "./workflows/cache";
@@ -225,6 +225,7 @@ export class Worker {
     const nativeOptions: NativeWorkerOptions = {
       queues: run?.queues,
       channelCapacity: run?.channelCapacity,
+      concurrency: run?.concurrency,
       batchSize: run?.batchSize,
       taskConfigs: applyTaskOverrides(
         buildTaskConfigs(tasks),
@@ -312,28 +313,41 @@ export class Worker {
 function buildTaskConfigs(tasks: ReadonlyMap<string, RegisteredTask>): TaskConfigInput[] {
   const configs: TaskConfigInput[] = [];
   for (const [name, task] of tasks) {
-    const options = task.options;
-    if (
-      !options ||
-      (options.maxRetries === undefined &&
-        options.retryBackoff === undefined &&
-        options.maxConcurrent === undefined &&
-        options.rateLimit === undefined &&
-        options.circuitBreaker === undefined)
-    ) {
+    if (!task.options) {
       continue;
     }
-    configs.push({
-      name,
-      maxRetries: options.maxRetries,
-      retryBaseDelayMs: options.retryBackoff?.baseMs,
-      retryMaxDelayMs: options.retryBackoff?.maxMs,
-      maxConcurrent: options.maxConcurrent,
-      rateLimit: options.rateLimit,
-      circuitBreaker: options.circuitBreaker,
-    });
+    const config = toTaskConfig(name, task.options);
+    if (setsSomething(config)) {
+      configs.push(config);
+    }
   }
   return configs;
+}
+
+function toTaskConfig(name: string, options: TaskOptions): TaskConfigInput {
+  return {
+    name,
+    maxRetries: options.maxRetries,
+    retryBaseDelayMs: options.retryBackoff?.baseMs,
+    retryMaxDelayMs: options.retryBackoff?.maxMs,
+    maxConcurrent: options.maxConcurrent,
+    maxInFlightPerTask: options.maxInFlightPerTask,
+    rateLimit: options.rateLimit,
+    retryBudget: options.retryBudget,
+    circuitBreaker: options.circuitBreaker,
+  };
+}
+
+/**
+ * Whether a task set any policy worth registering.
+ *
+ * Derived from the built config rather than a hand-listed set of option names:
+ * a list silently drops any option missing from it, so a task setting only the
+ * new option would never reach the scheduler — with no error, and invisible to
+ * type-checking. `name` is always present, so it can't stand in for a setting.
+ */
+function setsSomething({ name: _name, ...policy }: TaskConfigInput): boolean {
+  return Object.values(policy).some((value) => value !== undefined);
 }
 
 function buildQueueConfigs(limits: ReadonlyMap<string, QueueLimits>): QueueConfigInput[] {

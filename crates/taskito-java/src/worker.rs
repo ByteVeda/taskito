@@ -13,6 +13,7 @@ use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::jlong;
 use jni::JNIEnv;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
+use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{ResultOutcome, TaskConfig};
 use taskito_core::worker::WorkerDispatcher;
@@ -91,6 +92,12 @@ fn start_worker(
     #[cfg(feature = "mesh")]
     let mesh_worker_id = worker_id.clone();
 
+    // Validate every task policy before writing any persistent state: this is
+    // the last fallible step that has no side effects, and returning Err past
+    // the writes below would leave a worker row and its subscriptions behind
+    // with no handle to run the lifecycle loop that cleans them up.
+    let task_policies = build_task_policies(options.task_configs)?;
+
     // Create the live worker row before its ephemeral subscriptions exist:
     // the reaper only spares owned rows whose owner is registered, so this
     // ordering (plus the core's registration grace window) keeps a concurrent
@@ -105,7 +112,9 @@ fn start_worker(
     // Claim execution under this worker's id so dead-worker recovery can
     // attribute orphaned jobs (matches the worker id registered above).
     scheduler.set_claim_owner(worker_id.clone());
-    register_task_policies(&mut scheduler, options.task_configs);
+    for (name, policy) in task_policies {
+        scheduler.register_task(name, policy);
+    }
     let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
     let heartbeat_stop = Arc::new(Notify::new());
@@ -156,7 +165,9 @@ fn start_worker(
     // result sender has dropped (dispatcher done).
     let drain_scheduler = scheduler;
     let drain_callbacks = callbacks;
-    runtime.spawn_blocking(move || drain_results(result_rx, drain_scheduler, drain_callbacks));
+    runtime.spawn_blocking(move || {
+        drain_results(result_rx, drain_scheduler, drain_callbacks, capacity)
+    });
 
     // Lifecycle loop: heartbeat until stopped, then unregister.
     spawn_lifecycle(
@@ -234,11 +245,21 @@ fn register_subscriptions(
     Ok(())
 }
 
-/// Register each task's retry-backoff curve with the scheduler. Only the curve
-/// is set here — the core resolves the retry budget from the job's `max_retries`
-/// — so unset fields keep the core [`RetryPolicy`] defaults.
-fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRetryConfig>>) {
-    let Some(configs) = configs else { return };
+/// Build each task's policy — retry curve, throttling, concurrency caps — from
+/// its wire config. Unset fields keep the core's defaults; the per-job retry
+/// budget still resolves from the job's `max_retries`.
+///
+/// Fails on a malformed rate spec rather than registering the task without it:
+/// silently dropping a throttle the caller asked for is worse than not starting.
+/// Pure, so the caller can validate before writing any persistent worker state
+/// and a rejected config leaves nothing behind.
+fn build_task_policies(
+    configs: Option<Vec<TaskRetryConfig>>,
+) -> Result<Vec<(String, TaskConfig)>, crate::error::BindingError> {
+    let Some(configs) = configs else {
+        return Ok(Vec::new());
+    };
+    let mut built = Vec::with_capacity(configs.len());
     for config in configs {
         let mut retry_policy = RetryPolicy::default();
         if let Some(custom) = config.custom_delays_ms {
@@ -271,27 +292,52 @@ fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRet
                         .circuit_breaker_half_open_success_rate
                         .unwrap_or(0.8),
                 });
-        scheduler.register_task(
+        let rate_limit = parse_rate_spec("rateLimit", &config.name, config.rate_limit.as_deref())?;
+        let retry_budget =
+            parse_rate_spec("retryBudget", &config.name, config.retry_budget.as_deref())?;
+        built.push((
             config.name,
             TaskConfig {
                 retry_policy,
-                rate_limit: None,
+                rate_limit,
                 circuit_breaker,
-                // Not surfaced on this SDK yet; retries stay bounded per job.
-                retry_budget: None,
-                max_concurrent: None,
-                // Not surfaced on this SDK yet; the whole pool stays available.
-                max_in_flight_per_task: None,
+                retry_budget,
+                max_concurrent: config.max_concurrent,
+                max_in_flight_per_task: config.max_in_flight_per_task.map(|n| n.max(1) as usize),
             },
-        );
+        ));
+    }
+    Ok(built)
+}
+
+/// Parse an optional rate spec, naming the offending task and option so a typo
+/// is actionable. Several options share this `"100/m"` grammar.
+fn parse_rate_spec(
+    field: &str,
+    task: &str,
+    spec: Option<&str>,
+) -> Result<Option<RateLimitConfig>, crate::error::BindingError> {
+    match spec {
+        Some(s) => RateLimitConfig::parse(s).map(Some).ok_or_else(|| {
+            crate::error::BindingError::new(format!(
+                "invalid {field} '{s}' on task '{task}' (expected e.g. '100/m')"
+            ))
+        }),
+        None => Ok(None),
     }
 }
 
-/// Drain results: apply each to storage and invoke `WorkerBridge.onOutcome`.
+/// Drain results: finalize each batch in one transaction, then invoke
+/// `WorkerBridge.onOutcome` per job.
+///
+/// `max_batch` bounds one drain. Unlike the other shells, this result channel is
+/// unbounded (so the dispatcher never blocks a runtime worker), so nothing else
+/// would cap how much a single drain swallows.
 fn drain_results(
     result_rx: crossbeam_channel::Receiver<taskito_core::scheduler::JobResult>,
     scheduler: Arc<Scheduler>,
     callbacks: GlobalRef,
+    max_batch: usize,
 ) {
     let vm = jvm::vm();
     let mut env = match vm.attach_current_thread() {
@@ -301,25 +347,40 @@ fn drain_results(
             return;
         }
     };
-    while let Ok(result) = result_rx.recv() {
-        let outcome = match scheduler.handle_result(result) {
-            Ok(outcome) => outcome,
-            Err(e) => {
-                log::error!("[taskito-java] result handling error: {e}");
-                continue;
+    while let Ok(first) = result_rx.recv() {
+        // Finalize everything already queued in one transaction rather than one
+        // per wake.
+        let mut batch = vec![first];
+        while batch.len() < max_batch {
+            match result_rx.try_recv() {
+                Ok(more) => batch.push(more),
+                Err(_) => break,
             }
-        };
-        // Each outcome allocates several JNI locals on this long-lived attached
-        // env; scope them in a frame so a busy worker can't exhaust the
-        // local-reference table over the loop's lifetime.
-        let framed = env.with_local_frame(16, |env| {
-            if let Err(e) = call_on_outcome(env, &callbacks, &outcome) {
-                log::error!("[taskito-java] onOutcome failed: {e}");
+        }
+
+        // One outcome per input, in order, so each job is reported exactly once.
+        for outcome in scheduler.handle_results(batch) {
+            let outcome = match outcome {
+                Ok(outcome) => outcome,
+                Err(e) => {
+                    log::error!("[taskito-java] result handling error: {e}");
+                    continue;
+                }
+            };
+            // Each outcome allocates several JNI locals on this long-lived attached
+            // env; scope them in a frame so a busy worker can't exhaust the
+            // local-reference table over the loop's lifetime. The frame stays per
+            // outcome — sized for one `call_on_outcome`, it would overflow if it
+            // wrapped the whole batch.
+            let framed = env.with_local_frame(16, |env| {
+                if let Err(e) = call_on_outcome(env, &callbacks, &outcome) {
+                    log::error!("[taskito-java] onOutcome failed: {e}");
+                }
+                Ok::<(), jni::errors::Error>(())
+            });
+            if let Err(e) = framed {
+                log::error!("[taskito-java] drain local frame failed: {e}");
             }
-            Ok::<(), jni::errors::Error>(())
-        });
-        if let Err(e) = framed {
-            log::error!("[taskito-java] drain local frame failed: {e}");
         }
     }
 }

@@ -22,6 +22,10 @@ public final class Task<T> {
     private final List<String> codecs;
     private final boolean idempotent;
     private final CircuitBreakerConfig circuitBreaker;
+    private final String rateLimit;
+    private final String retryBudget;
+    private final Integer maxConcurrent;
+    private final Integer maxInFlightPerTask;
 
     private Task(
             String name,
@@ -30,7 +34,11 @@ public final class Task<T> {
             RetryPolicy retryPolicy,
             List<String> codecs,
             boolean idempotent,
-            CircuitBreakerConfig circuitBreaker) {
+            CircuitBreakerConfig circuitBreaker,
+            String rateLimit,
+            String retryBudget,
+            Integer maxConcurrent,
+            Integer maxInFlightPerTask) {
         this.name = Objects.requireNonNull(name, "task name must not be null");
         if (name.trim().isEmpty()) {
             throw new IllegalArgumentException("task name must not be blank");
@@ -41,21 +49,48 @@ public final class Task<T> {
         this.codecs = List.copyOf(codecs);
         this.idempotent = idempotent;
         this.circuitBreaker = circuitBreaker;
+        this.rateLimit = rateLimit;
+        this.retryBudget = retryBudget;
+        this.maxConcurrent = maxConcurrent;
+        this.maxInFlightPerTask = maxInFlightPerTask;
     }
 
     /** A task whose payload deserializes to {@code payloadType}. */
     public static <T> Task<T> of(String name, Class<T> payloadType) {
-        return new Task<>(name, payloadType, EnqueueOptions.none(), null, List.of(), false, null);
+        return new Task<>(
+                name, payloadType, EnqueueOptions.none(), null, List.of(), false, null, null, null, null, null);
     }
 
     /** A task whose payload deserializes to a generic type, e.g. {@code new TypeReference<List<Foo>>(){}}. */
     public static <T> Task<T> of(String name, TypeReference<T> payloadType) {
-        return new Task<>(name, payloadType.getType(), EnqueueOptions.none(), null, List.of(), false, null);
+        return new Task<>(
+                name,
+                payloadType.getType(),
+                EnqueueOptions.none(),
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                null,
+                null,
+                null);
     }
 
     /** A copy of this task with the given default options. */
     public Task<T> withOptions(EnqueueOptions options) {
-        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -64,7 +99,18 @@ public final class Task<T> {
      * from {@link #maxRetries}.
      */
     public Task<T> retryPolicy(RetryPolicy retryPolicy) {
-        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -74,7 +120,18 @@ public final class Task<T> {
      * {@code Taskito.builder().codec(name, codec)} on producers and workers.
      */
     public Task<T> codecs(String... codecs) {
-        return new Task<>(name, payloadType, options, retryPolicy, Arrays.asList(codecs), idempotent, circuitBreaker);
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                Arrays.asList(codecs),
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -83,7 +140,18 @@ public final class Task<T> {
      * A per-enqueue {@link EnqueueOptions.Builder#idempotent(boolean)} overrides this default.
      */
     public Task<T> idempotent(boolean idempotent) {
-        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -92,7 +160,111 @@ public final class Task<T> {
      * it recovers.
      */
     public Task<T> circuitBreaker(CircuitBreakerConfig circuitBreaker) {
-        return new Task<>(name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker);
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
+    }
+
+    /**
+     * A copy of this task throttled to {@code rateLimit}, a spec like {@code "100/m"}
+     * ({@code s}, {@code m} and {@code h} suffixes). The worker registers it on
+     * {@code start()} and rejects a malformed spec rather than running unthrottled.
+     */
+    public Task<T> rateLimit(String rateLimit) {
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
+    }
+
+    /**
+     * A copy of this task allowed at most {@code maxConcurrent} jobs running at once
+     * across the cluster. The scheduler counts running jobs before dispatch, so this
+     * costs a database read. {@code null} or {@code 0} means no cap — matching the
+     * annotation's sentinel, and because a literal cap of zero would stop the task
+     * from ever dispatching.
+     */
+    public Task<T> maxConcurrent(Integer maxConcurrent) {
+        maxConcurrent = uncappedIfZero(maxConcurrent);
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
+    }
+
+    /**
+     * A copy of this task whose <em>retries</em> are capped at {@code retryBudget},
+     * a spec like {@code "100/m"} — across all of its jobs, not per job. Once spent,
+     * failures dead-letter instead of retrying, so a broken dependency cannot become
+     * a retry storm. Distinct from {@link #maxRetries}, which bounds one job rather
+     * than the rate.
+     */
+    public Task<T> retryBudget(String retryBudget) {
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
+    }
+
+    /**
+     * A copy of this task allowed at most {@code maxInFlightPerTask} of one worker's
+     * dispatch slots, so a slow task cannot occupy the whole pool and starve the
+     * others. In-process and free, unlike {@link #maxConcurrent}, which is
+     * cluster-wide and costs a database read. {@code null} or {@code 0} lets it use
+     * the whole pool, matching the annotation's sentinel.
+     */
+    public Task<T> maxInFlightPerTask(Integer maxInFlightPerTask) {
+        maxInFlightPerTask = uncappedIfZero(maxInFlightPerTask);
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
+    }
+
+    /** A cap of zero is the annotation's "unset" sentinel, never a literal zero. */
+    private static Integer uncappedIfZero(Integer cap) {
+        return cap != null && cap == 0 ? null : cap;
     }
 
     public Task<T> queue(String queue) {
@@ -159,5 +331,25 @@ public final class Task<T> {
     /** This task's circuit-breaker configuration, or {@code null} when none is set. */
     public CircuitBreakerConfig circuitBreaker() {
         return circuitBreaker;
+    }
+
+    /** This task's rate-limit spec (e.g. {@code "100/m"}), or {@code null} when unthrottled. */
+    public String rateLimit() {
+        return rateLimit;
+    }
+
+    /** This task's retry-rate cap (e.g. {@code "100/m"}), or {@code null} when uncapped. */
+    public String retryBudget() {
+        return retryBudget;
+    }
+
+    /** Cap on this task's concurrently-running jobs, or {@code null} when uncapped. */
+    public Integer maxConcurrent() {
+        return maxConcurrent;
+    }
+
+    /** Cap on this task's share of one worker's dispatch slots, or {@code null} when uncapped. */
+    public Integer maxInFlightPerTask() {
+        return maxInFlightPerTask;
     }
 }

@@ -36,6 +36,32 @@ public @interface TaskHandler {
     /** Auto-derive an idempotency {@code uniqueKey} from the payload on every enqueue. */
     boolean idempotent() default false;
 
+    /**
+     * Rate-limit spec like {@code "100/m"} ({@code s}, {@code m} and {@code h}
+     * suffixes); empty (default) leaves the task unthrottled. A malformed spec
+     * fails the worker's start rather than running unthrottled.
+     */
+    String rateLimit() default "";
+
+    /**
+     * Cap on how fast this task may <em>retry</em>, across all of its jobs — a
+     * spec like {@code "100/m"}; empty (default) leaves retries uncapped. Once
+     * spent, failures dead-letter instead of retrying.
+     */
+    String retryBudget() default "";
+
+    /**
+     * Cap on concurrently-running jobs of this task across the cluster; 0
+     * (default) leaves it uncapped.
+     */
+    int maxConcurrent() default 0;
+
+    /**
+     * Cap on this task's share of one worker's dispatch slots, so a slow task
+     * cannot occupy the whole pool; 0 (default) lets it use the whole pool.
+     */
+    int maxInFlightPerTask() default 0;
+
     /** Circuit-breaker failure threshold; 0 (default) leaves the breaker off. */
     int circuitBreakerThreshold() default 0;
 

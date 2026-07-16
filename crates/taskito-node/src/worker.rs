@@ -86,10 +86,20 @@ pub fn start_worker(
         .map(|c| (c as usize).max(1))
         .unwrap_or(DEFAULT_CHANNEL_CAPACITY);
 
+    // Jobs this worker runs at once. Separate from `channel_capacity`, which
+    // buffers hand-offs and advertises the worker's capacity — matching Java,
+    // where the two are distinct options.
+    let concurrency = options.concurrency.map(|c| (c as usize).max(1));
+
     let mut config = SchedulerConfig::default();
     if let Some(batch) = options.batch_size {
         config.batch_size = batch.max(1) as usize;
     }
+    // Bound in-flight work to what this worker will actually run, so it never
+    // claims more and strands the surplus Running while peers sharing the
+    // database skip it. Left unbounded when unset, so an existing worker does
+    // not silently acquire a cap it never asked for.
+    config.max_in_flight = concurrency;
 
     // The dispatcher reads cancel flags, and the lifecycle loop registers/heartbeats
     // — both need their own storage handle before `storage` moves into the scheduler.
@@ -178,7 +188,7 @@ pub fn start_worker(
     }
 
     // Dispatcher loop: execute each job in JS, report results on `result_tx`.
-    let dispatcher = NodeDispatcher::new(callback, dispatcher_storage);
+    let dispatcher = NodeDispatcher::new(callback, dispatcher_storage, concurrency);
     spawn(async move {
         dispatcher.run(job_rx, result_tx).await;
     });
@@ -188,23 +198,50 @@ pub fn start_worker(
     // sender has dropped (i.e. after the dispatcher and all in-flight jobs end).
     let scheduler_results = scheduler;
     spawn_blocking(move || {
-        while let Ok(result) = result_rx.recv() {
-            // A panicking result must not kill the drain loop — a dead loop
-            // silently drops every later outcome.
+        while let Ok(first) = result_rx.recv() {
+            // Finalize everything already queued in one batched transaction
+            // rather than one per wake.
+            //
+            // Capped explicitly: the channel bounds how many results can sit in
+            // it at once, not how many this loop drains — senders refill slots
+            // while `try_recv` runs, so an unbounded drain could swallow a whole
+            // backlog into one Vec and stall finalization behind it.
+            let mut batch = vec![first];
+            while batch.len() < capacity {
+                match result_rx.try_recv() {
+                    Ok(more) => batch.push(more),
+                    Err(_) => break,
+                }
+            }
+
+            // A panicking batch must not kill the drain loop — a dead loop
+            // silently drops every later outcome. The batch widens a panic's
+            // reach from one outcome to N, which is acceptable: the realistic
+            // failure is a batch write error, and `handle_results` already
+            // falls back to finalizing those jobs one at a time.
             let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                scheduler_results.handle_result(result)
+                scheduler_results.handle_results(batch)
             }));
             match handled {
                 // Surface each outcome to JS so the shell can emit events and run
-                // middleware (the events layer).
-                Ok(Ok(outcome)) => {
-                    outcome_callback.call(
-                        outcome_to_js(&outcome),
-                        ThreadsafeFunctionCallMode::NonBlocking,
-                    );
+                // middleware (the events layer). `handle_results` returns one
+                // outcome per input, in order, so each job is reported once.
+                Ok(outcomes) => {
+                    for outcome in outcomes {
+                        match outcome {
+                            Ok(outcome) => {
+                                outcome_callback.call(
+                                    outcome_to_js(&outcome),
+                                    ThreadsafeFunctionCallMode::NonBlocking,
+                                );
+                            }
+                            Err(err) => {
+                                log::error!("[taskito-node] result handling error: {err}")
+                            }
+                        }
+                    }
                 }
-                Ok(Err(err)) => log::error!("[taskito-node] result handling error: {err}"),
-                Err(_) => log::error!("[taskito-node] result handling panicked; outcome dropped"),
+                Err(_) => log::error!("[taskito-node] result handling panicked; outcomes dropped"),
             }
         }
     });
