@@ -12,10 +12,11 @@ import java.util.List;
  * the requested limit means the listing is exhausted — so a walk reads:
  *
  * <pre>{@code
+ * JobFilter filter = JobFilter.builder().limit(50).build();
  * String cursor = null;
  * do {
- *     Page<Job> page = queue.listJobsAfter(filter, 50, cursor);
- *     page.items.forEach(::handle);
+ *     Page<Job> page = queue.listJobsAfter(filter, cursor);
+ *     page.items.forEach(this::handle);
  *     cursor = page.nextCursor;
  * } while (cursor != null);
  * }</pre>

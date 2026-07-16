@@ -221,7 +221,7 @@ public final class InMemoryQueueBackend implements QueueBackend {
         String status = text(filter, "status");
         String queue = text(filter, "queue");
         String task = text(filter, "task");
-        int limit = optInt(filter, "limit", Integer.MAX_VALUE);
+        int limit = Math.max(0, optInt(filter, "limit", Integer.MAX_VALUE));
 
         List<JobRec> matching = new ArrayList<>();
         for (JobRec job : jobs.values()) {
@@ -247,9 +247,12 @@ public final class InMemoryQueueBackend implements QueueBackend {
                 archived.add(job);
             }
         }
+        // Clamp before narrowing: the native handlers reject a negative limit, and
+        // subList would throw on one rather than return an empty page.
+        long clamped = Math.max(0, limit);
         return keysetPage(
                 archived,
-                limit > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) limit,
+                (int) Math.min(clamped, Integer.MAX_VALUE),
                 afterOrNull,
                 job -> job.completedAt == null ? job.createdAt : job.completedAt);
     }
