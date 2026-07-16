@@ -600,6 +600,9 @@ def test_base_exception_reports_failure(poll_until: PollUntil) -> None:
     executor.stop()
 
     assert not sender.try_report_cancelled.called, "an interrupt is not a cancellation"
+    # `stop()` only logs when its join times out, and the thread-exception warning
+    # is filtered here — without this the test could go green on a leaked thread.
+    assert not executor._thread.is_alive(), "the executor thread outlived stop()"
 
 
 def test_cancelled_coroutine_reports_cancelled(poll_until: PollUntil) -> None:
