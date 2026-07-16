@@ -10,7 +10,7 @@ use taskito_core::job::{now_millis, NewJob};
 use taskito_core::Storage;
 
 use super::JsQueue;
-use crate::convert::{dead_job_to_js, JsDeadJob};
+use crate::convert::{dead_job_to_js, JsDeadJob, JsDeadJobPage};
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -30,6 +30,38 @@ impl JsQueue {
         spawn_blocking(move || {
             let dead = storage.list_dead(limit, offset).map_err(to_napi_err)?;
             Ok(dead.into_iter().map(dead_job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Keyset-paginated [`JsQueue::dead_letters`], ordered by failed time. Pass
+    /// a page's `nextCursor` back as `after`; `null` means the last page.
+    #[napi]
+    pub async fn dead_letters_after(
+        &self,
+        limit: Option<i64>,
+        after: Option<String>,
+    ) -> Result<JsDeadJobPage> {
+        let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            // A malformed cursor is a bad request, not a reason to silently
+            // restart from the first page.
+            let cursor = after
+                .as_deref()
+                .map(taskito_core::storage::cursor::decode_cursor)
+                .transpose()
+                .map_err(to_napi_err)?;
+            let dead = storage
+                .list_dead_after(limit, cursor)
+                .map_err(to_napi_err)?;
+            let next_cursor =
+                taskito_core::storage::cursor::next_cursor(&dead, limit, |d| (d.failed_at, &d.id));
+            Ok(JsDeadJobPage {
+                items: dead.into_iter().map(dead_job_to_js).collect(),
+                next_cursor,
+            })
         })
         .await
         .map_err(join_to_napi_err)?

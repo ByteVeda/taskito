@@ -87,6 +87,7 @@ export type {
   JobFilter,
   MeshWorkerConfig,
   Metric,
+  Page,
   PeriodicOptions,
   PeriodicTask,
   PublishOptions,

@@ -58,6 +58,7 @@ import type {
   JobError,
   JobFilter,
   Metric,
+  Page,
   PeriodicOptions,
   PeriodicTask,
   PublishOptions,
@@ -118,6 +119,17 @@ export interface QueueOptions {
  * A Taskito queue: register tasks, enqueue work, read results, and run workers.
  * Backed by the Rust core over SQLite, Postgres, or Redis.
  */
+/**
+ * Normalize a native page to the declared {@link Page} shape.
+ *
+ * napi types an `Option<String>` as `nextCursor?: string` but hands back `null`
+ * at runtime, so the two disagree: a `=== undefined` check against the raw value
+ * would silently never fire. Settle on `null`, matching the other SDKs.
+ */
+function toPage<T>(page: { items: T[]; nextCursor?: string | null }): Page<T> {
+  return { items: page.items, nextCursor: page.nextCursor ?? null };
+}
+
 export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly native: NativeQueue;
   private readonly serializer: Serializer;
@@ -838,6 +850,41 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** List archived (completed and moved out of the live table) jobs, newest first. */
   listArchived(limit?: number, offset?: number): Promise<Job[]> {
     return this.native.listArchived(limit, offset);
+  }
+
+  /**
+   * Keyset-paginated {@link Queue.listJobs}, ordered by created time. Pass a
+   * page's `nextCursor` back as `after`; `null` means the last page.
+   *
+   * O(page) at any depth on SQLite/Postgres. On Redis the status indexes are not
+   * seekable, so the keyset is applied in memory — correct, but O(matching rows).
+   */
+  async listJobsAfter(filter?: JobFilter, after?: string): Promise<Page<Job>> {
+    return toPage(await this.native.listJobsAfter(filter, after));
+  }
+
+  /**
+   * Keyset-paginated {@link Queue.listJobsFiltered}, ordered by created time.
+   * See {@link Queue.listJobsAfter} for the cursor contract.
+   */
+  async listJobsFilteredAfter(filter?: DetailedJobFilter, after?: string): Promise<Page<Job>> {
+    return toPage(await this.native.listJobsFilteredAfter(filter, after));
+  }
+
+  /**
+   * Keyset-paginated {@link Queue.listArchived}, ordered by completed time.
+   * See {@link Queue.listJobsAfter} for the cursor contract.
+   */
+  async listArchivedAfter(limit?: number, after?: string): Promise<Page<Job>> {
+    return toPage(await this.native.listArchivedAfter(limit, after));
+  }
+
+  /**
+   * Keyset-paginated {@link Queue.deadLetters}, ordered by failed time.
+   * See {@link Queue.listJobsAfter} for the cursor contract.
+   */
+  async deadLettersAfter(limit?: number, after?: string): Promise<Page<DeadJob>> {
+    return toPage(await this.native.deadLettersAfter(limit, after));
   }
 
   /** Error history for a job (one entry per failed attempt). */

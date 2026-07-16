@@ -173,6 +173,18 @@ export interface RegisteredTask {
   options?: TaskOptions;
 }
 
+/**
+ * One page of a keyset-paginated listing.
+ *
+ * `nextCursor` is `null` on the last page — a short page means the listing is
+ * exhausted — so a walk is `while (cursor !== null)`. Pass it back verbatim as
+ * the next call's `after`; treat it as opaque.
+ */
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
 /** Options for {@link Queue.runWorker}. */
 export interface WorkerRunOptions {
   /** Queues to consume (default `["default"]`). */
