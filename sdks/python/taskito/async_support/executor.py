@@ -169,7 +169,6 @@ class AsyncTaskExecutor:
                     self._registry[task_name]._taskito_async_fn,
                     args,
                     kwargs,
-                    is_async=True,
                 )
 
                 result_bytes = (

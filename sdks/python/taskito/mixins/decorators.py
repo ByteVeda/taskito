@@ -148,7 +148,6 @@ class QueueDecoratorMixin:
         makes that safe — `run_maybe_async` raises if one is already running.
         """
         queue_ref = self
-        is_async = inspect.iscoroutinefunction(fn)
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -161,7 +160,6 @@ class QueueDecoratorMixin:
                         fn,
                         args,
                         kwargs,
-                        is_async=is_async,
                     )
                 )
             finally:

@@ -29,12 +29,12 @@ resolves on either path.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from taskito.async_support.helpers import run_maybe_async
 from taskito.batching.item_result import (
     BatchPartialFailureError,
     BatchResultTypeError,
@@ -77,8 +77,6 @@ async def run_lifecycle(
     fn: Callable,
     args: Any,
     kwargs: Any,
-    *,
-    is_async: bool,
 ) -> Any:
     """Run one task end to end: gates, reconstruction, injection, middleware, hooks.
 
@@ -86,10 +84,9 @@ async def run_lifecycle(
     belongs to the caller, which knows whether it is answering Rust or a result
     sender. ``args``/``kwargs`` arrive already deserialized.
 
-    ``is_async`` selects how the body is invoked: awaited directly when the task
-    is a coroutine function (native dispatch), or driven to completion by
-    ``run_maybe_async`` when it is not. A blocking caller must therefore drive
-    the whole coroutine with ``run_maybe_async``; a native one awaits it.
+    This is a coroutine, so a blocking caller must drive it (``run_maybe_async``)
+    while a native one awaits it. Either way it ends up on an event loop, which
+    is why the task body is awaited here rather than driven.
     """
     job_id = current_job.id
     logger.info("Task %s[%s] received", task_name, job_id)
@@ -186,9 +183,13 @@ async def run_lifecycle(
     result = None
     try:
         called = fn(*args, **kwargs)
-        # Native dispatch awaits the coroutine on the executor's loop; the
-        # blocking path has no loop of its own, so run_maybe_async drives it.
-        ret = await called if is_async else run_maybe_async(called)
+        # Await whatever is awaitable, rather than trusting the task's declared
+        # kind: a plain `def` may hand back a coroutine, and that has always
+        # worked. Driving it with run_maybe_async instead would raise — this body
+        # already runs inside an event loop on both paths (``asyncio.run`` on the
+        # blocking one, the executor's own loop on the native one), and
+        # run_maybe_async refuses to nest.
+        ret = await called if inspect.isawaitable(called) else called
         # Per-item batch result: when the task is batched with
         # per_item_results=True, enforce the return type contract and surface
         # partial failures via BatchPartialFailureError so the existing

@@ -77,6 +77,30 @@ def _wait_for(predicate: Any, message: str) -> None:
     raise AssertionError(message)
 
 
+def test_sync_task_returning_a_coroutine_is_awaited(queue: Queue) -> None:
+    """A plain ``def`` may hand back a coroutine, and its value is the result.
+
+    Not parametrised: the whole point is a task the lifecycle would not classify
+    as async. The body must be awaited on what it returns, not on how it was
+    declared — driving it instead would raise, since the lifecycle already runs
+    on an event loop.
+    """
+
+    async def inner(x: int) -> int:
+        return x * 2
+
+    @queue.task(name="returns_coro")
+    def returns_coro(x: int) -> Any:
+        return inner(x)
+
+    job = returns_coro.delay(21)
+    thread = _start_worker(queue)
+    try:
+        assert job.result(timeout=_TIMEOUT) == 42
+    finally:
+        _stop_worker(queue, thread)
+
+
 @BOTH_PATHS
 def test_queue_hooks_fire(queue: Queue, is_async: bool) -> None:
     """before_task/on_success/after_task fire for either kind of task."""
