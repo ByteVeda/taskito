@@ -50,6 +50,8 @@ import {
 import type {
   AnyHandler,
   CircuitBreaker,
+  CursorDetailedJobFilter,
+  CursorJobFilter,
   DeadJob,
   DetailedJobFilter,
   EnqueueOptions,
@@ -859,7 +861,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    * O(page) at any depth on SQLite/Postgres. On Redis the status indexes are not
    * seekable, so the keyset is applied in memory — correct, but O(matching rows).
    */
-  async listJobsAfter(filter?: JobFilter, after?: string): Promise<Page<Job>> {
+  async listJobsAfter(filter?: CursorJobFilter, after?: string): Promise<Page<Job>> {
     return toPage(await this.native.listJobsAfter(filter, after));
   }
 
@@ -867,7 +869,10 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    * Keyset-paginated {@link Queue.listJobsFiltered}, ordered by created time.
    * See {@link Queue.listJobsAfter} for the cursor contract.
    */
-  async listJobsFilteredAfter(filter?: DetailedJobFilter, after?: string): Promise<Page<Job>> {
+  async listJobsFilteredAfter(
+    filter?: CursorDetailedJobFilter,
+    after?: string,
+  ): Promise<Page<Job>> {
     return toPage(await this.native.listJobsFilteredAfter(filter, after));
   }
 

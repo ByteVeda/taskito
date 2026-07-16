@@ -67,6 +67,17 @@ it("carries the wider filter across pages", async () => {
   expect(ids).toHaveLength(3);
 });
 
+it("rejects an offset rather than silently returning a different page", async () => {
+  // Offset and cursor paging do not compose — a cursor already says where to
+  // resume — so honouring one and ignoring the other would quietly hand back a
+  // page the caller did not ask for. The TS type omits the field; this covers a
+  // caller who reaches past it.
+  const queue = newQueue();
+  await expect(queue.listJobsAfter({ limit: 2, offset: 10 } as never)).rejects.toThrow(
+    /offset is not supported/,
+  );
+});
+
 it("rejects a malformed cursor rather than restarting", async () => {
   const queue = newQueue();
   await expect(queue.listJobsAfter({ limit: 2 }, "nocolon")).rejects.toThrow(/cursor/);

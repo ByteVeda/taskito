@@ -30,6 +30,18 @@ fn parse_status_filter(status: Option<&str>) -> Result<Option<i32>> {
     }
 }
 
+/// Reject an offset on a keyset call. The two ways of paging do not compose —
+/// a cursor already says where to resume — so honouring one and ignoring the
+/// other would quietly return a different page than the caller asked for.
+fn reject_offset(offset: Option<i64>) -> Result<()> {
+    match offset {
+        Some(o) if o != 0 => Err(invalid_arg(
+            "offset is not supported with cursor pagination; pass the page's nextCursor as `after`",
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Decode a caller-supplied page cursor. A malformed one is a bad request, not
 /// a reason to silently restart from the first page.
 fn parse_cursor(after: Option<&str>) -> Result<Option<(i64, &str)>> {
@@ -186,6 +198,7 @@ impl JsQueue {
     ) -> Result<JsJobPage> {
         let filter = filter.unwrap_or_default();
         let status = parse_status_filter(filter.status.as_deref())?;
+        reject_offset(filter.offset)?;
         let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
         let storage = self.storage.clone();
         let namespace = self.namespace.clone();
@@ -217,6 +230,7 @@ impl JsQueue {
     ) -> Result<JsJobPage> {
         let filter = filter.unwrap_or_default();
         let status = parse_status_filter(filter.status.as_deref())?;
+        reject_offset(filter.offset)?;
         let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
         let storage = self.storage.clone();
         let namespace = self.namespace.clone();

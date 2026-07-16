@@ -79,6 +79,8 @@ export { decodeTaskError, encodeTaskError, type TaskError } from "./task-error";
 export type {
   AnyHandler,
   CircuitBreakerOptions,
+  CursorDetailedJobFilter,
+  CursorJobFilter,
   DeadJob,
   DetailedJobFilter,
   EnqueueOptions,

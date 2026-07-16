@@ -1,5 +1,7 @@
 import type {
   CircuitBreakerInput,
+  DetailedJobFilter,
+  JobFilter,
   MeshWorkerConfig,
   EnqueueOptions as NativeEnqueueOptions,
   PublishOptions as NativePublishOptions,
@@ -184,6 +186,16 @@ export interface Page<T> {
   items: T[];
   nextCursor: string | null;
 }
+
+/**
+ * A filter for a cursor-paginated listing: the offset-paged filter without its
+ * `offset`. The two ways of paging do not compose — a cursor already says where
+ * to resume — so the field is removed rather than silently ignored.
+ */
+export type CursorJobFilter = Omit<JobFilter, "offset">;
+
+/** {@link DetailedJobFilter} without its `offset`. See {@link CursorJobFilter}. */
+export type CursorDetailedJobFilter = Omit<DetailedJobFilter, "offset">;
 
 /** Options for {@link Queue.runWorker}. */
 export interface WorkerRunOptions {
