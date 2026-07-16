@@ -199,12 +199,19 @@ pub fn start_worker(
     let scheduler_results = scheduler;
     spawn_blocking(move || {
         while let Ok(first) = result_rx.recv() {
-            // Take everything already queued and finalize it in one batched
-            // transaction rather than one per wake. The channel is bounded, so
-            // the drain caps itself.
+            // Finalize everything already queued in one batched transaction
+            // rather than one per wake.
+            //
+            // Capped explicitly: the channel bounds how many results can sit in
+            // it at once, not how many this loop drains — senders refill slots
+            // while `try_recv` runs, so an unbounded drain could swallow a whole
+            // backlog into one Vec and stall finalization behind it.
             let mut batch = vec![first];
-            while let Ok(more) = result_rx.try_recv() {
-                batch.push(more);
+            while batch.len() < capacity {
+                match result_rx.try_recv() {
+                    Ok(more) => batch.push(more),
+                    Err(_) => break,
+                }
             }
 
             // A panicking batch must not kill the drain loop — a dead loop
