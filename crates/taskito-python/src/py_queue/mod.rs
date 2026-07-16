@@ -26,22 +26,7 @@ use taskito_core::worker::WorkerDispatcher;
 
 use crate::py_job::PyJob;
 
-/// Build the next-page cursor from a returned page. `None` when the page is the
-/// last one (fewer rows than `limit`), so callers can loop `while cursor`.
-/// Shared by every `*_after` binding across the `py_queue` submodules.
-pub(crate) fn next_cursor<T>(
-    rows: &[T],
-    limit: i64,
-    key: impl Fn(&T) -> (i64, &str),
-) -> Option<String> {
-    if (rows.len() as i64) < limit {
-        return None;
-    }
-    rows.last().map(|r| {
-        let (sort_key, id) = key(r);
-        taskito_core::storage::cursor::encode_cursor(sort_key, id)
-    })
-}
+pub(crate) use taskito_core::storage::cursor::next_cursor;
 
 /// The core queue engine exposed to Python.
 #[pyclass]

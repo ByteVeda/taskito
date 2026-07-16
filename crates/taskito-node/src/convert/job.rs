@@ -115,3 +115,15 @@ pub fn job_to_js(job: Job) -> JsJob {
         namespace: job.namespace,
     }
 }
+
+/// One page of jobs plus the cursor for the next. napi has no generics, so each
+/// item type needs its own page struct; the TS shell declares a `Page<T>` they
+/// all satisfy structurally.
+///
+/// `next_cursor` is `null` on the last page — a short page means the listing is
+/// exhausted — so callers can loop until it is null.
+#[napi(object)]
+pub struct JsJobPage {
+    pub items: Vec<JsJob>,
+    pub next_cursor: Option<String>,
+}

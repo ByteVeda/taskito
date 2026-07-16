@@ -31,9 +31,47 @@ pub fn decode_cursor(cursor: &str) -> Result<(i64, &str)> {
     Ok((sort_key, id))
 }
 
+/// Build the next-page cursor from a returned page, or `None` when the page is
+/// the last one — a short page means the listing is exhausted, so callers can
+/// loop `while let Some(cursor)`. `key` reads the row's `(sort_key, id)`.
+///
+/// Lives here rather than in a binding: every SDK pages the same way, and the
+/// "fewer rows than limit ⇒ last page" rule is part of the cursor contract, not
+/// of any one shell.
+pub fn next_cursor<T>(rows: &[T], limit: i64, key: impl Fn(&T) -> (i64, &str)) -> Option<String> {
+    if (rows.len() as i64) < limit {
+        return None;
+    }
+    rows.last().map(|row| {
+        let (sort_key, id) = key(row);
+        encode_cursor(sort_key, id)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `(sort_key, id)` rows standing in for a listing's page.
+    fn rows(n: usize) -> Vec<(i64, String)> {
+        (0..n).map(|i| (i as i64, format!("id-{i}"))).collect()
+    }
+
+    #[test]
+    fn next_cursor_is_none_on_a_short_page() {
+        assert!(next_cursor(&rows(2), 5, |r| (r.0, &r.1)).is_none());
+    }
+
+    #[test]
+    fn next_cursor_points_at_the_last_row_of_a_full_page() {
+        let cursor = next_cursor(&rows(3), 3, |r| (r.0, &r.1)).expect("full page has a cursor");
+        assert_eq!(cursor, encode_cursor(2, "id-2"));
+    }
+
+    #[test]
+    fn next_cursor_is_none_on_an_empty_page() {
+        assert!(next_cursor::<(i64, String)>(&[], 5, |r| (r.0, &r.1)).is_none());
+    }
 
     #[test]
     fn round_trips() {

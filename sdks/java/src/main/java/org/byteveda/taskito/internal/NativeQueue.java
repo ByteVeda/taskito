@@ -47,6 +47,10 @@ public final class NativeQueue {
 
     public static native String listJobs(long handle, String filterJson);
 
+    public static native String listJobsAfter(long handle, String filterJson, String afterOrNull);
+
+    public static native String listArchivedAfter(long handle, long limit, String afterOrNull);
+
     public static native String jobErrors(long handle, String jobId);
 
     public static native String metrics(long handle, String taskNameOrNull, long sinceMs);

@@ -145,3 +145,11 @@ pub fn status_code(status: &str) -> Option<i32> {
         _ => None,
     }
 }
+
+/// One page of dead-letter entries plus the cursor for the next. See
+/// [`crate::convert::JsJobPage`] for the contract.
+#[napi(object)]
+pub struct JsDeadJobPage {
+    pub items: Vec<JsDeadJob>,
+    pub next_cursor: Option<String>,
+}

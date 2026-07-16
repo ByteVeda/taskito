@@ -17,6 +17,7 @@ export type NativeWorker = InstanceType<typeof JsWorker>;
 
 export type {
   CircuitBreakerInput,
+  DetailedJobFilter,
   EnqueueOptions,
   JobFilter,
   JsCircuitBreaker,

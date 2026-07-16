@@ -9,15 +9,65 @@ use napi_derive::napi;
 use taskito_core::Storage;
 
 use super::JsQueue;
-use crate::config::JobFilter;
+use crate::config::{DetailedJobFilter, JobFilter};
 use crate::convert::{
     circuit_breaker_to_js, job_error_to_js, job_to_js, log_to_js, metric_to_js, replay_to_js,
     stats_to_js, status_code, worker_to_js, JsCircuitBreaker, JsDagEdge, JsJob, JsJobDag,
-    JsJobError, JsMetric, JsReplayEntry, JsStats, JsTaskLog, JsWorkerRow,
+    JsJobError, JsJobPage, JsMetric, JsReplayEntry, JsStats, JsTaskLog, JsWorkerRow,
 };
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
 
 const DEFAULT_LIMIT: i64 = 50;
+
+/// Resolve a lowercase status name to its code. An unrecognized status would
+/// otherwise silently widen the result set to every job, so a typo fails loudly.
+fn parse_status_filter(status: Option<&str>) -> Result<Option<i32>> {
+    match status {
+        Some(s) => status_code(s)
+            .map(Some)
+            .ok_or_else(|| invalid_arg(format!("unknown status filter '{s}'"))),
+        None => Ok(None),
+    }
+}
+
+/// Reject an offset on a keyset call. The two ways of paging do not compose —
+/// a cursor already says where to resume — so honouring one and ignoring the
+/// other would quietly return a different page than the caller asked for.
+fn reject_offset(offset: Option<i64>) -> Result<()> {
+    match offset {
+        Some(o) if o != 0 => Err(invalid_arg(
+            "offset is not supported with cursor pagination; pass the page's nextCursor as `after`",
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Decode a caller-supplied page cursor. A malformed one is a bad request, not
+/// a reason to silently restart from the first page.
+fn parse_cursor(after: Option<&str>) -> Result<Option<(i64, &str)>> {
+    after
+        .map(taskito_core::storage::cursor::decode_cursor)
+        .transpose()
+        .map_err(to_napi_err)
+}
+
+/// Wrap a page of jobs with the cursor for the next, keyed on `sort_key`.
+/// Archived rows always carry `completed_at`; the fallback keeps the key
+/// non-null for a row written before it was set.
+fn job_page(jobs: Vec<taskito_core::job::Job>, limit: i64, by_completed_at: bool) -> JsJobPage {
+    let next_cursor = taskito_core::storage::cursor::next_cursor(&jobs, limit, |j| {
+        let key = if by_completed_at {
+            j.completed_at.unwrap_or(j.created_at)
+        } else {
+            j.created_at
+        };
+        (key, &j.id)
+    });
+    JsJobPage {
+        items: jobs.into_iter().map(job_to_js).collect(),
+        next_cursor,
+    }
+}
 
 #[napi]
 impl JsQueue {
@@ -60,15 +110,7 @@ impl JsQueue {
     #[napi]
     pub async fn list_jobs(&self, filter: Option<JobFilter>) -> Result<Vec<JsJob>> {
         let filter = filter.unwrap_or_default();
-        // An unrecognized status would otherwise silently widen the result set
-        // to every job; reject it so a typo fails loudly.
-        let status = match filter.status.as_deref() {
-            Some(s) => Some(
-                status_code(s)
-                    .ok_or_else(|| invalid_arg(format!("unknown status filter '{s}'")))?,
-            ),
-            None => None,
-        };
+        let status = parse_status_filter(filter.status.as_deref())?;
         let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
         let offset = non_negative(filter.offset.unwrap_or(0), "offset")?;
         let storage = self.storage.clone();
@@ -85,6 +127,151 @@ impl JsQueue {
                 )
                 .map_err(to_napi_err)?;
             Ok(jobs.into_iter().map(job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// List jobs on the wider filter: everything [`JsQueue::list_jobs`] matches
+    /// on, plus metadata/error substrings and a created-at range.
+    #[napi]
+    pub async fn list_jobs_filtered(
+        &self,
+        filter: Option<DetailedJobFilter>,
+    ) -> Result<Vec<JsJob>> {
+        let filter = filter.unwrap_or_default();
+        let status = parse_status_filter(filter.status.as_deref())?;
+        let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let offset = non_negative(filter.offset.unwrap_or(0), "offset")?;
+        let storage = self.storage.clone();
+        let namespace = self.namespace.clone();
+        spawn_blocking(move || {
+            let jobs = storage
+                .list_jobs_filtered(
+                    status,
+                    filter.queue.as_deref(),
+                    filter.task.as_deref(),
+                    filter.metadata_like.as_deref(),
+                    filter.error_like.as_deref(),
+                    filter.created_after,
+                    filter.created_before,
+                    limit,
+                    offset,
+                    namespace.as_deref(),
+                )
+                .map_err(to_napi_err)?;
+            Ok(jobs.into_iter().map(job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// List archived (completed, moved out of the live table) jobs, newest first.
+    #[napi]
+    pub async fn list_archived(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<JsJob>> {
+        let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let offset = non_negative(offset.unwrap_or(0), "offset")?;
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let jobs = storage.list_archived(limit, offset).map_err(to_napi_err)?;
+            Ok(jobs.into_iter().map(job_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Keyset-paginated [`JsQueue::list_jobs`], ordered by created time. Pass a
+    /// page's `nextCursor` back as `after`; `null` means the last page.
+    ///
+    /// O(page) at any depth on SQLite/Postgres. On Redis the status indexes are
+    /// not seekable, so the keyset is applied in memory — correct, but O(rows
+    /// matching the filter) rather than O(page).
+    #[napi]
+    pub async fn list_jobs_after(
+        &self,
+        filter: Option<JobFilter>,
+        after: Option<String>,
+    ) -> Result<JsJobPage> {
+        let filter = filter.unwrap_or_default();
+        let status = parse_status_filter(filter.status.as_deref())?;
+        reject_offset(filter.offset)?;
+        let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let storage = self.storage.clone();
+        let namespace = self.namespace.clone();
+        spawn_blocking(move || {
+            let cursor = parse_cursor(after.as_deref())?;
+            let jobs = storage
+                .list_jobs_after(
+                    status,
+                    filter.queue.as_deref(),
+                    filter.task.as_deref(),
+                    limit,
+                    cursor,
+                    namespace.as_deref(),
+                )
+                .map_err(to_napi_err)?;
+            Ok(job_page(jobs, limit, false))
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Keyset-paginated [`JsQueue::list_jobs_filtered`], ordered by created
+    /// time. See [`JsQueue::list_jobs_after`] for the cursor contract.
+    #[napi]
+    pub async fn list_jobs_filtered_after(
+        &self,
+        filter: Option<DetailedJobFilter>,
+        after: Option<String>,
+    ) -> Result<JsJobPage> {
+        let filter = filter.unwrap_or_default();
+        let status = parse_status_filter(filter.status.as_deref())?;
+        reject_offset(filter.offset)?;
+        let limit = non_negative(filter.limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let storage = self.storage.clone();
+        let namespace = self.namespace.clone();
+        spawn_blocking(move || {
+            let cursor = parse_cursor(after.as_deref())?;
+            let jobs = storage
+                .list_jobs_filtered_after(
+                    status,
+                    filter.queue.as_deref(),
+                    filter.task.as_deref(),
+                    filter.metadata_like.as_deref(),
+                    filter.error_like.as_deref(),
+                    filter.created_after,
+                    filter.created_before,
+                    limit,
+                    cursor,
+                    namespace.as_deref(),
+                )
+                .map_err(to_napi_err)?;
+            Ok(job_page(jobs, limit, false))
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Keyset-paginated [`JsQueue::list_archived`], ordered by completed time.
+    /// See [`JsQueue::list_jobs_after`] for the cursor contract.
+    #[napi]
+    pub async fn list_archived_after(
+        &self,
+        limit: Option<i64>,
+        after: Option<String>,
+    ) -> Result<JsJobPage> {
+        let limit = non_negative(limit.unwrap_or(DEFAULT_LIMIT), "limit")?;
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let cursor = parse_cursor(after.as_deref())?;
+            let jobs = storage
+                .list_archived_after(limit, cursor)
+                .map_err(to_napi_err)?;
+            Ok(job_page(jobs, limit, true))
         })
         .await
         .map_err(join_to_napi_err)?

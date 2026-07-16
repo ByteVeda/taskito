@@ -28,6 +28,7 @@ import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.JobError;
 import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.Page;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
@@ -179,6 +180,29 @@ public interface Taskito extends AutoCloseable {
 
     List<Job> listJobs(JobFilter filter);
 
+    /**
+     * Keyset-paginated {@link #listJobs}, ordered by created time. Pass a page's
+     * {@code nextCursor} back as {@code after}; {@code null} starts at the first
+     * page, and a {@code null} {@code nextCursor} means the last one.
+     *
+     * <p>Stays O(page) at any depth, unlike an offset walk. On Redis the status
+     * indexes are not seekable, so the keyset is applied in memory — correct, but
+     * O(matching rows) rather than O(page).
+     *
+     * @param filter same predicates as {@link #listJobs}; its {@code offset} is ignored
+     * @param after cursor from a previous page, or {@code null} for the first
+     */
+    Page<Job> listJobsAfter(JobFilter filter, String after);
+
+    /**
+     * Keyset-paginated archived-job listing, ordered by completed time. See
+     * {@link #listJobsAfter} for the cursor contract.
+     *
+     * @param limit page size
+     * @param after cursor from a previous page, or {@code null} for the first
+     */
+    Page<Job> listArchivedAfter(long limit, String after);
+
     List<JobError> jobErrors(String jobId);
 
     /** Per-execution metrics within the last {@code sinceMs}; null task = all. */
@@ -230,6 +254,35 @@ public interface Taskito extends AutoCloseable {
     boolean deleteSetting(String key);
 
     Map<String, String> listSettings();
+
+    // ── Middleware toggles ──────────────────────────────────────────
+
+    /**
+     * Stop running {@code middlewareName} for {@code taskName}. Takes effect on
+     * the next job — workers read the list per invocation, so no restart is
+     * needed. The name is the middleware's fully-qualified class name.
+     *
+     * @param taskName task to disable it for
+     * @param middlewareName fully-qualified class name of the middleware
+     */
+    void disableMiddleware(String taskName, String middlewareName);
+
+    /**
+     * Undo {@link #disableMiddleware}. A no-op when it was not disabled.
+     *
+     * @param taskName task to re-enable it for
+     * @param middlewareName fully-qualified class name of the middleware
+     */
+    void enableMiddleware(String taskName, String middlewareName);
+
+    /**
+     * Middleware names currently disabled for {@code taskName}; empty when none
+     * are.
+     *
+     * @param taskName task to read the list for
+     * @return the disabled middleware names
+     */
+    List<String> listDisabledMiddleware(String taskName);
 
     // ── Logs ────────────────────────────────────────────────────────
 

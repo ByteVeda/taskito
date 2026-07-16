@@ -1,5 +1,7 @@
 import type {
   CircuitBreakerInput,
+  DetailedJobFilter,
+  JobFilter,
   MeshWorkerConfig,
   EnqueueOptions as NativeEnqueueOptions,
   PublishOptions as NativePublishOptions,
@@ -7,6 +9,7 @@ import type {
 
 export type {
   CircuitBreakerInput as CircuitBreakerOptions,
+  DetailedJobFilter,
   JobFilter,
   JsCircuitBreaker as CircuitBreaker,
   JsDagEdge as DagEdge,
@@ -171,6 +174,28 @@ export interface RegisteredTask {
   handler: AnyHandler;
   options?: TaskOptions;
 }
+
+/**
+ * One page of a keyset-paginated listing.
+ *
+ * `nextCursor` is `null` on the last page — a short page means the listing is
+ * exhausted — so a walk is `while (cursor !== null)`. Pass it back verbatim as
+ * the next call's `after`; treat it as opaque.
+ */
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+/**
+ * A filter for a cursor-paginated listing: the offset-paged filter without its
+ * `offset`. The two ways of paging do not compose — a cursor already says where
+ * to resume — so the field is removed rather than silently ignored.
+ */
+export type CursorJobFilter = Omit<JobFilter, "offset">;
+
+/** {@link DetailedJobFilter} without its `offset`. See {@link CursorJobFilter}. */
+export type CursorDetailedJobFilter = Omit<DetailedJobFilter, "offset">;
 
 /** Options for {@link Queue.runWorker}. */
 export interface WorkerRunOptions {
