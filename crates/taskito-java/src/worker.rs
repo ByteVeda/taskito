@@ -92,6 +92,12 @@ fn start_worker(
     #[cfg(feature = "mesh")]
     let mesh_worker_id = worker_id.clone();
 
+    // Validate every task policy before writing any persistent state: this is
+    // the last fallible step that has no side effects, and returning Err past
+    // the writes below would leave a worker row and its subscriptions behind
+    // with no handle to run the lifecycle loop that cleans them up.
+    let task_policies = build_task_policies(options.task_configs)?;
+
     // Create the live worker row before its ephemeral subscriptions exist:
     // the reaper only spares owned rows whose owner is registered, so this
     // ordering (plus the core's registration grace window) keeps a concurrent
@@ -106,7 +112,9 @@ fn start_worker(
     // Claim execution under this worker's id so dead-worker recovery can
     // attribute orphaned jobs (matches the worker id registered above).
     scheduler.set_claim_owner(worker_id.clone());
-    register_task_policies(&mut scheduler, options.task_configs)?;
+    for (name, policy) in task_policies {
+        scheduler.register_task(name, policy);
+    }
     let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
     let heartbeat_stop = Arc::new(Notify::new());
@@ -237,19 +245,21 @@ fn register_subscriptions(
     Ok(())
 }
 
-/// Register each task's policy — retry curve, throttling, concurrency caps —
-/// with the scheduler. Unset fields keep the core's defaults; the per-job retry
+/// Build each task's policy — retry curve, throttling, concurrency caps — from
+/// its wire config. Unset fields keep the core's defaults; the per-job retry
 /// budget still resolves from the job's `max_retries`.
 ///
 /// Fails on a malformed rate spec rather than registering the task without it:
 /// silently dropping a throttle the caller asked for is worse than not starting.
-fn register_task_policies(
-    scheduler: &mut Scheduler,
+/// Pure, so the caller can validate before writing any persistent worker state
+/// and a rejected config leaves nothing behind.
+fn build_task_policies(
     configs: Option<Vec<TaskRetryConfig>>,
-) -> Result<(), crate::error::BindingError> {
+) -> Result<Vec<(String, TaskConfig)>, crate::error::BindingError> {
     let Some(configs) = configs else {
-        return Ok(());
+        return Ok(Vec::new());
     };
+    let mut built = Vec::with_capacity(configs.len());
     for config in configs {
         let mut retry_policy = RetryPolicy::default();
         if let Some(custom) = config.custom_delays_ms {
@@ -285,7 +295,7 @@ fn register_task_policies(
         let rate_limit = parse_rate_spec("rateLimit", &config.name, config.rate_limit.as_deref())?;
         let retry_budget =
             parse_rate_spec("retryBudget", &config.name, config.retry_budget.as_deref())?;
-        scheduler.register_task(
+        built.push((
             config.name,
             TaskConfig {
                 retry_policy,
@@ -295,9 +305,9 @@ fn register_task_policies(
                 max_concurrent: config.max_concurrent,
                 max_in_flight_per_task: config.max_in_flight_per_task.map(|n| n.max(1) as usize),
             },
-        );
+        ));
     }
-    Ok(())
+    Ok(built)
 }
 
 /// Parse an optional rate spec, naming the offending task and option so a typo
