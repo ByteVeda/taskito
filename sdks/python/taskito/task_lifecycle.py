@@ -212,22 +212,27 @@ async def run_lifecycle(
     except Exception as exc:
         error = exc
         elapsed = time.perf_counter() - started_at
+        # Format the exception into the message rather than passing it as an
+        # argument: a LogRecord keeps its args, and any handler that retains
+        # records (a buffering handler, an error reporter, a test's log capture)
+        # would then hold the exception — and through its traceback, every frame
+        # that raised, for as long as the record lives.
         if isinstance(exc, TaskCancelledError):
             logger.info(
                 "Task %s[%s] cancelled in %.3fs: %s",
                 task_name,
                 job_id,
                 elapsed,
-                exc,
+                str(exc),
             )
         else:
             logger.error(
-                "Task %s[%s] raised %s in %.3fs: %r",
+                "Task %s[%s] raised %s in %.3fs: %s",
                 task_name,
                 job_id,
                 type(exc).__name__,
                 elapsed,
-                exc,
+                repr(exc),
             )
         for hook in hooks["on_failure"]:
             hook(task_name, args, kwargs, exc)
@@ -297,3 +302,13 @@ async def run_lifecycle(
                 queue_ref._emit_event(EventType.JOB_FAILED, event_payload)
             else:
                 queue_ref._emit_event(EventType.JOB_COMPLETED, event_payload)
+        # Drop the exception before this frame outlives it. Its traceback points
+        # back at this very frame, so holding it in an ordinary local is a
+        # reference cycle — Python auto-clears an `except ... as` name for exactly
+        # this reason, but `error` is a plain local and keeps it. Until the cyclic
+        # collector runs, everything reachable from this frame stays alive, which
+        # on native dispatch includes the async result sender: the worker's drain
+        # loop ends when that sender drops, so a leaked one stalls every shutdown
+        # after a failed task until the drain times out. Must stay last — it is
+        # only safe once nothing above still reads `error`.
+        error = None

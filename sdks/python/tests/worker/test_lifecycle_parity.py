@@ -404,3 +404,53 @@ def test_base_exception_is_not_reported_as_completed(tmp_path: Path, is_async: b
         )
     finally:
         q.close()
+
+
+@BOTH_PATHS
+def test_failed_task_does_not_stall_shutdown(tmp_path: Path, is_async: bool) -> None:
+    """A failed task must not keep the worker from stopping promptly.
+
+    The lifecycle holds the exception in a local while it runs the cleanup, and
+    the exception's traceback points back at that frame — a cycle, so the frame
+    and everything reachable from it survives until the cyclic collector runs.
+    On native dispatch the async result sender is reachable from that frame, and
+    the worker's drain loop only ends once the sender drops and the result
+    channel disconnects. Leak it and every shutdown after a failed task waits out
+    the full drain timeout instead of stopping.
+    """
+    q = Queue(db_path=str(tmp_path / "stall.db"), workers=2, default_retry=0)
+    try:
+        if is_async:
+
+            @q.task(name="failing", max_retries=0)
+            async def failing() -> None:
+                raise ValueError("expected failure")
+
+        else:
+
+            @q.task(name="failing", max_retries=0)
+            def failing() -> None:
+                raise ValueError("expected failure")
+
+        job = failing.delay()
+        thread = _start_worker(q)
+
+        # Wait for the job to reach a terminal state, so the failure is genuinely
+        # behind us and the only thing left to measure is the shutdown itself.
+        # `status` is the last-fetched value, so it needs a refresh to advance.
+        def is_terminal() -> bool:
+            job.refresh()
+            return job.status in ("failed", "dead")
+
+        _wait_for(is_terminal, "job never reached a terminal state")
+
+        started = time.monotonic()
+        q._inner.request_shutdown()
+        thread.join(timeout=30)
+        elapsed = time.monotonic() - started
+
+        assert not thread.is_alive(), "worker did not stop after a failed task"
+        # Prompt is ~0.2s; the leak shows up as the multi-second drain timeout.
+        assert elapsed < 5, f"shutdown after a failed task took {elapsed:.1f}s — sender leaked?"
+    finally:
+        q.close()
