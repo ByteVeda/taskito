@@ -221,6 +221,32 @@ class AsyncTaskExecutor:
                         )
                     )
 
+            except BaseException as exc:
+                # Neither a cancellation nor an ordinary failure — KeyboardInterrupt,
+                # SystemExit, or any other BaseException the clause above cannot see.
+                # Unreported, the job sits Running until the reaper mislabels it a
+                # timeout, so report it as the blocking path would: a failure, with
+                # the retry policy left to decide. Hand off without awaiting — the
+                # loop may be going down — then re-raise, since swallowing these
+                # breaks interpreter and loop teardown.
+                if not reported:
+                    wall_ns = time.monotonic_ns() - start_ns
+                    reported = True
+                    error_msg = encode_task_error(exc)
+                    self._hand_off_now(
+                        lambda: self._sender.try_report_failure(
+                            job_id,
+                            task_name,
+                            error_msg,
+                            retry_count,
+                            max_retries,
+                            wall_ns,
+                            True,
+                        ),
+                        job_id,
+                    )
+                raise
+
             finally:
                 clear_async_context(token)
 
