@@ -343,6 +343,9 @@ pub struct TaskRetryConfig {
     pub retry_budget: Option<String>,
     /// Cap on concurrently-running jobs of this task, across the cluster.
     pub max_concurrent: Option<i32>,
+    /// Cap on this task's share of one worker's dispatch slots. In-process,
+    /// unlike `max_concurrent`, which is cluster-wide and costs a DB read.
+    pub max_in_flight_per_task: Option<i32>,
 }
 
 /// Filter accepted by `NativeQueue.listJobs`.

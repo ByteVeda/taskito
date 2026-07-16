@@ -293,8 +293,7 @@ fn register_task_policies(
                 circuit_breaker,
                 retry_budget,
                 max_concurrent: config.max_concurrent,
-                // Not surfaced on this SDK yet; the whole pool stays available.
-                max_in_flight_per_task: None,
+                max_in_flight_per_task: config.max_in_flight_per_task.map(|n| n.max(1) as usize),
             },
         );
     }

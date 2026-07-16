@@ -25,6 +25,7 @@ public final class Task<T> {
     private final String rateLimit;
     private final String retryBudget;
     private final Integer maxConcurrent;
+    private final Integer maxInFlightPerTask;
 
     private Task(
             String name,
@@ -36,7 +37,8 @@ public final class Task<T> {
             CircuitBreakerConfig circuitBreaker,
             String rateLimit,
             String retryBudget,
-            Integer maxConcurrent) {
+            Integer maxConcurrent,
+            Integer maxInFlightPerTask) {
         this.name = Objects.requireNonNull(name, "task name must not be null");
         if (name.trim().isEmpty()) {
             throw new IllegalArgumentException("task name must not be blank");
@@ -50,17 +52,29 @@ public final class Task<T> {
         this.rateLimit = rateLimit;
         this.retryBudget = retryBudget;
         this.maxConcurrent = maxConcurrent;
+        this.maxInFlightPerTask = maxInFlightPerTask;
     }
 
     /** A task whose payload deserializes to {@code payloadType}. */
     public static <T> Task<T> of(String name, Class<T> payloadType) {
-        return new Task<>(name, payloadType, EnqueueOptions.none(), null, List.of(), false, null, null, null, null);
+        return new Task<>(
+                name, payloadType, EnqueueOptions.none(), null, List.of(), false, null, null, null, null, null);
     }
 
     /** A task whose payload deserializes to a generic type, e.g. {@code new TypeReference<List<Foo>>(){}}. */
     public static <T> Task<T> of(String name, TypeReference<T> payloadType) {
         return new Task<>(
-                name, payloadType.getType(), EnqueueOptions.none(), null, List.of(), false, null, null, null, null);
+                name,
+                payloadType.getType(),
+                EnqueueOptions.none(),
+                null,
+                List.of(),
+                false,
+                null,
+                null,
+                null,
+                null,
+                null);
     }
 
     /** A copy of this task with the given default options. */
@@ -75,7 +89,8 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -94,7 +109,8 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -114,7 +130,8 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -133,7 +150,8 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -152,7 +170,8 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -171,7 +190,8 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -190,7 +210,8 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     /**
@@ -211,7 +232,29 @@ public final class Task<T> {
                 circuitBreaker,
                 rateLimit,
                 retryBudget,
-                maxConcurrent);
+                maxConcurrent,
+                maxInFlightPerTask);
+    }
+
+    /**
+     * A copy of this task allowed at most {@code maxInFlightPerTask} of one worker's
+     * dispatch slots, so a slow task cannot occupy the whole pool and starve the
+     * others. In-process and free, unlike {@link #maxConcurrent}, which is
+     * cluster-wide and costs a database read; {@code null} lets it use the whole pool.
+     */
+    public Task<T> maxInFlightPerTask(Integer maxInFlightPerTask) {
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent,
+                maxInFlightPerTask);
     }
 
     public Task<T> queue(String queue) {
@@ -293,5 +336,10 @@ public final class Task<T> {
     /** Cap on this task's concurrently-running jobs, or {@code null} when uncapped. */
     public Integer maxConcurrent() {
         return maxConcurrent;
+    }
+
+    /** Cap on this task's share of one worker's dispatch slots, or {@code null} when uncapped. */
+    public Integer maxInFlightPerTask() {
+        return maxInFlightPerTask;
     }
 }

@@ -210,6 +210,10 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         if (maxConcurrent > 0) {
             chain.append(".maxConcurrent(").append(maxConcurrent).append(")");
         }
+        long maxInFlightPerTask = longValue(mirror, "maxInFlightPerTask", 0);
+        if (maxInFlightPerTask > 0) {
+            chain.append(".maxInFlightPerTask(").append(maxInFlightPerTask).append(")");
+        }
         appendCircuitBreaker(chain, mirror);
         return chain.toString();
     }

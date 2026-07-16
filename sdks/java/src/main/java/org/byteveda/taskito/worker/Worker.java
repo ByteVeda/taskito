@@ -253,7 +253,8 @@ public final class Worker implements AutoCloseable {
                     || task.circuitBreaker() != null
                     || task.rateLimit() != null
                     || task.retryBudget() != null
-                    || task.maxConcurrent() != null;
+                    || task.maxConcurrent() != null
+                    || task.maxInFlightPerTask() != null;
         }
 
         /** Register every handler in a {@link HandlerRegistry} (e.g. a generated {@code XxxTasks.handlers}). */
@@ -503,6 +504,9 @@ public final class Worker implements AutoCloseable {
                 }
                 if (task.maxConcurrent() != null) {
                     config.put("maxConcurrent", task.maxConcurrent());
+                }
+                if (task.maxInFlightPerTask() != null) {
+                    config.put("maxInFlightPerTask", task.maxInFlightPerTask());
                 }
                 configs.add(config);
             }

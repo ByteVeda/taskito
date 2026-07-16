@@ -56,6 +56,12 @@ public @interface TaskHandler {
      */
     int maxConcurrent() default 0;
 
+    /**
+     * Cap on this task's share of one worker's dispatch slots, so a slow task
+     * cannot occupy the whole pool; 0 (default) lets it use the whole pool.
+     */
+    int maxInFlightPerTask() default 0;
+
     /** Circuit-breaker failure threshold; 0 (default) leaves the breaker off. */
     int circuitBreakerThreshold() default 0;
 

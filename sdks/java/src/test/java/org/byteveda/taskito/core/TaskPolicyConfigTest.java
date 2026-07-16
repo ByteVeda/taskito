@@ -58,6 +58,47 @@ class TaskPolicyConfigTest {
         assertEquals(1, peak.get(), "maxConcurrent=1 must never let two jobs of the task overlap");
     }
 
+    /** The in-process bulkhead holds a task to its share of one worker's slots. */
+    @Test
+    @Timeout(30)
+    void maxInFlightPerTaskBoundsOneTask(@TempDir Path dir) throws Exception {
+        // Same visible effect as maxConcurrent=1 here, but enforced in-process
+        // from the worker's in-flight map rather than a running-count query.
+        Task<String> solo = Task.of("solo", String.class).maxInFlightPerTask(1);
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+        CountDownLatch done = new CountDownLatch(4);
+
+        try (Taskito queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
+            for (int i = 0; i < 4; i++) {
+                queue.enqueue(solo, String.valueOf(i));
+            }
+
+            try (Worker worker = queue.worker()
+                    .concurrency(4)
+                    .batchSize(4)
+                    .handle(solo, (String p) -> {
+                        peak.accumulateAndGet(running.incrementAndGet(), Math::max);
+                        try {
+                            Thread.sleep(150);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        running.decrementAndGet();
+                        return null;
+                    })
+                    .on(EventName.SUCCESS, event -> done.countDown())
+                    .start()) {
+                assertTrue(done.await(20, TimeUnit.SECONDS), "all four jobs should finish");
+            }
+        }
+
+        assertEquals(1, peak.get(), "maxInFlightPerTask=1 must never let two jobs of the task overlap");
+    }
+
     /** Throttling drags a burst out past the window it would otherwise finish in. */
     @Test
     @Timeout(30)
