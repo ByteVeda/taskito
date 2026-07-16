@@ -198,23 +198,43 @@ pub fn start_worker(
     // sender has dropped (i.e. after the dispatcher and all in-flight jobs end).
     let scheduler_results = scheduler;
     spawn_blocking(move || {
-        while let Ok(result) = result_rx.recv() {
-            // A panicking result must not kill the drain loop — a dead loop
-            // silently drops every later outcome.
+        while let Ok(first) = result_rx.recv() {
+            // Take everything already queued and finalize it in one batched
+            // transaction rather than one per wake. The channel is bounded, so
+            // the drain caps itself.
+            let mut batch = vec![first];
+            while let Ok(more) = result_rx.try_recv() {
+                batch.push(more);
+            }
+
+            // A panicking batch must not kill the drain loop — a dead loop
+            // silently drops every later outcome. The batch widens a panic's
+            // reach from one outcome to N, which is acceptable: the realistic
+            // failure is a batch write error, and `handle_results` already
+            // falls back to finalizing those jobs one at a time.
             let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                scheduler_results.handle_result(result)
+                scheduler_results.handle_results(batch)
             }));
             match handled {
                 // Surface each outcome to JS so the shell can emit events and run
-                // middleware (the events layer).
-                Ok(Ok(outcome)) => {
-                    outcome_callback.call(
-                        outcome_to_js(&outcome),
-                        ThreadsafeFunctionCallMode::NonBlocking,
-                    );
+                // middleware (the events layer). `handle_results` returns one
+                // outcome per input, in order, so each job is reported once.
+                Ok(outcomes) => {
+                    for outcome in outcomes {
+                        match outcome {
+                            Ok(outcome) => {
+                                outcome_callback.call(
+                                    outcome_to_js(&outcome),
+                                    ThreadsafeFunctionCallMode::NonBlocking,
+                                );
+                            }
+                            Err(err) => {
+                                log::error!("[taskito-node] result handling error: {err}")
+                            }
+                        }
+                    }
                 }
-                Ok(Err(err)) => log::error!("[taskito-node] result handling error: {err}"),
-                Err(_) => log::error!("[taskito-node] result handling panicked; outcome dropped"),
+                Err(_) => log::error!("[taskito-node] result handling panicked; outcomes dropped"),
             }
         }
     });
