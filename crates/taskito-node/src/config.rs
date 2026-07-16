@@ -114,6 +114,9 @@ pub struct TaskConfigInput {
     pub max_in_flight_per_task: Option<i32>,
     /// Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`.
     pub rate_limit: Option<String>,
+    /// Cap on how fast this task may *retry*, across all of its jobs. Same spec
+    /// as `rate_limit`; once spent, failures dead-letter instead of retrying.
+    pub retry_budget: Option<String>,
     pub circuit_breaker: Option<CircuitBreakerInput>,
 }
 

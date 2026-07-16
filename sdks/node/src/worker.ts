@@ -333,6 +333,7 @@ function toTaskConfig(name: string, options: TaskOptions): TaskConfigInput {
     maxConcurrent: options.maxConcurrent,
     maxInFlightPerTask: options.maxInFlightPerTask,
     rateLimit: options.rateLimit,
+    retryBudget: options.retryBudget,
     circuitBreaker: options.circuitBreaker,
   };
 }

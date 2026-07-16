@@ -42,8 +42,8 @@ pub fn task_config(input: &TaskConfigInput) -> Result<TaskConfig> {
             .as_ref()
             .map(circuit_breaker_config)
             .transpose()?,
-        // Not surfaced on this SDK yet; retries stay bounded per job.
-        retry_budget: None,
+        // Same "100/m" grammar as rate_limit, so one parser serves both.
+        retry_budget: parse_rate_spec("retryBudget", input.retry_budget.as_deref())?,
         max_concurrent: input.max_concurrent,
         max_in_flight_per_task: input.max_in_flight_per_task.map(|n| n.max(1) as usize),
     })

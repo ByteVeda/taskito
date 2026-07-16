@@ -15,6 +15,21 @@ function newQueue(): Queue {
   return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-tc-")), "q.db") });
 }
 
+/** Poll an async predicate. `waitFor` takes a sync one — a promise is always truthy there. */
+async function waitForAsync(
+  predicate: () => Promise<boolean>,
+  timeoutMs = 10000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return false;
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 10000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -64,4 +79,32 @@ it("rejects a malformed rateLimit rather than silently disabling it", async () =
   const queue = newQueue();
   queue.task("bad", async () => {}, { rateLimit: "100/mm" as never });
   expect(() => queue.runWorker({ queues: ["default"] })).toThrow(/rateLimit/);
+});
+
+it("registers a task that sets only retryBudget", async () => {
+  // Nothing was added to the config gate for this option — it derives from the
+  // built config — so this asserts a task setting only retryBudget still reaches
+  // the scheduler. One token means the second failure dead-letters rather than
+  // retrying, even though maxRetries would allow more.
+  const queue = newQueue();
+
+  queue.task(
+    "flaky",
+    async () => {
+      throw new Error("dependency down");
+    },
+    { retryBudget: "1/m", maxRetries: 5 },
+  );
+
+  for (let i = 0; i < 3; i += 1) {
+    await queue.enqueue("flaky");
+  }
+
+  worker = queue.runWorker({ queues: ["default"], concurrency: 4, batchSize: 3 });
+
+  const budgetKilled = async (): Promise<number> => {
+    const dead = await queue.deadLetters(10);
+    return dead.filter((entry) => entry.metadata === "retry_budget_exhausted").length;
+  };
+  expect(await waitForAsync(async () => (await budgetKilled()) > 0)).toBe(true);
 });

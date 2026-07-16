@@ -109,6 +109,15 @@ export interface TaskOptions {
   maxInFlightPerTask?: number;
   /** Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`. */
   rateLimit?: RateLimit;
+  /**
+   * Cap on how fast this task may **retry**, across all of its jobs — same spec
+   * as {@link TaskOptions.rateLimit}. Once spent, failures dead-letter instead
+   * of retrying, so a broken dependency cannot become a retry storm. Distinct
+   * from {@link TaskOptions.maxRetries}, which bounds one job rather than the
+   * rate, and from {@link TaskOptions.circuitBreaker}, which trips on hard
+   * failure rather than aggregate retry rate.
+   */
+  retryBudget?: RateLimit;
   /** Trip the task's circuit breaker after repeated failures. */
   circuitBreaker?: CircuitBreakerInput;
   /**
