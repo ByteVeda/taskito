@@ -77,6 +77,20 @@ def _wait_for(predicate: Any, message: str) -> None:
     raise AssertionError(message)
 
 
+def test_re_registering_a_task_clears_its_soft_timeout(queue: Queue) -> None:
+    """Replacing a task must not leave it wearing the old task's soft_timeout."""
+
+    @queue.task(name="dup", soft_timeout=0.05)
+    def first() -> None: ...
+
+    assert queue._task_soft_timeouts["dup"] == 0.05
+
+    @queue.task(name="dup")
+    def second() -> None: ...
+
+    assert "dup" not in queue._task_soft_timeouts
+
+
 def test_setup_failure_releases_what_it_acquired(tmp_path: Path) -> None:
     """A task that dies during setup must still hand back its resources.
 

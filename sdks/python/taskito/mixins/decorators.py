@@ -413,8 +413,12 @@ class QueueDecoratorMixin:
             if final_inject:
                 self._task_inject_map[task_name] = final_inject
 
-            # Wrap the function with hooks, middleware, and context
-            if soft_timeout is not None:
+            # Wrap the function with hooks, middleware, and context. Re-registering
+            # a name replaces the task, so an absent soft_timeout has to clear any
+            # earlier one rather than leave it for the new task to inherit.
+            if soft_timeout is None:
+                self._task_soft_timeouts.pop(task_name, None)
+            else:
                 self._task_soft_timeouts[task_name] = soft_timeout
             wrapped = self._wrap_task(fn, task_name)
 
