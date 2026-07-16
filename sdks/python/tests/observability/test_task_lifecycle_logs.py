@@ -9,7 +9,7 @@ import pytest
 
 from taskito import Queue
 from taskito.exceptions import TaskCancelledError
-from taskito.mixins.decorators import _MAX_RESULT_REPR, _safe_result_repr
+from taskito.task_lifecycle import _MAX_RESULT_REPR, _safe_result_repr
 
 _RECEIVED = re.compile(r"^Task (\S+)\[(\S+)\] received$")
 _SUCCEEDED = re.compile(r"^Task (\S+)\[(\S+)\] succeeded in \d+\.\d{3}s: (.+)$")

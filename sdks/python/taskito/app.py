@@ -278,6 +278,10 @@ class Queue(
         self._task_idempotent: dict[str, bool] = {}
         self._task_compensates: dict[str, str] = {}
         self._task_batch_configs: dict[str, BatchConfig] = {}
+        # Per-task cooperative timeout, mirrored here like every other per-task
+        # option so the lifecycle can reach it through the queue rather than a
+        # closure only the blocking wrapper had.
+        self._task_soft_timeouts: dict[str, float] = {}
         self._batch_accumulator: BatchAccumulator | None = None
         self._global_middleware: list[TaskMiddleware] = middleware or []
         self._task_middleware: dict[str, list[TaskMiddleware]] = {}

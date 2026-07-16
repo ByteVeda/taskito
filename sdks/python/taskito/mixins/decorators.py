@@ -16,26 +16,14 @@ from typing import TYPE_CHECKING, Any
 from taskito._taskito import PyTaskConfig
 from taskito.async_support.helpers import run_maybe_async
 from taskito.batching.config import BatchConfig
-from taskito.batching.item_result import (
-    BatchPartialFailureError,
-    BatchResultTypeError,
-    is_batch_item_result_list,
-)
 from taskito.codecs import CodecSerializer
-from taskito.context import _clear_context, current_job
+from taskito.context import _clear_context
 from taskito.dashboard.middleware_store import MiddlewareDisableStore
-from taskito.events import EventType
-from taskito.exceptions import TaskCancelledError
 from taskito.inject import Inject, _InjectAlias
-from taskito.interception.reconstruct import reconstruct_args
 from taskito.middleware import middleware_key
 from taskito.predicates.core import coerce_predicate
-from taskito.proxies import cleanup_proxies, reconstruct_proxies
 from taskito.task import TaskWrapper
-from taskito.workflows.saga.context import (
-    _reset_compensation_context,
-    _set_compensation_context,
-)
+from taskito.task_lifecycle import run_lifecycle
 
 if TYPE_CHECKING:
     from taskito.codecs import PayloadCodec
@@ -51,27 +39,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("taskito")
 
-# Cap the result repr length in the "succeeded" log so a task returning a
-# large structure can't blow out the worker output. Matches Celery's
-# `CELERYD_TASK_LOG_FORMAT` truncation in spirit.
-_MAX_RESULT_REPR = 80
-
 # How long a cached middleware chain stays valid without a version bump. Bounds
 # the worst-case lag for an out-of-process dashboard disable change.
 _MW_CHAIN_TTL = 1.0
-
-
-def _safe_result_repr(value: Any) -> str:
-    """Render a task return value for the success log, bounded and crash-proof."""
-    if value is None:
-        return "None"
-    try:
-        text = repr(value)
-    except Exception:
-        return "<unrepresentable>"
-    if len(text) > _MAX_RESULT_REPR:
-        return text[: _MAX_RESULT_REPR - 1] + "…"
-    return text
 
 
 def _resolve_module_name(module_name: str) -> str:
@@ -104,6 +74,7 @@ class QueueDecoratorMixin:
     _task_idempotent: dict[str, bool]
     _task_compensates: dict[str, str]
     _task_batch_configs: dict[str, Any]
+    _task_soft_timeouts: dict[str, float]
     _task_middleware: dict[str, list[TaskMiddleware]]
     _task_retry_filters: dict[str, dict[str, list[type[Exception]]]]
     _task_inject_map: dict[str, list[str]]
@@ -168,191 +139,36 @@ class QueueDecoratorMixin:
         self._mw_chain_cache[task_name] = (chain, version, time.monotonic())
         return chain
 
-    def _wrap_task(
-        self, fn: Callable, task_name: str, soft_timeout: float | None = None
-    ) -> Callable:
-        """Wrap a task function with hooks, middleware, and job context."""
-        hooks = self._hooks
+    def _wrap_task(self, fn: Callable, task_name: str) -> Callable:
+        """The blocking entry point Rust calls: drive the shared lifecycle to completion.
+
+        Rust hands over deserialized args and expects a plain value back (or an
+        exception), so the coroutine is driven here rather than awaited. It runs
+        on a `spawn_blocking` thread with no event loop of its own, which is what
+        makes that safe — `run_maybe_async` raises if one is already running.
+        """
         queue_ref = self
+        is_async = inspect.iscoroutinefunction(fn)
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            job_id = current_job.id
-            logger.info("Task %s[%s] received", task_name, job_id)
-            started_at = time.perf_counter()
-
-            # Worker-dispatch predicate gate. Evaluated on the raw
-            # deserialized payload (before arg/proxy reconstruction) so
-            # re-enqueue on defer can round-trip cleanly.
-            if task_name in queue_ref._task_predicates:
-                queue_ref._apply_dispatch_predicate(
-                    task_name=task_name,
-                    args=args,
-                    kwargs=kwargs,
-                    job_id=current_job.id,
-                    queue_name=current_job.queue_name,
-                    retry_count=current_job.retry_count,
-                )
-
-            # Reconstruct intercepted arguments (CONVERT markers → original types)
-            redirects: dict[str, str] = {}
-            if queue_ref._interceptor is not None:
-                args, kwargs, redirects = reconstruct_args(args, kwargs)
-
-            # Reconstruct proxy markers (PROXY → live objects)
-            proxy_cleanup: list[Any] = []
-            if queue_ref._proxy_registry is not None and not queue_ref._test_mode_active:
-                args, kwargs, proxy_cleanup = reconstruct_proxies(
-                    args,
-                    kwargs,
-                    queue_ref._proxy_registry,
-                    signing_secret=queue_ref._recipe_signing_key,
-                    max_timeout=queue_ref._max_reconstruction_timeout,
-                    metrics=queue_ref._proxy_metrics,
-                )
-
-            # Inject resources from runtime
-            release_callbacks: list[Any] = []
-            runtime = queue_ref._resource_runtime
-            if runtime is not None:
-                # From explicit inject=["db"] on task decorator
-                for res_name in queue_ref._task_inject_map.get(task_name, []):
-                    if res_name not in kwargs:
-                        instance, release = runtime.acquire_for_task(res_name)
-                        kwargs[res_name] = instance
-                        if release is not None:
-                            release_callbacks.append(release)
-                # From interception REDIRECT markers
-                for kwarg_name, resource_name in redirects.items():
-                    instance, release = runtime.acquire_for_task(resource_name)
-                    kwargs[kwarg_name] = instance
-                    if release is not None:
-                        release_callbacks.append(release)
-
-            middleware_chain = queue_ref._get_middleware_chain(task_name)
-
-            # Set soft timeout on context if configured
-            if soft_timeout is not None:
-                current_job._set_soft_timeout(soft_timeout)
-
-            # Run middleware before hooks (skipping middlewares whose
-            # predicate filter excludes this job)
-            completed_mw: list[Any] = []
-            for mw in middleware_chain:
-                if not mw._should_apply(current_job):
-                    continue
-                try:
-                    mw.before(current_job)
-                    completed_mw.append(mw)
-                except Exception:
-                    logger.exception("middleware before() error")
-
-            for hook in hooks["before_task"]:
-                hook(task_name, args, kwargs)
-
-            # Saga compensation context: if this job was dispatched by the
-            # saga orchestrator, look up the in-memory CompensationContext
-            # and push it onto a contextvar so the compensator body can
-            # call ``current_compensation_context()`` to introspect the
-            # forward execution. Pop in the ``finally`` below.
-            comp_ctx_token = None
-            tracker = getattr(queue_ref, "_workflow_tracker", None)
-            saga = getattr(tracker, "_saga", None) if tracker is not None else None
-            if saga is not None and saga.is_compensation_job(job_id):
-                comp_ctx = saga.take_compensation_context(job_id)
-                if comp_ctx is not None:
-                    comp_ctx_token = _set_compensation_context(comp_ctx)
-
-            error = None
-            result = None
             try:
-                ret = run_maybe_async(fn(*args, **kwargs))
-                # Per-item batch result: when the task is batched with
-                # per_item_results=True, enforce the return type contract
-                # and surface partial failures via BatchPartialFailureError
-                # so the existing retry/DLQ machinery applies.
-                batch_cfg = queue_ref._task_batch_configs.get(task_name)
-                if batch_cfg is not None and getattr(batch_cfg, "per_item_results", False):
-                    if not is_batch_item_result_list(ret):
-                        raise BatchResultTypeError(
-                            f"task {task_name!r} declares per_item_results=True but "
-                            f"returned {type(ret).__name__} instead of "
-                            f"list[BatchItemResult]"
-                        )
-                    failed = [item for item in ret if item.status == "failure"]
-                    if failed:
-                        # Pass the result through so the worker can still
-                        # store it (per-item outcomes are stored verbatim);
-                        # the existing on_failure path emits JOB_FAILED.
-                        result = ret
-                        raise BatchPartialFailureError(failed_items=failed)
-                result = ret
-            except Exception as exc:
-                error = exc
-                elapsed = time.perf_counter() - started_at
-                if isinstance(exc, TaskCancelledError):
-                    logger.info(
-                        "Task %s[%s] cancelled in %.3fs: %s",
+                # The mixin is a Queue once composed; mypy only sees the mixin.
+                return run_maybe_async(
+                    run_lifecycle(
+                        queue_ref,  # type: ignore[arg-type]
                         task_name,
-                        job_id,
-                        elapsed,
-                        exc,
+                        fn,
+                        args,
+                        kwargs,
+                        is_async=is_async,
                     )
-                else:
-                    logger.error(
-                        "Task %s[%s] raised %s in %.3fs: %r",
-                        task_name,
-                        job_id,
-                        type(exc).__name__,
-                        elapsed,
-                        exc,
-                    )
-                for hook in hooks["on_failure"]:
-                    hook(task_name, args, kwargs, exc)
-                raise
-            else:
-                elapsed = time.perf_counter() - started_at
-                logger.info(
-                    "Task %s[%s] succeeded in %.3fs: %s",
-                    task_name,
-                    job_id,
-                    elapsed,
-                    _safe_result_repr(result),
                 )
-                for hook in hooks["on_success"]:
-                    hook(task_name, args, kwargs, result)
-                return result
             finally:
-                # Pop the saga compensation context (no-op outside saga flow).
-                if comp_ctx_token is not None:
-                    _reset_compensation_context(comp_ctx_token)
-                # Release task/request-scoped resources
-                for release_fn in release_callbacks:
-                    try:
-                        release_fn()
-                    except Exception:
-                        logger.exception("resource release error")
-                # Clean up reconstructed proxies (LIFO order)
-                cleanup_proxies(proxy_cleanup, metrics=queue_ref._proxy_metrics)
-                for hook in hooks["after_task"]:
-                    hook(task_name, args, kwargs, result, error)
-                # Run middleware after hooks (only those whose before() succeeded)
-                for mw in completed_mw:
-                    try:
-                        mw.after(current_job, result, error)
-                    except Exception:
-                        logger.exception("middleware after() error")
-                # Emit job lifecycle events
-                event_payload: dict[str, Any] = {
-                    "task_name": task_name,
-                    "job_id": current_job.id,
-                    "queue": current_job.queue_name,
-                }
-                if error is not None:
-                    event_payload["error"] = str(error)
-                    queue_ref._emit_event(EventType.JOB_FAILED, event_payload)
-                else:
-                    queue_ref._emit_event(EventType.JOB_COMPLETED, event_payload)
+                # Rust clears the context too, but the classic pool relies on this
+                # one. It is edge state, not lifecycle state, so it stays out of
+                # the shared body — there it would null out the thread-local of
+                # whichever thread the executor loop happens to run on.
                 _clear_context()
 
         return wrapper
@@ -600,7 +416,9 @@ class QueueDecoratorMixin:
                 self._task_inject_map[task_name] = final_inject
 
             # Wrap the function with hooks, middleware, and context
-            wrapped = self._wrap_task(fn, task_name, soft_timeout)
+            if soft_timeout is not None:
+                self._task_soft_timeouts[task_name] = soft_timeout
+            wrapped = self._wrap_task(fn, task_name)
 
             # NOTE: `_taskito_is_async` is deliberately NOT set on `wrapped`.
             # The pool reads that flag off this registry entry to choose native
