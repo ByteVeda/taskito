@@ -420,13 +420,21 @@ class QueueDecoratorMixin:
                 self._task_soft_timeouts[task_name] = soft_timeout
             wrapped = self._wrap_task(fn, task_name)
 
-            # NOTE: `_taskito_is_async` is deliberately NOT set on `wrapped`.
-            # The pool reads that flag off this registry entry to choose native
-            # dispatch, so setting it here activates the native path — and that
-            # path reimplements the task lifecycle and still lacks this wrapper's
-            # queue hooks, saga compensation context, soft_timeout and per-item
-            # batch handling. Async tasks therefore run through this blocking
-            # wrapper (via run_maybe_async) until those gaps are closed.
+            # NOTE: `_taskito_is_async`/`_taskito_async_fn` are deliberately NOT
+            # set on `wrapped`. The pool reads them off this registry entry to
+            # choose native dispatch, so setting them here activates that path.
+            # Both must move together when it is activated — the pool reads the
+            # first to route, the executor reads the second to find the coroutine.
+            #
+            # The lifecycle gaps that used to block activation are closed: both
+            # paths now run `run_lifecycle`. What still blocks it is shutdown.
+            # The worker's drain loop ends when the result channel disconnects,
+            # which needs the executor's `PyResultSender` to drop — but a failed
+            # task's traceback keeps the frame that owns it alive, so anything
+            # holding the exception (an on_failure hook that collects errors is
+            # enough) makes every shutdown wait out the full drain timeout: 30s
+            # by default, past a typical container's grace period. Decoupling the
+            # drain from Python object lifetime has to land first.
             self._task_registry[task_name] = wrapped
 
             cb_threshold = None
