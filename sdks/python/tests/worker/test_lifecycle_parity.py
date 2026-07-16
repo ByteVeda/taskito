@@ -63,8 +63,15 @@ def _start_worker(queue: Queue) -> threading.Thread:
 
 
 def _stop_worker(queue: Queue, thread: threading.Thread) -> None:
+    """Stop the worker, and fail if it does not actually stop.
+
+    Returning quietly on a live thread is how a shutdown regression hides: the
+    assertions have already passed by this point, so the test still goes green
+    and only the wall clock shows anything is wrong.
+    """
     queue._inner.request_shutdown()
     thread.join(timeout=10)
+    assert not thread.is_alive(), "worker did not stop within 10s"
 
 
 def _wait_for(predicate: Any, message: str) -> None:
@@ -194,11 +201,15 @@ def test_queue_hooks_fire(queue: Queue, is_async: bool) -> None:
 @BOTH_PATHS
 def test_on_failure_hook_sees_the_exception(noretry_queue: Queue, is_async: bool) -> None:
     """on_failure receives the live exception for either kind of task."""
-    failures: list[BaseException] = []
+    # Record what the hook saw, not the exception itself: holding a live
+    # exception here would pin its traceback — the documented condition that
+    # stalls worker shutdown once dispatch goes native — and turn every failure
+    # test into a slow one for no added assurance.
+    failures: list[tuple[type, str]] = []
 
     @noretry_queue.on_failure
     def on_fail(task_name: str, args: tuple, kwargs: dict, error: BaseException) -> None:
-        failures.append(error)
+        failures.append((type(error), str(error)))
 
     if is_async:
 
@@ -219,8 +230,8 @@ def test_on_failure_hook_sees_the_exception(noretry_queue: Queue, is_async: bool
     finally:
         _stop_worker(noretry_queue, thread)
 
-    assert isinstance(failures[0], ValueError)
-    assert "expected failure" in str(failures[0])
+    assert failures[0][0] is ValueError
+    assert "expected failure" in failures[0][1]
 
 
 @BOTH_PATHS
@@ -390,12 +401,13 @@ def test_lifecycle_is_logged(queue: Queue, is_async: bool, caplog: Any) -> None:
 @BOTH_PATHS
 def test_middleware_after_receives_the_error(tmp_path: Path, is_async: bool) -> None:
     """Middleware .after() receives the exception, not None, for either kind."""
-    seen: list[Any] = []
+    seen: list[tuple[type, str] | None] = []
     ran = threading.Event()
 
     class Recorder(TaskMiddleware):
         def after(self, job: Any, result: Any, error: Any) -> None:
-            seen.append(error)
+            # Type and message only — see the note in the on_failure test.
+            seen.append(None if error is None else (type(error), str(error)))
             ran.set()
 
     q = Queue(db_path=str(tmp_path / "mw.db"), workers=2, default_retry=0, middleware=[Recorder()])
@@ -419,7 +431,8 @@ def test_middleware_after_receives_the_error(tmp_path: Path, is_async: bool) -> 
         finally:
             _stop_worker(q, thread)
 
-        assert isinstance(seen[0], RuntimeError), f"after() should see the error, got {seen[0]!r}"
+        assert seen[0] is not None, "after() should see the error, not None"
+        assert seen[0][0] is RuntimeError, f"after() should see the error, got {seen[0]!r}"
     finally:
         q.close()
 
@@ -437,7 +450,7 @@ def test_base_exception_is_not_reported_as_completed(tmp_path: Path, is_async: b
     and every loop shutdown raises one.
     """
     completed: list[dict] = []
-    after_task_errors: list[Any] = []
+    after_task_errors: list[tuple[type, str] | None] = []
     ran = threading.Event()
 
     class Killed(BaseException):
@@ -449,7 +462,8 @@ def test_base_exception_is_not_reported_as_completed(tmp_path: Path, is_async: b
 
         @q.after_task
         def on_after(task_name: str, args: tuple, kwargs: dict, result: Any, error: Any) -> None:
-            after_task_errors.append(error)
+            # Type and message only — see the note in the on_failure test.
+            after_task_errors.append(None if error is None else (type(error), str(error)))
             ran.set()
 
         if is_async:
@@ -472,7 +486,8 @@ def test_base_exception_is_not_reported_as_completed(tmp_path: Path, is_async: b
             _stop_worker(q, thread)
 
         assert completed == [], f"a torn-down task must not emit JOB_COMPLETED, got {completed}"
-        assert isinstance(after_task_errors[0], Killed), (
+        assert after_task_errors[0] is not None, "after_task saw no error for a torn-down task"
+        assert after_task_errors[0][0] is Killed, (
             f"after_task should see the BaseException, got {after_task_errors[0]!r}"
         )
     finally:
