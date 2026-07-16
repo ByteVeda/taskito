@@ -12,6 +12,7 @@ import org.byteveda.taskito.errors.TaskErrors;
 import org.byteveda.taskito.events.Emitter;
 import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
+import org.byteveda.taskito.internal.MiddlewareDisables;
 import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.JobInfo;
 import org.byteveda.taskito.middleware.Middleware;
@@ -44,6 +45,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
     private final List<Middleware> middleware;
     private final ResourceRuntime resources;
     private final Map<String, PayloadCodec> codecs;
+    private final MiddlewareDisables disables;
     // Resolved once startWorker returns; job tasks await it before completing.
     private final CompletableFuture<WorkerControl> control = new CompletableFuture<>();
 
@@ -64,6 +66,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
         this.middleware = middleware;
         this.resources = resources;
         this.codecs = codecs;
+        this.disables = new MiddlewareDisables(backend);
     }
 
     void bind(WorkerControl control) {
@@ -90,18 +93,22 @@ final class WorkerDispatchBridge implements WorkerBridge {
         if (scope != null) {
             Resources.enter(scope);
         }
+        // Resolved once and reused below: re-reading the disable list between
+        // before and after would let a mid-job toggle run after on a middleware
+        // whose before never ran.
+        List<Middleware> chain = disables.resolve(taskName, middleware);
         try {
-            for (Middleware m : middleware) {
+            for (Middleware m : chain) {
                 m.before(context);
             }
             Object argument = serializer.deserializeCall(decodePayload(payload, task.codecs), task.payloadType);
             Object result = task.handler.apply(argument);
-            for (Middleware m : middleware) {
+            for (Middleware m : chain) {
                 m.after(context, result);
             }
             bound.completeJob(token, serializer.serialize(result));
         } catch (Throwable t) {
-            for (Middleware m : middleware) {
+            for (Middleware m : chain) {
                 m.onError(context, t);
             }
             // Canonical structured error (middleware above saw the live Throwable).
@@ -132,7 +139,7 @@ final class WorkerDispatchBridge implements WorkerBridge {
         EventName name = EventName.fromKind(kind);
         OutcomeEvent event = new OutcomeEvent(name, jobId, taskName, error, retryCount, timedOut);
         emitter.emit(event);
-        for (Middleware m : middleware) {
+        for (Middleware m : disables.resolve(taskName, middleware)) {
             try {
                 dispatch(m, name, event);
             } catch (RuntimeException e) {

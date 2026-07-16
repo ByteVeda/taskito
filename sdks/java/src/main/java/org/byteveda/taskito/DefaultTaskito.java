@@ -26,6 +26,7 @@ import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.interception.Interception;
 import org.byteveda.taskito.interception.Interceptor;
 import org.byteveda.taskito.internal.IdempotencyKeys;
+import org.byteveda.taskito.internal.MiddlewareDisables;
 import org.byteveda.taskito.locks.Lock;
 import org.byteveda.taskito.locks.LockInfo;
 import org.byteveda.taskito.middleware.EnqueueContext;
@@ -1064,6 +1065,28 @@ final class DefaultTaskito implements Taskito {
         } catch (Exception e) {
             throw new SerializationException("failed to decode native response", e);
         }
+    }
+
+    @Override
+    public void disableMiddleware(String taskName, String middlewareName) {
+        List<String> disabled = new ArrayList<>(listDisabledMiddleware(taskName));
+        if (!disabled.contains(middlewareName)) {
+            disabled.add(middlewareName);
+            backend.setSetting(MiddlewareDisables.key(taskName), encode(disabled));
+        }
+    }
+
+    @Override
+    public void enableMiddleware(String taskName, String middlewareName) {
+        List<String> disabled = new ArrayList<>(listDisabledMiddleware(taskName));
+        if (disabled.remove(middlewareName)) {
+            backend.setSetting(MiddlewareDisables.key(taskName), encode(disabled));
+        }
+    }
+
+    @Override
+    public List<String> listDisabledMiddleware(String taskName) {
+        return new MiddlewareDisables(backend).disabledFor(taskName);
     }
 
     private static <R> Page<R> decodePage(String json, Class<R> element) {

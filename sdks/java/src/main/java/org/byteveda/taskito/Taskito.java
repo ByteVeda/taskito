@@ -255,6 +255,35 @@ public interface Taskito extends AutoCloseable {
 
     Map<String, String> listSettings();
 
+    // ── Middleware toggles ──────────────────────────────────────────
+
+    /**
+     * Stop running {@code middlewareName} for {@code taskName}. Takes effect on
+     * the next job — workers read the list per invocation, so no restart is
+     * needed. The name is the middleware's fully-qualified class name.
+     *
+     * @param taskName task to disable it for
+     * @param middlewareName fully-qualified class name of the middleware
+     */
+    void disableMiddleware(String taskName, String middlewareName);
+
+    /**
+     * Undo {@link #disableMiddleware}. A no-op when it was not disabled.
+     *
+     * @param taskName task to re-enable it for
+     * @param middlewareName fully-qualified class name of the middleware
+     */
+    void enableMiddleware(String taskName, String middlewareName);
+
+    /**
+     * Middleware names currently disabled for {@code taskName}; empty when none
+     * are.
+     *
+     * @param taskName task to read the list for
+     * @return the disabled middleware names
+     */
+    List<String> listDisabledMiddleware(String taskName);
+
     // ── Logs ────────────────────────────────────────────────────────
 
     void writeTaskLog(String jobId, String taskName, String level, String message);
