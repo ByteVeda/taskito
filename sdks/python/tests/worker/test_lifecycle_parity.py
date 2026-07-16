@@ -32,6 +32,7 @@ import pytest
 
 from taskito import BatchItemResult, MaxRetriesExceededError, Queue
 from taskito.context import current_job
+from taskito.events import EventType
 from taskito.exceptions import SoftTimeoutError
 from taskito.middleware import TaskMiddleware
 from taskito.workflows import Workflow, WorkflowState
@@ -346,5 +347,60 @@ def test_middleware_after_receives_the_error(tmp_path: Path, is_async: bool) -> 
             _stop_worker(q, thread)
 
         assert isinstance(seen[0], RuntimeError), f"after() should see the error, got {seen[0]!r}"
+    finally:
+        q.close()
+
+
+@BOTH_PATHS
+def test_base_exception_is_not_reported_as_completed(tmp_path: Path, is_async: bool) -> None:
+    """A task killed by a BaseException must not emit JOB_COMPLETED.
+
+    ``except Exception`` does not catch a BaseException, so without an explicit
+    clause the lifecycle's cleanup sees no error and calls the job a success —
+    it emits JOB_COMPLETED and hands ``error=None`` to after_task/middleware for
+    a task whose body never returned. Latent on the blocking path, where only an
+    exotic BaseException reaches it, but ``asyncio.CancelledError`` is a
+    BaseException and is routine on the native path: every cancelled coroutine
+    and every loop shutdown raises one.
+    """
+    completed: list[dict] = []
+    after_task_errors: list[Any] = []
+    ran = threading.Event()
+
+    class Killed(BaseException):
+        """Not an Exception, so `except Exception` cannot see it."""
+
+    q = Queue(db_path=str(tmp_path / "base_exc.db"), workers=2, default_retry=0)
+    try:
+        q.on_event(EventType.JOB_COMPLETED, lambda _t, payload: completed.append(payload))
+
+        @q.after_task
+        def on_after(task_name: str, args: tuple, kwargs: dict, result: Any, error: Any) -> None:
+            after_task_errors.append(error)
+            ran.set()
+
+        if is_async:
+
+            @q.task(name="killed", max_retries=0)
+            async def killed() -> None:
+                raise Killed("torn down")
+
+        else:
+
+            @q.task(name="killed", max_retries=0)
+            def killed() -> None:
+                raise Killed("torn down")
+
+        killed.delay()
+        thread = _start_worker(q)
+        try:
+            assert ran.wait(timeout=_TIMEOUT), "after_task never fired"
+        finally:
+            _stop_worker(q, thread)
+
+        assert completed == [], f"a torn-down task must not emit JOB_COMPLETED, got {completed}"
+        assert isinstance(after_task_errors[0], Killed), (
+            f"after_task should see the BaseException, got {after_task_errors[0]!r}"
+        )
     finally:
         q.close()

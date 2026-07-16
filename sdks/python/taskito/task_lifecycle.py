@@ -179,7 +179,10 @@ async def run_lifecycle(
         if comp_ctx is not None:
             comp_ctx_token = _set_compensation_context(comp_ctx)
 
-    error = None
+    # `torn_down` tracks a BaseException separately from a task failure: both must
+    # keep the cleanup below from reporting success, but only a failure is one.
+    error: BaseException | None = None
+    torn_down = False
     result = None
     try:
         called = fn(*args, **kwargs)
@@ -229,6 +232,23 @@ async def run_lifecycle(
         for hook in hooks["on_failure"]:
             hook(task_name, args, kwargs, exc)
         raise
+    except BaseException as exc:
+        # asyncio.CancelledError is a BaseException, so the clause above cannot see
+        # it — and native dispatch raises one on every cancellation and loop
+        # shutdown. Record it, or the cleanup below reads `error is None` and calls
+        # a task that never returned a success. The failure hooks stay out of it:
+        # being torn down is not the task failing, and the disposition event comes
+        # from the outcome loop (JOB_CANCELLED), not from here.
+        error = exc
+        torn_down = True
+        logger.info(
+            "Task %s[%s] torn down after %.3fs by %s",
+            task_name,
+            job_id,
+            time.perf_counter() - started_at,
+            type(exc).__name__,
+        )
+        raise
     else:
         elapsed = time.perf_counter() - started_at
         logger.info(
@@ -263,13 +283,17 @@ async def run_lifecycle(
                 logger.exception("middleware after() error")
         # Emit job lifecycle events. The Rust outcome loop skips Success on the
         # grounds that this body emits it, so it must stay here for both paths.
-        event_payload: dict[str, Any] = {
-            "task_name": task_name,
-            "job_id": current_job.id,
-            "queue": current_job.queue_name,
-        }
-        if error is not None:
-            event_payload["error"] = str(error)
-            queue_ref._emit_event(EventType.JOB_FAILED, event_payload)
-        else:
-            queue_ref._emit_event(EventType.JOB_COMPLETED, event_payload)
+        # A torn-down job is the exception: it has no outcome to report yet, and
+        # the outcome loop emits its own (JOB_CANCELLED, or JOB_RETRYING/JOB_DEAD
+        # once the failure is classified).
+        if not torn_down:
+            event_payload: dict[str, Any] = {
+                "task_name": task_name,
+                "job_id": current_job.id,
+                "queue": current_job.queue_name,
+            }
+            if error is not None:
+                event_payload["error"] = str(error)
+                queue_ref._emit_event(EventType.JOB_FAILED, event_payload)
+            else:
+                queue_ref._emit_event(EventType.JOB_COMPLETED, event_payload)
