@@ -202,6 +202,10 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         if (!rateLimit.isEmpty()) {
             chain.append(".rateLimit(\"").append(rateLimit).append("\")");
         }
+        String retryBudget = stringValue(mirror, "retryBudget", "");
+        if (!retryBudget.isEmpty()) {
+            chain.append(".retryBudget(\"").append(retryBudget).append("\")");
+        }
         long maxConcurrent = longValue(mirror, "maxConcurrent", 0);
         if (maxConcurrent > 0) {
             chain.append(".maxConcurrent(").append(maxConcurrent).append(")");

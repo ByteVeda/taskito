@@ -283,14 +283,15 @@ fn register_task_policies(
                         .unwrap_or(0.8),
                 });
         let rate_limit = parse_rate_spec("rateLimit", &config.name, config.rate_limit.as_deref())?;
+        let retry_budget =
+            parse_rate_spec("retryBudget", &config.name, config.retry_budget.as_deref())?;
         scheduler.register_task(
             config.name,
             TaskConfig {
                 retry_policy,
                 rate_limit,
                 circuit_breaker,
-                // Not surfaced on this SDK yet; retries stay bounded per job.
-                retry_budget: None,
+                retry_budget,
                 max_concurrent: config.max_concurrent,
                 // Not surfaced on this SDK yet; the whole pool stays available.
                 max_in_flight_per_task: None,

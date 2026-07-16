@@ -252,6 +252,7 @@ public final class Worker implements AutoCloseable {
             return task.retryPolicy() != null
                     || task.circuitBreaker() != null
                     || task.rateLimit() != null
+                    || task.retryBudget() != null
                     || task.maxConcurrent() != null;
         }
 
@@ -496,6 +497,9 @@ public final class Worker implements AutoCloseable {
                 encodeCircuitBreaker(task.circuitBreaker(), config);
                 if (task.rateLimit() != null) {
                     config.put("rateLimit", task.rateLimit());
+                }
+                if (task.retryBudget() != null) {
+                    config.put("retryBudget", task.retryBudget());
                 }
                 if (task.maxConcurrent() != null) {
                     config.put("maxConcurrent", task.maxConcurrent());

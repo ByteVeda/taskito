@@ -44,6 +44,13 @@ public @interface TaskHandler {
     String rateLimit() default "";
 
     /**
+     * Cap on how fast this task may <em>retry</em>, across all of its jobs — a
+     * spec like {@code "100/m"}; empty (default) leaves retries uncapped. Once
+     * spent, failures dead-letter instead of retrying.
+     */
+    String retryBudget() default "";
+
+    /**
      * Cap on concurrently-running jobs of this task across the cluster; 0
      * (default) leaves it uncapped.
      */

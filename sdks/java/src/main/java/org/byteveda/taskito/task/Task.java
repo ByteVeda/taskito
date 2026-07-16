@@ -23,6 +23,7 @@ public final class Task<T> {
     private final boolean idempotent;
     private final CircuitBreakerConfig circuitBreaker;
     private final String rateLimit;
+    private final String retryBudget;
     private final Integer maxConcurrent;
 
     private Task(
@@ -34,6 +35,7 @@ public final class Task<T> {
             boolean idempotent,
             CircuitBreakerConfig circuitBreaker,
             String rateLimit,
+            String retryBudget,
             Integer maxConcurrent) {
         this.name = Objects.requireNonNull(name, "task name must not be null");
         if (name.trim().isEmpty()) {
@@ -46,23 +48,34 @@ public final class Task<T> {
         this.idempotent = idempotent;
         this.circuitBreaker = circuitBreaker;
         this.rateLimit = rateLimit;
+        this.retryBudget = retryBudget;
         this.maxConcurrent = maxConcurrent;
     }
 
     /** A task whose payload deserializes to {@code payloadType}. */
     public static <T> Task<T> of(String name, Class<T> payloadType) {
-        return new Task<>(name, payloadType, EnqueueOptions.none(), null, List.of(), false, null, null, null);
+        return new Task<>(name, payloadType, EnqueueOptions.none(), null, List.of(), false, null, null, null, null);
     }
 
     /** A task whose payload deserializes to a generic type, e.g. {@code new TypeReference<List<Foo>>(){}}. */
     public static <T> Task<T> of(String name, TypeReference<T> payloadType) {
-        return new Task<>(name, payloadType.getType(), EnqueueOptions.none(), null, List.of(), false, null, null, null);
+        return new Task<>(
+                name, payloadType.getType(), EnqueueOptions.none(), null, List.of(), false, null, null, null, null);
     }
 
     /** A copy of this task with the given default options. */
     public Task<T> withOptions(EnqueueOptions options) {
         return new Task<>(
-                name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker, rateLimit, maxConcurrent);
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent);
     }
 
     /**
@@ -72,7 +85,16 @@ public final class Task<T> {
      */
     public Task<T> retryPolicy(RetryPolicy retryPolicy) {
         return new Task<>(
-                name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker, rateLimit, maxConcurrent);
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent);
     }
 
     /**
@@ -91,6 +113,7 @@ public final class Task<T> {
                 idempotent,
                 circuitBreaker,
                 rateLimit,
+                retryBudget,
                 maxConcurrent);
     }
 
@@ -101,7 +124,16 @@ public final class Task<T> {
      */
     public Task<T> idempotent(boolean idempotent) {
         return new Task<>(
-                name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker, rateLimit, maxConcurrent);
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent);
     }
 
     /**
@@ -111,7 +143,16 @@ public final class Task<T> {
      */
     public Task<T> circuitBreaker(CircuitBreakerConfig circuitBreaker) {
         return new Task<>(
-                name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker, rateLimit, maxConcurrent);
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent);
     }
 
     /**
@@ -121,7 +162,16 @@ public final class Task<T> {
      */
     public Task<T> rateLimit(String rateLimit) {
         return new Task<>(
-                name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker, rateLimit, maxConcurrent);
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent);
     }
 
     /**
@@ -131,7 +181,37 @@ public final class Task<T> {
      */
     public Task<T> maxConcurrent(Integer maxConcurrent) {
         return new Task<>(
-                name, payloadType, options, retryPolicy, codecs, idempotent, circuitBreaker, rateLimit, maxConcurrent);
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent);
+    }
+
+    /**
+     * A copy of this task whose <em>retries</em> are capped at {@code retryBudget},
+     * a spec like {@code "100/m"} — across all of its jobs, not per job. Once spent,
+     * failures dead-letter instead of retrying, so a broken dependency cannot become
+     * a retry storm. Distinct from {@link #maxRetries}, which bounds one job rather
+     * than the rate.
+     */
+    public Task<T> retryBudget(String retryBudget) {
+        return new Task<>(
+                name,
+                payloadType,
+                options,
+                retryPolicy,
+                codecs,
+                idempotent,
+                circuitBreaker,
+                rateLimit,
+                retryBudget,
+                maxConcurrent);
     }
 
     public Task<T> queue(String queue) {
@@ -203,6 +283,11 @@ public final class Task<T> {
     /** This task's rate-limit spec (e.g. {@code "100/m"}), or {@code null} when unthrottled. */
     public String rateLimit() {
         return rateLimit;
+    }
+
+    /** This task's retry-rate cap (e.g. {@code "100/m"}), or {@code null} when uncapped. */
+    public String retryBudget() {
+        return retryBudget;
     }
 
     /** Cap on this task's concurrently-running jobs, or {@code null} when uncapped. */

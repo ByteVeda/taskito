@@ -91,6 +91,40 @@ class TaskPolicyConfigTest {
         }
     }
 
+    /** The budget caps retries across jobs, so a storm dead-letters rather than retrying forever. */
+    @Test
+    @Timeout(30)
+    void retryBudgetDeadLettersOnceSpent(@TempDir Path dir) throws Exception {
+        // maxRetries(5) would allow plenty of retries per job; one budget token
+        // across all of them means the rest dead-letter instead.
+        Task<String> flaky = Task.of("flaky", String.class).retryBudget("1/m").maxRetries(5);
+        CountDownLatch dead = new CountDownLatch(1);
+
+        try (Taskito queue = Taskito.builder()
+                .backend("sqlite")
+                .url(dir.resolve("t.db").toString())
+                .open()) {
+            for (int i = 0; i < 3; i++) {
+                queue.enqueue(flaky, String.valueOf(i));
+            }
+
+            try (Worker worker = queue.worker()
+                    .concurrency(4)
+                    .handle(flaky, (String p) -> {
+                        throw new IllegalStateException("dependency down");
+                    })
+                    .on(EventName.DEAD, event -> dead.countDown())
+                    .start()) {
+                assertTrue(dead.await(20, TimeUnit.SECONDS), "an over-budget job should dead-letter");
+            }
+
+            long budgetKilled = queue.listDead(10, 0).stream()
+                    .filter(entry -> "retry_budget_exhausted".equals(entry.metadata))
+                    .count();
+            assertTrue(budgetKilled > 0, "a job should be dead-lettered by the budget, not by retry exhaustion");
+        }
+    }
+
     /** A typo must fail the start, not silently run the task unthrottled. */
     @Test
     @Timeout(30)

@@ -338,6 +338,9 @@ pub struct TaskRetryConfig {
     pub circuit_breaker_half_open_success_rate: Option<f64>,
     /// Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`.
     pub rate_limit: Option<String>,
+    /// Cap on how fast this task may *retry*, across all of its jobs. Same spec
+    /// as `rate_limit`; once spent, failures dead-letter instead of retrying.
+    pub retry_budget: Option<String>,
     /// Cap on concurrently-running jobs of this task, across the cluster.
     pub max_concurrent: Option<i32>,
 }
