@@ -365,6 +365,18 @@ impl PyQueue {
                 .rate_limit
                 .as_ref()
                 .and_then(|s| RateLimitConfig::parse(s));
+            // Same "100/m" syntax as rate_limit, so it parses the same way. An
+            // unparseable value would silently disable the cap, so reject it here
+            // rather than let a typo look like it took effect.
+            let retry_budget = match tc.retry_budget.as_ref() {
+                Some(s) => Some(RateLimitConfig::parse(s).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "invalid retry_budget {s:?} for task {}: expected a rate like \"100/m\"",
+                        tc.name
+                    ))
+                })?),
+                None => None,
+            };
             let circuit_breaker =
                 tc.circuit_breaker_threshold
                     .map(|threshold| CircuitBreakerConfig {
@@ -382,6 +394,7 @@ impl PyQueue {
                     retry_policy,
                     rate_limit,
                     circuit_breaker,
+                    retry_budget,
                     max_concurrent: tc.max_concurrent,
                     max_in_flight_per_task: tc.max_in_flight_per_task.map(|n| n.max(1) as usize),
                 },

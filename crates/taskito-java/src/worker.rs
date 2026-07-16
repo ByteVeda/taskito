@@ -277,6 +277,8 @@ fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRet
                 retry_policy,
                 rate_limit: None,
                 circuit_breaker,
+                // Not surfaced on this SDK yet; retries stay bounded per job.
+                retry_budget: None,
                 max_concurrent: None,
                 // Not surfaced on this SDK yet; the whole pool stays available.
                 max_in_flight_per_task: None,

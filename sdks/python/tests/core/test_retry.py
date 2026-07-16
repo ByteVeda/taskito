@@ -85,3 +85,61 @@ def test_retry_dead_letter(queue: Queue, poll_until: PollUntil) -> None:
         new_id = queue.retry_dead(dead[0]["id"])
         assert new_id is not None
         assert len(new_id) > 0
+
+
+def test_retry_budget_dead_letters_a_retry_storm(queue: Queue, poll_until: PollUntil) -> None:
+    """retry_budget caps the retry *rate* across a task's jobs, not per job.
+
+    max_retries bounds one job; a broken dependency failing every job still
+    retries without limit. Once the budget is spent, failures dead-letter.
+    """
+    attempts = 0
+
+    @queue.task(max_retries=5, retry_backoff=0.01, retry_budget="2/m")
+    def always_fails() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("dependency down")
+
+    for _ in range(4):
+        always_fails.delay()
+
+    thread = threading.Thread(target=queue.run_worker, daemon=True)
+    thread.start()
+    try:
+        poll_until(
+            lambda: len(queue.dead_letters(limit=10)) >= 2,
+            timeout=30,
+            message="budget-exhausted jobs never reached the DLQ",
+        )
+    finally:
+        queue.shutdown()
+        thread.join(timeout=5)
+
+    dead = queue.dead_letters(limit=10)
+    budget_killed = [d for d in dead if d.get("metadata") == "retry_budget_exhausted"]
+    assert budget_killed, f"no job dead-lettered by the budget; DLQ={dead}"
+
+
+def test_retry_budget_rejects_an_unparseable_rate(queue: Queue) -> None:
+    """A typo must not silently disable the cap."""
+
+    @queue.task(retry_budget="not-a-rate")
+    def bad_budget() -> None:
+        pass
+
+    thread_error: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            queue.run_worker()
+        except BaseException as exc:
+            thread_error.append(exc)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout=10)
+    queue.shutdown()
+
+    assert thread_error, "an invalid retry_budget must be rejected, not ignored"
+    assert "retry_budget" in str(thread_error[0])

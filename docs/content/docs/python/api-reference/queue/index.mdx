@@ -93,6 +93,8 @@ Queue(
     batch: bool | dict | None = None,
     predicate: Predicate | Callable | None = None,
     on_false: str = "defer",
+    max_in_flight_per_task: int | None = None,
+    retry_budget: str | None = None,
 ) -> TaskWrapper
 ```
 
@@ -115,7 +117,9 @@ Register a function as a background task. Returns a [`TaskWrapper`](/python/api-
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Per-task middleware, applied in addition to queue-level middleware. |
 | `inject` | `list[str] \| None` | `None` | Resource names to inject as keyword arguments. See [Resource System](/python/guides/resources). |
 | `serializer` | `Serializer \| None` | `None` | Per-task serializer override. Falls back to queue-level serializer. |
-| `max_concurrent` | `int \| None` | `None` | Max concurrent running instances. `None` = no limit. |
+| `max_concurrent` | `int \| None` | `None` | Max concurrent running instances, across the cluster. `None` = no limit. |
+| `max_in_flight_per_task` | `int \| None` | `None` | Cap on this task's share of a *single worker's* dispatch slots, so one slow task can't occupy the whole pool and starve the others. In-process and free, unlike `max_concurrent`, which is cluster-wide and costs a database read. `None` = the task may use the whole pool. |
+| `retry_budget` | `str \| None` | `None` | Cap on how fast this task may **retry**, across all of its jobs — same syntax as `rate_limit`, e.g. `"100/m"`. Once spent, further failures dead-letter instead of retrying (DLQ `metadata` is set to `retry_budget_exhausted`). Distinct from `max_retries`, which bounds one job rather than the rate, and from `circuit_breaker`, which trips on hard failure rather than aggregate retry rate. `None` = no cap. |
 | `idempotent` | `bool` | `False` | Auto-derive a dedup key from `sha256(task_name\|payload)` so duplicate `.delay()`/`.apply_async()` calls while a job is pending or running return the same job ID. |
 | `compensates` | `TaskWrapper \| str \| None` | `None` | Saga compensator for this task, enqueued in reverse order if a later workflow step fails. See [Sagas](/python/guides/workflows/saga). |
 | `batch` | `bool \| dict \| None` | `None` | Enable producer-side batching (`True` for defaults, or a dict with `max_size`/`max_wait_ms`). See [Batching](/python/guides/core/batching). |
