@@ -157,7 +157,9 @@ fn start_worker(
     // result sender has dropped (dispatcher done).
     let drain_scheduler = scheduler;
     let drain_callbacks = callbacks;
-    runtime.spawn_blocking(move || drain_results(result_rx, drain_scheduler, drain_callbacks));
+    runtime.spawn_blocking(move || {
+        drain_results(result_rx, drain_scheduler, drain_callbacks, capacity)
+    });
 
     // Lifecycle loop: heartbeat until stopped, then unregister.
     spawn_lifecycle(
@@ -315,11 +317,17 @@ fn parse_rate_spec(
     }
 }
 
-/// Drain results: apply each to storage and invoke `WorkerBridge.onOutcome`.
+/// Drain results: finalize each batch in one transaction, then invoke
+/// `WorkerBridge.onOutcome` per job.
+///
+/// `max_batch` bounds one drain. Unlike the other shells, this result channel is
+/// unbounded (so the dispatcher never blocks a runtime worker), so nothing else
+/// would cap how much a single drain swallows.
 fn drain_results(
     result_rx: crossbeam_channel::Receiver<taskito_core::scheduler::JobResult>,
     scheduler: Arc<Scheduler>,
     callbacks: GlobalRef,
+    max_batch: usize,
 ) {
     let vm = jvm::vm();
     let mut env = match vm.attach_current_thread() {
@@ -329,25 +337,40 @@ fn drain_results(
             return;
         }
     };
-    while let Ok(result) = result_rx.recv() {
-        let outcome = match scheduler.handle_result(result) {
-            Ok(outcome) => outcome,
-            Err(e) => {
-                log::error!("[taskito-java] result handling error: {e}");
-                continue;
+    while let Ok(first) = result_rx.recv() {
+        // Finalize everything already queued in one transaction rather than one
+        // per wake.
+        let mut batch = vec![first];
+        while batch.len() < max_batch {
+            match result_rx.try_recv() {
+                Ok(more) => batch.push(more),
+                Err(_) => break,
             }
-        };
-        // Each outcome allocates several JNI locals on this long-lived attached
-        // env; scope them in a frame so a busy worker can't exhaust the
-        // local-reference table over the loop's lifetime.
-        let framed = env.with_local_frame(16, |env| {
-            if let Err(e) = call_on_outcome(env, &callbacks, &outcome) {
-                log::error!("[taskito-java] onOutcome failed: {e}");
+        }
+
+        // One outcome per input, in order, so each job is reported exactly once.
+        for outcome in scheduler.handle_results(batch) {
+            let outcome = match outcome {
+                Ok(outcome) => outcome,
+                Err(e) => {
+                    log::error!("[taskito-java] result handling error: {e}");
+                    continue;
+                }
+            };
+            // Each outcome allocates several JNI locals on this long-lived attached
+            // env; scope them in a frame so a busy worker can't exhaust the
+            // local-reference table over the loop's lifetime. The frame stays per
+            // outcome — sized for one `call_on_outcome`, it would overflow if it
+            // wrapped the whole batch.
+            let framed = env.with_local_frame(16, |env| {
+                if let Err(e) = call_on_outcome(env, &callbacks, &outcome) {
+                    log::error!("[taskito-java] onOutcome failed: {e}");
+                }
+                Ok::<(), jni::errors::Error>(())
+            });
+            if let Err(e) = framed {
+                log::error!("[taskito-java] drain local frame failed: {e}");
             }
-            Ok::<(), jni::errors::Error>(())
-        });
-        if let Err(e) = framed {
-            log::error!("[taskito-java] drain local frame failed: {e}");
         }
     }
 }
