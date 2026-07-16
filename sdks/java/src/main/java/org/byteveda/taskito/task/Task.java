@@ -197,9 +197,12 @@ public final class Task<T> {
     /**
      * A copy of this task allowed at most {@code maxConcurrent} jobs running at once
      * across the cluster. The scheduler counts running jobs before dispatch, so this
-     * costs a database read; {@code null} means no cap.
+     * costs a database read. {@code null} or {@code 0} means no cap — matching the
+     * annotation's sentinel, and because a literal cap of zero would stop the task
+     * from ever dispatching.
      */
     public Task<T> maxConcurrent(Integer maxConcurrent) {
+        maxConcurrent = uncappedIfZero(maxConcurrent);
         return new Task<>(
                 name,
                 payloadType,
@@ -240,9 +243,11 @@ public final class Task<T> {
      * A copy of this task allowed at most {@code maxInFlightPerTask} of one worker's
      * dispatch slots, so a slow task cannot occupy the whole pool and starve the
      * others. In-process and free, unlike {@link #maxConcurrent}, which is
-     * cluster-wide and costs a database read; {@code null} lets it use the whole pool.
+     * cluster-wide and costs a database read. {@code null} or {@code 0} lets it use
+     * the whole pool, matching the annotation's sentinel.
      */
     public Task<T> maxInFlightPerTask(Integer maxInFlightPerTask) {
+        maxInFlightPerTask = uncappedIfZero(maxInFlightPerTask);
         return new Task<>(
                 name,
                 payloadType,
@@ -255,6 +260,11 @@ public final class Task<T> {
                 retryBudget,
                 maxConcurrent,
                 maxInFlightPerTask);
+    }
+
+    /** A cap of zero is the annotation's "unset" sentinel, never a literal zero. */
+    private static Integer uncappedIfZero(Integer cap) {
+        return cap != null && cap == 0 ? null : cap;
     }
 
     public Task<T> queue(String queue) {

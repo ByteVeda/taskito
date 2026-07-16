@@ -50,8 +50,8 @@ it("reports every job exactly once when results are drained as a batch", async (
   );
 
   for (let i = 0; i < each; i += 1) {
-    queue.enqueue("ok", [i]);
-    queue.enqueue("boom");
+    await queue.enqueue("ok", [i]);
+    await queue.enqueue("boom");
   }
 
   worker = queue.runWorker({ queues: ["default"], concurrency: 8, batchSize: each * 2 });
@@ -62,4 +62,7 @@ it("reports every job exactly once when results are drained as a batch", async (
   expect(dead).toHaveLength(each);
   expect(new Set(completed).size).toBe(each);
   expect(new Set(dead).size).toBe(each);
+  // Uniqueness within each list would still miss a job reported once as both.
+  const overlap = completed.filter((id) => dead.includes(id));
+  expect(overlap).toEqual([]);
 });

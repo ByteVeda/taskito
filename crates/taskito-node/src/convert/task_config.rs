@@ -16,13 +16,16 @@ const DEFAULT_HALF_OPEN_PROBES: i32 = 5;
 const DEFAULT_HALF_OPEN_SUCCESS_RATE: f64 = 0.8;
 
 /// Parse an optional rate spec, failing fast on a malformed value rather than
-/// silently disabling the cap (a misconfigured limit is a config error).
-/// `field` names the option in the error, since several share this grammar.
-fn parse_rate_spec(field: &str, spec: Option<&str>) -> Result<Option<RateLimitConfig>> {
+/// silently disabling the cap (a misconfigured limit is a config error). Names
+/// the option and the task, since several options share this grammar and the
+/// error otherwise cannot say which config is wrong.
+fn parse_rate_spec(field: &str, task: &str, spec: Option<&str>) -> Result<Option<RateLimitConfig>> {
     match spec {
-        Some(s) => RateLimitConfig::parse(s)
-            .map(Some)
-            .ok_or_else(|| invalid_arg(format!("invalid {field} '{s}' (expected e.g. '100/m')"))),
+        Some(s) => RateLimitConfig::parse(s).map(Some).ok_or_else(|| {
+            invalid_arg(format!(
+                "invalid {field} '{s}' on task '{task}' (expected e.g. '100/m')"
+            ))
+        }),
         None => Ok(None),
     }
 }
@@ -36,14 +39,14 @@ pub fn task_config(input: &TaskConfigInput) -> Result<TaskConfig> {
             max_delay_ms: input.retry_max_delay_ms.unwrap_or(DEFAULT_RETRY_MAX_MS),
             custom_delays_ms: None,
         },
-        rate_limit: parse_rate_spec("rateLimit", input.rate_limit.as_deref())?,
+        rate_limit: parse_rate_spec("rateLimit", &input.name, input.rate_limit.as_deref())?,
         circuit_breaker: input
             .circuit_breaker
             .as_ref()
             .map(circuit_breaker_config)
             .transpose()?,
         // Same "100/m" grammar as rate_limit, so one parser serves both.
-        retry_budget: parse_rate_spec("retryBudget", input.retry_budget.as_deref())?,
+        retry_budget: parse_rate_spec("retryBudget", &input.name, input.retry_budget.as_deref())?,
         max_concurrent: input.max_concurrent,
         max_in_flight_per_task: input.max_in_flight_per_task.map(|n| n.max(1) as usize),
     })
@@ -88,7 +91,7 @@ fn circuit_breaker_config(input: &CircuitBreakerInput) -> Result<CircuitBreakerC
 /// Build a [`QueueConfig`] (rate limit, concurrency cap) from JS input.
 pub fn queue_config(input: &QueueConfigInput) -> Result<QueueConfig> {
     Ok(QueueConfig {
-        rate_limit: parse_rate_spec("rateLimit", input.rate_limit.as_deref())?,
+        rate_limit: parse_rate_spec("rateLimit", &input.name, input.rate_limit.as_deref())?,
         max_concurrent: input.max_concurrent,
     })
 }
