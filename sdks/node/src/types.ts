@@ -98,8 +98,15 @@ export interface TaskOptions {
   retryBackoff?: { baseMs?: number; maxMs?: number };
   /** Per-job timeout default (ms); enforced by the worker. */
   timeoutMs?: number;
-  /** Cap on concurrently-running jobs of this task. */
+  /** Cap on concurrently-running jobs of this task, across the cluster. */
   maxConcurrent?: number;
+  /**
+   * Cap on this task's share of a single worker's dispatch slots, so one slow
+   * task cannot occupy the whole pool and starve the others. In-process and
+   * free, unlike {@link TaskOptions.maxConcurrent}, which is cluster-wide and
+   * costs a database read.
+   */
+  maxInFlightPerTask?: number;
   /** Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`. */
   rateLimit?: RateLimit;
   /** Trip the task's circuit breaker after repeated failures. */
