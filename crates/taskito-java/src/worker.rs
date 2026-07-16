@@ -13,6 +13,7 @@ use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::jlong;
 use jni::JNIEnv;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
+use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
 use taskito_core::scheduler::{ResultOutcome, TaskConfig};
 use taskito_core::worker::WorkerDispatcher;
@@ -105,7 +106,7 @@ fn start_worker(
     // Claim execution under this worker's id so dead-worker recovery can
     // attribute orphaned jobs (matches the worker id registered above).
     scheduler.set_claim_owner(worker_id.clone());
-    register_task_policies(&mut scheduler, options.task_configs);
+    register_task_policies(&mut scheduler, options.task_configs)?;
     let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
     let heartbeat_stop = Arc::new(Notify::new());
@@ -234,11 +235,19 @@ fn register_subscriptions(
     Ok(())
 }
 
-/// Register each task's retry-backoff curve with the scheduler. Only the curve
-/// is set here — the core resolves the retry budget from the job's `max_retries`
-/// — so unset fields keep the core [`RetryPolicy`] defaults.
-fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRetryConfig>>) {
-    let Some(configs) = configs else { return };
+/// Register each task's policy — retry curve, throttling, concurrency caps —
+/// with the scheduler. Unset fields keep the core's defaults; the per-job retry
+/// budget still resolves from the job's `max_retries`.
+///
+/// Fails on a malformed rate spec rather than registering the task without it:
+/// silently dropping a throttle the caller asked for is worse than not starting.
+fn register_task_policies(
+    scheduler: &mut Scheduler,
+    configs: Option<Vec<TaskRetryConfig>>,
+) -> Result<(), crate::error::BindingError> {
+    let Some(configs) = configs else {
+        return Ok(());
+    };
     for config in configs {
         let mut retry_policy = RetryPolicy::default();
         if let Some(custom) = config.custom_delays_ms {
@@ -271,19 +280,38 @@ fn register_task_policies(scheduler: &mut Scheduler, configs: Option<Vec<TaskRet
                         .circuit_breaker_half_open_success_rate
                         .unwrap_or(0.8),
                 });
+        let rate_limit = parse_rate_spec("rateLimit", &config.name, config.rate_limit.as_deref())?;
         scheduler.register_task(
             config.name,
             TaskConfig {
                 retry_policy,
-                rate_limit: None,
+                rate_limit,
                 circuit_breaker,
                 // Not surfaced on this SDK yet; retries stay bounded per job.
                 retry_budget: None,
-                max_concurrent: None,
+                max_concurrent: config.max_concurrent,
                 // Not surfaced on this SDK yet; the whole pool stays available.
                 max_in_flight_per_task: None,
             },
         );
+    }
+    Ok(())
+}
+
+/// Parse an optional rate spec, naming the offending task and option so a typo
+/// is actionable. Several options share this `"100/m"` grammar.
+fn parse_rate_spec(
+    field: &str,
+    task: &str,
+    spec: Option<&str>,
+) -> Result<Option<RateLimitConfig>, crate::error::BindingError> {
+    match spec {
+        Some(s) => RateLimitConfig::parse(s).map(Some).ok_or_else(|| {
+            crate::error::BindingError::new(format!(
+                "invalid {field} '{s}' on task '{task}' (expected e.g. '100/m')"
+            ))
+        }),
+        None => Ok(None),
     }
 }
 

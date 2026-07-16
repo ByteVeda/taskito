@@ -36,6 +36,19 @@ public @interface TaskHandler {
     /** Auto-derive an idempotency {@code uniqueKey} from the payload on every enqueue. */
     boolean idempotent() default false;
 
+    /**
+     * Rate-limit spec like {@code "100/m"} ({@code s}, {@code m} and {@code h}
+     * suffixes); empty (default) leaves the task unthrottled. A malformed spec
+     * fails the worker's start rather than running unthrottled.
+     */
+    String rateLimit() default "";
+
+    /**
+     * Cap on concurrently-running jobs of this task across the cluster; 0
+     * (default) leaves it uncapped.
+     */
+    int maxConcurrent() default 0;
+
     /** Circuit-breaker failure threshold; 0 (default) leaves the breaker off. */
     int circuitBreakerThreshold() default 0;
 

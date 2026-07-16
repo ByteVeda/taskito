@@ -319,9 +319,9 @@ pub struct SubscriptionSpec {
     pub timeout_ms: Option<i64>,
 }
 
-/// A task's retry-backoff curve. Fields left unset fall back to the core's
-/// `RetryPolicy` defaults; the per-job retry budget travels via `maxRetries` on
-/// enqueue, so it is deliberately absent here.
+/// A task's policy: retry curve, throttling, and concurrency caps. Fields left
+/// unset fall back to the core's defaults. The per-job retry *budget* travels
+/// via `maxRetries` on enqueue, so it is deliberately absent here.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRetryConfig {
@@ -336,6 +336,10 @@ pub struct TaskRetryConfig {
     pub circuit_breaker_cooldown_ms: Option<i64>,
     pub circuit_breaker_half_open_probes: Option<i32>,
     pub circuit_breaker_half_open_success_rate: Option<f64>,
+    /// Rate-limit spec like `"100/m"`, `"50/s"`, `"3600/h"`.
+    pub rate_limit: Option<String>,
+    /// Cap on concurrently-running jobs of this task, across the cluster.
+    pub max_concurrent: Option<i32>,
 }
 
 /// Filter accepted by `NativeQueue.listJobs`.

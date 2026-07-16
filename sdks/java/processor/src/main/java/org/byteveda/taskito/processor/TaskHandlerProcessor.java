@@ -198,6 +198,14 @@ public final class TaskHandlerProcessor extends AbstractProcessor {
         if (boolValue(mirror, "idempotent", false)) {
             chain.append(".idempotent(true)");
         }
+        String rateLimit = stringValue(mirror, "rateLimit", "");
+        if (!rateLimit.isEmpty()) {
+            chain.append(".rateLimit(\"").append(rateLimit).append("\")");
+        }
+        long maxConcurrent = longValue(mirror, "maxConcurrent", 0);
+        if (maxConcurrent > 0) {
+            chain.append(".maxConcurrent(").append(maxConcurrent).append(")");
+        }
         appendCircuitBreaker(chain, mirror);
         return chain.toString();
     }
