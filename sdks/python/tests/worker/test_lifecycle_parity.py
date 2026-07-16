@@ -98,16 +98,23 @@ def test_re_registering_a_task_clears_its_soft_timeout(queue: Queue) -> None:
     assert "dup" not in queue._task_soft_timeouts
 
 
-def test_setup_failure_releases_what_it_acquired(tmp_path: Path) -> None:
-    """A task that dies during setup must still hand back its resources.
+def test_setup_failure_undoes_what_setup_did(tmp_path: Path) -> None:
+    """A task that dies during setup must still be torn down.
 
-    Resources are injected before the before_task hooks run, so a raising hook
-    leaves them held — and the teardown that would release them only runs once
-    the body is entered, which it never is.
+    Resources are injected and middleware prepared before the before_task hooks
+    run, so a raising hook leaves them held — and the teardown that would undo
+    them only runs once the body is entered, which it never is.
     """
     released: list[str] = []
+    torn_down: list[tuple[type, str]] = []
 
-    q = Queue(db_path=str(tmp_path / "setup.db"), workers=2, default_retry=0)
+    class Recorder(TaskMiddleware):
+        def after(self, job: Any, result: Any, error: Any) -> None:
+            torn_down.append((type(error), str(error)))
+
+    q = Queue(
+        db_path=str(tmp_path / "setup.db"), workers=2, default_retry=0, middleware=[Recorder()]
+    )
     try:
         # Request scope, because its release calls `teardown` outright — a
         # task-scoped resource goes back to a pool, where nothing observes it.
@@ -115,6 +122,7 @@ def test_setup_failure_releases_what_it_acquired(tmp_path: Path) -> None:
         def make_db() -> str:
             return "conn"
 
+        # Raises after the resource is injected and Recorder.before() has run.
         @q.before_task
         def boom(task_name: str, args: tuple, kwargs: dict) -> None:
             raise RuntimeError("hook blew up during setup")
@@ -127,8 +135,13 @@ def test_setup_failure_releases_what_it_acquired(tmp_path: Path) -> None:
         thread = _start_worker(q)
         try:
             _wait_for(lambda: released, "the request-scoped resource was never released")
+            _wait_for(lambda: torn_down, "middleware that ran before() never got its after()")
         finally:
             _stop_worker(q, thread)
+
+        assert torn_down[0][0] is RuntimeError, (
+            f"after() should see the error, got {torn_down[0]!r}"
+        )
     finally:
         q.close()
 

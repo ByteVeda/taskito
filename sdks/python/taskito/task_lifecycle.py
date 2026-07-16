@@ -200,12 +200,20 @@ async def run_lifecycle(
             comp_ctx = saga.take_compensation_context(job_id)
             if comp_ctx is not None:
                 comp_ctx_token = _set_compensation_context(comp_ctx)
-    except BaseException:
-        # Setup failed, so the body never runs and its teardown never will. Give
-        # back only what was acquired: after_task and the lifecycle events belong
-        # to a task that started, and this one did not.
+    except BaseException as exc:
+        # Setup failed, so the body never runs and its teardown never will. Undo
+        # what setup did, and no more: after_task and the lifecycle events belong
+        # to a task that started, and this one did not. Middleware is the
+        # exception — `completed_mw` exists to pair every before() with an
+        # after(), and a middleware that set something up is owed the chance to
+        # take it down whether or not the task it prepared for ever ran.
         if comp_ctx_token is not None:
             _reset_compensation_context(comp_ctx_token)
+        for mw in completed_mw:
+            try:
+                mw.after(current_job, None, exc)
+            except Exception:
+                logger.exception("middleware after() error")
         _release_acquired(release_callbacks, proxy_cleanup, queue_ref)
         raise
 
