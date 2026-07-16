@@ -46,6 +46,20 @@ public interface QueueBackend extends AutoCloseable {
 
     String listJobsJson(String filterJson);
 
+    /**
+     * A keyset-paginated page of jobs as JSON. Defaults to unsupported: a backend
+     * without a seekable ordering cannot honour the cursor contract, and silently
+     * returning an unpaginated list would look like the last page.
+     */
+    default String listJobsAfterJson(String filterJson, String afterOrNull) {
+        throw new UnsupportedOperationException("keyset pagination not supported by this backend");
+    }
+
+    /** A keyset-paginated page of archived jobs as JSON. See {@link #listJobsAfterJson}. */
+    default String listArchivedAfterJson(long limit, String afterOrNull) {
+        throw new UnsupportedOperationException("keyset pagination not supported by this backend");
+    }
+
     String jobErrorsJson(String jobId);
 
     String metricsJson(String taskNameOrNull, long sinceMs);

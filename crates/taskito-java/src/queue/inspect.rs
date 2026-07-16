@@ -12,7 +12,7 @@ use taskito_core::Storage;
 use super::borrow_queue;
 use crate::convert::{
     status_code, to_json, CircuitBreakerView, JobErrorView, JobFilter, JobView, MetricView,
-    StatsView, WorkerView,
+    PageView, StatsView, WorkerView,
 };
 use crate::error::BindingError;
 use crate::ffi::{guard, new_string, read_optional_string, read_string};
@@ -113,6 +113,86 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listJobs<'
         )?;
         let views: Vec<JobView> = jobs.iter().map(JobView::from).collect();
         new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String listJobsAfter(long handle, String filterJson, String afterOrNull)` —
+/// keyset-paginated `listJobs`, ordered by created time. Returns a `Page`; its
+/// `nextCursor` is absent on the last page.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listJobsAfter<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    filter_json: JString<'local>,
+    after: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let raw = read_string(env, &filter_json)?;
+        let filter: JobFilter = crate::convert::parse_json(&raw, "job filter")?;
+        // Reject an unknown status so a typo fails loudly instead of matching all.
+        let status = match filter.status.as_deref() {
+            Some(s) => Some(
+                status_code(s).ok_or_else(|| BindingError::new(format!("unknown status '{s}'")))?,
+            ),
+            None => None,
+        };
+        let limit = filter.limit.unwrap_or(DEFAULT_LIMIT).max(0);
+        // A malformed cursor is a bad request, not a reason to silently restart
+        // from the first page.
+        let after = read_optional_string(env, &after)?;
+        let cursor = after
+            .as_deref()
+            .map(taskito_core::storage::cursor::decode_cursor)
+            .transpose()?;
+        let jobs = queue.storage.list_jobs_after(
+            status,
+            filter.queue.as_deref(),
+            filter.task.as_deref(),
+            limit,
+            cursor,
+            queue.namespace.as_deref(),
+        )?;
+        let next_cursor =
+            taskito_core::storage::cursor::next_cursor(&jobs, limit, |j| (j.created_at, &j.id));
+        let page = PageView {
+            items: jobs.iter().map(JobView::from).collect(),
+            next_cursor,
+        };
+        new_string(env, to_json(&page)?)
+    })
+}
+
+/// `String listArchivedAfter(long handle, long limit, String afterOrNull)` —
+/// keyset-paginated `listArchived`, ordered by completed time.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listArchivedAfter<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    limit: jlong,
+    after: JString<'local>,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let limit = limit.max(0);
+        let after = read_optional_string(env, &after)?;
+        let cursor = after
+            .as_deref()
+            .map(taskito_core::storage::cursor::decode_cursor)
+            .transpose()?;
+        let jobs = queue.storage.list_archived_after(limit, cursor)?;
+        // Archived rows always carry `completed_at`; the fallback keeps the key
+        // non-null for a row written before it was set.
+        let next_cursor = taskito_core::storage::cursor::next_cursor(&jobs, limit, |j| {
+            (j.completed_at.unwrap_or(j.created_at), &j.id)
+        });
+        let page = PageView {
+            items: jobs.iter().map(JobView::from).collect(),
+            next_cursor,
+        };
+        new_string(env, to_json(&page)?)
     })
 }
 

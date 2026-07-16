@@ -216,6 +216,84 @@ public final class InMemoryQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String listJobsAfterJson(String filterJson, String afterOrNull) {
+        JsonNode filter = readNode(filterJson);
+        String status = text(filter, "status");
+        String queue = text(filter, "queue");
+        String task = text(filter, "task");
+        int limit = optInt(filter, "limit", Integer.MAX_VALUE);
+
+        List<JobRec> matching = new ArrayList<>();
+        for (JobRec job : jobs.values()) {
+            if (status != null && !status.equals(job.status)) {
+                continue;
+            }
+            if (queue != null && !queue.equals(job.queue)) {
+                continue;
+            }
+            if (task != null && !task.equals(job.taskName)) {
+                continue;
+            }
+            matching.add(job);
+        }
+        return keysetPage(matching, limit, afterOrNull, job -> job.createdAt);
+    }
+
+    @Override
+    public String listArchivedAfterJson(long limit, String afterOrNull) {
+        List<JobRec> archived = new ArrayList<>();
+        for (JobRec job : jobs.values()) {
+            if (job.completedAt != null) {
+                archived.add(job);
+            }
+        }
+        return keysetPage(
+                archived,
+                limit > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) limit,
+                afterOrNull,
+                job -> job.completedAt == null ? job.createdAt : job.completedAt);
+    }
+
+    /**
+     * Order by {@code (sortKey, id)} descending, seek past the cursor, take a
+     * page — the same contract the native backends implement, so a test against
+     * this backend exercises the real pagination semantics rather than a stub.
+     */
+    private static String keysetPage(
+            List<JobRec> rows, int limit, String afterOrNull, java.util.function.ToLongFunction<JobRec> sortKey) {
+        rows.sort((a, b) -> {
+            int byKey = Long.compare(sortKey.applyAsLong(b), sortKey.applyAsLong(a));
+            return byKey != 0 ? byKey : b.id.compareTo(a.id);
+        });
+        if (afterOrNull != null) {
+            int split = afterOrNull.indexOf(':');
+            if (split < 0) {
+                throw new IllegalArgumentException("invalid cursor: " + afterOrNull);
+            }
+            long cursorKey = Long.parseLong(afterOrNull.substring(0, split));
+            String cursorId = afterOrNull.substring(split + 1);
+            rows.removeIf(job -> {
+                long key = sortKey.applyAsLong(job);
+                return key > cursorKey || (key == cursorKey && job.id.compareTo(cursorId) >= 0);
+            });
+        }
+        List<JobRec> page = rows.subList(0, Math.min(limit, rows.size()));
+        List<Map<String, Object>> views = new ArrayList<>();
+        for (JobRec job : page) {
+            views.add(jobView(job));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("items", views);
+        // A short page is the last one.
+        result.put(
+                "nextCursor",
+                page.size() < limit || page.isEmpty()
+                        ? null
+                        : sortKey.applyAsLong(page.get(page.size() - 1)) + ":" + page.get(page.size() - 1).id);
+        return toJson(result);
+    }
+
+    @Override
     public String jobErrorsJson(String jobId) {
         return "[]";
     }

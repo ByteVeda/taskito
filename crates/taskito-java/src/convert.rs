@@ -359,6 +359,15 @@ pub struct JobFilter {
     pub offset: Option<i64>,
 }
 
+/// One page of a keyset-paginated listing, as the Java `Page<T>` decodes it.
+/// `next_cursor` is absent on the last page.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageView<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+}
+
 /// Map a lowercase status string to the core's `i32` status code.
 pub fn status_code(status: &str) -> Option<i32> {
     match status {

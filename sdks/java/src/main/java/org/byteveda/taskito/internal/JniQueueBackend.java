@@ -108,6 +108,16 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String listJobsAfterJson(String filterJson, String afterOrNull) {
+        return withOpenHandle(() -> NativeQueue.listJobsAfter(handle, filterJson, afterOrNull));
+    }
+
+    @Override
+    public String listArchivedAfterJson(long limit, String afterOrNull) {
+        return withOpenHandle(() -> NativeQueue.listArchivedAfter(handle, limit, afterOrNull));
+    }
+
+    @Override
     public String jobErrorsJson(String jobId) {
         return withOpenHandle(() -> NativeQueue.jobErrors(handle, jobId));
     }

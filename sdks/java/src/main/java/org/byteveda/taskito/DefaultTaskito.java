@@ -36,6 +36,7 @@ import org.byteveda.taskito.model.Job;
 import org.byteveda.taskito.model.JobDag;
 import org.byteveda.taskito.model.JobError;
 import org.byteveda.taskito.model.JobFilter;
+import org.byteveda.taskito.model.Page;
 import org.byteveda.taskito.model.PeriodicInfo;
 import org.byteveda.taskito.model.QueueStats;
 import org.byteveda.taskito.model.ReplayEntry;
@@ -466,6 +467,16 @@ final class DefaultTaskito implements Taskito {
     @Override
     public List<Job> listJobs(JobFilter filter) {
         return decodeList(backend.listJobsJson(encode(filter)), Job.class);
+    }
+
+    @Override
+    public Page<Job> listJobsAfter(JobFilter filter, String after) {
+        return decodePage(backend.listJobsAfterJson(encode(filter), after), Job.class);
+    }
+
+    @Override
+    public Page<Job> listArchivedAfter(long limit, String after) {
+        return decodePage(backend.listArchivedAfterJson(limit, after), Job.class);
     }
 
     @Override
@@ -1048,6 +1059,15 @@ final class DefaultTaskito implements Taskito {
     }
 
     private static <R> R decode(String json, Class<R> type) {
+        try {
+            return VIEWS.readValue(json, type);
+        } catch (Exception e) {
+            throw new SerializationException("failed to decode native response", e);
+        }
+    }
+
+    private static <R> Page<R> decodePage(String json, Class<R> element) {
+        JavaType type = VIEWS.getTypeFactory().constructParametricType(Page.class, element);
         try {
             return VIEWS.readValue(json, type);
         } catch (Exception e) {
