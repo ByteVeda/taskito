@@ -93,11 +93,16 @@ final class WorkerDispatchBridge implements WorkerBridge {
         if (scope != null) {
             Resources.enter(scope);
         }
-        // Resolved once and reused below: re-reading the disable list between
-        // before and after would let a mid-job toggle run after on a middleware
-        // whose before never ran.
-        List<Middleware> chain = disables.resolve(taskName, middleware);
+        // Empty until resolved, so a failure to read the disable list runs onError
+        // on nothing — which is right, because no before() ran either.
+        List<Middleware> chain = List.of();
         try {
+            // Resolved once and reused below: re-reading the disable list between
+            // before and after would let a mid-job toggle run after on a middleware
+            // whose before never ran. Inside the try because it reads the backend,
+            // so a settings failure fails the job rather than leaving it unresolved
+            // with its resource scope still bound.
+            chain = disables.resolve(taskName, middleware);
             for (Middleware m : chain) {
                 m.before(context);
             }
