@@ -58,6 +58,26 @@ logger = logging.getLogger("taskito")
 _MAX_RESULT_REPR = 80
 
 
+def _release_acquired(
+    release_callbacks: list[Any], proxy_cleanup: list[Any], queue_ref: Queue
+) -> None:
+    """Hand back everything acquired for one task. Never raises.
+
+    Called from the task's teardown, and again if setup fails partway — by then
+    resources may already be held and proxies reconstructed, and nothing else
+    would give them back.
+    """
+    for release_fn in release_callbacks:
+        try:
+            release_fn()
+        except Exception:
+            logger.exception("resource release error")
+    try:
+        cleanup_proxies(proxy_cleanup, metrics=queue_ref._proxy_metrics)
+    except Exception:
+        logger.exception("proxy cleanup error")
+
+
 def _safe_result_repr(value: Any) -> str:
     """Render a task return value for the success log, bounded and crash-proof."""
     if value is None:
@@ -122,59 +142,72 @@ async def run_lifecycle(
             metrics=queue_ref._proxy_metrics,
         )
 
-    # Inject resources from runtime
+    # From here on the task holds things — resources, proxies — that only the
+    # teardown below gives back, and the teardown only runs once the body is
+    # entered. Anything that raises in between (acquiring a resource, a
+    # before_task hook) would strand them, so unwind explicitly on the way out.
     release_callbacks: list[Any] = []
-    runtime = queue_ref._resource_runtime
-    if runtime is not None:
-        # From explicit inject=["db"] on task decorator
-        for res_name in queue_ref._task_inject_map.get(task_name, []):
-            if res_name not in kwargs:
-                instance, release = runtime.acquire_for_task(res_name)
-                kwargs[res_name] = instance
+    completed_mw: list[Any] = []
+    comp_ctx_token = None
+    try:
+        # Inject resources from runtime
+        runtime = queue_ref._resource_runtime
+        if runtime is not None:
+            # From explicit inject=["db"] on task decorator
+            for res_name in queue_ref._task_inject_map.get(task_name, []):
+                if res_name not in kwargs:
+                    instance, release = runtime.acquire_for_task(res_name)
+                    kwargs[res_name] = instance
+                    if release is not None:
+                        release_callbacks.append(release)
+            # From interception REDIRECT markers
+            for kwarg_name, resource_name in redirects.items():
+                instance, release = runtime.acquire_for_task(resource_name)
+                kwargs[kwarg_name] = instance
                 if release is not None:
                     release_callbacks.append(release)
-        # From interception REDIRECT markers
-        for kwarg_name, resource_name in redirects.items():
-            instance, release = runtime.acquire_for_task(resource_name)
-            kwargs[kwarg_name] = instance
-            if release is not None:
-                release_callbacks.append(release)
 
-    middleware_chain = queue_ref._get_middleware_chain(task_name)
-    hooks = queue_ref._hooks
+        middleware_chain = queue_ref._get_middleware_chain(task_name)
+        hooks = queue_ref._hooks
 
-    # Set soft timeout on context if configured
-    soft_timeout = queue_ref._task_soft_timeouts.get(task_name)
-    if soft_timeout is not None:
-        current_job._set_soft_timeout(soft_timeout)
+        # Set soft timeout on context if configured
+        soft_timeout = queue_ref._task_soft_timeouts.get(task_name)
+        if soft_timeout is not None:
+            current_job._set_soft_timeout(soft_timeout)
 
-    # Run middleware before hooks (skipping middlewares whose predicate filter
-    # excludes this job)
-    completed_mw: list[Any] = []
-    for mw in middleware_chain:
-        if not mw._should_apply(current_job):
-            continue
-        try:
-            mw.before(current_job)
-            completed_mw.append(mw)
-        except Exception:
-            logger.exception("middleware before() error")
+        # Run middleware before hooks (skipping middlewares whose predicate filter
+        # excludes this job)
+        for mw in middleware_chain:
+            if not mw._should_apply(current_job):
+                continue
+            try:
+                mw.before(current_job)
+                completed_mw.append(mw)
+            except Exception:
+                logger.exception("middleware before() error")
 
-    for hook in hooks["before_task"]:
-        hook(task_name, args, kwargs)
+        for hook in hooks["before_task"]:
+            hook(task_name, args, kwargs)
 
-    # Saga compensation context: if this job was dispatched by the saga
-    # orchestrator, look up the in-memory CompensationContext and push it onto a
-    # contextvar so the compensator body can call
-    # ``current_compensation_context()`` to introspect the forward execution.
-    # Pop in the ``finally`` below.
-    comp_ctx_token = None
-    tracker = getattr(queue_ref, "_workflow_tracker", None)
-    saga = getattr(tracker, "_saga", None) if tracker is not None else None
-    if saga is not None and saga.is_compensation_job(job_id):
-        comp_ctx = saga.take_compensation_context(job_id)
-        if comp_ctx is not None:
-            comp_ctx_token = _set_compensation_context(comp_ctx)
+        # Saga compensation context: if this job was dispatched by the saga
+        # orchestrator, look up the in-memory CompensationContext and push it onto a
+        # contextvar so the compensator body can call
+        # ``current_compensation_context()`` to introspect the forward execution.
+        # Pop in the ``finally`` below.
+        tracker = getattr(queue_ref, "_workflow_tracker", None)
+        saga = getattr(tracker, "_saga", None) if tracker is not None else None
+        if saga is not None and saga.is_compensation_job(job_id):
+            comp_ctx = saga.take_compensation_context(job_id)
+            if comp_ctx is not None:
+                comp_ctx_token = _set_compensation_context(comp_ctx)
+    except BaseException:
+        # Setup failed, so the body never runs and its teardown never will. Give
+        # back only what was acquired: after_task and the lifecycle events belong
+        # to a task that started, and this one did not.
+        if comp_ctx_token is not None:
+            _reset_compensation_context(comp_ctx_token)
+        _release_acquired(release_callbacks, proxy_cleanup, queue_ref)
+        raise
 
     # `torn_down` tracks a BaseException separately from a task failure: both must
     # keep the cleanup below from reporting success, but only a failure is one.
@@ -268,48 +301,46 @@ async def run_lifecycle(
             hook(task_name, args, kwargs, result)
         return result
     finally:
-        # Pop the saga compensation context (no-op outside saga flow).
-        if comp_ctx_token is not None:
-            _reset_compensation_context(comp_ctx_token)
-        # Release task/request-scoped resources
-        for release_fn in release_callbacks:
-            try:
-                release_fn()
-            except Exception:
-                logger.exception("resource release error")
-        # Clean up reconstructed proxies (LIFO order)
-        cleanup_proxies(proxy_cleanup, metrics=queue_ref._proxy_metrics)
-        for hook in hooks["after_task"]:
-            hook(task_name, args, kwargs, result, error)
-        # Run middleware after hooks (only those whose before() succeeded)
-        for mw in completed_mw:
-            try:
-                mw.after(current_job, result, error)
-            except Exception:
-                logger.exception("middleware after() error")
-        # Emit job lifecycle events. The Rust outcome loop skips Success on the
-        # grounds that this body emits it, so it must stay here for both paths.
-        # A torn-down job is the exception: it has no outcome to report yet, and
-        # the outcome loop emits its own (JOB_CANCELLED, or JOB_RETRYING/JOB_DEAD
-        # once the failure is classified).
-        if not torn_down:
-            event_payload: dict[str, Any] = {
-                "task_name": task_name,
-                "job_id": current_job.id,
-                "queue": current_job.queue_name,
-            }
-            if error is not None:
-                event_payload["error"] = str(error)
-                queue_ref._emit_event(EventType.JOB_FAILED, event_payload)
-            else:
-                queue_ref._emit_event(EventType.JOB_COMPLETED, event_payload)
-        # Drop the exception before this frame outlives it. Its traceback points
-        # back at this very frame, so holding it in an ordinary local is a
-        # reference cycle — Python auto-clears an `except ... as` name for exactly
-        # this reason, but `error` is a plain local and keeps it. Until the cyclic
-        # collector runs, everything reachable from this frame stays alive, which
-        # on native dispatch includes the async result sender: the worker's drain
-        # loop ends when that sender drops, so a leaked one stalls every shutdown
-        # after a failed task until the drain times out. Must stay last — it is
-        # only safe once nothing above still reads `error`.
-        error = None
+        # The clearing of `error` below is not optional, so nothing here may skip
+        # it — a raising after_task hook or event subscriber must not be able to
+        # leave the exception behind.
+        try:
+            # Pop the saga compensation context (no-op outside saga flow).
+            if comp_ctx_token is not None:
+                _reset_compensation_context(comp_ctx_token)
+            _release_acquired(release_callbacks, proxy_cleanup, queue_ref)
+            for hook in hooks["after_task"]:
+                hook(task_name, args, kwargs, result, error)
+            # Run middleware after hooks (only those whose before() succeeded)
+            for mw in completed_mw:
+                try:
+                    mw.after(current_job, result, error)
+                except Exception:
+                    logger.exception("middleware after() error")
+            # Emit job lifecycle events. The Rust outcome loop skips Success on
+            # the grounds that this body emits it, so it must stay here for both
+            # paths. A torn-down job is the exception: it has no outcome to report
+            # yet, and the outcome loop emits its own (JOB_CANCELLED, or
+            # JOB_RETRYING/JOB_DEAD once the failure is classified).
+            if not torn_down:
+                event_payload: dict[str, Any] = {
+                    "task_name": task_name,
+                    "job_id": current_job.id,
+                    "queue": current_job.queue_name,
+                }
+                if error is not None:
+                    event_payload["error"] = str(error)
+                    queue_ref._emit_event(EventType.JOB_FAILED, event_payload)
+                else:
+                    queue_ref._emit_event(EventType.JOB_COMPLETED, event_payload)
+        finally:
+            # Drop the exception before this frame outlives it. Its traceback
+            # points back at this very frame, so holding it in an ordinary local
+            # is a reference cycle — Python auto-clears an `except ... as` name
+            # for exactly this reason, but `error` is a plain local and keeps it.
+            # Until the cyclic collector runs, everything reachable from this
+            # frame stays alive, which on native dispatch includes the async
+            # result sender: the worker's drain loop ends when that sender drops,
+            # so a leaked one stalls every shutdown after a failed task until the
+            # drain times out.
+            error = None

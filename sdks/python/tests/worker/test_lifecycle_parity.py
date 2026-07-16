@@ -77,6 +77,41 @@ def _wait_for(predicate: Any, message: str) -> None:
     raise AssertionError(message)
 
 
+def test_setup_failure_releases_what_it_acquired(tmp_path: Path) -> None:
+    """A task that dies during setup must still hand back its resources.
+
+    Resources are injected before the before_task hooks run, so a raising hook
+    leaves them held — and the teardown that would release them only runs once
+    the body is entered, which it never is.
+    """
+    released: list[str] = []
+
+    q = Queue(db_path=str(tmp_path / "setup.db"), workers=2, default_retry=0)
+    try:
+        # Request scope, because its release calls `teardown` outright — a
+        # task-scoped resource goes back to a pool, where nothing observes it.
+        @q.worker_resource(name="db", scope="request", teardown=lambda conn: released.append(conn))
+        def make_db() -> str:
+            return "conn"
+
+        @q.before_task
+        def boom(task_name: str, args: tuple, kwargs: dict) -> None:
+            raise RuntimeError("hook blew up during setup")
+
+        @q.task(name="needs_db", max_retries=0, inject=["db"])
+        def needs_db(db: Any = None) -> str:
+            return f"got-{db}"
+
+        needs_db.delay()
+        thread = _start_worker(q)
+        try:
+            _wait_for(lambda: released, "the request-scoped resource was never released")
+        finally:
+            _stop_worker(q, thread)
+    finally:
+        q.close()
+
+
 def test_sync_task_returning_a_coroutine_is_awaited(queue: Queue) -> None:
     """A plain ``def`` may hand back a coroutine, and its value is the result.
 
