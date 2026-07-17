@@ -57,37 +57,46 @@ public final class Retention {
         private Integer taskMetrics;
         private Integer jobErrors;
 
+        // A negative window would invert the cleanup cutoff into the future and
+        // match every row, so reject it at the boundary. Zero is valid.
+        private static int nonNegative(int seconds, String window) {
+            if (seconds < 0) {
+                throw new IllegalArgumentException("retention window '" + window + "' must be non-negative");
+            }
+            return seconds;
+        }
+
         /**
          * Terminal jobs — the artifact read after completion. Covers every
          * status on SQLite/Postgres; the Redis backend currently purges only
          * {@code Complete} archive rows.
          */
         public Builder archivedJobs(int seconds) {
-            this.archivedJobs = seconds;
+            this.archivedJobs = nonNegative(seconds, "archivedJobs");
             return this;
         }
 
         /** Dead-letter entries — the only copy of a payload a human must act on. */
         public Builder deadLetter(int seconds) {
-            this.deadLetter = seconds;
+            this.deadLetter = nonNegative(seconds, "deadLetter");
             return this;
         }
 
         /** Task logs — highest write volume, lowest per-row value. */
         public Builder taskLogs(int seconds) {
-            this.taskLogs = seconds;
+            this.taskLogs = nonNegative(seconds, "taskLogs");
             return this;
         }
 
         /** Task metrics — feeds the dashboard charts. */
         public Builder taskMetrics(int seconds) {
-            this.taskMetrics = seconds;
+            this.taskMetrics = nonNegative(seconds, "taskMetrics");
             return this;
         }
 
         /** Per-attempt job errors. */
         public Builder jobErrors(int seconds) {
-            this.jobErrors = seconds;
+            this.jobErrors = nonNegative(seconds, "jobErrors");
             return this;
         }
 

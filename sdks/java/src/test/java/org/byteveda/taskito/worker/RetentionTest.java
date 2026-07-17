@@ -2,6 +2,7 @@ package org.byteveda.taskito.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -25,5 +26,15 @@ class RetentionTest {
     @Test
     void emptyRetentionEncodesEmptyMap() {
         assertEquals(0, Retention.builder().build().toMap().size());
+    }
+
+    @Test
+    void negativeWindowRejectedAtTheBuilder() {
+        assertThrows(IllegalArgumentException.class, () -> Retention.builder().taskLogs(-1));
+    }
+
+    @Test
+    void zeroWindowIsValid() {
+        assertEquals(0, Retention.builder().taskLogs(0).build().toMap().get("taskLogs"));
     }
 }
