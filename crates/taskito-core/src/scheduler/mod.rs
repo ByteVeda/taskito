@@ -1519,17 +1519,16 @@ mod tests {
     }
 
     #[test]
-    fn test_try_dispatch_reschedules_on_full_channel() {
-        // Same regression when the channel is *full* rather than closed —
-        // the worker pool is behind but still alive. The job must come back
-        // to Pending so the next tick has a chance to dispatch it once the
-        // pool drains.
+    fn test_try_dispatch_skips_when_channel_full() {
+        // When the channel is *full* rather than closed, the poller must not
+        // dequeue at all: a claim taken now could only roll back on `try_send`,
+        // churning storage for nothing. The job stays Pending, untouched, and
+        // dispatch resumes once the pool drains.
         let scheduler = test_scheduler();
         let job = scheduler.storage.enqueue(make_job("ch_full_task")).unwrap();
 
-        // Capacity-1 channel pre-filled with a sentinel job. The poller's
-        // `try_send` will see `TrySendError::Full`.
-        let (tx, _rx) = make_channel(1);
+        // Capacity-1 channel pre-filled with a sentinel job.
+        let (tx, mut rx) = make_channel(1);
         let sentinel = scheduler.storage.enqueue(make_job("sentinel")).unwrap();
         tx.try_send(sentinel).expect("pre-fill should succeed");
 
@@ -1538,13 +1537,23 @@ mod tests {
 
         let after = scheduler.storage.get_job(&job.id).unwrap().unwrap();
         assert_eq!(after.status, JobStatus::Pending);
-        assert!(after.scheduled_at > now_millis());
+        assert_eq!(
+            after.scheduled_at, job.scheduled_at,
+            "a skipped job keeps its schedule — it was never touched"
+        );
 
         let claims = scheduler
             .storage
             .list_claims_by_worker("scheduler")
             .unwrap();
         assert!(!claims.contains(&job.id));
+
+        // Draining the channel restores dispatch.
+        let _ = rx.try_recv().expect("sentinel was in the channel");
+        assert!(
+            scheduler.tick_dispatch(&tx),
+            "freed capacity resumes dispatch"
+        );
     }
 
     #[test]

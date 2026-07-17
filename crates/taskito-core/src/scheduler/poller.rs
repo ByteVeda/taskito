@@ -93,6 +93,14 @@ impl Scheduler {
             return Ok(false);
         }
 
+        // A full channel means every dequeue would claim and then immediately
+        // roll back on `try_send` — pure storage churn. Wait for the pool to
+        // drain; `try_send` below still guards the race where it fills between
+        // this check and the hand-off.
+        if job_tx.capacity() == 0 {
+            return Ok(false);
+        }
+
         let job = match self
             .storage
             .dequeue_from(&active_queues, now, self.namespace.as_deref())?
@@ -126,8 +134,13 @@ impl Scheduler {
         // Size the batch to the worker pool's free capacity so we never claim
         // more jobs than the channel can immediately accept. `try_send` still
         // guards each hand-off, but pre-sizing avoids needless claim/rollback
-        // churn. Always claim at least one.
-        let mut budget = self.config.batch_size.min(job_tx.capacity().max(1));
+        // churn — including the full-channel case, where any claim would
+        // immediately roll back.
+        let capacity = job_tx.capacity();
+        if capacity == 0 {
+            return Ok(false);
+        }
+        let mut budget = self.config.batch_size.min(capacity);
 
         // Never claim past the in-flight cap: a drained batch that outran the
         // workers would mark the surplus `Running` and starve peer schedulers.
