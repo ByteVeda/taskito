@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, renameSync, rmdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Config } from "@react-router/dev/config";
 import { allDocPaths } from "./app/lib/doc-paths";
 import { redirectPaths } from "./app/lib/redirects";
@@ -28,5 +30,18 @@ export default {
       ...allDocPaths(),
       ...redirectPaths(),
     ];
+  },
+  // Prerender nests every route under the basename dir, but Pages already serves
+  // this project under /taskito — hoist the tree so the artifact root is the site
+  // root and the prefix isn't doubled. No-op locally where basename is "/".
+  buildEnd({ reactRouterConfig }) {
+    if (basename === "/") return;
+    const clientDir = join(reactRouterConfig.buildDirectory, "client");
+    const nested = join(clientDir, basename);
+    if (!existsSync(nested)) return;
+    for (const entry of readdirSync(nested)) {
+      renameSync(join(nested, entry), join(clientDir, entry));
+    }
+    rmdirSync(nested);
   },
 } satisfies Config;
