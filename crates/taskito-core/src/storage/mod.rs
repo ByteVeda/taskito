@@ -400,7 +400,7 @@ macro_rules! impl_storage {
             }
             fn purge_completed_with_ttl(
                 &self,
-                global_cutoff_ms: i64,
+                global_cutoff_ms: Option<i64>,
             ) -> $crate::error::Result<u64> {
                 self.purge_completed_with_ttl(global_cutoff_ms)
             }
@@ -473,7 +473,10 @@ macro_rules! impl_storage {
             fn delete_dead(&self, dead_id: &str) -> $crate::error::Result<bool> {
                 self.delete_dead(dead_id)
             }
-            fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> $crate::error::Result<u64> {
+            fn purge_dead_with_ttl(
+                &self,
+                global_cutoff_ms: Option<i64>,
+            ) -> $crate::error::Result<u64> {
                 self.purge_dead_with_ttl(global_cutoff_ms)
             }
             fn list_dead_for_retry(
@@ -1107,7 +1110,7 @@ impl Storage for StorageBackend {
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
         delegate!(self, purge_completed, older_than_ms)
     }
-    fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+    fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
         delegate!(self, purge_completed_with_ttl, global_cutoff_ms)
     }
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>> {
@@ -1153,7 +1156,7 @@ impl Storage for StorageBackend {
     fn delete_dead(&self, dead_id: &str) -> Result<bool> {
         delegate!(self, delete_dead, dead_id)
     }
-    fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+    fn purge_dead_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
         delegate!(self, purge_dead_with_ttl, global_cutoff_ms)
     }
     fn list_dead_for_retry(

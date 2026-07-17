@@ -110,7 +110,10 @@ pub trait Storage: Send + Sync + Clone {
     fn get_job(&self, id: &str) -> Result<Option<Job>>;
     fn stats(&self) -> Result<QueueStats>;
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64>;
-    fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64>;
+    /// Purge archived jobs by the global/per-entry TTL. On Diesel this covers
+    /// every terminal status; the Redis backend still walks the Complete-status
+    /// index only, pending its ZSET-drain rewrite.
+    fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64>;
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>>;
     /// Running jobs whose execution-claim owner is not in `live_owner_ids` (the
     /// worker that claimed them has died). Read-only — paired with the dead
@@ -135,7 +138,7 @@ pub trait Storage: Send + Sync + Clone {
     fn retry_dead(&self, dead_id: &str) -> Result<String>;
     fn purge_dead(&self, older_than_ms: i64) -> Result<u64>;
     fn delete_dead(&self, dead_id: &str) -> Result<bool>;
-    fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64>;
+    fn purge_dead_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64>;
     fn list_dead_for_retry(
         &self,
         cutoff_ms: i64,

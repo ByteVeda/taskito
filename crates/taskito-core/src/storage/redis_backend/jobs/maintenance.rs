@@ -24,13 +24,14 @@ impl RedisStorage {
         })
     }
 
-    pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+    pub fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
         let now = now_millis();
         self.purge_completed_scan(|job| match (job.completed_at, job.result_ttl_ms) {
             (Some(completed), Some(ttl)) => completed
                 .checked_add(ttl)
                 .is_some_and(|expiry| expiry < now),
-            (Some(completed), None) => completed < global_cutoff_ms,
+            // A row with no per-entry TTL expires only when a global cutoff is set.
+            (Some(completed), None) => global_cutoff_ms.is_some_and(|c| completed < c),
             _ => false,
         })
     }

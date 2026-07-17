@@ -319,25 +319,31 @@ macro_rules! impl_diesel_dead_letter_ops {
             /// Purge dead letter entries respecting per-entry TTL overrides.
             ///
             /// Deletes in bounded batches, each its own txn — see
-            /// `diesel_common::purge`.
-            pub fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+            /// `diesel_common::purge`. A `None` cutoff runs only the per-entry
+            /// sweep — an entry can carry its own TTL even when the queue keeps
+            /// everything.
+            pub fn purge_dead_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
                 let now = now_millis();
 
                 // Entries with no per-entry TTL fall back to the global cutoff.
-                let global = $crate::storage::diesel_common::purge::drain_batches(|| {
-                    self.write_transaction(|conn| {
-                        let ids: Vec<String> = dead_letter::table
-                            .filter(dead_letter::result_ttl_ms.is_null())
-                            .filter(dead_letter::failed_at.lt(global_cutoff_ms))
-                            .select(dead_letter::id)
-                            .limit($crate::storage::diesel_common::purge::PURGE_BATCH)
-                            .load(conn)?;
-                        let affected =
-                            diesel::delete(dead_letter::table.filter(dead_letter::id.eq_any(&ids)))
-                                .execute(conn)?;
-                        Ok(affected as u64)
-                    })
-                })?;
+                let global = match global_cutoff_ms {
+                    Some(cutoff) => $crate::storage::diesel_common::purge::drain_batches(|| {
+                        self.write_transaction(|conn| {
+                            let ids: Vec<String> = dead_letter::table
+                                .filter(dead_letter::result_ttl_ms.is_null())
+                                .filter(dead_letter::failed_at.lt(cutoff))
+                                .select(dead_letter::id)
+                                .limit($crate::storage::diesel_common::purge::PURGE_BATCH)
+                                .load(conn)?;
+                            let affected = diesel::delete(
+                                dead_letter::table.filter(dead_letter::id.eq_any(&ids)),
+                            )
+                            .execute(conn)?;
+                            Ok(affected as u64)
+                        })
+                    })?,
+                    None => 0,
+                };
 
                 // Entries with a per-entry TTL: `failed_at + result_ttl_ms < now`.
                 // Served by the partial `idx_dead_letter_ttl` — no ordinary index

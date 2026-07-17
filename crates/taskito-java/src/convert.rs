@@ -298,6 +298,35 @@ pub struct WorkerOptions {
     /// Topic subscriptions written at worker start; ephemeral entries bind to
     /// the started worker's id.
     pub subscriptions: Option<Vec<SubscriptionSpec>>,
+    /// Per-table retention windows for auto-cleanup, in seconds.
+    pub retention: Option<RetentionSpec>,
+}
+
+/// Per-table retention windows in seconds. An unset field keeps that table
+/// forever. `u32` seconds caps at ~136 years and cannot be negative.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RetentionSpec {
+    pub archived_jobs: Option<u32>,
+    pub dead_letter: Option<u32>,
+    pub task_logs: Option<u32>,
+    pub task_metrics: Option<u32>,
+    pub job_errors: Option<u32>,
+}
+
+impl RetentionSpec {
+    /// Build a core [`RetentionConfig`], or `None` when no window is set.
+    pub fn to_config(&self) -> Option<taskito_core::scheduler::retention::RetentionConfig> {
+        let to_ms = |secs: Option<u32>| secs.map(|s| s as i64 * 1000);
+        let config = taskito_core::scheduler::retention::RetentionConfig {
+            archived_jobs_ttl_ms: to_ms(self.archived_jobs),
+            dead_letter_ttl_ms: to_ms(self.dead_letter),
+            task_logs_ttl_ms: to_ms(self.task_logs),
+            task_metrics_ttl_ms: to_ms(self.task_metrics),
+            job_errors_ttl_ms: to_ms(self.job_errors),
+        };
+        (!config.is_empty()).then_some(config)
+    }
 }
 
 /// One topic subscription declared by the SDK, registered at worker start.
@@ -604,4 +633,24 @@ impl<'a> From<&'a LockInfoRow> for LockInfoView<'a> {
 /// Serialize a view to a JSON string for return across the boundary.
 pub fn to_json<T: Serialize>(value: &T) -> Result<String, BindingError> {
     serde_json::to_string(value).map_err(|e| BindingError::new(format!("serialize failed: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retention_spec_converts_and_deserializes() {
+        let spec: RetentionSpec =
+            serde_json::from_str(r#"{"archivedJobs":7,"taskLogs":3}"#).unwrap();
+        let config = spec.to_config().expect("some windows set");
+        assert_eq!(config.archived_jobs_ttl_ms, Some(7_000));
+        assert_eq!(config.task_logs_ttl_ms, Some(3_000));
+        assert_eq!(config.dead_letter_ttl_ms, None);
+    }
+
+    #[test]
+    fn retention_spec_is_none_when_empty() {
+        assert!(RetentionSpec::default().to_config().is_none());
+    }
 }

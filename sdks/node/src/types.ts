@@ -226,4 +226,27 @@ export interface WorkerRunOptions {
    * false on workers that never process workflow steps.
    */
   advanceWorkflows?: boolean;
+  /** Per-table retention windows for auto-cleanup. */
+  retention?: RetentionOptions;
+}
+
+/**
+ * How long each history table keeps a row before auto-cleanup deletes it, in
+ * seconds. An unset field keeps that table forever. A job or DLQ entry can
+ * still carry its own per-entry `resultTtl`, honored independently.
+ */
+export interface RetentionOptions {
+  /**
+   * Terminal jobs — the artifact read after completion. Covers every status on
+   * SQLite/Postgres; the Redis backend currently purges only `Complete` rows.
+   */
+  archivedJobs?: number;
+  /** Dead-letter entries — the only copy of a payload a human must act on. */
+  deadLetter?: number;
+  /** Task logs — highest write volume, lowest per-row value. */
+  taskLogs?: number;
+  /** Task metrics — feeds the dashboard charts. */
+  taskMetrics?: number;
+  /** Per-attempt job errors. */
+  jobErrors?: number;
 }

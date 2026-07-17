@@ -47,6 +47,7 @@ from taskito.middleware import TaskMiddleware
 from taskito.notes import MAX_NOTE_FIELDS
 from taskito.proxies.no_proxy import NoProxy
 from taskito.result import JobResult
+from taskito.retention import Retention
 from taskito.serializers import (
     CborSerializer,
     CloudpickleSerializer,
@@ -100,6 +101,7 @@ __all__ = [
     "ResourceInitError",
     "ResourceNotFoundError",
     "ResourceUnavailableError",
+    "Retention",
     "SerializationError",
     "Serializer",
     "Signature",

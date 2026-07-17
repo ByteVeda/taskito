@@ -55,6 +55,7 @@ from taskito.proxies import ProxyRegistry
 from taskito.proxies.built_in import register_builtin_handlers
 from taskito.proxies.metrics import ProxyMetrics
 from taskito.result import JobResult
+from taskito.retention import Retention
 from taskito.serializers import Serializer, SmartSerializer
 from taskito.webhooks import WebhookManager
 
@@ -150,6 +151,7 @@ class Queue(
         push_dispatch: bool = False,
         dlq_auto_retry_delay: int | None = None,
         dlq_auto_retry_max: int = 1,
+        retention: Retention | None = None,
     ):
         """Initialize a new task queue.
 
@@ -163,7 +165,10 @@ class Queue(
             default_priority: Default task priority (higher = more urgent).
             result_ttl: Auto-cleanup completed/dead jobs older than this many
                 seconds. Must be non-negative. None disables queue-wide
-                auto-cleanup; per-job TTLs are still honored.
+                auto-cleanup; per-job TTLs are still honored. Superseded by
+                ``retention`` — prefer that for new code.
+            retention: Per-table retention windows (:class:`Retention`). When
+                set, wins over ``result_ttl``. None falls back to ``result_ttl``.
             serializer: Serializer for task payloads. Defaults to SmartSerializer
                 (msgpack with cloudpickle fallback).
             codec: Global payload codec chain — a single :class:`PayloadCodec`
@@ -246,6 +251,7 @@ class Queue(
             push_dispatch=push_dispatch,
             dlq_auto_retry_delay=dlq_auto_retry_delay,
             dlq_auto_retry_max=dlq_auto_retry_max,
+            retention=retention._as_map() if retention is not None else None,
         )
         self._backend = backend
         self._namespace = namespace

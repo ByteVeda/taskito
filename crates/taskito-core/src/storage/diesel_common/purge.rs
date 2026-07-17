@@ -14,6 +14,11 @@ use crate::error::Result;
 /// 999-parameter limit.
 pub(crate) const PURGE_BATCH: i64 = 500;
 
+/// Max ids per child-delete statement. The `job_dependencies` delete binds the
+/// ids twice (`job_id OR depends_on_job_id`), so 450 keeps it under SQLite's
+/// 999-parameter limit.
+pub(crate) const DELETE_ID_CHUNK: usize = 450;
+
 /// Max batches one sweep may drain. A table written faster than it purges would
 /// otherwise keep a single sweep running indefinitely; the cap makes the sweep
 /// yield and the next tick resume where this one stopped.

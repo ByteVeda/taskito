@@ -15,6 +15,7 @@ use pyo3::types::PyDict;
 
 use taskito_core::job::{now_millis, NewJob};
 use taskito_core::periodic::next_cron_time;
+use taskito_core::scheduler::retention::RetentionConfig;
 use taskito_core::storage::models::NewPeriodicTaskRow;
 #[cfg(feature = "postgres")]
 use taskito_core::storage::postgres::PostgresStorage;
@@ -39,6 +40,7 @@ pub struct PyQueue {
     pub(crate) default_priority: i32,
     pub(crate) shutdown_flag: Arc<AtomicBool>,
     pub(crate) result_ttl_ms: Option<i64>,
+    pub(crate) retention: Option<RetentionConfig>,
     pub(crate) scheduler_poll_interval_ms: u64,
     pub(crate) scheduler_reap_interval: u32,
     pub(crate) scheduler_cleanup_interval: u32,
@@ -61,6 +63,52 @@ pub struct PyQueue {
     pub(crate) workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowStorageBackend>,
 }
 
+/// Build a per-table [`RetentionConfig`] from a `{table: seconds}` map. An
+/// absent map is `None` (fall back to the legacy `result_ttl`); an explicitly
+/// empty map is `Some(default)` — the caller asked for retention and set no
+/// windows, which must disable them all, not fall back. Each value is validated
+/// non-negative and converted to milliseconds; an unknown table name is
+/// rejected so a typo never silently disables a window.
+fn build_retention_config(
+    retention: Option<std::collections::HashMap<String, i64>>,
+) -> PyResult<Option<RetentionConfig>> {
+    let Some(map) = retention else {
+        return Ok(None);
+    };
+    if map.is_empty() {
+        return Ok(Some(RetentionConfig::default()));
+    }
+
+    let to_ms = |secs: i64| -> PyResult<i64> {
+        if secs < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "retention windows must be non-negative",
+            ));
+        }
+        secs.checked_mul(1000).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("retention window too large, would overflow")
+        })
+    };
+
+    let mut config = RetentionConfig::default();
+    for (table, secs) in map {
+        let ms = to_ms(secs)?;
+        match table.as_str() {
+            "archived_jobs" => config.archived_jobs_ttl_ms = Some(ms),
+            "dead_letter" => config.dead_letter_ttl_ms = Some(ms),
+            "task_logs" => config.task_logs_ttl_ms = Some(ms),
+            "task_metrics" => config.task_metrics_ttl_ms = Some(ms),
+            "job_errors" => config.job_errors_ttl_ms = Some(ms),
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown retention table '{other}'"
+                )))
+            }
+        }
+    }
+    Ok(Some(config))
+}
+
 #[pymethods]
 #[allow(
     clippy::too_many_arguments,
@@ -69,7 +117,7 @@ pub struct PyQueue {
 )]
 impl PyQueue {
     #[new]
-    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200, scheduler_batch_size=1, namespace=None, push_dispatch=false, dlq_auto_retry_delay=None, dlq_auto_retry_max=1))]
+    #[pyo3(signature = (db_path=".taskito/taskito.db", workers=0, default_retry=3, default_timeout=300, default_priority=0, result_ttl=None, backend="sqlite", db_url=None, schema="taskito", pool_size=None, scheduler_poll_interval_ms=50, scheduler_reap_interval=100, scheduler_cleanup_interval=1200, scheduler_batch_size=1, namespace=None, push_dispatch=false, dlq_auto_retry_delay=None, dlq_auto_retry_max=1, retention=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         py: Python<'_>,
@@ -91,6 +139,7 @@ impl PyQueue {
         push_dispatch: bool,
         dlq_auto_retry_delay: Option<i64>,
         dlq_auto_retry_max: i32,
+        retention: Option<std::collections::HashMap<String, i64>>,
     ) -> PyResult<Self> {
         // A negative TTL inverts the cleanup cutoff: `now.saturating_sub(-ttl)`
         // lands in the future, so every archived job matches and auto-cleanup
@@ -122,6 +171,8 @@ impl PyQueue {
                 })
             })
             .transpose()?;
+
+        let retention = build_retention_config(retention)?;
 
         let dlq_auto_retry_delay_ms = dlq_auto_retry_delay
             .map(|s| {
@@ -194,6 +245,7 @@ impl PyQueue {
         };
 
         Ok(Self {
+            retention,
             storage,
             db_path: db_path.to_string(),
             num_workers,

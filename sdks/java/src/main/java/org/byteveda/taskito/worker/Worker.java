@@ -197,6 +197,7 @@ public final class Worker implements AutoCloseable {
         private WorkflowTracker tracker;
         private AutoscaleOptions autoscale;
         private MeshOptions mesh;
+        private Retention retention;
 
         Builder(
                 QueueBackend backend,
@@ -291,6 +292,12 @@ public final class Worker implements AutoCloseable {
 
         public Builder batchSize(int batchSize) {
             this.batchSize = batchSize;
+            return this;
+        }
+
+        /** Per-table retention windows for auto-cleanup. */
+        public Builder retention(Retention retention) {
+            this.retention = retention;
             return this;
         }
 
@@ -449,6 +456,9 @@ public final class Worker implements AutoCloseable {
             }
             if (!subscriptions.isEmpty()) {
                 options.put("subscriptions", encodeSubscriptions());
+            }
+            if (retention != null) {
+                options.put("retention", retention.toMap());
             }
             try {
                 return JSON.writeValueAsString(options);

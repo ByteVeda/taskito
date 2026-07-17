@@ -402,7 +402,7 @@ impl RedisStorage {
         Ok(true)
     }
 
-    pub fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+    pub fn purge_dead_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
         let mut conn = self.conn()?;
         let dlq_all = self.key(&["dlq", "all"]);
         let now = now_millis();
@@ -436,7 +436,7 @@ impl RedisStorage {
                                 .failed_at
                                 .checked_add(ttl)
                                 .is_some_and(|expiry| expiry <= now),
-                            None => entry.failed_at < global_cutoff_ms,
+                            None => global_cutoff_ms.is_some_and(|c| entry.failed_at < c),
                         };
                         if expired {
                             to_delete.push((id.clone(), entry.notes, entry.original_job_id));

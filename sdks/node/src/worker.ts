@@ -235,6 +235,7 @@ export class Worker {
       queueConfigs: applyQueueOverrides(buildQueueConfigs(queueLimits), new OverridesStore(queue)),
       resources: resources.isEmpty ? undefined : resources.names,
       mesh: run?.mesh,
+      retention: run?.retention,
     };
     const native = queue.runWorker(taskCallback, outcomeCallback, nativeOptions);
     // Lease the shared resource runtime only once the native worker actually

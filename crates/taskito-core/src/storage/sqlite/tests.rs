@@ -965,10 +965,31 @@ fn test_purge_completed_respects_per_job_ttl() {
     std::thread::sleep(std::time::Duration::from_millis(5));
 
     // global_cutoff = 0 so only the per-job TTL path can match.
-    storage.purge_completed_with_ttl(0).unwrap();
+    storage.purge_completed_with_ttl(Some(0)).unwrap();
 
     assert!(storage.get_job(&expired.id).unwrap().is_none());
     assert!(storage.get_job(&kept.id).unwrap().is_some());
+}
+
+#[test]
+fn test_purge_completed_with_ttl_covers_non_complete_statuses() {
+    // Retention bounds the whole archive, not just successes: a Dead archived
+    // row (from a DLQ move) must be purged by the global cutoff too.
+    let storage = test_storage();
+    let now = now_millis();
+
+    let job = storage.enqueue(make_job("dead_archived")).unwrap();
+    storage.dequeue("default", now + 1000, None).unwrap();
+    let running = storage.get_job(&job.id).unwrap().unwrap();
+    storage.move_to_dlq(&running, "boom", None).unwrap();
+
+    // The archived row is now status Dead. A future cutoff must delete it —
+    // before all-status retention, the Complete-only filter left it forever.
+    let removed = storage
+        .purge_completed_with_ttl(Some(now + 10_000))
+        .unwrap();
+    assert_eq!(removed, 1, "the Dead archived row must be purged");
+    assert!(storage.get_job(&job.id).unwrap().is_none());
 }
 
 #[test]
@@ -1340,7 +1361,7 @@ fn test_purge_dead_with_ttl_global() {
     storage.move_to_dlq(&running, "err", None).unwrap();
 
     // Cutoff in the future purges it
-    let purged = storage.purge_dead_with_ttl(now + 5000).unwrap();
+    let purged = storage.purge_dead_with_ttl(Some(now + 5000)).unwrap();
     assert_eq!(purged, 1);
 }
 
@@ -1360,7 +1381,7 @@ fn test_purge_dead_with_ttl_per_entry() {
     std::thread::sleep(std::time::Duration::from_millis(5));
 
     // Global cutoff in the past — only per-entry TTL should purge
-    let purged = storage.purge_dead_with_ttl(0).unwrap();
+    let purged = storage.purge_dead_with_ttl(Some(0)).unwrap();
     assert_eq!(purged, 1);
 }
 
@@ -1393,7 +1414,9 @@ fn test_purge_dead_with_ttl_drains_across_batches() {
         storage.move_to_dlq(&running, "boom", None).unwrap();
     }
 
-    let removed = storage.purge_dead_with_ttl(now_millis() + 10_000).unwrap();
+    let removed = storage
+        .purge_dead_with_ttl(Some(now_millis() + 10_000))
+        .unwrap();
     assert_eq!(removed, 550, "batched TTL purge must drain every dead row");
     assert!(storage.list_dead(1000, 0).unwrap().is_empty());
 }

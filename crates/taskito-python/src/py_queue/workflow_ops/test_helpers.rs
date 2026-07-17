@@ -51,6 +51,7 @@ pub(crate) fn make_test_pyqueue() -> PyQueue {
         default_priority: 0,
         shutdown_flag: Arc::new(AtomicBool::new(false)),
         result_ttl_ms: None,
+        retention: None,
         scheduler_poll_interval_ms: 50,
         scheduler_reap_interval: 100,
         scheduler_cleanup_interval: 1200,
