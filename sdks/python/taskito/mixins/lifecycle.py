@@ -336,8 +336,9 @@ class QueueLifecycleMixin:
                 for rid in reaped_ids:
                     self._emit_event(EventType.WORKER_OFFLINE, {"worker_id": rid})  # type: ignore[attr-defined]
                 # Dead workers gone from the registry → drop their ephemeral
-                # topic subscriptions on the same cadence.
-                self._inner.reap_ephemeral_subscriptions()
+                # topic subscriptions on the same cadence, under the same reaper
+                # election so only one worker sweeps.
+                self._inner.reap_ephemeral_subscriptions(worker_id)
             except Exception:
                 logger.debug("Heartbeat failed", exc_info=True)
 

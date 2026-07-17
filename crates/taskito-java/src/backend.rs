@@ -112,11 +112,8 @@ pub fn enqueue_batch_dedup(
 /// Callers prune dead workers first — a stale registry row keeps its
 /// subscriptions alive. Returns the count removed.
 pub fn reap_ephemeral_subscriptions(storage: &StorageBackend) -> Result<u64, BindingError> {
-    let live: Vec<String> = storage
-        .list_workers()?
-        .into_iter()
-        .map(|worker| worker.worker_id)
-        .collect();
+    let cutoff = taskito_core::storage::dead_worker_cutoff(taskito_core::job::now_millis());
+    let live = storage.list_live_worker_ids(cutoff)?;
     Ok(storage.reap_ephemeral_subscriptions(&live)?)
 }
 

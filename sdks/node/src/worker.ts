@@ -276,10 +276,10 @@ export class Worker {
       void queue.workerHeartbeat(native.id, snapshot && JSON.stringify(snapshot)).catch((error) => {
         log.debug(() => "worker heartbeat failed", error);
       });
-      // Same cadence: prune ephemeral subscriptions whose owner is gone.
-      // Per-tick failures are swallowed like the heartbeat's — the next
-      // beat retries.
-      void queue.reapEphemeralSubscriptions().catch((error) => {
+      // Same cadence, same reaper election: passing this worker's id gates the
+      // sweep so only the leader runs it. Per-tick failures are swallowed like
+      // the heartbeat's — the next beat retries.
+      void queue.reapEphemeralSubscriptions(native.id).catch((error) => {
         log.debug(() => "ephemeral subscription reap failed", error);
       });
       declareSubscriptions();

@@ -824,6 +824,11 @@ impl PyQueue {
 
     /// Update the heartbeat for a running worker. Called from Python every 5s.
     /// Returns a list of worker IDs that were reaped as dead.
+    ///
+    /// Only the elected reaper sweeps: every worker running this every 5s makes
+    /// the dead-worker scan O(N) per cluster, and each returns the same dead ids
+    /// so a `WORKER_OFFLINE` webhook fires N times per death. A non-leader
+    /// returns an empty list and emits nothing.
     #[pyo3(signature = (worker_id, resource_health=None))]
     pub fn worker_heartbeat(
         &self,
@@ -833,6 +838,23 @@ impl PyQueue {
         self.storage
             .heartbeat(worker_id, resource_health)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        let leading = taskito_core::storage::try_lead(
+            &self.storage,
+            taskito_core::storage::REAPER_LOCK,
+            worker_id,
+            taskito_core::storage::REAPER_LOCK_TTL_MS,
+        )
+        .unwrap_or_else(|e| {
+            // A backend error is not lost leadership — log it so a storage outage
+            // that stalls reaping is diagnosable, then skip this tick.
+            log::warn!("reaper election failed: {e}");
+            false
+        });
+        if !leading {
+            return Ok(Vec::new());
+        }
+
         let reaped = self.storage.reap_dead_workers().unwrap_or_default();
         Ok(reaped)
     }

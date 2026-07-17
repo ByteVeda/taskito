@@ -112,22 +112,32 @@ impl JsQueue {
         .map_err(join_to_napi_err)?
     }
 
-    /// Drop ephemeral subscriptions whose owning worker is gone. Prunes dead
-    /// worker rows first so the live set is current. Runs on the heartbeat
-    /// cadence. Returns the number of subscriptions removed.
+    /// Drop ephemeral subscriptions whose owning worker is gone. Runs on the
+    /// heartbeat cadence. Returns the number of subscriptions removed.
+    ///
+    /// Gated behind the same reaper election as the dead-worker reap when a
+    /// `workerId` is given: only the leader sweeps, so the scan runs once per
+    /// cluster. Without one (a manual call) it runs unconditionally. The live
+    /// set is filtered by heartbeat, so a stale worker is excluded whether or
+    /// not its registry row has been reaped yet.
     #[napi]
-    pub async fn reap_ephemeral_subscriptions(&self) -> Result<i64> {
+    pub async fn reap_ephemeral_subscriptions(&self, worker_id: Option<String>) -> Result<i64> {
         let storage = self.storage.clone();
         spawn_blocking(move || {
-            // Prune stale worker rows first so a crashed owner doesn't keep its
-            // ephemeral subscriptions alive; opportunistic like the heartbeat's.
-            let _ = storage.reap_dead_workers();
-            let live: Vec<String> = storage
-                .list_workers()
-                .map_err(to_napi_err)?
-                .into_iter()
-                .map(|worker| worker.worker_id)
-                .collect();
+            if let Some(owner) = worker_id {
+                let leading = taskito_core::storage::try_lead(
+                    &storage,
+                    taskito_core::storage::REAPER_LOCK,
+                    &owner,
+                    taskito_core::storage::REAPER_LOCK_TTL_MS,
+                )
+                .map_err(to_napi_err)?;
+                if !leading {
+                    return Ok(0);
+                }
+            }
+            let cutoff = taskito_core::storage::dead_worker_cutoff(now_millis());
+            let live = storage.list_live_worker_ids(cutoff).map_err(to_napi_err)?;
             storage
                 .reap_ephemeral_subscriptions(&live)
                 .map(|n| n as i64)

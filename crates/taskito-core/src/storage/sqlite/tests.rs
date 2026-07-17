@@ -458,6 +458,34 @@ fn test_reap_dead_workers_removes_stale_keeps_fresh() {
 }
 
 #[test]
+fn test_list_live_worker_ids_filters_stale() {
+    use diesel::prelude::*;
+
+    use crate::storage::schema::workers;
+
+    let storage = test_storage();
+    storage
+        .register_worker("stale", "default", None, None, None, 1, None, None, None)
+        .unwrap();
+    storage
+        .register_worker("fresh", "default", None, None, None, 1, None, None, None)
+        .unwrap();
+
+    let now = now_millis();
+    let mut conn = storage.conn().unwrap();
+    diesel::update(workers::table.filter(workers::worker_id.eq("stale")))
+        .set(workers::last_heartbeat.eq(now - crate::storage::DEAD_WORKER_THRESHOLD_MS - 1_000))
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let live = storage
+        .list_live_worker_ids(crate::storage::dead_worker_cutoff(now))
+        .unwrap();
+    assert_eq!(live, vec!["fresh".to_string()]);
+}
+
+#[test]
 fn test_stats() {
     let storage = test_storage();
     storage.enqueue(make_job("t1")).unwrap();

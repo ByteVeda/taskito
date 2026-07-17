@@ -410,6 +410,11 @@ impl JsQueue {
     /// Record a heartbeat for a running worker, carrying its current resource
     /// health as a JSON object (`null` clears it). Called from the JS shell
     /// every 5s. Returns the ids of dead workers reaped as a side effect.
+    ///
+    /// Only the elected reaper sweeps: every worker scanning for dead workers
+    /// every 5s is O(N) per cluster, and each returns the same dead ids so a
+    /// `WORKER_OFFLINE` event fires N times per death. A non-leader reaps
+    /// nothing and returns an empty list.
     #[napi]
     pub async fn worker_heartbeat(
         &self,
@@ -422,6 +427,21 @@ impl JsQueue {
                 .heartbeat(&worker_id, resource_health.as_deref())
                 .map_err(to_napi_err)?;
             // Reaping is opportunistic — a failure must not fail the heartbeat.
+            let leading = taskito_core::storage::try_lead(
+                &storage,
+                taskito_core::storage::REAPER_LOCK,
+                &worker_id,
+                taskito_core::storage::REAPER_LOCK_TTL_MS,
+            )
+            .unwrap_or_else(|e| {
+                // A backend error is not lost leadership — log it so a storage
+                // outage that stalls reaping is diagnosable, then skip this tick.
+                log::warn!("reaper election failed: {e}");
+                false
+            });
+            if !leading {
+                return Ok(Vec::new());
+            }
             Ok(storage.reap_dead_workers().unwrap_or_default())
         })
         .await
