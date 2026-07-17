@@ -100,6 +100,7 @@ class PyQueue:
         push_dispatch: bool = False,
         dlq_auto_retry_delay: int | None = None,
         dlq_auto_retry_max: int = 1,
+        retention: dict[str, int] | None = None,
     ) -> None: ...
     def request_shutdown(self) -> None: ...
     def enqueue(
