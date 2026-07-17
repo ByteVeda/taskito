@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -210,6 +211,40 @@ def test_async_executor_lifecycle() -> None:
     assert executor._loop is not None
     assert executor._loop.is_running()
     executor.stop()
+
+
+def test_stop_before_loop_runs_still_stops_the_thread() -> None:
+    """stop() racing start() must not leave the loop thread running forever.
+
+    Rebuilds start()'s state with the thread held before ``run_forever`` so the
+    loop is provably not running when stop() checks it — the race window that
+    ``is_running()`` misses and ``is_closed()`` does not.
+    """
+    from taskito.async_support.executor import AsyncTaskExecutor
+
+    executor = AsyncTaskExecutor(MagicMock(), {}, MagicMock(), max_concurrency=10)
+    executor._loop = asyncio.new_event_loop()
+    entered = threading.Event()
+
+    def held_run_forever() -> None:
+        entered.wait(timeout=10)
+        assert executor._loop is not None
+        executor._loop.run_forever()
+
+    executor._thread = threading.Thread(target=held_run_forever, daemon=True)
+    executor._thread.start()
+
+    stopper = threading.Thread(target=executor.stop)
+    stopper.start()
+    # Let stop() run its loop check while the loop is still not running, then
+    # release the thread into run_forever.
+    time.sleep(0.5)
+    entered.set()
+    stopper.join(timeout=10)
+
+    assert not stopper.is_alive(), "stop() never returned"
+    assert not executor._thread.is_alive(), "loop thread kept running forever"
+    assert executor._sender is None
 
 
 def test_stop_releases_result_sender() -> None:

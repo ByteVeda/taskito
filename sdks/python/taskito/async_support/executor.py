@@ -269,7 +269,10 @@ class AsyncTaskExecutor:
 
     def stop(self) -> None:
         """Stop the executor's event loop, join the thread, release the sender."""
-        if self._loop is not None and self._loop.is_running():
+        # `not is_closed()` rather than `is_running()`: right after `start()`
+        # the thread may not have entered `run_forever()` yet, and skipping the
+        # stop here would leave it running forever once it does.
+        if self._loop is not None and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread is not None:
             self._thread.join(timeout=5)
