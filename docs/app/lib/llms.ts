@@ -1,5 +1,10 @@
 import { SEARCH_DOCS, type SearchDoc } from "./search";
 
+// Prefix the deploy base (`/taskito` on Pages, empty locally) so emitted links
+// resolve under the project path, not the domain root.
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const docUrl = (id: string): string => `${BASE}${id}`;
+
 // Shared pages mount at one URL per SDK; list each only once, at its
 // canonical (default-SDK) URL, so the corpus carries no duplicates.
 function uniqueDocs(): SearchDoc[] {
@@ -12,7 +17,7 @@ function uniqueDocs(): SearchDoc[] {
 export function llmsIndex(): string {
   const lines = ["# Taskito documentation", ""];
   for (const doc of uniqueDocs()) {
-    lines.push(`- [${doc.title}](${doc.id})`);
+    lines.push(`- [${doc.title}](${docUrl(doc.id)})`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -20,7 +25,7 @@ export function llmsIndex(): string {
 /** Full corpus (title + stripped body per page) — the `/llms-full.txt` body. */
 export function llmsFull(): string {
   const blocks = uniqueDocs().map(
-    (doc) => `## ${doc.title}\nURL: ${doc.id}\n\n${doc.text}\n`,
+    (doc) => `## ${doc.title}\nURL: ${docUrl(doc.id)}\n\n${doc.text}\n`,
   );
   return `# Taskito documentation (full text)\n\n${blocks.join("\n---\n\n")}`;
 }
