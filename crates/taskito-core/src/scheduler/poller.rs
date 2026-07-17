@@ -93,6 +93,14 @@ impl Scheduler {
             return Ok(false);
         }
 
+        // A full channel means every dequeue would claim and then immediately
+        // roll back on `try_send` — pure storage churn. Wait for the pool to
+        // drain; `try_send` below still guards the race where it fills between
+        // this check and the hand-off.
+        if job_tx.capacity() == 0 {
+            return Ok(false);
+        }
+
         let job = match self
             .storage
             .dequeue_from(&active_queues, now, self.namespace.as_deref())?
@@ -126,8 +134,13 @@ impl Scheduler {
         // Size the batch to the worker pool's free capacity so we never claim
         // more jobs than the channel can immediately accept. `try_send` still
         // guards each hand-off, but pre-sizing avoids needless claim/rollback
-        // churn. Always claim at least one.
-        let mut budget = self.config.batch_size.min(job_tx.capacity().max(1));
+        // churn — including the full-channel case, where any claim would
+        // immediately roll back.
+        let capacity = job_tx.capacity();
+        if capacity == 0 {
+            return Ok(false);
+        }
+        let mut budget = self.config.batch_size.min(capacity);
 
         // Never claim past the in-flight cap: a drained batch that outran the
         // workers would mark the surplus `Running` and starve peer schedulers.
@@ -289,15 +302,20 @@ impl Scheduler {
         // must reverse the claim — otherwise the job sits in `Running` until
         // the stale-reaper times it out, which surfaces as a *timeout* in
         // metrics and middleware (wrong outcome for a job that never ran).
+        //
+        // Track BEFORE the send: once the job is in the channel its result can
+        // arrive on the drain thread at any moment, and a release that races
+        // ahead of the insert would leak the slot forever. Tracking first means
+        // the entry always exists by the time a result can be handled; the
+        // failure arms untrack what never left.
         let job_id = job.id.clone();
         let task_name = job.task_name.clone();
+        self.track_in_flight(&job_id, &task_name);
         match job_tx.try_send(job) {
-            Ok(()) => {
-                self.track_in_flight(&job_id, &task_name);
-                Ok(true)
-            }
+            Ok(()) => Ok(true),
             Err(TrySendError::Full(job)) => {
                 warn!("worker channel full; rescheduling job {job_id} (worker pool is behind)",);
+                self.untrack_in_flight(&job_id);
                 counts.release(&job.task_name, &job.queue);
                 self.rollback_claim_and_reschedule(
                     &job_id,
@@ -309,6 +327,7 @@ impl Scheduler {
                 warn!(
                     "worker channel closed; rescheduling job {job_id} (worker pool shutting down)",
                 );
+                self.untrack_in_flight(&job_id);
                 counts.release(&job.task_name, &job.queue);
                 self.rollback_claim_and_reschedule(
                     &job_id,

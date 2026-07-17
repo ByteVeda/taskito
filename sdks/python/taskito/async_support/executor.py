@@ -268,10 +268,19 @@ class AsyncTaskExecutor:
         return True
 
     def stop(self) -> None:
-        """Stop the executor's event loop and join the thread."""
-        if self._loop is not None and self._loop.is_running():
+        """Stop the executor's event loop, join the thread, release the sender."""
+        # `not is_closed()` rather than `is_running()`: right after `start()`
+        # the thread may not have entered `run_forever()` yet, and skipping the
+        # stop here would leave it running forever once it does.
+        if self._loop is not None and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():
                 logger.warning("Async executor thread did not stop within 5s timeout")
+                return
+        # The sender wraps a clone of the worker's result channel, and a pinned
+        # frame (a retained exception's traceback) can keep this object alive
+        # long past shutdown — so the release must not wait for GC. Only safe
+        # once the loop thread is down: no coroutine can report after that.
+        self._sender = None

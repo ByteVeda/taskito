@@ -212,6 +212,60 @@ def test_async_executor_lifecycle() -> None:
     executor.stop()
 
 
+def test_stop_before_loop_runs_still_stops_the_thread() -> None:
+    """stop() racing start() must not leave the loop thread running forever.
+
+    Rebuilds start()'s state with the thread held before ``run_forever`` so the
+    loop is provably not running when stop() checks it — the race window that
+    ``is_running()`` misses and ``is_closed()`` does not.
+    """
+    from taskito.async_support.executor import AsyncTaskExecutor
+
+    executor = AsyncTaskExecutor(MagicMock(), {}, MagicMock(), max_concurrency=10)
+    executor._loop = asyncio.new_event_loop()
+    entered = threading.Event()
+    checked = threading.Event()
+
+    def held_run_forever() -> None:
+        entered.wait(timeout=10)
+        assert executor._loop is not None
+        executor._loop.run_forever()
+
+    class JoinSignalsCheckDone(threading.Thread):
+        """stop() joins only after its loop check, so join marks the check done."""
+
+        def join(self, timeout: float | None = None) -> None:
+            checked.set()
+            super().join(timeout)
+
+    executor._thread = JoinSignalsCheckDone(target=held_run_forever, daemon=True)
+    executor._thread.start()
+
+    stopper = threading.Thread(target=executor.stop)
+    stopper.start()
+    # Release the thread into run_forever only once stop() has provably made
+    # its loop check against a not-yet-running loop.
+    assert checked.wait(timeout=10), "stop() never reached its join"
+    entered.set()
+    stopper.join(timeout=10)
+
+    assert not stopper.is_alive(), "stop() never returned"
+    assert not executor._thread.is_alive(), "loop thread kept running forever"
+    assert executor._sender is None
+
+
+def test_stop_releases_result_sender() -> None:
+    """stop() must drop the sender itself — a pinned frame can keep the
+    executor alive indefinitely, so the release cannot wait for GC."""
+    from taskito.async_support.executor import AsyncTaskExecutor
+
+    executor = AsyncTaskExecutor(MagicMock(), {}, MagicMock(), max_concurrency=10)
+    executor.start()
+    executor.stop()
+    assert executor._sender is None
+    assert executor._thread is not None and not executor._thread.is_alive()
+
+
 def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
     """Basic async task produces correct result via executor."""
     from taskito.async_support.executor import AsyncTaskExecutor
