@@ -476,14 +476,25 @@ fn spawn_lifecycle(
                     if let Err(e) = storage.heartbeat(&worker_id, None) {
                         log::warn!("[taskito-java] worker heartbeat failed: {e}");
                     }
-                    // Prune stale workers first: the ephemeral-subscription reap
-                    // treats every registry row as live, so a lingering dead
-                    // worker would keep its subscriptions receiving deliveries.
-                    if let Err(e) = storage.reap_dead_workers() {
-                        log::warn!("[taskito-java] dead-worker reap failed: {e}");
-                    }
-                    if let Err(e) = crate::backend::reap_ephemeral_subscriptions(&storage) {
-                        log::warn!("[taskito-java] ephemeral subscription reap failed: {e}");
+                    // Elect a single reaper: without this, every worker's 5s
+                    // sweep scans the whole registry, O(N) per cluster. The
+                    // non-leader skips both reaps. Dead-worker reap first so a
+                    // WORKER_OFFLINE peer sees the pruned registry; the ephemeral
+                    // reap already filters the live set by heartbeat.
+                    let leading = taskito_core::storage::try_lead(
+                        &storage,
+                        taskito_core::storage::REAPER_LOCK,
+                        &worker_id,
+                        taskito_core::storage::REAPER_LOCK_TTL_MS,
+                    )
+                    .unwrap_or(false);
+                    if leading {
+                        if let Err(e) = storage.reap_dead_workers() {
+                            log::warn!("[taskito-java] dead-worker reap failed: {e}");
+                        }
+                        if let Err(e) = crate::backend::reap_ephemeral_subscriptions(&storage) {
+                            log::warn!("[taskito-java] ephemeral subscription reap failed: {e}");
+                        }
                     }
                 }
             }

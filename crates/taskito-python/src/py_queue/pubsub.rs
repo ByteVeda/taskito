@@ -144,11 +144,33 @@ impl PyQueue {
 
     /// Drop ephemeral subscriptions whose owning worker is gone. Runs on the
     /// heartbeat cadence, after `reap_dead_workers` has pruned the registry.
-    pub fn reap_ephemeral_subscriptions(&self, py: Python<'_>) -> PyResult<u64> {
+    ///
+    /// Gated behind the same reaper election as the dead-worker reap: only the
+    /// leader sweeps, so the scan runs once per cluster rather than once per
+    /// worker. A non-leader returns 0. `worker_id` is the election owner.
+    #[pyo3(signature = (worker_id=None))]
+    pub fn reap_ephemeral_subscriptions(
+        &self,
+        py: Python<'_>,
+        worker_id: Option<&str>,
+    ) -> PyResult<u64> {
         let storage = &self.storage;
         // Release the GIL: the reap scans every worker + subscription, which
         // must not freeze other Python threads while it runs.
         py.detach(|| {
+            // An explicit owner elects a single reaper; without one (a manual
+            // admin call) the sweep runs unconditionally.
+            if let Some(owner) = worker_id {
+                let leading = taskito_core::storage::try_lead(
+                    storage,
+                    taskito_core::storage::REAPER_LOCK,
+                    owner,
+                    taskito_core::storage::REAPER_LOCK_TTL_MS,
+                )?;
+                if !leading {
+                    return Ok(0);
+                }
+            }
             let cutoff = taskito_core::storage::dead_worker_cutoff(now_millis());
             let live = storage.list_live_worker_ids(cutoff)?;
             storage.reap_ephemeral_subscriptions(&live)
