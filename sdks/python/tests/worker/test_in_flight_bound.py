@@ -45,6 +45,15 @@ def test_worker_does_not_claim_more_than_it_can_run(tmp_path: Path) -> None:
         thread.join(timeout=5)
 
     assert queue.stats().get("completed", 0) == job_count
-    # Two threads can be executing, plus one in hand-off; the bound is generous
-    # because the failure mode is the whole backlog going Running at once.
-    assert peak_running <= 8, f"worker claimed {peak_running} jobs but can only run 2"
+    # The failure mode guarded here is the whole backlog going Running at once
+    # (an uncapped scheduler claims all 40). The legitimate ceiling is the
+    # worker's pipeline, every stage of which is a bounded channel or pool:
+    #   2 executing + 4 job-channel + 1 held by the pool loop
+    #   + 4 result-channel + ~5 in one finalize batch (Running until committed)
+    # = 16. On native-async builds the in-flight cap is num_workers +
+    # async_concurrency, so for sync work the channel is the binding limiter,
+    # not the cap — observed peaks are 7-9, the rest is commit lag headroom.
+    assert peak_running <= 16, (
+        f"worker claimed {peak_running} jobs — pipeline ceiling is 16, "
+        f"anything near the {job_count}-job backlog is the S01 over-claim"
+    )
