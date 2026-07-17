@@ -297,7 +297,14 @@ mod tests {
 
     #[test]
     fn m0003_renders_partial_indexes_on_both_backends() {
-        for (backend, label) in [(Backend::Sqlite, "sqlite"), (Backend::Postgres, "postgres")] {
+        // The Postgres arm only renders under its feature — `render_schema`
+        // is `unreachable!()` otherwise.
+        let backends = [
+            (Backend::Sqlite, "sqlite"),
+            #[cfg(feature = "postgres")]
+            (Backend::Postgres, "postgres"),
+        ];
+        for (backend, label) in backends {
             let sql: Vec<String> = crate::storage::migrations::all()
                 .iter()
                 .find(|m| m.version() == "0003_retention_indexes")
