@@ -251,6 +251,64 @@ fn test_dead_letter_queue(s: &impl Storage) {
     assert!(!dead.is_empty());
 }
 
+fn test_purge_retention_covers_every_status(s: &impl Storage) {
+    // Retention bounds the whole archive, not just successes: a Dead archived
+    // row (from a DLQ move) must be purged by the global cutoff on every backend.
+    let q = "q-retain-status";
+    let job = s.enqueue(make_job(q, "retain_dead")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+    s.move_to_dlq(&running, "boom", None).unwrap();
+    assert_eq!(s.get_job(&job.id).unwrap().unwrap().status, JobStatus::Dead);
+
+    s.purge_completed_with_ttl(Some(now_millis() + 10_000))
+        .unwrap();
+    assert!(
+        s.get_job(&job.id).unwrap().is_none(),
+        "a Dead archived row must be purged by retention"
+    );
+}
+
+fn test_purge_retention_honors_per_entry_ttl(s: &impl Storage) {
+    // A per-entry TTL expires by its own window even with no global cutoff.
+    let q = "q-retain-perentry";
+    let mut nj = make_job(q, "retain_ttl");
+    nj.result_ttl_ms = Some(1);
+    let job = s.enqueue(nj).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&job.id, Some(vec![1])).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // Global cutoff None → only the per-entry TTL can purge this row.
+    s.purge_completed_with_ttl(None).unwrap();
+    assert!(
+        s.get_job(&job.id).unwrap().is_none(),
+        "a per-entry TTL must purge without a global cutoff"
+    );
+}
+
+fn test_purge_retention_keeps_job_errors(s: &impl Storage) {
+    // Per-table independence: retention-purging the archived job must leave its
+    // job_errors to their own window, not cascade-delete them.
+    let q = "q-retain-errors";
+    let job = s.enqueue(make_job(q, "retain_err")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.record_error(&job.id, 0, "boom").unwrap();
+    s.complete(&job.id, Some(vec![1])).unwrap();
+
+    s.purge_completed_with_ttl(Some(now_millis() + 10_000))
+        .unwrap();
+    assert!(
+        s.get_job(&job.id).unwrap().is_none(),
+        "the archived job is purged"
+    );
+    assert_eq!(
+        s.get_job_errors(&job.id).unwrap().len(),
+        1,
+        "job_errors have no window here, so they must survive"
+    );
+}
+
 fn test_dead_letter_by_task(s: &impl Storage) {
     let q = "q-dlq-by-task";
 
@@ -1279,6 +1337,9 @@ fn run_storage_tests(s: &impl Storage) {
     test_enqueue_unique_batch(s);
     test_dead_letter_queue(s);
     test_dead_letter_by_task(s);
+    test_purge_retention_covers_every_status(s);
+    test_purge_retention_honors_per_entry_ttl(s);
+    test_purge_retention_keeps_job_errors(s);
     test_delete_dead(s);
     test_list_dead_for_retry(s);
     test_progress_tracking(s);
