@@ -63,10 +63,12 @@ pub struct PyQueue {
     pub(crate) workflow_storage: std::sync::OnceLock<taskito_workflows::WorkflowStorageBackend>,
 }
 
-/// Build a per-table [`RetentionConfig`] from a `{table: seconds}` map, or
-/// `None` when the map is absent or empty. Each value is validated non-negative
-/// and converted to milliseconds; an unknown table name is rejected so a typo
-/// never silently disables a window.
+/// Build a per-table [`RetentionConfig`] from a `{table: seconds}` map. An
+/// absent map is `None` (fall back to the legacy `result_ttl`); an explicitly
+/// empty map is `Some(default)` — the caller asked for retention and set no
+/// windows, which must disable them all, not fall back. Each value is validated
+/// non-negative and converted to milliseconds; an unknown table name is
+/// rejected so a typo never silently disables a window.
 fn build_retention_config(
     retention: Option<std::collections::HashMap<String, i64>>,
 ) -> PyResult<Option<RetentionConfig>> {
@@ -74,7 +76,7 @@ fn build_retention_config(
         return Ok(None);
     };
     if map.is_empty() {
-        return Ok(None);
+        return Ok(Some(RetentionConfig::default()));
     }
 
     let to_ms = |secs: i64| -> PyResult<i64> {

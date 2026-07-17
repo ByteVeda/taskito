@@ -2123,6 +2123,22 @@ mod tests {
     }
 
     #[test]
+    fn test_explicit_empty_retention_overrides_legacy_ttl() {
+        // An explicitly empty retention map wins over result_ttl: the caller
+        // asked for retention and set no windows, which disables them all rather
+        // than falling back to the legacy queue-wide TTL.
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(3_600_000),
+            retention: Some(retention::RetentionConfig::default()),
+            ..SchedulerConfig::default()
+        };
+        assert!(
+            config.effective_retention().is_empty(),
+            "explicit empty retention disables all windows, ignoring result_ttl"
+        );
+    }
+
+    #[test]
     fn test_effective_retention_drops_negative_explicit_window() {
         // An explicit map is not validated by construction, so a negative field
         // must be sanitized before it can produce a future cutoff.

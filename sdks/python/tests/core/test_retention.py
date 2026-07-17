@@ -35,9 +35,14 @@ def test_retention_map_accepted(tmp_path: Path) -> None:
     assert queue is not None
 
 
-def test_empty_retention_accepted(tmp_path: Path) -> None:
-    # An all-None Retention is the same as passing nothing.
-    queue = Queue(db_path=str(tmp_path / "retention.db"), retention=Retention())
+def test_empty_retention_overrides_result_ttl(tmp_path: Path) -> None:
+    # An explicit empty Retention disables all windows, winning over result_ttl
+    # rather than falling back to it — the precedence contract.
+    queue = Queue(
+        db_path=str(tmp_path / "retention.db"),
+        result_ttl=3600,
+        retention=Retention(),
+    )
     assert queue is not None
 
 
