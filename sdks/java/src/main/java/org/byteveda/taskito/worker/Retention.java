@@ -57,7 +57,11 @@ public final class Retention {
         private Integer taskMetrics;
         private Integer jobErrors;
 
-        /** Terminal jobs, every status — the artifact read after completion. */
+        /**
+         * Terminal jobs — the artifact read after completion. Covers every
+         * status on SQLite/Postgres; the Redis backend currently purges only
+         * {@code Complete} archive rows.
+         */
         public Builder archivedJobs(int seconds) {
             this.archivedJobs = seconds;
             return this;

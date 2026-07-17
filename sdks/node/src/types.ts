@@ -236,7 +236,10 @@ export interface WorkerRunOptions {
  * still carry its own per-entry `resultTtl`, honored independently.
  */
 export interface RetentionOptions {
-  /** Terminal jobs, every status — the artifact read after completion. */
+  /**
+   * Terminal jobs — the artifact read after completion. Covers every status on
+   * SQLite/Postgres; the Redis backend currently purges only `Complete` rows.
+   */
   archivedJobs?: number;
   /** Dead-letter entries — the only copy of a payload a human must act on. */
   deadLetter?: number;
