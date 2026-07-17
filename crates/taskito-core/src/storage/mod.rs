@@ -36,6 +36,54 @@ pub const DEAD_WORKER_THRESHOLD_MS: i64 = 30_000;
 /// threshold keeps one full failure-detection cycle of headroom.
 pub const EPHEMERAL_SUBSCRIPTION_GRACE_MS: i64 = 2 * DEAD_WORKER_THRESHOLD_MS;
 
+/// The `last_heartbeat` at or below which a worker is dead. One definition so
+/// the three backends' reaps and the orphan-recovery filter can never drift on
+/// the arithmetic (they already share [`DEAD_WORKER_THRESHOLD_MS`]).
+pub fn dead_worker_cutoff(now: i64) -> i64 {
+    now.saturating_sub(DEAD_WORKER_THRESHOLD_MS)
+}
+
+/// Cluster-wide election lock for the dead-worker reap. Not namespaced — the
+/// `workers` table is cluster-global, so one worker per cluster should reap.
+pub const REAPER_LOCK: &str = "taskito:reaper";
+
+/// Reaper lease. Longer than the 5s heartbeat cadence so the leader keeps the
+/// lock across ticks, but under [`DEAD_WORKER_THRESHOLD_MS`] so a dead leader's
+/// lock frees before the workers it should have reaped go stale-plus-a-cycle.
+pub const REAPER_LOCK_TTL_MS: i64 = 15_000;
+
+/// Cluster-wide election lock for the retention purge. Separate from the reaper
+/// lock so a long cleanup sweep can never starve worker-death detection.
+pub const RETENTION_LOCK: &str = "taskito:retention";
+
+/// Retention lease. Must exceed the worst-case sweep, which the per-tick batch
+/// cap bounds — the first sweep after a retention default flip is the long one.
+pub const RETENTION_LOCK_TTL_MS: i64 = 300_000;
+
+/// Hold `lock_name` as `owner_id` for another `ttl_ms`, renewing first and only
+/// taking it when free. Returns whether this caller now holds it.
+///
+/// The renew-then-acquire order is required, not stylistic: `acquire_lock`
+/// refuses a live lock even for its current owner (it only checks
+/// `expires_at > now`), so an acquire-first caller would lose leadership every
+/// time its own lock is still valid and thrash on each expiry.
+///
+/// This is best-effort load shedding, not mutual exclusion — the callers
+/// (dead-worker reap, retention purge) are idempotent predicate deletes that
+/// re-evaluate fresh state, so a lost lock degrades to the pre-election
+/// behaviour of every worker doing the sweep, never to incorrectness.
+pub fn try_lead(
+    storage: &impl Storage,
+    lock_name: &str,
+    owner_id: &str,
+    ttl_ms: i64,
+) -> Result<bool> {
+    if storage.extend_lock(lock_name, owner_id, ttl_ms)? {
+        return Ok(true);
+    }
+    storage.acquire_lock(lock_name, owner_id, ttl_ms)
+}
+
 // ── Shared helper types ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
@@ -1458,5 +1506,55 @@ impl Storage for StorageBackend {
     }
     fn list_settings(&self) -> Result<std::collections::HashMap<String, String>> {
         delegate!(self, list_settings)
+    }
+}
+
+#[cfg(test)]
+mod election_tests {
+    use super::*;
+    use crate::storage::sqlite::SqliteStorage;
+
+    fn store() -> SqliteStorage {
+        SqliteStorage::in_memory().unwrap()
+    }
+
+    #[test]
+    fn try_lead_takes_a_free_lock() {
+        let s = store();
+        assert!(try_lead(&s, "l", "worker-a", 10_000).unwrap());
+    }
+
+    #[test]
+    fn try_lead_renews_its_own_live_lock() {
+        // The load-bearing test: `acquire_lock` refuses a live lock even for its
+        // owner, so an acquire-first `try_lead` would return false on the second
+        // call and hand leadership to nobody. Renew-then-acquire keeps it.
+        let s = store();
+        assert!(try_lead(&s, "l", "worker-a", 10_000).unwrap());
+        assert!(
+            try_lead(&s, "l", "worker-a", 10_000).unwrap(),
+            "the current leader must keep the lock across ticks"
+        );
+    }
+
+    #[test]
+    fn try_lead_refuses_a_lock_held_by_another() {
+        let s = store();
+        assert!(try_lead(&s, "l", "worker-a", 10_000).unwrap());
+        assert!(
+            !try_lead(&s, "l", "worker-b", 10_000).unwrap(),
+            "a live lock held by another owner is not stealable"
+        );
+    }
+
+    #[test]
+    fn try_lead_takes_an_expired_lock() {
+        let s = store();
+        assert!(try_lead(&s, "l", "worker-a", 1).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(
+            try_lead(&s, "l", "worker-b", 10_000).unwrap(),
+            "an expired lock is stealable by a new owner"
+        );
     }
 }
