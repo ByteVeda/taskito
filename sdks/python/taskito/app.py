@@ -162,7 +162,8 @@ class Queue(
             default_timeout: Default task timeout in seconds.
             default_priority: Default task priority (higher = more urgent).
             result_ttl: Auto-cleanup completed/dead jobs older than this many
-                seconds. Must be non-negative. None disables auto-cleanup.
+                seconds. Must be non-negative. None disables queue-wide
+                auto-cleanup; per-job TTLs are still honored.
             serializer: Serializer for task payloads. Defaults to SmartSerializer
                 (msgpack with cloudpickle fallback).
             codec: Global payload codec chain — a single :class:`PayloadCodec`
