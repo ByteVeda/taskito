@@ -278,7 +278,11 @@ impl Scheduler {
             shutdown: Arc::new(Notify::new()),
             paused_cache: Mutex::new((HashSet::new(), Instant::now())),
             namespace,
-            claim_owner: poller::SCHEDULER_CLAIM_OWNER.to_string(),
+            // Instance-unique by default so two un-configured schedulers sharing
+            // storage can't both win the retention election (`try_lead` renews a
+            // matching owner's lease). Bindings override this with the real
+            // `worker_id` via `set_claim_owner`.
+            claim_owner: format!("{}-{}", poller::SCHEDULER_CLAIM_OWNER, uuid::Uuid::now_v7()),
             in_flight: Mutex::new(InFlight::default()),
             dispatch_wake: Arc::new(Notify::new()),
             #[cfg(feature = "push-dispatch")]
@@ -298,6 +302,11 @@ impl Scheduler {
     /// `register_worker`/`heartbeat`.
     pub fn set_claim_owner(&mut self, worker_id: String) {
         self.claim_owner = worker_id;
+    }
+
+    /// The execution-claim / retention-election owner for this scheduler.
+    pub fn claim_owner(&self) -> &str {
+        &self.claim_owner
     }
 
     /// Free in-flight slots remaining before the dispatch cap, or `None` when
@@ -802,7 +811,7 @@ mod tests {
         }
         let claims = scheduler
             .storage
-            .list_claims_by_worker("scheduler")
+            .list_claims_by_worker(scheduler.claim_owner())
             .unwrap();
         assert!(!claims.contains(&s0.id) && !claims.contains(&s1.id));
     }
@@ -1089,7 +1098,7 @@ mod tests {
 
         let claims = scheduler
             .storage
-            .list_claims_by_worker("scheduler")
+            .list_claims_by_worker(scheduler.claim_owner())
             .unwrap();
         assert_eq!(
             claims.len(),
@@ -1150,7 +1159,7 @@ mod tests {
 
         let claims = scheduler
             .storage
-            .list_claims_by_worker("scheduler")
+            .list_claims_by_worker(scheduler.claim_owner())
             .unwrap();
         assert_eq!(
             claims.len(),
@@ -1374,7 +1383,7 @@ mod tests {
 
         let claims = scheduler
             .storage
-            .list_claims_by_worker("scheduler")
+            .list_claims_by_worker(scheduler.claim_owner())
             .unwrap();
         assert_eq!(
             claims.len(),
@@ -1576,7 +1585,7 @@ mod tests {
 
         let claims = scheduler
             .storage
-            .list_claims_by_worker("scheduler")
+            .list_claims_by_worker(scheduler.claim_owner())
             .unwrap();
         assert!(
             !claims.contains(&job.id),
@@ -1610,7 +1619,7 @@ mod tests {
 
         let claims = scheduler
             .storage
-            .list_claims_by_worker("scheduler")
+            .list_claims_by_worker(scheduler.claim_owner())
             .unwrap();
         assert!(!claims.contains(&job.id));
 
@@ -2002,6 +2011,58 @@ mod tests {
         assert!(
             scheduler.storage.get_job(&job.id).unwrap().is_some(),
             "a non-leader must not purge"
+        );
+    }
+
+    #[test]
+    fn test_two_default_schedulers_do_not_both_lead_retention() {
+        // Regression: the default claim_owner used to be the shared constant
+        // "scheduler", so two un-configured schedulers on one store both renewed
+        // the same lease and both ran retention. Unique default owners fix it.
+        // in_memory() pins a single-connection pool, so the clone shares the DB.
+        let storage = crate::storage::sqlite::SqliteStorage::in_memory().unwrap();
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(1),
+            ..SchedulerConfig::default()
+        };
+        let s1 = Scheduler::new(
+            StorageBackend::Sqlite(storage.clone()),
+            vec!["default".to_string()],
+            config.clone(),
+            None,
+        );
+        let s2 = Scheduler::new(
+            StorageBackend::Sqlite(storage),
+            vec!["default".to_string()],
+            config,
+            None,
+        );
+
+        assert_ne!(
+            s1.claim_owner(),
+            s2.claim_owner(),
+            "each scheduler must have a distinct default owner"
+        );
+
+        let lead1 = crate::storage::try_lead(
+            s1.storage(),
+            crate::storage::RETENTION_LOCK,
+            s1.claim_owner(),
+            crate::storage::RETENTION_LOCK_TTL_MS,
+        )
+        .unwrap();
+        let lead2 = crate::storage::try_lead(
+            s2.storage(),
+            crate::storage::RETENTION_LOCK,
+            s2.claim_owner(),
+            crate::storage::RETENTION_LOCK_TTL_MS,
+        )
+        .unwrap();
+
+        assert!(lead1, "the first scheduler takes the free lease");
+        assert!(
+            !lead2,
+            "the second must not also win — a shared owner would let it renew"
         );
     }
 
