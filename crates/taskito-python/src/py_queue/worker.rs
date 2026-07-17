@@ -845,7 +845,12 @@ impl PyQueue {
             worker_id,
             taskito_core::storage::REAPER_LOCK_TTL_MS,
         )
-        .unwrap_or(false);
+        .unwrap_or_else(|e| {
+            // A backend error is not lost leadership — log it so a storage outage
+            // that stalls reaping is diagnosable, then skip this tick.
+            log::warn!("reaper election failed: {e}");
+            false
+        });
         if !leading {
             return Ok(Vec::new());
         }

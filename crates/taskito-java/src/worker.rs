@@ -487,7 +487,12 @@ fn spawn_lifecycle(
                         &worker_id,
                         taskito_core::storage::REAPER_LOCK_TTL_MS,
                     )
-                    .unwrap_or(false);
+                    .unwrap_or_else(|e| {
+                        // A backend error is not lost leadership — log it so a
+                        // storage outage that stalls reaping is diagnosable.
+                        log::warn!("[taskito-java] reaper election failed: {e}");
+                        false
+                    });
                     if leading {
                         if let Err(e) = storage.reap_dead_workers() {
                             log::warn!("[taskito-java] dead-worker reap failed: {e}");

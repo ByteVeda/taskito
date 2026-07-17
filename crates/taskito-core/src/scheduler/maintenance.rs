@@ -145,7 +145,12 @@ impl Scheduler {
             &self.claim_owner,
             RETENTION_LOCK_TTL_MS,
         )
-        .unwrap_or(false);
+        .unwrap_or_else(|e| {
+            // A backend error is not the same as losing the election — surface it
+            // so a storage outage that stalls retention is diagnosable, not silent.
+            warn!("retention election failed: {e}");
+            false
+        });
         if !leading {
             return Ok(());
         }
