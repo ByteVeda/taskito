@@ -1,0 +1,94 @@
+package org.byteveda.taskito.worker;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * Per-table retention windows for auto-cleanup, in seconds. An unset field
+ * keeps that table forever. A job or DLQ entry can still carry its own
+ * per-entry {@code resultTtl}, honored independently of these windows.
+ */
+public final class Retention {
+
+    private final Integer archivedJobs;
+    private final Integer deadLetter;
+    private final Integer taskLogs;
+    private final Integer taskMetrics;
+    private final Integer jobErrors;
+
+    private Retention(Builder builder) {
+        this.archivedJobs = builder.archivedJobs;
+        this.deadLetter = builder.deadLetter;
+        this.taskLogs = builder.taskLogs;
+        this.taskMetrics = builder.taskMetrics;
+        this.jobErrors = builder.jobErrors;
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /** The set windows as a camelCase map for the native worker options. */
+    Map<String, Object> toMap() {
+        Map<String, Object> map = new LinkedHashMap<>();
+        if (archivedJobs != null) {
+            map.put("archivedJobs", archivedJobs);
+        }
+        if (deadLetter != null) {
+            map.put("deadLetter", deadLetter);
+        }
+        if (taskLogs != null) {
+            map.put("taskLogs", taskLogs);
+        }
+        if (taskMetrics != null) {
+            map.put("taskMetrics", taskMetrics);
+        }
+        if (jobErrors != null) {
+            map.put("jobErrors", jobErrors);
+        }
+        return map;
+    }
+
+    /** Fluent builder; every window is optional. */
+    public static final class Builder {
+        private Integer archivedJobs;
+        private Integer deadLetter;
+        private Integer taskLogs;
+        private Integer taskMetrics;
+        private Integer jobErrors;
+
+        /** Terminal jobs, every status — the artifact read after completion. */
+        public Builder archivedJobs(int seconds) {
+            this.archivedJobs = seconds;
+            return this;
+        }
+
+        /** Dead-letter entries — the only copy of a payload a human must act on. */
+        public Builder deadLetter(int seconds) {
+            this.deadLetter = seconds;
+            return this;
+        }
+
+        /** Task logs — highest write volume, lowest per-row value. */
+        public Builder taskLogs(int seconds) {
+            this.taskLogs = seconds;
+            return this;
+        }
+
+        /** Task metrics — feeds the dashboard charts. */
+        public Builder taskMetrics(int seconds) {
+            this.taskMetrics = seconds;
+            return this;
+        }
+
+        /** Per-attempt job errors. */
+        public Builder jobErrors(int seconds) {
+            this.jobErrors = seconds;
+            return this;
+        }
+
+        public Retention build() {
+            return new Retention(this);
+        }
+    }
+}

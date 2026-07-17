@@ -76,6 +76,9 @@ fn start_worker(
     if let Some(batch) = options.batch_size {
         config.batch_size = batch.max(1) as usize;
     }
+    if let Some(retention) = &options.retention {
+        config.retention = retention.to_config();
+    }
     // Bound in-flight work to the worker's execution parallelism so a
     // drain-until-empty poll can't claim more than the pool runs and starve
     // peer workers sharing the database.
