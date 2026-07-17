@@ -3,7 +3,9 @@ use log::{error, info, warn};
 use crate::error::Result;
 use crate::job::{now_millis, NewJob};
 use crate::periodic::{next_cron_time, next_cron_time_tz};
-use crate::storage::{dead_worker_cutoff, Storage};
+use crate::storage::{
+    dead_worker_cutoff, try_lead, Storage, RETENTION_LOCK, RETENTION_LOCK_TTL_MS,
+};
 
 use super::{JobResult, Scheduler};
 
@@ -132,6 +134,22 @@ impl Scheduler {
     /// deletes (and the side tables, which have no per-entry TTL) only run when a
     /// global `result_ttl` is set.
     pub(super) fn auto_cleanup(&self) -> Result<()> {
+        // Elect a single cleaner: every worker runs this tick, but the purge
+        // sweeps are cluster-wide, so N workers draining the same tables is
+        // wasted work — and on a retention-default upgrade, N simultaneous
+        // multi-million-row backfills. A separate lock from the reaper so a long
+        // sweep can't starve worker-death detection.
+        let leading = try_lead(
+            &self.storage,
+            RETENTION_LOCK,
+            &self.claim_owner,
+            RETENTION_LOCK_TTL_MS,
+        )
+        .unwrap_or(false);
+        if !leading {
+            return Ok(());
+        }
+
         let now = now_millis();
         let global_cutoff = self.global_retention_cutoff(now);
         // `i64::MIN` disables the methods' global-cutoff branch (`failed_at < MIN`

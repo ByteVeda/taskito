@@ -1967,6 +1967,45 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_cleanup_skips_when_another_holds_the_lock() {
+        // A peer holds the retention lock, so this scheduler is not the elected
+        // cleaner and must purge nothing even though its own TTL has expired.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(1),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+
+        let job = scheduler.storage.enqueue(make_job("gated")).unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap();
+        scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+
+        // A different owner takes the lock first; the scheduler's own owner
+        // ("scheduler") then loses the election.
+        assert!(scheduler
+            .storage
+            .acquire_lock(
+                crate::storage::RETENTION_LOCK,
+                "another-worker",
+                crate::storage::RETENTION_LOCK_TTL_MS
+            )
+            .unwrap());
+
+        scheduler.auto_cleanup().unwrap();
+
+        assert!(
+            scheduler.storage.get_job(&job.id).unwrap().is_some(),
+            "a non-leader must not purge"
+        );
+    }
+
+    #[test]
     fn test_auto_cleanup_ignores_negative_result_ttl() {
         // A negative TTL inverts the cutoff — `now.saturating_sub(-ttl)` lands in
         // the future, matching every archived row. The bindings reject it, so the
