@@ -114,25 +114,11 @@ impl Scheduler {
         Ok(())
     }
 
-    /// The queue-wide retention cutoff, or `None` when retention is disabled.
-    ///
-    /// A negative TTL is treated as unset: `now - (-ttl)` lands in the future and
-    /// would match every row, purging the whole history. The bindings reject one
-    /// up front, so this only keeps a bad config from being destructive.
-    fn global_retention_cutoff(&self, now: i64) -> Option<i64> {
-        let ttl = self.config.result_ttl_ms?;
-        if ttl < 0 {
-            warn!("ignoring negative result_ttl_ms ({ttl}); retention stays disabled");
-            return None;
-        }
-        Some(now.saturating_sub(ttl))
-    }
-
-    /// Purge expired completed/dead jobs and their side data. The per-entry TTL
-    /// purges run every tick — a job or DLQ entry can carry its own `result_ttl`
-    /// even when no queue-wide `result_ttl` is configured. The global-cutoff
-    /// deletes (and the side tables, which have no per-entry TTL) only run when a
-    /// global `result_ttl` is set.
+    /// Purge expired rows in each history table per its retention window. The
+    /// per-entry TTL sweeps inside the archived/dead purges run every tick — a
+    /// job or DLQ entry can carry its own `result_ttl` even when its table has no
+    /// window. A table with no window only runs that per-entry sweep; the side
+    /// tables (no per-entry TTL) are skipped entirely.
     pub(super) fn auto_cleanup(&self) -> Result<()> {
         // Elect a single cleaner: every worker runs this tick, but the purge
         // sweeps are cluster-wide, so N workers draining the same tables is
@@ -156,25 +142,31 @@ impl Scheduler {
         }
 
         let now = now_millis();
-        let global_cutoff = self.global_retention_cutoff(now);
-        // `i64::MIN` disables the methods' global-cutoff branch (`failed_at < MIN`
-        // never matches), leaving only the per-entry TTL deletes.
-        let ttl_cutoff = global_cutoff.unwrap_or(i64::MIN);
+        let windows = self.config.effective_retention();
+        // A window `ttl` becomes the cutoff `now - ttl`; an absent window is a
+        // `None` cutoff, which the fused purges read as "per-entry only".
+        let cutoff = |ttl: Option<i64>| ttl.map(|t| now.saturating_sub(t));
 
         let completed = sweep("purge_completed_with_ttl", || {
-            self.storage.purge_completed_with_ttl(ttl_cutoff)
+            self.storage
+                .purge_completed_with_ttl(cutoff(windows.archived_jobs_ttl_ms))
         });
         let dead = sweep("purge_dead_with_ttl", || {
-            self.storage.purge_dead_with_ttl(ttl_cutoff)
+            self.storage
+                .purge_dead_with_ttl(cutoff(windows.dead_letter_ttl_ms))
         });
 
-        let (errors, metrics, logs) = match global_cutoff {
-            Some(cutoff) => (
-                sweep("purge_job_errors", || self.storage.purge_job_errors(cutoff)),
-                sweep("purge_metrics", || self.storage.purge_metrics(cutoff)),
-                sweep("purge_task_logs", || self.storage.purge_task_logs(cutoff)),
-            ),
-            None => (0, 0, 0),
+        let errors = match cutoff(windows.job_errors_ttl_ms) {
+            Some(c) => sweep("purge_job_errors", || self.storage.purge_job_errors(c)),
+            None => 0,
+        };
+        let metrics = match cutoff(windows.task_metrics_ttl_ms) {
+            Some(c) => sweep("purge_metrics", || self.storage.purge_metrics(c)),
+            None => 0,
+        };
+        let logs = match cutoff(windows.task_logs_ttl_ms) {
+            Some(c) => sweep("purge_task_logs", || self.storage.purge_task_logs(c)),
+            None => 0,
         };
 
         if completed + dead + errors + metrics + logs > 0 {

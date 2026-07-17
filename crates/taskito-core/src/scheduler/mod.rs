@@ -2162,6 +2162,48 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_cleanup_purges_only_configured_tables() {
+        // A per-table window must purge only its own table. Set logs to expire
+        // but keep archived jobs forever, then assert the completed job survives.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            retention: Some(retention::RetentionConfig {
+                task_logs_ttl_ms: Some(1),
+                ..retention::RetentionConfig::default()
+            }),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+
+        let job = scheduler
+            .storage
+            .enqueue(make_job("keeps_archived"))
+            .unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap();
+        scheduler
+            .storage
+            .write_task_log(&job.id, "keeps_archived", "INFO", "msg", None)
+            .unwrap();
+        scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+
+        scheduler.auto_cleanup().unwrap();
+
+        assert!(
+            scheduler.storage.get_job(&job.id).unwrap().is_some(),
+            "archived_jobs has no window, so the completed job must survive"
+        );
+        assert!(
+            scheduler.storage.get_task_logs(&job.id).unwrap().is_empty(),
+            "task_logs has a 1ms window, so its rows must be purged"
+        );
+    }
+
+    #[test]
     fn test_auto_cleanup_per_entry_ttl_without_global() {
         // With no queue-wide result_ttl, a per-job result_ttl must still be
         // honored (the per-entry purge runs every tick).

@@ -1707,23 +1707,28 @@ macro_rules! impl_diesel_job_ops {
             /// Purge completed jobs respecting per-job result_ttl_ms. Terminal
             /// jobs live in `archived_jobs`, so the purge targets that table.
             /// Batched like [`Self::purge_completed`]; the global-TTL and
-            /// per-job-TTL rows are swept in two independent bounded loops.
-            pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
+            /// per-job-TTL rows are swept in two independent bounded loops. A
+            /// `None` cutoff runs only the per-entry sweep — a job can carry its
+            /// own TTL even when the queue keeps everything.
+            pub fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
                 let now = now_millis();
 
                 // Rows with no per-job TTL fall back to the global cutoff.
-                let global = $crate::storage::diesel_common::purge::drain_batches(|| {
-                    self.write_transaction(|conn| {
-                        let ids: Vec<String> = archived_jobs::table
-                            .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
-                            .filter(archived_jobs::result_ttl_ms.is_null())
-                            .filter(archived_jobs::completed_at.lt(global_cutoff_ms))
-                            .select(archived_jobs::id)
-                            .limit(Self::PURGE_BATCH)
-                            .load(conn)?;
-                        Ok(Self::purge_archived_id_batch(conn, &ids)?)
-                    })
-                })?;
+                let global = match global_cutoff_ms {
+                    Some(cutoff) => $crate::storage::diesel_common::purge::drain_batches(|| {
+                        self.write_transaction(|conn| {
+                            let ids: Vec<String> = archived_jobs::table
+                                .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
+                                .filter(archived_jobs::result_ttl_ms.is_null())
+                                .filter(archived_jobs::completed_at.lt(cutoff))
+                                .select(archived_jobs::id)
+                                .limit(Self::PURGE_BATCH)
+                                .load(conn)?;
+                            Ok(Self::purge_archived_id_batch(conn, &ids)?)
+                        })
+                    })?,
+                    None => 0,
+                };
 
                 // Rows with a per-job TTL: `completed_at + result_ttl_ms < now`.
                 // The check is pushed into SQL, selecting only the id so no
