@@ -1,6 +1,7 @@
 mod maintenance;
 mod poller;
 mod result_handler;
+pub mod retention;
 #[cfg(feature = "push-dispatch")]
 pub mod wake;
 
@@ -33,8 +34,13 @@ pub struct SchedulerConfig {
     pub periodic_check_interval: u32,
     /// Auto-cleanup old jobs every N iterations.
     pub cleanup_interval: u32,
-    /// TTL for job results in milliseconds. None means no auto-cleanup.
+    /// Deprecated queue-wide result TTL in milliseconds. Superseded by
+    /// [`SchedulerConfig::retention`]; kept so existing callers still work — it
+    /// maps onto every table. `None` means no queue-wide auto-cleanup.
     pub result_ttl_ms: Option<i64>,
+    /// Per-table retention windows. When set, wins over `result_ttl_ms`. `None`
+    /// falls back to the legacy `result_ttl_ms` mapping.
+    pub retention: Option<retention::RetentionConfig>,
     /// Maximum number of jobs claimed per dispatch round. `1` (the default)
     /// preserves the original one-job-per-round-trip behavior; values above
     /// `1` enable batch claiming for higher throughput.
@@ -63,11 +69,29 @@ impl Default for SchedulerConfig {
             periodic_check_interval: 60,
             cleanup_interval: 1200,
             result_ttl_ms: None,
+            retention: None,
             batch_size: 1,
             max_in_flight: None,
             dlq_auto_retry_delay_ms: None,
             dlq_auto_retry_max: 1,
             dlq_auto_retry_interval: 60,
+        }
+    }
+}
+
+impl SchedulerConfig {
+    /// The retention windows this config actually applies. An explicit
+    /// `retention` wins; otherwise the deprecated queue-wide `result_ttl_ms`
+    /// maps onto every table, which is exactly what it used to mean. A negative
+    /// legacy TTL is dropped — it would invert the cutoff into the future and
+    /// match every row (the bindings reject one, this is defense in depth).
+    pub fn effective_retention(&self) -> retention::RetentionConfig {
+        if let Some(retention) = &self.retention {
+            return retention.clone();
+        }
+        match self.result_ttl_ms {
+            Some(ttl) if ttl >= 0 => retention::RetentionConfig::uniform(ttl),
+            _ => retention::RetentionConfig::default(),
         }
     }
 }
@@ -2012,6 +2036,48 @@ mod tests {
             scheduler.storage.get_job(&job.id).unwrap().is_some(),
             "a non-leader must not purge"
         );
+    }
+
+    #[test]
+    fn test_effective_retention_maps_legacy_result_ttl() {
+        // The legacy knob means "every table, same window" — the mapping must be
+        // lossless so existing Queue(result_ttl=...) callers keep byte-identical
+        // behavior.
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(3_600_000),
+            ..SchedulerConfig::default()
+        };
+        assert_eq!(
+            config.effective_retention(),
+            retention::RetentionConfig::uniform(3_600_000)
+        );
+    }
+
+    #[test]
+    fn test_effective_retention_prefers_explicit_map() {
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(3_600_000),
+            retention: Some(retention::RetentionConfig {
+                task_logs_ttl_ms: Some(1000),
+                ..retention::RetentionConfig::default()
+            }),
+            ..SchedulerConfig::default()
+        };
+        let eff = config.effective_retention();
+        assert_eq!(eff.task_logs_ttl_ms, Some(1000));
+        assert_eq!(
+            eff.archived_jobs_ttl_ms, None,
+            "the map wins, not the legacy TTL"
+        );
+    }
+
+    #[test]
+    fn test_effective_retention_drops_negative_legacy_ttl() {
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(-5_000),
+            ..SchedulerConfig::default()
+        };
+        assert!(config.effective_retention().is_empty());
     }
 
     #[test]
