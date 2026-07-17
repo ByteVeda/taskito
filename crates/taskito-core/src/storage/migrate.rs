@@ -296,6 +296,33 @@ mod tests {
     }
 
     #[test]
+    fn m0003_renders_partial_indexes_on_both_backends() {
+        // The Postgres arm only renders under its feature — `render_schema`
+        // is `unreachable!()` otherwise.
+        let backends = [
+            (Backend::Sqlite, "sqlite"),
+            #[cfg(feature = "postgres")]
+            (Backend::Postgres, "postgres"),
+        ];
+        for (backend, label) in backends {
+            let sql: Vec<String> = crate::storage::migrations::all()
+                .iter()
+                .find(|m| m.version() == "0003_retention_indexes")
+                .expect("m0003 registered")
+                .up(backend)
+                .iter()
+                .map(|s| s.sql.clone())
+                .collect();
+            let joined = sql.join("\n");
+            assert!(joined.contains("idx_dead_letter_ttl"), "{label}: {joined}");
+            assert!(
+                joined.contains("WHERE") && joined.contains("result_ttl_ms"),
+                "{label}: partial predicate must render: {joined}"
+            );
+        }
+    }
+
+    #[test]
     fn fresh_db_applies_all_migrations_and_is_idempotent() {
         let mut conn = mem();
         let migrations = crate::storage::migrations::all();

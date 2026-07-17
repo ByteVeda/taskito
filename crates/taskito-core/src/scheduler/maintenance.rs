@@ -13,6 +13,18 @@ const PERIODIC_DEFAULT_MAX_RETRIES: i32 = 3;
 /// Default timeout for periodic tasks (ms).
 const PERIODIC_DEFAULT_TIMEOUT_MS: i64 = 300_000;
 
+/// Run one retention sweep, logging and continuing on failure.
+///
+/// The five purges are independent, so one table's error must never abort the
+/// rest — that would leave every table after it unpurged for as long as the
+/// failure persists, silently disabling retention where it was configured.
+fn sweep(label: &str, purge: impl FnOnce() -> Result<u64>) -> u64 {
+    purge().unwrap_or_else(|e| {
+        warn!("{label} failed: {e}");
+        0
+    })
+}
+
 impl Scheduler {
     pub(super) fn reap_stale(&self) -> Result<()> {
         let now = now_millis();
@@ -132,22 +144,19 @@ impl Scheduler {
         // never matches), leaving only the per-entry TTL deletes.
         let ttl_cutoff = global_cutoff.unwrap_or(i64::MIN);
 
-        let completed = self.storage.purge_completed_with_ttl(ttl_cutoff)?;
-        let dead = self.storage.purge_dead_with_ttl(ttl_cutoff)?;
+        let completed = sweep("purge_completed_with_ttl", || {
+            self.storage.purge_completed_with_ttl(ttl_cutoff)
+        });
+        let dead = sweep("purge_dead_with_ttl", || {
+            self.storage.purge_dead_with_ttl(ttl_cutoff)
+        });
 
         let (errors, metrics, logs) = match global_cutoff {
-            Some(cutoff) => {
-                let errors = self.storage.purge_job_errors(cutoff)?;
-                let metrics = self.storage.purge_metrics(cutoff).unwrap_or_else(|e| {
-                    warn!("purge_metrics failed: {e}");
-                    0
-                });
-                let logs = self.storage.purge_task_logs(cutoff).unwrap_or_else(|e| {
-                    warn!("purge_task_logs failed: {e}");
-                    0
-                });
-                (errors, metrics, logs)
-            }
+            Some(cutoff) => (
+                sweep("purge_job_errors", || self.storage.purge_job_errors(cutoff)),
+                sweep("purge_metrics", || self.storage.purge_metrics(cutoff)),
+                sweep("purge_task_logs", || self.storage.purge_task_logs(cutoff)),
+            ),
             None => (0, 0, 0),
         };
 
