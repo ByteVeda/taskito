@@ -16,8 +16,7 @@ class Retention:
 
     archived_jobs: int | None = None
     """Terminal jobs — the artifact ``get_job`` reads after completion. Covers
-    every status on SQLite/Postgres; the Redis backend currently purges only
-    ``Complete`` archive rows."""
+    every terminal status, not just successes."""
     dead_letter: int | None = None
     """Dead-letter entries. The only copy of a payload a human must act on."""
     task_logs: int | None = None

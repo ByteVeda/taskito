@@ -110,9 +110,8 @@ pub trait Storage: Send + Sync + Clone {
     fn get_job(&self, id: &str) -> Result<Option<Job>>;
     fn stats(&self) -> Result<QueueStats>;
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64>;
-    /// Purge archived jobs by the global/per-entry TTL. On Diesel this covers
-    /// every terminal status; the Redis backend still walks the Complete-status
-    /// index only, pending its ZSET-drain rewrite.
+    /// Purge archived jobs by the global/per-entry TTL, covering every terminal
+    /// status on all backends.
     fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64>;
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>>;
     /// Running jobs whose execution-claim owner is not in `live_owner_ids` (the

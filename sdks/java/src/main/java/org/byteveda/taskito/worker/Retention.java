@@ -66,11 +66,7 @@ public final class Retention {
             return seconds;
         }
 
-        /**
-         * Terminal jobs — the artifact read after completion. Covers every
-         * status on SQLite/Postgres; the Redis backend currently purges only
-         * {@code Complete} archive rows.
-         */
+        /** Terminal jobs, every terminal status — the artifact read after completion. */
         public Builder archivedJobs(int seconds) {
             this.archivedJobs = nonNegative(seconds, "archivedJobs");
             return this;
