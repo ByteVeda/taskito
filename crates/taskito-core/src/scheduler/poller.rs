@@ -289,15 +289,20 @@ impl Scheduler {
         // must reverse the claim — otherwise the job sits in `Running` until
         // the stale-reaper times it out, which surfaces as a *timeout* in
         // metrics and middleware (wrong outcome for a job that never ran).
+        //
+        // Track BEFORE the send: once the job is in the channel its result can
+        // arrive on the drain thread at any moment, and a release that races
+        // ahead of the insert would leak the slot forever. Tracking first means
+        // the entry always exists by the time a result can be handled; the
+        // failure arms untrack what never left.
         let job_id = job.id.clone();
         let task_name = job.task_name.clone();
+        self.track_in_flight(&job_id, &task_name);
         match job_tx.try_send(job) {
-            Ok(()) => {
-                self.track_in_flight(&job_id, &task_name);
-                Ok(true)
-            }
+            Ok(()) => Ok(true),
             Err(TrySendError::Full(job)) => {
                 warn!("worker channel full; rescheduling job {job_id} (worker pool is behind)",);
+                self.untrack_in_flight(&job_id);
                 counts.release(&job.task_name, &job.queue);
                 self.rollback_claim_and_reschedule(
                     &job_id,
@@ -309,6 +314,7 @@ impl Scheduler {
                 warn!(
                     "worker channel closed; rescheduling job {job_id} (worker pool shutting down)",
                 );
+                self.untrack_in_flight(&job_id);
                 counts.release(&job.task_name, &job.queue);
                 self.rollback_claim_and_reschedule(
                     &job_id,

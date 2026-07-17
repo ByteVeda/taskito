@@ -324,6 +324,19 @@ impl Scheduler {
         }
     }
 
+    /// Forget a job that was tracked but never reached the worker channel
+    /// (dispatch rollback). Unlike [`Self::release_in_flight`] this never wakes
+    /// the poller — the slot was returned by the same thread that took it, and
+    /// the send just failed, so an immediate retry would only spin.
+    fn untrack_in_flight(&self, job_id: &str) {
+        if self.config.max_in_flight.is_some() {
+            self.in_flight
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(job_id);
+        }
+    }
+
     /// How many of this task's jobs this worker currently has in flight.
     fn task_in_flight(&self, task_name: &str) -> usize {
         self.in_flight
@@ -1178,6 +1191,70 @@ mod tests {
         assert_eq!(
             dispatched_after, 1,
             "a freed slot admits exactly one more job"
+        );
+    }
+
+    #[test]
+    fn test_full_channel_rollback_does_not_leak_in_flight_slot() {
+        // A job that fails the channel hand-off must not keep its in-flight
+        // slot: a leaked entry shrinks the dispatch cap for the life of the
+        // worker and keeps the drain-exit signal from ever settling.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            max_in_flight: Some(8),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+        scheduler.storage.enqueue(make_job("full_chan")).unwrap();
+
+        // Capacity-1 channel pre-filled with a sentinel so the hand-off fails.
+        let (tx, _rx) = make_channel(1);
+        let sentinel = scheduler.storage.enqueue(make_job("sentinel")).unwrap();
+        tx.try_send(sentinel).expect("pre-fill should succeed");
+
+        assert!(!scheduler.tick_dispatch(&tx), "hand-off must not succeed");
+        assert_eq!(
+            scheduler.in_flight_remaining(),
+            Some(8),
+            "failed hand-off must not occupy an in-flight slot"
+        );
+    }
+
+    #[test]
+    fn test_closed_channel_rollback_untracks_in_flight() {
+        // A job tracked before a failed hand-off must be untracked by the
+        // rollback, or the slot leaks and `in_flight_settled` can never turn
+        // true again — every later shutdown would wait out the drain timeout.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            max_in_flight: Some(8),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+        scheduler.storage.enqueue(make_job("closed_chan")).unwrap();
+
+        let (tx, rx) = make_channel(16);
+        drop(rx);
+        assert!(
+            !scheduler.tick_dispatch(&tx),
+            "closed channel must not count as a dispatch"
+        );
+
+        assert_eq!(
+            scheduler.in_flight_remaining(),
+            Some(8),
+            "rolled-back job must not occupy an in-flight slot"
+        );
+        let pending = scheduler
+            .storage
+            .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
+            .unwrap();
+        assert_eq!(
+            pending.len(),
+            1,
+            "job returned to Pending for another worker"
         );
     }
 
