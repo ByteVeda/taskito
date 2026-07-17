@@ -82,12 +82,13 @@ impl Default for SchedulerConfig {
 impl SchedulerConfig {
     /// The retention windows this config actually applies. An explicit
     /// `retention` wins; otherwise the deprecated queue-wide `result_ttl_ms`
-    /// maps onto every table, which is exactly what it used to mean. A negative
-    /// legacy TTL is dropped — it would invert the cutoff into the future and
-    /// match every row (the bindings reject one, this is defense in depth).
+    /// maps onto every table, which is exactly what it used to mean. Negative
+    /// windows are dropped on both paths — one would invert the cutoff into the
+    /// future and match every row (the bindings reject them; this is defense in
+    /// depth for a directly-constructed config).
     pub fn effective_retention(&self) -> retention::RetentionConfig {
         if let Some(retention) = &self.retention {
-            return retention.clone();
+            return retention.sanitized();
         }
         match self.result_ttl_ms {
             Some(ttl) if ttl >= 0 => retention::RetentionConfig::uniform(ttl),
@@ -2119,6 +2120,26 @@ mod tests {
             ..SchedulerConfig::default()
         };
         assert!(config.effective_retention().is_empty());
+    }
+
+    #[test]
+    fn test_effective_retention_drops_negative_explicit_window() {
+        // An explicit map is not validated by construction, so a negative field
+        // must be sanitized before it can produce a future cutoff.
+        let config = SchedulerConfig {
+            retention: Some(retention::RetentionConfig {
+                archived_jobs_ttl_ms: Some(-1),
+                task_logs_ttl_ms: Some(1000),
+                ..retention::RetentionConfig::default()
+            }),
+            ..SchedulerConfig::default()
+        };
+        let eff = config.effective_retention();
+        assert_eq!(
+            eff.archived_jobs_ttl_ms, None,
+            "a negative window is dropped"
+        );
+        assert_eq!(eff.task_logs_ttl_ms, Some(1000), "a valid window is kept");
     }
 
     #[test]

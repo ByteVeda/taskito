@@ -41,4 +41,18 @@ impl RetentionConfig {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+
+    /// A copy with every negative window dropped to `None`. A negative window
+    /// would invert the cutoff into the future (`now - (-ttl)`) and match every
+    /// row, so it is treated as "no window" rather than a mass delete.
+    pub fn sanitized(&self) -> Self {
+        let keep = |ttl: Option<i64>| ttl.filter(|t| *t >= 0);
+        Self {
+            archived_jobs_ttl_ms: keep(self.archived_jobs_ttl_ms),
+            dead_letter_ttl_ms: keep(self.dead_letter_ttl_ms),
+            task_logs_ttl_ms: keep(self.task_logs_ttl_ms),
+            task_metrics_ttl_ms: keep(self.task_metrics_ttl_ms),
+            job_errors_ttl_ms: keep(self.job_errors_ttl_ms),
+        }
+    }
 }
