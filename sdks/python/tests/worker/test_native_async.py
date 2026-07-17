@@ -212,6 +212,18 @@ def test_async_executor_lifecycle() -> None:
     executor.stop()
 
 
+def test_stop_releases_result_sender() -> None:
+    """stop() must drop the sender itself — a pinned frame can keep the
+    executor alive indefinitely, so the release cannot wait for GC."""
+    from taskito.async_support.executor import AsyncTaskExecutor
+
+    executor = AsyncTaskExecutor(MagicMock(), {}, MagicMock(), max_concurrency=10)
+    executor.start()
+    executor.stop()
+    assert executor._sender is None
+    assert executor._thread is not None and not executor._thread.is_alive()
+
+
 def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
     """Basic async task produces correct result via executor."""
     from taskito.async_support.executor import AsyncTaskExecutor
