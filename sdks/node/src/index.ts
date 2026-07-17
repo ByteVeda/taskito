@@ -96,6 +96,7 @@ export type {
   QueueLimits,
   RateLimit,
   ResultOptions,
+  RetentionOptions,
   Stats,
   StreamOptions,
   SubscriberOptions,

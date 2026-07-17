@@ -95,6 +95,9 @@ pub fn start_worker(
     if let Some(batch) = options.batch_size {
         config.batch_size = batch.max(1) as usize;
     }
+    if let Some(retention) = &options.retention {
+        config.retention = retention.to_config();
+    }
     // Bound in-flight work to what this worker will actually run, so it never
     // claims more and strands the surplus Running while peers sharing the
     // database skip it. Left unbounded when unset, so an existing worker does

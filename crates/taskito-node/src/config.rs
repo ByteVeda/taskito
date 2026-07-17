@@ -183,6 +183,33 @@ pub struct MeshWorkerConfig {
 }
 
 /// Options for a running worker. `queues` defaults to `["default"]`.
+/// Per-table retention windows in seconds. An unset field keeps that table
+/// forever. `u32` seconds caps at ~136 years and cannot be negative.
+#[napi(object)]
+#[derive(Default)]
+pub struct RetentionInput {
+    pub archived_jobs: Option<u32>,
+    pub dead_letter: Option<u32>,
+    pub task_logs: Option<u32>,
+    pub task_metrics: Option<u32>,
+    pub job_errors: Option<u32>,
+}
+
+impl RetentionInput {
+    /// Build a core [`RetentionConfig`], or `None` when no window is set.
+    pub fn to_config(&self) -> Option<taskito_core::scheduler::retention::RetentionConfig> {
+        let to_ms = |secs: Option<u32>| secs.map(|s| s as i64 * 1000);
+        let config = taskito_core::scheduler::retention::RetentionConfig {
+            archived_jobs_ttl_ms: to_ms(self.archived_jobs),
+            dead_letter_ttl_ms: to_ms(self.dead_letter),
+            task_logs_ttl_ms: to_ms(self.task_logs),
+            task_metrics_ttl_ms: to_ms(self.task_metrics),
+            job_errors_ttl_ms: to_ms(self.job_errors),
+        };
+        (!config.is_empty()).then_some(config)
+    }
+}
+
 #[napi(object)]
 #[derive(Default)]
 pub struct WorkerOptions {
@@ -201,4 +228,29 @@ pub struct WorkerOptions {
     pub resources: Option<Vec<String>>,
     /// Opt-in decentralized mesh overlay (requires the `mesh` build feature).
     pub mesh: Option<MeshWorkerConfig>,
+    /// Per-table retention windows for auto-cleanup.
+    pub retention: Option<RetentionInput>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retention_to_config_converts_seconds_to_ms() {
+        let input = RetentionInput {
+            archived_jobs: Some(7),
+            task_logs: Some(3),
+            ..RetentionInput::default()
+        };
+        let config = input.to_config().expect("some windows set");
+        assert_eq!(config.archived_jobs_ttl_ms, Some(7_000));
+        assert_eq!(config.task_logs_ttl_ms, Some(3_000));
+        assert_eq!(config.dead_letter_ttl_ms, None);
+    }
+
+    #[test]
+    fn retention_to_config_is_none_when_empty() {
+        assert!(RetentionInput::default().to_config().is_none());
+    }
 }
