@@ -92,6 +92,16 @@ impl PyQueue {
         dlq_auto_retry_delay: Option<i64>,
         dlq_auto_retry_max: i32,
     ) -> PyResult<Self> {
+        // A negative TTL inverts the cleanup cutoff: `now.saturating_sub(-ttl)`
+        // lands in the future, so every archived job matches and auto-cleanup
+        // deletes the whole history.
+        if let Some(ttl) = result_ttl {
+            if ttl < 0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "result_ttl must be non-negative",
+                ));
+            }
+        }
         if let Some(delay) = dlq_auto_retry_delay {
             if delay < 0 {
                 return Err(pyo3::exceptions::PyValueError::new_err(
@@ -104,6 +114,14 @@ impl PyQueue {
                 "dlq_auto_retry_max must be non-negative",
             ));
         }
+
+        let result_ttl_ms = result_ttl
+            .map(|s| {
+                s.checked_mul(1000).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("result_ttl too large, would overflow")
+                })
+            })
+            .transpose()?;
 
         let dlq_auto_retry_delay_ms = dlq_auto_retry_delay
             .map(|s| {
@@ -183,7 +201,7 @@ impl PyQueue {
             default_timeout,
             default_priority,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
-            result_ttl_ms: result_ttl.map(|s| s * 1000),
+            result_ttl_ms,
             scheduler_poll_interval_ms,
             scheduler_reap_interval,
             scheduler_cleanup_interval,
