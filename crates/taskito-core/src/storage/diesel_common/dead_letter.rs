@@ -289,15 +289,23 @@ macro_rules! impl_diesel_dead_letter_ops {
             }
 
             /// Purge dead letter entries older than the given timestamp.
+            ///
+            /// Deletes in bounded batches, each its own txn — see
+            /// `diesel_common::purge`.
             pub fn purge_dead(&self, older_than_ms: i64) -> Result<u64> {
-                let mut conn = self.conn()?;
-
-                let affected = diesel::delete(
-                    dead_letter::table.filter(dead_letter::failed_at.lt(older_than_ms)),
-                )
-                .execute(&mut conn)?;
-
-                Ok(affected as u64)
+                $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
+                        let ids: Vec<String> = dead_letter::table
+                            .filter(dead_letter::failed_at.lt(older_than_ms))
+                            .select(dead_letter::id)
+                            .limit($crate::storage::diesel_common::purge::PURGE_BATCH)
+                            .load(conn)?;
+                        let affected =
+                            diesel::delete(dead_letter::table.filter(dead_letter::id.eq_any(&ids)))
+                                .execute(conn)?;
+                        Ok(affected as u64)
+                    })
+                })
             }
 
             /// Delete a single dead letter entry. Returns true if it existed.
@@ -309,28 +317,51 @@ macro_rules! impl_diesel_dead_letter_ops {
             }
 
             /// Purge dead letter entries respecting per-entry TTL overrides.
+            ///
+            /// Deletes in bounded batches, each its own txn — see
+            /// `diesel_common::purge`.
             pub fn purge_dead_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
                 let now = now_millis();
-                let mut conn = self.conn()?;
 
-                let global_count = diesel::delete(
-                    dead_letter::table
-                        .filter(dead_letter::result_ttl_ms.is_null())
-                        .filter(dead_letter::failed_at.lt(global_cutoff_ms)),
-                )
-                .execute(&mut conn)?;
+                // Entries with no per-entry TTL fall back to the global cutoff.
+                let global = $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
+                        let ids: Vec<String> = dead_letter::table
+                            .filter(dead_letter::result_ttl_ms.is_null())
+                            .filter(dead_letter::failed_at.lt(global_cutoff_ms))
+                            .select(dead_letter::id)
+                            .limit($crate::storage::diesel_common::purge::PURGE_BATCH)
+                            .load(conn)?;
+                        let affected =
+                            diesel::delete(dead_letter::table.filter(dead_letter::id.eq_any(&ids)))
+                                .execute(conn)?;
+                        Ok(affected as u64)
+                    })
+                })?;
 
-                let per_entry_count = diesel::delete(
-                    dead_letter::table
-                        .filter(dead_letter::result_ttl_ms.is_not_null())
-                        .filter(
-                            (dead_letter::failed_at + dead_letter::result_ttl_ms.assume_not_null())
+                // Entries with a per-entry TTL: `failed_at + result_ttl_ms < now`.
+                // Served by the partial `idx_dead_letter_ttl` — no ordinary index
+                // covers an expression over two columns.
+                let per_entry = $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
+                        let ids: Vec<String> = dead_letter::table
+                            .filter(dead_letter::result_ttl_ms.is_not_null())
+                            .filter(
+                                (dead_letter::failed_at
+                                    + dead_letter::result_ttl_ms.assume_not_null())
                                 .lt(now),
-                        ),
-                )
-                .execute(&mut conn)?;
+                            )
+                            .select(dead_letter::id)
+                            .limit($crate::storage::diesel_common::purge::PURGE_BATCH)
+                            .load(conn)?;
+                        let affected =
+                            diesel::delete(dead_letter::table.filter(dead_letter::id.eq_any(&ids)))
+                                .execute(conn)?;
+                        Ok(affected as u64)
+                    })
+                })?;
 
-                Ok((global_count + per_entry_count) as u64)
+                Ok(global + per_entry)
             }
 
             /// List DLQ entries eligible for auto-retry.

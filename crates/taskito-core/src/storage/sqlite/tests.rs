@@ -1292,6 +1292,40 @@ fn test_purge_dead_with_ttl_per_entry() {
 }
 
 #[test]
+fn test_purge_dead_drains_across_batches() {
+    // 550 DLQ rows exceed one PURGE_BATCH (500): the batched loop must drain
+    // every row across iterations, not stop after the first batch.
+    let storage = test_storage();
+    let now = now_millis();
+    for _ in 0..550 {
+        let job = storage.enqueue(make_job("dead_batch")).unwrap();
+        storage.dequeue("default", now + 1000, None).unwrap();
+        let running = storage.get_job(&job.id).unwrap().unwrap();
+        storage.move_to_dlq(&running, "boom", None).unwrap();
+    }
+
+    let removed = storage.purge_dead(now_millis() + 10_000).unwrap();
+    assert_eq!(removed, 550, "batched purge must drain every dead row");
+    assert!(storage.list_dead(1000, 0).unwrap().is_empty());
+}
+
+#[test]
+fn test_purge_dead_with_ttl_drains_across_batches() {
+    let storage = test_storage();
+    let now = now_millis();
+    for _ in 0..550 {
+        let job = storage.enqueue(make_job("dead_ttl_batch")).unwrap();
+        storage.dequeue("default", now + 1000, None).unwrap();
+        let running = storage.get_job(&job.id).unwrap().unwrap();
+        storage.move_to_dlq(&running, "boom", None).unwrap();
+    }
+
+    let removed = storage.purge_dead_with_ttl(now_millis() + 10_000).unwrap();
+    assert_eq!(removed, 550, "batched TTL purge must drain every dead row");
+    assert!(storage.list_dead(1000, 0).unwrap().is_empty());
+}
+
+#[test]
 fn test_list_dead_for_retry() {
     let storage = test_storage();
     let now = now_millis();
