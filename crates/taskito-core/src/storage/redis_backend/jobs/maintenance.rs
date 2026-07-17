@@ -31,6 +31,11 @@ impl RedisStorage {
     /// window (`cascade_diagnostics = false`).
     pub fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
         let now = now_millis();
+        // `archived:expiry` only holds rows archived since this feature shipped.
+        // Index any pre-existing per-entry-TTL rows a batch at a time, so a
+        // no-global-cutoff purge can find them (the global drain below re-checks
+        // per-entry TTLs, but does not run when there is no cutoff).
+        self.backfill_archived_expiry()?;
         // Per-entry TTLs first: the expiry index is scored by expiry time, so a
         // score drain finds the expired rows without scanning the archive. This
         // also catches short-TTL rows too recent for the global window below.
@@ -41,6 +46,55 @@ impl RedisStorage {
             count += self.drain_archived_below(cutoff, now)?;
         }
         Ok(count)
+    }
+
+    /// Index one batch of pre-existing archived rows that carry a per-entry TTL
+    /// but predate the `archived:expiry` index. Resumable via a stored cursor
+    /// and bounded to one `ZSCAN` batch per call, so the one-time migration
+    /// never blocks a maintenance tick. Sets a done marker when the scan wraps.
+    fn backfill_archived_expiry(&self) -> Result<()> {
+        let mut conn = self.conn()?;
+        let done_key = self.key(&["archived", "expiry", "backfilled"]);
+        let done: Option<String> = conn.get(&done_key).map_err(map_err)?;
+        if done.is_some() {
+            return Ok(());
+        }
+
+        let all_key = self.key(&["archived", "all"]);
+        let expiry_key = self.key(&["archived", "expiry"]);
+        let cursor_key = self.key(&["archived", "expiry", "cursor"]);
+        let cursor: u64 = conn
+            .get::<_, Option<u64>>(&cursor_key)
+            .map_err(map_err)?
+            .unwrap_or(0);
+
+        let (next, flat): (u64, Vec<String>) = redis::cmd("ZSCAN")
+            .arg(&all_key)
+            .arg(cursor)
+            .arg("COUNT")
+            .arg(SCAN_BATCH)
+            .query(&mut conn)
+            .map_err(map_err)?;
+
+        // ZSCAN returns a flat [member, score, member, score, ...] list.
+        for id in flat.iter().step_by(2) {
+            if let Some(job) = self.load_archived_job(&mut conn, id)? {
+                if let Some(ttl) = job.result_ttl_ms {
+                    if let Some(expiry) = job.completed_at.and_then(|c| c.checked_add(ttl)) {
+                        conn.zadd::<_, _, _, ()>(&expiry_key, id, expiry as f64)
+                            .map_err(map_err)?;
+                    }
+                }
+            }
+        }
+
+        if next == 0 {
+            conn.set::<_, _, ()>(&done_key, "1").map_err(map_err)?;
+            conn.del::<_, ()>(&cursor_key).map_err(map_err)?;
+        } else {
+            conn.set::<_, _, ()>(&cursor_key, next).map_err(map_err)?;
+        }
+        Ok(())
     }
 
     /// Delete archived jobs whose per-entry TTL has expired, draining the

@@ -1624,6 +1624,46 @@ fn redis_storage_tests() {
     redis_move_to_dlq_skips_already_archived(&storage);
     redis_purge_dead_drains_across_batches(&storage);
     redis_keyset_pages_a_large_tie_bucket(&storage);
+    redis_backfills_expiry_for_preupgrade_rows(&storage);
+}
+
+/// A per-entry-TTL row archived before the `archived:expiry` index existed must
+/// still expire: the purge backfills the index for it. Simulated by archiving a
+/// per-entry row, then stripping its expiry entry and the done marker so it
+/// looks pre-upgrade.
+#[cfg(feature = "redis")]
+fn redis_backfills_expiry_for_preupgrade_rows(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-backfill";
+    let mut nj = make_job(q, "backfill_ttl");
+    nj.result_ttl_ms = Some(1);
+    let job = s.enqueue(nj).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&job.id, Some(vec![1])).unwrap();
+
+    let prefix = s.prefix();
+    let mut conn = s.conn().unwrap();
+    // Strip the expiry index entry and the backfill marker so the row looks like
+    // it predates the index.
+    let _: () = redis::cmd("ZREM")
+        .arg(format!("{prefix}archived:expiry"))
+        .arg(&job.id)
+        .query(&mut conn)
+        .unwrap();
+    let _: () = redis::cmd("DEL")
+        .arg(format!("{prefix}archived:expiry:backfilled"))
+        .arg(format!("{prefix}archived:expiry:cursor"))
+        .query(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // No global cutoff: only the backfilled expiry index can purge this row.
+    s.purge_completed_with_ttl(None).unwrap();
+    assert!(
+        s.get_job(&job.id).unwrap().is_none(),
+        "a pre-upgrade per-entry TTL row must be backfilled and purged"
+    );
 }
 
 /// S12: `cancel_pending_by_queue` archives a whole batch under a single `now`,
