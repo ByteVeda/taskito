@@ -1955,15 +1955,23 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// Purge job errors older than the given timestamp.
+            ///
+            /// Deletes in bounded batches, each its own txn — see
+            /// `diesel_common::purge`.
             pub fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64> {
-                let mut conn = self.conn()?;
-
-                let affected = diesel::delete(
-                    job_errors::table.filter(job_errors::failed_at.lt(older_than_ms)),
-                )
-                .execute(&mut conn)?;
-
-                Ok(affected as u64)
+                $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
+                        let ids: Vec<String> = job_errors::table
+                            .filter(job_errors::failed_at.lt(older_than_ms))
+                            .select(job_errors::id)
+                            .limit(Self::PURGE_BATCH)
+                            .load(conn)?;
+                        let affected =
+                            diesel::delete(job_errors::table.filter(job_errors::id.eq_any(&ids)))
+                                .execute(conn)?;
+                        Ok(affected as u64)
+                    })
+                })
             }
         }
     };

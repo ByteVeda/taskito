@@ -95,12 +95,24 @@ macro_rules! impl_diesel_log_ops {
             }
 
             /// Purge old log records.
+            ///
+            /// Deletes in bounded batches, each its own txn — see
+            /// `diesel_common::purge`. This is the highest-volume purge (N rows
+            /// per job), so it is the one an unbounded DELETE hurts most.
             pub fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64> {
-                let mut conn = self.conn()?;
-                let affected =
-                    diesel::delete(task_logs::table.filter(task_logs::logged_at.lt(older_than_ms)))
-                        .execute(&mut conn)?;
-                Ok(affected as u64)
+                $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
+                        let ids: Vec<String> = task_logs::table
+                            .filter(task_logs::logged_at.lt(older_than_ms))
+                            .select(task_logs::id)
+                            .limit($crate::storage::diesel_common::purge::PURGE_BATCH)
+                            .load(conn)?;
+                        let affected =
+                            diesel::delete(task_logs::table.filter(task_logs::id.eq_any(&ids)))
+                                .execute(conn)?;
+                        Ok(affected as u64)
+                    })
+                })
             }
         }
     };

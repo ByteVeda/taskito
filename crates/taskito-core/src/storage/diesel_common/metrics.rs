@@ -57,13 +57,24 @@ macro_rules! impl_diesel_metric_ops {
             }
 
             /// Purge old metric records.
+            ///
+            /// Deletes in bounded batches, each its own txn — see
+            /// `diesel_common::purge`.
             pub fn purge_metrics(&self, older_than_ms: i64) -> Result<u64> {
-                let mut conn = self.conn()?;
-                let affected = diesel::delete(
-                    task_metrics::table.filter(task_metrics::recorded_at.lt(older_than_ms)),
-                )
-                .execute(&mut conn)?;
-                Ok(affected as u64)
+                $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
+                        let ids: Vec<String> = task_metrics::table
+                            .filter(task_metrics::recorded_at.lt(older_than_ms))
+                            .select(task_metrics::id)
+                            .limit($crate::storage::diesel_common::purge::PURGE_BATCH)
+                            .load(conn)?;
+                        let affected = diesel::delete(
+                            task_metrics::table.filter(task_metrics::id.eq_any(&ids)),
+                        )
+                        .execute(conn)?;
+                        Ok(affected as u64)
+                    })
+                })
             }
 
             /// Record a replay event.

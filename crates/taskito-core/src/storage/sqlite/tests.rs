@@ -613,6 +613,51 @@ fn test_purge_job_errors() {
 }
 
 #[test]
+fn test_purge_job_errors_drains_across_batches() {
+    // 550 rows exceed one PURGE_BATCH (500): the batched loop must drain every
+    // row across iterations, not stop after the first batch.
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("purge_err_batch")).unwrap();
+    for attempt in 0..550 {
+        storage.record_error(&job.id, attempt, "boom").unwrap();
+    }
+
+    let purged = storage.purge_job_errors(now_millis() + 10_000).unwrap();
+    assert_eq!(purged, 550, "batched purge must drain every error row");
+    assert!(storage.get_job_errors(&job.id).unwrap().is_empty());
+}
+
+#[test]
+fn test_purge_metrics_drains_across_batches() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("purge_metric_batch")).unwrap();
+    for _ in 0..550 {
+        storage
+            .record_metric("purge_metric_batch", &job.id, 1, 1, true)
+            .unwrap();
+    }
+
+    let purged = storage.purge_metrics(now_millis() + 10_000).unwrap();
+    assert_eq!(purged, 550, "batched purge must drain every metric row");
+    assert!(storage.get_metrics(None, 0).unwrap().is_empty());
+}
+
+#[test]
+fn test_purge_task_logs_drains_across_batches() {
+    let storage = test_storage();
+    let job = storage.enqueue(make_job("purge_log_batch")).unwrap();
+    for _ in 0..550 {
+        storage
+            .write_task_log(&job.id, "purge_log_batch", "INFO", "msg", None)
+            .unwrap();
+    }
+
+    let purged = storage.purge_task_logs(now_millis() + 10_000).unwrap();
+    assert_eq!(purged, 550, "batched purge must drain every log row");
+    assert!(storage.get_task_logs(&job.id).unwrap().is_empty());
+}
+
+#[test]
 fn test_progress_tracking() {
     let storage = test_storage();
     let job = storage.enqueue(make_job("progress_task")).unwrap();
