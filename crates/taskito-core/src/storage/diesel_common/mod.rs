@@ -10,6 +10,7 @@ mod locks;
 mod logs;
 mod metrics;
 mod pubsub;
+pub(crate) mod purge;
 mod workers;
 
 pub(crate) use archival::impl_diesel_archival_ops;

@@ -5,10 +5,9 @@
 macro_rules! impl_diesel_job_ops {
     ($storage_type:ty, $conn_type:ty) => {
         impl $storage_type {
-            /// Max archived rows deleted per txn in the batched purge loops —
-            /// bounds the SQLite writer-lock hold time and the `IN (...)` bind
-            /// count so a purge of millions of rows never stalls other writers.
-            const PURGE_BATCH: i64 = 500;
+            /// Max archived rows deleted per txn in the batched purge loops.
+            /// Shared with every other purge — see `diesel_common::purge`.
+            const PURGE_BATCH: i64 = $crate::storage::diesel_common::purge::PURGE_BATCH;
             /// Max pending rows archived per txn in the batched cancel/expire
             /// loops — same lock-hold bound for the mass-mutation paths.
             const MASS_ARCHIVE_BATCH: i64 = 500;
@@ -1692,9 +1691,8 @@ macro_rules! impl_diesel_job_ops {
             /// for the whole sweep (SQLite) and never builds an unbounded
             /// `IN (...)` list.
             pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
-                let mut total = 0u64;
-                loop {
-                    let removed = self.write_transaction(|conn| {
+                $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
                         let ids: Vec<String> = archived_jobs::table
                             .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
                             .filter(archived_jobs::completed_at.lt(older_than_ms))
@@ -1702,13 +1700,8 @@ macro_rules! impl_diesel_job_ops {
                             .limit(Self::PURGE_BATCH)
                             .load(conn)?;
                         Ok(Self::purge_archived_id_batch(conn, &ids)?)
-                    })?;
-                    total += removed;
-                    if removed < Self::PURGE_BATCH as u64 {
-                        break;
-                    }
-                }
-                Ok(total)
+                    })
+                })
             }
 
             /// Purge completed jobs respecting per-job result_ttl_ms. Terminal
@@ -1717,11 +1710,10 @@ macro_rules! impl_diesel_job_ops {
             /// per-job-TTL rows are swept in two independent bounded loops.
             pub fn purge_completed_with_ttl(&self, global_cutoff_ms: i64) -> Result<u64> {
                 let now = now_millis();
-                let mut total = 0u64;
 
                 // Rows with no per-job TTL fall back to the global cutoff.
-                loop {
-                    let removed = self.write_transaction(|conn| {
+                let global = $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
                         let ids: Vec<String> = archived_jobs::table
                             .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
                             .filter(archived_jobs::result_ttl_ms.is_null())
@@ -1730,18 +1722,14 @@ macro_rules! impl_diesel_job_ops {
                             .limit(Self::PURGE_BATCH)
                             .load(conn)?;
                         Ok(Self::purge_archived_id_batch(conn, &ids)?)
-                    })?;
-                    total += removed;
-                    if removed < Self::PURGE_BATCH as u64 {
-                        break;
-                    }
-                }
+                    })
+                })?;
 
                 // Rows with a per-job TTL: `completed_at + result_ttl_ms < now`.
                 // The check is pushed into SQL, selecting only the id so no
                 // payload/result blob is loaded just to filter it.
-                loop {
-                    let removed = self.write_transaction(|conn| {
+                let per_entry = $crate::storage::diesel_common::purge::drain_batches(|| {
+                    self.write_transaction(|conn| {
                         let ids: Vec<String> = archived_jobs::table
                             .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
                             .filter(archived_jobs::result_ttl_ms.is_not_null())
@@ -1755,14 +1743,10 @@ macro_rules! impl_diesel_job_ops {
                             .limit(Self::PURGE_BATCH)
                             .load(conn)?;
                         Ok(Self::purge_archived_id_batch(conn, &ids)?)
-                    })?;
-                    total += removed;
-                    if removed < Self::PURGE_BATCH as u64 {
-                        break;
-                    }
-                }
+                    })
+                })?;
 
-                Ok(total)
+                Ok(global + per_entry)
             }
 
             /// Find stale running jobs that exceeded their timeout.
