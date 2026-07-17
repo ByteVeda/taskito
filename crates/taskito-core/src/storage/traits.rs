@@ -261,6 +261,10 @@ pub trait Storage: Send + Sync + Clone {
     fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()>;
     fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()>;
     fn list_workers(&self) -> Result<Vec<WorkerRow>>;
+    /// Ids of workers whose heartbeat is at or after `cutoff_ms`. A narrow
+    /// projection of [`Self::list_workers`] for callers that only need the live
+    /// set and must not pay to load every worker's `resource_health` blob.
+    fn list_live_worker_ids(&self, cutoff_ms: i64) -> Result<Vec<String>>;
     fn reap_dead_workers(&self) -> Result<Vec<String>>;
     fn unregister_worker(&self, worker_id: &str) -> Result<()>;
     fn list_claims_by_worker(&self, worker_id: &str) -> Result<Vec<String>>;

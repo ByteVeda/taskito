@@ -44,6 +44,22 @@ macro_rules! impl_diesel_worker_ops {
                 Ok(rows)
             }
 
+            /// Ids of workers whose heartbeat is at or after `cutoff_ms`.
+            ///
+            /// Pushes both the liveness filter and the projection into the query
+            /// — a caller that only needs live ids must not load every worker's
+            /// `resource_health` blob just to discard it.
+            pub fn list_live_worker_ids(&self, cutoff_ms: i64) -> Result<Vec<String>> {
+                let mut conn = self.conn()?;
+
+                let ids = workers::table
+                    .filter(workers::last_heartbeat.ge(cutoff_ms))
+                    .select(workers::worker_id)
+                    .load(&mut conn)?;
+
+                Ok(ids)
+            }
+
             /// Remove workers that haven't sent a heartbeat within the threshold.
             /// Returns the IDs of the reaped workers.
             ///
@@ -55,7 +71,7 @@ macro_rules! impl_diesel_worker_ops {
             /// orphan rescue, both of which tolerate the false positive.
             pub fn reap_dead_workers(&self) -> Result<Vec<String>> {
                 let mut conn = self.conn()?;
-                let cutoff = now_millis().saturating_sub(DEAD_WORKER_THRESHOLD_MS);
+                let cutoff = $crate::storage::dead_worker_cutoff(now_millis());
 
                 let dead_ids: Vec<String> = workers::table
                     .filter(workers::last_heartbeat.lt(cutoff))

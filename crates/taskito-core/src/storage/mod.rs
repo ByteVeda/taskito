@@ -713,6 +713,12 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::storage::models::WorkerRow>> {
                 self.list_workers()
             }
+            fn list_live_worker_ids(
+                &self,
+                cutoff_ms: i64,
+            ) -> $crate::error::Result<Vec<String>> {
+                self.list_live_worker_ids(cutoff_ms)
+            }
             fn reap_dead_workers(&self) -> $crate::error::Result<Vec<String>> {
                 self.reap_dead_workers()
             }
@@ -1357,6 +1363,9 @@ impl Storage for StorageBackend {
     }
     fn list_workers(&self) -> Result<Vec<models::WorkerRow>> {
         delegate!(self, list_workers)
+    }
+    fn list_live_worker_ids(&self, cutoff_ms: i64) -> Result<Vec<String>> {
+        delegate!(self, list_live_worker_ids, cutoff_ms)
     }
     fn reap_dead_workers(&self) -> Result<Vec<String>> {
         delegate!(self, reap_dead_workers)

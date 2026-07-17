@@ -2,7 +2,6 @@ use diesel::prelude::*;
 
 use super::super::models::*;
 use super::super::schema::{execution_claims, workers};
-use super::super::DEAD_WORKER_THRESHOLD_MS;
 use super::PostgresStorage;
 use crate::error::Result;
 use crate::job::now_millis;

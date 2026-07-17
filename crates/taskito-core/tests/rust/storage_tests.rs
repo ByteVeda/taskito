@@ -400,6 +400,14 @@ fn test_workers(s: &impl Storage) {
     let w = workers.iter().find(|w| w.worker_id == "w-test-1").unwrap();
     assert_eq!(w.status, "draining");
 
+    // list_live_worker_ids applies the cutoff without loading the row: a fresh
+    // worker is live under a past cutoff and excluded under a future one.
+    let now = taskito_core::job::now_millis();
+    let live = s.list_live_worker_ids(now - 10_000).unwrap();
+    assert!(live.contains(&"w-test-1".to_string()));
+    let none_live = s.list_live_worker_ids(now + 10_000).unwrap();
+    assert!(!none_live.contains(&"w-test-1".to_string()));
+
     s.unregister_worker("w-test-1").unwrap();
 }
 

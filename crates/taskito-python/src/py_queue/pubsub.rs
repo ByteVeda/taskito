@@ -149,11 +149,8 @@ impl PyQueue {
         // Release the GIL: the reap scans every worker + subscription, which
         // must not freeze other Python threads while it runs.
         py.detach(|| {
-            let live: Vec<String> = storage
-                .list_workers()?
-                .into_iter()
-                .map(|w| w.worker_id)
-                .collect();
+            let cutoff = taskito_core::storage::dead_worker_cutoff(now_millis());
+            let live = storage.list_live_worker_ids(cutoff)?;
             storage.reap_ephemeral_subscriptions(&live)
         })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))

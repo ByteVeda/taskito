@@ -4,7 +4,6 @@ use super::{map_err, RedisStorage};
 use crate::error::Result;
 use crate::job::now_millis;
 use crate::storage::models::WorkerRow;
-use crate::storage::DEAD_WORKER_THRESHOLD_MS;
 
 impl RedisStorage {
     #[allow(clippy::too_many_arguments)]
@@ -119,24 +118,52 @@ impl RedisStorage {
         Ok(rows)
     }
 
-    pub fn reap_dead_workers(&self) -> Result<Vec<String>> {
+    /// Ids of workers whose heartbeat is at or after `cutoff_ms`.
+    ///
+    /// Pipelines the per-worker `HGET` so a live-set read costs one round trip
+    /// plus one pipeline flush, not one round trip per worker.
+    pub fn list_live_worker_ids(&self, cutoff_ms: i64) -> Result<Vec<String>> {
         let mut conn = self.conn()?;
-        let cutoff = now_millis().saturating_sub(DEAD_WORKER_THRESHOLD_MS);
         let wall = self.key(&["workers", "all"]);
 
         let worker_ids: Vec<String> = conn.smembers(&wall).map_err(map_err)?;
+        if worker_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let heartbeats: Vec<Option<i64>> = self.heartbeats_pipelined(&mut conn, &worker_ids)?;
+
+        Ok(worker_ids
+            .into_iter()
+            .zip(heartbeats)
+            .filter_map(|(wid, hb)| match hb {
+                Some(last_hb) if last_hb >= cutoff_ms => Some(wid),
+                _ => None,
+            })
+            .collect())
+    }
+
+    pub fn reap_dead_workers(&self) -> Result<Vec<String>> {
+        let mut conn = self.conn()?;
+        let cutoff = crate::storage::dead_worker_cutoff(now_millis());
+        let wall = self.key(&["workers", "all"]);
+
+        let worker_ids: Vec<String> = conn.smembers(&wall).map_err(map_err)?;
+        if worker_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let heartbeats = self.heartbeats_pipelined(&mut conn, &worker_ids)?;
 
         let mut reaped = Vec::new();
-        for wid in worker_ids {
-            let wkey = self.key(&["worker", &wid]);
-            let hb: Option<i64> = conn.hget(&wkey, "last_heartbeat").map_err(map_err)?;
-
+        for (wid, hb) in worker_ids.into_iter().zip(heartbeats) {
             let is_dead = match hb {
                 Some(last_hb) => last_hb < cutoff,
                 None => true,
             };
 
             if is_dead {
+                let wkey = self.key(&["worker", &wid]);
                 let pipe = &mut redis::pipe();
                 pipe.del(&wkey);
                 pipe.srem(&wall, &wid);
@@ -146,6 +173,20 @@ impl RedisStorage {
         }
 
         Ok(reaped)
+    }
+
+    /// Fetch every worker's `last_heartbeat` in one pipeline, preserving input
+    /// order so callers can zip the result back onto the id list.
+    fn heartbeats_pipelined(
+        &self,
+        conn: &mut redis::Connection,
+        worker_ids: &[String],
+    ) -> Result<Vec<Option<i64>>> {
+        let mut pipe = redis::pipe();
+        for wid in worker_ids {
+            pipe.hget(self.key(&["worker", wid]), "last_heartbeat");
+        }
+        pipe.query(conn).map_err(map_err)
     }
 
     pub fn unregister_worker(&self, worker_id: &str) -> Result<()> {

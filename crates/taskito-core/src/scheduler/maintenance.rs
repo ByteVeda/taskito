@@ -3,7 +3,7 @@ use log::{error, info, warn};
 use crate::error::Result;
 use crate::job::{now_millis, NewJob};
 use crate::periodic::{next_cron_time, next_cron_time_tz};
-use crate::storage::{Storage, DEAD_WORKER_THRESHOLD_MS};
+use crate::storage::{dead_worker_cutoff, Storage};
 
 use super::{JobResult, Scheduler};
 
@@ -76,13 +76,7 @@ impl Scheduler {
         // Live owners = workers with a fresh heartbeat, plus self: a scheduler
         // must never orphan its own in-flight jobs (covers the startup window
         // before its first heartbeat row is written).
-        let mut live: Vec<String> = self
-            .storage
-            .list_workers()?
-            .into_iter()
-            .filter(|w| w.last_heartbeat >= now - DEAD_WORKER_THRESHOLD_MS)
-            .map(|w| w.worker_id)
-            .collect();
+        let mut live = self.storage.list_live_worker_ids(dead_worker_cutoff(now))?;
         live.push(self.claim_owner.clone());
 
         for (job, dead_owner) in self.storage.reap_orphaned_jobs(&live, now)? {

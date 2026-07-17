@@ -122,12 +122,8 @@ impl JsQueue {
             // Prune stale worker rows first so a crashed owner doesn't keep its
             // ephemeral subscriptions alive; opportunistic like the heartbeat's.
             let _ = storage.reap_dead_workers();
-            let live: Vec<String> = storage
-                .list_workers()
-                .map_err(to_napi_err)?
-                .into_iter()
-                .map(|worker| worker.worker_id)
-                .collect();
+            let cutoff = taskito_core::storage::dead_worker_cutoff(now_millis());
+            let live = storage.list_live_worker_ids(cutoff).map_err(to_napi_err)?;
             storage
                 .reap_ephemeral_subscriptions(&live)
                 .map(|n| n as i64)
