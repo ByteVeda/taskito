@@ -27,6 +27,14 @@ class Retention:
     job_errors: int | None = None
     """Per-attempt job errors."""
 
+    def __post_init__(self) -> None:
+        # Fail fast at construction: a negative window would invert the cleanup
+        # cutoff into the future and match every row. Zero is valid (purge on
+        # completion).
+        for table, secs in self._as_map().items():
+            if secs < 0:
+                raise ValueError(f"retention window '{table}' must be non-negative")
+
     def _as_map(self) -> dict[str, int]:
         """The set windows as a ``{table: seconds}`` map for the native layer."""
         fields = {

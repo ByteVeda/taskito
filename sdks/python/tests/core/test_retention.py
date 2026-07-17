@@ -46,9 +46,10 @@ def test_empty_retention_overrides_result_ttl(tmp_path: Path) -> None:
     assert queue is not None
 
 
-def test_negative_retention_window_rejected(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="retention windows must be non-negative"):
-        Queue(db_path=str(tmp_path / "retention.db"), retention=Retention(task_logs=-1))
+def test_negative_retention_window_rejected_at_construction() -> None:
+    # Fail fast on the dataclass, before it ever reaches a Queue.
+    with pytest.raises(ValueError, match="retention window 'task_logs' must be non-negative"):
+        Retention(task_logs=-1)
 
 
 def test_retention_map_omits_none_fields() -> None:
