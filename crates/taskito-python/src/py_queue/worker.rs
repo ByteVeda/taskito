@@ -282,17 +282,24 @@ impl PyQueue {
         #[allow(unused_variables)]
         let async_concurrency = async_concurrency.max(1) as usize;
 
+        let use_prefork = pool.as_deref() == Some("prefork");
+
         // Bound in-flight work to what this worker can actually run, so it never
         // claims more and starves peers sharing the DB.
         //
         // With the native pool, sync and async work draw on separate budgets:
         // blocking tasks are bounded by `num_workers` threads, coroutines by the
         // executor's `async_concurrency` semaphore — so the cap is their sum.
-        // Without it every task is sync work bounded by `num_workers`; adding
+        // Everywhere else — non-native builds, and prefork, which builds no
+        // executor — every task is bounded by `num_workers`; adding
         // `async_concurrency` there would claim jobs nothing can execute — they
-        // would sit Running in the channel waiting for a blocking thread.
+        // would sit Running in the channel waiting for a worker slot.
         #[cfg(feature = "native-async")]
-        let max_in_flight = self.num_workers + async_concurrency;
+        let max_in_flight = if use_prefork {
+            self.num_workers
+        } else {
+            self.num_workers + async_concurrency
+        };
         #[cfg(not(feature = "native-async"))]
         let max_in_flight = self.num_workers;
 
@@ -491,7 +498,6 @@ impl PyQueue {
         // a no-op — running tasks observe cancellation via the storage flag —
         // so we don't install the dispatcher on `self`.
         let num_workers = self.num_workers;
-        let use_prefork = pool.as_deref() == Some("prefork");
 
         // Held on this thread so shutdown can stop the executor's event loop
         // once the drain completes. Safe to keep here: the drain exits when
