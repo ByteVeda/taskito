@@ -1658,10 +1658,19 @@ fn redis_backfills_expiry_for_preupgrade_rows(s: &taskito_core::RedisStorage) {
 
     std::thread::sleep(std::time::Duration::from_millis(5));
 
-    // No global cutoff: only the backfilled expiry index can purge this row.
-    s.purge_completed_with_ttl(None).unwrap();
+    // No global cutoff: only the backfilled expiry index can purge this row. The
+    // backfill advances one ZSCAN batch per call, so drive it to completion —
+    // other tests leave enough archived rows to span several batches.
+    let mut purged = false;
+    for _ in 0..64 {
+        s.purge_completed_with_ttl(None).unwrap();
+        if s.get_job(&job.id).unwrap().is_none() {
+            purged = true;
+            break;
+        }
+    }
     assert!(
-        s.get_job(&job.id).unwrap().is_none(),
+        purged,
         "a pre-upgrade per-entry TTL row must be backfilled and purged"
     );
 }
