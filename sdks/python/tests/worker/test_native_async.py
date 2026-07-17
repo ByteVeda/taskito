@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import cloudpickle
+import pytest
+
 from taskito import Queue, TaskCancelledError, current_job
 from taskito.async_support.context import (
     clear_async_context,
@@ -17,6 +20,82 @@ from taskito.async_support.context import (
 from taskito.middleware import TaskMiddleware
 
 PollUntil = Any  # the conftest fixture's runtime type
+
+
+class _FakeQueue:
+    """A queue stub covering every attribute the shared lifecycle reads.
+
+    Deliberately not a bare ``MagicMock``: that invents whatever it is asked for,
+    and the lifecycle branches on ``is not None`` and on truthiness, so an unset
+    attribute would not raise — it would quietly take the wrong branch. An absent
+    ``_task_batch_configs`` is the sharp one, since the auto-made mock reads as a
+    per-item batch config and every task then fails the return-type contract.
+
+    ``__slots__`` makes the trade explicit: a lifecycle read this class does not
+    declare raises here, and so does a typo'd override, instead of turning into a
+    silently wrong test.
+    """
+
+    __slots__ = (
+        "_apply_dispatch_predicate",
+        "_deserialize_payload",
+        "_emit_event",
+        "_get_middleware_chain",
+        "_hooks",
+        "_interceptor",
+        "_max_reconstruction_timeout",
+        "_proxy_metrics",
+        "_proxy_registry",
+        "_recipe_signing_key",
+        "_resource_runtime",
+        "_serialize_result",
+        "_task_batch_configs",
+        "_task_inject_map",
+        "_task_predicates",
+        "_task_retry_filters",
+        "_task_soft_timeouts",
+        "_test_mode_active",
+        "_workflow_tracker",
+    )
+
+    def __init__(self) -> None:
+        self._deserialize_payload = MagicMock(
+            side_effect=lambda _name, data: cloudpickle.loads(data)
+        )
+        self._serialize_result = MagicMock(
+            side_effect=lambda _name, result: cloudpickle.dumps(result)
+        )
+        self._get_middleware_chain = MagicMock(return_value=[])
+        self._apply_dispatch_predicate = MagicMock()
+        self._emit_event = MagicMock()
+        self._interceptor = None
+        self._proxy_registry = None
+        self._proxy_metrics = None
+        self._recipe_signing_key = None
+        self._max_reconstruction_timeout = None
+        self._test_mode_active = False
+        self._resource_runtime = None
+        self._workflow_tracker = None
+        self._task_inject_map: dict[str, Any] = {}
+        self._task_retry_filters: dict[str, Any] = {}
+        self._task_predicates: dict[str, Any] = {}
+        self._task_batch_configs: dict[str, Any] = {}
+        self._task_soft_timeouts: dict[str, Any] = {}
+        self._hooks: dict[str, list[Any]] = {
+            "before_task": [],
+            "after_task": [],
+            "on_success": [],
+            "on_failure": [],
+        }
+
+
+def _fake_queue(**overrides: Any) -> Any:
+    """A :class:`_FakeQueue` with per-test overrides applied."""
+    queue = _FakeQueue()
+    for name, value in overrides.items():
+        setattr(queue, name, value)
+    return queue
+
 
 # ── Async detection ──────────────────────────────────────────────
 
@@ -135,8 +214,6 @@ def test_async_executor_lifecycle() -> None:
 
 def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
     """Basic async task produces correct result via executor."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
@@ -150,17 +227,7 @@ def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
 
     registry: dict[str, Any] = {"test_mod.my_task": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
+    queue_ref = _fake_queue()
 
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -180,8 +247,6 @@ def test_async_executor_submit_and_execute(poll_until: PollUntil) -> None:
 
 def test_async_exception_reported(poll_until: PollUntil) -> None:
     """Exception in async task → failure result with traceback."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
@@ -194,17 +259,7 @@ def test_async_exception_reported(poll_until: PollUntil) -> None:
 
     registry: dict[str, Any] = {"mod.failing_task": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
+    queue_ref = _fake_queue()
 
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -223,8 +278,6 @@ def test_async_exception_reported(poll_until: PollUntil) -> None:
 
 def test_async_cancellation(poll_until: PollUntil) -> None:
     """TaskCancelledError → cancelled result."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
@@ -237,17 +290,7 @@ def test_async_cancellation(poll_until: PollUntil) -> None:
 
     registry: dict[str, Any] = {"mod.cancelling_task": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
+    queue_ref = _fake_queue()
 
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -265,8 +308,6 @@ def test_async_cancellation(poll_until: PollUntil) -> None:
 
 def test_async_retry_filter(poll_until: PollUntil) -> None:
     """Failed async task respects retry_on filter."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
@@ -279,14 +320,7 @@ def test_async_retry_filter(poll_until: PollUntil) -> None:
 
     registry: dict[str, Any] = {"mod.flaky_task": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
+    queue_ref = _fake_queue()
     # Only retry on ValueError, not TypeError
     queue_ref._task_retry_filters = {
         "mod.flaky_task": {"retry_on": [ValueError], "dont_retry_on": []},
@@ -308,8 +342,6 @@ def test_async_retry_filter(poll_until: PollUntil) -> None:
 
 def test_async_concurrency_limit(poll_until: PollUntil) -> None:
     """Semaphore bounds concurrent async tasks."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
@@ -331,17 +363,7 @@ def test_async_concurrency_limit(poll_until: PollUntil) -> None:
 
     registry: dict[str, Any] = {"mod.slow_task": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
+    queue_ref = _fake_queue()
 
     # Set concurrency to 2
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=2)
@@ -364,8 +386,6 @@ def test_async_concurrency_limit(poll_until: PollUntil) -> None:
 
 def test_async_middleware_hooks(poll_until: PollUntil) -> None:
     """Middleware before/after called for async tasks."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     before_called: list[str] = []
@@ -388,17 +408,8 @@ def test_async_middleware_hooks(poll_until: PollUntil) -> None:
 
     registry: dict[str, Any] = {"mod.simple_task": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
+    queue_ref = _fake_queue()
     queue_ref._get_middleware_chain.return_value = [TestMiddleware()]
-    queue_ref._proxy_metrics = None
 
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -414,8 +425,6 @@ def test_async_middleware_hooks(poll_until: PollUntil) -> None:
 
 def test_async_task_with_injection(poll_until: PollUntil) -> None:
     """inject=["db"] works for async tasks via executor."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
@@ -430,21 +439,14 @@ def test_async_task_with_injection(poll_until: PollUntil) -> None:
 
     fake_db = "fake-conn"
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._task_inject_map = {"mod.db_task": ["db"]}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
-
     # Mock resource runtime
     runtime = MagicMock()
     runtime.acquire_for_task.return_value = (fake_db, None)
-    queue_ref._resource_runtime = runtime
+
+    queue_ref = _fake_queue(
+        _task_inject_map={"mod.db_task": ["db"]},
+        _resource_runtime=runtime,
+    )
 
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -461,8 +463,6 @@ def test_async_task_with_injection(poll_until: PollUntil) -> None:
 
 def test_async_context_available_inside_task(poll_until: PollUntil) -> None:
     """current_job.id works inside an async task via contextvars."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     sender = MagicMock()
@@ -477,17 +477,7 @@ def test_async_context_available_inside_task(poll_until: PollUntil) -> None:
 
     registry: dict[str, Any] = {"mod.ctx_task": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
+    queue_ref = _fake_queue()
 
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -531,19 +521,11 @@ def test_async_executor_honors_per_task_serializer(poll_until: PollUntil) -> Non
 
     registry: dict[str, Any] = {"mod.add": FakeWrapper()}
 
-    queue_ref = MagicMock()
-    # Route deserialization through a NON-cloudpickle serializer; a hardcoded
+    queue_ref = _fake_queue()
+    # Route serialization through a NON-cloudpickle serializer; a hardcoded
     # cloudpickle.loads would raise on this JSON payload.
     queue_ref._deserialize_payload.side_effect = lambda _name, data: serializer.loads(data)
     queue_ref._serialize_result.side_effect = lambda _name, result: serializer.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
 
     executor = AsyncTaskExecutor(sender, registry, queue_ref, max_concurrency=10)
     executor.start()
@@ -574,24 +556,12 @@ class FakePermit:
 
 def _backpressure_executor(sender: Any, fn: Any, task_name: str) -> Any:
     """An executor wired to a single async `fn`, with everything else mocked out."""
-    import cloudpickle
-
     from taskito.async_support.executor import AsyncTaskExecutor
 
     class FakeWrapper:
         _taskito_async_fn = staticmethod(fn)
 
-    queue_ref = MagicMock()
-    queue_ref._deserialize_payload.side_effect = lambda _name, data: cloudpickle.loads(data)
-    queue_ref._serialize_result.side_effect = lambda _name, result: cloudpickle.dumps(result)
-    queue_ref._interceptor = None
-    queue_ref._proxy_registry = None
-    queue_ref._test_mode_active = False
-    queue_ref._resource_runtime = None
-    queue_ref._task_inject_map = {}
-    queue_ref._task_retry_filters = {}
-    queue_ref._get_middleware_chain.return_value = []
-    queue_ref._proxy_metrics = None
+    queue_ref = _fake_queue()
 
     executor = AsyncTaskExecutor(sender, {task_name: FakeWrapper()}, queue_ref, max_concurrency=10)
     executor.start()
@@ -599,10 +569,40 @@ def _backpressure_executor(sender: Any, fn: Any, task_name: str) -> Any:
 
 
 def _payload() -> bytes:
-    import cloudpickle
-
     payload: bytes = cloudpickle.dumps(((), {}))
     return payload
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_base_exception_reports_failure(poll_until: PollUntil) -> None:
+    """A non-cancellation BaseException must still reach a terminal report.
+
+    KeyboardInterrupt and friends slip past `except Exception` just as
+    CancelledError does, but they are not cancellations — unreported, the job
+    sits Running until the reaper mislabels it a timeout.
+
+    The interrupt is re-raised after reporting, which is the contract (swallowing
+    it would break loop teardown), so it surfaces on the executor thread and
+    pytest notices — expected here, hence the filter.
+    """
+    sender = MagicMock()
+    sender.try_report_failure.return_value = True
+
+    async def interrupted_task() -> None:
+        raise KeyboardInterrupt
+
+    executor = _backpressure_executor(sender, interrupted_task, "mod.interrupted_task")
+    executor.submit_job("job-k", "mod.interrupted_task", _payload(), 0, 3, "default")
+    poll_until(
+        lambda: sender.try_report_failure.called,
+        message="KeyboardInterrupt was not reported",
+    )
+    executor.stop()
+
+    assert not sender.try_report_cancelled.called, "an interrupt is not a cancellation"
+    # `stop()` only logs when its join times out, and the thread-exception warning
+    # is filtered here — without this the test could go green on a leaked thread.
+    assert not executor._thread.is_alive(), "the executor thread outlived stop()"
 
 
 def test_cancelled_coroutine_reports_cancelled(poll_until: PollUntil) -> None:
@@ -778,7 +778,15 @@ def test_native_dispatch_emits_job_failed(poll_until: PollUntil) -> None:
 
 
 def test_native_dispatch_does_not_emit_completed_on_cancel(poll_until: PollUntil) -> None:
-    """Cancellation has its own Rust-side event; emitting COMPLETED would be a lie."""
+    """Cancellation has its own Rust-side event; emitting COMPLETED would be a lie.
+
+    Both paths run one lifecycle, so both report a cancel the same way:
+    TaskCancelledError is an ordinary Exception, so it emits JOB_FAILED here and
+    the outcome loop adds JOB_CANCELLED. That pairing is the blocking path's
+    long-standing behaviour — what must never appear is JOB_COMPLETED.
+    """
+    from taskito.events import EventType
+
     sender = MagicMock()
     sender.try_report_cancelled.return_value = True
 
@@ -791,4 +799,6 @@ def test_native_dispatch_does_not_emit_completed_on_cancel(poll_until: PollUntil
     poll_until(lambda: sender.try_report_cancelled.called, message="cancellation not reported")
     executor.stop()
 
-    assert not queue_ref._emit_event.called, "a cancelled job did not complete"
+    emitted = [call.args[0] for call in queue_ref._emit_event.call_args_list]
+    assert EventType.JOB_COMPLETED not in emitted, "a cancelled job did not complete"
+    assert EventType.JOB_FAILED in emitted, "cancel should report like the blocking path"

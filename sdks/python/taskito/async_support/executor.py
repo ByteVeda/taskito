@@ -10,12 +10,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from taskito.async_support.context import clear_async_context, set_async_context
-from taskito.context import current_job
-from taskito.events import EventType
 from taskito.exceptions import TaskCancelledError
-from taskito.interception.reconstruct import reconstruct_args
-from taskito.proxies import cleanup_proxies, reconstruct_proxies
 from taskito.task_errors import encode_task_error
+from taskito.task_lifecycle import run_lifecycle
 
 if TYPE_CHECKING:
     from taskito.app import Queue
@@ -30,9 +27,10 @@ _REPORT_BACKOFF_MAX_S = 0.05
 class AsyncTaskExecutor:
     """Runs async tasks natively on a dedicated event loop.
 
-    Receives jobs from Rust via :meth:`submit_job`, executes the async coroutine
-    with full lifecycle support (interception, proxies, resource injection,
-    middleware), and reports results back via a ``PyResultSender``.
+    Receives jobs from Rust via :meth:`submit_job`, awaits the coroutine through
+    :func:`~taskito.task_lifecycle.run_lifecycle` — the same body the blocking
+    path runs, so both dispatch paths honour one lifecycle — and reports the
+    outcome back via a ``PyResultSender``.
     """
 
     def __init__(
@@ -143,21 +141,19 @@ class AsyncTaskExecutor:
         max_retries: int,
         queue_name: str,
     ) -> None:
-        """Run one job: gate on the concurrency backstop, execute, report."""
+        """Run one job: gate on the concurrency backstop, execute, report.
+
+        Everything between the arguments and the result belongs to
+        :func:`run_lifecycle`; what stays here is what native dispatch does
+        differently — decoding the payload, and answering the result sender.
+        """
         assert self._semaphore is not None
         async with self._semaphore:
             start_ns = time.monotonic_ns()
             token = set_async_context(job_id, task_name, retry_count, queue_name)
-            release_callbacks: list[Any] = []
-            proxy_cleanup: list[Any] = []
-            result: Any = None
-            error: Exception | None = None
-            completed_mw: list[Any] = []
             # Set before the hand-off so a raising send can't also fire report_failure
             # for the same job — the scheduler would then see two results for one job.
             reported = False
-            # Cancellation has its own event, emitted by the Rust outcome loop.
-            cancelled = False
 
             try:
                 queue = self._queue_ref
@@ -165,65 +161,16 @@ class AsyncTaskExecutor:
                 # a hardcoded cloudpickle.loads would ignore @task(serializer=...).
                 args, kwargs = queue._deserialize_payload(task_name, payload_bytes)
 
-                # Worker-dispatch predicate gate (raw args, pre-reconstruction).
-                if task_name in queue._task_predicates:
-                    queue._apply_dispatch_predicate(
-                        task_name=task_name,
-                        args=args,
-                        kwargs=kwargs,
-                        job_id=job_id,
-                        queue_name=queue_name,
-                        retry_count=retry_count,
-                    )
+                # Awaited, not run_maybe_async'd: this is the executor's own loop,
+                # and the coroutine belongs on it.
+                result = await run_lifecycle(
+                    queue,
+                    task_name,
+                    self._registry[task_name]._taskito_async_fn,
+                    args,
+                    kwargs,
+                )
 
-                # Reconstruct intercepted arguments
-                redirects: dict[str, str] = {}
-                if queue._interceptor is not None:
-                    args, kwargs, redirects = reconstruct_args(args, kwargs)
-
-                # Reconstruct proxy markers
-                if queue._proxy_registry is not None and not queue._test_mode_active:
-                    args, kwargs, proxy_cleanup = reconstruct_proxies(
-                        args,
-                        kwargs,
-                        queue._proxy_registry,
-                        signing_secret=queue._recipe_signing_key,
-                        max_timeout=queue._max_reconstruction_timeout,
-                        metrics=queue._proxy_metrics,
-                    )
-
-                # Inject resources
-                runtime = queue._resource_runtime
-                if runtime is not None:
-                    for res_name in queue._task_inject_map.get(task_name, []):
-                        if res_name not in kwargs:
-                            instance, release = runtime.acquire_for_task(res_name)
-                            kwargs[res_name] = instance
-                            if release is not None:
-                                release_callbacks.append(release)
-                    for kwarg_name, resource_name in redirects.items():
-                        instance, release = runtime.acquire_for_task(resource_name)
-                        kwargs[kwarg_name] = instance
-                        if release is not None:
-                            release_callbacks.append(release)
-
-                # Middleware before hooks (skipping filtered middlewares)
-                middleware_chain = queue._get_middleware_chain(task_name)
-                for mw in middleware_chain:
-                    if not mw._should_apply(current_job):
-                        continue
-                    try:
-                        mw.before(current_job)
-                        completed_mw.append(mw)
-                    except Exception:
-                        logger.exception("middleware before() error")
-
-                # Execute the async function
-                wrapper = self._registry[task_name]
-                fn = wrapper._taskito_async_fn
-                result = await fn(*args, **kwargs)
-
-                # Serialize and report success
                 result_bytes = (
                     queue._serialize_result(task_name, result) if result is not None else None
                 )
@@ -236,8 +183,6 @@ class AsyncTaskExecutor:
                 )
 
             except TaskCancelledError:
-                error = None  # Don't treat cancellation as an error for middleware
-                cancelled = True
                 if not reported:
                     wall_ns = time.monotonic_ns() - start_ns
                     reported = True
@@ -249,7 +194,6 @@ class AsyncTaskExecutor:
                 # CancelledError is a BaseException, so `except Exception` misses it and
                 # the job would sit Running until the reaper mislabelled it a timeout.
                 # Report, then re-raise — swallowing a cancellation breaks loop shutdown.
-                cancelled = True
                 if not reported:
                     wall_ns = time.monotonic_ns() - start_ns
                     reported = True
@@ -260,7 +204,6 @@ class AsyncTaskExecutor:
                 raise
 
             except Exception as exc:
-                error = exc
                 if not reported:
                     wall_ns = time.monotonic_ns() - start_ns
                     reported = True
@@ -278,53 +221,34 @@ class AsyncTaskExecutor:
                         )
                     )
 
+            except BaseException as exc:
+                # Neither a cancellation nor an ordinary failure — KeyboardInterrupt,
+                # SystemExit, or any other BaseException the clause above cannot see.
+                # Unreported, the job sits Running until the reaper mislabels it a
+                # timeout, so report it as the blocking path would: a failure, with
+                # the retry policy left to decide. Hand off without awaiting — the
+                # loop may be going down — then re-raise, since swallowing these
+                # breaks interpreter and loop teardown.
+                if not reported:
+                    wall_ns = time.monotonic_ns() - start_ns
+                    reported = True
+                    error_msg = encode_task_error(exc)
+                    self._hand_off_now(
+                        lambda: self._sender.try_report_failure(
+                            job_id,
+                            task_name,
+                            error_msg,
+                            retry_count,
+                            max_retries,
+                            wall_ns,
+                            True,
+                        ),
+                        job_id,
+                    )
+                raise
+
             finally:
-                # Release task/request-scoped resources
-                for release_fn in release_callbacks:
-                    try:
-                        release_fn()
-                    except Exception:
-                        logger.exception("resource release error")
-
-                # Clean up reconstructed proxies
-                cleanup_proxies(proxy_cleanup, metrics=self._queue_ref._proxy_metrics)
-
-                # Middleware after hooks (only those whose before() succeeded)
-                for mw in completed_mw:
-                    try:
-                        mw.after(current_job, result, error)
-                    except Exception:
-                        logger.exception("middleware after() error")
-
-                # Emit job lifecycle events. The Rust outcome loop deliberately
-                # skips Success — the blocking wrapper emits it — and native
-                # dispatch bypasses that wrapper, so it has to emit here too or
-                # nothing downstream (workflow tracker, subscribers) ever learns
-                # the job finished. Cancellation is the exception — that outcome
-                # does have a Rust-side event.
-                if not cancelled:
-                    self._emit_lifecycle_event(job_id, task_name, queue_name, error)
-
                 clear_async_context(token)
-
-    def _emit_lifecycle_event(
-        self, job_id: str, task_name: str, queue_name: str, error: Exception | None
-    ) -> None:
-        """Emit JOB_COMPLETED/JOB_FAILED, mirroring the blocking task wrapper."""
-        payload: dict[str, Any] = {
-            "task_name": task_name,
-            "job_id": job_id,
-            "queue": queue_name,
-        }
-        if error is not None:
-            payload["error"] = str(error)
-        try:
-            self._queue_ref._emit_event(
-                EventType.JOB_FAILED if error is not None else EventType.JOB_COMPLETED,
-                payload,
-            )
-        except Exception:
-            logger.exception("job lifecycle event error")
 
     def _check_retry(self, task_name: str, exc: Exception) -> bool:
         """Check retry filters to decide if this exception should be retried."""
