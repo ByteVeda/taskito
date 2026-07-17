@@ -422,21 +422,16 @@ class QueueDecoratorMixin:
                 self._task_soft_timeouts[task_name] = soft_timeout
             wrapped = self._wrap_task(fn, task_name)
 
-            # NOTE: `_taskito_is_async`/`_taskito_async_fn` are deliberately NOT
-            # set on `wrapped`. The pool reads them off this registry entry to
-            # choose native dispatch, so setting them here activates that path.
-            # Both must move together when it is activated — the pool reads the
-            # first to route, the executor reads the second to find the coroutine.
-            #
-            # The lifecycle gaps that used to block activation are closed: both
-            # paths now run `run_lifecycle`. What still blocks it is shutdown.
-            # The worker's drain loop ends when the result channel disconnects,
-            # which needs the executor's `PyResultSender` to drop — but a failed
-            # task's traceback keeps the frame that owns it alive, so anything
-            # holding the exception (an on_failure hook that collects errors is
-            # enough) makes every shutdown wait out the full drain timeout: 30s
-            # by default, past a typical container's grace period. Decoupling the
-            # drain from Python object lifetime has to land first.
+            # Native async dispatch keys off this registry entry: the pool reads
+            # `_taskito_is_async` to route, the executor reads `_taskito_async_fn`
+            # to find the coroutine — so both must live on `wrapped`, not only on
+            # the TaskWrapper returned to the caller. On builds without the
+            # native pool the flags are inert and async tasks run on the
+            # blocking path via `run_maybe_async`.
+            is_async = inspect.iscoroutinefunction(fn)
+            wrapped._taskito_is_async = is_async  # type: ignore[attr-defined]
+            if is_async:
+                wrapped._taskito_async_fn = fn  # type: ignore[attr-defined]
             self._task_registry[task_name] = wrapped
 
             cb_threshold = None
@@ -489,8 +484,7 @@ class QueueDecoratorMixin:
             # Preserve function metadata
             functools.update_wrapper(wrapper, fn)
 
-            # Mark async status for native async dispatch
-            is_async = inspect.iscoroutinefunction(fn)
+            # Mirror the async markers for introspection on the returned handle.
             wrapper._taskito_is_async = is_async
             if is_async:
                 wrapper._taskito_async_fn = fn

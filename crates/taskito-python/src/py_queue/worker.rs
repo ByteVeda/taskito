@@ -285,12 +285,15 @@ impl PyQueue {
         // Bound in-flight work to what this worker can actually run, so it never
         // claims more and starves peers sharing the DB.
         //
-        // Only the sync branch runs today: native async dispatch is dormant (see
-        // the note in decorators.py), so async tasks reach the pool as sync work
-        // and every job is bounded by `num_workers`. Adding `async_concurrency`
-        // here would claim jobs nothing can execute — they would sit Running in
-        // the channel waiting for a blocking thread. Widen this to the sum of the
-        // two budgets in the change that activates native dispatch, not before.
+        // With the native pool, sync and async work draw on separate budgets:
+        // blocking tasks are bounded by `num_workers` threads, coroutines by the
+        // executor's `async_concurrency` semaphore — so the cap is their sum.
+        // Without it every task is sync work bounded by `num_workers`; adding
+        // `async_concurrency` there would claim jobs nothing can execute — they
+        // would sit Running in the channel waiting for a blocking thread.
+        #[cfg(feature = "native-async")]
+        let max_in_flight = self.num_workers + async_concurrency;
+        #[cfg(not(feature = "native-async"))]
         let max_in_flight = self.num_workers;
 
         let scheduler_config = SchedulerConfig {
