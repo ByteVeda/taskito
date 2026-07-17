@@ -480,43 +480,23 @@ impl PyQueue {
             pool.as_deref(),
         );
 
-        // Create the async executor for native async tasks (if feature enabled)
-        #[cfg(feature = "native-async")]
-        let async_executor = {
-            let sender = crate::native_async::PyResultSender::new(result_tx.clone());
-            Python::attach(|py| -> PyResult<Arc<Py<PyAny>>> {
-                let sender_obj = pyo3::Py::new(py, sender)?;
-                let mod_ = py.import("taskito.async_support.executor")?;
-                let cls = mod_.getattr("AsyncTaskExecutor")?;
-                let context_mod = py.import("taskito.context")?;
-                let queue_ref = context_mod.getattr("_queue_ref")?;
-                let executor = cls.call1((
-                    sender_obj,
-                    registry_arc.clone_ref(py),
-                    queue_ref,
-                    async_concurrency,
-                ))?;
-                executor.call_method0("start")?;
-                Ok(Arc::new(executor.unbind()))
-            })?
-        };
-
         // Build the dispatcher up front for the prefork case so we can install
         // it on the queue before the run loop starts — request_cancel relies on
         // the install to deliver out-of-band cancel signals to child processes.
         //
         // For in-process pools (native-async, classic async) `notify_cancel` is
         // a no-op — running tasks observe cancellation via the storage flag —
-        // so we deliberately do NOT install the dispatcher on `self`.
-        // Installing it would keep an `Arc<Py<PyAny>>` reference (the async
-        // executor / PyResultSender chain) alive on the parent thread until
-        // `set_dispatcher(None)` runs after `runtime_handle.join()`, deadlocking
-        // shutdown: the drain loop waits for the result channel to disconnect,
-        // which can't happen until PyResultSender drops, which can't happen
-        // until both `async_executor` Arc refs drop — and the second ref is
-        // exactly what `self.dispatcher` was holding.
+        // so we don't install the dispatcher on `self`.
         let num_workers = self.num_workers;
         let use_prefork = pool.as_deref() == Some("prefork");
+
+        // Held on this thread so shutdown can stop the executor's event loop
+        // once the drain completes. Safe to keep here: the drain exits when
+        // in-flight work settles, not when the result channel disconnects, so
+        // this reference cannot deadlock shutdown.
+        #[cfg(feature = "native-async")]
+        let mut async_executor_for_shutdown: Option<Arc<Py<PyAny>>> = None;
+
         let dispatcher_for_run: Arc<dyn taskito_core::worker::WorkerDispatcher> = if use_prefork {
             let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> = Arc::new(
                 crate::prefork::PreforkPool::new(num_workers, app_path.unwrap_or_default()),
@@ -526,6 +506,26 @@ impl PyQueue {
         } else {
             #[cfg(feature = "native-async")]
             {
+                // The executor is built only for the pool that uses it —
+                // prefork must not hold a PyResultSender (a result-channel
+                // clone) it would never send on.
+                let sender = crate::native_async::PyResultSender::new(result_tx.clone());
+                let async_executor = Python::attach(|py| -> PyResult<Arc<Py<PyAny>>> {
+                    let sender_obj = pyo3::Py::new(py, sender)?;
+                    let mod_ = py.import("taskito.async_support.executor")?;
+                    let cls = mod_.getattr("AsyncTaskExecutor")?;
+                    let context_mod = py.import("taskito.context")?;
+                    let queue_ref = context_mod.getattr("_queue_ref")?;
+                    let executor = cls.call1((
+                        sender_obj,
+                        registry_arc.clone_ref(py),
+                        queue_ref,
+                        async_concurrency,
+                    ))?;
+                    executor.call_method0("start")?;
+                    Ok(Arc::new(executor.unbind()))
+                })?;
+                async_executor_for_shutdown = Some(async_executor.clone());
                 let pool_arc: Arc<dyn taskito_core::worker::WorkerDispatcher> =
                     Arc::new(crate::native_async::NativeAsyncPool::new(
                         num_workers,
@@ -547,6 +547,15 @@ impl PyQueue {
 
         #[cfg(feature = "mesh")]
         let mesh_worker_id = worker_id.clone();
+
+        // Mesh-stolen jobs enter the channel through the bridge, bypassing
+        // `finish_dispatch` — the scheduler's in-flight tracking never sees
+        // them, so the settled-work drain exit below is only sound without
+        // mesh.
+        #[cfg(feature = "mesh")]
+        let mesh_enabled = mesh_config.is_some();
+        #[cfg(not(feature = "mesh"))]
+        let mesh_enabled = false;
 
         // Captured for the channel-based (Postgres/Redis) wake-source setup
         // inside the runtime. Gated to the listener-bearing backends so the
@@ -664,6 +673,23 @@ impl PyQueue {
 
         let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs.unwrap_or(30));
 
+        // Refcount-independent "drain is done" signal. Waiting for the result
+        // channel to *disconnect* requires every sender clone to drop, and the
+        // async executor's PyResultSender is owned by a Python object — a failed
+        // task's traceback can pin it (any hook that retains the exception
+        // reaches the frame that owns the sender), stalling shutdown for the
+        // full drain timeout. Instead: the runtime thread finishing proves the
+        // scheduler returned (no dispatch in progress) and the pool drained its
+        // queue (the runtime's drop flushes running blocking tasks), and a
+        // settled in-flight map proves every dispatched job's result was
+        // handled — this loop is the only consumer, so nothing can still be
+        // pending.
+        let work_settled = || {
+            !mesh_enabled
+                && runtime_handle.is_finished()
+                && scheduler_for_results.in_flight_settled()
+        };
+
         loop {
             // Release GIL for one iteration of result polling
             let action = py.detach(|| {
@@ -721,7 +747,12 @@ impl PyQueue {
                                     }
                                 }
                             }
-                            PollAction::Continue => continue,
+                            PollAction::Continue => {
+                                if work_settled() {
+                                    break;
+                                }
+                                continue;
+                            }
                             PollAction::Done => break,
                             PollAction::Shutdown => unreachable!(),
                         }
@@ -746,12 +777,31 @@ impl PyQueue {
                         }
                     }
                 }
-                PollAction::Continue => continue,
+                PollAction::Continue => {
+                    // Without this, a runtime that died with all work settled
+                    // would leave the loop polling a channel that can never
+                    // disconnect (the executor still holds a sender).
+                    if work_settled() {
+                        break;
+                    }
+                    continue;
+                }
                 PollAction::Done => break,
             }
         }
 
         let _ = runtime_handle.join();
+
+        // Stop the async executor's event loop and drop its result sender.
+        // Best effort — shutdown must finish even if the interpreter is
+        // tearing down. Without this the daemon thread and the sender live
+        // until the executor object is garbage collected.
+        #[cfg(feature = "native-async")]
+        if let Some(executor) = async_executor_for_shutdown {
+            if let Err(e) = executor.call_method0(py, "stop") {
+                log::warn!("[taskito] async executor stop failed: {e}");
+            }
+        }
 
         // Clear the dispatcher reference so post-shutdown cancel requests
         // become no-ops instead of forwarding to a torn-down pool.

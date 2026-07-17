@@ -398,6 +398,21 @@ impl Scheduler {
         self.shutdown.clone()
     }
 
+    /// `true` once every job this scheduler dispatched has had its result
+    /// handled — a "drain is done" signal for a binding's shutdown loop that
+    /// does not depend on the result channel disconnecting (which can hinge on
+    /// foreign-object lifetimes, e.g. a Python-held sender). `false` when
+    /// dispatch is unbounded: nothing is tracked, so emptiness proves nothing.
+    pub fn in_flight_settled(&self) -> bool {
+        self.config.max_in_flight.is_some()
+            && self
+                .in_flight
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .len()
+                == 0
+    }
+
     pub fn register_queue_config(&mut self, queue_name: String, config: QueueConfig) {
         self.queue_configs.insert(queue_name, config);
     }
@@ -1255,6 +1270,57 @@ mod tests {
             pending.len(),
             1,
             "job returned to Pending for another worker"
+        );
+    }
+
+    #[test]
+    fn test_in_flight_settled_tracks_dispatch_lifecycle() {
+        // Bounded dispatch: settled when idle, unsettled while a job is out,
+        // settled again once its result is handled. Unbounded dispatch tracks
+        // nothing, so it must never report settled.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            max_in_flight: Some(4),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+        assert!(
+            scheduler.in_flight_settled(),
+            "idle bounded scheduler is settled"
+        );
+
+        scheduler.storage.enqueue(make_job("settle")).unwrap();
+        let (tx, mut rx) = make_channel(16);
+        while scheduler.tick_dispatch(&tx) {}
+        let job = rx.try_recv().expect("job dispatched");
+        assert!(
+            !scheduler.in_flight_settled(),
+            "a dispatched job keeps the scheduler unsettled"
+        );
+
+        scheduler
+            .handle_result(JobResult::Success {
+                job_id: job.id.clone(),
+                result: None,
+                task_name: "settle".to_string(),
+                wall_time_ns: 1,
+            })
+            .unwrap();
+        assert!(
+            scheduler.in_flight_settled(),
+            "handled result settles the scheduler"
+        );
+
+        let unbounded = Scheduler::new(
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap()),
+            vec!["default".to_string()],
+            SchedulerConfig::default(),
+            None,
+        );
+        assert!(
+            !unbounded.in_flight_settled(),
+            "unbounded dispatch can never prove it settled"
         );
     }
 
