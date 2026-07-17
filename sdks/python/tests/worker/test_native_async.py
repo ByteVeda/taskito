@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -225,20 +224,28 @@ def test_stop_before_loop_runs_still_stops_the_thread() -> None:
     executor = AsyncTaskExecutor(MagicMock(), {}, MagicMock(), max_concurrency=10)
     executor._loop = asyncio.new_event_loop()
     entered = threading.Event()
+    checked = threading.Event()
 
     def held_run_forever() -> None:
         entered.wait(timeout=10)
         assert executor._loop is not None
         executor._loop.run_forever()
 
-    executor._thread = threading.Thread(target=held_run_forever, daemon=True)
+    class JoinSignalsCheckDone(threading.Thread):
+        """stop() joins only after its loop check, so join marks the check done."""
+
+        def join(self, timeout: float | None = None) -> None:
+            checked.set()
+            super().join(timeout)
+
+    executor._thread = JoinSignalsCheckDone(target=held_run_forever, daemon=True)
     executor._thread.start()
 
     stopper = threading.Thread(target=executor.stop)
     stopper.start()
-    # Let stop() run its loop check while the loop is still not running, then
-    # release the thread into run_forever.
-    time.sleep(0.5)
+    # Release the thread into run_forever only once stop() has provably made
+    # its loop check against a not-yet-running loop.
+    assert checked.wait(timeout=10), "stop() never reached its join"
     entered.set()
     stopper.join(timeout=10)
 
