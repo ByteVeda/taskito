@@ -972,6 +972,27 @@ fn test_purge_completed_respects_per_job_ttl() {
 }
 
 #[test]
+fn test_purge_completed_with_ttl_covers_non_complete_statuses() {
+    // Retention bounds the whole archive, not just successes: a Dead archived
+    // row (from a DLQ move) must be purged by the global cutoff too.
+    let storage = test_storage();
+    let now = now_millis();
+
+    let job = storage.enqueue(make_job("dead_archived")).unwrap();
+    storage.dequeue("default", now + 1000, None).unwrap();
+    let running = storage.get_job(&job.id).unwrap().unwrap();
+    storage.move_to_dlq(&running, "boom", None).unwrap();
+
+    // The archived row is now status Dead. A future cutoff must delete it —
+    // before all-status retention, the Complete-only filter left it forever.
+    let removed = storage
+        .purge_completed_with_ttl(Some(now + 10_000))
+        .unwrap();
+    assert_eq!(removed, 1, "the Dead archived row must be purged");
+    assert!(storage.get_job(&job.id).unwrap().is_none());
+}
+
+#[test]
 fn test_purge_completed_drains_across_batches() {
     // 550 completed rows exceed one PURGE_BATCH (500): the batched purge loop
     // must drain every row across iterations, not stop after the first batch.

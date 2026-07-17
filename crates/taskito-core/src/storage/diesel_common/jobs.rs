@@ -1704,12 +1704,13 @@ macro_rules! impl_diesel_job_ops {
                 })
             }
 
-            /// Purge completed jobs respecting per-job result_ttl_ms. Terminal
-            /// jobs live in `archived_jobs`, so the purge targets that table.
-            /// Batched like [`Self::purge_completed`]; the global-TTL and
-            /// per-job-TTL rows are swept in two independent bounded loops. A
-            /// `None` cutoff runs only the per-entry sweep — a job can carry its
-            /// own TTL even when the queue keeps everything.
+            /// Purge archived jobs respecting per-job result_ttl_ms. Covers
+            /// **every terminal status** — a failing queue's Failed/Cancelled
+            /// rows grow the archive just as much as successes, so retention must
+            /// bound them too. Batched like [`Self::purge_completed`]; the
+            /// global-TTL and per-job-TTL rows are swept in two independent
+            /// bounded loops. A `None` cutoff runs only the per-entry sweep — a
+            /// job can carry its own TTL even when the queue keeps everything.
             pub fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
                 let now = now_millis();
 
@@ -1718,7 +1719,6 @@ macro_rules! impl_diesel_job_ops {
                     Some(cutoff) => $crate::storage::diesel_common::purge::drain_batches(|| {
                         self.write_transaction(|conn| {
                             let ids: Vec<String> = archived_jobs::table
-                                .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
                                 .filter(archived_jobs::result_ttl_ms.is_null())
                                 .filter(archived_jobs::completed_at.lt(cutoff))
                                 .select(archived_jobs::id)
@@ -1736,7 +1736,6 @@ macro_rules! impl_diesel_job_ops {
                 let per_entry = $crate::storage::diesel_common::purge::drain_batches(|| {
                     self.write_transaction(|conn| {
                         let ids: Vec<String> = archived_jobs::table
-                            .filter(archived_jobs::status.eq(JobStatus::Complete as i32))
                             .filter(archived_jobs::result_ttl_ms.is_not_null())
                             .filter(archived_jobs::completed_at.is_not_null())
                             .filter(
