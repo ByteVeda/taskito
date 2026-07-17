@@ -12,23 +12,15 @@ macro_rules! impl_diesel_job_ops {
             /// loops — same lock-hold bound for the mass-mutation paths.
             const MASS_ARCHIVE_BATCH: i64 = 500;
 
-            fn delete_job_children(
+            /// Delete a job's dependency edges and replay history — the
+            /// relational children with no retention window, always removed with
+            /// the job.
+            fn delete_job_relations(
                 conn: &mut $conn_type,
                 job_ids: &[String],
             ) -> diesel::result::QueryResult<()> {
-                // Chunk the id list so the bind count stays under SQLite's 999
-                // parameter limit even for a mass purge. The job_dependencies
-                // delete binds the ids twice (job_id OR depends_on_job_id), so
-                // cap at 450 → ≤ 900 params per statement.
-                const DELETE_ID_CHUNK: usize = 450;
-
-                for chunk in job_ids.chunks(DELETE_ID_CHUNK) {
-                    diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(chunk)))
-                        .execute(conn)?;
-                    diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(chunk)))
-                        .execute(conn)?;
-                    diesel::delete(task_metrics::table.filter(task_metrics::job_id.eq_any(chunk)))
-                        .execute(conn)?;
+                let chunk_size = $crate::storage::diesel_common::purge::DELETE_ID_CHUNK;
+                for chunk in job_ids.chunks(chunk_size) {
                     diesel::delete(
                         job_dependencies::table.filter(
                             job_dependencies::job_id
@@ -42,7 +34,26 @@ macro_rules! impl_diesel_job_ops {
                     )
                     .execute(conn)?;
                 }
+                Ok(())
+            }
 
+            /// Delete a job's retention-managed side data — errors, logs, and
+            /// metrics. Each has its own retention window, so the retention
+            /// archive purge leaves these to their own sweep; only a full purge
+            /// (`purge_completed`) removes them alongside the job.
+            fn delete_job_diagnostics(
+                conn: &mut $conn_type,
+                job_ids: &[String],
+            ) -> diesel::result::QueryResult<()> {
+                let chunk_size = $crate::storage::diesel_common::purge::DELETE_ID_CHUNK;
+                for chunk in job_ids.chunks(chunk_size) {
+                    diesel::delete(job_errors::table.filter(job_errors::job_id.eq_any(chunk)))
+                        .execute(conn)?;
+                    diesel::delete(task_logs::table.filter(task_logs::job_id.eq_any(chunk)))
+                        .execute(conn)?;
+                    diesel::delete(task_metrics::table.filter(task_metrics::job_id.eq_any(chunk)))
+                        .execute(conn)?;
+                }
                 Ok(())
             }
 
@@ -1667,16 +1678,23 @@ macro_rules! impl_diesel_job_ops {
                 Ok(rows.into_iter().map(Job::from_narrow_archived).collect())
             }
 
-            /// Delete one already-selected batch of archived jobs (their child
-            /// rows first, then the archive rows) inside the caller's txn.
+            /// Delete one already-selected batch of archived jobs and their
+            /// children inside the caller's txn. Relations (deps, replay) always
+            /// go; the retention-managed diagnostics (errors/logs/metrics) go
+            /// only when `cascade_diagnostics` is set — the per-table retention
+            /// purge leaves them to their own window instead.
             fn purge_archived_id_batch(
                 conn: &mut $conn_type,
                 ids: &[String],
+                cascade_diagnostics: bool,
             ) -> diesel::result::QueryResult<u64> {
                 if ids.is_empty() {
                     return Ok(0);
                 }
-                Self::delete_job_children(conn, ids)?;
+                Self::delete_job_relations(conn, ids)?;
+                if cascade_diagnostics {
+                    Self::delete_job_diagnostics(conn, ids)?;
+                }
                 let affected =
                     diesel::delete(archived_jobs::table.filter(archived_jobs::id.eq_any(ids)))
                         .execute(conn)?;
@@ -1699,7 +1717,7 @@ macro_rules! impl_diesel_job_ops {
                             .select(archived_jobs::id)
                             .limit(Self::PURGE_BATCH)
                             .load(conn)?;
-                        Ok(Self::purge_archived_id_batch(conn, &ids)?)
+                        Ok(Self::purge_archived_id_batch(conn, &ids, true)?)
                     })
                 })
             }
@@ -1724,7 +1742,7 @@ macro_rules! impl_diesel_job_ops {
                                 .select(archived_jobs::id)
                                 .limit(Self::PURGE_BATCH)
                                 .load(conn)?;
-                            Ok(Self::purge_archived_id_batch(conn, &ids)?)
+                            Ok(Self::purge_archived_id_batch(conn, &ids, false)?)
                         })
                     })?,
                     None => 0,
@@ -1746,7 +1764,7 @@ macro_rules! impl_diesel_job_ops {
                             .select(archived_jobs::id)
                             .limit(Self::PURGE_BATCH)
                             .load(conn)?;
-                        Ok(Self::purge_archived_id_batch(conn, &ids)?)
+                        Ok(Self::purge_archived_id_batch(conn, &ids, false)?)
                     })
                 })?;
 

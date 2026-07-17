@@ -2039,6 +2039,47 @@ mod tests {
     }
 
     #[test]
+    fn test_archive_retention_keeps_side_tables_with_no_window() {
+        // Per-table independence: archived_jobs has a window but task_logs does
+        // not, so purging the archived job must NOT cascade-delete its logs —
+        // they are the caller's to keep forever.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            retention: Some(retention::RetentionConfig {
+                archived_jobs_ttl_ms: Some(1),
+                task_logs_ttl_ms: None,
+                ..retention::RetentionConfig::default()
+            }),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+
+        let job = scheduler.storage.enqueue(make_job("keeps_logs")).unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap();
+        scheduler
+            .storage
+            .write_task_log(&job.id, "keeps_logs", "INFO", "msg", None)
+            .unwrap();
+        scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+
+        scheduler.auto_cleanup().unwrap();
+
+        assert!(
+            scheduler.storage.get_job(&job.id).unwrap().is_none(),
+            "archived_jobs has a 1ms window, so the job must be purged"
+        );
+        assert!(
+            !scheduler.storage.get_task_logs(&job.id).unwrap().is_empty(),
+            "task_logs has no window, so the log must survive the archive purge"
+        );
+    }
+
+    #[test]
     fn test_effective_retention_maps_legacy_result_ttl() {
         // The legacy knob means "every table, same window" — the mapping must be
         // lossless so existing Queue(result_ttl=...) callers keep byte-identical
