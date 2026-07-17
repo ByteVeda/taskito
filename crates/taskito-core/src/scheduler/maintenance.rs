@@ -106,6 +106,20 @@ impl Scheduler {
         Ok(())
     }
 
+    /// The queue-wide retention cutoff, or `None` when retention is disabled.
+    ///
+    /// A negative TTL is treated as unset: `now - (-ttl)` lands in the future and
+    /// would match every row, purging the whole history. The bindings reject one
+    /// up front, so this only keeps a bad config from being destructive.
+    fn global_retention_cutoff(&self, now: i64) -> Option<i64> {
+        let ttl = self.config.result_ttl_ms?;
+        if ttl < 0 {
+            warn!("ignoring negative result_ttl_ms ({ttl}); retention stays disabled");
+            return None;
+        }
+        Some(now.saturating_sub(ttl))
+    }
+
     /// Purge expired completed/dead jobs and their side data. The per-entry TTL
     /// purges run every tick — a job or DLQ entry can carry its own `result_ttl`
     /// even when no queue-wide `result_ttl` is configured. The global-cutoff
@@ -113,7 +127,7 @@ impl Scheduler {
     /// global `result_ttl` is set.
     pub(super) fn auto_cleanup(&self) -> Result<()> {
         let now = now_millis();
-        let global_cutoff = self.config.result_ttl_ms.map(|ttl| now.saturating_sub(ttl));
+        let global_cutoff = self.global_retention_cutoff(now);
         // `i64::MIN` disables the methods' global-cutoff branch (`failed_at < MIN`
         // never matches), leaving only the per-entry TTL deletes.
         let ttl_cutoff = global_cutoff.unwrap_or(i64::MIN);

@@ -1967,6 +1967,35 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_cleanup_ignores_negative_result_ttl() {
+        // A negative TTL inverts the cutoff — `now.saturating_sub(-ttl)` lands in
+        // the future, matching every archived row. The bindings reject it, so the
+        // scheduler must never be handed one; this pins the blast radius if one
+        // ever gets through.
+        let storage =
+            StorageBackend::Sqlite(crate::storage::sqlite::SqliteStorage::in_memory().unwrap());
+        let config = SchedulerConfig {
+            result_ttl_ms: Some(-5_000),
+            ..SchedulerConfig::default()
+        };
+        let scheduler = Scheduler::new(storage, vec!["default".to_string()], config, None);
+
+        let job = scheduler.storage.enqueue(make_job("fresh_task")).unwrap();
+        scheduler
+            .storage
+            .dequeue("default", now_millis() + 1000, None)
+            .unwrap();
+        scheduler.storage.complete(&job.id, Some(vec![1])).unwrap();
+
+        scheduler.auto_cleanup().unwrap();
+
+        assert!(
+            scheduler.storage.get_job(&job.id).unwrap().is_some(),
+            "a negative result_ttl must not purge a job that just completed"
+        );
+    }
+
+    #[test]
     fn test_auto_cleanup_per_entry_ttl_without_global() {
         // With no queue-wide result_ttl, a per-job result_ttl must still be
         // honored (the per-entry purge runs every tick).
