@@ -136,6 +136,11 @@ impl RedisStorage {
         since_ms: i64,
         limit: i64,
     ) -> Result<Vec<TaskLogEntry>> {
+        // A zero limit is an empty page; without this the filtered walk below
+        // never hits its `rows.len() == limit` stop and scans the whole range.
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);
 
