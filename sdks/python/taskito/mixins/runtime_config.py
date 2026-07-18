@@ -104,3 +104,23 @@ class QueueRuntimeConfigMixin:
         if max_pending < 0:
             raise ValueError("max_pending must be non-negative")
         self._max_pending[queue_name] = max_pending
+
+    def set_queue_codel(self, queue_name: str, target_ms: int, interval_ms: int) -> None:
+        """Enable opt-in CoDel load shedding on a queue.
+
+        Under sustained overload — when a job's wait past its eligibility stays
+        above ``target_ms`` for a full ``interval_ms`` — the dispatcher sheds the
+        stalest jobs to the dead-letter queue (reason prefixed ``codel:``)
+        instead of running them stale. A transient spike is never shed, and CoDel
+        entries are excluded from DLQ auto-retry. Takes effect at ``run_worker``.
+
+        Args:
+            queue_name: Queue name (e.g. ``"default"``).
+            target_ms: Acceptable steady-state wait (ms) past eligibility.
+            interval_ms: Window the wait must stay above target before shedding.
+        """
+        if target_ms <= 0 or interval_ms <= 0:
+            raise ValueError("target_ms and interval_ms must be positive")
+        config = self._queue_configs.setdefault(queue_name, {})
+        config["codel_target_ms"] = target_ms
+        config["codel_interval_ms"] = interval_ms
