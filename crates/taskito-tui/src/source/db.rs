@@ -191,14 +191,17 @@ impl DataSource for DbSource {
             namespace: job.namespace,
         };
         let created = self.be.storage.enqueue(new_job)?;
-        self.be.storage.record_replay(
+        // Audit is best-effort: the job already exists, so a failure here must
+        // not report the replay as failed (which would also risk a duplicate on
+        // retry). Core has no single transactional replay to make this atomic.
+        let _ = self.be.storage.record_replay(
             id,
             &created.id,
             None,
             None,
             original_error.as_deref(),
             None,
-        )?;
+        );
         Ok(created.id)
     }
 
