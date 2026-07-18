@@ -130,6 +130,16 @@ public interface Taskito extends AutoCloseable {
      */
     Taskito maxPending(String queue, int cap);
 
+    /**
+     * Enable opt-in CoDel load shedding on {@code queue}. Under sustained
+     * overload — a job's wait past its eligibility staying above {@code targetMs}
+     * for a full {@code intervalMs} — a running worker sheds the stalest jobs to
+     * the dead-letter queue (reason prefixed {@code codel:}) instead of running
+     * them stale. A transient spike is never shed. Takes effect for workers
+     * started after this call. Returns {@code this}.
+     */
+    Taskito codel(String queue, long targetMs, long intervalMs);
+
     // ── Producer ────────────────────────────────────────────────────
 
     /** Enqueue a typed payload using the task's default options; returns the job id. */

@@ -190,6 +190,7 @@ public final class Worker implements AutoCloseable {
 
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
         private List<SubscriptionConfig> subscriptions = List.of();
+        private List<Map<String, Object>> queueConfigs = List.of();
         private List<String> queues;
         private int concurrency;
         private Integer channelCapacity;
@@ -271,6 +272,16 @@ public final class Worker implements AutoCloseable {
          */
         public Builder subscriptions(List<SubscriptionConfig> subscriptions) {
             this.subscriptions = subscriptions;
+            return this;
+        }
+
+        /**
+         * Per-queue scheduler config in wire shape (currently CoDel). Populated
+         * from the owning {@code Taskito} via {@code Taskito.worker()}; a manually
+         * built worker leaves it empty.
+         */
+        public Builder queueConfigs(List<Map<String, Object>> queueConfigs) {
+            this.queueConfigs = queueConfigs;
             return this;
         }
 
@@ -456,6 +467,9 @@ public final class Worker implements AutoCloseable {
             }
             if (!subscriptions.isEmpty()) {
                 options.put("subscriptions", encodeSubscriptions());
+            }
+            if (!queueConfigs.isEmpty()) {
+                options.put("queueConfigs", queueConfigs);
             }
             // Presence, not emptiness: an empty Retention encodes as `{}` and
             // disables retention, which the core distinguishes from an omitted

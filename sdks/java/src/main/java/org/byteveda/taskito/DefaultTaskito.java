@@ -94,6 +94,8 @@ final class DefaultTaskito implements Taskito {
     private final List<SubscriptionConfig> subscriptions = new CopyOnWriteArrayList<>();
     // Opt-in per-queue admission caps (queue -> max pending). Absent = uncapped.
     private final Map<String, Integer> maxPending = new ConcurrentHashMap<>();
+    // Opt-in per-queue CoDel config (queue -> [targetMs, intervalMs]).
+    private final Map<String, long[]> codelConfigs = new ConcurrentHashMap<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer, Map<String, PayloadCodec> codecs) {
         this.backend = backend;
@@ -192,6 +194,28 @@ final class DefaultTaskito implements Taskito {
     public Taskito gate(String taskName, EnqueueGate gate) {
         gates.computeIfAbsent(taskName, key -> new CopyOnWriteArrayList<>()).add(gate);
         return this;
+    }
+
+    @Override
+    public Taskito codel(String queue, long targetMs, long intervalMs) {
+        if (targetMs <= 0 || intervalMs <= 0) {
+            throw new IllegalArgumentException("targetMs and intervalMs must be positive");
+        }
+        codelConfigs.put(queue, new long[] {targetMs, intervalMs});
+        return this;
+    }
+
+    /** Serialize the per-queue CoDel configs into the worker-options wire shape. */
+    private List<Map<String, Object>> encodeQueueConfigs() {
+        List<Map<String, Object>> specs = new ArrayList<>(codelConfigs.size());
+        codelConfigs.forEach((queue, codel) -> {
+            Map<String, Object> spec = new LinkedHashMap<>();
+            spec.put("name", queue);
+            spec.put("codelTargetMs", codel[0]);
+            spec.put("codelIntervalMs", codel[1]);
+            specs.add(spec);
+        });
+        return specs;
     }
 
     @Override
@@ -1085,7 +1109,8 @@ final class DefaultTaskito implements Taskito {
         // The live subscription list is shared so subscribe() calls made before
         // start() are registered under the started worker's id.
         return Worker.builder(backend, serializer, middleware, resources.forWorker(), codecs)
-                .subscriptions(subscriptions);
+                .subscriptions(subscriptions)
+                .queueConfigs(encodeQueueConfigs());
     }
 
     @Override
