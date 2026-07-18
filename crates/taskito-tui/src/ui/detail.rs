@@ -1,5 +1,7 @@
 //! Detail pane for the Jobs, Workflows, and Dead-Letters views.
 
+use std::collections::BTreeMap;
+
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -141,37 +143,52 @@ fn workflow_lines(app: &App) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
     }
     lines.push(section("DAG"));
-    // Nodes are in topological order; indent by depth and mark edges so the
-    // dependency structure reads as a graph.
-    for n in &app.wf_dag {
-        let indent = "  ".repeat(n.depth);
-        let marker = if n.depth == 0 { "●" } else { "└▶" };
-        let status = n.status.map(|s| s.as_str()).unwrap_or("pending");
-        let style = n
-            .status
-            .map(wf_node_style)
-            .unwrap_or_else(|| Style::default().fg(ratatui::style::Color::Gray));
+    lines.push(Line::from(Span::styled(
+        "nodes in the same stage run in parallel · ← shows dependencies",
+        Style::default().fg(ratatui::style::Color::DarkGray),
+    )));
 
-        let mut spans = vec![
-            Span::raw(format!("{indent}{marker} ")),
-            Span::styled(
-                format!("{:<14}", n.name),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!("{status:<11}"), style),
-        ];
-        if !n.predecessors.is_empty() {
-            spans.push(Span::styled(
-                format!("after {}", n.predecessors.join(", ")),
-                Style::default().fg(ratatui::style::Color::DarkGray),
-            ));
-        }
-        lines.push(Line::from(spans));
-        if let Some(err) = &n.error {
-            lines.push(Line::from(Span::styled(
-                format!("{indent}   {err}"),
-                Style::default().fg(ratatui::style::Color::Red),
-            )));
+    // Group by topological stage (depth = longest path from a root). Nodes in a
+    // stage have no dependency on each other, so listing them together — with
+    // each node's exact predecessors after `←` — avoids the false "nesting" a
+    // depth-indented tree implies for fan-in/fan-out graphs.
+    let mut by_stage: BTreeMap<usize, Vec<&crate::source::DagNode>> = BTreeMap::new();
+    for n in &app.wf_dag {
+        by_stage.entry(n.depth).or_default().push(n);
+    }
+    for (stage, nodes) in &by_stage {
+        lines.push(Line::from(Span::styled(
+            format!("stage {stage}"),
+            Style::default().fg(ratatui::style::Color::Cyan),
+        )));
+        for n in nodes {
+            let status = n.status.map(|s| s.as_str()).unwrap_or("pending");
+            let style = n
+                .status
+                .map(wf_node_style)
+                .unwrap_or_else(|| Style::default().fg(ratatui::style::Color::Gray));
+            let mut spans = vec![
+                Span::raw("  "),
+                Span::styled("● ", style),
+                Span::styled(
+                    format!("{:<14}", n.name),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{status:<11}"), style),
+            ];
+            if !n.predecessors.is_empty() {
+                spans.push(Span::styled(
+                    format!("← {}", n.predecessors.join(", ")),
+                    Style::default().fg(ratatui::style::Color::DarkGray),
+                ));
+            }
+            lines.push(Line::from(spans));
+            if let Some(err) = &n.error {
+                lines.push(Line::from(Span::styled(
+                    format!("    {err}"),
+                    Style::default().fg(ratatui::style::Color::Red),
+                )));
+            }
         }
     }
     lines
