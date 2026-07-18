@@ -32,4 +32,6 @@ pub use storage::sqlite::SqliteStorage;
 pub use storage::Storage;
 pub use storage::StorageBackend;
 pub use storage::{DeadJob, QueueStats, SubscriptionBacklogStats};
-pub use worker::WorkerDispatcher;
+pub use worker::{
+    NativeDispatcher, TaskError, TaskRegistry, TaskResult, Worker, WorkerDispatcher, WorkerHandle,
+};

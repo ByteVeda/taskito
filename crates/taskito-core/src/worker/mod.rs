@@ -1,3 +1,11 @@
+pub mod dispatcher;
+pub mod registry;
+pub mod runner;
+
+pub use dispatcher::NativeDispatcher;
+pub use registry::{TaskError, TaskHandler, TaskRegistry, TaskResult};
+pub use runner::{Worker, WorkerHandle};
+
 use async_trait::async_trait;
 use crossbeam_channel::Sender;
 
@@ -5,7 +13,8 @@ use crate::job::Job;
 use crate::scheduler::JobResult;
 
 /// Abstraction for worker pool implementations.
-/// Core defines the interface; language-specific crates provide implementations.
+/// Core defines the interface; the [`NativeDispatcher`] runs registered Rust
+/// handlers, and the language bindings provide their own pools.
 #[async_trait]
 pub trait WorkerDispatcher: Send + Sync {
     /// Start dispatching jobs from the receiver. Runs until channel closes.
@@ -23,3 +32,6 @@ pub trait WorkerDispatcher: Send + Sync {
     /// storage.
     fn notify_cancel(&self, _job_id: &str) {}
 }
+
+#[cfg(test)]
+mod tests;

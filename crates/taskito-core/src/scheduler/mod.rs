@@ -199,6 +199,20 @@ pub struct TaskConfig {
     pub max_in_flight_per_task: Option<usize>,
 }
 
+impl Default for TaskConfig {
+    /// Default retry policy, no rate limit, breaker, retry budget, or caps.
+    fn default() -> Self {
+        Self {
+            retry_policy: RetryPolicy::default(),
+            rate_limit: None,
+            circuit_breaker: None,
+            retry_budget: None,
+            max_concurrent: None,
+            max_in_flight_per_task: None,
+        }
+    }
+}
+
 /// In-flight bookkeeping behind the dispatch caps: which jobs are out, and how many
 /// of each task. Per-task counts are maintained alongside rather than derived so the
 /// per-task gate stays O(1) — the poller consults it on every dispatch, and the map
