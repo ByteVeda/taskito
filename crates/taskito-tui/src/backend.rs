@@ -55,8 +55,8 @@ fn open_postgres(url: &str) -> Result<Backend> {
     use taskito_core::PostgresStorage;
     use taskito_workflows::WorkflowPostgresStorage;
 
-    let storage = PostgresStorage::new(url)
-        .with_context(|| format!("failed to connect to Postgres at '{url}'"))?;
+    // Don't interpolate the URL — it may embed credentials.
+    let storage = PostgresStorage::new(url).context("failed to connect to Postgres")?;
     let workflows = WorkflowPostgresStorage::new(storage.clone())
         .context("failed to initialise workflow tables")?;
     Ok(Backend {
@@ -75,8 +75,8 @@ fn open_redis(url: &str) -> Result<Backend> {
     use taskito_core::RedisStorage;
     use taskito_workflows::WorkflowRedisStorage;
 
-    let storage =
-        RedisStorage::new(url).with_context(|| format!("failed to connect to Redis at '{url}'"))?;
+    // Don't interpolate the URL — it may embed credentials.
+    let storage = RedisStorage::new(url).context("failed to connect to Redis")?;
     let workflows = WorkflowRedisStorage::new(storage.clone())
         .context("failed to initialise workflow store")?;
     Ok(Backend {
