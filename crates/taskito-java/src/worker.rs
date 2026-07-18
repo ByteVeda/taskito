@@ -15,6 +15,7 @@ use jni::JNIEnv;
 use taskito_core::resilience::circuit_breaker::CircuitBreakerConfig;
 use taskito_core::resilience::rate_limiter::RateLimitConfig;
 use taskito_core::resilience::retry::RetryPolicy;
+use taskito_core::scheduler::codel::CodelConfig;
 use taskito_core::scheduler::{ResultOutcome, TaskConfig};
 use taskito_core::worker::WorkerDispatcher;
 use taskito_core::{Scheduler, SchedulerConfig, Storage, StorageBackend};
@@ -24,7 +25,9 @@ use taskito_core::job::now_millis;
 use taskito_core::storage::models::NewSubscriptionRow;
 
 use crate::backend::QueueHandle;
-use crate::convert::{parse_json, SubscriptionSpec, TaskRetryConfig, WorkerOptions};
+use crate::convert::{
+    parse_json, QueueConfigSpec, SubscriptionSpec, TaskRetryConfig, WorkerOptions,
+};
 use crate::dispatcher::{JavaDispatcher, Registry, TaskOutcome};
 use crate::ffi::{guard, read_bytes, read_string};
 use crate::handle::{self, drop_handle, into_handle};
@@ -119,6 +122,9 @@ fn start_worker(
     scheduler.set_claim_owner(worker_id.clone());
     for (name, policy) in task_policies {
         scheduler.register_task(name, policy);
+    }
+    for (name, codel) in build_queue_codels(options.queue_configs.take()) {
+        scheduler.register_queue_codel(name, codel);
     }
     let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
@@ -313,6 +319,27 @@ fn build_task_policies(
         ));
     }
     Ok(built)
+}
+
+/// Build the per-queue CoDel configs. Only queues with positive bounds are
+/// registered; anything else is dropped so an empty spec is a harmless no-op.
+fn build_queue_codels(configs: Option<Vec<QueueConfigSpec>>) -> Vec<(String, CodelConfig)> {
+    configs
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(
+            |spec| match (spec.codel_target_ms, spec.codel_interval_ms) {
+                (Some(target_ms), Some(interval_ms)) if target_ms > 0 && interval_ms > 0 => Some((
+                    spec.name,
+                    CodelConfig {
+                        target_ms,
+                        interval_ms,
+                    },
+                )),
+                _ => None,
+            },
+        )
+        .collect()
 }
 
 /// Parse an optional rate spec, naming the offending task and option so a typo

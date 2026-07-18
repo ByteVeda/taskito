@@ -300,6 +300,19 @@ pub struct WorkerOptions {
     pub subscriptions: Option<Vec<SubscriptionSpec>>,
     /// Per-table retention windows for auto-cleanup, in seconds.
     pub retention: Option<RetentionSpec>,
+    /// Per-queue config registered with the scheduler at start. Currently
+    /// carries opt-in CoDel load shedding.
+    pub queue_configs: Option<Vec<QueueConfigSpec>>,
+}
+
+/// Per-queue scheduler config. Only queues with a value here are registered; an
+/// entry with no positive CoDel bounds is ignored.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QueueConfigSpec {
+    pub name: String,
+    pub codel_target_ms: Option<i64>,
+    pub codel_interval_ms: Option<i64>,
 }
 
 /// Per-table retention windows in seconds. An unset field keeps that table

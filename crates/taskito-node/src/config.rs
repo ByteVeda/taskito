@@ -148,6 +148,11 @@ pub struct QueueConfigInput {
     pub name: String,
     pub max_concurrent: Option<i32>,
     pub rate_limit: Option<String>,
+    /// Opt-in CoDel load shedding. Both must be set and positive to enable it:
+    /// `codelTargetMs` = acceptable steady-state wait; `codelIntervalMs` = window
+    /// the wait must stay above target before jobs are shed to the DLQ.
+    pub codel_target_ms: Option<i64>,
+    pub codel_interval_ms: Option<i64>,
 }
 
 /// Opt-in mesh overlay for a worker: decentralized peer discovery (SWIM gossip)

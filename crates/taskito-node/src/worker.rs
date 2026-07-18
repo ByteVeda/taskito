@@ -127,6 +127,9 @@ pub fn start_worker(
         scheduler.register_task(input.name.clone(), crate::convert::task_config(input)?);
     }
     for input in options.queue_configs.iter().flatten() {
+        if let Some(codel) = crate::convert::queue_codel(input) {
+            scheduler.register_queue_codel(input.name.clone(), codel);
+        }
         scheduler.register_queue_config(input.name.clone(), crate::convert::queue_config(input)?);
     }
     let scheduler = Arc::new(scheduler);

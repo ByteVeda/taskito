@@ -173,6 +173,13 @@ export interface QueueLimits {
    * (a non-atomic count-then-insert), so it applies even with no worker running.
    */
   maxPending?: number;
+  /**
+   * Opt-in CoDel load shedding. Under sustained overload — a job's wait past its
+   * eligibility staying above `targetMs` for a full `intervalMs` — the
+   * dispatcher sheds the stalest jobs to the DLQ (reason prefixed `codel:`)
+   * rather than running them stale. A transient spike is never shed.
+   */
+  codel?: { targetMs: number; intervalMs: number };
 }
 
 /** A task handler plus its registration options. */

@@ -324,6 +324,15 @@ impl Scheduler {
 
         let mut retried = 0u64;
         for entry in &candidates {
+            // Jobs shed by CoDel were intentionally dropped as stale; never let
+            // the auto-retry sweep resurrect them.
+            if entry
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("codel:"))
+            {
+                continue;
+            }
             match self.storage.retry_dead(&entry.id) {
                 Ok(new_id) => {
                     info!(

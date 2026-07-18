@@ -18,6 +18,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.byteveda.taskito.autoscale.AutoscaleOptions;
 import org.byteveda.taskito.autoscale.Autoscaler;
 import org.byteveda.taskito.errors.SerializationException;
@@ -190,6 +191,7 @@ public final class Worker implements AutoCloseable {
 
         private final Map<EventName, List<Consumer<OutcomeEvent>>> listeners = new EnumMap<>(EventName.class);
         private List<SubscriptionConfig> subscriptions = List.of();
+        private Supplier<List<Map<String, Object>>> queueConfigs = List::of;
         private List<String> queues;
         private int concurrency;
         private Integer channelCapacity;
@@ -271,6 +273,18 @@ public final class Worker implements AutoCloseable {
          */
         public Builder subscriptions(List<SubscriptionConfig> subscriptions) {
             this.subscriptions = subscriptions;
+            return this;
+        }
+
+        /**
+         * Late-bound per-queue scheduler config in wire shape (currently CoDel).
+         * Supplied by the owning {@code Taskito} via {@code Taskito.worker()} and
+         * resolved at {@code start()}, so config set *after* the builder was
+         * obtained (e.g. {@code Taskito.codel(...)}) is still picked up — matching
+         * that method's documented timing. A manually built worker leaves it empty.
+         */
+        public Builder queueConfigs(Supplier<List<Map<String, Object>>> queueConfigs) {
+            this.queueConfigs = queueConfigs;
             return this;
         }
 
@@ -456,6 +470,11 @@ public final class Worker implements AutoCloseable {
             }
             if (!subscriptions.isEmpty()) {
                 options.put("subscriptions", encodeSubscriptions());
+            }
+            // Resolve at start() so config set after the builder was obtained is seen.
+            List<Map<String, Object>> resolvedQueueConfigs = queueConfigs.get();
+            if (!resolvedQueueConfigs.isEmpty()) {
+                options.put("queueConfigs", resolvedQueueConfigs);
             }
             // Presence, not emptiness: an empty Retention encodes as `{}` and
             // disables retention, which the core distinguishes from an omitted

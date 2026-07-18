@@ -16,6 +16,21 @@ use super::PyQueue;
 use crate::async_worker::AsyncWorkerPool;
 use crate::py_config::PyTaskConfig;
 
+/// Parse the optional per-queue CoDel config from a `queue_configs` entry. Both
+/// `codel_target_ms` and `codel_interval_ms` must be present and positive for
+/// shedding to be enabled on the queue.
+fn parse_codel(cfg: &serde_json::Value) -> Option<taskito_core::scheduler::codel::CodelConfig> {
+    let target_ms = cfg.get("codel_target_ms").and_then(|v| v.as_i64())?;
+    let interval_ms = cfg.get("codel_interval_ms").and_then(|v| v.as_i64())?;
+    if target_ms <= 0 || interval_ms <= 0 {
+        return None;
+    }
+    Some(taskito_core::scheduler::codel::CodelConfig {
+        target_ms,
+        interval_ms,
+    })
+}
+
 /// Mesh-aware scheduler bridge: receives jobs from the scheduler's
 /// intermediate channel, pushes them into the local deque with affinity
 /// sorting, then drains the deque to the real dispatcher channel.
@@ -427,6 +442,9 @@ impl PyQueue {
                         .get("max_concurrent")
                         .and_then(|v| v.as_i64())
                         .map(|v| v as i32);
+                    if let Some(codel) = parse_codel(&cfg) {
+                        scheduler.register_queue_codel(queue_name.clone(), codel);
+                    }
                     scheduler.register_queue_config(
                         queue_name,
                         taskito_core::scheduler::QueueConfig {
