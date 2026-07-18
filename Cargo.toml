@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/taskito-core", "crates/taskito-python", "crates/taskito-node", "crates/taskito-java", "crates/taskito-workflows", "crates/taskito-mesh"]
+members = ["crates/taskito-core", "crates/taskito-python", "crates/taskito-node", "crates/taskito-java", "crates/taskito-workflows", "crates/taskito-mesh", "crates/taskito-tui"]
 resolver = "2"
 
 [workspace.dependencies]
