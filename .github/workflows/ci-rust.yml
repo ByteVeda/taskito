@@ -138,6 +138,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Read MSRV from workspace manifest
         id: msrv
@@ -162,9 +164,19 @@ jobs:
       - name: Package passes a publish dry-run
         run: cargo publish --dry-run -p taskito-core
 
+      # No baseline exists before the first publish; the check is skipped until
+      # then, and a breaking change fails CI once one does.
+      - name: Check for a crates.io baseline
+        id: baseline
+        run: |
+          if curl -sfo /dev/null "https://crates.io/api/v1/crates/taskito-core"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Semver check against crates.io baseline
-        # No baseline exists before the first publish; keep advisory until then.
-        continue-on-error: true
+        if: steps.baseline.outputs.exists == 'true'
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           package: taskito-core
