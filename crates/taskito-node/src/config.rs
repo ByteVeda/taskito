@@ -153,6 +153,10 @@ pub struct QueueConfigInput {
     /// the wait must stay above target before jobs are shed to the DLQ.
     pub codel_target_ms: Option<i64>,
     pub codel_interval_ms: Option<i64>,
+    /// `"lifo"` dispatches newest-first within a priority under overload;
+    /// anything else (or unset) keeps the fair `"fifo"` default. Honored on
+    /// SQLite/Postgres; Redis is FIFO-only.
+    pub dispatch_order: Option<String>,
 }
 
 /// Opt-in mesh overlay for a worker: decentralized peer discovery (SWIM gossip)
