@@ -25,6 +25,7 @@ class QueueRuntimeConfigMixin:
     """Rate limits, concurrency caps, and custom type registration."""
 
     _queue_configs: dict[str, dict[str, Any]]
+    _max_pending: dict[str, int]
     _interceptor: ArgumentInterceptor | None
 
     def register_type(
@@ -85,3 +86,21 @@ class QueueRuntimeConfigMixin:
                 from this queue.
         """
         self._queue_configs.setdefault(queue_name, {})["max_concurrent"] = max_concurrent
+
+    def set_queue_max_pending(self, queue_name: str, max_pending: int) -> None:
+        """Set an opt-in admission cap on a queue's pending backlog.
+
+        Once the queue holds ``max_pending`` pending jobs, ``enqueue`` and
+        ``enqueue_many`` raise :class:`~taskito.exceptions.QueueFullError`. The
+        check is a non-atomic count-then-insert (brief overshoot is possible
+        under concurrent producers). Enforced producer-side, so it applies even
+        when no worker is running.
+
+        Args:
+            queue_name: Queue name (e.g. ``"default"``).
+            max_pending: Maximum pending jobs allowed before enqueue is rejected.
+                Must be non-negative; ``0`` admits nothing.
+        """
+        if max_pending < 0:
+            raise ValueError("max_pending must be non-negative")
+        self._max_pending[queue_name] = max_pending

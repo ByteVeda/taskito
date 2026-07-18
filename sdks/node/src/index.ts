@@ -25,6 +25,7 @@ export {
   PredicateRejectedError,
   ProxyError,
   QueueError,
+  QueueFullError,
   ResourceError,
   ResourceNotFoundError,
   ResourceScopeError,

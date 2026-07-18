@@ -589,6 +589,14 @@ impl PyQueue {
         })
     }
 
+    /// Count pending jobs on a queue — the lean primitive behind the
+    /// `max_pending` admission cap (avoids the full `stats_by_queue` breakdown).
+    pub fn count_pending_by_queue(&self, queue_name: &str) -> PyResult<i64> {
+        self.storage
+            .count_pending_by_queue(queue_name)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Get queue statistics broken down by queue name.
     pub fn stats_all_queues(&self) -> PyResult<Py<PyAny>> {
         let all = self

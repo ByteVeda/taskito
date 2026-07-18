@@ -85,6 +85,16 @@ impl JsQueue {
         Ok(created.into_iter().map(|job| job.id).collect())
     }
 
+    /// Count pending jobs on a queue — the lean primitive behind the
+    /// `maxPending` admission cap. Sync so the producer can gate a sync
+    /// `enqueue`/`enqueueMany` without a round trip to the event loop.
+    #[napi]
+    pub fn count_pending_by_queue(&self, queue: String) -> Result<i64> {
+        self.storage
+            .count_pending_by_queue(&queue)
+            .map_err(to_napi_err)
+    }
+
     /// Fetch a job by id, or `null` if no such job exists.
     #[napi]
     pub fn get_job(&self, id: String) -> Result<Option<JsJob>> {

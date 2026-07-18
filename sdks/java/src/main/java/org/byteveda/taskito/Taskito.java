@@ -121,6 +121,15 @@ public interface Taskito extends AutoCloseable {
      */
     Taskito intercept(Interceptor interceptor);
 
+    /**
+     * Set an opt-in admission cap on {@code queue}'s pending backlog. Once the
+     * queue holds {@code cap} pending jobs, {@link #enqueue} throws
+     * {@link org.byteveda.taskito.errors.QueueFullException}. Enforced
+     * producer-side (a non-atomic count-then-insert), so it applies even with no
+     * worker running. Returns {@code this}.
+     */
+    Taskito maxPending(String queue, int cap);
+
     // ── Producer ────────────────────────────────────────────────────
 
     /** Enqueue a typed payload using the task's default options; returns the job id. */
@@ -175,6 +184,9 @@ public interface Taskito extends AutoCloseable {
     QueueStats stats();
 
     QueueStats statsByQueue(String queue);
+
+    /** Count pending jobs on {@code queue} — the primitive behind the {@code maxPending} cap. */
+    long countPendingByQueue(String queue);
 
     Map<String, QueueStats> statsAllQueues();
 

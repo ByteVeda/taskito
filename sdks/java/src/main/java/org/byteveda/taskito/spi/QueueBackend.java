@@ -42,6 +42,16 @@ public interface QueueBackend extends AutoCloseable {
 
     String statsByQueueJson(String queue);
 
+    /**
+     * Count pending jobs on {@code queue} — the primitive behind the
+     * {@code maxPending} cap. Defaults to unsupported so this optional capability
+     * doesn't break existing third-party {@code QueueBackend} implementations at
+     * compile time; it is only invoked when a queue actually has a cap set.
+     */
+    default long countPendingByQueue(String queue) {
+        throw new UnsupportedOperationException("countPendingByQueue not supported by this backend");
+    }
+
     String statsAllQueuesJson();
 
     String listJobsJson(String filterJson);

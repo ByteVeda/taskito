@@ -21,6 +21,7 @@ import org.byteveda.taskito.core.CoreFacade;
 import org.byteveda.taskito.errors.EnqueueSkippedException;
 import org.byteveda.taskito.errors.InterceptionException;
 import org.byteveda.taskito.errors.PredicateRejectedException;
+import org.byteveda.taskito.errors.QueueFullException;
 import org.byteveda.taskito.errors.SerializationException;
 import org.byteveda.taskito.errors.WorkflowException;
 import org.byteveda.taskito.interception.Interception;
@@ -91,6 +92,8 @@ final class DefaultTaskito implements Taskito {
     private final Map<String, List<EnqueueGate>> gates = new ConcurrentHashMap<>();
     private final List<Interceptor> interceptors = new CopyOnWriteArrayList<>();
     private final List<SubscriptionConfig> subscriptions = new CopyOnWriteArrayList<>();
+    // Opt-in per-queue admission caps (queue -> max pending). Absent = uncapped.
+    private final Map<String, Integer> maxPending = new ConcurrentHashMap<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer, Map<String, PayloadCodec> codecs) {
         this.backend = backend;
@@ -143,6 +146,37 @@ final class DefaultTaskito implements Taskito {
     @Override
     public Map<String, ResourceStat> resourceMetrics() {
         return resources.metrics();
+    }
+
+    @Override
+    public Taskito maxPending(String queue, int cap) {
+        if (cap < 0) {
+            // A negative cap makes `pending + incoming > cap` always true and
+            // would permanently reject every enqueue for the queue.
+            throw new IllegalArgumentException("cap must be non-negative");
+        }
+        maxPending.put(queue, cap);
+        return this;
+    }
+
+    /**
+     * Enforce the opt-in {@code maxPending} admission cap for a queue. Throws
+     * {@link QueueFullException} when admitting {@code incoming} jobs would push
+     * the queue's pending backlog past its cap; {@code incoming} is the batch
+     * size, so a batch is rejected as a whole rather than overshooting the cap by
+     * its full size. A no-op (and no query) for uncapped queues. Non-atomic
+     * count-then-insert, like the rate limiter.
+     */
+    private void rejectIfQueueFull(String queueOrNull, int incoming) {
+        String queue = queueOrNull == null ? "default" : queueOrNull;
+        Integer cap = maxPending.get(queue);
+        if (cap == null) {
+            return;
+        }
+        long pending = backend.countPendingByQueue(queue);
+        if (pending + incoming > cap) {
+            throw new QueueFullException(queue, pending, cap);
+        }
     }
 
     @Override
@@ -267,6 +301,8 @@ final class DefaultTaskito implements Taskito {
                     .metadata(encode(context.metadata()))
                     .build();
         }
+        // Admission cap: reject before serializing/inserting if the target queue is full.
+        rejectIfQueueFull(finalOptions.queue(), 1);
         // Serialize before codec-encoding so the idempotency key hashes the deterministic
         // pre-codec payload — a non-deterministic codec (e.g. an AES-GCM nonce) must not
         // change the dedup key.
@@ -376,6 +412,9 @@ final class DefaultTaskito implements Taskito {
             bytes[i] = encodeCodecs(payloadBytes, task.codecNames());
             perJob.add(jobOptions);
         }
+        // The whole batch targets one queue (a single `options`); reject before
+        // inserting if admitting all of it would push that queue past its cap.
+        rejectIfQueueFull(options.queue(), payloads.size());
         return Arrays.asList(backend.enqueueMany(task.name(), bytes, encode(perJob)));
     }
 
@@ -458,6 +497,11 @@ final class DefaultTaskito implements Taskito {
     @Override
     public QueueStats statsByQueue(String queue) {
         return decode(backend.statsByQueueJson(queue), QueueStats.class);
+    }
+
+    @Override
+    public long countPendingByQueue(String queue) {
+        return backend.countPendingByQueue(queue);
     }
 
     @Override

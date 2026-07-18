@@ -43,6 +43,8 @@ public final class NativeQueue {
 
     public static native String statsByQueue(long handle, String queue);
 
+    public static native long countPendingByQueue(long handle, String queue);
+
     public static native String statsAllQueues(long handle);
 
     public static native String listJobs(long handle, String filterJson);

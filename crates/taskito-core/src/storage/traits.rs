@@ -329,6 +329,10 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Per-queue stats ──────────────────────────────────────────
 
+    /// Cheap count of pending jobs on a queue — the admission-cap primitive.
+    /// Single-status, unlike the full-breakdown `stats_by_queue`.
+    fn count_pending_by_queue(&self, queue_name: &str) -> Result<i64>;
+
     fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats>;
     fn stats_all_queues(&self) -> Result<std::collections::HashMap<String, QueueStats>>;
 

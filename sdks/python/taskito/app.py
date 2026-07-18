@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+from collections import Counter
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -30,7 +31,7 @@ from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.batching import BatchAccumulator, BatchConfig
 from taskito.codecs import CodecSerializer, PayloadCodec
 from taskito.events import EventBus, EventType
-from taskito.exceptions import SerializationError
+from taskito.exceptions import QueueFullError, SerializationError
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
 from taskito.interception.metrics import InterceptionMetrics
@@ -152,6 +153,7 @@ class Queue(
         dlq_auto_retry_delay: int | None = None,
         dlq_auto_retry_max: int = 1,
         retention: Retention | None = None,
+        max_pending: dict[str, int] | None = None,
     ):
         """Initialize a new task queue.
 
@@ -225,6 +227,14 @@ class Queue(
                 is automatically retried. ``None`` disables auto-retry.
             dlq_auto_retry_max: Maximum number of DLQ auto-retries per entry
                 before giving up. Defaults to 1.
+            max_pending: Opt-in per-queue admission cap, mapping queue name to a
+                maximum pending backlog. When set, ``enqueue``/``enqueue_many``
+                raise :class:`QueueFullError` once a queue's pending count
+                reaches its cap. Queues absent from the map are uncapped (zero
+                overhead). The check is a non-atomic count-then-insert, so brief
+                overshoot is possible under concurrent producers — the same soft
+                guarantee as the rate limiter. Also settable at runtime via
+                ``set_queue_max_pending``.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -302,6 +312,13 @@ class Queue(
         self._init_predicate_state()
         self._drain_timeout = drain_timeout
         self._queue_configs: dict[str, dict[str, Any]] = {}
+        # Opt-in per-queue admission caps (queue -> max pending). Empty = uncapped.
+        self._max_pending: dict[str, int] = dict(max_pending or {})
+        # A negative cap would make `pending + incoming > cap` always true and
+        # permanently reject every enqueue — reject it at construction instead.
+        for _queue, _cap in self._max_pending.items():
+            if _cap < 0:
+                raise ValueError(f"max_pending for '{_queue}' must be non-negative")
         self._event_bus = EventBus(max_workers=event_workers)
         self._webhook_manager = WebhookManager(queue_ref=self)
 
@@ -444,6 +461,9 @@ class Queue(
         del config  # currently unused at dispatch time; reserved for telemetry
         payload = self._encode_payload(task_name, (items,), {})
         self._check_payload_size(task_name, len(payload))
+        # A flush is a single-job enqueue onto the default queue, so it honors the
+        # admission cap like any other producer path (no silent bypass).
+        self._reject_if_queue_full("default")
         py_job = self._inner.enqueue(
             task_name=task_name,
             payload=payload,
@@ -508,6 +528,26 @@ class Queue(
         contract with the Rust worker paths, which call this per job.
         """
         return self._serializer.dumps(result)
+
+    def _reject_if_queue_full(self, queue_name: str, incoming: int = 1) -> None:
+        """Enforce the opt-in ``max_pending`` admission cap for a queue.
+
+        Raises :class:`QueueFullError` when admitting ``incoming`` jobs would push
+        the queue's pending backlog past its configured cap. ``incoming`` is the
+        batch size, so a batch is rejected as a whole rather than overshooting the
+        cap by its full size. No-op (and no query) for uncapped queues. Non-atomic
+        count-then-insert — brief overshoot under concurrent producers is accepted,
+        like the rate limiter.
+        """
+        cap = self._max_pending.get(queue_name)
+        if cap is None:
+            return
+        pending = self._inner.count_pending_by_queue(queue_name)
+        if pending + incoming > cap:
+            raise QueueFullError(
+                f"queue '{queue_name}' is full: {pending} pending + {incoming} "
+                f"would exceed max_pending {cap}"
+            )
 
     def enqueue(
         self,
@@ -663,6 +703,8 @@ class Queue(
         dep_ids = None
         if depends_on is not None:
             dep_ids = [depends_on] if isinstance(depends_on, str) else list(depends_on)
+
+        self._reject_if_queue_full(queue or "default")
 
         py_job = self._inner.enqueue(
             task_name=task_name,
@@ -893,6 +935,14 @@ class Queue(
                     payload_size=len(payloads[i]),
                     delay=delays[i],
                 )
+
+        # Admission cap is all-or-nothing for the batch: reject before inserting
+        # any row if admitting this batch would push a target queue past its cap.
+        # Count the rows per queue so the check accounts for the whole batch
+        # rather than overshooting the cap by its size.
+        batch_by_queue = Counter(queues_list)
+        for capped_queue, incoming in batch_by_queue.items():
+            self._reject_if_queue_full(capped_queue, incoming)
 
         py_jobs = self._inner.enqueue_batch(
             task_names=task_names,

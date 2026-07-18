@@ -254,6 +254,13 @@ impl RedisStorage {
         self.count_in_status(&mut conn, &by_task_key, JobStatus::Running)
     }
 
+    /// Count pending jobs on a queue (for the `max_pending` admission cap).
+    pub fn count_pending_by_queue(&self, queue_name: &str) -> Result<i64> {
+        let mut conn = self.conn()?;
+        let by_queue_key = self.key(&["jobs", "by_queue", queue_name]);
+        self.count_in_status(&mut conn, &by_queue_key, JobStatus::Pending)
+    }
+
     pub fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
         let mut conn = self.conn()?;
         self.queue_stats(&mut conn, queue_name)

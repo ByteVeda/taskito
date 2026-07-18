@@ -183,6 +183,11 @@ public final class InMemoryQueueBackend implements QueueBackend {
     }
 
     @Override
+    public long countPendingByQueue(String queue) {
+        return count("pending", queue);
+    }
+
+    @Override
     public String statsAllQueuesJson() {
         Map<String, Object> out = new LinkedHashMap<>();
         jobs.values().stream().map(j -> j.queue).distinct().forEach(q -> out.put(q, statsFor(q)));
