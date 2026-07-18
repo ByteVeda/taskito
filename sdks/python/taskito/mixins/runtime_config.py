@@ -99,5 +99,8 @@ class QueueRuntimeConfigMixin:
         Args:
             queue_name: Queue name (e.g. ``"default"``).
             max_pending: Maximum pending jobs allowed before enqueue is rejected.
+                Must be non-negative; ``0`` admits nothing.
         """
+        if max_pending < 0:
+            raise ValueError("max_pending must be non-negative")
         self._max_pending[queue_name] = max_pending

@@ -6,6 +6,7 @@ purely on the producer side.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -84,19 +85,66 @@ def test_enqueue_many_all_or_nothing(queue: Queue) -> None:
     assert queue._inner.count_pending_by_queue("default") == 3
 
 
-def test_cap_frees_after_drain(queue: Queue, run_worker: object) -> None:
-    """Once pending drains below the cap, enqueue is admitted again."""
-    from taskito import JobResult
+def test_enqueue_many_accounts_for_batch_size(queue: Queue) -> None:
+    _register(queue)
+    queue.set_queue_max_pending("default", 3)
+    # An empty queue but a batch bigger than the cap is rejected as a whole.
+    with pytest.raises(QueueFullError):
+        queue.enqueue_many("noop", [(), (), (), ()])
+    assert queue._inner.count_pending_by_queue("default") == 0
+    # A batch that exactly fits is admitted.
+    queue.enqueue_many("noop", [(), (), ()])
+    assert queue._inner.count_pending_by_queue("default") == 3
+    # Now full: even a single more is rejected.
+    with pytest.raises(QueueFullError):
+        queue.enqueue("noop")
 
-    results: list[JobResult] = []
 
-    @queue.task(name="quick")
-    def quick() -> str:
-        return "ok"
+def test_negative_cap_rejected(tmp_path: Path) -> None:
+    q = Queue(db_path=str(tmp_path / "n.db"), workers=1)
+    with pytest.raises(ValueError):
+        q.set_queue_max_pending("default", -1)
+    with pytest.raises(ValueError):
+        Queue(db_path=str(tmp_path / "n2.db"), workers=1, max_pending={"default": -1})
 
-    queue.set_queue_max_pending("default", 100)
-    # With a worker draining, pending stays well under the cap.
-    for _ in range(20):
-        results.append(queue.enqueue("quick"))
-    for r in results:
-        assert r.result(timeout=10) == "ok"
+
+def test_cap_frees_after_drain(tmp_path: Path) -> None:
+    """Fill a small cap, observe rejection, then confirm draining re-admits.
+
+    A gated task blocks the worker so the cap can actually be reached; releasing
+    the gate drains the backlog and a fresh enqueue must be admitted again.
+    """
+    import threading
+
+    q = Queue(db_path=str(tmp_path / "drain.db"), workers=1)
+    gate = threading.Event()
+
+    @q.task(name="blocked")
+    def blocked() -> None:
+        gate.wait(timeout=10)
+
+    q.set_queue_max_pending("default", 2)
+    # No worker yet: two enqueues fill the cap, the third is rejected.
+    q.enqueue("blocked")
+    q.enqueue("blocked")
+    with pytest.raises(QueueFullError):
+        q.enqueue("blocked")
+
+    worker = threading.Thread(target=q.run_worker, daemon=True)
+    worker.start()
+    try:
+        # The worker claims a job (Running), so pending drops below the cap and a
+        # new enqueue is admitted where it was rejected a moment ago.
+        deadline = time.time() + 10
+        admitted = False
+        while time.time() < deadline:
+            if q._inner.count_pending_by_queue("default") < 2:
+                q.enqueue("blocked")
+                admitted = True
+                break
+            time.sleep(0.05)
+        assert admitted, "draining below the cap must re-admit an enqueue"
+    finally:
+        gate.set()
+        q.shutdown()
+        worker.join(timeout=5)
