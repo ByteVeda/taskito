@@ -5,8 +5,10 @@ use crate::error::Result;
 use crate::job::{Job, JobStatus};
 
 impl RedisStorage {
-    /// Move terminal jobs completed before `cutoff_ms` (Unix milliseconds) out
-    /// of every live index and into the archive. Returns the count archived.
+    /// Move `Complete`/`Dead`/`Cancelled` jobs completed before `cutoff_ms`
+    /// (Unix milliseconds) out of every live index and into the archive.
+    /// Returns the count archived. `Failed` jobs never appear here — `fail()`
+    /// archives them immediately.
     pub fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let mut count = 0u64;

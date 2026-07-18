@@ -127,7 +127,8 @@ impl RedisStorage {
         Ok(rows)
     }
 
-    /// Purge metric records older than the cutoff. Returns the count removed.
+    /// Purge metric records recorded at or before the cutoff (inclusive).
+    /// Returns the count removed.
     pub fn purge_metrics(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["metrics", "all"]);

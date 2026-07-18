@@ -269,7 +269,7 @@ impl RedisStorage {
         Ok(is_member)
     }
 
-    /// Archive a running job as `Cancelled` after it observed a cancel request.
+    /// Archive a live job as `Cancelled` after a cancel request was observed.
     pub fn mark_cancelled(&self, id: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;
@@ -350,7 +350,7 @@ impl RedisStorage {
         Ok(ids)
     }
 
-    /// Update a running job's progress (0-100).
+    /// Update a live (not yet archived) job's progress (0-100).
     pub fn update_progress(&self, id: &str, progress: i32) -> Result<()> {
         if !(0..=100).contains(&progress) {
             return Err(QueueError::Other(

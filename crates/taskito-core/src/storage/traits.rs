@@ -380,8 +380,9 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Job archival ─────────────────────────────────────────────
 
-    /// Move terminal jobs older than the cutoff from `jobs` into
-    /// `archived_jobs`. Returns the count archived.
+    /// Move `Complete`/`Dead`/`Cancelled` jobs older than the cutoff from
+    /// `jobs` into `archived_jobs`. Returns the count archived. `Failed`
+    /// jobs are archived immediately by `fail()`, never by this sweep.
     fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64>;
     /// Archived jobs, newest first, paginated. Rows are blob-free.
     fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>>;

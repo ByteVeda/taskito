@@ -303,8 +303,8 @@ impl RedisStorage {
         Ok(orphaned)
     }
 
-    /// Fail pending jobs whose `expires_at` has passed. Returns the count
-    /// expired.
+    /// Cancel pending jobs whose `expires_at` has passed, archiving them as
+    /// `Cancelled`. Returns the count expired.
     pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let status_key = self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);

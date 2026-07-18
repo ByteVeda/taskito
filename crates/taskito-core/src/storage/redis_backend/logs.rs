@@ -70,7 +70,8 @@ impl RedisStorage {
         Ok(())
     }
 
-    /// All log lines for a job, in emission order.
+    /// All log lines for a job, in chronological (UUIDv7 id) order;
+    /// same-millisecond lines have no guaranteed emission order.
     pub fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogEntry>> {
         let mut conn = self.conn()?;
         let by_job_key = self.key(&["logs", "by_job", job_id]);
@@ -218,7 +219,8 @@ impl RedisStorage {
         Ok(rows)
     }
 
-    /// Purge log lines older than the cutoff. Returns the count removed.
+    /// Purge log lines logged at or before the cutoff (inclusive). Returns
+    /// the count removed.
     pub fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);

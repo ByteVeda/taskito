@@ -113,8 +113,8 @@ impl RedisStorage {
         Ok(result == 1)
     }
 
-    /// Extend a lock's TTL by `ttl_ms` (milliseconds). Returns `true` only if
-    /// `owner_id` held it.
+    /// Reset a lock's expiry to `ttl_ms` milliseconds from now (not additive).
+    /// Returns `true` only if `owner_id` held it.
     pub fn extend_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();

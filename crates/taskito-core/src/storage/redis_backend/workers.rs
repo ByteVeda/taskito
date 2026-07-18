@@ -44,8 +44,8 @@ impl RedisStorage {
         Ok(())
     }
 
-    /// Refresh a worker's heartbeat timestamp, optionally updating its
-    /// resource-health JSON.
+    /// Refresh a worker's heartbeat timestamp and overwrite its
+    /// resource-health JSON (`None` clears any previous value).
     pub fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
