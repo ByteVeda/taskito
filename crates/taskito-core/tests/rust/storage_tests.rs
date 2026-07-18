@@ -251,6 +251,64 @@ fn test_dead_letter_queue(s: &impl Storage) {
     assert!(!dead.is_empty());
 }
 
+fn test_purge_retention_covers_every_status(s: &impl Storage) {
+    // Retention bounds the whole archive, not just successes: a Dead archived
+    // row (from a DLQ move) must be purged by the global cutoff on every backend.
+    let q = "q-retain-status";
+    let job = s.enqueue(make_job(q, "retain_dead")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    let running = s.get_job(&job.id).unwrap().unwrap();
+    s.move_to_dlq(&running, "boom", None).unwrap();
+    assert_eq!(s.get_job(&job.id).unwrap().unwrap().status, JobStatus::Dead);
+
+    s.purge_completed_with_ttl(Some(now_millis() + 10_000))
+        .unwrap();
+    assert!(
+        s.get_job(&job.id).unwrap().is_none(),
+        "a Dead archived row must be purged by retention"
+    );
+}
+
+fn test_purge_retention_honors_per_entry_ttl(s: &impl Storage) {
+    // A per-entry TTL expires by its own window even with no global cutoff.
+    let q = "q-retain-perentry";
+    let mut nj = make_job(q, "retain_ttl");
+    nj.result_ttl_ms = Some(1);
+    let job = s.enqueue(nj).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&job.id, Some(vec![1])).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // Global cutoff None → only the per-entry TTL can purge this row.
+    s.purge_completed_with_ttl(None).unwrap();
+    assert!(
+        s.get_job(&job.id).unwrap().is_none(),
+        "a per-entry TTL must purge without a global cutoff"
+    );
+}
+
+fn test_purge_retention_keeps_job_errors(s: &impl Storage) {
+    // Per-table independence: retention-purging the archived job must leave its
+    // job_errors to their own window, not cascade-delete them.
+    let q = "q-retain-errors";
+    let job = s.enqueue(make_job(q, "retain_err")).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.record_error(&job.id, 0, "boom").unwrap();
+    s.complete(&job.id, Some(vec![1])).unwrap();
+
+    s.purge_completed_with_ttl(Some(now_millis() + 10_000))
+        .unwrap();
+    assert!(
+        s.get_job(&job.id).unwrap().is_none(),
+        "the archived job is purged"
+    );
+    assert_eq!(
+        s.get_job_errors(&job.id).unwrap().len(),
+        1,
+        "job_errors have no window here, so they must survive"
+    );
+}
+
 fn test_dead_letter_by_task(s: &impl Storage) {
     let q = "q-dlq-by-task";
 
@@ -1279,6 +1337,9 @@ fn run_storage_tests(s: &impl Storage) {
     test_enqueue_unique_batch(s);
     test_dead_letter_queue(s);
     test_dead_letter_by_task(s);
+    test_purge_retention_covers_every_status(s);
+    test_purge_retention_honors_per_entry_ttl(s);
+    test_purge_retention_keeps_job_errors(s);
     test_delete_dead(s);
     test_list_dead_for_retry(s);
     test_progress_tracking(s);
@@ -1563,6 +1624,55 @@ fn redis_storage_tests() {
     redis_move_to_dlq_skips_already_archived(&storage);
     redis_purge_dead_drains_across_batches(&storage);
     redis_keyset_pages_a_large_tie_bucket(&storage);
+    redis_backfills_expiry_for_preupgrade_rows(&storage);
+}
+
+/// A per-entry-TTL row archived before the `archived:expiry` index existed must
+/// still expire: the purge backfills the index for it. Simulated by archiving a
+/// per-entry row, then stripping its expiry entry and the done marker so it
+/// looks pre-upgrade.
+#[cfg(feature = "redis")]
+fn redis_backfills_expiry_for_preupgrade_rows(s: &taskito_core::RedisStorage) {
+    let q = "q-redis-backfill";
+    let mut nj = make_job(q, "backfill_ttl");
+    nj.result_ttl_ms = Some(1);
+    let job = s.enqueue(nj).unwrap();
+    s.dequeue(q, now_millis() + 1000, None).unwrap();
+    s.complete(&job.id, Some(vec![1])).unwrap();
+
+    let prefix = s.prefix();
+    let mut conn = s.conn().unwrap();
+    // Strip the expiry index entry and the backfill marker so the row looks like
+    // it predates the index.
+    let _: () = redis::cmd("ZREM")
+        .arg(format!("{prefix}archived:expiry"))
+        .arg(&job.id)
+        .query(&mut conn)
+        .unwrap();
+    let _: () = redis::cmd("DEL")
+        .arg(format!("{prefix}archived:expiry:backfilled"))
+        .arg(format!("{prefix}archived:expiry:cursor"))
+        .query(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // No global cutoff: only the backfilled expiry index can purge this row. The
+    // backfill advances one ZSCAN batch per call, so drive it to completion —
+    // other tests leave enough archived rows to span several batches.
+    let mut purged = false;
+    for _ in 0..64 {
+        s.purge_completed_with_ttl(None).unwrap();
+        if s.get_job(&job.id).unwrap().is_none() {
+            purged = true;
+            break;
+        }
+    }
+    assert!(
+        purged,
+        "a pre-upgrade per-entry TTL row must be backfilled and purged"
+    );
 }
 
 /// S12: `cancel_pending_by_queue` archives a whole batch under a single `now`,

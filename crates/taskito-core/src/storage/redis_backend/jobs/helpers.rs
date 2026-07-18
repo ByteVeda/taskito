@@ -171,6 +171,7 @@ impl RedisStorage {
             self.key(&["archived", "status", &(job.status as i32).to_string()]);
         let archived_by_queue = self.key(&["archived", "by_queue", &job.queue]);
         let archived_all = self.key(&["archived", "all"]);
+        let archived_expiry = self.key(&["archived", "expiry"]);
 
         // Results are ignored so callers can query the pipe as `()` (or
         // `Option<()>` inside a WATCH transaction).
@@ -189,6 +190,15 @@ impl RedisStorage {
         pipe.sadd(&archived_by_queue, &job.id).ignore();
         pipe.zadd(&archived_all, &job.id, completed_at as f64)
             .ignore();
+
+        // A per-entry TTL gets its own expiry index, scored by when it expires
+        // (`completed_at + result_ttl_ms`). The retention purge drains this by
+        // score, so a per-entry row is found without scanning the whole archive.
+        if let Some(ttl) = job.result_ttl_ms {
+            if let Some(expiry) = completed_at.checked_add(ttl) {
+                pipe.zadd(&archived_expiry, &job.id, expiry as f64).ignore();
+            }
+        }
 
         // Mirror the terminal move on the pub/sub backlog indices (no-op for
         // ordinary jobs). `job.status` is the terminal status the caller set:
@@ -216,13 +226,15 @@ impl RedisStorage {
         Ok(())
     }
 
-    /// Delete an archived job and all its associated data: `archived:<id>`,
-    /// `archived:status:<n>`, `archived:all`, plus per-job error/dependency
-    /// keys (which are keyed by job id regardless of which table holds it).
+    /// Delete an archived job and its archive-index entries plus its dependency
+    /// relations. `cascade_diagnostics` also deletes the job's errors — a full
+    /// purge sets it, but the per-table retention purge leaves `job_errors` to
+    /// its own window (see the Diesel `purge_archived_id_batch` split).
     pub(in crate::storage::redis_backend) fn delete_archived_job(
         &self,
         conn: &mut redis::Connection,
         job: &Job,
+        cascade_diagnostics: bool,
     ) -> Result<()> {
         let pipe = &mut redis::pipe();
 
@@ -231,7 +243,7 @@ impl RedisStorage {
             self.key(&["archived", "status", &(job.status as i32).to_string()]);
         let archived_by_queue = self.key(&["archived", "by_queue", &job.queue]);
         let archived_all = self.key(&["archived", "all"]);
-        let errors_key = self.key(&["job_errors", &job.id]);
+        let archived_expiry = self.key(&["archived", "expiry"]);
         let deps_key = self.key(&["job", &job.id, "depends_on"]);
         let dependents_key = self.key(&["job", &job.id, "dependents"]);
 
@@ -239,9 +251,12 @@ impl RedisStorage {
         pipe.srem(&archived_status_key, &job.id);
         pipe.srem(&archived_by_queue, &job.id);
         pipe.zrem(&archived_all, &job.id);
-        pipe.del(&errors_key);
+        pipe.zrem(&archived_expiry, &job.id);
         pipe.del(&deps_key);
         pipe.del(&dependents_key);
+        if cascade_diagnostics {
+            pipe.del(self.key(&["job_errors", &job.id]));
+        }
         pipe.query::<()>(conn).map_err(map_err)?;
 
         // Release the unique-key pointer through the atomic compare-and-delete so

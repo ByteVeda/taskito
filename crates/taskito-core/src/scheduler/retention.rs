@@ -10,8 +10,7 @@
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RetentionConfig {
     /// Terminal jobs (`archived_jobs`) — the artifact `get_job` reads after
-    /// completion. Covers every status on the Diesel backends; Redis currently
-    /// purges only `Complete` archive rows (pending its ZSET-drain rewrite).
+    /// completion. Covers every terminal status.
     pub archived_jobs_ttl_ms: Option<i64>,
     /// Dead-letter entries. The only copy of a payload a human must act on, so
     /// deliberately the longest-lived by default.
