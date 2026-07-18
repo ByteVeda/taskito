@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
 
-use taskito_core::job::now_millis;
+use taskito_core::now_millis;
 use taskito_core::{Job, JobStatus, NewJob, Storage};
 use taskito_workflows::{topological_order, TopologicalNode, WorkflowNodeStatus, WorkflowStorage};
 
