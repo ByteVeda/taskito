@@ -165,12 +165,17 @@ impl RedisStorage {
         Ok(None)
     }
 
-    /// [`dequeue`](Self::dequeue) across several queues, checked in order.
+    /// Dequeue across queues. `orders` is accepted for cross-backend signature
+    /// parity but **ignored**: Redis packs priority and `scheduled_at` into a
+    /// single ZSET score, so per-priority LIFO would need a second score-inverted
+    /// sorted set (a backfill migration of every pending row). Documented as an
+    /// exception, like the `list_jobs_after` Redis note; Redis stays FIFO.
     pub fn dequeue_from(
         &self,
         queues: &[String],
         now: i64,
         namespace: Option<&str>,
+        _orders: &std::collections::HashMap<String, crate::storage::DispatchOrder>,
     ) -> Result<Option<Job>> {
         for queue_name in queues {
             if let Some(job) = self.dequeue(queue_name, now, namespace)? {
@@ -307,13 +312,15 @@ impl RedisStorage {
     }
 
     /// Claim up to `max` ready jobs across the given queues, checking each in
-    /// order until the budget is exhausted.
+    /// order until the budget is exhausted. `orders` is accepted but ignored —
+    /// see [`dequeue_from`](Self::dequeue_from) for why Redis stays FIFO.
     pub fn dequeue_batch_from(
         &self,
         queues: &[String],
         now: i64,
         namespace: Option<&str>,
         max: usize,
+        _orders: &std::collections::HashMap<String, crate::storage::DispatchOrder>,
     ) -> Result<Vec<Job>> {
         let mut claimed: Vec<Job> = Vec::new();
         for queue_name in queues {

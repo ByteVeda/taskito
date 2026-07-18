@@ -551,12 +551,30 @@ macro_rules! impl_diesel_job_ops {
                 now: i64,
                 namespace: Option<&str>,
             ) -> Result<Option<Job>> {
+                self.dequeue_ordered(
+                    queue_name,
+                    now,
+                    namespace,
+                    $crate::storage::DispatchOrder::Fifo,
+                )
+            }
+
+            /// [`dequeue`](Self::dequeue) with an explicit dispatch order — the
+            /// per-queue path used by [`dequeue_from`](Self::dequeue_from).
+            pub fn dequeue_ordered(
+                &self,
+                queue_name: &str,
+                now: i64,
+                namespace: Option<&str>,
+                order: $crate::storage::DispatchOrder,
+            ) -> Result<Option<Job>> {
                 self.write_transaction(|conn| {
                     // Narrow candidate scan (no payload/result blobs). Postgres
                     // applies FOR UPDATE SKIP LOCKED so concurrent workers claim
                     // disjoint rows; SQLite serializes writers via BEGIN IMMEDIATE.
-                    let candidates: Vec<NarrowJobRow> =
-                        Self::scan_dequeue_candidates(conn, queue_name, now, namespace, 100)?;
+                    let candidates: Vec<NarrowJobRow> = Self::scan_dequeue_candidates(
+                        conn, queue_name, now, namespace, 100, order,
+                    )?;
 
                     for row in candidates {
                         // Skip expired jobs — archive them as cancelled. The
@@ -613,15 +631,18 @@ macro_rules! impl_diesel_job_ops {
                 })
             }
 
-            /// Dequeue from multiple queues, checking each in order.
+            /// Dequeue from multiple queues, checking each in order. Each queue
+            /// is scanned with its own dispatch order (`orders`, default Fifo).
             pub fn dequeue_from(
                 &self,
                 queues: &[String],
                 now: i64,
                 namespace: Option<&str>,
+                orders: &std::collections::HashMap<String, $crate::storage::DispatchOrder>,
             ) -> Result<Option<Job>> {
                 for queue_name in queues {
-                    if let Some(job) = self.dequeue(queue_name, now, namespace)? {
+                    let order = $crate::storage::order_for(orders, queue_name);
+                    if let Some(job) = self.dequeue_ordered(queue_name, now, namespace, order)? {
                         return Ok(Some(job));
                     }
                 }
@@ -644,6 +665,26 @@ macro_rules! impl_diesel_job_ops {
                 namespace: Option<&str>,
                 max: usize,
             ) -> Result<Vec<Job>> {
+                self.dequeue_batch_ordered(
+                    queue_name,
+                    now,
+                    namespace,
+                    max,
+                    $crate::storage::DispatchOrder::Fifo,
+                )
+            }
+
+            /// [`dequeue_batch`](Self::dequeue_batch) with an explicit dispatch
+            /// order — the per-queue path used by
+            /// [`dequeue_batch_from`](Self::dequeue_batch_from).
+            pub fn dequeue_batch_ordered(
+                &self,
+                queue_name: &str,
+                now: i64,
+                namespace: Option<&str>,
+                max: usize,
+                order: $crate::storage::DispatchOrder,
+            ) -> Result<Vec<Job>> {
                 if max == 0 {
                     return Ok(Vec::new());
                 }
@@ -658,7 +699,7 @@ macro_rules! impl_diesel_job_ops {
                     // Postgres applies FOR UPDATE SKIP LOCKED). Only claimed
                     // winners load their payload inline below.
                     let candidates: Vec<NarrowJobRow> = Self::scan_dequeue_candidates(
-                        conn, queue_name, now, namespace, scan_limit,
+                        conn, queue_name, now, namespace, scan_limit, order,
                     )?;
 
                     let mut claimed: Vec<Job> = Vec::with_capacity(max.min(candidates.len()));
@@ -720,13 +761,15 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// Claim up to `max` ready jobs across the given queues, checking
-            /// each in order until the budget is exhausted.
+            /// each in order until the budget is exhausted. Each queue uses its
+            /// own dispatch order (`orders`, default Fifo).
             pub fn dequeue_batch_from(
                 &self,
                 queues: &[String],
                 now: i64,
                 namespace: Option<&str>,
                 max: usize,
+                orders: &std::collections::HashMap<String, $crate::storage::DispatchOrder>,
             ) -> Result<Vec<Job>> {
                 let mut claimed: Vec<Job> = Vec::new();
                 for queue_name in queues {
@@ -734,7 +777,9 @@ macro_rules! impl_diesel_job_ops {
                         break;
                     }
                     let remaining = max - claimed.len();
-                    let mut batch = self.dequeue_batch(queue_name, now, namespace, remaining)?;
+                    let order = $crate::storage::order_for(orders, queue_name);
+                    let mut batch =
+                        self.dequeue_batch_ordered(queue_name, now, namespace, remaining, order)?;
                     claimed.append(&mut batch);
                 }
                 Ok(claimed)

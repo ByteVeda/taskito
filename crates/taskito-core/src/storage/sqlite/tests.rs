@@ -237,7 +237,13 @@ fn test_dequeue_batch_from_across_queues() {
 
     let queues = vec!["qa".to_string(), "qb".to_string()];
     let claimed = storage
-        .dequeue_batch_from(&queues, now_millis() + 1000, None, 10)
+        .dequeue_batch_from(
+            &queues,
+            now_millis() + 1000,
+            None,
+            10,
+            &std::collections::HashMap::new(),
+        )
         .unwrap();
     assert_eq!(claimed.len(), 3, "claims across both queues");
 
@@ -834,6 +840,85 @@ fn test_cascade_cancel_on_dlq() {
     let b = storage.get_job(&job_b.id).unwrap().unwrap();
     assert_eq!(b.status, JobStatus::Cancelled);
     assert!(b.error.unwrap().contains("dependency failed"));
+}
+
+#[test]
+fn test_dequeue_lifo_vs_fifo_order() {
+    use crate::storage::DispatchOrder;
+    use std::collections::HashMap;
+
+    let storage = test_storage();
+    let base = now_millis();
+    let now = base + 1000;
+
+    // Same priority, staggered eligibility: index 4 is the newest.
+    for i in 0..5i64 {
+        let mut job = make_job("t");
+        job.queue = "lifoq".to_string();
+        job.scheduled_at = base + i;
+        storage.enqueue(job).unwrap();
+    }
+    let mut orders = HashMap::new();
+    orders.insert("lifoq".to_string(), DispatchOrder::Lifo);
+    let jobs = storage
+        .dequeue_batch_from(&["lifoq".to_string()], now, None, 5, &orders)
+        .unwrap();
+    let sched: Vec<i64> = jobs.iter().map(|j| j.scheduled_at).collect();
+    assert_eq!(
+        sched,
+        vec![base + 4, base + 3, base + 2, base + 1, base],
+        "LIFO dispatches newest-first within a priority"
+    );
+
+    // FIFO (default, empty map) keeps oldest-first.
+    for i in 0..5i64 {
+        let mut job = make_job("t");
+        job.queue = "fifoq".to_string();
+        job.scheduled_at = base + i;
+        storage.enqueue(job).unwrap();
+    }
+    let jobs = storage
+        .dequeue_batch_from(&["fifoq".to_string()], now, None, 5, &HashMap::new())
+        .unwrap();
+    let sched: Vec<i64> = jobs.iter().map(|j| j.scheduled_at).collect();
+    assert_eq!(
+        sched,
+        vec![base, base + 1, base + 2, base + 3, base + 4],
+        "FIFO dispatches oldest-first (the default)"
+    );
+}
+
+#[test]
+fn test_dequeue_lifo_priority_still_dominates() {
+    use crate::storage::DispatchOrder;
+    use std::collections::HashMap;
+
+    let storage = test_storage();
+    let base = now_millis();
+    let now = base + 1000;
+
+    // A high-priority OLD job and a low-priority NEW job on a LIFO queue.
+    let mut old_high = make_job("t");
+    old_high.queue = "pq".to_string();
+    old_high.priority = 10;
+    old_high.scheduled_at = base; // oldest
+    storage.enqueue(old_high).unwrap();
+
+    let mut new_low = make_job("t");
+    new_low.queue = "pq".to_string();
+    new_low.priority = 0;
+    new_low.scheduled_at = base + 100; // newest
+    storage.enqueue(new_low).unwrap();
+
+    let mut orders = HashMap::new();
+    orders.insert("pq".to_string(), DispatchOrder::Lifo);
+    let jobs = storage
+        .dequeue_batch_from(&["pq".to_string()], now, None, 2, &orders)
+        .unwrap();
+    // Priority wins even under LIFO: the high-priority job goes first despite
+    // being older; LIFO only reorders same-priority ties.
+    assert_eq!(jobs[0].priority, 10);
+    assert_eq!(jobs[1].priority, 0);
 }
 
 #[test]

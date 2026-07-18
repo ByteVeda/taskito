@@ -44,17 +44,32 @@ impl SqliteStorage {
         now: i64,
         namespace: Option<&str>,
         limit: i64,
+        order: crate::storage::DispatchOrder,
     ) -> diesel::result::QueryResult<Vec<NarrowJobRow>> {
         let mut query = jobs::table
             .filter(jobs::queue.eq(queue_name))
             .filter(jobs::status.eq(JobStatus::Pending as i32))
             .filter(jobs::scheduled_at.le(now))
-            .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
             .limit(limit)
             .into_boxed();
         query = match namespace {
             Some(ns) => query.filter(jobs::namespace.eq(ns)),
             None => query.filter(jobs::namespace.is_null()),
+        };
+        // Priority always wins; the (scheduled_at, id) tie-break flips with the
+        // dispatch order. `id` is a UUIDv7, so it is a deterministic time-ordered
+        // final key — without it, same-`scheduled_at` ties are engine-order.
+        query = match order {
+            crate::storage::DispatchOrder::Fifo => query.order((
+                jobs::priority.desc(),
+                jobs::scheduled_at.asc(),
+                jobs::id.asc(),
+            )),
+            crate::storage::DispatchOrder::Lifo => query.order((
+                jobs::priority.desc(),
+                jobs::scheduled_at.desc(),
+                jobs::id.desc(),
+            )),
         };
         query.select(NarrowJobRow::as_select()).load(conn)
     }

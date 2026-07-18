@@ -4,7 +4,7 @@ use crate::storage::records::{
     CircuitBreakerState, JobError, LockInfo, NewPeriodicTask, NewSubscription, PeriodicTask,
     RateLimitState, ReplayEntry, Subscription, TaskLogEntry, TaskMetric, WorkerInfo,
 };
-use crate::storage::{DeadJob, QueueStats, SubscriptionBacklogStats};
+use crate::storage::{DeadJob, DispatchOrder, QueueStats, SubscriptionBacklogStats};
 
 /// Trait abstracting the storage backend for the task queue.
 ///
@@ -27,12 +27,14 @@ pub trait Storage: Send + Sync + Clone {
     /// to `Running`. `None` when no job is eligible. `namespace = None`
     /// matches only namespace-less jobs.
     fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>>;
-    /// [`dequeue`](Self::dequeue) across several queues, checked in order.
+    /// [`dequeue`](Self::dequeue) across several queues, checked in order. Each
+    /// queue uses its dispatch order from `orders` (absent = the `Fifo` default).
     fn dequeue_from(
         &self,
         queues: &[String],
         now: i64,
         namespace: Option<&str>,
+        orders: &std::collections::HashMap<String, DispatchOrder>,
     ) -> Result<Option<Job>>;
     /// Atomically claim up to `max` ready jobs from a single queue in one
     /// transaction. Returns the claimed jobs (now in `Running` state). May
@@ -45,13 +47,15 @@ pub trait Storage: Send + Sync + Clone {
         max: usize,
     ) -> Result<Vec<Job>>;
     /// Claim up to `max` ready jobs across the given queues, checking each in
-    /// order until the budget is exhausted.
+    /// order until the budget is exhausted. Each queue uses its dispatch order
+    /// from `orders` (absent = the `Fifo` default).
     fn dequeue_batch_from(
         &self,
         queues: &[String],
         now: i64,
         namespace: Option<&str>,
         max: usize,
+        orders: &std::collections::HashMap<String, DispatchOrder>,
     ) -> Result<Vec<Job>>;
     /// Mark a job completed with its result, moving it from `jobs` into
     /// `archived_jobs` in one transaction.

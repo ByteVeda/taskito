@@ -322,6 +322,10 @@ pub struct Scheduler {
     /// a queue has CoDel configured; `codel_configs.is_empty()` short-circuits
     /// the common no-CoDel case before this lock is ever taken.
     codel_states: Mutex<HashMap<String, codel::CodelState>>,
+    /// Opt-in per-queue dispatch order (queue → Lifo). Absent = the fair Fifo
+    /// default. Passed straight to the storage dequeue so each queue is scanned
+    /// with its own tie-break direction.
+    dispatch_orders: HashMap<String, crate::storage::DispatchOrder>,
     queues: Vec<String>,
     config: SchedulerConfig,
     shutdown: Arc<Notify>,
@@ -387,6 +391,7 @@ impl Scheduler {
             queue_configs: HashMap::new(),
             codel_configs: HashMap::new(),
             codel_states: Mutex::new(HashMap::new()),
+            dispatch_orders: HashMap::new(),
             queues,
             config,
             shutdown: Arc::new(Notify::new()),
@@ -548,6 +553,16 @@ impl Scheduler {
     /// [`Scheduler::register_queue_config`] so the common (no-CoDel) path never pays for it.
     pub fn register_queue_codel(&mut self, queue_name: String, config: codel::CodelConfig) {
         self.codel_configs.insert(queue_name, config);
+    }
+
+    /// Set a queue's dispatch order. `Lifo` runs newest-first within a priority
+    /// under overload; the default is `Fifo`. Priority always dominates.
+    pub fn register_queue_dispatch_order(
+        &mut self,
+        queue_name: String,
+        order: crate::storage::DispatchOrder,
+    ) {
+        self.dispatch_orders.insert(queue_name, order);
     }
 
     /// Set a task's resilience policy and register its circuit breaker, if any.
