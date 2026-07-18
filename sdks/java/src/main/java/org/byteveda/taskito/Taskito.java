@@ -140,6 +140,15 @@ public interface Taskito extends AutoCloseable {
      */
     Taskito codel(String queue, long targetMs, long intervalMs);
 
+    /**
+     * Set a queue's same-priority dispatch order. {@code "lifo"} runs
+     * newest-first under overload (a freshness lever); {@code "fifo"} (default)
+     * is the fair oldest-first ordering. Priority always dominates. Honored on
+     * SQLite/Postgres; the Redis backend is FIFO-only. Takes effect for workers
+     * started after this call. Returns {@code this}.
+     */
+    Taskito dispatchOrder(String queue, String order);
+
     // ── Producer ────────────────────────────────────────────────────
 
     /** Enqueue a typed payload using the task's default options; returns the job id. */

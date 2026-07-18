@@ -123,8 +123,16 @@ fn start_worker(
     for (name, policy) in task_policies {
         scheduler.register_task(name, policy);
     }
-    for (name, codel) in build_queue_codels(options.queue_configs.take()) {
-        scheduler.register_queue_codel(name, codel);
+    for spec in options.queue_configs.take().unwrap_or_default() {
+        if let Some(codel) = queue_codel_from_spec(&spec) {
+            scheduler.register_queue_codel(spec.name.clone(), codel);
+        }
+        if spec.dispatch_order.as_deref() == Some("lifo") {
+            scheduler.register_queue_dispatch_order(
+                spec.name,
+                taskito_core::storage::DispatchOrder::Lifo,
+            );
+        }
     }
     let scheduler = Arc::new(scheduler);
     let shutdown = scheduler.shutdown_handle();
@@ -323,23 +331,18 @@ fn build_task_policies(
 
 /// Build the per-queue CoDel configs. Only queues with positive bounds are
 /// registered; anything else is dropped so an empty spec is a harmless no-op.
-fn build_queue_codels(configs: Option<Vec<QueueConfigSpec>>) -> Vec<(String, CodelConfig)> {
-    configs
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(
-            |spec| match (spec.codel_target_ms, spec.codel_interval_ms) {
-                (Some(target_ms), Some(interval_ms)) if target_ms > 0 && interval_ms > 0 => Some((
-                    spec.name,
-                    CodelConfig {
-                        target_ms,
-                        interval_ms,
-                    },
-                )),
-                _ => None,
-            },
-        )
-        .collect()
+/// Extract a valid CoDel config from a queue spec: both bounds set and positive,
+/// else `None` (the queue keeps default dispatch, no shedding).
+fn queue_codel_from_spec(spec: &QueueConfigSpec) -> Option<CodelConfig> {
+    match (spec.codel_target_ms, spec.codel_interval_ms) {
+        (Some(target_ms), Some(interval_ms)) if target_ms > 0 && interval_ms > 0 => {
+            Some(CodelConfig {
+                target_ms,
+                interval_ms,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Parse an optional rate spec, naming the offending task and option so a typo
