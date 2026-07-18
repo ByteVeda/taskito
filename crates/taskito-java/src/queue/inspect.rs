@@ -64,6 +64,24 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_statsByQue
     })
 }
 
+/// `long countPendingByQueue(long handle, String queue)` — the lean primitive
+/// behind the `maxPending` admission cap.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_countPendingByQueue<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    queue_name: JString<'local>,
+) -> jlong {
+    guard(&mut env, 0, |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let name = read_string(env, &queue_name)?;
+        Ok(queue.storage.count_pending_by_queue(&name)?)
+    })
+}
+
 /// `String statsAllQueues(long handle)` — a JSON map of queue name to counts.
 #[no_mangle]
 pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_statsAllQueues<'local>(

@@ -98,6 +98,11 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public long countPendingByQueue(String queue) {
+        return withOpenHandle(() -> NativeQueue.countPendingByQueue(handle, queue));
+    }
+
+    @Override
     public String statsAllQueuesJson() {
         return withOpenHandle(() -> NativeQueue.statsAllQueues(handle));
     }
