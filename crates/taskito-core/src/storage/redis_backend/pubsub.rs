@@ -98,7 +98,7 @@ impl RedisStorage {
         blobs
             .into_iter()
             .flatten()
-            .map(|d| serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string())))
+            .map(|d| serde_json::from_str(&d).map_err(QueueError::from))
             .collect()
     }
 
