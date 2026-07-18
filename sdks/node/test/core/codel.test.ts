@@ -23,6 +23,20 @@ function newQueue(): Queue {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+it("rejects non-positive-integer CoDel bounds at configureQueue", () => {
+  const queue = newQueue();
+  for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    expect(() =>
+      queue.configureQueue("default", { codel: { targetMs: bad, intervalMs: 30 } }),
+    ).toThrow(RangeError);
+    expect(() =>
+      queue.configureQueue("default", { codel: { targetMs: 30, intervalMs: bad } }),
+    ).toThrow(RangeError);
+  }
+  // A valid pair is accepted.
+  queue.configureQueue("default", { codel: { targetMs: 1, intervalMs: 30 } });
+});
+
 it("sheds stale jobs to the DLQ under sustained overload", async () => {
   const queue = newQueue();
   queue.configureQueue("default", { codel: { targetMs: 1, intervalMs: 30 } });

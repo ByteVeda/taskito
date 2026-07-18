@@ -392,6 +392,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     if (limits.maxPending !== undefined && limits.maxPending < 0) {
       throw new RangeError("maxPending must be non-negative");
     }
+    // CoDel bounds cross to native as i64 — reject non-positive/non-integer
+    // (0, negatives, fractions, NaN, Infinity) here rather than silently coercing.
+    if (limits.codel !== undefined) {
+      for (const key of ["targetMs", "intervalMs"] as const) {
+        const value = limits.codel[key];
+        if (!Number.isInteger(value) || value <= 0) {
+          throw new RangeError(`codel.${key} must be a positive integer`);
+        }
+      }
+    }
     this.queueLimits.set(name, limits);
   }
 
