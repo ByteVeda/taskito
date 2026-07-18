@@ -211,8 +211,9 @@ impl DataSource for DbSource {
     }
 
     fn purge_dead(&self) -> Result<u64> {
-        // Cutoff = now → every entry with failed_at < now, i.e. all of them.
-        Ok(self.be.storage.purge_dead(now_millis())?)
+        // Max cutoff → every entry, including same-millisecond or clock-skewed
+        // future timestamps a `now`-based cutoff would miss.
+        Ok(self.be.storage.purge_dead(i64::MAX)?)
     }
 
     fn pause_queue(&self, queue: &str) -> Result<()> {
