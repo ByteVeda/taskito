@@ -41,12 +41,14 @@ fn iso_cutoff(ms: i64) -> String {
 /// a policy the operator did not set. Names the queue and every active window
 /// (duration + resolved cutoff) and how to opt out.
 fn announce_default_retention(
-    queue: &str,
+    namespace: &str,
     windows: &crate::scheduler::retention::RetentionConfig,
     now: i64,
 ) {
+    // `namespace`, not a queue name: the purge predicates are not queue-scoped,
+    // so the windows below apply cluster-wide within this namespace.
     let mut msg = format!(
-        "retention is ON by default for queue '{queue}': history is auto-deleted on the \
+        "retention is ON by default for namespace '{namespace}': history is auto-deleted on the \
          recommended windows below. Set explicit windows, or pass an empty retention config to \
          disable."
     );
@@ -202,9 +204,9 @@ impl Scheduler {
         // process (the election means that's the leader). Skipped for an explicit
         // or legacy config — that is the operator's own choice.
         if self.config.retention_is_defaulted() {
-            let queue = self.namespace.as_deref().unwrap_or("default");
+            let namespace = self.namespace.as_deref().unwrap_or("default");
             self.retention_announced
-                .call_once(|| announce_default_retention(queue, &windows, now));
+                .call_once(|| announce_default_retention(namespace, &windows, now));
         }
 
         // A window `ttl` becomes the cutoff `now - ttl`; an absent window is a
