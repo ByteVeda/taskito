@@ -28,13 +28,21 @@ fn block(title: String) -> Block<'static> {
     Block::default().borders(Borders::ALL).title(title)
 }
 
-fn render_table(f: &mut Frame, area: Rect, table: Table, selected: usize) {
+fn render_table(f: &mut Frame, area: Rect, table: Table, app: &App) {
+    // Record the data-row rect (inside the border, below the header) so mouse
+    // clicks map to a row: top border + header = 2 rows above the first row.
+    app.hit.borrow_mut().rows = Some(Rect {
+        x: area.x + 1,
+        y: area.y + 2,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(3),
+    });
     f.render_stateful_widget(
         table
             .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("▌"),
         area,
-        &mut state(selected),
+        &mut state(app.selected),
     );
 }
 
@@ -67,7 +75,7 @@ pub fn jobs(f: &mut Frame, area: Rect, app: &App) {
             "ID", "STATUS", "TASK", "QUEUE", "TRY", "AGE", "ERROR",
         ]))
         .block(block(title));
-    render_table(f, area, table, app.selected);
+    render_table(f, area, table, app);
 }
 
 pub fn dead(f: &mut Frame, area: Rect, app: &App) {
@@ -97,7 +105,7 @@ pub fn dead(f: &mut Frame, area: Rect, app: &App) {
             "ID", "TASK", "QUEUE", "TRY", "DLQ", "AGE", "ERROR",
         ]))
         .block(block(title));
-    render_table(f, area, table, app.selected);
+    render_table(f, area, table, app);
 }
 
 pub fn workers(f: &mut Frame, area: Rect, app: &App) {
@@ -133,7 +141,7 @@ pub fn workers(f: &mut Frame, area: Rect, app: &App) {
             "PID",
         ]))
         .block(block(title));
-    render_table(f, area, table, app.selected);
+    render_table(f, area, table, app);
 }
 
 pub fn workflows(f: &mut Frame, area: Rect, app: &App) {
@@ -166,7 +174,7 @@ pub fn workflows(f: &mut Frame, area: Rect, app: &App) {
             "ERROR",
         ]))
         .block(block(title));
-    render_table(f, area, table, app.selected);
+    render_table(f, area, table, app);
 }
 
 pub fn stats(f: &mut Frame, area: Rect, app: &App) {
@@ -223,7 +231,7 @@ pub fn stats(f: &mut Frame, area: Rect, app: &App) {
             "QUEUE", "STATE", "PEND", "RUN", "DONE", "FAIL", "DEAD", "CANCEL",
         ]))
         .block(block(title));
-    render_table(f, rows[1], table, app.selected);
+    render_table(f, rows[1], table, app);
 }
 
 fn short(id: &str) -> String {

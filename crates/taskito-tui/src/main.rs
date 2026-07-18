@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::event::{self as cevent, Event, KeyEventKind};
+use crossterm::event::{
+    self as cevent, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -57,11 +59,11 @@ fn run(
         terminal.draw(|f| ui::draw(f, app))?;
 
         if cevent::poll(poll)? {
-            // Only react to key *presses* — Windows also emits Release/Repeat.
-            if let Event::Key(key) = cevent::read()? {
-                if key.kind == KeyEventKind::Press {
-                    app.on_key(key, cmd_tx);
-                }
+            match cevent::read()? {
+                // Only react to key *presses* — Windows also emits Release/Repeat.
+                Event::Key(key) if key.kind == KeyEventKind::Press => app.on_key(key, cmd_tx),
+                Event::Mouse(me) => app.on_mouse(me, cmd_tx),
+                _ => {}
             }
         }
 
@@ -79,13 +81,17 @@ fn run(
 fn setup_terminal() -> Result<Term> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
 fn restore_terminal(terminal: &mut Term) -> Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }

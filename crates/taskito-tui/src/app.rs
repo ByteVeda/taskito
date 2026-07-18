@@ -1,10 +1,12 @@
 //! UI-thread state and input handling. Holds the latest snapshot of each view
 //! and translates key presses into [`Cmd`]s for the worker.
 
+use std::cell::RefCell;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 use taskito_core::storage::QueueStats;
 use taskito_core::JobStatus;
 
@@ -12,6 +14,15 @@ use crate::event::{Cmd, FetchReq, Msg, PendingAction};
 use crate::source::{
     DagNode, DeadRow, JobDetail, JobRow, StatsSnapshot, View, WorkerView, WorkflowRunRow,
 };
+
+/// Clickable regions recorded during rendering and consumed by mouse handling.
+#[derive(Default)]
+pub struct Hit {
+    /// `(x_start, x_end_exclusive, view)` span of each tab label.
+    pub tabs: Vec<(u16, u16, View)>,
+    /// Screen rect of the active view's selectable data rows (each row height 1).
+    pub rows: Option<Rect>,
+}
 
 pub enum InputMode {
     Normal,
@@ -44,6 +55,9 @@ pub struct App {
     pub wf_dag: Vec<DagNode>,
 
     pub notice: Option<Notice>,
+    /// Clickable regions from the last render; interior-mutable so `draw(&App)`
+    /// can record them.
+    pub hit: RefCell<Hit>,
     last_refresh: Instant,
 }
 
@@ -66,6 +80,7 @@ impl App {
             job_detail: None,
             wf_dag: Vec::new(),
             notice: None,
+            hit: RefCell::new(Hit::default()),
             last_refresh: Instant::now(),
         }
     }
@@ -175,6 +190,54 @@ impl App {
                 _ => self.input = InputMode::Normal,
             },
             InputMode::Normal => self.on_normal_key(key, tx),
+        }
+    }
+
+    pub fn on_mouse(&mut self, me: MouseEvent, tx: &Sender<Cmd>) {
+        // Mouse drives only Normal mode; modal overlays are keyboard-only.
+        if !matches!(self.input, InputMode::Normal) {
+            return;
+        }
+        match me.kind {
+            MouseEventKind::ScrollDown => self.move_selection(1),
+            MouseEventKind::ScrollUp => self.move_selection(-1),
+            MouseEventKind::Down(MouseButton::Left) => self.on_click(me.column, me.row, tx),
+            _ => {}
+        }
+    }
+
+    fn on_click(&mut self, col: u16, row: u16, tx: &Sender<Cmd>) {
+        // Tab bar: click a label to switch view. (Copy out of the RefCell borrow
+        // before mutating self.)
+        let tab = self
+            .hit
+            .borrow()
+            .tabs
+            .iter()
+            .find(|(x0, x1, _)| col >= *x0 && col < *x1)
+            .map(|(_, _, v)| *v);
+        if let Some(view) = tab {
+            self.set_view(view, tx);
+            return;
+        }
+        // Data row: first click selects it; clicking the already-selected row
+        // opens its detail.
+        let rows = self.hit.borrow().rows;
+        if let Some(area) = rows {
+            let inside = col >= area.x
+                && col < area.x + area.width
+                && row >= area.y
+                && row < area.y + area.height;
+            if inside {
+                let idx = (row - area.y) as usize;
+                if idx < self.current_len() {
+                    if self.selected == idx && !self.detail_open {
+                        self.open_detail(tx);
+                    } else {
+                        self.selected = idx;
+                    }
+                }
+            }
         }
     }
 
@@ -347,5 +410,91 @@ fn cycle_filter(current: Option<JobStatus>) -> Option<JobStatus> {
         Some(JobStatus::Failed) => Some(JobStatus::Dead),
         Some(JobStatus::Dead) => Some(JobStatus::Cancelled),
         Some(JobStatus::Cancelled) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn app() -> App {
+        App::new(Duration::from_secs(1))
+    }
+
+    fn jr(id: &str) -> JobRow {
+        JobRow {
+            id: id.into(),
+            task_name: "t".into(),
+            queue: "q".into(),
+            status: JobStatus::Pending,
+            priority: 0,
+            retry_count: 0,
+            max_retries: 0,
+            created_at: 0,
+            scheduled_at: 0,
+            started_at: None,
+            completed_at: None,
+            error: None,
+            cancel_requested: false,
+        }
+    }
+
+    #[test]
+    fn click_tab_switches_view() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = app();
+        app.hit.borrow_mut().tabs = vec![(1, 10, View::Stats), (13, 21, View::Jobs)];
+        app.on_click(15, 1, &tx); // inside the Jobs label span
+        assert_eq!(app.view, View::Jobs);
+    }
+
+    #[test]
+    fn click_outside_any_hitbox_is_ignored() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = app();
+        app.hit.borrow_mut().tabs = vec![(1, 10, View::Stats), (13, 21, View::Jobs)];
+        app.on_click(11, 1, &tx); // in the divider gap
+        assert_eq!(app.view, View::Stats);
+    }
+
+    #[test]
+    fn click_row_selects_then_second_click_opens_detail() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = app();
+        app.view = View::Jobs;
+        app.jobs = vec![jr("a"), jr("b"), jr("c")];
+        app.hit.borrow_mut().rows = Some(Rect {
+            x: 1,
+            y: 5,
+            width: 40,
+            height: 10,
+        });
+
+        app.on_click(10, 6, &tx); // row index 1 (y = 5 + 1)
+        assert_eq!(app.selected, 1);
+        assert!(!app.detail_open);
+
+        app.on_click(10, 6, &tx); // same row again → open detail
+        assert!(app.detail_open);
+    }
+
+    #[test]
+    fn scroll_moves_selection() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let (tx, _rx) = mpsc::channel();
+        let mut app = app();
+        app.view = View::Jobs;
+        app.jobs = vec![jr("a"), jr("b")];
+        let scroll = |kind| MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.on_mouse(scroll(MouseEventKind::ScrollDown), &tx);
+        assert_eq!(app.selected, 1);
+        app.on_mouse(scroll(MouseEventKind::ScrollUp), &tx);
+        assert_eq!(app.selected, 0);
     }
 }

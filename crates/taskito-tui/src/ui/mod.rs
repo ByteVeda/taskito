@@ -8,7 +8,7 @@ mod tables;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use taskito_core::JobStatus;
@@ -39,26 +39,39 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
-    let titles: Vec<Line> = View::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, v)| Line::from(format!(" {}·{} ", i + 1, v.title())))
-        .collect();
-    let selected = View::ALL.iter().position(|v| *v == app.view).unwrap_or(0);
-    let tabs = Tabs::new(titles)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" taskito-tui "),
-        )
-        .select(selected)
-        .highlight_style(
+    // Rendered as manual spans (not the `Tabs` widget) so we can record the
+    // exact screen span of each label for click handling.
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" taskito-tui ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut spans = Vec::new();
+    let mut hits = Vec::new();
+    let mut x = inner.x;
+    for (i, v) in View::ALL.iter().enumerate() {
+        if i > 0 {
+            let div = " │ ";
+            spans.push(Span::styled(div, Style::default().fg(Color::DarkGray)));
+            x += div.chars().count() as u16;
+        }
+        let label = format!(" {}·{} ", i + 1, v.title());
+        let w = label.chars().count() as u16;
+        let style = if *v == app.view {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-    f.render_widget(tabs, area);
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        hits.push((x, x + w, *v));
+        spans.push(Span::styled(label, style));
+        x += w;
+    }
+    app.hit.borrow_mut().tabs = hits;
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
@@ -156,6 +169,10 @@ fn render_help(f: &mut Frame) {
         Line::from("  Dead:  T retry · d delete · P purge all"),
         Line::from("  Stats: p pause / resume selected queue"),
         Line::from("  (every action asks for confirmation)"),
+        Line::from(""),
+        Line::from(Span::styled("Mouse", help_head())),
+        Line::from("  click a tab to switch · click a row to select"),
+        Line::from("  click the selected row to open detail · wheel scrolls"),
         Line::from(""),
         Line::from(Span::styled("General", help_head())),
         Line::from("  ? this help · q quit · Ctrl-C quit"),
