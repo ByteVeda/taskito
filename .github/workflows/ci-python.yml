@@ -46,11 +46,6 @@ jobs:
       # Disabling pip's cache eliminates the warning at zero cost (we use uv
       # for actual package installs).
       PIP_NO_CACHE_DIR: "1"
-      # Share compiled rustc artifacts across the matrix's release builds via
-      # the GitHub Actions cache. The Cargo cache written by the Rust lint job
-      # is dev-profile, so these release builds got near-zero reuse from it.
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     strategy:
       # PRs run a trimmed matrix: oldest+newest Python on Linux plus one
       # Windows smoke (the vendored-OpenSSL path). The full 9-cell version/OS
@@ -90,6 +85,15 @@ jobs:
 
       - name: Build native extension with maturin
         uses: PyO3/maturin-action@v1.51.0
+        # Step-scoped on purpose: a job-level RUSTC_WRAPPER poisons the
+        # uv-sync editable build inside setup-python, which runs before the
+        # sccache binary exists on the runner.
+        env:
+          # Share compiled rustc artifacts across the matrix's release builds
+          # via the GitHub Actions cache. The Cargo cache written by the Rust
+          # lint job is dev-profile, so these builds got near-zero reuse.
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         with:
           command: develop
           args: --release --features extension-module,postgres,redis,native-async,workflows,mesh
