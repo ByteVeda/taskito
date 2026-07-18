@@ -77,6 +77,10 @@ class QueueError(TaskitoError):
     """Raised on queue-level operational errors."""
 
 
+class QueueFullError(QueueError):
+    """Raised when enqueuing would exceed a queue's ``max_pending`` admission cap."""
+
+
 class ResourceError(TaskitoError):
     """Base exception for resource system errors."""
 

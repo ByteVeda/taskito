@@ -30,7 +30,7 @@ from taskito.async_support.mixins import AsyncQueueMixin
 from taskito.batching import BatchAccumulator, BatchConfig
 from taskito.codecs import CodecSerializer, PayloadCodec
 from taskito.events import EventBus, EventType
-from taskito.exceptions import SerializationError
+from taskito.exceptions import QueueFullError, SerializationError
 from taskito.interception import ArgumentInterceptor
 from taskito.interception.built_in import build_default_registry
 from taskito.interception.metrics import InterceptionMetrics
@@ -152,6 +152,7 @@ class Queue(
         dlq_auto_retry_delay: int | None = None,
         dlq_auto_retry_max: int = 1,
         retention: Retention | None = None,
+        max_pending: dict[str, int] | None = None,
     ):
         """Initialize a new task queue.
 
@@ -225,6 +226,14 @@ class Queue(
                 is automatically retried. ``None`` disables auto-retry.
             dlq_auto_retry_max: Maximum number of DLQ auto-retries per entry
                 before giving up. Defaults to 1.
+            max_pending: Opt-in per-queue admission cap, mapping queue name to a
+                maximum pending backlog. When set, ``enqueue``/``enqueue_many``
+                raise :class:`QueueFullError` once a queue's pending count
+                reaches its cap. Queues absent from the map are uncapped (zero
+                overhead). The check is a non-atomic count-then-insert, so brief
+                overshoot is possible under concurrent producers — the same soft
+                guarantee as the rate limiter. Also settable at runtime via
+                ``set_queue_max_pending``.
         """
         if backend == "sqlite":
             # Ensure parent directory exists for SQLite
@@ -302,6 +311,8 @@ class Queue(
         self._init_predicate_state()
         self._drain_timeout = drain_timeout
         self._queue_configs: dict[str, dict[str, Any]] = {}
+        # Opt-in per-queue admission caps (queue -> max pending). Empty = uncapped.
+        self._max_pending: dict[str, int] = dict(max_pending or {})
         self._event_bus = EventBus(max_workers=event_workers)
         self._webhook_manager = WebhookManager(queue_ref=self)
 
@@ -509,6 +520,23 @@ class Queue(
         """
         return self._serializer.dumps(result)
 
+    def _reject_if_queue_full(self, queue_name: str) -> None:
+        """Enforce the opt-in ``max_pending`` admission cap for a queue.
+
+        Raises :class:`QueueFullError` when the queue's pending backlog has
+        reached its configured cap. No-op (and no query) for uncapped queues.
+        Non-atomic count-then-insert — brief overshoot is accepted, like the
+        rate limiter.
+        """
+        cap = self._max_pending.get(queue_name)
+        if cap is None:
+            return
+        pending = self._inner.count_pending_by_queue(queue_name)
+        if pending >= cap:
+            raise QueueFullError(
+                f"queue '{queue_name}' is full: {pending} pending >= max_pending {cap}"
+            )
+
     def enqueue(
         self,
         task_name: str,
@@ -663,6 +691,8 @@ class Queue(
         dep_ids = None
         if depends_on is not None:
             dep_ids = [depends_on] if isinstance(depends_on, str) else list(depends_on)
+
+        self._reject_if_queue_full(queue or "default")
 
         py_job = self._inner.enqueue(
             task_name=task_name,
@@ -893,6 +923,11 @@ class Queue(
                     payload_size=len(payloads[i]),
                     delay=delays[i],
                 )
+
+        # Admission cap is all-or-nothing for the batch: if any distinct target
+        # queue is at its cap, reject before inserting any row.
+        for capped_queue in set(queues_list):
+            self._reject_if_queue_full(capped_queue)
 
         py_jobs = self._inner.enqueue_batch(
             task_names=task_names,
