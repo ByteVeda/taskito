@@ -44,6 +44,15 @@ pub struct Stmt {
     swallow_dup_column: bool,
 }
 
+impl Stmt {
+    /// Rendered SQL. Test-only accessor so migration render tests co-located in a
+    /// migration's own module (a different module than `Stmt`) can inspect output.
+    #[cfg(test)]
+    pub(crate) fn sql(&self) -> &str {
+        &self.sql
+    }
+}
+
 /// A single schema version. `up` returns the rendered statements to apply.
 pub trait Migration {
     /// Stable, unique version key recorded in the ledger (e.g. `"0001_initial"`).
@@ -75,6 +84,18 @@ pub fn add_column(backend: Backend, table: &str, column: &mut ColumnDef) -> Stmt
     Stmt {
         sql: render_schema(&alter, backend),
         swallow_dup_column: true,
+    }
+}
+
+/// Escape hatch for DDL sea-query cannot model — currently only Postgres table
+/// storage parameters (`ALTER TABLE … SET (…)`, which `TableAlterStatement` has
+/// no method for). The SQL is a code-defined literal that never renders through
+/// a dialect builder: no user input reaches here, and the caller owns dialect
+/// gating (return no statements for the backends it does not apply to).
+pub fn raw_ddl(sql: impl Into<String>) -> Stmt {
+    Stmt {
+        sql: sql.into(),
+        swallow_dup_column: false,
     }
 }
 
@@ -296,6 +317,15 @@ mod tests {
     }
 
     #[test]
+    fn raw_ddl_passes_sql_through_verbatim() {
+        // The escape hatch must not touch the SQL — it is a code-defined literal
+        // the caller has already made dialect-correct.
+        let stmt = raw_ddl("ALTER TABLE jobs SET (fillfactor = 85)");
+        assert_eq!(stmt.sql, "ALTER TABLE jobs SET (fillfactor = 85)");
+        assert!(!stmt.swallow_dup_column);
+    }
+
+    #[test]
     fn m0003_renders_partial_indexes_on_both_backends() {
         // The Postgres arm only renders under its feature — `render_schema`
         // is `unreachable!()` otherwise.
@@ -320,6 +350,21 @@ mod tests {
                 "{label}: partial predicate must render: {joined}"
             );
         }
+    }
+
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn add_column_renders_if_not_exists_on_postgres() {
+        // The Postgres `ADD COLUMN IF NOT EXISTS` branch had no coverage — SQLite
+        // renders a plain `ADD COLUMN` and swallows the dup-column error instead.
+        let mut col = ColumnDef::new(Alias::new("namespace"));
+        col.text();
+        let stmt = add_column(Backend::Postgres, "jobs", &mut col);
+        assert!(
+            stmt.sql.contains("ADD COLUMN IF NOT EXISTS"),
+            "{}",
+            stmt.sql
+        );
     }
 
     #[test]
