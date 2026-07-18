@@ -20,6 +20,9 @@ use crate::source::{
 pub struct Hit {
     /// `(x_start, x_end_exclusive, view)` span of each tab label.
     pub tabs: Vec<(u16, u16, View)>,
+    /// Screen row the tab labels are drawn on — a click must land on it (not
+    /// merely in a tab's columns) to count as a tab click.
+    pub tabs_row: u16,
     /// Screen rect of the active view's selectable data rows (each row height 1).
     pub rows: Option<Rect>,
 }
@@ -207,15 +210,20 @@ impl App {
     }
 
     fn on_click(&mut self, col: u16, row: u16, tx: &Sender<Cmd>) {
-        // Tab bar: click a label to switch view. (Copy out of the RefCell borrow
-        // before mutating self.)
-        let tab = self
-            .hit
-            .borrow()
-            .tabs
-            .iter()
-            .find(|(x0, x1, _)| col >= *x0 && col < *x1)
-            .map(|(_, _, v)| *v);
+        // Tab bar: click a label to switch view. Require both the tab row and a
+        // label's columns — otherwise a click far below a tab would switch views.
+        // (Copy out of the RefCell borrow before mutating self.)
+        let tab = {
+            let hit = self.hit.borrow();
+            if row == hit.tabs_row {
+                hit.tabs
+                    .iter()
+                    .find(|(x0, x1, _)| col >= *x0 && col < *x1)
+                    .map(|(_, _, v)| *v)
+            } else {
+                None
+            }
+        };
         if let Some(view) = tab {
             self.set_view(view, tx);
             return;
@@ -436,12 +444,18 @@ mod tests {
         }
     }
 
+    fn set_tabs(app: &App) {
+        let mut h = app.hit.borrow_mut();
+        h.tabs = vec![(1, 10, View::Stats), (13, 21, View::Jobs)];
+        h.tabs_row = 1;
+    }
+
     #[test]
     fn click_tab_switches_view() {
         let (tx, _rx) = mpsc::channel();
         let mut app = app();
-        app.hit.borrow_mut().tabs = vec![(1, 10, View::Stats), (13, 21, View::Jobs)];
-        app.on_click(15, 1, &tx); // inside the Jobs label span
+        set_tabs(&app);
+        app.on_click(15, 1, &tx); // inside the Jobs label span, on the tab row
         assert_eq!(app.view, View::Jobs);
     }
 
@@ -449,8 +463,17 @@ mod tests {
     fn click_outside_any_hitbox_is_ignored() {
         let (tx, _rx) = mpsc::channel();
         let mut app = app();
-        app.hit.borrow_mut().tabs = vec![(1, 10, View::Stats), (13, 21, View::Jobs)];
+        set_tabs(&app);
         app.on_click(11, 1, &tx); // in the divider gap
+        assert_eq!(app.view, View::Stats);
+    }
+
+    #[test]
+    fn click_below_tab_row_does_not_switch() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = app();
+        set_tabs(&app);
+        app.on_click(15, 5, &tx); // Jobs columns, but far below the tab row
         assert_eq!(app.view, View::Stats);
     }
 

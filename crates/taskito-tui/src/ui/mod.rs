@@ -70,7 +70,11 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(label, style));
         x += w;
     }
-    app.hit.borrow_mut().tabs = hits;
+    {
+        let mut hit = app.hit.borrow_mut();
+        hit.tabs = hits;
+        hit.tabs_row = inner.y;
+    }
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
