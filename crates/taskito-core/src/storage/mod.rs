@@ -40,26 +40,26 @@ pub const EPHEMERAL_SUBSCRIPTION_GRACE_MS: i64 = 2 * DEAD_WORKER_THRESHOLD_MS;
 /// The `last_heartbeat` at or below which a worker is dead. One definition so
 /// the three backends' reaps and the orphan-recovery filter can never drift on
 /// the arithmetic (they already share [`DEAD_WORKER_THRESHOLD_MS`]).
-pub fn dead_worker_cutoff(now: i64) -> i64 {
+pub(crate) fn dead_worker_cutoff(now: i64) -> i64 {
     now.saturating_sub(DEAD_WORKER_THRESHOLD_MS)
 }
 
 /// Cluster-wide election lock for the dead-worker reap. Not namespaced — the
 /// `workers` table is cluster-global, so one worker per cluster should reap.
-pub const REAPER_LOCK: &str = "taskito:reaper";
+pub(crate) const REAPER_LOCK: &str = "taskito:reaper";
 
 /// Reaper lease. Longer than the 5s heartbeat cadence so the leader keeps the
 /// lock across ticks, but under [`DEAD_WORKER_THRESHOLD_MS`] so a dead leader's
 /// lock frees before the workers it should have reaped go stale-plus-a-cycle.
-pub const REAPER_LOCK_TTL_MS: i64 = 15_000;
+pub(crate) const REAPER_LOCK_TTL_MS: i64 = 15_000;
 
 /// Cluster-wide election lock for the retention purge. Separate from the reaper
 /// lock so a long cleanup sweep can never starve worker-death detection.
-pub const RETENTION_LOCK: &str = "taskito:retention";
+pub(crate) const RETENTION_LOCK: &str = "taskito:retention";
 
 /// Retention lease. Must exceed the worst-case sweep, which the per-tick batch
 /// cap bounds — the first sweep after a retention default flip is the long one.
-pub const RETENTION_LOCK_TTL_MS: i64 = 300_000;
+pub(crate) const RETENTION_LOCK_TTL_MS: i64 = 300_000;
 
 /// Hold `lock_name` as `owner_id` for another `ttl_ms`, renewing first and only
 /// taking it when free. Returns whether this caller now holds it.
@@ -73,7 +73,7 @@ pub const RETENTION_LOCK_TTL_MS: i64 = 300_000;
 /// (dead-worker reap, retention purge) are idempotent predicate deletes that
 /// re-evaluate fresh state, so a lost lock degrades to the pre-election
 /// behaviour of every worker doing the sweep, never to incorrectness.
-pub fn try_lead(
+pub(crate) fn try_lead(
     storage: &impl Storage,
     lock_name: &str,
     owner_id: &str,
@@ -83,6 +83,47 @@ pub fn try_lead(
         return Ok(true);
     }
     storage.acquire_lock(lock_name, owner_id, ttl_ms)
+}
+
+/// Reap dead workers if `owner_id` wins the cluster reaper election; a
+/// non-leader gets an empty list. One elected reaper per cluster keeps the
+/// registry sweep O(1) cluster-wide and fires each `WORKER_OFFLINE` once.
+///
+/// Reaping is opportunistic on the heartbeat cadence, so every error degrades
+/// to "not this tick": a backend error is not lost leadership — it is logged
+/// so a storage outage that stalls reaping stays diagnosable, then skipped.
+pub fn reap_dead_workers_if_leader(storage: &impl Storage, owner_id: &str) -> Vec<String> {
+    let leading = try_lead(storage, REAPER_LOCK, owner_id, REAPER_LOCK_TTL_MS).unwrap_or_else(
+        |election_error| {
+            log::warn!("reaper election failed: {election_error}");
+            false
+        },
+    );
+    if !leading {
+        return Vec::new();
+    }
+    storage.reap_dead_workers().unwrap_or_default()
+}
+
+/// Drop ephemeral subscriptions whose owning worker is gone, filtering the
+/// live set by heartbeat. Returns the number removed.
+///
+/// With `elected_owner` set, the sweep runs only when that owner wins the
+/// reaper election (the heartbeat-cadence path — one sweep per cluster);
+/// a non-leader returns `Ok(0)`. `None` sweeps unconditionally (a manual
+/// admin call, or a shutting-down worker reaping its own rows).
+pub fn sweep_ephemeral_subscriptions(
+    storage: &impl Storage,
+    elected_owner: Option<&str>,
+) -> Result<u64> {
+    if let Some(owner) = elected_owner {
+        if !try_lead(storage, REAPER_LOCK, owner, REAPER_LOCK_TTL_MS)? {
+            return Ok(0);
+        }
+    }
+    let cutoff = dead_worker_cutoff(crate::job::now_millis());
+    let live = storage.list_live_worker_ids(cutoff)?;
+    storage.reap_ephemeral_subscriptions(&live)
 }
 
 // ── Shared helper types ────────────────────────────────────────────────

@@ -160,20 +160,7 @@ impl PyQueue {
         py.detach(|| {
             // An explicit owner elects a single reaper; without one (a manual
             // admin call) the sweep runs unconditionally.
-            if let Some(owner) = worker_id {
-                let leading = taskito_core::storage::try_lead(
-                    storage,
-                    taskito_core::storage::REAPER_LOCK,
-                    owner,
-                    taskito_core::storage::REAPER_LOCK_TTL_MS,
-                )?;
-                if !leading {
-                    return Ok(0);
-                }
-            }
-            let cutoff = taskito_core::storage::dead_worker_cutoff(now_millis());
-            let live = storage.list_live_worker_ids(cutoff)?;
-            storage.reap_ephemeral_subscriptions(&live)
+            taskito_core::storage::sweep_ephemeral_subscriptions(storage, worker_id)
         })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }

@@ -427,22 +427,9 @@ impl JsQueue {
                 .heartbeat(&worker_id, resource_health.as_deref())
                 .map_err(to_napi_err)?;
             // Reaping is opportunistic — a failure must not fail the heartbeat.
-            let leading = taskito_core::storage::try_lead(
-                &storage,
-                taskito_core::storage::REAPER_LOCK,
-                &worker_id,
-                taskito_core::storage::REAPER_LOCK_TTL_MS,
-            )
-            .unwrap_or_else(|e| {
-                // A backend error is not lost leadership — log it so a storage
-                // outage that stalls reaping is diagnosable, then skip this tick.
-                log::warn!("reaper election failed: {e}");
-                false
-            });
-            if !leading {
-                return Ok(Vec::new());
-            }
-            Ok(storage.reap_dead_workers().unwrap_or_default())
+            Ok(taskito_core::storage::reap_dead_workers_if_leader(
+                &storage, &worker_id,
+            ))
         })
         .await
         .map_err(join_to_napi_err)?

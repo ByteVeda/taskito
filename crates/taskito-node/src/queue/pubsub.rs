@@ -124,22 +124,7 @@ impl JsQueue {
     pub async fn reap_ephemeral_subscriptions(&self, worker_id: Option<String>) -> Result<i64> {
         let storage = self.storage.clone();
         spawn_blocking(move || {
-            if let Some(owner) = worker_id {
-                let leading = taskito_core::storage::try_lead(
-                    &storage,
-                    taskito_core::storage::REAPER_LOCK,
-                    &owner,
-                    taskito_core::storage::REAPER_LOCK_TTL_MS,
-                )
-                .map_err(to_napi_err)?;
-                if !leading {
-                    return Ok(0);
-                }
-            }
-            let cutoff = taskito_core::storage::dead_worker_cutoff(now_millis());
-            let live = storage.list_live_worker_ids(cutoff).map_err(to_napi_err)?;
-            storage
-                .reap_ephemeral_subscriptions(&live)
+            taskito_core::storage::sweep_ephemeral_subscriptions(&storage, worker_id.as_deref())
                 .map(|n| n as i64)
                 .map_err(to_napi_err)
         })

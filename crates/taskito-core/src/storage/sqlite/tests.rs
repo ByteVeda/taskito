@@ -419,6 +419,61 @@ fn test_retry_dead_missing_id_returns_not_found() {
 }
 
 #[test]
+fn test_reap_if_leader_only_leader_reaps_and_gets_ids() {
+    use diesel::prelude::*;
+
+    use crate::storage::schema::workers;
+
+    let storage = test_storage();
+    storage
+        .register_worker("stale", "default", None, None, None, 1, None, None, None)
+        .unwrap();
+    let cutoff = now_millis() - crate::storage::DEAD_WORKER_THRESHOLD_MS - 1_000;
+    let mut conn = storage.conn().unwrap();
+    diesel::update(workers::table.filter(workers::worker_id.eq("stale")))
+        .set(workers::last_heartbeat.eq(cutoff))
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    // First caller wins the reaper election and gets the reaped ids; a second
+    // worker on the same tick loses the election and must get an empty list.
+    let reaped = crate::storage::reap_dead_workers_if_leader(&storage, "w-leader");
+    assert_eq!(reaped, vec!["stale".to_string()]);
+    let non_leader = crate::storage::reap_dead_workers_if_leader(&storage, "w-follower");
+    assert!(non_leader.is_empty());
+
+    // The leader keeps the lock across ticks (renew-then-acquire).
+    assert!(crate::storage::reap_dead_workers_if_leader(&storage, "w-leader").is_empty());
+}
+
+#[test]
+fn test_sweep_ephemeral_subscriptions_election_and_unconditional() {
+    let storage = test_storage();
+    // Aged past the registration grace window so the sweep may act on it.
+    let created = now_millis() - crate::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS - 1_000;
+    storage
+        .register_subscription(&make_sub("t", "eph", "task", Some("dead-worker"), created))
+        .unwrap();
+
+    // Leader sweeps the dead-owned row; a follower on the same tick gets 0
+    // without sweeping.
+    let swept = crate::storage::sweep_ephemeral_subscriptions(&storage, Some("w-leader")).unwrap();
+    assert_eq!(swept, 1);
+    assert_eq!(
+        crate::storage::sweep_ephemeral_subscriptions(&storage, Some("w-follower")).unwrap(),
+        0
+    );
+
+    // An unconditional (admin) sweep needs no election.
+    storage
+        .register_subscription(&make_sub("t", "eph2", "task", Some("dead-worker"), created))
+        .unwrap();
+    let swept = crate::storage::sweep_ephemeral_subscriptions(&storage, None).unwrap();
+    assert_eq!(swept, 1);
+}
+
+#[test]
 fn test_reap_dead_workers_removes_stale_keeps_fresh() {
     use diesel::prelude::*;
 
