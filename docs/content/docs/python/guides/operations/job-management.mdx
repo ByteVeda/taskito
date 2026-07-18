@@ -47,8 +47,9 @@ configuration required:
 | `dead_letter` (DLQ) | 30 days |
 
 The DLQ is deliberately the longest-lived — it's the only copy of a payload
-a human must act on. The scheduler checks every ~60 seconds and purges rows
-older than their table's window.
+a human must act on. The scheduler runs cleanup periodically (on its cleanup
+tick, not a fixed wall-clock interval) and purges rows older than their
+table's window.
 
 <Callout type="warn">
   The first time a worker running on this defaulted policy runs a cleanup
@@ -80,14 +81,17 @@ All windows are in seconds.
 
 ### Opting out
 
-Pass a fully empty `Retention()` to disable auto-cleanup entirely and keep
-every table forever. This is deliberately different from *omitting*
+Pass a fully empty `Retention()` to disable the table-wide windows, so no table
+is auto-cleaned on a schedule. This is deliberately different from *omitting*
 `retention`, which applies the recommended defaults above:
 
 ```python
-# Never auto-delete anything
+# No table-wide retention windows
 queue = Queue(db_path="myapp.db", retention=Retention())
 ```
+
+A per-entry `result_ttl` on an individual job or DLQ entry is still honored even
+with the windows disabled — the per-entry sweep runs every cleanup tick.
 
 ### Legacy: `result_ttl`
 

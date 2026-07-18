@@ -16,8 +16,9 @@ class Retention:
     Retention is **on by default**: a worker started with no ``retention``
     applies the recommended windows (archived jobs and metrics 7d, job errors
     7d, task logs 3d, dead-letter 30d). Pass a fully empty ``Retention()`` to
-    disable auto-cleanup and keep every table forever; pass specific windows to
-    override only those tables (the rest then keep forever).
+    disable the table-wide windows (a per-entry ``result_ttl`` is still honored);
+    pass specific windows to override only those tables (the rest then keep
+    forever).
     """
 
     archived_jobs: int | None = None
