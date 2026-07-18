@@ -148,3 +148,4 @@ def test_cap_frees_after_drain(tmp_path: Path) -> None:
         gate.set()
         q.shutdown()
         worker.join(timeout=5)
+        assert not worker.is_alive(), "worker did not stop during cleanup"
