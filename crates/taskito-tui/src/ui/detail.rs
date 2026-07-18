@@ -22,7 +22,8 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     };
     let para = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll, 0));
     f.render_widget(para, area);
 }
 

@@ -59,6 +59,8 @@ pub struct App {
     /// Id (job or run) the open detail was requested for, so late responses for
     /// a since-changed selection are dropped.
     detail_id: Option<String>,
+    /// Vertical scroll offset of the detail pane, in lines (read by the renderer).
+    pub detail_scroll: u16,
 
     pub notice: Option<Notice>,
     /// Clickable regions from the last render; interior-mutable so `draw(&App)`
@@ -89,6 +91,7 @@ impl App {
             job_detail: None,
             wf_dag: Vec::new(),
             detail_id: None,
+            detail_scroll: 0,
             notice: None,
             hit: RefCell::new(Hit::default()),
             last_refresh: Instant::now(),
@@ -228,8 +231,8 @@ impl App {
             return;
         }
         match me.kind {
-            MouseEventKind::ScrollDown => self.move_selection(1),
-            MouseEventKind::ScrollUp => self.move_selection(-1),
+            MouseEventKind::ScrollDown => self.nav(1),
+            MouseEventKind::ScrollUp => self.nav(-1),
             MouseEventKind::Down(MouseButton::Left) => self.on_click(me.column, me.row, tx),
             _ => {}
         }
@@ -301,10 +304,18 @@ impl App {
                 self.set_view(View::ALL[idx], tx);
             }
             KeyCode::Char('r') => self.request_active(tx),
-            KeyCode::Char('j') | KeyCode::Down => self.move_selection(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
-            KeyCode::Char('g') => self.selected = 0,
-            KeyCode::Char('G') => self.selected = self.current_len().saturating_sub(1),
+            KeyCode::Char('j') | KeyCode::Down => self.nav(1),
+            KeyCode::Char('k') | KeyCode::Up => self.nav(-1),
+            KeyCode::Char('g') => {
+                if self.detail_open {
+                    self.detail_scroll = 0;
+                } else {
+                    self.selected = 0;
+                }
+            }
+            KeyCode::Char('G') if !self.detail_open => {
+                self.selected = self.current_len().saturating_sub(1);
+            }
             KeyCode::Enter => self.open_detail(tx),
             _ => self.on_view_action_key(key, tx),
         }
@@ -379,6 +390,16 @@ impl App {
         self.selected = next.clamp(0, len as i32 - 1) as usize;
     }
 
+    /// Vertical movement: scroll the detail pane when it's open, otherwise move
+    /// the list selection. Keeps wheel/j/k doing the expected thing in context.
+    fn nav(&mut self, delta: i32) {
+        if self.detail_open {
+            self.detail_scroll = (self.detail_scroll as i32 + delta).max(0) as u16;
+        } else {
+            self.move_selection(delta);
+        }
+    }
+
     fn switch_view(&mut self, delta: i32, tx: &Sender<Cmd>) {
         let cur = View::ALL.iter().position(|v| *v == self.view).unwrap_or(0);
         let len = View::ALL.len() as i32;
@@ -397,6 +418,7 @@ impl App {
     }
 
     fn open_detail(&mut self, tx: &Sender<Cmd>) {
+        self.detail_scroll = 0;
         // Clone the id first so the selection borrow ends before we mutate self.
         match self.view {
             View::Jobs => {
@@ -573,5 +595,23 @@ mod tests {
 
         app.apply(Msg::JobDetail("right".into(), None)); // matches
         assert!(!app.loading_detail); // applied
+    }
+
+    #[test]
+    fn nav_scrolls_detail_when_open_else_moves_selection() {
+        let mut app = app();
+        app.detail_open = true;
+        app.nav(1);
+        app.nav(1);
+        assert_eq!(app.detail_scroll, 2);
+        app.nav(-5); // clamps at 0
+        assert_eq!(app.detail_scroll, 0);
+
+        app.detail_open = false;
+        app.view = View::Jobs;
+        app.jobs = vec![jr("a"), jr("b")];
+        app.nav(1);
+        assert_eq!(app.selected, 1);
+        assert_eq!(app.detail_scroll, 0);
     }
 }
