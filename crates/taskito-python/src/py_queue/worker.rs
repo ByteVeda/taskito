@@ -445,6 +445,12 @@ impl PyQueue {
                     if let Some(codel) = parse_codel(&cfg) {
                         scheduler.register_queue_codel(queue_name.clone(), codel);
                     }
+                    if let Some("lifo") = cfg.get("dispatch_order").and_then(|v| v.as_str()) {
+                        scheduler.register_queue_dispatch_order(
+                            queue_name.clone(),
+                            taskito_core::storage::DispatchOrder::Lifo,
+                        );
+                    }
                     scheduler.register_queue_config(
                         queue_name,
                         taskito_core::scheduler::QueueConfig {

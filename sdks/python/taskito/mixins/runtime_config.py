@@ -124,3 +124,24 @@ class QueueRuntimeConfigMixin:
         config = self._queue_configs.setdefault(queue_name, {})
         config["codel_target_ms"] = target_ms
         config["codel_interval_ms"] = interval_ms
+
+    def set_queue_dispatch_order(self, queue_name: str, order: str) -> None:
+        """Set a queue's dispatch order for same-priority jobs.
+
+        ``"fifo"`` (default) runs oldest-first — the fair ordering a durable
+        queue is expected to keep. ``"lifo"`` runs newest-first, a freshness
+        lever for workloads that would rather run recent work than clear a stale
+        backlog in order under overload. Priority always dominates; this only
+        breaks ties. Takes effect at ``run_worker``.
+
+        Note: honored on SQLite and PostgreSQL. The Redis backend is FIFO-only
+        (its single-score index can't express per-priority LIFO without a
+        second sorted set); ``"lifo"`` is accepted but ignored there.
+
+        Args:
+            queue_name: Queue name (e.g. ``"default"``).
+            order: ``"fifo"`` or ``"lifo"``.
+        """
+        if order not in ("fifo", "lifo"):
+            raise ValueError("order must be 'fifo' or 'lifo'")
+        self._queue_configs.setdefault(queue_name, {})["dispatch_order"] = order
