@@ -102,7 +102,10 @@ pub fn reap_dead_workers_if_leader(storage: &impl Storage, owner_id: &str) -> Ve
     if !leading {
         return Vec::new();
     }
-    storage.reap_dead_workers().unwrap_or_default()
+    storage.reap_dead_workers().unwrap_or_else(|error| {
+        log::warn!("dead-worker reap failed: {error}");
+        Vec::new()
+    })
 }
 
 /// Drop ephemeral subscriptions whose owning worker is gone, filtering the
