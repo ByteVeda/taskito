@@ -167,6 +167,12 @@ export interface PeriodicTask {
 export interface QueueLimits {
   maxConcurrent?: number;
   rateLimit?: RateLimit;
+  /**
+   * Opt-in admission cap on the queue's pending backlog. Once reached,
+   * `enqueue`/`enqueueMany` throw {@link QueueFullError}. Enforced producer-side
+   * (a non-atomic count-then-insert), so it applies even with no worker running.
+   */
+  maxPending?: number;
 }
 
 /** A task handler plus its registration options. */

@@ -15,6 +15,7 @@ import {
   LockNotAcquiredError,
   PredicateRejectedError,
   QueueError,
+  QueueFullError,
   ResourceError,
   ResultTimeoutError,
   SerializationError,
@@ -440,8 +441,24 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     args?: Parameters<TTasks[Name]>,
     options?: EnqueueOptions,
   ): string {
+    this.rejectIfQueueFull(options?.queue ?? "default");
     const { taskName, payload, options: nativeOpts } = this.prepareEnqueue(name, args, options);
     return this.native.enqueue(taskName, payload, nativeOpts);
+  }
+
+  /**
+   * Enforce the opt-in `maxPending` admission cap for a queue (set via
+   * {@link Queue.configureQueue}). Throws {@link QueueFullError} once the
+   * queue's pending backlog reaches its cap; a no-op (and no query) for
+   * uncapped queues. Non-atomic count-then-insert, like the rate limiter.
+   */
+  private rejectIfQueueFull(queue: string): void {
+    const cap = this.queueLimits.get(queue)?.maxPending;
+    if (cap === undefined) return;
+    const pending = this.native.countPendingByQueue(queue);
+    if (pending >= cap) {
+      throw new QueueFullError(queue, pending, cap);
+    }
   }
 
   /**
@@ -453,6 +470,10 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     name: Name,
     jobs: ReadonlyArray<{ args?: Parameters<TTasks[Name]>; options?: EnqueueOptions }>,
   ): string[] {
+    // All-or-nothing: if any distinct target queue is at its cap, reject the batch.
+    for (const queue of new Set(jobs.map((job) => job.options?.queue ?? "default"))) {
+      this.rejectIfQueueFull(queue);
+    }
     const prepared = jobs.map((job) => {
       const { payload, options } = this.prepareEnqueue(name, job.args, job.options, {
         batch: true,
@@ -829,6 +850,14 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** Job counts by status for a single queue. */
   statsByQueue(queue: string): Promise<Stats> {
     return this.native.statsByQueue(queue);
+  }
+
+  /**
+   * Count pending jobs on `queue` — the lean primitive behind the `maxPending`
+   * admission cap (avoids the full {@link Queue.statsByQueue} breakdown).
+   */
+  countPendingByQueue(queue: string): number {
+    return this.native.countPendingByQueue(queue);
   }
 
   /** Job counts by status, keyed by queue name. */

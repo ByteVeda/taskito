@@ -79,6 +79,18 @@ export class QueueError extends TaskitoError {
   }
 }
 
+/** Thrown by `enqueue`/`enqueueMany` when a queue's `maxPending` admission cap is reached. */
+export class QueueFullError extends QueueError {
+  constructor(
+    readonly queue: string,
+    readonly pending: number,
+    readonly cap: number,
+  ) {
+    super(`queue '${queue}' is full: ${pending} pending >= maxPending ${cap}`);
+    this.name = "QueueFullError";
+  }
+}
+
 /** Thrown by {@link Queue.withLock} when the lock is held by another owner. */
 export class LockNotAcquiredError extends TaskitoError {
   constructor(readonly lockName: string) {
