@@ -858,24 +858,10 @@ impl PyQueue {
             .heartbeat(worker_id, resource_health)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        let leading = taskito_core::storage::try_lead(
+        Ok(taskito_core::storage::reap_dead_workers_if_leader(
             &self.storage,
-            taskito_core::storage::REAPER_LOCK,
             worker_id,
-            taskito_core::storage::REAPER_LOCK_TTL_MS,
-        )
-        .unwrap_or_else(|e| {
-            // A backend error is not lost leadership — log it so a storage outage
-            // that stalls reaping is diagnosable, then skip this tick.
-            log::warn!("reaper election failed: {e}");
-            false
-        });
-        if !leading {
-            return Ok(Vec::new());
-        }
-
-        let reaped = self.storage.reap_dead_workers().unwrap_or_default();
-        Ok(reaped)
+        ))
     }
 
     /// Update the status of a worker.
