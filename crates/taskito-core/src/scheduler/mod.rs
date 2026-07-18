@@ -81,19 +81,33 @@ impl Default for SchedulerConfig {
 
 impl SchedulerConfig {
     /// The retention windows this config actually applies. An explicit
-    /// `retention` wins; otherwise the deprecated queue-wide `result_ttl_ms`
-    /// maps onto every table, which is exactly what it used to mean. Negative
-    /// windows are dropped on both paths — one would invert the cutoff into the
-    /// future and match every row (the bindings reject them; this is defense in
-    /// depth for a directly-constructed config).
+    /// `retention` wins (an empty one disables retention); otherwise the
+    /// deprecated queue-wide `result_ttl_ms` maps onto every table, which is
+    /// exactly what it used to mean. With neither set, retention falls back to
+    /// the recommended defaults — history is bounded out of the box. Negative
+    /// windows are dropped on the explicit and legacy paths (a negative would
+    /// invert the cutoff into the future and match every row; the bindings
+    /// reject them, this is defense in depth for a directly-constructed config).
     pub fn effective_retention(&self) -> retention::RetentionConfig {
         if let Some(retention) = &self.retention {
             return retention.sanitized();
         }
         match self.result_ttl_ms {
             Some(ttl) if ttl >= 0 => retention::RetentionConfig::uniform(ttl),
-            _ => retention::RetentionConfig::default(),
+            // A negative legacy TTL is a set-but-invalid choice: refuse to be
+            // destructive on it (disable), rather than inverting the cutoff or
+            // silently upgrading it to the recommended windows.
+            Some(_) => retention::RetentionConfig::default(),
+            None => retention::RetentionConfig::recommended(),
         }
+    }
+
+    /// True when retention runs on the recommended defaults because nothing was
+    /// configured — no per-table map and no legacy `result_ttl_ms` at all. The
+    /// one-time cleanup announcement fires only in this case: an explicit, legacy,
+    /// or set-but-invalid config is the operator's own doing and needs no warning.
+    pub fn retention_is_defaulted(&self) -> bool {
+        self.retention.is_none() && self.result_ttl_ms.is_none()
     }
 }
 
@@ -260,6 +274,11 @@ pub struct Scheduler {
     /// can refill immediately instead of waiting out its backoff — keeping
     /// throughput up despite the in-flight cap.
     dispatch_wake: Arc<Notify>,
+    /// Fires the default-retention announcement exactly once per process, before
+    /// the first delete. Only the elected cleaner reaches it, so in practice it
+    /// is one line per cluster; a leadership change re-announces, which is
+    /// informative. Per-instance (`Scheduler` is not `Clone`).
+    retention_announced: std::sync::Once,
     /// Wake source for push-dispatch, installed before `run()`. Taken (moved
     /// out) once when the loop starts. `None` means the loop polls as today.
     #[cfg(feature = "push-dispatch")]
@@ -310,6 +329,7 @@ impl Scheduler {
             claim_owner: format!("{}-{}", poller::SCHEDULER_CLAIM_OWNER, uuid::Uuid::now_v7()),
             in_flight: Mutex::new(InFlight::default()),
             dispatch_wake: Arc::new(Notify::new()),
+            retention_announced: std::sync::Once::new(),
             #[cfg(feature = "push-dispatch")]
             wake_source: Mutex::new(None),
             #[cfg(feature = "push-dispatch")]
@@ -2078,6 +2098,45 @@ mod tests {
             !scheduler.storage.get_task_logs(&job.id).unwrap().is_empty(),
             "task_logs has no window, so the log must survive the archive purge"
         );
+    }
+
+    #[test]
+    fn test_default_retention_is_enabled() {
+        // The default flip: a config that sets neither the per-table map nor a
+        // legacy result_ttl now bounds history on the recommended windows. This
+        // is the single behavioral change of the default-on release.
+        let config = SchedulerConfig::default();
+        assert!(config.retention_is_defaulted());
+        assert_eq!(
+            config.effective_retention(),
+            retention::RetentionConfig::recommended()
+        );
+        assert!(!config.effective_retention().is_empty());
+    }
+
+    #[test]
+    fn test_retention_is_defaulted_only_without_config() {
+        // Defaulted (announced + recommended) only when nothing is chosen.
+        assert!(SchedulerConfig::default().retention_is_defaulted());
+        assert!(!SchedulerConfig {
+            result_ttl_ms: Some(3_600_000),
+            ..SchedulerConfig::default()
+        }
+        .retention_is_defaulted());
+        assert!(!SchedulerConfig {
+            retention: Some(retention::RetentionConfig::default()),
+            ..SchedulerConfig::default()
+        }
+        .retention_is_defaulted());
+        // A negative legacy TTL is a set-but-invalid choice, not the absence of
+        // one: not defaulted (no announcement), and it disables retention rather
+        // than falling through to the recommended windows.
+        let negative = SchedulerConfig {
+            result_ttl_ms: Some(-1),
+            ..SchedulerConfig::default()
+        };
+        assert!(!negative.retention_is_defaulted());
+        assert!(negative.effective_retention().is_empty());
     }
 
     #[test]
