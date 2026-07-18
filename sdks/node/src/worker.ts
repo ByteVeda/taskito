@@ -356,5 +356,7 @@ function buildQueueConfigs(limits: ReadonlyMap<string, QueueLimits>): QueueConfi
     name,
     maxConcurrent: limit.maxConcurrent,
     rateLimit: limit.rateLimit,
+    codelTargetMs: limit.codel?.targetMs,
+    codelIntervalMs: limit.codel?.intervalMs,
   }));
 }

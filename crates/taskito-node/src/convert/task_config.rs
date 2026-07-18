@@ -118,3 +118,20 @@ pub fn queue_config(input: &QueueConfigInput) -> Result<QueueConfig> {
         max_concurrent: input.max_concurrent,
     })
 }
+
+/// Build the optional per-queue CoDel config: both bounds must be present and
+/// positive. Kept separate from [`queue_config`] since the core registers CoDel
+/// through its own path, not on `QueueConfig`.
+pub fn queue_codel(
+    input: &QueueConfigInput,
+) -> Option<taskito_core::scheduler::codel::CodelConfig> {
+    match (input.codel_target_ms, input.codel_interval_ms) {
+        (Some(target_ms), Some(interval_ms)) if target_ms > 0 && interval_ms > 0 => {
+            Some(taskito_core::scheduler::codel::CodelConfig {
+                target_ms,
+                interval_ms,
+            })
+        }
+        _ => None,
+    }
+}
