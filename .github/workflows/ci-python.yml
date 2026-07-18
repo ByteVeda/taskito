@@ -47,18 +47,13 @@ jobs:
       # for actual package installs).
       PIP_NO_CACHE_DIR: "1"
     strategy:
-      matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        include:
-          - os: macos-15
-            python-version: "3.14"
-          - os: macos-15
-            python-version: "3.10"
-          - os: windows-2025
-            python-version: "3.14"
-          - os: windows-2025
-            python-version: "3.10"
+      # PRs run a trimmed matrix: oldest+newest Python on Linux plus one
+      # Windows smoke (the vendored-OpenSSL path). The full 9-cell version/OS
+      # matrix still runs on every push to master and on workflow_dispatch,
+      # so coverage is delayed to merge, not lost.
+      matrix: ${{ github.event_name == 'pull_request'
+        && fromJSON('{"os":["ubuntu-latest"],"python-version":["3.10","3.14"],"include":[{"os":"windows-2025","python-version":"3.14"}]}')
+        || fromJSON('{"os":["ubuntu-latest"],"python-version":["3.10","3.11","3.12","3.13","3.14"],"include":[{"os":"macos-15","python-version":"3.14"},{"os":"macos-15","python-version":"3.10"},{"os":"windows-2025","python-version":"3.14"},{"os":"windows-2025","python-version":"3.10"}]}') }}
     steps:
       - name: Point vendored OpenSSL at Strawberry Perl (Windows)
         if: runner.os == 'Windows'
@@ -85,8 +80,20 @@ jobs:
           # cache is written by the Rust lint job.
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Build native extension with maturin
         uses: PyO3/maturin-action@v1.51.0
+        # Step-scoped on purpose: a job-level RUSTC_WRAPPER poisons the
+        # uv-sync editable build inside setup-python, which runs before the
+        # sccache binary exists on the runner.
+        env:
+          # Share compiled rustc artifacts across the matrix's release builds
+          # via the GitHub Actions cache. The Cargo cache written by the Rust
+          # lint job is dev-profile, so these builds got near-zero reuse.
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         with:
           command: develop
           args: --release --features extension-module,postgres,redis,native-async,workflows,mesh
