@@ -36,16 +36,44 @@ fn main() -> Result<()> {
     let (msg_tx, msg_rx) = mpsc::channel::<Msg>();
     let worker = spawn_worker(Box::new(source), cmd_rx, msg_tx);
 
-    let mut terminal = setup_terminal()?;
+    // The guard restores the terminal on any exit path — normal return, `?`
+    // error, or panic unwind — via its Drop.
+    let _guard = TerminalGuard::enter()?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let mut app = App::new(Duration::from_millis(cli.refresh));
     app.request_active(&cmd_tx); // initial load for the default view
 
     let res = run(&mut terminal, &mut app, &cmd_tx, &msg_rx);
 
-    restore_terminal(&mut terminal)?;
     let _ = cmd_tx.send(Cmd::Shutdown);
     let _ = worker.join();
     res
+}
+
+/// Enables raw mode + alternate screen + mouse capture on construction and
+/// restores all of it on `Drop`, independently so one failing step can't skip
+/// the others. This is what keeps a panic or early error from leaving the shell
+/// in raw mode.
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            LeaveAlternateScreen,
+            crossterm::cursor::Show
+        );
+    }
 }
 
 fn run(
@@ -75,23 +103,5 @@ fn run(
 
         app.maybe_auto_refresh(cmd_tx);
     }
-    Ok(())
-}
-
-fn setup_terminal() -> Result<Term> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
-}
-
-fn restore_terminal(terminal: &mut Term) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        DisableMouseCapture,
-        LeaveAlternateScreen
-    )?;
-    terminal.show_cursor()?;
     Ok(())
 }
