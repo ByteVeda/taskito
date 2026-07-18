@@ -5,6 +5,8 @@ use crate::error::Result;
 use crate::job::{Job, JobStatus};
 
 impl RedisStorage {
+    /// Move terminal jobs completed before `cutoff_ms` (Unix milliseconds) out
+    /// of every live index and into the archive. Returns the count archived.
     pub fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let mut count = 0u64;
@@ -35,6 +37,7 @@ impl RedisStorage {
         Ok(count)
     }
 
+    /// Archived jobs, newest first, paginated. Rows are blob-free.
     pub fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>> {
         let mut conn = self.conn()?;
         let archived_all = self.key(&["archived", "all"]);

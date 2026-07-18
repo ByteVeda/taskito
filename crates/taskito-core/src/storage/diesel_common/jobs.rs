@@ -428,7 +428,7 @@ macro_rules! impl_diesel_job_ops {
                 ))
             }
 
-            /// Batch variant of [`enqueue_unique`]: dedupe-insert many jobs in a
+            /// Batch variant of `enqueue_unique`: dedupe-insert many jobs in a
             /// single transaction instead of one transaction per job. Used by
             /// pub/sub keyed fan-out, where a publish creates one uniquely-keyed
             /// job per subscriber — previously N separate write transactions
@@ -1114,7 +1114,7 @@ macro_rules! impl_diesel_job_ops {
                 )
             }
 
-            /// Keyset-paginated `list_jobs` — see [`list_jobs_filtered_after`].
+            /// Keyset-paginated `list_jobs` — see `list_jobs_filtered_after`.
             pub fn list_jobs_after(
                 &self,
                 status: Option<i32>,

@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::job::now_millis;
 
 impl SqliteStorage {
+    /// Token-bucket state for a rate-limit key, if one exists.
     pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitState>> {
         let mut conn = self.conn()?;
 
@@ -20,6 +21,7 @@ impl SqliteStorage {
         Ok(row.map(Into::into))
     }
 
+    /// Insert or replace a token-bucket state row.
     pub fn upsert_rate_limit(&self, state: &RateLimitState) -> Result<()> {
         let mut conn = self.conn()?;
 
@@ -34,7 +36,7 @@ impl SqliteStorage {
     /// Atomically try to acquire a rate limit token.
     /// Does the read-refill-consume-write in a single write transaction to
     /// prevent race conditions between concurrent workers. Uses
-    /// [`SqliteStorage::write_transaction`] (BEGIN IMMEDIATE) so the read-then-
+    /// `SqliteStorage::write_transaction` (BEGIN IMMEDIATE) so the read-then-
     /// write can't hit the deferred-lock-upgrade `SQLITE_BUSY` deadlock.
     pub fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> {
         let now = now_millis();

@@ -11,49 +11,78 @@ use serde::{Deserialize, Serialize};
 /// One recorded failure attempt for a job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobError {
+    /// Unique id of this error record.
     pub id: String,
+    /// Id of the job that failed.
     pub job_id: String,
+    /// 1-based attempt number that produced this error.
     pub attempt: i32,
+    /// Error message (canonical JSON `TaskError` when structured).
     pub error: String,
+    /// Unix-millisecond time of the failure.
     pub failed_at: i64,
 }
 
 /// Token-bucket state for a rate-limit key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitState {
+    /// Rate-limit key (task or queue scoped).
     pub key: String,
+    /// Tokens currently available.
     pub tokens: f64,
+    /// Bucket capacity.
     pub max_tokens: f64,
+    /// Tokens added per second.
     pub refill_rate: f64,
+    /// Unix-millisecond time of the last refill.
     pub last_refill: i64,
 }
 
 /// A registered periodic (cron) task.
 #[derive(Debug, Clone)]
 pub struct PeriodicTask {
+    /// Unique schedule name.
     pub name: String,
+    /// Task to enqueue on each firing.
     pub task_name: String,
+    /// Cron expression driving the schedule.
     pub cron_expr: String,
+    /// Serialized positional arguments.
     pub args: Option<Vec<u8>>,
+    /// Serialized keyword arguments.
     pub kwargs: Option<Vec<u8>>,
+    /// Queue to enqueue into.
     pub queue: String,
+    /// Whether the schedule is active (false = paused).
     pub enabled: bool,
+    /// Unix-millisecond time of the last firing, unset until first run.
     pub last_run: Option<i64>,
+    /// Unix-millisecond time of the next firing.
     pub next_run: i64,
+    /// IANA timezone for cron evaluation. `None` = UTC.
     pub timezone: Option<String>,
 }
 
 /// Registration payload for a periodic task. `last_run` starts unset.
 #[derive(Debug, Clone)]
 pub struct NewPeriodicTask {
+    /// Unique schedule name.
     pub name: String,
+    /// Task to enqueue on each firing.
     pub task_name: String,
+    /// Cron expression driving the schedule.
     pub cron_expr: String,
+    /// Serialized positional arguments.
     pub args: Option<Vec<u8>>,
+    /// Serialized keyword arguments.
     pub kwargs: Option<Vec<u8>>,
+    /// Queue to enqueue into.
     pub queue: String,
+    /// Whether the schedule starts active.
     pub enabled: bool,
+    /// Unix-millisecond time of the first firing.
     pub next_run: i64,
+    /// IANA timezone for cron evaluation. `None` = UTC.
     pub timezone: Option<String>,
 }
 
@@ -65,94 +94,151 @@ pub struct NewPeriodicTask {
 /// when its worker dies.
 #[derive(Debug, Clone)]
 pub struct Subscription {
+    /// Topic the subscription listens on.
     pub topic: String,
+    /// Subscription name, unique per topic.
     pub subscription_name: String,
+    /// Task enqueued for each published message.
     pub task_name: String,
+    /// Queue deliveries are enqueued into.
     pub queue: String,
+    /// Whether deliveries are currently enabled (false = paused).
     pub active: bool,
+    /// True for durable subscriptions that outlive their creator.
     pub durable: bool,
+    /// Owning worker id for ephemeral subscriptions; `None` = durable.
     pub owner_worker_id: Option<String>,
+    /// Unix-millisecond registration time.
     pub created_at: i64,
     /// Per-subscription delivery settings persisted at registration so
     /// `publish_to_topic` applies them cross-process. `None` = queue default.
     pub priority: Option<i32>,
+    /// Per-delivery retry cap. `None` = queue default.
     pub max_retries: Option<i32>,
+    /// Per-delivery timeout in milliseconds. `None` = queue default.
     pub timeout_ms: Option<i64>,
 }
 
 /// Registration payload for a topic subscription.
 #[derive(Debug, Clone)]
 pub struct NewSubscription {
+    /// Topic the subscription listens on.
     pub topic: String,
+    /// Subscription name, unique per topic.
     pub subscription_name: String,
+    /// Task enqueued for each published message.
     pub task_name: String,
+    /// Queue deliveries are enqueued into.
     pub queue: String,
+    /// Whether deliveries start enabled.
     pub active: bool,
+    /// True for durable subscriptions that outlive their creator.
     pub durable: bool,
+    /// Owning worker id for ephemeral subscriptions; `None` = durable.
     pub owner_worker_id: Option<String>,
+    /// Unix-millisecond registration time.
     pub created_at: i64,
+    /// Per-delivery priority override. `None` = queue default.
     pub priority: Option<i32>,
+    /// Per-delivery retry cap. `None` = queue default.
     pub max_retries: Option<i32>,
+    /// Per-delivery timeout in milliseconds. `None` = queue default.
     pub timeout_ms: Option<i64>,
 }
 
 /// One execution measurement for a task.
 #[derive(Debug, Clone)]
 pub struct TaskMetric {
+    /// Unique id of this metric record.
     pub id: String,
+    /// Task that was executed.
     pub task_name: String,
+    /// Job the measurement belongs to.
     pub job_id: String,
+    /// Wall-clock execution time in nanoseconds.
     pub wall_time_ns: i64,
+    /// Peak memory delta in bytes.
     pub memory_bytes: i64,
+    /// Whether the execution succeeded.
     pub succeeded: bool,
+    /// Unix-millisecond time the metric was recorded.
     pub recorded_at: i64,
 }
 
 /// One replay of a completed job, pairing original and replay outcomes.
 #[derive(Debug, Clone)]
 pub struct ReplayEntry {
+    /// Unique id of this replay record.
     pub id: String,
+    /// Id of the job that was replayed.
     pub original_job_id: String,
+    /// Id of the replay job.
     pub replay_job_id: String,
+    /// Unix-millisecond time of the replay.
     pub replayed_at: i64,
+    /// Serialized result of the original run.
     pub original_result: Option<Vec<u8>>,
+    /// Serialized result of the replay run.
     pub replay_result: Option<Vec<u8>>,
+    /// Error message of the original run, if it failed.
     pub original_error: Option<String>,
+    /// Error message of the replay run, if it failed.
     pub replay_error: Option<String>,
 }
 
 /// One structured log line emitted during task execution.
 #[derive(Debug, Clone)]
 pub struct TaskLogEntry {
+    /// Unique id of this log line (UUIDv7, doubles as a stream cursor).
     pub id: String,
+    /// Job the log line belongs to.
     pub job_id: String,
+    /// Task that emitted the line.
     pub task_name: String,
+    /// Log level (`debug`/`info`/`warning`/`error`).
     pub level: String,
+    /// Log message text.
     pub message: String,
+    /// Pre-encoded JSON of structured extra fields, if any.
     pub extra: Option<String>,
+    /// Unix-millisecond time the line was logged.
     pub logged_at: i64,
 }
 
 /// Persisted circuit-breaker state for a task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBreakerState {
+    /// Task the breaker guards.
     pub task_name: String,
+    /// Current state: 0 = closed, 1 = open, 2 = half-open.
     pub state: i32,
+    /// Failures observed in the current window.
     pub failure_count: i32,
+    /// Unix-millisecond time of the most recent failure.
     pub last_failure_at: Option<i64>,
+    /// Unix-millisecond time the breaker opened.
     pub opened_at: Option<i64>,
+    /// Unix-millisecond time the breaker entered half-open.
     pub half_open_at: Option<i64>,
+    /// Failure count that trips the breaker open.
     pub threshold: i32,
+    /// Failure-counting window in milliseconds.
     pub window_ms: i64,
+    /// Open-state cooldown in milliseconds before probing.
     pub cooldown_ms: i64,
+    /// Maximum probe executions allowed while half-open.
     #[serde(default = "default_max_probes")]
     pub half_open_max_probes: i32,
+    /// Probe success ratio (0.0-1.0) required to close.
     #[serde(default = "default_success_rate")]
     pub half_open_success_rate: f64,
+    /// Probes dispatched in the current half-open round.
     #[serde(default)]
     pub half_open_probe_count: i32,
+    /// Probes that succeeded in the current half-open round.
     #[serde(default)]
     pub half_open_success_count: i32,
+    /// Probes that failed in the current half-open round.
     #[serde(default)]
     pub half_open_failure_count: i32,
 }
@@ -168,25 +254,41 @@ fn default_success_rate() -> f64 {
 /// A registered worker as seen by the cluster registry.
 #[derive(Debug, Clone)]
 pub struct WorkerInfo {
+    /// Unique worker id.
     pub worker_id: String,
+    /// Unix-millisecond time of the last heartbeat.
     pub last_heartbeat: i64,
+    /// Comma-separated queue names the worker consumes.
     pub queues: String,
+    /// Worker status string (e.g. `active`, `offline`).
     pub status: String,
+    /// Pre-encoded JSON list of worker tags, if any.
     pub tags: Option<String>,
+    /// Pre-encoded JSON list of resource names the worker provides.
     pub resources: Option<String>,
+    /// Pre-encoded JSON of per-resource health, refreshed each heartbeat.
     pub resource_health: Option<String>,
+    /// Worker thread count.
     pub threads: i32,
+    /// Unix-millisecond time the worker started.
     pub started_at: Option<i64>,
+    /// Host the worker runs on.
     pub hostname: Option<String>,
+    /// OS process id of the worker.
     pub pid: Option<i32>,
+    /// Execution pool type (e.g. `thread`, `prefork`).
     pub pool_type: Option<String>,
 }
 
 /// Holder and expiry of a distributed lock.
 #[derive(Debug, Clone)]
 pub struct LockInfo {
+    /// Lock name.
     pub lock_name: String,
+    /// Current holder's owner id.
     pub owner_id: String,
+    /// Unix-millisecond time the lock was acquired.
     pub acquired_at: i64,
+    /// Unix-millisecond time the lock expires.
     pub expires_at: i64,
 }

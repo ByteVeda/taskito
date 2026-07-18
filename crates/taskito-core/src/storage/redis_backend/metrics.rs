@@ -59,6 +59,7 @@ impl From<ReplayHistoryEntry> for ReplayEntry {
 }
 
 impl RedisStorage {
+    /// Record one execution measurement for a task.
     pub fn record_metric(
         &self,
         task_name: &str,
@@ -96,6 +97,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Metrics recorded since `since_ms` (Unix milliseconds) for one task, or
+    /// all tasks when `name` is `None`.
     pub fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<TaskMetric>> {
         let mut conn = self.conn()?;
 
@@ -124,6 +127,7 @@ impl RedisStorage {
         Ok(rows)
     }
 
+    /// Purge metric records older than the cutoff. Returns the count removed.
     pub fn purge_metrics(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["metrics", "all"]);
@@ -155,6 +159,8 @@ impl RedisStorage {
         Ok(ids.len() as u64)
     }
 
+    /// Record a replay of a completed job, pairing original and replay
+    /// outcomes.
     pub fn record_replay(
         &self,
         original_job_id: &str,
@@ -192,6 +198,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// All replays recorded against `original_job_id`.
     pub fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<ReplayEntry>> {
         let mut conn = self.conn()?;
         let by_original = self.key(&["replay", "by_original", original_job_id]);

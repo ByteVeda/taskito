@@ -5,6 +5,7 @@ use crate::error::Result;
 use crate::storage::records::CircuitBreakerState;
 
 impl RedisStorage {
+    /// Persisted circuit-breaker state for a task, if one exists.
     pub fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<CircuitBreakerState>> {
         let mut conn = self.conn()?;
         let cb_key = self.key(&["cb", task_name]);
@@ -19,6 +20,7 @@ impl RedisStorage {
         }
     }
 
+    /// Insert or replace a task's circuit-breaker state.
     pub fn upsert_circuit_breaker(&self, row: &CircuitBreakerState) -> Result<()> {
         let mut conn = self.conn()?;
         let cb_key = self.key(&["cb", &row.task_name]);
@@ -34,6 +36,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Every persisted circuit-breaker state.
     pub fn list_circuit_breakers(&self) -> Result<Vec<CircuitBreakerState>> {
         let mut conn = self.conn()?;
         let cb_all = self.key(&["cb", "all"]);

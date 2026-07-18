@@ -4,18 +4,26 @@ use uuid::Uuid;
 
 use crate::storage::models::{ArchivedJobRow, JobRow, NarrowArchivedJobRow, NarrowJobRow};
 
+/// Lifecycle state of a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(i32)]
 pub enum JobStatus {
+    /// Waiting to be dequeued (or scheduled for the future).
     Pending = 0,
+    /// Claimed by a worker and executing.
     Running = 1,
+    /// Finished successfully.
     Complete = 2,
+    /// Failed; may still be retried.
     Failed = 3,
+    /// Exhausted retries and moved to the dead-letter queue.
     Dead = 4,
+    /// Cancelled before or during execution.
     Cancelled = 5,
 }
 
 impl JobStatus {
+    /// Decode the `#[repr(i32)]` discriminant; `None` for unknown values.
     pub fn from_i32(v: i32) -> Option<Self> {
         match v {
             0 => Some(Self::Pending),
@@ -28,6 +36,7 @@ impl JobStatus {
         }
     }
 
+    /// Lowercase display name (e.g. `"pending"`), as shown in listings.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -61,23 +70,41 @@ impl JobStatus {
 /// A job stored in the queue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
+    /// Unique job id (UUIDv7).
     pub id: String,
+    /// Queue the job belongs to.
     pub queue: String,
+    /// Registered task the job runs.
     pub task_name: String,
+    /// Serialized task arguments (wire-envelope bytes).
     pub payload: Vec<u8>,
+    /// Current lifecycle state.
     pub status: JobStatus,
+    /// Dispatch priority; higher runs first.
     pub priority: i32,
+    /// Unix-millisecond time the job was enqueued.
     pub created_at: i64,
+    /// Unix-millisecond time the job becomes eligible to run.
     pub scheduled_at: i64,
+    /// Unix-millisecond time execution started, unset until dequeued.
     pub started_at: Option<i64>,
+    /// Unix-millisecond time the job reached a terminal state.
     pub completed_at: Option<i64>,
+    /// Retries attempted so far.
     pub retry_count: i32,
+    /// Maximum retries before dead-lettering.
     pub max_retries: i32,
+    /// Serialized result of a successful run.
     pub result: Option<Vec<u8>>,
+    /// Error message of the last failure (canonical JSON `TaskError` when structured).
     pub error: Option<String>,
+    /// Execution timeout in milliseconds.
     pub timeout_ms: i64,
+    /// Deduplication key; at most one non-terminal job per key.
     pub unique_key: Option<String>,
+    /// Task-reported progress percentage (0-100).
     pub progress: Option<i32>,
+    /// Pre-encoded JSON of free-form caller metadata, if any.
     pub metadata: Option<String>,
     /// Structured, user-readable annotations attached to the job (canonical
     /// JSON object, ≤ 15 top-level fields). Validated at the binding
@@ -85,9 +112,13 @@ pub struct Job {
     /// shell); stored as the already-encoded JSON string here.
     #[serde(default)]
     pub notes: Option<String>,
+    /// True when cancellation was requested; workers poll this flag.
     pub cancel_requested: bool,
+    /// Unix-millisecond time after which a still-pending job expires.
     pub expires_at: Option<i64>,
+    /// How long the archived result is kept, in milliseconds.
     pub result_ttl_ms: Option<i64>,
+    /// Tenant namespace the job is scoped to. `None` = default namespace.
     pub namespace: Option<String>,
     /// True when the job was enqueued with at least one dependency. Lets the
     /// scheduler skip the dependency lookup entirely for the common case.
@@ -159,7 +190,7 @@ impl From<ArchivedJobRow> for Job {
 }
 
 impl Job {
-    /// Assemble a [`Job`] from a blob-free [`NarrowJobRow`] plus `payload`/
+    /// Assemble a [`Job`] from a blob-free `NarrowJobRow` plus `payload`/
     /// `result` supplied by the caller. The narrow row carries every non-blob
     /// column; reap/listing paths that don't need the blobs pass empty ones.
     pub fn from_narrow(narrow: NarrowJobRow, payload: Vec<u8>, result: Option<Vec<u8>>) -> Self {
@@ -191,7 +222,7 @@ impl Job {
         }
     }
 
-    /// Assemble a terminal [`Job`] from a blob-free [`NarrowArchivedJobRow`].
+    /// Assemble a terminal [`Job`] from a blob-free `NarrowArchivedJobRow`.
     /// Listing paths use this so paging the archive never loads `payload`/
     /// `result`; both come back empty (fetch the full job via `get_job`).
     /// Archived jobs are terminal and never re-dequeued, so `has_deps` is false.
@@ -231,32 +262,51 @@ impl Job {
 ///
 /// [`Storage::complete_batch`]: crate::storage::Storage::complete_batch
 pub struct JobCompletion {
+    /// Id of the completed job.
     pub job_id: String,
+    /// Serialized result to archive.
     pub result: Option<Vec<u8>>,
+    /// Task that ran, recorded on the metric.
     pub task_name: String,
+    /// Wall-clock execution time in nanoseconds.
     pub wall_time_ns: i64,
 }
 
 /// Parameters for creating a new job.
 pub struct NewJob {
+    /// Queue to enqueue into.
     pub queue: String,
+    /// Registered task the job will run.
     pub task_name: String,
+    /// Serialized task arguments (wire-envelope bytes).
     pub payload: Vec<u8>,
+    /// Dispatch priority; higher runs first.
     pub priority: i32,
+    /// Unix-millisecond time the job becomes eligible to run.
     pub scheduled_at: i64,
+    /// Maximum retries before dead-lettering.
     pub max_retries: i32,
+    /// Execution timeout in milliseconds.
     pub timeout_ms: i64,
+    /// Deduplication key; at most one non-terminal job per key.
     pub unique_key: Option<String>,
+    /// Pre-encoded JSON of free-form caller metadata, if any.
     pub metadata: Option<String>,
     /// Pre-encoded canonical JSON object (≤ 15 fields). See [`Job::notes`].
     pub notes: Option<String>,
+    /// Ids of jobs that must complete before this one runs.
     pub depends_on: Vec<String>,
+    /// Unix-millisecond time after which a still-pending job expires.
     pub expires_at: Option<i64>,
+    /// How long the archived result is kept, in milliseconds.
     pub result_ttl_ms: Option<i64>,
+    /// Tenant namespace the job is scoped to. `None` = default namespace.
     pub namespace: Option<String>,
 }
 
 impl NewJob {
+    /// Materialize a [`Job`] with a fresh UUIDv7 id, `Pending` status, and
+    /// `created_at` = now.
     pub fn into_job(self) -> Job {
         let now = now_millis();
         let has_deps = !self.depends_on.is_empty();
@@ -289,6 +339,7 @@ impl NewJob {
     }
 }
 
+/// Current wall-clock time as Unix milliseconds.
 pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

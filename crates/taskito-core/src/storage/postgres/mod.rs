@@ -116,6 +116,7 @@ impl PostgresStorage {
         &self.database_url
     }
 
+    /// Pooled connection with `search_path` set to this storage's schema.
     pub fn conn(&self) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<PgConnection>>> {
         let mut conn = self.pool.get()?;
         diesel::sql_query(format!(

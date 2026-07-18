@@ -9,8 +9,10 @@ pub struct RateLimiter {
 /// Parsed rate limit configuration (e.g., "100/m" → 100 tokens, refill 1.667/s).
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
+    /// Bucket capacity.
     pub max_tokens: f64,
-    pub refill_rate: f64, // tokens per second
+    /// Tokens added per second.
+    pub refill_rate: f64,
 }
 
 impl RateLimitConfig {
@@ -37,6 +39,7 @@ impl RateLimitConfig {
 }
 
 impl RateLimiter {
+    /// Build a rate limiter over `storage`.
     pub fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }

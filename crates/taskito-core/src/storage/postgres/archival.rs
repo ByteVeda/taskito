@@ -9,6 +9,8 @@ use crate::job::{Job, JobStatus};
 crate::storage::diesel_common::impl_diesel_archival_ops!(PostgresStorage);
 
 impl PostgresStorage {
+    /// Move terminal jobs completed before `cutoff_ms` (Unix milliseconds)
+    /// from `jobs` into `archived_jobs`. Returns the count archived.
     pub fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
 

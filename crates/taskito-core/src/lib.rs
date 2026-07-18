@@ -1,10 +1,20 @@
+#![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
+
+/// Error types: [`QueueError`] and the crate-wide [`Result`] alias.
 pub mod error;
+/// Core job model: [`Job`], [`JobStatus`], [`NewJob`], [`JobCompletion`].
 pub mod job;
+/// Periodic (cron) task scheduling helpers.
 pub mod periodic;
 pub mod pubsub;
+/// Resilience primitives: retry policies, rate limiting, circuit breakers, DLQ.
 pub mod resilience;
+/// The [`Scheduler`]: job dispatch, retries, maintenance, retention.
 pub mod scheduler;
+/// The [`Storage`] trait, backend implementations, and shared records.
 pub mod storage;
+/// Native worker: task registry, dispatcher trait, worker runner.
 pub mod worker;
 
 // Primary public API — the types most consumers need. The crate root is the

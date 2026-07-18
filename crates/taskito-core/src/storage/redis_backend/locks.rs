@@ -78,6 +78,8 @@ const REAP_LOCK_SCRIPT: &str = r#"
 "#;
 
 impl RedisStorage {
+    /// Try to take a distributed lock for `ttl_ms` (milliseconds) via a
+    /// Lua-atomic check-and-set. Returns `false` while another holder's lock is unexpired.
     pub fn acquire_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();
@@ -97,6 +99,7 @@ impl RedisStorage {
         Ok(result == 1)
     }
 
+    /// Release a lock. Lua-checked: returns `true` only if `owner_id` held it.
     pub fn release_lock(&self, lock_name: &str, owner_id: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let lkey = self.key(&["lock", lock_name]);
@@ -110,6 +113,8 @@ impl RedisStorage {
         Ok(result == 1)
     }
 
+    /// Extend a lock's TTL by `ttl_ms` (milliseconds). Returns `true` only if
+    /// `owner_id` held it.
     pub fn extend_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();
@@ -126,6 +131,7 @@ impl RedisStorage {
         Ok(result == 1)
     }
 
+    /// Holder and expiry of a lock, if it exists.
     pub fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfo>> {
         let mut conn = self.conn()?;
         let lkey = self.key(&["lock", lock_name]);
@@ -154,6 +160,8 @@ impl RedisStorage {
         }))
     }
 
+    /// Remove locks expired before `now` (Unix milliseconds); a Lua re-check
+    /// closes the scan-then-delete race. Returns the count removed.
     pub fn reap_expired_locks(&self, now: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let pattern = self.key(&["lock", "*"]);
@@ -185,6 +193,8 @@ impl RedisStorage {
         Ok(count)
     }
 
+    /// Claim exclusive execution of a job via `SET NX` with a 24-hour expiry.
+    /// Returns `false` when a claim already exists.
     pub fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();
@@ -258,6 +268,7 @@ impl RedisStorage {
         Ok(claimed)
     }
 
+    /// Remove the execution claim of a finished job.
     pub fn complete_execution(&self, job_id: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let ckey = self.key(&["exec_claim", job_id]);
@@ -298,6 +309,8 @@ impl RedisStorage {
         Ok(result == 1)
     }
 
+    /// Purge execution claims older than the cutoff via the time-indexed sorted
+    /// set. Returns the count removed.
     pub fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let index_key = self.key(&["exec_claims", "by_time"]);

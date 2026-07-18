@@ -47,6 +47,7 @@ const REQUEUE_STUCK_IF_RUNNING: &str = r#"
 "#;
 
 impl RedisStorage {
+    /// Mark a job completed with its result, moving it into the archive.
     pub fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;
@@ -85,6 +86,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Mark a job terminally failed, moving it into the archive.
     pub fn fail(&self, id: &str, error: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;
@@ -102,6 +104,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Re-schedule a job for retry at `next_scheduled_at` (Unix milliseconds),
+    /// incrementing its `retry_count`.
     pub fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()> {
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;
@@ -194,6 +198,8 @@ impl RedisStorage {
         Ok(applied == 1)
     }
 
+    /// Cancel a `Pending` job (archived as `Cancelled`) and cascade-cancel its
+    /// dependents. Returns `false` when the job is missing or not pending.
     pub fn cancel_job(&self, id: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let job = match self.get_job(id)? {
@@ -221,6 +227,8 @@ impl RedisStorage {
         Ok(true)
     }
 
+    /// Set the cancel-requested flag on a `Running` job — the task must poll
+    /// for it. Returns `false` when no running job matched.
     pub fn request_cancel(&self, id: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let mut job = match self.get_job(id)? {
@@ -253,6 +261,7 @@ impl RedisStorage {
         Ok(applied == 1)
     }
 
+    /// Whether cancellation has been requested for a job.
     pub fn is_cancel_requested(&self, id: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let cancel_set = self.key(&["jobs", "cancel_requested"]);
@@ -260,6 +269,7 @@ impl RedisStorage {
         Ok(is_member)
     }
 
+    /// Archive a running job as `Cancelled` after it observed a cancel request.
     pub fn mark_cancelled(&self, id: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;
@@ -277,6 +287,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Cancel every pending job that depends, directly or transitively, on
+    /// `failed_job_id`.
     pub fn cascade_cancel(&self, failed_job_id: &str, reason: &str) -> Result<()> {
         let now = now_millis();
 
@@ -322,6 +334,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Ids of the jobs `job_id` depends on.
     pub fn get_dependencies(&self, job_id: &str) -> Result<Vec<String>> {
         let mut conn = self.conn()?;
         let key = self.key(&["job", job_id, "depends_on"]);
@@ -329,6 +342,7 @@ impl RedisStorage {
         Ok(ids)
     }
 
+    /// Ids of the jobs that depend on `job_id`.
     pub fn get_dependents(&self, job_id: &str) -> Result<Vec<String>> {
         let mut conn = self.conn()?;
         let key = self.key(&["job", job_id, "dependents"]);
@@ -336,6 +350,7 @@ impl RedisStorage {
         Ok(ids)
     }
 
+    /// Update a running job's progress (0-100).
     pub fn update_progress(&self, id: &str, progress: i32) -> Result<()> {
         if !(0..=100).contains(&progress) {
             return Err(QueueError::Other(

@@ -13,8 +13,11 @@ use crate::storage::Storage;
 /// nor the subscription row specifies a value.
 #[derive(Clone, Copy)]
 pub struct DeliveryDefaults {
+    /// Default dispatch priority for deliveries.
     pub priority: i32,
+    /// Default retry cap for deliveries.
     pub max_retries: i32,
+    /// Default execution timeout in milliseconds.
     pub timeout_ms: i64,
 }
 
@@ -23,6 +26,7 @@ pub struct DeliveryDefaults {
 /// registry; delivery settings resolve per field as explicit publish override,
 /// then the subscription row's persisted setting, then the queue default.
 pub struct PublishRequest {
+    /// Topic to fan out on.
     pub topic: String,
     /// Wire-envelope payload bytes; every subscriber receives the same body.
     pub payload: Vec<u8>,
@@ -31,17 +35,26 @@ pub struct PublishRequest {
     /// job `unique_key`: the jobs table's unique index is global, so reusing
     /// the raw key across the fan-out would dedup away all but one delivery.
     pub idempotency_key: Option<String>,
+    /// Pre-encoded JSON of free-form caller metadata, copied to every delivery.
     pub metadata: Option<String>,
     /// Pre-validated canonical notes JSON object (see `Job::notes`); the
     /// topic and subscription name are stamped in per delivery.
     pub notes: Option<String>,
+    /// Priority override for every delivery. `None` = subscription, then default.
     pub priority: Option<i32>,
+    /// Unix-millisecond time the deliveries become eligible to run.
     pub scheduled_at: i64,
+    /// Retry-cap override for every delivery. `None` = subscription, then default.
     pub max_retries: Option<i32>,
+    /// Timeout override in milliseconds. `None` = subscription, then default.
     pub timeout_ms: Option<i64>,
+    /// Unix-millisecond expiry for still-pending deliveries.
     pub expires_at: Option<i64>,
+    /// How long each delivery's archived result is kept, in milliseconds.
     pub result_ttl_ms: Option<i64>,
+    /// Tenant namespace the deliveries are scoped to. `None` = default namespace.
     pub namespace: Option<String>,
+    /// Queue-level fallback delivery settings.
     pub queue_defaults: DeliveryDefaults,
 }
 
@@ -116,7 +129,7 @@ fn delivery_job(request: &PublishRequest, sub: &Subscription) -> NewJob {
     }
 }
 
-/// Inverse of [`delivery_notes`]: pull `topic`/`subscription` back out of a
+/// Inverse of `delivery_notes`: pull `topic`/`subscription` back out of a
 /// job's notes JSON when both are present. Feeds the indexed
 /// `jobs.topic`/`jobs.subscription_name` columns (and their `dead_letter`
 /// mirrors) at insert time, so backlog/lag aggregation runs off an index

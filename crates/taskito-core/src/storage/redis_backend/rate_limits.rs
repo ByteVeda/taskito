@@ -6,6 +6,7 @@ use crate::job::now_millis;
 use crate::storage::records::RateLimitState;
 
 impl RedisStorage {
+    /// Token-bucket state for a rate-limit key, if one exists.
     pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitState>> {
         let mut conn = self.conn()?;
         let rkey = self.key(&["rate_limit", key]);
@@ -20,6 +21,7 @@ impl RedisStorage {
         }
     }
 
+    /// Insert or replace a token-bucket state entry.
     pub fn upsert_rate_limit(&self, row: &RateLimitState) -> Result<()> {
         let mut conn = self.conn()?;
         let rkey = self.key(&["rate_limit", &row.key]);
@@ -28,6 +30,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Atomically refill and consume one token via a Lua script. Returns
+    /// `false` when the bucket is empty.
     pub fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> {
         let mut conn = self.conn()?;
         let now = now_millis();

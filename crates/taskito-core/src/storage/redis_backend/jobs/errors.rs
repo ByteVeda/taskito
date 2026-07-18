@@ -8,6 +8,7 @@ use crate::storage::records::JobError;
 use crate::storage::redis_backend::{map_err, RedisStorage};
 
 impl RedisStorage {
+    /// Record one failed attempt's error for a job.
     pub fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let id = uuid::Uuid::now_v7().to_string();
@@ -29,6 +30,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// All recorded errors for a job, ordered by attempt.
     pub fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobError>> {
         let mut conn = self.conn()?;
         let errors_key = self.key(&["job_errors", job_id]);
@@ -43,6 +45,7 @@ impl RedisStorage {
         Ok(rows)
     }
 
+    /// Purge error records older than the cutoff. Returns the count removed.
     pub fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         // Scan for all job_errors keys

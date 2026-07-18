@@ -7,6 +7,8 @@ use crate::storage::records::WorkerInfo;
 
 impl RedisStorage {
     #[allow(clippy::too_many_arguments)]
+    /// Register a worker in the cluster registry, or update it if the id
+    /// already exists. `tags`/`resources` are pre-encoded JSON.
     pub fn register_worker(
         &self,
         worker_id: &str,
@@ -42,6 +44,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Refresh a worker's heartbeat timestamp, optionally updating its
+    /// resource-health JSON.
     pub fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
@@ -55,6 +59,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Set a worker's status string.
     pub fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let wkey = self.key(&["worker", worker_id]);
@@ -65,6 +70,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Every registered worker with its heartbeat state.
     pub fn list_workers(&self) -> Result<Vec<WorkerInfo>> {
         let mut conn = self.conn()?;
         let wall = self.key(&["workers", "all"]);
@@ -143,6 +149,8 @@ impl RedisStorage {
             .collect())
     }
 
+    /// Remove workers whose heartbeat is stale past the dead-worker threshold.
+    /// Returns the reaped worker ids.
     pub fn reap_dead_workers(&self) -> Result<Vec<String>> {
         let mut conn = self.conn()?;
         let cutoff = crate::storage::dead_worker_cutoff(now_millis());
@@ -189,6 +197,7 @@ impl RedisStorage {
         pipe.query(conn).map_err(map_err)
     }
 
+    /// Remove a worker from the registry (called on shutdown).
     pub fn unregister_worker(&self, worker_id: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let wkey = self.key(&["worker", worker_id]);
@@ -202,6 +211,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Job ids currently execution-claimed by a worker.
     pub fn list_claims_by_worker(&self, worker_id: &str) -> Result<Vec<String>> {
         let mut conn = self.conn()?;
         let pattern = self.key(&["exec_claim", "*"]);

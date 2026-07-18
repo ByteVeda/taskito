@@ -45,6 +45,7 @@ pub struct Worker {
 }
 
 impl Worker {
+    /// A worker builder over `storage` with default settings.
     pub fn new(storage: StorageBackend) -> Self {
         Self {
             storage,
@@ -72,6 +73,7 @@ impl Worker {
         self
     }
 
+    /// Tenant namespace this worker is scoped to (default: none).
     pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
         self
@@ -304,6 +306,7 @@ pub struct WorkerHandle {
 }
 
 impl WorkerHandle {
+    /// Id this worker registered under.
     pub fn worker_id(&self) -> &str {
         &self.worker_id
     }
