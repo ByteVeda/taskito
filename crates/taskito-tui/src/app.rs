@@ -289,11 +289,7 @@ impl App {
                 }
                 KeyCode::Char('c') => {
                     if let Some(job) = self.selected_job() {
-                        let running = job.status == JobStatus::Running;
-                        self.confirm(PendingAction::CancelJob {
-                            id: job.id.clone(),
-                            running,
-                        });
+                        self.confirm(PendingAction::CancelJob { id: job.id.clone() });
                     }
                 }
                 KeyCode::Char('R') => {

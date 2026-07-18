@@ -155,12 +155,14 @@ impl DataSource for DbSource {
         Ok(assemble_dag(topo, &statuses))
     }
 
-    fn cancel(&self, id: &str, running: bool) -> Result<bool> {
-        if running {
-            Ok(self.be.storage.request_cancel(id)?)
-        } else {
-            Ok(self.be.storage.cancel_job(id)?)
+    fn cancel(&self, id: &str) -> Result<bool> {
+        // Try the Pending path; if the job isn't Pending (e.g. it started
+        // running since the UI snapshot), fall back to the cooperative Running
+        // path. Never relies on stale UI state to choose.
+        if self.be.storage.cancel_job(id)? {
+            return Ok(true);
         }
+        Ok(self.be.storage.request_cancel(id)?)
     }
 
     fn replay(&self, id: &str) -> Result<String> {
@@ -332,7 +334,7 @@ mod tests {
         let src = seed();
         let job = enqueue(&src, "send_email", "default");
 
-        assert!(src.cancel(&job.id, false).unwrap());
+        assert!(src.cancel(&job.id).unwrap());
         let pending = src.jobs(Some(JobStatus::Pending), 50).unwrap();
         assert!(pending.is_empty());
     }
@@ -341,7 +343,7 @@ mod tests {
     fn replay_creates_new_pending_job() {
         let src = seed();
         let job = enqueue(&src, "send_email", "default");
-        src.cancel(&job.id, false).unwrap();
+        src.cancel(&job.id).unwrap();
 
         let new_id = src.replay(&job.id).unwrap();
         assert_ne!(new_id, job.id);

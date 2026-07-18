@@ -29,7 +29,7 @@ pub enum FetchReq {
 /// confirmation prompt.
 #[derive(Clone)]
 pub enum PendingAction {
-    CancelJob { id: String, running: bool },
+    CancelJob { id: String },
     ReplayJob { id: String },
     RetryDead { id: String },
     DeleteDead { id: String },
@@ -42,14 +42,7 @@ impl PendingAction {
     /// Human-readable confirmation prompt.
     pub fn prompt(&self) -> String {
         match self {
-            PendingAction::CancelJob { id, running } => {
-                let how = if *running {
-                    "request cancel of running"
-                } else {
-                    "cancel pending"
-                };
-                format!("{how} job {}?", short(id))
-            }
+            PendingAction::CancelJob { id } => format!("cancel job {}?", short(id)),
             PendingAction::ReplayJob { id } => format!("replay job {} as a new job?", short(id)),
             PendingAction::RetryDead { id } => format!("retry dead-letter {}?", short(id)),
             PendingAction::DeleteDead { id } => format!("delete dead-letter {}?", short(id)),
@@ -118,7 +111,7 @@ fn handle_fetch(source: &dyn DataSource, req: FetchReq, tx: &Sender<Msg>) {
 
 fn handle_act(source: &dyn DataSource, action: PendingAction, tx: &Sender<Msg>) {
     let result = match action {
-        PendingAction::CancelJob { id, running } => source.cancel(&id, running).map(|ok| {
+        PendingAction::CancelJob { id } => source.cancel(&id).map(|ok| {
             if ok {
                 format!("cancelled {}", short(&id))
             } else {

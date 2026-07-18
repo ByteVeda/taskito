@@ -153,9 +153,10 @@ pub trait DataSource: Send {
     fn workflow_dag(&self, run_id: &str, definition_id: &str) -> Result<Vec<DagNode>>;
 
     // ── Actions ──────────────────────────────────────────────────
-    /// Cancel a job. `running` selects the cooperative path (`request_cancel`)
-    /// for a Running job vs. the direct `cancel_job` for a Pending one.
-    fn cancel(&self, id: &str, running: bool) -> Result<bool>;
+    /// Cancel a job: try the direct `cancel_job` (Pending), then fall back to
+    /// the cooperative `request_cancel` (Running). Returns whether anything was
+    /// affected. Robust to the job's state changing after the UI snapshot.
+    fn cancel(&self, id: &str) -> Result<bool>;
     /// Re-enqueue a job as a brand-new job; returns the new job id.
     fn replay(&self, id: &str) -> Result<String>;
     /// Requeue a dead-letter entry; returns the new job id.
