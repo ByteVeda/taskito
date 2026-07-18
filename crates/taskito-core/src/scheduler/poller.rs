@@ -109,6 +109,13 @@ impl Scheduler {
             None => return Ok(false),
         };
 
+        // CoDel: shed a stale job before claiming (opt-in per queue). The job is
+        // still Pending here, so the DLQ move is uniform across backends.
+        let job = match self.codel_admit(vec![job], now)?.pop() {
+            Some(j) => j,
+            None => return Ok(false),
+        };
+
         // A fresh cache for a single job loads each count at most once — the
         // same one query the old code issued.
         let mut counts = GateCounts::default();
@@ -161,6 +168,14 @@ impl Scheduler {
             return Ok(false);
         }
 
+        // CoDel: shed stale jobs before claiming (opt-in per queue). Dropped
+        // jobs are still Pending, so the DLQ move is uniform across backends and
+        // leaves no execution claim to unwind.
+        let jobs = self.codel_admit(jobs, now)?;
+        if jobs.is_empty() {
+            return Ok(false);
+        }
+
         // Claim the entire batch in one round-trip instead of one per job. A
         // storage error leaves the batch claim atomic-nothing (failed statement
         // / rolled-back txn), so degrade to the proven single-job path where
@@ -202,6 +217,47 @@ impl Scheduler {
             }
         }
         Ok(dispatched_any)
+    }
+
+    /// CoDel admission: drop stale jobs before they are claimed (opt-in per
+    /// queue). Returns the jobs that survive; shed jobs are dead-lettered with a
+    /// reserved `codel:` reason so the auto-retry sweep leaves them alone.
+    ///
+    /// A job's sojourn is measured from `scheduled_at` (time waiting *past* its
+    /// eligibility), so an intentional delay is never counted as staleness. The
+    /// empty-map short-circuit keeps this free for queues that never opted in.
+    pub(super) fn codel_admit(&self, jobs: Vec<Job>, now: i64) -> Result<Vec<Job>> {
+        if self.codel_configs.is_empty() {
+            return Ok(jobs);
+        }
+        let mut states = self.codel_states.lock().unwrap();
+        let mut kept = Vec::with_capacity(jobs.len());
+        for job in jobs {
+            let cfg = match self.codel_configs.get(&job.queue).copied() {
+                Some(cfg) => cfg,
+                None => {
+                    kept.push(job);
+                    continue;
+                }
+            };
+            let sojourn = now.saturating_sub(job.scheduled_at).max(0);
+            let state = states.entry(job.queue.clone()).or_default();
+            if state.should_drop(sojourn, now, &cfg) {
+                let reason = format!(
+                    "codel: sojourn {sojourn}ms exceeded target {}ms under sustained overload",
+                    cfg.target_ms
+                );
+                self.storage
+                    .move_to_dlq(&job, &reason, Some("{\"codel\":true}"))?;
+                warn!(
+                    "codel shed {} on queue '{}' (sojourn {sojourn}ms)",
+                    job.id, job.queue
+                );
+            } else {
+                kept.push(job);
+            }
+        }
+        Ok(kept)
     }
 
     /// Run the post-dequeue pipeline for a single job: soft pre-claim gates,

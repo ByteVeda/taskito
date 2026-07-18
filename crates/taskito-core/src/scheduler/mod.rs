@@ -1,3 +1,4 @@
+pub mod codel;
 mod maintenance;
 mod poller;
 mod result_handler;
@@ -256,6 +257,13 @@ pub struct Scheduler {
     circuit_breaker: CircuitBreaker,
     task_configs: HashMap<String, TaskConfig>,
     queue_configs: HashMap<String, QueueConfig>,
+    /// Opt-in per-queue CoDel tuning, kept out of `QueueConfig` so enabling it
+    /// never forces every backend to thread a new field. Empty = no shedding.
+    codel_configs: HashMap<String, codel::CodelConfig>,
+    /// Per-queue CoDel controller state, keyed by queue name. Only touched when
+    /// a queue has CoDel configured; `codel_configs.is_empty()` short-circuits
+    /// the common no-CoDel case before this lock is ever taken.
+    codel_states: Mutex<HashMap<String, codel::CodelState>>,
     queues: Vec<String>,
     config: SchedulerConfig,
     shutdown: Arc<Notify>,
@@ -317,6 +325,8 @@ impl Scheduler {
             circuit_breaker,
             task_configs: HashMap::new(),
             queue_configs: HashMap::new(),
+            codel_configs: HashMap::new(),
+            codel_states: Mutex::new(HashMap::new()),
             queues,
             config,
             shutdown: Arc::new(Notify::new()),
@@ -469,6 +479,12 @@ impl Scheduler {
 
     pub fn register_queue_config(&mut self, queue_name: String, config: QueueConfig) {
         self.queue_configs.insert(queue_name, config);
+    }
+
+    /// Enable opt-in CoDel load shedding on a queue. Orthogonal to
+    /// [`register_queue_config`] so the common (no-CoDel) path never pays for it.
+    pub fn register_queue_codel(&mut self, queue_name: String, config: codel::CodelConfig) {
+        self.codel_configs.insert(queue_name, config);
     }
 
     pub fn register_task(&mut self, task_name: String, config: TaskConfig) {
@@ -1598,6 +1614,53 @@ mod tests {
             .list_jobs(Some(JobStatus::Pending as i32), None, None, 10, 0, None)
             .unwrap();
         assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn test_codel_sheds_stale_job_to_dlq() {
+        // Drive the real dispatch shed path with controlled time. CoDel arms on
+        // the first stale candidate, then sheds a later one once the sojourn has
+        // stayed above target for a full interval — dead-lettering it with a
+        // reserved `codel:` reason (never dropping during a transient spike).
+        let mut scheduler = test_scheduler();
+        scheduler.register_queue_codel(
+            "default".to_string(),
+            codel::CodelConfig {
+                target_ms: 100,
+                interval_ms: 1000,
+            },
+        );
+        let job = scheduler.storage.enqueue(make_job("stale")).unwrap();
+        let base = job.scheduled_at;
+
+        // First stale candidate (sojourn 500 > target 100): only arms, kept.
+        let kept = scheduler
+            .codel_admit(vec![job.clone()], base + 500)
+            .unwrap();
+        assert_eq!(kept.len(), 1, "the first stale job arms but is not shed");
+
+        // A full interval later, still stale: shed to the DLQ.
+        let kept = scheduler
+            .codel_admit(vec![job.clone()], base + 500 + 1000)
+            .unwrap();
+        assert!(kept.is_empty(), "a sustained-overload job is shed");
+
+        let dead = scheduler.storage.list_dead(10, 0).unwrap();
+        assert!(
+            dead.iter()
+                .any(|d| d.error.as_deref().is_some_and(|e| e.starts_with("codel:"))),
+            "shed job is dead-lettered with a codel: reason"
+        );
+    }
+
+    #[test]
+    fn test_codel_leaves_uncapped_queues_untouched() {
+        // With no CoDel config, the admit filter is a no-op fast path.
+        let scheduler = test_scheduler();
+        let job = scheduler.storage.enqueue(make_job("fresh")).unwrap();
+        let ancient = job.scheduled_at + 10_000_000;
+        let kept = scheduler.codel_admit(vec![job], ancient).unwrap();
+        assert_eq!(kept.len(), 1, "no codel config => nothing is ever shed");
     }
 
     #[test]
