@@ -4,15 +4,16 @@ pub mod migrate;
 /// Code-first schema migrations. The files live at the crate root
 /// (`crates/taskito-core/migrations/`) but compile as part of this crate.
 #[path = "../../migrations/mod.rs"]
-pub mod migrations;
-pub mod models;
+pub(crate) mod migrations;
+pub(crate) mod models;
 #[cfg(feature = "push-dispatch")]
-pub mod notify;
+pub(crate) mod notify;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+pub mod records;
 #[cfg(feature = "redis")]
 pub mod redis_backend;
-pub mod schema;
+pub(crate) mod schema;
 pub mod sqlite;
 pub mod traits;
 
@@ -123,7 +124,7 @@ pub struct SubscriptionBacklogStats {
 /// oldest-pending age (converted to a millisecond age), and dead counts.
 /// Shared by the Diesel and Redis backends.
 pub(crate) fn merge_backlog_stats(
-    subs: Vec<models::SubscriptionRow>,
+    subs: Vec<records::Subscription>,
     counts: Vec<(String, String, i32, i64)>,
     oldest: Vec<(String, String, Option<i64>)>,
     dead: Vec<(String, String, i64)>,
@@ -425,7 +426,7 @@ macro_rules! impl_storage {
             fn get_job_errors(
                 &self,
                 job_id: &str,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::JobErrorRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::JobError>> {
                 self.get_job_errors(job_id)
             }
             fn purge_job_errors(&self, older_than_ms: i64) -> $crate::error::Result<u64> {
@@ -492,12 +493,12 @@ macro_rules! impl_storage {
             fn get_rate_limit(
                 &self,
                 key: &str,
-            ) -> $crate::error::Result<Option<$crate::storage::models::RateLimitRow>> {
+            ) -> $crate::error::Result<Option<$crate::storage::records::RateLimitState>> {
                 self.get_rate_limit(key)
             }
             fn upsert_rate_limit(
                 &self,
-                row: &$crate::storage::models::RateLimitRow,
+                row: &$crate::storage::records::RateLimitState,
             ) -> $crate::error::Result<()> {
                 self.upsert_rate_limit(row)
             }
@@ -511,14 +512,14 @@ macro_rules! impl_storage {
             }
             fn register_periodic(
                 &self,
-                task: &$crate::storage::models::NewPeriodicTaskRow,
+                task: &$crate::storage::records::NewPeriodicTask,
             ) -> $crate::error::Result<()> {
                 self.register_periodic(task)
             }
             fn get_due_periodic(
                 &self,
                 now: i64,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::PeriodicTaskRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::PeriodicTask>> {
                 self.get_due_periodic(now)
             }
             fn update_periodic_schedule(
@@ -531,7 +532,7 @@ macro_rules! impl_storage {
             }
             fn list_periodic(
                 &self,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::PeriodicTaskRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::PeriodicTask>> {
                 self.list_periodic()
             }
             fn delete_periodic(&self, name: &str) -> $crate::error::Result<bool> {
@@ -546,19 +547,19 @@ macro_rules! impl_storage {
             }
             fn register_subscription(
                 &self,
-                sub: &$crate::storage::models::NewSubscriptionRow,
+                sub: &$crate::storage::records::NewSubscription,
             ) -> $crate::error::Result<()> {
                 self.register_subscription(sub)
             }
             fn list_subscriptions_for_topic(
                 &self,
                 topic: &str,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::SubscriptionRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::Subscription>> {
                 self.list_subscriptions_for_topic(topic)
             }
             fn list_subscriptions(
                 &self,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::SubscriptionRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::Subscription>> {
                 self.list_subscriptions()
             }
             fn unsubscribe(
@@ -601,7 +602,7 @@ macro_rules! impl_storage {
                 &self,
                 name: Option<&str>,
                 since_ms: i64,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::TaskMetricRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::TaskMetric>> {
                 self.get_metrics(name, since_ms)
             }
             fn purge_metrics(&self, older_than_ms: i64) -> $crate::error::Result<u64> {
@@ -628,7 +629,7 @@ macro_rules! impl_storage {
             fn get_replay_history(
                 &self,
                 original_job_id: &str,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::ReplayHistoryRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::ReplayEntry>> {
                 self.get_replay_history(original_job_id)
             }
             fn write_task_log(
@@ -644,14 +645,14 @@ macro_rules! impl_storage {
             fn get_task_logs(
                 &self,
                 job_id: &str,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::TaskLogRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::TaskLogEntry>> {
                 self.get_task_logs(job_id)
             }
             fn get_task_logs_after(
                 &self,
                 job_id: &str,
                 after_id: Option<&str>,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::TaskLogRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::TaskLogEntry>> {
                 self.get_task_logs_after(job_id, after_id)
             }
             fn query_task_logs(
@@ -660,7 +661,7 @@ macro_rules! impl_storage {
                 level: Option<&str>,
                 since_ms: i64,
                 limit: i64,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::TaskLogRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::TaskLogEntry>> {
                 self.query_task_logs(task_name, level, since_ms, limit)
             }
             fn purge_task_logs(&self, older_than_ms: i64) -> $crate::error::Result<u64> {
@@ -669,18 +670,18 @@ macro_rules! impl_storage {
             fn get_circuit_breaker(
                 &self,
                 task_name: &str,
-            ) -> $crate::error::Result<Option<$crate::storage::models::CircuitBreakerRow>> {
+            ) -> $crate::error::Result<Option<$crate::storage::records::CircuitBreakerState>> {
                 self.get_circuit_breaker(task_name)
             }
             fn upsert_circuit_breaker(
                 &self,
-                row: &$crate::storage::models::CircuitBreakerRow,
+                row: &$crate::storage::records::CircuitBreakerState,
             ) -> $crate::error::Result<()> {
                 self.upsert_circuit_breaker(row)
             }
             fn list_circuit_breakers(
                 &self,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::CircuitBreakerRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::CircuitBreakerState>> {
                 self.list_circuit_breakers()
             }
             fn register_worker(
@@ -713,7 +714,7 @@ macro_rules! impl_storage {
             }
             fn list_workers(
                 &self,
-            ) -> $crate::error::Result<Vec<$crate::storage::models::WorkerRow>> {
+            ) -> $crate::error::Result<Vec<$crate::storage::records::WorkerInfo>> {
                 self.list_workers()
             }
             fn list_live_worker_ids(
@@ -792,7 +793,7 @@ macro_rules! impl_storage {
             fn get_lock_info(
                 &self,
                 lock_name: &str,
-            ) -> $crate::error::Result<Option<$crate::storage::models::LockInfoRow>> {
+            ) -> $crate::error::Result<Option<$crate::storage::records::LockInfo>> {
                 self.get_lock_info(lock_name)
             }
             fn reap_expired_locks(&self, now: i64) -> $crate::error::Result<u64> {
@@ -1132,7 +1133,7 @@ impl Storage for StorageBackend {
     fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()> {
         delegate!(self, record_error, job_id, attempt, error)
     }
-    fn get_job_errors(&self, job_id: &str) -> Result<Vec<models::JobErrorRow>> {
+    fn get_job_errors(&self, job_id: &str) -> Result<Vec<records::JobError>> {
         delegate!(self, get_job_errors, job_id)
     }
     fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64> {
@@ -1183,25 +1184,25 @@ impl Storage for StorageBackend {
             limit
         )
     }
-    fn get_rate_limit(&self, key: &str) -> Result<Option<models::RateLimitRow>> {
+    fn get_rate_limit(&self, key: &str) -> Result<Option<records::RateLimitState>> {
         delegate!(self, get_rate_limit, key)
     }
-    fn upsert_rate_limit(&self, row: &models::RateLimitRow) -> Result<()> {
+    fn upsert_rate_limit(&self, row: &records::RateLimitState) -> Result<()> {
         delegate!(self, upsert_rate_limit, row)
     }
     fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool> {
         delegate!(self, try_acquire_token, key, max_tokens, refill_rate)
     }
-    fn register_periodic(&self, task: &models::NewPeriodicTaskRow) -> Result<()> {
+    fn register_periodic(&self, task: &records::NewPeriodicTask) -> Result<()> {
         delegate!(self, register_periodic, task)
     }
-    fn get_due_periodic(&self, now: i64) -> Result<Vec<models::PeriodicTaskRow>> {
+    fn get_due_periodic(&self, now: i64) -> Result<Vec<records::PeriodicTask>> {
         delegate!(self, get_due_periodic, now)
     }
     fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()> {
         delegate!(self, update_periodic_schedule, name, last_run, next_run)
     }
-    fn list_periodic(&self) -> Result<Vec<models::PeriodicTaskRow>> {
+    fn list_periodic(&self) -> Result<Vec<records::PeriodicTask>> {
         delegate!(self, list_periodic)
     }
     fn delete_periodic(&self, name: &str) -> Result<bool> {
@@ -1210,13 +1211,13 @@ impl Storage for StorageBackend {
     fn set_periodic_enabled(&self, name: &str, enabled: bool) -> Result<bool> {
         delegate!(self, set_periodic_enabled, name, enabled)
     }
-    fn register_subscription(&self, sub: &models::NewSubscriptionRow) -> Result<()> {
+    fn register_subscription(&self, sub: &records::NewSubscription) -> Result<()> {
         delegate!(self, register_subscription, sub)
     }
-    fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<models::SubscriptionRow>> {
+    fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<records::Subscription>> {
         delegate!(self, list_subscriptions_for_topic, topic)
     }
-    fn list_subscriptions(&self) -> Result<Vec<models::SubscriptionRow>> {
+    fn list_subscriptions(&self) -> Result<Vec<records::Subscription>> {
         delegate!(self, list_subscriptions)
     }
     fn unsubscribe(&self, topic: &str, subscription_name: &str) -> Result<bool> {
@@ -1260,7 +1261,7 @@ impl Storage for StorageBackend {
             succeeded
         )
     }
-    fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<models::TaskMetricRow>> {
+    fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<records::TaskMetric>> {
         delegate!(self, get_metrics, name, since_ms)
     }
     fn purge_metrics(&self, older_than_ms: i64) -> Result<u64> {
@@ -1286,7 +1287,7 @@ impl Storage for StorageBackend {
             replay_error
         )
     }
-    fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<models::ReplayHistoryRow>> {
+    fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<records::ReplayEntry>> {
         delegate!(self, get_replay_history, original_job_id)
     }
     fn write_task_log(
@@ -1307,14 +1308,14 @@ impl Storage for StorageBackend {
             extra
         )
     }
-    fn get_task_logs(&self, job_id: &str) -> Result<Vec<models::TaskLogRow>> {
+    fn get_task_logs(&self, job_id: &str) -> Result<Vec<records::TaskLogEntry>> {
         delegate!(self, get_task_logs, job_id)
     }
     fn get_task_logs_after(
         &self,
         job_id: &str,
         after_id: Option<&str>,
-    ) -> Result<Vec<models::TaskLogRow>> {
+    ) -> Result<Vec<records::TaskLogEntry>> {
         delegate!(self, get_task_logs_after, job_id, after_id)
     }
     fn query_task_logs(
@@ -1323,19 +1324,19 @@ impl Storage for StorageBackend {
         level: Option<&str>,
         since_ms: i64,
         limit: i64,
-    ) -> Result<Vec<models::TaskLogRow>> {
+    ) -> Result<Vec<records::TaskLogEntry>> {
         delegate!(self, query_task_logs, task_name, level, since_ms, limit)
     }
     fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64> {
         delegate!(self, purge_task_logs, older_than_ms)
     }
-    fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<models::CircuitBreakerRow>> {
+    fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<records::CircuitBreakerState>> {
         delegate!(self, get_circuit_breaker, task_name)
     }
-    fn upsert_circuit_breaker(&self, row: &models::CircuitBreakerRow) -> Result<()> {
+    fn upsert_circuit_breaker(&self, row: &records::CircuitBreakerState) -> Result<()> {
         delegate!(self, upsert_circuit_breaker, row)
     }
-    fn list_circuit_breakers(&self) -> Result<Vec<models::CircuitBreakerRow>> {
+    fn list_circuit_breakers(&self) -> Result<Vec<records::CircuitBreakerState>> {
         delegate!(self, list_circuit_breakers)
     }
     fn register_worker(
@@ -1370,7 +1371,7 @@ impl Storage for StorageBackend {
     fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()> {
         delegate!(self, update_worker_status, worker_id, status)
     }
-    fn list_workers(&self) -> Result<Vec<models::WorkerRow>> {
+    fn list_workers(&self) -> Result<Vec<records::WorkerInfo>> {
         delegate!(self, list_workers)
     }
     fn list_live_worker_ids(&self, cutoff_ms: i64) -> Result<Vec<String>> {
@@ -1421,7 +1422,7 @@ impl Storage for StorageBackend {
     fn extend_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool> {
         delegate!(self, extend_lock, lock_name, owner_id, ttl_ms)
     }
-    fn get_lock_info(&self, lock_name: &str) -> Result<Option<models::LockInfoRow>> {
+    fn get_lock_info(&self, lock_name: &str) -> Result<Option<records::LockInfo>> {
         delegate!(self, get_lock_info, lock_name)
     }
     fn reap_expired_locks(&self, now: i64) -> Result<u64> {

@@ -1,7 +1,7 @@
 //! Marshalling for task logs / published partial results.
 
 use napi_derive::napi;
-use taskito_core::storage::models::TaskLogRow;
+use taskito_core::storage::records::TaskLogEntry;
 
 /// JS-facing view of a task log entry. A published partial result is a log with
 /// `level === "result"` and the value in `extra`.
@@ -16,7 +16,7 @@ pub struct JsTaskLog {
     pub logged_at: i64,
 }
 
-pub fn log_to_js(row: TaskLogRow) -> JsTaskLog {
+pub fn log_to_js(row: TaskLogEntry) -> JsTaskLog {
     JsTaskLog {
         id: row.id,
         job_id: row.job_id,

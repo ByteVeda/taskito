@@ -16,9 +16,9 @@ use pyo3::types::PyDict;
 use taskito_core::job::{now_millis, NewJob};
 use taskito_core::periodic::next_cron_time;
 use taskito_core::scheduler::retention::RetentionConfig;
-use taskito_core::storage::models::NewPeriodicTaskRow;
 #[cfg(feature = "postgres")]
 use taskito_core::storage::postgres::PostgresStorage;
+use taskito_core::storage::records::NewPeriodicTask;
 #[cfg(feature = "redis")]
 use taskito_core::storage::redis_backend::RedisStorage;
 use taskito_core::storage::sqlite::SqliteStorage;
@@ -756,16 +756,16 @@ impl PyQueue {
         }
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-        let row = NewPeriodicTaskRow {
-            name,
-            task_name,
-            cron_expr,
-            args: args.as_deref(),
-            kwargs: kwargs.as_deref(),
-            queue,
+        let row = NewPeriodicTask {
+            name: name.to_string(),
+            task_name: task_name.to_string(),
+            cron_expr: cron_expr.to_string(),
+            args,
+            kwargs,
+            queue: queue.to_string(),
             enabled: true,
             next_run,
-            timezone,
+            timezone: timezone.map(str::to_string),
         };
 
         self.storage

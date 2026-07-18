@@ -9,7 +9,7 @@ use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::publish_to_topic;
-use taskito_core::storage::models::NewSubscriptionRow;
+use taskito_core::storage::records::NewSubscription;
 use taskito_core::Storage;
 
 use crate::backend;
@@ -58,16 +58,16 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
                 "an ephemeral subscription (durable=false) requires ownerWorkerId",
             ));
         }
-        let row = NewSubscriptionRow {
-            topic: &topic,
-            subscription_name: &subscription_name,
-            task_name: &task_name,
-            queue: &queue,
+        let row = NewSubscription {
+            topic,
+            subscription_name,
+            task_name,
+            queue,
             // Insert default only: the core upsert preserves an existing row's
             // `active` (and `created_at`), so re-declaring never resumes a pause.
             active: true,
             durable: durable != 0,
-            owner_worker_id: owner_worker_id.as_deref(),
+            owner_worker_id,
             created_at: now_millis(),
             priority: (priority != jint::MIN).then_some(priority),
             max_retries: (max_retries != jint::MIN).then_some(max_retries),

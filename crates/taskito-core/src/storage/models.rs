@@ -1,6 +1,10 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::records::{
+    CircuitBreakerState, JobError, LockInfo, PeriodicTask, RateLimitState, ReplayEntry,
+    Subscription, TaskLogEntry, TaskMetric, WorkerInfo,
+};
 use super::schema::{
     archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
     execution_claims, job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits,
@@ -241,15 +245,6 @@ pub struct NewJobErrorRow<'a> {
     pub attempt: i32,
     pub error: &'a str,
     pub failed_at: i64,
-}
-
-/// A row in the `job_dependencies` table.
-#[derive(Queryable, Selectable, Debug, Clone)]
-#[diesel(table_name = job_dependencies)]
-pub struct JobDependencyRow {
-    pub id: String,
-    pub job_id: String,
-    pub depends_on_job_id: String,
 }
 
 /// Insertable struct for job dependency entries.
@@ -497,14 +492,6 @@ pub struct NewLockRow<'a> {
 
 // ── Execution Claims ────────────────────────────────────────────
 
-#[derive(Queryable, Selectable, Debug, Clone)]
-#[diesel(table_name = execution_claims)]
-pub struct ExecutionClaimRow {
-    pub job_id: String,
-    pub worker_id: String,
-    pub claimed_at: i64,
-}
-
 #[derive(Insertable, Debug)]
 #[diesel(table_name = execution_claims)]
 pub struct NewExecutionClaimRow<'a> {
@@ -604,4 +591,196 @@ pub struct NewArchivedJobRow<'a> {
     pub expires_at: Option<i64>,
     pub result_ttl_ms: Option<i64>,
     pub namespace: Option<&'a str>,
+}
+
+// ── Row → record conversions ─────────────────────────────────────
+//
+// The Diesel rows above are crate-private; the Storage trait speaks the plain
+// records in `storage::records`. Diesel query sites map with `.into()` right
+// after loading; insert sites build the borrowed insert rows from records.
+
+impl From<JobErrorRow> for JobError {
+    fn from(r: JobErrorRow) -> Self {
+        JobError {
+            id: r.id,
+            job_id: r.job_id,
+            attempt: r.attempt,
+            error: r.error,
+            failed_at: r.failed_at,
+        }
+    }
+}
+
+impl From<RateLimitRow> for RateLimitState {
+    fn from(r: RateLimitRow) -> Self {
+        RateLimitState {
+            key: r.key,
+            tokens: r.tokens,
+            max_tokens: r.max_tokens,
+            refill_rate: r.refill_rate,
+            last_refill: r.last_refill,
+        }
+    }
+}
+
+impl From<&RateLimitState> for RateLimitRow {
+    fn from(s: &RateLimitState) -> Self {
+        RateLimitRow {
+            key: s.key.clone(),
+            tokens: s.tokens,
+            max_tokens: s.max_tokens,
+            refill_rate: s.refill_rate,
+            last_refill: s.last_refill,
+        }
+    }
+}
+
+impl From<PeriodicTaskRow> for PeriodicTask {
+    fn from(r: PeriodicTaskRow) -> Self {
+        PeriodicTask {
+            name: r.name,
+            task_name: r.task_name,
+            cron_expr: r.cron_expr,
+            args: r.args,
+            kwargs: r.kwargs,
+            queue: r.queue,
+            enabled: r.enabled,
+            last_run: r.last_run,
+            next_run: r.next_run,
+            timezone: r.timezone,
+        }
+    }
+}
+
+impl From<SubscriptionRow> for Subscription {
+    fn from(r: SubscriptionRow) -> Self {
+        Subscription {
+            topic: r.topic,
+            subscription_name: r.subscription_name,
+            task_name: r.task_name,
+            queue: r.queue,
+            active: r.active,
+            durable: r.durable,
+            owner_worker_id: r.owner_worker_id,
+            created_at: r.created_at,
+            priority: r.priority,
+            max_retries: r.max_retries,
+            timeout_ms: r.timeout_ms,
+        }
+    }
+}
+
+impl From<TaskMetricRow> for TaskMetric {
+    fn from(r: TaskMetricRow) -> Self {
+        TaskMetric {
+            id: r.id,
+            task_name: r.task_name,
+            job_id: r.job_id,
+            wall_time_ns: r.wall_time_ns,
+            memory_bytes: r.memory_bytes,
+            succeeded: r.succeeded,
+            recorded_at: r.recorded_at,
+        }
+    }
+}
+
+impl From<ReplayHistoryRow> for ReplayEntry {
+    fn from(r: ReplayHistoryRow) -> Self {
+        ReplayEntry {
+            id: r.id,
+            original_job_id: r.original_job_id,
+            replay_job_id: r.replay_job_id,
+            replayed_at: r.replayed_at,
+            original_result: r.original_result,
+            replay_result: r.replay_result,
+            original_error: r.original_error,
+            replay_error: r.replay_error,
+        }
+    }
+}
+
+impl From<TaskLogRow> for TaskLogEntry {
+    fn from(r: TaskLogRow) -> Self {
+        TaskLogEntry {
+            id: r.id,
+            job_id: r.job_id,
+            task_name: r.task_name,
+            level: r.level,
+            message: r.message,
+            extra: r.extra,
+            logged_at: r.logged_at,
+        }
+    }
+}
+
+impl From<CircuitBreakerRow> for CircuitBreakerState {
+    fn from(r: CircuitBreakerRow) -> Self {
+        CircuitBreakerState {
+            task_name: r.task_name,
+            state: r.state,
+            failure_count: r.failure_count,
+            last_failure_at: r.last_failure_at,
+            opened_at: r.opened_at,
+            half_open_at: r.half_open_at,
+            threshold: r.threshold,
+            window_ms: r.window_ms,
+            cooldown_ms: r.cooldown_ms,
+            half_open_max_probes: r.half_open_max_probes,
+            half_open_success_rate: r.half_open_success_rate,
+            half_open_probe_count: r.half_open_probe_count,
+            half_open_success_count: r.half_open_success_count,
+            half_open_failure_count: r.half_open_failure_count,
+        }
+    }
+}
+
+impl From<&CircuitBreakerState> for CircuitBreakerRow {
+    fn from(s: &CircuitBreakerState) -> Self {
+        CircuitBreakerRow {
+            task_name: s.task_name.clone(),
+            state: s.state,
+            failure_count: s.failure_count,
+            last_failure_at: s.last_failure_at,
+            opened_at: s.opened_at,
+            half_open_at: s.half_open_at,
+            threshold: s.threshold,
+            window_ms: s.window_ms,
+            cooldown_ms: s.cooldown_ms,
+            half_open_max_probes: s.half_open_max_probes,
+            half_open_success_rate: s.half_open_success_rate,
+            half_open_probe_count: s.half_open_probe_count,
+            half_open_success_count: s.half_open_success_count,
+            half_open_failure_count: s.half_open_failure_count,
+        }
+    }
+}
+
+impl From<WorkerRow> for WorkerInfo {
+    fn from(r: WorkerRow) -> Self {
+        WorkerInfo {
+            worker_id: r.worker_id,
+            last_heartbeat: r.last_heartbeat,
+            queues: r.queues,
+            status: r.status,
+            tags: r.tags,
+            resources: r.resources,
+            resource_health: r.resource_health,
+            threads: r.threads,
+            started_at: r.started_at,
+            hostname: r.hostname,
+            pid: r.pid,
+            pool_type: r.pool_type,
+        }
+    }
+}
+
+impl From<LockInfoRow> for LockInfo {
+    fn from(r: LockInfoRow) -> Self {
+        LockInfo {
+            lock_name: r.lock_name,
+            owner_id: r.owner_id,
+            acquired_at: r.acquired_at,
+            expires_at: r.expires_at,
+        }
+    }
 }

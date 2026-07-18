@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
-use taskito_core::storage::models::NewSubscriptionRow;
+use taskito_core::storage::records::NewSubscription;
 use taskito_core::storage::Storage;
 
 use super::PyQueue;
@@ -56,14 +56,14 @@ impl PyQueue {
                 "an ephemeral subscription (durable=false) requires owner_worker_id",
             ));
         }
-        let row = NewSubscriptionRow {
-            topic,
-            subscription_name,
-            task_name,
-            queue,
+        let row = NewSubscription {
+            topic: topic.to_string(),
+            subscription_name: subscription_name.to_string(),
+            task_name: task_name.to_string(),
+            queue: queue.to_string(),
             active: true,
             durable,
-            owner_worker_id,
+            owner_worker_id: owner_worker_id.map(str::to_string),
             created_at: now_millis(),
             priority,
             max_retries,

@@ -2,17 +2,17 @@ use redis::Commands;
 
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
-use crate::storage::models::CircuitBreakerRow;
+use crate::storage::records::CircuitBreakerState;
 
 impl RedisStorage {
-    pub fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<CircuitBreakerRow>> {
+    pub fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<CircuitBreakerState>> {
         let mut conn = self.conn()?;
         let cb_key = self.key(&["cb", task_name]);
 
         let data: Option<String> = conn.get(&cb_key).map_err(map_err)?;
         match data {
             Some(d) => {
-                let row: CircuitBreakerRow =
+                let row: CircuitBreakerState =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
                 Ok(Some(row))
             }
@@ -20,7 +20,7 @@ impl RedisStorage {
         }
     }
 
-    pub fn upsert_circuit_breaker(&self, row: &CircuitBreakerRow) -> Result<()> {
+    pub fn upsert_circuit_breaker(&self, row: &CircuitBreakerState) -> Result<()> {
         let mut conn = self.conn()?;
         let cb_key = self.key(&["cb", &row.task_name]);
         let cb_all = self.key(&["cb", "all"]);
@@ -35,7 +35,7 @@ impl RedisStorage {
         Ok(())
     }
 
-    pub fn list_circuit_breakers(&self) -> Result<Vec<CircuitBreakerRow>> {
+    pub fn list_circuit_breakers(&self) -> Result<Vec<CircuitBreakerState>> {
         let mut conn = self.conn()?;
         let cb_all = self.key(&["cb", "all"]);
 
@@ -45,7 +45,7 @@ impl RedisStorage {
             let cb_key = self.key(&["cb", &name]);
             let data: Option<String> = conn.get(&cb_key).map_err(map_err)?;
             if let Some(d) = data {
-                let row: CircuitBreakerRow =
+                let row: CircuitBreakerState =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
                 rows.push(row);
             }

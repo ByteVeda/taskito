@@ -1495,14 +1495,14 @@ fn test_dlq_retry_count_round_trip() {
     assert_eq!(dead2[0].dlq_retry_count, 1);
 }
 
-fn make_periodic(name: &str, next_run: i64) -> crate::storage::models::NewPeriodicTaskRow<'_> {
-    crate::storage::models::NewPeriodicTaskRow {
-        name,
-        task_name: "periodic_task",
-        cron_expr: "* * * * *",
+fn make_periodic(name: &str, next_run: i64) -> crate::storage::records::NewPeriodicTask {
+    crate::storage::records::NewPeriodicTask {
+        name: name.to_string(),
+        task_name: "periodic_task".to_string(),
+        cron_expr: "* * * * *".to_string(),
         args: None,
         kwargs: None,
-        queue: "default",
+        queue: "default".to_string(),
         enabled: true,
         next_run,
         timezone: None,
@@ -1562,21 +1562,21 @@ fn test_periodic_pause_resume_and_delete() {
 
 // -- Topic pub/sub --
 
-fn make_sub<'a>(
-    topic: &'a str,
-    name: &'a str,
-    task_name: &'a str,
-    owner: Option<&'a str>,
+fn make_sub(
+    topic: &str,
+    name: &str,
+    task_name: &str,
+    owner: Option<&str>,
     created_at: i64,
-) -> crate::storage::models::NewSubscriptionRow<'a> {
-    crate::storage::models::NewSubscriptionRow {
-        topic,
-        subscription_name: name,
-        task_name,
-        queue: "default",
+) -> crate::storage::records::NewSubscription {
+    crate::storage::records::NewSubscription {
+        topic: topic.to_string(),
+        subscription_name: name.to_string(),
+        task_name: task_name.to_string(),
+        queue: "default".to_string(),
         active: true,
         durable: owner.is_none(),
-        owner_worker_id: owner,
+        owner_worker_id: owner.map(str::to_string),
         created_at,
         priority: None,
         max_retries: None,

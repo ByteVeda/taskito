@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
-use crate::storage::models::{NewSubscriptionRow, SubscriptionRow};
+use crate::storage::records::{NewSubscription, Subscription};
 use crate::storage::SubscriptionBacklogStats;
 
 /// JSON blob stored at `sub:<topic>:<subscription_name>`. Mirrors
-/// [`SubscriptionRow`] so the CRUD path needs no Lua — index sets alone keep
+/// [`Subscription`] so the CRUD path needs no Lua — index sets alone keep
 /// lookups and the reaper off a keyspace `SCAN`.
 #[derive(Serialize, Deserialize)]
 struct SubEntry {
@@ -32,7 +32,7 @@ struct SubEntry {
     timeout_ms: Option<i64>,
 }
 
-impl From<SubEntry> for SubscriptionRow {
+impl From<SubEntry> for Subscription {
     fn from(e: SubEntry) -> Self {
         Self {
             topic: e.topic,
@@ -109,26 +109,26 @@ impl RedisStorage {
     /// `subs:by_owner:<worker_id>` (ephemeral rows only). When a re-registration
     /// changes the owner (including clearing it to durable), the stale
     /// `by_owner` membership is dropped so the reaper's view stays exact.
-    pub fn register_subscription(&self, sub: &NewSubscriptionRow) -> Result<()> {
+    pub fn register_subscription(&self, sub: &NewSubscription) -> Result<()> {
         let mut conn = self.conn()?;
 
         let entry = SubEntry {
-            topic: sub.topic.to_string(),
-            subscription_name: sub.subscription_name.to_string(),
-            task_name: sub.task_name.to_string(),
-            queue: sub.queue.to_string(),
+            topic: sub.topic.clone(),
+            subscription_name: sub.subscription_name.clone(),
+            task_name: sub.task_name.clone(),
+            queue: sub.queue.clone(),
             active: sub.active,
             durable: sub.durable,
-            owner_worker_id: sub.owner_worker_id.map(|s| s.to_string()),
+            owner_worker_id: sub.owner_worker_id.clone(),
             created_at: sub.created_at,
             priority: sub.priority,
             max_retries: sub.max_retries,
             timeout_ms: sub.timeout_ms,
         };
-        let blob_key = self.key(&["sub", sub.topic, sub.subscription_name]);
-        let by_topic = self.key(&["subs", "by_topic", sub.topic]);
+        let blob_key = self.key(&["sub", &sub.topic, &sub.subscription_name]);
+        let by_topic = self.key(&["subs", "by_topic", &sub.topic]);
         let all = self.key(&["subs", "all"]);
-        let composite = Self::sub_composite(sub.topic, sub.subscription_name);
+        let composite = Self::sub_composite(&sub.topic, &sub.subscription_name);
 
         // A prior row may have carried a different (or NULL) owner; drop its
         // stale by_owner entry so ownership never lingers across re-registration.
@@ -146,14 +146,14 @@ impl RedisStorage {
         let pipe = redis::pipe().atomic().to_owned();
         let mut pipe = pipe;
         pipe.set(&blob_key, &json);
-        pipe.sadd(&by_topic, sub.subscription_name);
+        pipe.sadd(&by_topic, &sub.subscription_name);
         pipe.sadd(&all, &composite);
         if let Some(prev) = prior_owner.as_deref() {
-            if Some(prev) != sub.owner_worker_id {
+            if Some(prev) != sub.owner_worker_id.as_deref() {
                 pipe.srem(self.key(&["subs", "by_owner", prev]), &composite);
             }
         }
-        if let Some(owner) = sub.owner_worker_id {
+        if let Some(owner) = sub.owner_worker_id.as_deref() {
             pipe.sadd(self.key(&["subs", "by_owner", owner]), &composite);
         }
         pipe.query::<()>(&mut conn).map_err(map_err)?;
@@ -163,7 +163,7 @@ impl RedisStorage {
 
     /// Active subscriptions for a topic, in registration order (`created_at`
     /// then `subscription_name`, matching the Diesel backends).
-    pub fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<SubscriptionRow>> {
+    pub fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<Subscription>> {
         let mut conn = self.conn()?;
         let by_topic = self.key(&["subs", "by_topic", topic]);
 
@@ -173,11 +173,11 @@ impl RedisStorage {
             .map(|name| (topic.to_string(), name))
             .collect();
 
-        let mut rows: Vec<SubscriptionRow> = self
+        let mut rows: Vec<Subscription> = self
             .load_subs_pipelined(&mut conn, &pairs)?
             .into_iter()
             .filter(|entry| entry.active)
-            .map(SubscriptionRow::from)
+            .map(Subscription::from)
             .collect();
 
         rows.sort_by(|a, b| {
@@ -190,7 +190,7 @@ impl RedisStorage {
     }
 
     /// Every registered subscription, active or paused, across all topics.
-    pub fn list_subscriptions(&self) -> Result<Vec<SubscriptionRow>> {
+    pub fn list_subscriptions(&self) -> Result<Vec<Subscription>> {
         let mut conn = self.conn()?;
         let all = self.key(&["subs", "all"]);
 
@@ -200,7 +200,7 @@ impl RedisStorage {
         let rows = self
             .load_subs_pipelined(&mut conn, &pairs)?
             .into_iter()
-            .map(SubscriptionRow::from)
+            .map(Subscription::from)
             .collect();
 
         Ok(rows)

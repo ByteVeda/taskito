@@ -33,14 +33,17 @@ macro_rules! impl_diesel_log_ops {
             }
 
             /// Get logs for a specific job.
-            pub fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogRow>> {
+            pub fn get_task_logs(
+                &self,
+                job_id: &str,
+            ) -> Result<Vec<$crate::storage::records::TaskLogEntry>> {
                 let mut conn = self.conn()?;
                 let rows = task_logs::table
                     .filter(task_logs::job_id.eq(job_id))
                     .order(task_logs::logged_at.asc())
                     .select(TaskLogRow::as_select())
-                    .load(&mut conn)?;
-                Ok(rows)
+                    .load::<TaskLogRow>(&mut conn)?;
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Logs for a job with id strictly after `after_id` (cursor scan).
@@ -48,7 +51,7 @@ macro_rules! impl_diesel_log_ops {
                 &self,
                 job_id: &str,
                 after_id: Option<&str>,
-            ) -> Result<Vec<TaskLogRow>> {
+            ) -> Result<Vec<$crate::storage::records::TaskLogEntry>> {
                 let mut conn = self.conn()?;
                 let mut query = task_logs::table
                     .filter(task_logs::job_id.eq(job_id))
@@ -60,8 +63,8 @@ macro_rules! impl_diesel_log_ops {
                 let rows = query
                     .order(task_logs::id.asc())
                     .select(TaskLogRow::as_select())
-                    .load(&mut conn)?;
-                Ok(rows)
+                    .load::<TaskLogRow>(&mut conn)?;
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Query logs by task name, level, etc.
@@ -71,7 +74,7 @@ macro_rules! impl_diesel_log_ops {
                 level: Option<&str>,
                 since_ms: i64,
                 limit: i64,
-            ) -> Result<Vec<TaskLogRow>> {
+            ) -> Result<Vec<$crate::storage::records::TaskLogEntry>> {
                 let mut conn = self.conn()?;
 
                 let mut query = task_logs::table
@@ -89,9 +92,9 @@ macro_rules! impl_diesel_log_ops {
                     .order(task_logs::logged_at.desc())
                     .limit(limit)
                     .select(TaskLogRow::as_select())
-                    .load(&mut conn)?;
+                    .load::<TaskLogRow>(&mut conn)?;
 
-                Ok(rows)
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Purge old log records.

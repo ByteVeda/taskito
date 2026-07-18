@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{map_err, RedisStorage, SCAN_BATCH};
 use crate::error::{QueueError, Result};
 use crate::job::now_millis;
-use crate::storage::models::TaskLogRow;
+use crate::storage::records::TaskLogEntry;
 
 #[derive(Serialize, Deserialize)]
 struct LogEntry {
@@ -17,7 +17,7 @@ struct LogEntry {
     pub logged_at: i64,
 }
 
-impl From<LogEntry> for TaskLogRow {
+impl From<LogEntry> for TaskLogEntry {
     fn from(e: LogEntry) -> Self {
         Self {
             id: e.id,
@@ -69,7 +69,7 @@ impl RedisStorage {
         Ok(())
     }
 
-    pub fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogRow>> {
+    pub fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogEntry>> {
         let mut conn = self.conn()?;
         let by_job_key = self.key(&["logs", "by_job", job_id]);
 
@@ -84,7 +84,7 @@ impl RedisStorage {
             if let Some(d) = data {
                 let entry: LogEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                rows.push(TaskLogRow::from(entry));
+                rows.push(TaskLogEntry::from(entry));
             }
         }
 
@@ -98,7 +98,7 @@ impl RedisStorage {
         &self,
         job_id: &str,
         after_id: Option<&str>,
-    ) -> Result<Vec<TaskLogRow>> {
+    ) -> Result<Vec<TaskLogEntry>> {
         let mut conn = self.conn()?;
         let by_job_key = self.key(&["logs", "by_job", job_id]);
 
@@ -118,7 +118,7 @@ impl RedisStorage {
             if let Some(d) = data {
                 let entry: LogEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                rows.push(TaskLogRow::from(entry));
+                rows.push(TaskLogEntry::from(entry));
             }
         }
 
@@ -133,7 +133,7 @@ impl RedisStorage {
         level: Option<&str>,
         since_ms: i64,
         limit: i64,
-    ) -> Result<Vec<TaskLogRow>> {
+    ) -> Result<Vec<TaskLogEntry>> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);
 
@@ -156,7 +156,7 @@ impl RedisStorage {
                 if let Some(d) = data {
                     let entry: LogEntry =
                         serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                    rows.push(TaskLogRow::from(entry));
+                    rows.push(TaskLogEntry::from(entry));
                 }
             }
             // ZREVRANGEBYSCORE already yields newest-first (logged_at desc).
@@ -197,7 +197,7 @@ impl RedisStorage {
                     continue;
                 }
 
-                rows.push(TaskLogRow::from(entry));
+                rows.push(TaskLogEntry::from(entry));
                 if limit >= 0 && rows.len() as i64 == limit {
                     return Ok(rows);
                 }
