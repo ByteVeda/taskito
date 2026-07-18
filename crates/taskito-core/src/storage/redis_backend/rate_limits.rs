@@ -3,17 +3,17 @@ use redis::Commands;
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::now_millis;
-use crate::storage::models::RateLimitRow;
+use crate::storage::records::RateLimitState;
 
 impl RedisStorage {
-    pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitRow>> {
+    pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitState>> {
         let mut conn = self.conn()?;
         let rkey = self.key(&["rate_limit", key]);
 
         let data: Option<String> = conn.get(&rkey).map_err(map_err)?;
         match data {
             Some(d) => {
-                let row: RateLimitRow =
+                let row: RateLimitState =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
                 Ok(Some(row))
             }
@@ -21,7 +21,7 @@ impl RedisStorage {
         }
     }
 
-    pub fn upsert_rate_limit(&self, row: &RateLimitRow) -> Result<()> {
+    pub fn upsert_rate_limit(&self, row: &RateLimitState) -> Result<()> {
         let mut conn = self.conn()?;
         let rkey = self.key(&["rate_limit", &row.key]);
         let json = serde_json::to_string(row).map_err(|e| QueueError::Other(e.to_string()))?;

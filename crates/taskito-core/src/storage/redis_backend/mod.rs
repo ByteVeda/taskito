@@ -14,6 +14,7 @@ mod trait_impl;
 mod workers;
 
 #[cfg(feature = "push-dispatch")]
+#[doc(hidden)]
 pub mod listener;
 
 use crate::error::{QueueError, Result};

@@ -6,7 +6,7 @@
 
 use crate::error::Result;
 use crate::job::{Job, NewJob};
-use crate::storage::models::SubscriptionRow;
+use crate::storage::records::Subscription;
 use crate::storage::Storage;
 
 /// Queue-level fallback delivery settings, used when neither the publish call
@@ -80,7 +80,7 @@ fn salted_unique_key(key: &str, topic: &str, subscription_name: &str) -> String 
     )
 }
 
-fn delivery_job(request: &PublishRequest, sub: &SubscriptionRow) -> NewJob {
+fn delivery_job(request: &PublishRequest, sub: &Subscription) -> NewJob {
     // Resolve each field independently: explicit publish override, then the
     // subscription's persisted setting, then the queue default. Persisting on
     // the row is what lets a producer-only process apply a subscriber's own
@@ -130,7 +130,7 @@ pub fn extract_topic_subscription(notes: Option<&str>) -> Option<(String, String
 
 /// Stamp `topic` and `subscription` into the caller's notes object so every
 /// delivery is filterable per subscriber without a schema change.
-fn delivery_notes(request: &PublishRequest, sub: &SubscriptionRow) -> String {
+fn delivery_notes(request: &PublishRequest, sub: &Subscription) -> String {
     let mut notes = request
         .notes
         .as_deref()
@@ -153,7 +153,7 @@ fn delivery_notes(request: &PublishRequest, sub: &SubscriptionRow) -> String {
 mod tests {
     use super::*;
     use crate::job::now_millis;
-    use crate::storage::models::NewSubscriptionRow;
+    use crate::storage::records::NewSubscription;
     use crate::SqliteStorage;
 
     fn request(topic: &str, idempotency_key: Option<&str>) -> PublishRequest {
@@ -193,11 +193,11 @@ mod tests {
         timeout_ms: Option<i64>,
     ) {
         storage
-            .register_subscription(&NewSubscriptionRow {
-                topic,
-                subscription_name: name,
-                task_name: task,
-                queue: "default",
+            .register_subscription(&NewSubscription {
+                topic: topic.to_string(),
+                subscription_name: name.to_string(),
+                task_name: task.to_string(),
+                queue: "default".to_string(),
                 active: true,
                 durable: true,
                 owner_worker_id: None,

@@ -4,7 +4,7 @@ use redis::Commands;
 
 use crate::error::{QueueError, Result};
 use crate::job::now_millis;
-use crate::storage::models::JobErrorRow;
+use crate::storage::records::JobError;
 use crate::storage::redis_backend::{map_err, RedisStorage};
 
 impl RedisStorage {
@@ -13,7 +13,7 @@ impl RedisStorage {
         let id = uuid::Uuid::now_v7().to_string();
         let now = now_millis();
 
-        let row = JobErrorRow {
+        let row = JobError {
             id: id.clone(),
             job_id: job_id.to_string(),
             attempt,
@@ -29,14 +29,14 @@ impl RedisStorage {
         Ok(())
     }
 
-    pub fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobErrorRow>> {
+    pub fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobError>> {
         let mut conn = self.conn()?;
         let errors_key = self.key(&["job_errors", job_id]);
         let entries: Vec<String> = conn.lrange(&errors_key, 0, -1).map_err(map_err)?;
 
         let mut rows = Vec::new();
         for entry in entries {
-            let row: JobErrorRow =
+            let row: JobError =
                 serde_json::from_str(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
             rows.push(row);
         }
@@ -71,7 +71,7 @@ impl RedisStorage {
             let entries: Vec<String> = conn.lrange(&key, 0, -1).map_err(map_err)?;
             let mut to_keep = Vec::new();
             for entry in &entries {
-                if let Ok(row) = serde_json::from_str::<JobErrorRow>(entry) {
+                if let Ok(row) = serde_json::from_str::<JobError>(entry) {
                     if row.failed_at >= older_than_ms {
                         to_keep.push(entry.clone());
                     } else {

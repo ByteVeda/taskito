@@ -2,7 +2,7 @@
 //! and the job dependency DAG.
 
 use napi_derive::napi;
-use taskito_core::storage::models::{CircuitBreakerRow, ReplayHistoryRow};
+use taskito_core::storage::records::{CircuitBreakerState, ReplayEntry};
 
 use super::JsJob;
 
@@ -20,7 +20,7 @@ pub struct JsCircuitBreaker {
     pub cooldown_ms: i64,
 }
 
-pub fn circuit_breaker_to_js(row: CircuitBreakerRow) -> JsCircuitBreaker {
+pub fn circuit_breaker_to_js(row: CircuitBreakerState) -> JsCircuitBreaker {
     let state = match row.state {
         1 => "open",
         2 => "half_open",
@@ -49,7 +49,7 @@ pub struct JsReplayEntry {
     pub replay_error: Option<String>,
 }
 
-pub fn replay_to_js(row: ReplayHistoryRow) -> JsReplayEntry {
+pub fn replay_to_js(row: ReplayEntry) -> JsReplayEntry {
     JsReplayEntry {
         id: row.id,
         original_job_id: row.original_job_id,

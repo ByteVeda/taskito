@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
 use taskito_core::pubsub::{DeliveryDefaults, PublishRequest};
 use taskito_core::resilience::circuit_breaker::CircuitState;
-use taskito_core::storage::models::{
-    CircuitBreakerRow, JobErrorRow, LockInfoRow, PeriodicTaskRow, ReplayHistoryRow,
-    SubscriptionRow, TaskLogRow, TaskMetricRow, WorkerRow,
+use taskito_core::storage::records::{
+    CircuitBreakerState, JobError, LockInfo, PeriodicTask, ReplayEntry, Subscription, TaskLogEntry,
+    TaskMetric, WorkerInfo,
 };
 use taskito_core::storage::{DeadJob, QueueStats};
 
@@ -227,8 +227,8 @@ pub struct SubscriptionView<'a> {
     pub created_at: i64,
 }
 
-impl<'a> From<&'a SubscriptionRow> for SubscriptionView<'a> {
-    fn from(r: &'a SubscriptionRow) -> Self {
+impl<'a> From<&'a Subscription> for SubscriptionView<'a> {
+    fn from(r: &'a Subscription) -> Self {
         Self {
             topic: &r.topic,
             subscription_name: &r.subscription_name,
@@ -259,8 +259,8 @@ pub struct CircuitBreakerView<'a> {
     pub half_open_success_rate: f64,
 }
 
-impl<'a> From<&'a CircuitBreakerRow> for CircuitBreakerView<'a> {
-    fn from(r: &'a CircuitBreakerRow) -> Self {
+impl<'a> From<&'a CircuitBreakerState> for CircuitBreakerView<'a> {
+    fn from(r: &'a CircuitBreakerState) -> Self {
         Self {
             task_name: &r.task_name,
             state: CircuitState::from_i32(r.state).as_str(),
@@ -438,8 +438,8 @@ pub struct PeriodicTaskView<'a> {
     pub timezone: Option<&'a str>,
 }
 
-impl<'a> From<&'a PeriodicTaskRow> for PeriodicTaskView<'a> {
-    fn from(p: &'a PeriodicTaskRow) -> Self {
+impl<'a> From<&'a PeriodicTask> for PeriodicTaskView<'a> {
+    fn from(p: &'a PeriodicTask) -> Self {
         Self {
             name: &p.name,
             task_name: &p.task_name,
@@ -495,8 +495,8 @@ pub struct JobErrorView<'a> {
     pub failed_at: i64,
 }
 
-impl<'a> From<&'a JobErrorRow> for JobErrorView<'a> {
-    fn from(e: &'a JobErrorRow) -> Self {
+impl<'a> From<&'a JobError> for JobErrorView<'a> {
+    fn from(e: &'a JobError) -> Self {
         Self {
             id: &e.id,
             job_id: &e.job_id,
@@ -519,8 +519,8 @@ pub struct MetricView<'a> {
     pub recorded_at: i64,
 }
 
-impl<'a> From<&'a TaskMetricRow> for MetricView<'a> {
-    fn from(m: &'a TaskMetricRow) -> Self {
+impl<'a> From<&'a TaskMetric> for MetricView<'a> {
+    fn from(m: &'a TaskMetric) -> Self {
         Self {
             task_name: &m.task_name,
             job_id: &m.job_id,
@@ -552,8 +552,8 @@ pub struct WorkerView<'a> {
     pub resource_health: Option<&'a str>,
 }
 
-impl<'a> From<&'a WorkerRow> for WorkerView<'a> {
-    fn from(w: &'a WorkerRow) -> Self {
+impl<'a> From<&'a WorkerInfo> for WorkerView<'a> {
+    fn from(w: &'a WorkerInfo) -> Self {
         Self {
             worker_id: &w.worker_id,
             queues: &w.queues,
@@ -583,8 +583,8 @@ pub struct ReplayEntryView<'a> {
     pub replay_error: Option<&'a str>,
 }
 
-impl<'a> From<&'a ReplayHistoryRow> for ReplayEntryView<'a> {
-    fn from(r: &'a ReplayHistoryRow) -> Self {
+impl<'a> From<&'a ReplayEntry> for ReplayEntryView<'a> {
+    fn from(r: &'a ReplayEntry) -> Self {
         Self {
             id: &r.id,
             original_job_id: &r.original_job_id,
@@ -609,8 +609,8 @@ pub struct LogView<'a> {
     pub logged_at: i64,
 }
 
-impl<'a> From<&'a TaskLogRow> for LogView<'a> {
-    fn from(l: &'a TaskLogRow) -> Self {
+impl<'a> From<&'a TaskLogEntry> for LogView<'a> {
+    fn from(l: &'a TaskLogEntry) -> Self {
         Self {
             id: &l.id,
             job_id: &l.job_id,
@@ -633,8 +633,8 @@ pub struct LockInfoView<'a> {
     pub expires_at: i64,
 }
 
-impl<'a> From<&'a LockInfoRow> for LockInfoView<'a> {
-    fn from(l: &'a LockInfoRow) -> Self {
+impl<'a> From<&'a LockInfo> for LockInfoView<'a> {
+    fn from(l: &'a LockInfo) -> Self {
         Self {
             lock_name: &l.lock_name,
             owner_id: &l.owner_id,

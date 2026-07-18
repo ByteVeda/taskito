@@ -1,7 +1,7 @@
 //! JS-facing shapes for inspection/management results.
 
 use napi_derive::napi;
-use taskito_core::storage::models::{JobErrorRow, TaskMetricRow, WorkerRow};
+use taskito_core::storage::records::{JobError, TaskMetric, WorkerInfo};
 use taskito_core::storage::{DeadJob, QueueStats};
 
 /// Queue job counts by status.
@@ -64,7 +64,7 @@ pub struct JsJobError {
     pub failed_at: i64,
 }
 
-pub fn job_error_to_js(error: JobErrorRow) -> JsJobError {
+pub fn job_error_to_js(error: JobError) -> JsJobError {
     JsJobError {
         id: error.id,
         job_id: error.job_id,
@@ -85,7 +85,7 @@ pub struct JsMetric {
     pub recorded_at: i64,
 }
 
-pub fn metric_to_js(metric: TaskMetricRow) -> JsMetric {
+pub fn metric_to_js(metric: TaskMetric) -> JsMetric {
     JsMetric {
         task_name: metric.task_name,
         job_id: metric.job_id,
@@ -116,7 +116,7 @@ pub struct JsWorkerRow {
     pub resource_health: Option<String>,
 }
 
-pub fn worker_to_js(worker: WorkerRow) -> JsWorkerRow {
+pub fn worker_to_js(worker: WorkerInfo) -> JsWorkerRow {
     JsWorkerRow {
         worker_id: worker.worker_id,
         queues: worker.queues,

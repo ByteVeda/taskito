@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
-use crate::storage::models::{NewPeriodicTaskRow, PeriodicTaskRow};
+use crate::storage::records::{NewPeriodicTask, PeriodicTask};
 
 #[derive(Serialize, Deserialize)]
 struct PeriodicEntry {
@@ -19,7 +19,7 @@ struct PeriodicEntry {
     pub timezone: Option<String>,
 }
 
-impl From<PeriodicEntry> for PeriodicTaskRow {
+impl From<PeriodicEntry> for PeriodicTask {
     fn from(e: PeriodicEntry) -> Self {
         Self {
             name: e.name,
@@ -37,38 +37,38 @@ impl From<PeriodicEntry> for PeriodicTaskRow {
 }
 
 impl RedisStorage {
-    pub fn register_periodic(&self, task: &NewPeriodicTaskRow) -> Result<()> {
+    pub fn register_periodic(&self, task: &NewPeriodicTask) -> Result<()> {
         let mut conn = self.conn()?;
 
         let entry = PeriodicEntry {
-            name: task.name.to_string(),
-            task_name: task.task_name.to_string(),
-            cron_expr: task.cron_expr.to_string(),
-            args: task.args.map(|a| a.to_vec()),
-            kwargs: task.kwargs.map(|k| k.to_vec()),
-            queue: task.queue.to_string(),
+            name: task.name.clone(),
+            task_name: task.task_name.clone(),
+            cron_expr: task.cron_expr.clone(),
+            args: task.args.clone(),
+            kwargs: task.kwargs.clone(),
+            queue: task.queue.clone(),
             enabled: task.enabled,
             last_run: None,
             next_run: task.next_run,
-            timezone: task.timezone.map(|s| s.to_string()),
+            timezone: task.timezone.clone(),
         };
 
         let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
 
-        let pkey = self.key(&["periodic", task.name]);
+        let pkey = self.key(&["periodic", &task.name]);
         let due_key = self.key(&["periodic", "due"]);
 
         let pipe = &mut redis::pipe();
         pipe.set(&pkey, &json);
         if entry.enabled {
-            pipe.zadd(&due_key, task.name, task.next_run as f64);
+            pipe.zadd(&due_key, &task.name, task.next_run as f64);
         }
         pipe.query::<()>(&mut conn).map_err(map_err)?;
 
         Ok(())
     }
 
-    pub fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTaskRow>> {
+    pub fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTask>> {
         let mut conn = self.conn()?;
         let due_key = self.key(&["periodic", "due"]);
 
@@ -84,7 +84,7 @@ impl RedisStorage {
                 let entry: PeriodicEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
                 if entry.enabled {
-                    rows.push(PeriodicTaskRow::from(entry));
+                    rows.push(PeriodicTask::from(entry));
                 }
             }
         }
@@ -120,7 +120,7 @@ impl RedisStorage {
     /// `periodic:*` keyspace (like `list_dead`/`list_workers`) so there is no
     /// secondary index to keep consistent — tasks registered by any version are
     /// listed.
-    pub fn list_periodic(&self) -> Result<Vec<PeriodicTaskRow>> {
+    pub fn list_periodic(&self) -> Result<Vec<PeriodicTask>> {
         let mut conn = self.conn()?;
         let pattern = self.key(&["periodic", "*"]);
         // The due sorted-set shares the `periodic:` namespace but is not a task
@@ -147,7 +147,7 @@ impl RedisStorage {
                 if let Some(d) = data {
                     let entry: PeriodicEntry =
                         serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                    rows.push(PeriodicTaskRow::from(entry));
+                    rows.push(PeriodicTask::from(entry));
                 }
             }
 

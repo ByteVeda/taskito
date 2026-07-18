@@ -1,13 +1,14 @@
 use diesel::prelude::*;
 
 use super::super::models::RateLimitRow;
+use super::super::records::RateLimitState;
 use super::super::schema::rate_limits;
 use super::PostgresStorage;
 use crate::error::Result;
 use crate::job::now_millis;
 
 impl PostgresStorage {
-    pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitRow>> {
+    pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitState>> {
         let mut conn = self.conn()?;
 
         let row: Option<RateLimitRow> = rate_limits::table
@@ -16,17 +17,18 @@ impl PostgresStorage {
             .first(&mut conn)
             .optional()?;
 
-        Ok(row)
+        Ok(row.map(Into::into))
     }
 
-    pub fn upsert_rate_limit(&self, row: &RateLimitRow) -> Result<()> {
+    pub fn upsert_rate_limit(&self, state: &RateLimitState) -> Result<()> {
         let mut conn = self.conn()?;
 
+        let row = RateLimitRow::from(state);
         diesel::insert_into(rate_limits::table)
-            .values(row)
+            .values(&row)
             .on_conflict(rate_limits::key)
             .do_update()
-            .set(row)
+            .set(&row)
             .execute(&mut conn)?;
 
         Ok(())

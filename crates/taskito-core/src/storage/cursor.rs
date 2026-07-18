@@ -48,6 +48,24 @@ pub fn next_cursor<T>(rows: &[T], limit: i64, key: impl Fn(&T) -> (i64, &str)) -
     })
 }
 
+/// One page of a keyset-paginated listing: the rows plus the cursor for the
+/// next page (`None` when this page is the last).
+#[derive(Debug, Clone)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+}
+
+/// Wrap a `*_after` listing result as a [`Page`], deriving the next-page
+/// cursor via [`next_cursor`]. `key` reads a row's `(sort_key, id)`.
+pub fn page<T>(items: Vec<T>, limit: i64, key: impl Fn(&T) -> (i64, &str)) -> Page<T> {
+    let next = next_cursor(&items, limit, key);
+    Page {
+        items,
+        next_cursor: next,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

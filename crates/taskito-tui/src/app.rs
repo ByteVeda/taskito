@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
-use taskito_core::storage::QueueStats;
 use taskito_core::JobStatus;
+use taskito_core::QueueStats;
 
 use crate::event::{Cmd, FetchReq, Msg, PendingAction};
 use crate::source::{

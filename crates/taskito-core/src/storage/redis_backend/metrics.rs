@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::now_millis;
-use crate::storage::models::{ReplayHistoryRow, TaskMetricRow};
+use crate::storage::records::{ReplayEntry, TaskMetric};
 
 #[derive(Serialize, Deserialize)]
 struct MetricEntry {
@@ -17,7 +17,7 @@ struct MetricEntry {
     pub recorded_at: i64,
 }
 
-impl From<MetricEntry> for TaskMetricRow {
+impl From<MetricEntry> for TaskMetric {
     fn from(e: MetricEntry) -> Self {
         Self {
             id: e.id,
@@ -32,7 +32,7 @@ impl From<MetricEntry> for TaskMetricRow {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ReplayEntry {
+struct ReplayHistoryEntry {
     pub id: String,
     pub original_job_id: String,
     pub replay_job_id: String,
@@ -43,8 +43,8 @@ struct ReplayEntry {
     pub replay_error: Option<String>,
 }
 
-impl From<ReplayEntry> for ReplayHistoryRow {
-    fn from(e: ReplayEntry) -> Self {
+impl From<ReplayHistoryEntry> for ReplayEntry {
+    fn from(e: ReplayHistoryEntry) -> Self {
         Self {
             id: e.id,
             original_job_id: e.original_job_id,
@@ -96,7 +96,7 @@ impl RedisStorage {
         Ok(())
     }
 
-    pub fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<TaskMetricRow>> {
+    pub fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<TaskMetric>> {
         let mut conn = self.conn()?;
 
         let ids: Vec<String> = if let Some(n) = name {
@@ -116,7 +116,7 @@ impl RedisStorage {
             if let Some(d) = data {
                 let entry: MetricEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                rows.push(TaskMetricRow::from(entry));
+                rows.push(TaskMetric::from(entry));
             }
         }
 
@@ -169,7 +169,7 @@ impl RedisStorage {
         let id = uuid::Uuid::now_v7().to_string();
         let now = now_millis();
 
-        let entry = ReplayEntry {
+        let entry = ReplayHistoryEntry {
             id: id.clone(),
             original_job_id: original_job_id.to_string(),
             replay_job_id: replay_job_id.to_string(),
@@ -193,7 +193,7 @@ impl RedisStorage {
         Ok(())
     }
 
-    pub fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<ReplayHistoryRow>> {
+    pub fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<ReplayEntry>> {
         let mut conn = self.conn()?;
         let by_original = self.key(&["replay", "by_original", original_job_id]);
         let ids: Vec<String> = conn.lrange(&by_original, 0, -1).map_err(map_err)?;
@@ -203,9 +203,9 @@ impl RedisStorage {
             let replay_key = self.key(&["replay", &id]);
             let data: Option<String> = conn.get(&replay_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: ReplayEntry =
+                let entry: ReplayHistoryEntry =
                     serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
-                rows.push(ReplayHistoryRow::from(entry));
+                rows.push(ReplayEntry::from(entry));
             }
         }
 

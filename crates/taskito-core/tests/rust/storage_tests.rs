@@ -761,7 +761,7 @@ fn test_circuit_breakers(s: &impl Storage) {
     let cb = s.get_circuit_breaker(task).unwrap();
     assert!(cb.is_none());
 
-    let row = taskito_core::storage::models::CircuitBreakerRow {
+    let row = taskito_core::CircuitBreakerState {
         task_name: task.to_string(),
         state: 0, // closed
         failure_count: 0,
@@ -994,15 +994,15 @@ fn due_periodic_names(s: &impl Storage) -> Vec<String> {
 }
 
 fn test_periodic_crud(s: &impl Storage) {
-    use taskito_core::storage::models::NewPeriodicTaskRow;
+    use taskito_core::NewPeriodicTask;
     let past = now_millis() - 1_000;
-    let row = |name: &'static str| NewPeriodicTaskRow {
-        name,
-        task_name: "periodic-task",
-        cron_expr: "* * * * *",
+    let row = |name: &'static str| NewPeriodicTask {
+        name: name.to_string(),
+        task_name: "periodic-task".to_string(),
+        cron_expr: "* * * * *".to_string(),
         args: None,
         kwargs: None,
-        queue: "default",
+        queue: "default".to_string(),
         enabled: true,
         next_run: past,
         timezone: None,
@@ -1037,7 +1037,7 @@ fn test_periodic_crud(s: &impl Storage) {
 }
 
 fn test_topic_subscriptions_crud(s: &impl Storage) {
-    use taskito_core::storage::models::NewSubscriptionRow;
+    use taskito_core::NewSubscription;
     // Aged past the registration grace window so the reaper may act on the
     // ephemeral rows created below; freshness is covered by the grace test.
     let now = now_millis() - taskito_core::storage::EPHEMERAL_SUBSCRIPTION_GRACE_MS - 1_000;
@@ -1045,14 +1045,14 @@ fn test_topic_subscriptions_crud(s: &impl Storage) {
                name: &'static str,
                task_name: &'static str,
                owner: Option<&'static str>,
-               created_at: i64| NewSubscriptionRow {
-        topic,
-        subscription_name: name,
-        task_name,
-        queue: "default",
+               created_at: i64| NewSubscription {
+        topic: topic.to_string(),
+        subscription_name: name.to_string(),
+        task_name: task_name.to_string(),
+        queue: "default".to_string(),
         active: true,
         durable: owner.is_none(),
-        owner_worker_id: owner,
+        owner_worker_id: owner.map(str::to_string),
         created_at,
         priority: None,
         max_retries: None,
@@ -1216,13 +1216,13 @@ fn test_concurrent_dequeue_no_double_claim(s: &impl Storage) {
 
 fn test_topic_backlog_stats(s: &impl Storage) {
     use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
-    use taskito_core::storage::models::NewSubscriptionRow;
+    use taskito_core::NewSubscription;
 
-    let sub = |name: &'static str, task: &'static str| NewSubscriptionRow {
-        topic: "tbs-orders",
-        subscription_name: name,
-        task_name: task,
-        queue: "default",
+    let sub = |name: &'static str, task: &'static str| NewSubscription {
+        topic: "tbs-orders".to_string(),
+        subscription_name: name.to_string(),
+        task_name: task.to_string(),
+        queue: "default".to_string(),
         active: true,
         durable: true,
         owner_worker_id: None,

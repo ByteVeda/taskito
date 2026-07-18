@@ -1,7 +1,7 @@
 //! JS-facing shape for a registered periodic task. Timestamps are Unix milliseconds.
 
 use napi_derive::napi;
-use taskito_core::storage::models::PeriodicTaskRow;
+use taskito_core::storage::records::PeriodicTask;
 
 /// JS-facing view of a periodic task (omits the opaque args/kwargs payloads).
 #[napi(object)]
@@ -18,7 +18,7 @@ pub struct JsPeriodicTask {
     pub timezone: Option<String>,
 }
 
-pub fn periodic_to_js(row: PeriodicTaskRow) -> JsPeriodicTask {
+pub fn periodic_to_js(row: PeriodicTask) -> JsPeriodicTask {
     JsPeriodicTask {
         name: row.name,
         task_name: row.task_name,

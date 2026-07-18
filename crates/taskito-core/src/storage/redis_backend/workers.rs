@@ -3,7 +3,7 @@ use redis::Commands;
 use super::{map_err, RedisStorage};
 use crate::error::Result;
 use crate::job::now_millis;
-use crate::storage::models::WorkerRow;
+use crate::storage::records::WorkerInfo;
 
 impl RedisStorage {
     #[allow(clippy::too_many_arguments)]
@@ -65,7 +65,7 @@ impl RedisStorage {
         Ok(())
     }
 
-    pub fn list_workers(&self) -> Result<Vec<WorkerRow>> {
+    pub fn list_workers(&self) -> Result<Vec<WorkerInfo>> {
         let mut conn = self.conn()?;
         let wall = self.key(&["workers", "all"]);
 
@@ -84,7 +84,7 @@ impl RedisStorage {
             let to_opt =
                 |key: &str| -> Option<String> { data.get(key).filter(|s| !s.is_empty()).cloned() };
 
-            rows.push(WorkerRow {
+            rows.push(WorkerInfo {
                 worker_id: wid,
                 last_heartbeat: data
                     .get("last_heartbeat")

@@ -14,7 +14,7 @@ macro_rules! impl_diesel_pubsub_ops {
             pub fn list_subscriptions_for_topic(
                 &self,
                 topic: &str,
-            ) -> Result<Vec<SubscriptionRow>> {
+            ) -> Result<Vec<$crate::storage::records::Subscription>> {
                 let mut conn = self.conn()?;
 
                 let rows = topic_subscriptions::table
@@ -25,20 +25,22 @@ macro_rules! impl_diesel_pubsub_ops {
                         topic_subscriptions::subscription_name.asc(),
                     ))
                     .select(SubscriptionRow::as_select())
-                    .load(&mut conn)?;
+                    .load::<SubscriptionRow>(&mut conn)?;
 
-                Ok(rows)
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Every registered subscription, active or paused, across all topics.
-            pub fn list_subscriptions(&self) -> Result<Vec<SubscriptionRow>> {
+            pub fn list_subscriptions(
+                &self,
+            ) -> Result<Vec<$crate::storage::records::Subscription>> {
                 let mut conn = self.conn()?;
 
                 let rows = topic_subscriptions::table
                     .select(SubscriptionRow::as_select())
-                    .load(&mut conn)?;
+                    .load::<SubscriptionRow>(&mut conn)?;
 
-                Ok(rows)
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Remove a subscription. Returns false if none matched.
@@ -146,6 +148,7 @@ macro_rules! impl_diesel_pubsub_ops {
                     ))
                     .load(&mut conn)?;
 
+                let subs = subs.into_iter().map(Into::into).collect();
                 Ok($crate::storage::merge_backlog_stats(
                     subs, counts, oldest, dead,
                 ))

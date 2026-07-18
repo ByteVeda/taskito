@@ -1,6 +1,6 @@
 //! Small formatting helpers. All timestamps are Unix milliseconds.
 
-use taskito_core::job::now_millis;
+use taskito_core::now_millis;
 
 /// Render a Unix-ms timestamp as a compact relative age, e.g. `3s`, `5m`, `2h`,
 /// `4d`. Future timestamps (scheduled ahead) render as `in Xs`.

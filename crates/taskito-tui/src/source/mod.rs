@@ -8,8 +8,8 @@ pub mod db;
 
 use anyhow::Result;
 
-use taskito_core::storage::QueueStats;
 use taskito_core::JobStatus;
+use taskito_core::QueueStats;
 use taskito_workflows::{WorkflowNodeStatus, WorkflowState};
 
 /// Top-level tabs.

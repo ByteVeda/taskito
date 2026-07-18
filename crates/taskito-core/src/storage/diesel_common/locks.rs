@@ -41,16 +41,19 @@ macro_rules! impl_diesel_lock_ops {
             }
 
             /// Get info about a lock.
-            pub fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfoRow>> {
+            pub fn get_lock_info(
+                &self,
+                lock_name: &str,
+            ) -> Result<Option<$crate::storage::records::LockInfo>> {
                 let mut conn = self.conn()?;
 
                 let row = distributed_locks::table
                     .find(lock_name)
                     .select(LockInfoRow::as_select())
-                    .first(&mut conn)
+                    .first::<LockInfoRow>(&mut conn)
                     .optional()?;
 
-                Ok(row)
+                Ok(row.map(Into::into))
             }
 
             /// Remove expired locks. Returns count removed.

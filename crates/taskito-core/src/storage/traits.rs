@@ -1,6 +1,9 @@
 use crate::error::Result;
 use crate::job::{Job, NewJob};
-use crate::storage::models::*;
+use crate::storage::records::{
+    CircuitBreakerState, JobError, LockInfo, NewPeriodicTask, NewSubscription, PeriodicTask,
+    RateLimitState, ReplayEntry, Subscription, TaskLogEntry, TaskMetric, WorkerInfo,
+};
 use crate::storage::{DeadJob, QueueStats, SubscriptionBacklogStats};
 
 /// Trait abstracting the storage backend for the task queue.
@@ -120,7 +123,7 @@ pub trait Storage: Send + Sync + Clone {
     fn reap_orphaned_jobs(&self, live_owner_ids: &[String], now: i64)
         -> Result<Vec<(Job, String)>>;
     fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()>;
-    fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobErrorRow>>;
+    fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobError>>;
     fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64>;
 
     // ── Dead letter operations ──────────────────────────────────────
@@ -149,17 +152,17 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Rate limit operations ───────────────────────────────────────
 
-    fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitRow>>;
-    fn upsert_rate_limit(&self, row: &RateLimitRow) -> Result<()>;
+    fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitState>>;
+    fn upsert_rate_limit(&self, row: &RateLimitState) -> Result<()>;
     fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool>;
 
     // ── Periodic task operations ────────────────────────────────────
 
-    fn register_periodic(&self, task: &NewPeriodicTaskRow) -> Result<()>;
-    fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTaskRow>>;
+    fn register_periodic(&self, task: &NewPeriodicTask) -> Result<()>;
+    fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTask>>;
     fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()>;
     /// All registered periodic tasks, enabled or paused.
-    fn list_periodic(&self) -> Result<Vec<PeriodicTaskRow>>;
+    fn list_periodic(&self) -> Result<Vec<PeriodicTask>>;
     /// Remove a periodic task. Returns false if no task had that name.
     fn delete_periodic(&self, name: &str) -> Result<bool>;
     /// Pause (false) or resume (true) a periodic task by toggling `enabled`.
@@ -169,11 +172,11 @@ pub trait Storage: Send + Sync + Clone {
     // ── Topic pub/sub ───────────────────────────────────────────────
 
     /// Insert or update a subscription. Idempotent on (topic, subscription_name).
-    fn register_subscription(&self, sub: &NewSubscriptionRow) -> Result<()>;
+    fn register_subscription(&self, sub: &NewSubscription) -> Result<()>;
     /// Active subscriptions for a topic (active = true only).
-    fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<SubscriptionRow>>;
+    fn list_subscriptions_for_topic(&self, topic: &str) -> Result<Vec<Subscription>>;
     /// Every registered subscription (active or paused), all topics.
-    fn list_subscriptions(&self) -> Result<Vec<SubscriptionRow>>;
+    fn list_subscriptions(&self) -> Result<Vec<Subscription>>;
     /// Remove a subscription. Returns false if none matched.
     fn unsubscribe(&self, topic: &str, subscription_name: &str) -> Result<bool>;
     /// Pause/resume without removing registration. Returns false if none matched.
@@ -203,7 +206,7 @@ pub trait Storage: Send + Sync + Clone {
         memory_bytes: i64,
         succeeded: bool,
     ) -> Result<()>;
-    fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<TaskMetricRow>>;
+    fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<TaskMetric>>;
     fn purge_metrics(&self, older_than_ms: i64) -> Result<u64>;
     fn record_replay(
         &self,
@@ -214,7 +217,7 @@ pub trait Storage: Send + Sync + Clone {
         original_error: Option<&str>,
         replay_error: Option<&str>,
     ) -> Result<()>;
-    fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<ReplayHistoryRow>>;
+    fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<ReplayEntry>>;
 
     // ── Log operations ──────────────────────────────────────────────
 
@@ -226,24 +229,28 @@ pub trait Storage: Send + Sync + Clone {
         message: &str,
         extra: Option<&str>,
     ) -> Result<()>;
-    fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogRow>>;
+    fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogEntry>>;
     /// Logs for a job with id strictly after `after_id` (UUIDv7 ids are
     /// time-ordered, so the id doubles as a stream cursor). `None` = all.
-    fn get_task_logs_after(&self, job_id: &str, after_id: Option<&str>) -> Result<Vec<TaskLogRow>>;
+    fn get_task_logs_after(
+        &self,
+        job_id: &str,
+        after_id: Option<&str>,
+    ) -> Result<Vec<TaskLogEntry>>;
     fn query_task_logs(
         &self,
         task_name: Option<&str>,
         level: Option<&str>,
         since_ms: i64,
         limit: i64,
-    ) -> Result<Vec<TaskLogRow>>;
+    ) -> Result<Vec<TaskLogEntry>>;
     fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64>;
 
     // ── Circuit breaker operations ──────────────────────────────────
 
-    fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<CircuitBreakerRow>>;
-    fn upsert_circuit_breaker(&self, row: &CircuitBreakerRow) -> Result<()>;
-    fn list_circuit_breakers(&self) -> Result<Vec<CircuitBreakerRow>>;
+    fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<CircuitBreakerState>>;
+    fn upsert_circuit_breaker(&self, row: &CircuitBreakerState) -> Result<()>;
+    fn list_circuit_breakers(&self) -> Result<Vec<CircuitBreakerState>>;
 
     // ── Worker operations ───────────────────────────────────────────
 
@@ -262,7 +269,7 @@ pub trait Storage: Send + Sync + Clone {
     ) -> Result<()>;
     fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()>;
     fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()>;
-    fn list_workers(&self) -> Result<Vec<WorkerRow>>;
+    fn list_workers(&self) -> Result<Vec<WorkerInfo>>;
     /// Ids of workers whose heartbeat is at or after `cutoff_ms`. A narrow
     /// projection of [`Self::list_workers`] for callers that only need the live
     /// set and must not pay to load every worker's `resource_health` blob.
@@ -299,7 +306,7 @@ pub trait Storage: Send + Sync + Clone {
     fn acquire_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool>;
     fn release_lock(&self, lock_name: &str, owner_id: &str) -> Result<bool>;
     fn extend_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool>;
-    fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfoRow>>;
+    fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfo>>;
     fn reap_expired_locks(&self, now: i64) -> Result<u64>;
 
     // ── Execution claims (exactly-once) ────────────────────────

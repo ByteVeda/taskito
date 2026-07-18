@@ -1865,16 +1865,19 @@ macro_rules! impl_diesel_job_ops {
             }
 
             /// Get all errors for a job, ordered by attempt.
-            pub fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobErrorRow>> {
+            pub fn get_job_errors(
+                &self,
+                job_id: &str,
+            ) -> Result<Vec<$crate::storage::records::JobError>> {
                 let mut conn = self.conn()?;
 
                 let rows = job_errors::table
                     .filter(job_errors::job_id.eq(job_id))
                     .order(job_errors::attempt.asc())
                     .select(JobErrorRow::as_select())
-                    .load(&mut conn)?;
+                    .load::<JobErrorRow>(&mut conn)?;
 
-                Ok(rows)
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Archive a set of pending job rows as cancelled with the given

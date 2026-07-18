@@ -1,36 +1,48 @@
 use diesel::prelude::*;
 
 use super::super::models::*;
+use super::super::records::{NewPeriodicTask, PeriodicTask};
 use super::super::schema::periodic_tasks;
 use super::PostgresStorage;
 use crate::error::Result;
 
 impl PostgresStorage {
     /// Register or update a periodic task.
-    pub fn register_periodic(&self, task: &NewPeriodicTaskRow) -> Result<()> {
+    pub fn register_periodic(&self, task: &NewPeriodicTask) -> Result<()> {
         let mut conn = self.conn()?;
+        let row = NewPeriodicTaskRow {
+            name: &task.name,
+            task_name: &task.task_name,
+            cron_expr: &task.cron_expr,
+            args: task.args.as_deref(),
+            kwargs: task.kwargs.as_deref(),
+            queue: &task.queue,
+            enabled: task.enabled,
+            next_run: task.next_run,
+            timezone: task.timezone.as_deref(),
+        };
 
         diesel::insert_into(periodic_tasks::table)
-            .values(task)
+            .values(&row)
             .on_conflict(periodic_tasks::name)
             .do_update()
-            .set(task)
+            .set(&row)
             .execute(&mut conn)?;
 
         Ok(())
     }
 
     /// Get all periodic tasks that are due to run.
-    pub fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTaskRow>> {
+    pub fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTask>> {
         let mut conn = self.conn()?;
 
         let rows = periodic_tasks::table
             .filter(periodic_tasks::enabled.eq(true))
             .filter(periodic_tasks::next_run.le(now))
             .select(PeriodicTaskRow::as_select())
-            .load(&mut conn)?;
+            .load::<PeriodicTaskRow>(&mut conn)?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     /// Update a periodic task's schedule after execution.
@@ -48,14 +60,14 @@ impl PostgresStorage {
     }
 
     /// List all registered periodic tasks, enabled or paused.
-    pub fn list_periodic(&self) -> Result<Vec<PeriodicTaskRow>> {
+    pub fn list_periodic(&self) -> Result<Vec<PeriodicTask>> {
         let mut conn = self.conn()?;
 
         let rows = periodic_tasks::table
             .select(PeriodicTaskRow::as_select())
-            .load(&mut conn)?;
+            .load::<PeriodicTaskRow>(&mut conn)?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     /// Remove a periodic task. Returns false if no task had that name.

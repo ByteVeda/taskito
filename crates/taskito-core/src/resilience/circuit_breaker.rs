@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::job::now_millis;
-use crate::storage::models::CircuitBreakerRow;
+use crate::storage::records::CircuitBreakerState as CbState;
 use crate::storage::{Storage, StorageBackend};
 
 /// Circuit breaker states.
@@ -70,7 +70,7 @@ impl CircuitBreaker {
                 let opened = row.opened_at.unwrap_or(0);
                 if now.saturating_sub(opened) >= row.cooldown_ms {
                     // Transition to half-open: reset probe counters
-                    let updated = CircuitBreakerRow {
+                    let updated = CbState {
                         state: CircuitState::HalfOpen as i32,
                         half_open_at: Some(now),
                         half_open_probe_count: 0,
@@ -87,7 +87,7 @@ impl CircuitBreaker {
             CircuitState::HalfOpen => {
                 // Allow up to max_probes concurrent probes
                 if row.half_open_probe_count < row.half_open_max_probes {
-                    let updated = CircuitBreakerRow {
+                    let updated = CbState {
                         half_open_probe_count: row.half_open_probe_count + 1,
                         ..row
                     };
@@ -97,7 +97,7 @@ impl CircuitBreaker {
                     // Check for timeout: if probes haven't completed within cooldown, re-open
                     let half_open_since = row.half_open_at.unwrap_or(0);
                     if now.saturating_sub(half_open_since) >= row.cooldown_ms {
-                        let updated = CircuitBreakerRow {
+                        let updated = CbState {
                             state: CircuitState::Open as i32,
                             opened_at: Some(now),
                             half_open_at: None,
@@ -134,7 +134,7 @@ impl CircuitBreaker {
                     let rate = successes as f64 / total as f64;
                     if rate >= row.half_open_success_rate {
                         // Threshold met — close the circuit
-                        let updated = CircuitBreakerRow {
+                        let updated = CbState {
                             state: CircuitState::Closed as i32,
                             failure_count: 0,
                             opened_at: None,
@@ -148,7 +148,7 @@ impl CircuitBreaker {
                     } else {
                         // Threshold not met — re-open
                         let now = now_millis();
-                        let updated = CircuitBreakerRow {
+                        let updated = CbState {
                             state: CircuitState::Open as i32,
                             opened_at: Some(now),
                             half_open_at: None,
@@ -161,7 +161,7 @@ impl CircuitBreaker {
                     }
                 } else {
                     // Still collecting samples
-                    let updated = CircuitBreakerRow {
+                    let updated = CbState {
                         half_open_success_count: successes,
                         ..row
                     };
@@ -171,7 +171,7 @@ impl CircuitBreaker {
             }
             _ => {
                 // Closed with failures or Open — reset to clean Closed
-                let updated = CircuitBreakerRow {
+                let updated = CbState {
                     state: CircuitState::Closed as i32,
                     failure_count: 0,
                     opened_at: None,
@@ -216,7 +216,7 @@ impl CircuitBreaker {
                     || best_possible_rate < row.half_open_success_rate
                 {
                     // Either all samples collected and failed, or impossible to meet threshold
-                    let updated = CircuitBreakerRow {
+                    let updated = CbState {
                         state: CircuitState::Open as i32,
                         failure_count: row.failure_count.saturating_add(1),
                         last_failure_at: Some(now),
@@ -230,7 +230,7 @@ impl CircuitBreaker {
                     self.storage.upsert_circuit_breaker(&updated)?;
                 } else {
                     // Still collecting samples
-                    let updated = CircuitBreakerRow {
+                    let updated = CbState {
                         failure_count: row.failure_count.saturating_add(1),
                         last_failure_at: Some(now),
                         half_open_failure_count: failures,
@@ -253,7 +253,7 @@ impl CircuitBreaker {
 
                 if count >= row.threshold {
                     // Trip to open
-                    let updated = CircuitBreakerRow {
+                    let updated = CbState {
                         state: CircuitState::Open as i32,
                         failure_count: count,
                         last_failure_at: Some(now),
@@ -263,7 +263,7 @@ impl CircuitBreaker {
                     };
                     self.storage.upsert_circuit_breaker(&updated)?;
                 } else {
-                    let updated = CircuitBreakerRow {
+                    let updated = CbState {
                         failure_count: count,
                         last_failure_at: Some(now),
                         ..row
@@ -273,7 +273,7 @@ impl CircuitBreaker {
             }
             CircuitState::Open => {
                 // Already open, just update failure count
-                let updated = CircuitBreakerRow {
+                let updated = CbState {
                     failure_count: row.failure_count.saturating_add(1),
                     last_failure_at: Some(now),
                     ..row
@@ -291,7 +291,7 @@ impl CircuitBreaker {
             return Ok(());
         }
 
-        let row = CircuitBreakerRow {
+        let row = CbState {
             task_name: task_name.to_string(),
             state: CircuitState::Closed as i32,
             failure_count: 0,

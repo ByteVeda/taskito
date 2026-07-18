@@ -6,7 +6,7 @@ use napi::bindgen_prelude::{spawn_blocking, Buffer, Result};
 use napi_derive::napi;
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::{publish_to_topic, DeliveryDefaults, PublishRequest};
-use taskito_core::storage::models::NewSubscriptionRow;
+use taskito_core::storage::records::NewSubscription;
 use taskito_core::Storage;
 
 use super::JsQueue;
@@ -45,14 +45,14 @@ impl JsQueue {
         }
         let storage = self.storage.clone();
         spawn_blocking(move || {
-            let row = NewSubscriptionRow {
-                topic: &topic,
-                subscription_name: &subscription_name,
-                task_name: &task_name,
-                queue: &queue,
+            let row = NewSubscription {
+                topic,
+                subscription_name,
+                task_name,
+                queue,
                 active: true,
                 durable,
-                owner_worker_id: owner_worker_id.as_deref(),
+                owner_worker_id,
                 created_at: now_millis(),
                 priority,
                 max_retries,

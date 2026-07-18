@@ -1,7 +1,7 @@
 //! JS-facing shape of a topic subscription.
 
 use napi_derive::napi;
-use taskito_core::storage::models::SubscriptionRow;
+use taskito_core::storage::records::Subscription;
 
 /// A topic subscription: routes messages published to `topic` to `taskName`
 /// jobs on `queue`, one delivery per active subscription.
@@ -15,8 +15,8 @@ pub struct JsSubscription {
     pub durable: bool,
 }
 
-/// Convert a core [`SubscriptionRow`] into its JS-facing shape.
-pub fn subscription_to_js(row: SubscriptionRow) -> JsSubscription {
+/// Convert a core [`Subscription`] into its JS-facing shape.
+pub fn subscription_to_js(row: Subscription) -> JsSubscription {
     JsSubscription {
         topic: row.topic,
         subscription_name: row.subscription_name,

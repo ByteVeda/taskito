@@ -37,7 +37,7 @@ macro_rules! impl_diesel_metric_ops {
                 &self,
                 name: Option<&str>,
                 since_ms: i64,
-            ) -> Result<Vec<TaskMetricRow>> {
+            ) -> Result<Vec<$crate::storage::records::TaskMetric>> {
                 let mut conn = self.conn()?;
 
                 let mut query = task_metrics::table
@@ -51,9 +51,9 @@ macro_rules! impl_diesel_metric_ops {
                 let rows = query
                     .order(task_metrics::recorded_at.desc())
                     .select(TaskMetricRow::as_select())
-                    .load(&mut conn)?;
+                    .load::<TaskMetricRow>(&mut conn)?;
 
-                Ok(rows)
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Purge old metric records.
@@ -115,7 +115,7 @@ macro_rules! impl_diesel_metric_ops {
             pub fn get_replay_history(
                 &self,
                 original_job_id: &str,
-            ) -> Result<Vec<ReplayHistoryRow>> {
+            ) -> Result<Vec<$crate::storage::records::ReplayEntry>> {
                 use crate::storage::schema::replay_history;
 
                 let mut conn = self.conn()?;
@@ -123,8 +123,8 @@ macro_rules! impl_diesel_metric_ops {
                     .filter(replay_history::original_job_id.eq(original_job_id))
                     .order(replay_history::replayed_at.desc())
                     .select(ReplayHistoryRow::as_select())
-                    .load(&mut conn)?;
-                Ok(rows)
+                    .load::<ReplayHistoryRow>(&mut conn)?;
+                Ok(rows.into_iter().map(Into::into).collect())
             }
         }
     };

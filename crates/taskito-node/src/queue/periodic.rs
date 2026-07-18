@@ -6,7 +6,7 @@ use napi::bindgen_prelude::{Buffer, Result};
 use napi_derive::napi;
 use taskito_core::job::now_millis;
 use taskito_core::periodic::{next_cron_time, next_cron_time_tz};
-use taskito_core::storage::models::NewPeriodicTaskRow;
+use taskito_core::storage::records::NewPeriodicTask;
 use taskito_core::Storage;
 
 use super::JsQueue;
@@ -41,16 +41,16 @@ impl JsQueue {
         .map_err(to_napi_err)?;
 
         let args_bytes = args.map(|b| b.to_vec());
-        let row = NewPeriodicTaskRow {
-            name: &name,
-            task_name: &task_name,
-            cron_expr: &cron_expr,
-            args: args_bytes.as_deref(),
+        let row = NewPeriodicTask {
+            name: name.clone(),
+            task_name,
+            cron_expr,
+            args: args_bytes,
             kwargs: None,
-            queue: queue.as_deref().unwrap_or(DEFAULT_QUEUE),
+            queue: queue.unwrap_or_else(|| DEFAULT_QUEUE.to_string()),
             enabled: enabled.unwrap_or(true),
             next_run,
-            timezone: timezone.as_deref(),
+            timezone,
         };
         self.storage.register_periodic(&row).map_err(to_napi_err)?;
         Ok(next_run)

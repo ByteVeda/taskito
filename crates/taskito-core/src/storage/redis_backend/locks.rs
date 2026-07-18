@@ -3,7 +3,7 @@ use redis::Commands;
 use super::{map_err, RedisStorage};
 use crate::error::Result;
 use crate::job::now_millis;
-use crate::storage::models::LockInfoRow;
+use crate::storage::records::LockInfo;
 
 /// Lua script: atomically transfer an execution claim from `expected_owner`
 /// (ARGV[2]) to `new_owner` (ARGV[3]). The claim value is "{owner}:{ts}";
@@ -126,7 +126,7 @@ impl RedisStorage {
         Ok(result == 1)
     }
 
-    pub fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfoRow>> {
+    pub fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfo>> {
         let mut conn = self.conn()?;
         let lkey = self.key(&["lock", lock_name]);
 
@@ -137,7 +137,7 @@ impl RedisStorage {
             return Ok(None);
         }
 
-        Ok(Some(LockInfoRow {
+        Ok(Some(LockInfo {
             lock_name: data
                 .get("lock_name")
                 .cloned()

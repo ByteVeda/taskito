@@ -22,7 +22,7 @@ use taskito_core::{Scheduler, SchedulerConfig, Storage, StorageBackend};
 use tokio::sync::Notify;
 
 use taskito_core::job::now_millis;
-use taskito_core::storage::models::NewSubscriptionRow;
+use taskito_core::storage::records::NewSubscription;
 
 use crate::backend::QueueHandle;
 use crate::convert::{
@@ -238,14 +238,14 @@ fn register_subscriptions(
     };
     let created_at = now_millis();
     for spec in &specs {
-        let row = NewSubscriptionRow {
-            topic: &spec.topic,
-            subscription_name: &spec.subscription_name,
-            task_name: &spec.task_name,
-            queue: &spec.queue,
+        let row = NewSubscription {
+            topic: spec.topic.clone(),
+            subscription_name: spec.subscription_name.clone(),
+            task_name: spec.task_name.clone(),
+            queue: spec.queue.clone(),
             active: true,
             durable: spec.durable,
-            owner_worker_id: (!spec.durable).then_some(worker_id),
+            owner_worker_id: (!spec.durable).then(|| worker_id.to_string()),
             created_at,
             priority: spec.priority,
             max_retries: spec.max_retries,

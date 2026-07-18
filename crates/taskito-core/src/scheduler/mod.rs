@@ -4,6 +4,7 @@ mod poller;
 mod result_handler;
 pub mod retention;
 #[cfg(feature = "push-dispatch")]
+#[doc(hidden)]
 pub mod wake;
 
 use std::collections::{HashMap, HashSet};
@@ -748,7 +749,7 @@ mod tests {
     use super::*;
     use crate::job::{now_millis, JobStatus, NewJob};
     use crate::resilience::rate_limiter::RateLimitConfig;
-    use crate::storage::models::NewPeriodicTaskRow;
+    use crate::storage::records::NewPeriodicTask;
     use crate::storage::Storage;
 
     fn test_scheduler() -> Scheduler {
@@ -2025,13 +2026,13 @@ mod tests {
 
         // Register a periodic task that's due now
         let now = now_millis();
-        let row = NewPeriodicTaskRow {
-            name: "every_minute",
-            task_name: "periodic_task",
-            cron_expr: "* * * * * *", // every second
+        let row = NewPeriodicTask {
+            name: "every_minute".to_string(),
+            task_name: "periodic_task".to_string(),
+            cron_expr: "* * * * * *".to_string(), // every second
             args: None,
             kwargs: None,
-            queue: "default",
+            queue: "default".to_string(),
             enabled: true,
             next_run: now - 1000, // due 1 second ago
             timezone: None,

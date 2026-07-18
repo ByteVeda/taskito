@@ -7,7 +7,7 @@ use jni::sys::{jboolean, jlong, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::job::now_millis;
 use taskito_core::periodic::{next_cron_time, next_cron_time_tz};
-use taskito_core::storage::models::NewPeriodicTaskRow;
+use taskito_core::storage::records::NewPeriodicTask;
 use taskito_core::Storage;
 
 use super::{borrow_queue, to_jboolean};
@@ -51,16 +51,16 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerPe
             None => next_cron_time(&cron, now)?,
         };
 
-        let row = NewPeriodicTaskRow {
-            name: &name,
-            task_name: &task,
-            cron_expr: &cron,
-            args: args_bytes.as_deref(),
+        let row = NewPeriodicTask {
+            name: name.clone(),
+            task_name: task,
+            cron_expr: cron,
+            args: args_bytes,
             kwargs: None,
-            queue: queue_name.as_deref().unwrap_or(DEFAULT_QUEUE),
+            queue: queue_name.unwrap_or_else(|| DEFAULT_QUEUE.to_string()),
             enabled: enabled != 0,
             next_run,
-            timezone: timezone.as_deref(),
+            timezone,
         };
         queue.storage.register_periodic(&row)?;
         Ok(next_run)

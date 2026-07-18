@@ -268,7 +268,7 @@ mod tests {
 
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use taskito_core::storage::QueueStats;
+    use taskito_core::QueueStats;
 
     use crate::source::{DeadRow, JobRow, WorkerView, WorkflowRunRow};
 

@@ -34,14 +34,14 @@ macro_rules! impl_diesel_worker_ops {
             }
 
             /// List all workers with their heartbeat status.
-            pub fn list_workers(&self) -> Result<Vec<WorkerRow>> {
+            pub fn list_workers(&self) -> Result<Vec<$crate::storage::records::WorkerInfo>> {
                 let mut conn = self.conn()?;
 
                 let rows = workers::table
                     .select(WorkerRow::as_select())
-                    .load(&mut conn)?;
+                    .load::<WorkerRow>(&mut conn)?;
 
-                Ok(rows)
+                Ok(rows.into_iter().map(Into::into).collect())
             }
 
             /// Ids of workers whose heartbeat is at or after `cutoff_ms`.
