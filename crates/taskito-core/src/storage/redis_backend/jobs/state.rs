@@ -161,7 +161,7 @@ impl RedisStorage {
         job.error = None;
         job.cancel_requested = false;
 
-        let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(&job)?;
         let job_key = self.key(&["job", id]);
         let running_key = self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
         let pending_key = self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);
@@ -233,7 +233,7 @@ impl RedisStorage {
         }
 
         job.cancel_requested = true;
-        let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(&job)?;
         let job_key = self.key(&["job", id]);
         let running_key = self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
         let cancel_set = self.key(&["jobs", "cancel_requested"]);
@@ -345,7 +345,7 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let mut job = self.get_job_required(id)?;
         job.progress = Some(progress);
-        let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(&job)?;
         let job_key = self.key(&["job", id]);
 
         // Guarded write: only update if `job:<id>` still exists. If the job was

@@ -2,7 +2,7 @@ use redis::Commands;
 use serde::{Deserialize, Serialize};
 
 use super::{map_err, RedisStorage};
-use crate::error::{QueueError, Result};
+use crate::error::Result;
 use crate::storage::records::{NewPeriodicTask, PeriodicTask};
 
 #[derive(Serialize, Deserialize)]
@@ -53,7 +53,7 @@ impl RedisStorage {
             timezone: task.timezone.clone(),
         };
 
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
 
         let pkey = self.key(&["periodic", &task.name]);
         let due_key = self.key(&["periodic", "due"]);
@@ -81,8 +81,7 @@ impl RedisStorage {
             let pkey = self.key(&["periodic", &name]);
             let data: Option<String> = conn.get(&pkey).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: PeriodicEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: PeriodicEntry = serde_json::from_str(&d)?;
                 if entry.enabled {
                     rows.push(PeriodicTask::from(entry));
                 }
@@ -98,13 +97,11 @@ impl RedisStorage {
 
         let data: Option<String> = conn.get(&pkey).map_err(map_err)?;
         if let Some(d) = data {
-            let mut entry: PeriodicEntry =
-                serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+            let mut entry: PeriodicEntry = serde_json::from_str(&d)?;
             entry.last_run = Some(last_run);
             entry.next_run = next_run;
 
-            let json =
-                serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+            let json = serde_json::to_string(&entry)?;
 
             let due_key = self.key(&["periodic", "due"]);
             let pipe = &mut redis::pipe();
@@ -145,8 +142,7 @@ impl RedisStorage {
                 }
                 let data: Option<String> = conn.get(&key).map_err(map_err)?;
                 if let Some(d) = data {
-                    let entry: PeriodicEntry =
-                        serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                    let entry: PeriodicEntry = serde_json::from_str(&d)?;
                     rows.push(PeriodicTask::from(entry));
                 }
             }
@@ -185,11 +181,10 @@ impl RedisStorage {
             return Ok(false);
         };
 
-        let mut entry: PeriodicEntry =
-            serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+        let mut entry: PeriodicEntry = serde_json::from_str(&d)?;
         entry.enabled = enabled;
 
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
         let due_key = self.key(&["periodic", "due"]);
 
         let pipe = &mut redis::pipe();

@@ -88,7 +88,7 @@ impl RedisStorage {
             dlq_retry_count,
         };
 
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
 
         let dlq_key = self.key(&["dlq", &dlq_id]);
         let dlq_all = self.key(&["dlq", "all"]);
@@ -98,8 +98,7 @@ impl RedisStorage {
         dead_job.status = JobStatus::Dead;
         dead_job.error = Some(error.to_string());
         dead_job.completed_at = Some(now);
-        let dead_json =
-            serde_json::to_string(&dead_job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let dead_json = serde_json::to_string(&dead_job)?;
 
         // Commit the DLQ entry and the live→archive move together, but only if the
         // job is still live in its expected state. A racing complete/fail or the
@@ -148,8 +147,7 @@ impl RedisStorage {
             let dlq_key = self.key(&["dlq", &id]);
             let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: DeadJobEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: DeadJobEntry = serde_json::from_str(&d)?;
                 let mut dead = DeadJob::from(entry);
                 strip_dead_blob(&mut dead);
                 results.push(dead);
@@ -172,8 +170,7 @@ impl RedisStorage {
             let dlq_key = self.key(&["dlq", id]);
             let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: DeadJobEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: DeadJobEntry = serde_json::from_str(&d)?;
                 let mut dead = DeadJob::from(entry);
                 strip_dead_blob(&mut dead);
                 results.push(dead);
@@ -209,8 +206,7 @@ impl RedisStorage {
             let dlq_key = self.key(&["dlq", &id]);
             let data: Option<String> = conn.get(&dlq_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: DeadJobEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: DeadJobEntry = serde_json::from_str(&d)?;
                 if entry.task_name == task_name {
                     let mut dead = DeadJob::from(entry);
                     strip_dead_blob(&mut dead);
@@ -244,8 +240,7 @@ impl RedisStorage {
             if let Some(d) = data {
                 // Propagate (don't skip) on a corrupt entry: silently ignoring it
                 // would leave a task-owned row behind and under-report the count.
-                let entry: DeadJobEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: DeadJobEntry = serde_json::from_str(&d)?;
                 if entry.task_name == task_name {
                     to_delete.push((id, entry.notes, entry.original_job_id));
                 }
@@ -277,8 +272,7 @@ impl RedisStorage {
                 v.ok_or_else(|| QueueError::JobNotFound(dead_id.to_string()))
             })?;
 
-        let entry: DeadJobEntry =
-            serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+        let entry: DeadJobEntry = serde_json::from_str(&data)?;
 
         // Attribution + original job id for the sub:dead removal below, captured
         // before `entry`'s fields are moved into `new_job`. The re-enqueue below
@@ -391,8 +385,7 @@ impl RedisStorage {
         let Some(d) = data else {
             return Ok(false);
         };
-        let entry: DeadJobEntry =
-            serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+        let entry: DeadJobEntry = serde_json::from_str(&d)?;
 
         let pipe = &mut redis::pipe();
         pipe.del(&dlq_key);

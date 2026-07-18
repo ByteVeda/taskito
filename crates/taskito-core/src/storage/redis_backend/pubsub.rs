@@ -71,8 +71,7 @@ impl RedisStorage {
         let data: Option<String> = conn.get(&blob_key).map_err(map_err)?;
         match data {
             Some(d) => {
-                let entry: SubEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: SubEntry = serde_json::from_str(&d)?;
                 Ok(Some(entry))
             }
             None => Ok(None),
@@ -141,7 +140,7 @@ impl RedisStorage {
             entry.active = prior.active;
             entry.created_at = prior.created_at;
         }
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
 
         let pipe = redis::pipe().atomic().to_owned();
         let mut pipe = pipe;
@@ -228,8 +227,7 @@ impl RedisStorage {
         let Some(d) = data else {
             return Ok(false);
         };
-        let entry: SubEntry =
-            serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+        let entry: SubEntry = serde_json::from_str(&d)?;
 
         let by_topic = self.key(&["subs", "by_topic", topic]);
         let all = self.key(&["subs", "all"]);
@@ -263,11 +261,10 @@ impl RedisStorage {
             return Ok(false);
         };
 
-        let mut entry: SubEntry =
-            serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+        let mut entry: SubEntry = serde_json::from_str(&d)?;
         entry.active = active;
 
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
         conn.set::<_, _, ()>(&blob_key, &json).map_err(map_err)?;
 
         Ok(true)

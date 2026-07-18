@@ -30,9 +30,7 @@ impl RedisStorage {
             let dep_key = self.key(&["job", dep_id]);
             let data: Option<String> = conn.get(&dep_key).map_err(map_err)?;
             let dep_job: Job = match data {
-                Some(d) => {
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?
-                }
+                Some(d) => serde_json::from_str(&d)?,
                 None => match self.load_archived_job(conn, dep_id)? {
                     Some(archived) if archived.status == JobStatus::Complete => continue,
                     _ => return Err(QueueError::DependencyNotFound(DEP_MISSING.to_string())),
@@ -52,7 +50,7 @@ impl RedisStorage {
 
         self.validate_dep_ids(&mut conn, &depends_on, None)?;
 
-        let job_json = serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(&job)?;
         let job_key = self.key(&["job", &job.id]);
         let status_key = self.key(&["jobs", "status", &(job.status as i32).to_string()]);
         let queue_key = self.key(&["queue", &job.queue, "pending"]);
@@ -102,8 +100,7 @@ impl RedisStorage {
 
         let pipe = &mut redis::pipe();
         for (i, job) in jobs.iter().enumerate() {
-            let job_json =
-                serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+            let job_json = serde_json::to_string(job)?;
             let job_key = self.key(&["job", &job.id]);
             let status_key = self.key(&["jobs", "status", &(job.status as i32).to_string()]);
             let queue_key = self.key(&["queue", &job.queue, "pending"]);
@@ -195,16 +192,14 @@ impl RedisStorage {
                 .map_err(map_err)?;
 
             if let Some(job_data) = result {
-                let job: Job = serde_json::from_str(&job_data)
-                    .map_err(|e| QueueError::Other(e.to_string()))?;
+                let job: Job = serde_json::from_str(&job_data)?;
                 return Ok(job);
             }
 
             // No active duplicate — enqueue normally
             let depends_on = new_job.depends_on.clone();
             let job = new_job.into_job();
-            let job_json =
-                serde_json::to_string(&job).map_err(|e| QueueError::Other(e.to_string()))?;
+            let job_json = serde_json::to_string(&job)?;
 
             self.validate_dep_ids(&mut conn, &depends_on, None)?;
 
@@ -331,8 +326,7 @@ impl RedisStorage {
 
             if let Some(existing_data) = result {
                 // Lost the race — another caller created a job first
-                let existing_job: Job = serde_json::from_str(&existing_data)
-                    .map_err(|e| QueueError::Other(e.to_string()))?;
+                let existing_job: Job = serde_json::from_str(&existing_data)?;
                 return Ok(existing_job);
             }
 

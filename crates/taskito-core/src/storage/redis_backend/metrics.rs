@@ -2,7 +2,7 @@ use redis::Commands;
 use serde::{Deserialize, Serialize};
 
 use super::{map_err, RedisStorage};
-use crate::error::{QueueError, Result};
+use crate::error::Result;
 use crate::job::now_millis;
 use crate::storage::records::{ReplayEntry, TaskMetric};
 
@@ -81,7 +81,7 @@ impl RedisStorage {
             recorded_at: now,
         };
 
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
 
         let metric_key = self.key(&["metric", &id]);
         let all_key = self.key(&["metrics", "all"]);
@@ -114,8 +114,7 @@ impl RedisStorage {
             let metric_key = self.key(&["metric", &id]);
             let data: Option<String> = conn.get(&metric_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: MetricEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: MetricEntry = serde_json::from_str(&d)?;
                 rows.push(TaskMetric::from(entry));
             }
         }
@@ -180,7 +179,7 @@ impl RedisStorage {
             replay_error: replay_error.map(|s| s.to_string()),
         };
 
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
 
         let replay_key = self.key(&["replay", &id]);
         let by_original = self.key(&["replay", "by_original", original_job_id]);
@@ -203,8 +202,7 @@ impl RedisStorage {
             let replay_key = self.key(&["replay", &id]);
             let data: Option<String> = conn.get(&replay_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: ReplayHistoryEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: ReplayHistoryEntry = serde_json::from_str(&d)?;
                 rows.push(ReplayEntry::from(entry));
             }
         }

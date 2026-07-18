@@ -8,6 +8,13 @@ pub enum QueueError {
     #[error("connection pool error: {0}")]
     Pool(#[from] diesel::r2d2::PoolError),
 
+    #[cfg(feature = "redis")]
+    #[error("redis error: {0}")]
+    Redis(#[from] redis::RedisError),
+
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("job not found: {0}")]
     JobNotFound(String),
 
