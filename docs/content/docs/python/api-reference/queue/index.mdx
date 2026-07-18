@@ -26,6 +26,7 @@ Queue(
     default_timeout: int = 300,
     default_priority: int = 0,
     result_ttl: int | None = None,
+    retention: Retention | None = None,
     middleware: list[TaskMiddleware] | None = None,
     drain_timeout: int = 30,
     interception: str = "off",
@@ -50,7 +51,8 @@ Queue(
 | `default_retry` | `int` | `3` | Default max retry attempts for tasks |
 | `default_timeout` | `int` | `300` | Default task timeout in seconds |
 | `default_priority` | `int` | `0` | Default task priority (higher = more urgent) |
-| `result_ttl` | `int \| None` | `None` | Auto-cleanup completed/dead jobs older than this many seconds. `None` disables. |
+| `result_ttl` | `int \| None` | `None` | Legacy uniform auto-cleanup window in seconds, applied to every retention table. Superseded by `retention`. |
+| `retention` | `Retention \| None` | `None` | Per-table retention windows. Retention is **on by default** — leaving both `result_ttl` and `retention` unset applies the recommended windows (`archived_jobs`/`task_metrics`/`job_errors` 7d, `task_logs` 3d, `dead_letter` 30d). Pass an empty `Retention()` to disable the table-wide windows (per-entry `result_ttl` is still honored). See [Retention & auto-cleanup](/python/guides/operations/job-management#retention--auto-cleanup). |
 | `middleware` | `list[TaskMiddleware] \| None` | `None` | Queue-level middleware applied to all tasks. |
 | `drain_timeout` | `int` | `30` | Seconds to wait for in-flight tasks during graceful shutdown. |
 | `interception` | `str` | `"off"` | Argument interception mode: `"strict"`, `"lenient"`, or `"off"`. See [Resource System](/python/guides/resources). |

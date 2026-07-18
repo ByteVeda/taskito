@@ -15,6 +15,61 @@ const PERIODIC_DEFAULT_MAX_RETRIES: i32 = 3;
 /// Default timeout for periodic tasks (ms).
 const PERIODIC_DEFAULT_TIMEOUT_MS: i64 = 300_000;
 
+/// A retention window in ms as a compact human duration (`7d`, `12h`, `30m`).
+fn humanize_ms(ms: i64) -> String {
+    const S: i64 = 1000;
+    const M: i64 = 60 * S;
+    const H: i64 = 60 * M;
+    const D: i64 = 24 * H;
+    match ms {
+        _ if ms % D == 0 => format!("{}d", ms / D),
+        _ if ms % H == 0 => format!("{}h", ms / H),
+        _ if ms % M == 0 => format!("{}m", ms / M),
+        _ if ms % S == 0 => format!("{}s", ms / S),
+        _ => format!("{ms}ms"),
+    }
+}
+
+/// An epoch-ms cutoff as RFC 3339, falling back to raw ms if out of range.
+fn iso_cutoff(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| format!("{ms}ms"))
+}
+
+/// Warn, once, that retention is deleting history on the recommended defaults —
+/// a policy the operator did not set. Names the queue and every active window
+/// (duration + resolved cutoff) and how to opt out.
+fn announce_default_retention(
+    namespace: &str,
+    windows: &crate::scheduler::retention::RetentionConfig,
+    now: i64,
+) {
+    // `namespace`, not a queue name: the purge predicates are not queue-scoped,
+    // so the windows below apply cluster-wide within this namespace.
+    let mut msg = format!(
+        "retention is ON by default for namespace '{namespace}': history is auto-deleted on the \
+         recommended windows below. Set explicit windows, or pass an empty retention config to \
+         disable."
+    );
+    for (table, ttl) in [
+        ("archived_jobs", windows.archived_jobs_ttl_ms),
+        ("dead_letter", windows.dead_letter_ttl_ms),
+        ("task_metrics", windows.task_metrics_ttl_ms),
+        ("job_errors", windows.job_errors_ttl_ms),
+        ("task_logs", windows.task_logs_ttl_ms),
+    ] {
+        if let Some(ttl) = ttl {
+            msg.push_str(&format!(
+                "\n  {table}: delete after {} (cutoff {})",
+                humanize_ms(ttl),
+                iso_cutoff(now.saturating_sub(ttl)),
+            ));
+        }
+    }
+    warn!("{msg}");
+}
+
 /// Run one retention sweep, logging and continuing on failure.
 ///
 /// The five purges are independent, so one table's error must never abort the
@@ -143,6 +198,17 @@ impl Scheduler {
 
         let now = now_millis();
         let windows = self.config.effective_retention();
+
+        // The one moment we tell an operator their history will be auto-deleted
+        // on a policy they did not choose. Before the first delete, once per
+        // process (the election means that's the leader). Skipped for an explicit
+        // or legacy config — that is the operator's own choice.
+        if self.config.retention_is_defaulted() {
+            let namespace = self.namespace.as_deref().unwrap_or("default");
+            self.retention_announced
+                .call_once(|| announce_default_retention(namespace, &windows, now));
+        }
+
         // A window `ttl` becomes the cutoff `now - ttl`; an absent window is a
         // `None` cutoff, which the fused purges read as "per-entry only".
         let cutoff = |ttl: Option<i64>| ttl.map(|t| now.saturating_sub(t));

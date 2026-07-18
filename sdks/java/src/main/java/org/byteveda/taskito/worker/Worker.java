@@ -457,6 +457,9 @@ public final class Worker implements AutoCloseable {
             if (!subscriptions.isEmpty()) {
                 options.put("subscriptions", encodeSubscriptions());
             }
+            // Presence, not emptiness: an empty Retention encodes as `{}` and
+            // disables retention, which the core distinguishes from an omitted
+            // option (recommended defaults). Do NOT change to a non-empty check.
             if (retention != null) {
                 options.put("retention", retention.toMap());
             }

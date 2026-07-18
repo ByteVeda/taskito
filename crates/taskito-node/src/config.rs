@@ -196,17 +196,18 @@ pub struct RetentionInput {
 }
 
 impl RetentionInput {
-    /// Build a core [`RetentionConfig`], or `None` when no window is set.
-    pub fn to_config(&self) -> Option<taskito_core::scheduler::retention::RetentionConfig> {
+    /// Build a core [`RetentionConfig`]. An all-unset input yields an empty
+    /// config, which disables retention — deliberately distinct from *omitting*
+    /// the `retention` option, which falls back to the recommended defaults.
+    pub fn to_config(&self) -> taskito_core::scheduler::retention::RetentionConfig {
         let to_ms = |secs: Option<u32>| secs.map(|s| s as i64 * 1000);
-        let config = taskito_core::scheduler::retention::RetentionConfig {
+        taskito_core::scheduler::retention::RetentionConfig {
             archived_jobs_ttl_ms: to_ms(self.archived_jobs),
             dead_letter_ttl_ms: to_ms(self.dead_letter),
             task_logs_ttl_ms: to_ms(self.task_logs),
             task_metrics_ttl_ms: to_ms(self.task_metrics),
             job_errors_ttl_ms: to_ms(self.job_errors),
-        };
-        (!config.is_empty()).then_some(config)
+        }
     }
 }
 
@@ -243,14 +244,16 @@ mod tests {
             task_logs: Some(3),
             ..RetentionInput::default()
         };
-        let config = input.to_config().expect("some windows set");
+        let config = input.to_config();
         assert_eq!(config.archived_jobs_ttl_ms, Some(7_000));
         assert_eq!(config.task_logs_ttl_ms, Some(3_000));
         assert_eq!(config.dead_letter_ttl_ms, None);
     }
 
     #[test]
-    fn retention_to_config_is_none_when_empty() {
-        assert!(RetentionInput::default().to_config().is_none());
+    fn retention_to_config_is_empty_when_no_windows() {
+        // A present-but-empty input disables retention (an empty config), rather
+        // than collapsing to the omitted case that would use the defaults.
+        assert!(RetentionInput::default().to_config().is_empty());
     }
 }

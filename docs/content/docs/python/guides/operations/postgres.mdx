@@ -3,6 +3,8 @@ title: Postgres Backend
 description: "Multi-machine workers and concurrent writes with the PostgreSQL backend."
 ---
 
+import { Callout } from "fumadocs-ui/components/callout";
+
 taskito supports PostgreSQL as an alternative storage backend for production
 deployments that need multi-machine workers or higher write throughput.
 
@@ -43,7 +45,8 @@ queue = Queue(
 | `workers` | `int` | `0` (auto) | Number of worker threads |
 
 All other `Queue` parameters (`default_retry`, `default_timeout`,
-`default_priority`, `result_ttl`) work identically to the SQLite backend.
+`default_priority`, `result_ttl`, `retention`) work identically to the
+SQLite backend.
 
 ## Django integration
 
@@ -76,7 +79,15 @@ All Django settings:
 | `TASKITO_DEFAULT_RETRY` | `3` | Default max retries |
 | `TASKITO_DEFAULT_TIMEOUT` | `300` | Default task timeout in seconds |
 | `TASKITO_DEFAULT_PRIORITY` | `0` | Default task priority |
-| `TASKITO_RESULT_TTL` | `None` | Result TTL in seconds |
+| `TASKITO_RESULT_TTL` | `None` | Legacy queue-wide result TTL in seconds |
+
+<Callout type="info">
+  Retention is on by default: leaving `TASKITO_RESULT_TTL` unset does **not**
+  disable auto-cleanup — the queue applies the recommended per-table
+  retention windows automatically. See [Retention &
+  auto-cleanup](/python/guides/operations/job-management#retention--auto-cleanup)
+  for the defaults and how to opt out.
+</Callout>
 
 ## Schema isolation
 

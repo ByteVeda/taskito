@@ -12,6 +12,13 @@ class Retention:
     Values are in seconds; ``None`` keeps a table forever. A job or DLQ entry
     can still carry its own per-entry ``result_ttl``, which is honored
     independently of these windows.
+
+    Retention is **on by default**: a worker started with no ``retention``
+    applies the recommended windows (archived jobs and metrics 7d, job errors
+    7d, task logs 3d, dead-letter 30d). Pass a fully empty ``Retention()`` to
+    disable the table-wide windows (a per-entry ``result_ttl`` is still honored);
+    pass specific windows to override only those tables (the rest then keep
+    forever).
     """
 
     archived_jobs: int | None = None
