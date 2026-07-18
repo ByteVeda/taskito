@@ -62,6 +62,31 @@ class AdmissionTest {
 
     @Test
     @Timeout(30)
+    void enqueueManyAccountsForBatchSize(@TempDir Path dir) {
+        Task<String> noop = Task.of("noop", String.class);
+        try (Taskito queue = sqlite(dir)) {
+            queue.maxPending("default", 3);
+            // Empty queue, but a batch bigger than the cap is rejected as a whole.
+            assertThrows(
+                    QueueFullException.class, () -> queue.enqueueMany(noop, java.util.List.of("a", "b", "c", "d")));
+            assertEquals(0, queue.countPendingByQueue("default"));
+            // A batch that exactly fits is admitted.
+            queue.enqueueMany(noop, java.util.List.of("a", "b", "c"));
+            assertEquals(3, queue.countPendingByQueue("default"));
+            // Now full: one more is rejected.
+            assertThrows(QueueFullException.class, () -> queue.enqueue(noop, "x"));
+        }
+    }
+
+    @Test
+    void rejectsNegativeCap(@TempDir Path dir) {
+        try (Taskito queue = sqlite(dir)) {
+            assertThrows(IllegalArgumentException.class, () -> queue.maxPending("default", -1));
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void capIsPerQueue(@TempDir Path dir) {
         Task<String> noop = Task.of("noop", String.class);
         try (Taskito queue = sqlite(dir)) {
