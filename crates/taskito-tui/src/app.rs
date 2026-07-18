@@ -62,6 +62,9 @@ pub struct App {
     /// can record them.
     pub hit: RefCell<Hit>,
     last_refresh: Instant,
+    /// A view-data fetch is outstanding; suppresses auto-refresh so a slow
+    /// backend can't accumulate stale requests behind user actions.
+    awaiting: bool,
 }
 
 impl App {
@@ -85,6 +88,7 @@ impl App {
             notice: None,
             hit: RefCell::new(Hit::default()),
             last_refresh: Instant::now(),
+            awaiting: false,
         }
     }
 
@@ -120,6 +124,7 @@ impl App {
     /// clock so auto-refresh and manual refresh share one cadence.
     pub fn request_active(&mut self, tx: &Sender<Cmd>) {
         self.last_refresh = Instant::now();
+        self.awaiting = true;
         let req = match self.view {
             View::Stats => FetchReq::Stats,
             View::Jobs => FetchReq::Jobs(self.job_filter),
@@ -135,6 +140,7 @@ impl App {
     pub fn maybe_auto_refresh(&mut self, tx: &Sender<Cmd>) {
         if matches!(self.input, InputMode::Normal)
             && !self.detail_open
+            && !self.awaiting
             && self.last_refresh.elapsed() >= self.refresh
         {
             self.request_active(tx);
@@ -144,6 +150,18 @@ impl App {
     /// Apply a worker message. Returns `true` when a follow-up list refresh is
     /// warranted (after a successful mutation).
     pub fn apply(&mut self, msg: Msg) -> bool {
+        // A completed view-data fetch (or a failed one) clears the in-flight flag.
+        if matches!(
+            msg,
+            Msg::Stats(_)
+                | Msg::Jobs(_)
+                | Msg::Dead(_)
+                | Msg::Workers(_)
+                | Msg::Runs(_)
+                | Msg::Error(_)
+        ) {
+            self.awaiting = false;
+        }
         match msg {
             Msg::Stats(s) => self.stats = s,
             Msg::Jobs(v) => self.jobs = v,
@@ -515,5 +533,21 @@ mod tests {
         assert_eq!(app.selected, 1);
         app.on_mouse(scroll(MouseEventKind::ScrollUp), &tx);
         assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn auto_refresh_coalesces_while_awaiting() {
+        let (tx, rx) = mpsc::channel();
+        let mut app = App::new(Duration::from_millis(0));
+        app.view = View::Jobs;
+
+        app.request_active(&tx); // one fetch, marks awaiting
+        app.maybe_auto_refresh(&tx); // suppressed while awaiting
+        app.maybe_auto_refresh(&tx); // still suppressed
+        assert_eq!(rx.try_iter().count(), 1);
+
+        app.apply(Msg::Jobs(Vec::new())); // response clears awaiting
+        app.maybe_auto_refresh(&tx); // now allowed
+        assert_eq!(rx.try_iter().count(), 1);
     }
 }
