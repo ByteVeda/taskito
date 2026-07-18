@@ -59,6 +59,25 @@ it("enqueueMany is all-or-nothing against the cap", () => {
   expect(queue.countPendingByQueue("default")).toBe(3);
 });
 
+it("enqueueMany accounts for the batch size", () => {
+  const queue = newQueue();
+  queue.task("noop", () => undefined);
+  queue.configureQueue("default", { maxPending: 3 });
+  // Empty queue, but a batch bigger than the cap is rejected as a whole.
+  expect(() => queue.enqueueMany("noop", [{}, {}, {}, {}])).toThrow(QueueFullError);
+  expect(queue.countPendingByQueue("default")).toBe(0);
+  // A batch that exactly fits is admitted.
+  queue.enqueueMany("noop", [{}, {}, {}]);
+  expect(queue.countPendingByQueue("default")).toBe(3);
+  // Now full: one more is rejected.
+  expect(() => queue.enqueue("noop")).toThrow(QueueFullError);
+});
+
+it("configureQueue rejects a negative cap", () => {
+  const queue = newQueue();
+  expect(() => queue.configureQueue("default", { maxPending: -1 })).toThrow(RangeError);
+});
+
 it("QueueFullError is a QueueError", () => {
   const err = new QueueFullError("q", 5, 5);
   expect(err).toBeInstanceOf(QueueError);

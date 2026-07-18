@@ -387,6 +387,11 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
 
   /** Set per-queue concurrency / rate-limit applied when a worker runs. */
   configureQueue(name: string, limits: QueueLimits): void {
+    // A negative cap would make `pending + incoming > cap` always true and
+    // permanently reject every enqueue — reject it at configuration time.
+    if (limits.maxPending !== undefined && limits.maxPending < 0) {
+      throw new RangeError("maxPending must be non-negative");
+    }
     this.queueLimits.set(name, limits);
   }
 
@@ -448,15 +453,17 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
 
   /**
    * Enforce the opt-in `maxPending` admission cap for a queue (set via
-   * {@link Queue.configureQueue}). Throws {@link QueueFullError} once the
-   * queue's pending backlog reaches its cap; a no-op (and no query) for
-   * uncapped queues. Non-atomic count-then-insert, like the rate limiter.
+   * {@link Queue.configureQueue}). Throws {@link QueueFullError} when admitting
+   * `incoming` jobs would push the queue's pending backlog past its cap;
+   * `incoming` is the batch size, so a batch is rejected as a whole rather than
+   * overshooting the cap by its full size. A no-op (and no query) for uncapped
+   * queues. Non-atomic count-then-insert, like the rate limiter.
    */
-  private rejectIfQueueFull(queue: string): void {
+  private rejectIfQueueFull(queue: string, incoming = 1): void {
     const cap = this.queueLimits.get(queue)?.maxPending;
     if (cap === undefined) return;
     const pending = this.native.countPendingByQueue(queue);
-    if (pending >= cap) {
+    if (pending + incoming > cap) {
       throw new QueueFullError(queue, pending, cap);
     }
   }
@@ -470,9 +477,16 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     name: Name,
     jobs: ReadonlyArray<{ args?: Parameters<TTasks[Name]>; options?: EnqueueOptions }>,
   ): string[] {
-    // All-or-nothing: if any distinct target queue is at its cap, reject the batch.
-    for (const queue of new Set(jobs.map((job) => job.options?.queue ?? "default"))) {
-      this.rejectIfQueueFull(queue);
+    // All-or-nothing: reject the batch if admitting it would push a target queue
+    // past its cap. Count rows per queue so the check accounts for the whole
+    // batch rather than overshooting the cap by its size.
+    const perQueue = new Map<string, number>();
+    for (const job of jobs) {
+      const queue = job.options?.queue ?? "default";
+      perQueue.set(queue, (perQueue.get(queue) ?? 0) + 1);
+    }
+    for (const [queue, incoming] of perQueue) {
+      this.rejectIfQueueFull(queue, incoming);
     }
     const prepared = jobs.map((job) => {
       const { payload, options } = this.prepareEnqueue(name, job.args, job.options, {
