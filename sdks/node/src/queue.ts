@@ -402,7 +402,12 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
         }
       }
     }
-    this.queueLimits.set(name, limits);
+    // Snapshot after validating: `limits` is caller-owned, so store a copy (with
+    // a copied `codel`) so a later mutation can't slip past the checks above.
+    this.queueLimits.set(name, {
+      ...limits,
+      codel: limits.codel === undefined ? undefined : { ...limits.codel },
+    });
   }
 
   /** Register middleware (execution + outcome hooks). Runs in registration order. */
