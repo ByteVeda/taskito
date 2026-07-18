@@ -58,3 +58,10 @@ def test_retention_map_omits_none_fields() -> None:
         "archived_jobs": 7,
         "task_logs": 3,
     }
+
+
+def test_empty_retention_is_the_opt_out_signal() -> None:
+    # Retention is on by default, so opting out is passing an empty Retention():
+    # it maps to an empty window set, which the native layer reads as "disable"
+    # rather than the omitted case that applies the recommended defaults.
+    assert Retention()._as_map() == {}
