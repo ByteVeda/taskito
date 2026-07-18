@@ -169,11 +169,18 @@ jobs:
       - name: Check for a crates.io baseline
         id: baseline
         run: |
-          if curl -sfo /dev/null "https://crates.io/api/v1/crates/taskito-core"; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          # Fail closed: only an explicit 404 means "no baseline" — a transient
+          # registry or network error must not silently skip the semver check.
+          if ! status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            "https://crates.io/api/v1/crates/taskito-core")"; then
+            echo "Failed to query crates.io" >&2
+            exit 1
           fi
+          case "$status" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unexpected crates.io response: HTTP $status" >&2; exit 1 ;;
+          esac
 
       - name: Semver check against crates.io baseline
         if: steps.baseline.outputs.exists == 'true'
