@@ -8,8 +8,7 @@ use std::thread::{self, JoinHandle};
 use taskito_core::JobStatus;
 
 use crate::source::{
-    DataSource, DeadRow, JobDetail, JobRow, StatsSnapshot, WorkerView, WorkflowNodeRow,
-    WorkflowRunRow,
+    DagNode, DataSource, DeadRow, JobDetail, JobRow, StatsSnapshot, WorkerView, WorkflowRunRow,
 };
 
 /// A data request for the active view.
@@ -20,7 +19,10 @@ pub enum FetchReq {
     Workers,
     Runs,
     JobDetail(String),
-    WorkflowNodes(String),
+    WorkflowDag {
+        run_id: String,
+        definition_id: String,
+    },
 }
 
 /// A mutating operation, carrying enough context to describe itself in the
@@ -73,7 +75,7 @@ pub enum Msg {
     Workers(Vec<WorkerView>),
     Runs(Vec<WorkflowRunRow>),
     JobDetail(Option<JobDetail>),
-    WorkflowNodes(String, Vec<WorkflowNodeRow>),
+    WorkflowDag(Vec<DagNode>),
     ActionOk(String),
     Error(String),
 }
@@ -104,9 +106,12 @@ fn handle_fetch(source: &dyn DataSource, req: FetchReq, tx: &Sender<Msg>) {
         FetchReq::Workers => source.workers().map(Msg::Workers),
         FetchReq::Runs => source.workflow_runs(200).map(Msg::Runs),
         FetchReq::JobDetail(id) => source.job_detail(&id).map(Msg::JobDetail),
-        FetchReq::WorkflowNodes(run_id) => source
-            .workflow_nodes(&run_id)
-            .map(|nodes| Msg::WorkflowNodes(run_id, nodes)),
+        FetchReq::WorkflowDag {
+            run_id,
+            definition_id,
+        } => source
+            .workflow_dag(&run_id, &definition_id)
+            .map(Msg::WorkflowDag),
     };
     let _ = tx.send(msg.unwrap_or_else(|e| Msg::Error(e.to_string())));
 }

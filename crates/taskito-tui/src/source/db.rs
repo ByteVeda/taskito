@@ -2,15 +2,17 @@
 //! `taskito-core` `Storage` trait (and `taskito-workflows` `WorkflowStorage`)
 //! on a connected [`Backend`]. No server, no PyO3.
 
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Result};
 
 use taskito_core::job::now_millis;
 use taskito_core::{Job, JobStatus, NewJob, Storage};
-use taskito_workflows::WorkflowStorage;
+use taskito_workflows::{topological_order, TopologicalNode, WorkflowNodeStatus, WorkflowStorage};
 
 use super::{
-    DataSource, DeadRow, JobDetail, JobErrorEntry, JobRow, LogEntry, StatsSnapshot, WorkerView,
-    WorkflowNodeRow, WorkflowRunRow,
+    DagNode, DataSource, DeadRow, JobDetail, JobErrorEntry, JobRow, LogEntry, StatsSnapshot,
+    WorkerView, WorkflowRunRow,
 };
 use crate::backend::Backend;
 
@@ -132,19 +134,25 @@ impl DataSource for DbSource {
             .collect())
     }
 
-    fn workflow_nodes(&self, run_id: &str) -> Result<Vec<WorkflowNodeRow>> {
-        let nodes = self.be.workflows.get_workflow_nodes(run_id)?;
-        Ok(nodes
+    fn workflow_dag(&self, run_id: &str, definition_id: &str) -> Result<Vec<DagNode>> {
+        // Live per-node status/error, keyed by node name.
+        let statuses: NodeStatuses = self
+            .be
+            .workflows
+            .get_workflow_nodes(run_id)?
             .into_iter()
-            .map(|n| WorkflowNodeRow {
-                node_name: n.node_name,
-                status: n.status,
-                job_id: n.job_id,
-                error: n.error,
-                started_at: n.started_at,
-                completed_at: n.completed_at,
-            })
-            .collect())
+            .map(|n| (n.node_name, (Some(n.status), n.error)))
+            .collect();
+
+        // Edge structure comes from the definition's DAG, in topological order.
+        let def = self
+            .be
+            .workflows
+            .get_workflow_definition_by_id(definition_id)?
+            .ok_or_else(|| anyhow!("workflow definition {definition_id} not found"))?;
+        let topo = topological_order(&def.dag_data)?;
+
+        Ok(assemble_dag(topo, &statuses))
     }
 
     fn cancel(&self, id: &str, running: bool) -> Result<bool> {
@@ -214,6 +222,37 @@ impl DataSource for DbSource {
     fn resume_queue(&self, queue: &str) -> Result<()> {
         Ok(self.be.storage.resume_queue(queue)?)
     }
+}
+
+/// Per-node `(status, error)` keyed by node name. `status` is `None` until the
+/// tracker materializes the node (i.e. it is still effectively pending).
+type NodeStatuses = HashMap<String, (Option<WorkflowNodeStatus>, Option<String>)>;
+
+/// Merge topologically-ordered DAG nodes with their live status and compute each
+/// node's depth (longest path from a root). Pure — no storage — so it is unit
+/// testable. Predecessors always precede a node in topological order, so their
+/// depth is known by the time we reach it.
+fn assemble_dag(topo: Vec<TopologicalNode>, statuses: &NodeStatuses) -> Vec<DagNode> {
+    let mut depth: HashMap<String, usize> = HashMap::new();
+    let mut out = Vec::with_capacity(topo.len());
+    for tn in topo {
+        let d = tn
+            .predecessors
+            .iter()
+            .map(|p| depth.get(p).copied().unwrap_or(0) + 1)
+            .max()
+            .unwrap_or(0);
+        depth.insert(tn.name.clone(), d);
+        let (status, error) = statuses.get(&tn.name).cloned().unwrap_or((None, None));
+        out.push(DagNode {
+            status,
+            error,
+            predecessors: tn.predecessors,
+            depth: d,
+            name: tn.name,
+        });
+    }
+    out
 }
 
 fn job_to_row(job: Job) -> JobRow {
@@ -331,6 +370,49 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}-wal", path.display()));
         let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
+
+    fn tn(name: &str, preds: &[&str]) -> TopologicalNode {
+        TopologicalNode {
+            name: name.to_string(),
+            predecessors: preds.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn assemble_dag_orders_by_depth_and_carries_edges() {
+        // Diamond: extract → {transform_a, transform_b} → load.
+        let topo = vec![
+            tn("extract", &[]),
+            tn("transform_a", &["extract"]),
+            tn("transform_b", &["extract"]),
+            tn("load", &["transform_a", "transform_b"]),
+        ];
+        let mut statuses: NodeStatuses = HashMap::new();
+        statuses.insert(
+            "extract".into(),
+            (Some(WorkflowNodeStatus::Completed), None),
+        );
+        statuses.insert(
+            "transform_a".into(),
+            (Some(WorkflowNodeStatus::Running), None),
+        );
+
+        let dag = assemble_dag(topo, &statuses);
+
+        let shape: Vec<_> = dag.iter().map(|n| (n.name.as_str(), n.depth)).collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("extract", 0),
+                ("transform_a", 1),
+                ("transform_b", 1),
+                ("load", 2),
+            ]
+        );
+        assert_eq!(dag[3].predecessors, vec!["transform_a", "transform_b"]);
+        assert_eq!(dag[0].status, Some(WorkflowNodeStatus::Completed));
+        assert_eq!(dag[3].status, None); // not yet materialized → pending
     }
 
     #[test]

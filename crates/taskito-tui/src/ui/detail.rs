@@ -127,12 +127,11 @@ fn workflow_lines(app: &App) -> Vec<Line<'static>> {
     if app.loading_detail {
         return vec![Line::from("loading…")];
     }
-    if app.wf_nodes.is_empty() {
+    if app.wf_dag.is_empty() {
         return vec![Line::from("no nodes")];
     }
-    let run = app.selected_run();
     let mut lines = Vec::new();
-    if let Some(r) = run {
+    if let Some(r) = app.selected_run() {
         lines.push(field("run", r.id.clone()));
         lines.push(field("definition", r.definition_id.clone()));
         lines.push(field("started", fmt_age_opt(r.started_at)));
@@ -141,36 +140,36 @@ fn workflow_lines(app: &App) -> Vec<Line<'static>> {
         }
         lines.push(Line::from(""));
     }
-    lines.push(section("Nodes"));
-    for n in &app.wf_nodes {
+    lines.push(section("DAG"));
+    // Nodes are in topological order; indent by depth and mark edges so the
+    // dependency structure reads as a graph.
+    for n in &app.wf_dag {
+        let indent = "  ".repeat(n.depth);
+        let marker = if n.depth == 0 { "●" } else { "└▶" };
+        let status = n.status.map(|s| s.as_str()).unwrap_or("pending");
+        let style = n
+            .status
+            .map(wf_node_style)
+            .unwrap_or_else(|| Style::default().fg(ratatui::style::Color::Gray));
+
         let mut spans = vec![
+            Span::raw(format!("{indent}{marker} ")),
             Span::styled(
-                format!("{:<10}", n.status.as_str()),
-                wf_node_style(n.status),
+                format!("{:<14}", n.name),
+                Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(n.node_name.clone()),
+            Span::styled(format!("{status:<11}"), style),
         ];
-        if let Some(job) = &n.job_id {
+        if !n.predecessors.is_empty() {
             spans.push(Span::styled(
-                format!("  job {}", job.chars().take(8).collect::<String>()),
-                Style::default().fg(ratatui::style::Color::DarkGray),
-            ));
-        }
-        let timing = match (n.started_at, n.completed_at) {
-            (Some(_), Some(c)) => format!("  done {}", fmt_age(c)),
-            (Some(s), None) => format!("  started {}", fmt_age(s)),
-            _ => String::new(),
-        };
-        if !timing.is_empty() {
-            spans.push(Span::styled(
-                timing,
+                format!("after {}", n.predecessors.join(", ")),
                 Style::default().fg(ratatui::style::Color::DarkGray),
             ));
         }
         lines.push(Line::from(spans));
         if let Some(err) = &n.error {
             lines.push(Line::from(Span::styled(
-                format!("    {err}"),
+                format!("{indent}   {err}"),
                 Style::default().fg(ratatui::style::Color::Red),
             )));
         }

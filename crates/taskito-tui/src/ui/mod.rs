@@ -97,7 +97,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             "j/k move · Enter detail · T retry · d delete · P purge-all · ? help · q quit"
         }
         View::Workers => "1-5/Tab view · j/k move · r refresh · ? help · q quit",
-        View::Workflows => "j/k move · Enter nodes · r refresh · ? help · q quit",
+        View::Workflows => "j/k move · Enter DAG · r refresh · ? help · q quit",
     };
     let notice = app
         .notice

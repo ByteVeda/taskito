@@ -98,15 +98,16 @@ pub struct WorkflowRunRow {
     pub parent_run_id: Option<String>,
 }
 
-/// A node within a workflow run.
+/// A node in a workflow run's DAG, carrying its direct predecessors (edges) and
+/// its depth (longest path from a root) so the detail pane can draw the graph.
 #[derive(Clone)]
-pub struct WorkflowNodeRow {
-    pub node_name: String,
-    pub status: WorkflowNodeStatus,
-    pub job_id: Option<String>,
+pub struct DagNode {
+    pub name: String,
+    /// `None` until the tracker materializes the node (treat as pending).
+    pub status: Option<WorkflowNodeStatus>,
+    pub predecessors: Vec<String>,
+    pub depth: usize,
     pub error: Option<String>,
-    pub started_at: Option<i64>,
-    pub completed_at: Option<i64>,
 }
 
 /// Overview counts: whole-queue totals, per-queue breakdown, and paused set.
@@ -147,7 +148,9 @@ pub trait DataSource: Send {
     fn dead_letters(&self, limit: i64) -> Result<Vec<DeadRow>>;
     fn workers(&self) -> Result<Vec<WorkerView>>;
     fn workflow_runs(&self, limit: i64) -> Result<Vec<WorkflowRunRow>>;
-    fn workflow_nodes(&self, run_id: &str) -> Result<Vec<WorkflowNodeRow>>;
+    /// The run's DAG: nodes in topological order with predecessors, depth, and
+    /// live status. `definition_id` supplies the edge structure.
+    fn workflow_dag(&self, run_id: &str, definition_id: &str) -> Result<Vec<DagNode>>;
 
     // ── Actions ──────────────────────────────────────────────────
     /// Cancel a job. `running` selects the cooperative path (`request_cancel`)

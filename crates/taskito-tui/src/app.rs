@@ -10,7 +10,7 @@ use taskito_core::JobStatus;
 
 use crate::event::{Cmd, FetchReq, Msg, PendingAction};
 use crate::source::{
-    DeadRow, JobDetail, JobRow, StatsSnapshot, View, WorkerView, WorkflowNodeRow, WorkflowRunRow,
+    DagNode, DeadRow, JobDetail, JobRow, StatsSnapshot, View, WorkerView, WorkflowRunRow,
 };
 
 pub enum InputMode {
@@ -41,7 +41,7 @@ pub struct App {
     pub detail_open: bool,
     pub loading_detail: bool,
     pub job_detail: Option<JobDetail>,
-    pub wf_nodes: Vec<WorkflowNodeRow>,
+    pub wf_dag: Vec<DagNode>,
 
     pub notice: Option<Notice>,
     last_refresh: Instant,
@@ -64,7 +64,7 @@ impl App {
             detail_open: false,
             loading_detail: false,
             job_detail: None,
-            wf_nodes: Vec::new(),
+            wf_dag: Vec::new(),
             notice: None,
             last_refresh: Instant::now(),
         }
@@ -136,8 +136,8 @@ impl App {
                 self.job_detail = d;
                 self.loading_detail = false;
             }
-            Msg::WorkflowNodes(_run, nodes) => {
-                self.wf_nodes = nodes;
+            Msg::WorkflowDag(dag) => {
+                self.wf_dag = dag;
                 self.loading_detail = false;
             }
             Msg::ActionOk(text) => {
@@ -315,11 +315,17 @@ impl App {
                 }
             }
             View::Workflows => {
-                if let Some(id) = self.selected_run().map(|r| r.id.clone()) {
-                    self.wf_nodes = Vec::new();
+                if let Some((run_id, definition_id)) = self
+                    .selected_run()
+                    .map(|r| (r.id.clone(), r.definition_id.clone()))
+                {
+                    self.wf_dag = Vec::new();
                     self.loading_detail = true;
                     self.detail_open = true;
-                    let _ = tx.send(Cmd::Fetch(FetchReq::WorkflowNodes(id)));
+                    let _ = tx.send(Cmd::Fetch(FetchReq::WorkflowDag {
+                        run_id,
+                        definition_id,
+                    }));
                 }
             }
             View::DeadLetters => {
