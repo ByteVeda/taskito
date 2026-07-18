@@ -118,7 +118,7 @@ impl crate::storage::notify::StorageNotifier for RedisStorage {
 }
 
 fn map_err(e: redis::RedisError) -> QueueError {
-    QueueError::Other(e.to_string())
+    QueueError::Redis(e)
 }
 
 /// Batch size for the bounded history scans (SSCAN/ZSCAN COUNT hint and the

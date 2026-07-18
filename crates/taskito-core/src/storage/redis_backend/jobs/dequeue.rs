@@ -2,7 +2,7 @@
 
 use redis::Commands;
 
-use crate::error::{QueueError, Result};
+use crate::error::Result;
 use crate::job::{Job, JobStatus};
 use crate::storage::redis_backend::{map_err, RedisStorage};
 
@@ -36,7 +36,7 @@ impl RedisStorage {
         job: &Job,
         queue_key: &str,
     ) -> Result<bool> {
-        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(job)?;
         let job_key = self.key(&["job", &job.id]);
         let pending_status =
             self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);
@@ -88,8 +88,7 @@ impl RedisStorage {
                 }
             };
 
-            let mut job: Job =
-                serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+            let mut job: Job = serde_json::from_str(&data)?;
 
             // Must be pending and scheduled_at <= now
             if job.status != JobStatus::Pending || job.scheduled_at > now {
@@ -232,8 +231,7 @@ impl RedisStorage {
                 }
             };
 
-            let mut job: Job =
-                serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+            let mut job: Job = serde_json::from_str(&data)?;
 
             // Must be pending and scheduled_at <= now
             if job.status != JobStatus::Pending || job.scheduled_at > now {

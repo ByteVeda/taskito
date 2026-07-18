@@ -1,7 +1,7 @@
 use redis::Commands;
 
 use super::{map_err, RedisStorage};
-use crate::error::{QueueError, Result};
+use crate::error::Result;
 use crate::storage::records::CircuitBreakerState;
 
 impl RedisStorage {
@@ -12,8 +12,7 @@ impl RedisStorage {
         let data: Option<String> = conn.get(&cb_key).map_err(map_err)?;
         match data {
             Some(d) => {
-                let row: CircuitBreakerState =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let row: CircuitBreakerState = serde_json::from_str(&d)?;
                 Ok(Some(row))
             }
             None => Ok(None),
@@ -25,7 +24,7 @@ impl RedisStorage {
         let cb_key = self.key(&["cb", &row.task_name]);
         let cb_all = self.key(&["cb", "all"]);
 
-        let json = serde_json::to_string(row).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(row)?;
 
         let pipe = &mut redis::pipe();
         pipe.set(&cb_key, &json);
@@ -45,8 +44,7 @@ impl RedisStorage {
             let cb_key = self.key(&["cb", &name]);
             let data: Option<String> = conn.get(&cb_key).map_err(map_err)?;
             if let Some(d) = data {
-                let row: CircuitBreakerState =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let row: CircuitBreakerState = serde_json::from_str(&d)?;
                 rows.push(row);
             }
         }

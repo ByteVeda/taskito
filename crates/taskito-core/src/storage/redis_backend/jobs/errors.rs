@@ -2,7 +2,7 @@
 
 use redis::Commands;
 
-use crate::error::{QueueError, Result};
+use crate::error::Result;
 use crate::job::now_millis;
 use crate::storage::records::JobError;
 use crate::storage::redis_backend::{map_err, RedisStorage};
@@ -20,7 +20,7 @@ impl RedisStorage {
             error: error.to_string(),
             failed_at: now,
         };
-        let json = serde_json::to_string(&row).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&row)?;
 
         let errors_key = self.key(&["job_errors", job_id]);
         conn.rpush::<_, _, ()>(&errors_key, &json)
@@ -36,8 +36,7 @@ impl RedisStorage {
 
         let mut rows = Vec::new();
         for entry in entries {
-            let row: JobError =
-                serde_json::from_str(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+            let row: JobError = serde_json::from_str(&entry)?;
             rows.push(row);
         }
         rows.sort_by_key(|r| r.attempt);

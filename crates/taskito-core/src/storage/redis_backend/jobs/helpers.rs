@@ -29,8 +29,7 @@ impl RedisStorage {
         let data: Option<String> = conn.get(&job_key).map_err(map_err)?;
         match data {
             Some(d) => {
-                let job: Job =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let job: Job = serde_json::from_str(&d)?;
                 Ok(Some(job))
             }
             None => Ok(None),
@@ -46,8 +45,7 @@ impl RedisStorage {
         let data: Option<String> = conn.get(&archived_key).map_err(map_err)?;
         match data {
             Some(d) => {
-                let job: Job =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let job: Job = serde_json::from_str(&d)?;
                 Ok(Some(job))
             }
             None => Ok(None),
@@ -71,7 +69,7 @@ impl RedisStorage {
         job: &Job,
         old_status: JobStatus,
     ) -> Result<()> {
-        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(job)?;
         let job_key = self.key(&["job", &job.id]);
         let old_status_key = self.key(&["jobs", "status", &(old_status as i32).to_string()]);
         let new_status_key = self.key(&["jobs", "status", &(job.status as i32).to_string()]);
@@ -104,7 +102,7 @@ impl RedisStorage {
         job: &Job,
         old_status: JobStatus,
     ) -> Result<()> {
-        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(job)?;
         let job_key = self.key(&["job", &job.id]);
         let old_status_key = self.key(&["jobs", "status", &(old_status as i32).to_string()]);
         let pending_status_key =
@@ -217,7 +215,7 @@ impl RedisStorage {
         job: &Job,
         old_status: JobStatus,
     ) -> Result<()> {
-        let job_json = serde_json::to_string(job).map_err(|e| QueueError::Other(e.to_string()))?;
+        let job_json = serde_json::to_string(job)?;
         let pipe = &mut redis::pipe();
         pipe.atomic();
         self.push_archive_ops(pipe, job, old_status, &job_json);

@@ -2,7 +2,7 @@ use redis::Commands;
 use serde::{Deserialize, Serialize};
 
 use super::{map_err, RedisStorage, SCAN_BATCH};
-use crate::error::{QueueError, Result};
+use crate::error::Result;
 use crate::job::now_millis;
 use crate::storage::records::TaskLogEntry;
 
@@ -54,7 +54,7 @@ impl RedisStorage {
             logged_at: now,
         };
 
-        let json = serde_json::to_string(&entry).map_err(|e| QueueError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&entry)?;
 
         let log_key = self.key(&["log", &id]);
         let by_job_key = self.key(&["logs", "by_job", job_id]);
@@ -82,8 +82,7 @@ impl RedisStorage {
             let log_key = self.key(&["log", &id]);
             let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: LogEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: LogEntry = serde_json::from_str(&d)?;
                 rows.push(TaskLogEntry::from(entry));
             }
         }
@@ -116,8 +115,7 @@ impl RedisStorage {
             let log_key = self.key(&["log", &id]);
             let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
             if let Some(d) = data {
-                let entry: LogEntry =
-                    serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: LogEntry = serde_json::from_str(&d)?;
                 rows.push(TaskLogEntry::from(entry));
             }
         }
@@ -154,8 +152,7 @@ impl RedisStorage {
                 let log_key = self.key(&["log", &id]);
                 let data: Option<String> = conn.get(&log_key).map_err(map_err)?;
                 if let Some(d) = data {
-                    let entry: LogEntry =
-                        serde_json::from_str(&d).map_err(|e| QueueError::Other(e.to_string()))?;
+                    let entry: LogEntry = serde_json::from_str(&d)?;
                     rows.push(TaskLogEntry::from(entry));
                 }
             }
@@ -187,8 +184,7 @@ impl RedisStorage {
             let entries: Vec<Option<String>> = pipe.query(&mut conn).map_err(map_err)?;
 
             for data in entries.into_iter().flatten() {
-                let entry: LogEntry =
-                    serde_json::from_str(&data).map_err(|e| QueueError::Other(e.to_string()))?;
+                let entry: LogEntry = serde_json::from_str(&data)?;
 
                 if task_name.is_some_and(|n| entry.task_name != n) {
                     continue;
