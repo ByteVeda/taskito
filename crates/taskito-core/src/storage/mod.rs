@@ -835,6 +835,12 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<i64> {
                 self.count_running_by_task(task_name)
             }
+            fn count_pending_by_queue(
+                &self,
+                queue_name: &str,
+            ) -> $crate::error::Result<i64> {
+                self.count_pending_by_queue(queue_name)
+            }
             fn stats_by_queue(
                 &self,
                 queue_name: &str,
@@ -1443,6 +1449,9 @@ impl Storage for StorageBackend {
     }
     fn count_running_by_task(&self, task_name: &str) -> Result<i64> {
         delegate!(self, count_running_by_task, task_name)
+    }
+    fn count_pending_by_queue(&self, queue_name: &str) -> Result<i64> {
+        delegate!(self, count_pending_by_queue, queue_name)
     }
     fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
         delegate!(self, stats_by_queue, queue_name)

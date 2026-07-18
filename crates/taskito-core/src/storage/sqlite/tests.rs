@@ -807,6 +807,27 @@ fn test_count_running_by_task() {
 }
 
 #[test]
+fn test_count_pending_by_queue() {
+    let storage = test_storage();
+    assert_eq!(storage.count_pending_by_queue("default").unwrap(), 0);
+
+    storage.enqueue(make_job("task_a")).unwrap();
+    storage.enqueue(make_job("task_a")).unwrap();
+    let mut other = make_job("task_b");
+    other.queue = "other".to_string();
+    storage.enqueue(other).unwrap();
+
+    assert_eq!(storage.count_pending_by_queue("default").unwrap(), 2);
+    assert_eq!(storage.count_pending_by_queue("other").unwrap(), 1);
+    assert_eq!(storage.count_pending_by_queue("empty").unwrap(), 0);
+
+    // Dequeue drops the job out of Pending → count decreases.
+    let now = now_millis() + 1000;
+    storage.dequeue("default", now, None).unwrap().unwrap();
+    assert_eq!(storage.count_pending_by_queue("default").unwrap(), 1);
+}
+
+#[test]
 fn test_enqueue_rejects_missing_dependency() {
     let storage = test_storage();
 

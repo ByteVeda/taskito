@@ -173,6 +173,8 @@ fn test_stats_by_queue_and_task(s: &impl Storage) {
     assert_eq!(st.pending, 3);
     assert_eq!(st.running, 0);
     assert_eq!(s.count_running_by_task(task).unwrap(), 0);
+    // Lean pending-count primitive agrees with the full breakdown.
+    assert_eq!(s.count_pending_by_queue(q).unwrap(), 3);
 
     // Run two of them.
     let d1 = s.dequeue(q, now_millis() + 1000, None).unwrap().unwrap();
@@ -181,6 +183,7 @@ fn test_stats_by_queue_and_task(s: &impl Storage) {
     let st = s.stats_by_queue(q).unwrap();
     assert_eq!(st.running, 2);
     assert_eq!(st.pending, 1);
+    assert_eq!(s.count_pending_by_queue(q).unwrap(), 1);
 
     // Complete one — running drops, completed rises.
     s.complete(&d1.id, None).unwrap();

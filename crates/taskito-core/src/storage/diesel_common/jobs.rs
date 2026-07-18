@@ -1976,6 +1976,19 @@ macro_rules! impl_diesel_job_ops {
                 Ok(count)
             }
 
+            /// Count pending jobs on a queue (for the `max_pending` admission cap).
+            pub fn count_pending_by_queue(&self, queue_name: &str) -> Result<i64> {
+                let mut conn = self.conn()?;
+
+                let count: i64 = jobs::table
+                    .filter(jobs::queue.eq(queue_name))
+                    .filter(jobs::status.eq(JobStatus::Pending as i32))
+                    .count()
+                    .get_result(&mut conn)?;
+
+                Ok(count)
+            }
+
             /// Purge job errors older than the given timestamp.
             ///
             /// Deletes in bounded batches, each its own txn — see
