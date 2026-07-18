@@ -1110,7 +1110,7 @@ final class DefaultTaskito implements Taskito {
         // start() are registered under the started worker's id.
         return Worker.builder(backend, serializer, middleware, resources.forWorker(), codecs)
                 .subscriptions(subscriptions)
-                .queueConfigs(encodeQueueConfigs());
+                .queueConfigs(this::encodeQueueConfigs);
     }
 
     @Override

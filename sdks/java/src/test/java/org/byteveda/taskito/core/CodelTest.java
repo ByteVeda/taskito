@@ -79,4 +79,46 @@ class CodelTest {
             }
         }
     }
+
+    @Test
+    @Timeout(60)
+    void codelConfiguredAfterBuilderIsStillApplied(@TempDir Path dir) throws Exception {
+        try (Taskito queue =
+                Taskito.builder().url(dir.resolve("late.db").toString()).open()) {
+            Task<String> slow = Task.of("slow", String.class);
+            int total = 20;
+            for (int i = 0; i < total; i++) {
+                queue.enqueue(slow, "x");
+            }
+
+            // Obtain the builder BEFORE configuring CoDel, then configure it — the
+            // late-bound queue-config source must pick this up at start().
+            Worker.Builder builder = queue.worker().concurrency(1).batchSize(1).handle(slow, payload -> {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return null;
+            });
+            queue.codel("default", 1, 30);
+
+            try (Worker worker = builder.start()) {
+                long deadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
+                long codelDead = 0;
+                QueueStats stats = queue.stats();
+                while (System.nanoTime() < deadline) {
+                    codelDead = queue.listDead(100, 0).stream()
+                            .filter(d -> d.error != null && d.error.startsWith("codel:"))
+                            .count();
+                    stats = queue.stats();
+                    if (stats.completed + stats.dead == total && codelDead >= 1) {
+                        break;
+                    }
+                    Thread.sleep(100);
+                }
+                assertTrue(codelDead >= 1, "CoDel set after the builder was obtained must still apply");
+            }
+        }
+    }
 }
