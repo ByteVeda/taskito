@@ -67,8 +67,11 @@ pub enum Msg {
     Dead(Vec<DeadRow>),
     Workers(Vec<WorkerView>),
     Runs(Vec<WorkflowRunRow>),
-    JobDetail(Option<JobDetail>),
-    WorkflowDag(Vec<DagNode>),
+    /// Detail responses echo the requested id so the UI can drop stale results
+    /// for a selection the user has already moved off. `JobDetail` is boxed —
+    /// it dwarfs the other variants.
+    JobDetail(String, Option<Box<JobDetail>>),
+    WorkflowDag(String, Vec<DagNode>),
     ActionOk(String),
     Error(String),
 }
@@ -98,13 +101,15 @@ fn handle_fetch(source: &dyn DataSource, req: FetchReq, tx: &Sender<Msg>) {
         FetchReq::Dead => source.dead_letters(200).map(Msg::Dead),
         FetchReq::Workers => source.workers().map(Msg::Workers),
         FetchReq::Runs => source.workflow_runs(200).map(Msg::Runs),
-        FetchReq::JobDetail(id) => source.job_detail(&id).map(Msg::JobDetail),
+        FetchReq::JobDetail(id) => source
+            .job_detail(&id)
+            .map(|d| Msg::JobDetail(id, d.map(Box::new))),
         FetchReq::WorkflowDag {
             run_id,
             definition_id,
         } => source
             .workflow_dag(&run_id, &definition_id)
-            .map(Msg::WorkflowDag),
+            .map(|dag| Msg::WorkflowDag(run_id, dag)),
     };
     let _ = tx.send(msg.unwrap_or_else(|e| Msg::Error(e.to_string())));
 }

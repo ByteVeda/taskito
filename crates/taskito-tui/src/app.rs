@@ -56,6 +56,9 @@ pub struct App {
     pub loading_detail: bool,
     pub job_detail: Option<JobDetail>,
     pub wf_dag: Vec<DagNode>,
+    /// Id (job or run) the open detail was requested for, so late responses for
+    /// a since-changed selection are dropped.
+    detail_id: Option<String>,
 
     pub notice: Option<Notice>,
     /// Clickable regions from the last render; interior-mutable so `draw(&App)`
@@ -85,6 +88,7 @@ impl App {
             loading_detail: false,
             job_detail: None,
             wf_dag: Vec::new(),
+            detail_id: None,
             notice: None,
             hit: RefCell::new(Hit::default()),
             last_refresh: Instant::now(),
@@ -168,13 +172,17 @@ impl App {
             Msg::Dead(v) => self.dead = v,
             Msg::Workers(v) => self.workers = v,
             Msg::Runs(v) => self.runs = v,
-            Msg::JobDetail(d) => {
-                self.job_detail = d;
-                self.loading_detail = false;
+            Msg::JobDetail(id, d) => {
+                if self.detail_open && self.detail_id.as_deref() == Some(id.as_str()) {
+                    self.job_detail = d.map(|b| *b);
+                    self.loading_detail = false;
+                }
             }
-            Msg::WorkflowDag(dag) => {
-                self.wf_dag = dag;
-                self.loading_detail = false;
+            Msg::WorkflowDag(run_id, dag) => {
+                if self.detail_open && self.detail_id.as_deref() == Some(run_id.as_str()) {
+                    self.wf_dag = dag;
+                    self.loading_detail = false;
+                }
             }
             Msg::ActionOk(text) => {
                 self.notice = Some(Notice { text, error: false });
@@ -396,6 +404,7 @@ impl App {
                     self.job_detail = None;
                     self.loading_detail = true;
                     self.detail_open = true;
+                    self.detail_id = Some(id.clone());
                     let _ = tx.send(Cmd::Fetch(FetchReq::JobDetail(id)));
                 }
             }
@@ -407,6 +416,7 @@ impl App {
                     self.wf_dag = Vec::new();
                     self.loading_detail = true;
                     self.detail_open = true;
+                    self.detail_id = Some(run_id.clone());
                     let _ = tx.send(Cmd::Fetch(FetchReq::WorkflowDag {
                         run_id,
                         definition_id,
@@ -549,5 +559,19 @@ mod tests {
         app.apply(Msg::Jobs(Vec::new())); // response clears awaiting
         app.maybe_auto_refresh(&tx); // now allowed
         assert_eq!(rx.try_iter().count(), 1);
+    }
+
+    #[test]
+    fn stale_detail_response_is_dropped() {
+        let mut app = app();
+        app.detail_open = true;
+        app.loading_detail = true;
+        app.detail_id = Some("right".into());
+
+        app.apply(Msg::JobDetail("wrong".into(), None)); // for a stale selection
+        assert!(app.loading_detail); // ignored
+
+        app.apply(Msg::JobDetail("right".into(), None)); // matches
+        assert!(!app.loading_detail); // applied
     }
 }
