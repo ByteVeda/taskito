@@ -54,6 +54,11 @@ def test_codel_sheds_stale_jobs_under_overload(tmp_path: Path) -> None:
             if stats["completed"] + stats["dead"] == total and len(codel_dead) >= 1:
                 break
             time.sleep(0.1)
+        # A job can be shed between the dead-letter read and the stats read
+        # that satisfied the exit condition; once converged nothing moves, so
+        # a fresh dead-letter read gives the settled count.
+        dead = q.dead_letters(limit=100)
+        codel_dead = [d for d in dead if str(d.get("error", "")).startswith("codel:")]
     finally:
         q.shutdown()
         worker.join(timeout=5)
