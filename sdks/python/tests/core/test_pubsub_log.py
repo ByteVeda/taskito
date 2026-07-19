@@ -100,105 +100,66 @@ class TestManagedConsumer:
         thread.start()
         return thread
 
-    def test_consumer_invokes_handler_and_advances_cursor(
-        self, queue: Queue, poll_until: PollUntil
-    ) -> None:
-        received: list[int] = []
+    def test_managed_consumers_in_one_worker(self, queue: Queue, poll_until: PollUntil) -> None:
+        # One worker hosts all four consumers, so their poll loops share a single
+        # startup instead of a heavy worker lifecycle per test (slow on CI).
         lock = threading.Lock()
+        sync: list[int] = []
+        async_seen: list[int] = []
+        retry: list[int] = []
+        skip: list[int] = []
+        retry_failed = threading.Event()
 
-        @queue.log_consumer("events", "c", poll_interval=0.05)
-        def handle(n: int) -> None:
+        @queue.log_consumer("t-sync", "c", poll_interval=0.05)
+        def on_sync(n: int) -> None:
             with lock:
-                received.append(n)
+                sync.append(n)
 
-        thread = self._worker(queue)
-        try:
-            for i in range(3):
-                queue.publish("events", i)
-            poll_until(lambda: sorted(received) == [0, 1, 2], timeout=30, message="handler ran")
-        finally:
-            queue.shutdown()
-            thread.join(timeout=5)
-
-        # Every message handled → cursor caught up, nothing left to read.
-        (stat,) = queue.topic_log_stats()
-        assert stat["lag"] == 0
-
-    def test_async_handler_is_awaited(self, queue: Queue, poll_until: PollUntil) -> None:
-        received: list[int] = []
-        lock = threading.Lock()
-
-        @queue.log_consumer("events", "c", poll_interval=0.05)
-        async def handle(n: int) -> None:
+        @queue.log_consumer("t-async", "c", poll_interval=0.05)
+        async def on_async(n: int) -> None:
             with lock:
-                received.append(n)
+                async_seen.append(n)
 
-        thread = self._worker(queue)
-        try:
-            queue.publish("events", 42)
-            poll_until(lambda: received == [42], timeout=30, message="async handler awaited")
-        finally:
-            queue.shutdown()
-            thread.join(timeout=5)
-
-    def test_on_error_retry_redelivers_failed_message(
-        self, queue: Queue, poll_until: PollUntil
-    ) -> None:
-        # Value 1 fails on its first attempt, then succeeds; value 0 (acked
-        # before the failure) is never redelivered.
-        attempts: list[int] = []
-        failed_once = threading.Event()
-        lock = threading.Lock()
-
-        @queue.log_consumer("events", "c", poll_interval=0.05, on_error="retry")
-        def handle(n: int) -> None:
+        @queue.log_consumer("t-retry", "c", poll_interval=0.05, on_error="retry")
+        def on_retry(n: int) -> None:
             with lock:
-                attempts.append(n)
-            if n == 1 and not failed_once.is_set():
-                failed_once.set()
+                retry.append(n)
+            if n == 1 and not retry_failed.is_set():
+                retry_failed.set()
                 raise RuntimeError("boom")
 
-        thread = self._worker(queue)
-        try:
-            for i in range(3):
-                queue.publish("events", i)
-            poll_until(
-                lambda: attempts.count(1) == 2 and 2 in attempts,
-                timeout=30,
-                message="failed message re-read, then batch completes",
-            )
-        finally:
-            queue.shutdown()
-            thread.join(timeout=5)
-
-        assert attempts.count(0) == 1  # acked before the failure, never redelivered
-
-    def test_on_error_skip_advances_past_poison(self, queue: Queue, poll_until: PollUntil) -> None:
-        attempts: list[int] = []
-        lock = threading.Lock()
-
-        @queue.log_consumer("events", "c", poll_interval=0.05, on_error="skip")
-        def handle(n: int) -> None:
+        @queue.log_consumer("t-skip", "c", poll_interval=0.05, on_error="skip")
+        def on_skip(n: int) -> None:
             with lock:
-                attempts.append(n)
+                skip.append(n)
             if n == 1:
                 raise RuntimeError("always poison")
 
         thread = self._worker(queue)
         try:
             for i in range(3):
-                queue.publish("events", i)
+                queue.publish("t-sync", i)
+                queue.publish("t-retry", i)
+                queue.publish("t-skip", i)
+            queue.publish("t-async", 42)
+
+            poll_until(lambda: sorted(sync) == [0, 1, 2], timeout=30, message="sync handler ran")
+            poll_until(lambda: async_seen == [42], timeout=30, message="async handler awaited")
             poll_until(
-                lambda: sorted(attempts) == [0, 1, 2], timeout=30, message="skip past poison"
+                lambda: retry.count(1) == 2 and 2 in retry,
+                timeout=30,
+                message="retry re-reads the failure then completes",
             )
+            poll_until(lambda: sorted(skip) == [0, 1, 2], timeout=30, message="skip past poison")
         finally:
             queue.shutdown()
             thread.join(timeout=5)
 
-        # Poison attempted once then acked past → cursor caught up, no re-read.
-        (stat,) = queue.topic_log_stats()
-        assert stat["lag"] == 0
-        assert attempts.count(1) == 1
+        assert retry.count(0) == 1  # acked before the failure, never redelivered
+        assert skip.count(1) == 1  # poison attempted once, then acked past
+        stats = {(s["topic"], s["subscription"]): s for s in queue.topic_log_stats()}
+        assert stats[("t-sync", "c")]["lag"] == 0
+        assert stats[("t-skip", "c")]["lag"] == 0
 
     def test_shutdown_stops_consumer_thread(self, queue: Queue, poll_until: PollUntil) -> None:
         handled: list[int] = []
