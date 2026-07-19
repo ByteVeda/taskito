@@ -1,12 +1,13 @@
-//! Topic pub/sub fan-out: one job per active subscription.
+//! Topic pub/sub: fan-out (one job per active subscription) plus opt-in log
+//! mode (one durable message per publish, pulled via a per-subscription cursor).
 //!
 //! Lives in the core (not the language shells) so every binding shares the
-//! same fan-out semantics — in particular the idempotency-key salting, which
-//! silently drops deliveries if a shell gets it wrong.
+//! same semantics — in particular the idempotency-key salting, which silently
+//! drops deliveries if a shell gets it wrong.
 
 use crate::error::Result;
 use crate::job::{Job, NewJob};
-use crate::storage::records::Subscription;
+use crate::storage::records::{Subscription, SUBSCRIPTION_MODE_LOG};
 use crate::storage::Storage;
 
 /// Queue-level fallback delivery settings, used when neither the publish call
@@ -70,10 +71,32 @@ pub fn publish_to_topic<S: Storage>(storage: &S, request: &PublishRequest) -> Re
     if subscriptions.is_empty() {
         return Ok(Vec::new());
     }
+
+    // A log topic stores one durable message that consumers pull via cursor;
+    // fan-out subscribers still get one job each. A topic may mix both modes,
+    // so write the log row once when any log subscriber exists, then fan out
+    // only to the fan-out subscribers.
+    if subscriptions
+        .iter()
+        .any(|s| s.mode == SUBSCRIPTION_MODE_LOG)
+    {
+        storage.publish_message(
+            &request.topic,
+            &request.payload,
+            request.metadata.as_deref(),
+            request.notes.as_deref(),
+            request.expires_at,
+        )?;
+    }
+
     let jobs: Vec<NewJob> = subscriptions
         .iter()
+        .filter(|sub| sub.mode != SUBSCRIPTION_MODE_LOG)
         .map(|sub| delivery_job(request, sub))
         .collect();
+    if jobs.is_empty() {
+        return Ok(Vec::new());
+    }
     if request.idempotency_key.is_none() {
         return storage.enqueue_batch(jobs);
     }
@@ -228,6 +251,62 @@ mod tests {
         let storage = SqliteStorage::in_memory().unwrap();
         let jobs = publish_to_topic(&storage, &request("orders", None)).unwrap();
         assert!(jobs.is_empty());
+    }
+
+    fn subscribe_log(storage: &SqliteStorage, topic: &str, name: &str) {
+        storage
+            .register_subscription(&NewSubscription {
+                topic: topic.to_string(),
+                subscription_name: name.to_string(),
+                task_name: String::new(),
+                queue: "default".to_string(),
+                active: true,
+                durable: true,
+                owner_worker_id: None,
+                created_at: now_millis(),
+                priority: None,
+                max_retries: None,
+                timeout_ms: None,
+                mode: SUBSCRIPTION_MODE_LOG.to_string(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn log_topic_writes_one_message_and_no_jobs() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        subscribe_log(&storage, "events", "analytics");
+
+        // Two publishes → two log rows, zero fan-out jobs, regardless of readers.
+        assert!(publish_to_topic(&storage, &request("events", None))
+            .unwrap()
+            .is_empty());
+        assert!(publish_to_topic(&storage, &request("events", None))
+            .unwrap()
+            .is_empty());
+        let msgs = storage
+            .read_topic_messages("events", "analytics", 10)
+            .unwrap();
+        assert_eq!(msgs.len(), 2);
+    }
+
+    #[test]
+    fn mixed_topic_logs_once_and_fans_out_to_fanout_subs() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        subscribe(&storage, "events", "email", "send_email");
+        subscribe_log(&storage, "events", "analytics");
+
+        let jobs = publish_to_topic(&storage, &request("events", None)).unwrap();
+        // One fan-out job (email), one log message (analytics).
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].task_name, "send_email");
+        assert_eq!(
+            storage
+                .read_topic_messages("events", "analytics", 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

@@ -15,6 +15,9 @@ const PERIODIC_DEFAULT_MAX_RETRIES: i32 = 3;
 /// Default timeout for periodic tasks (ms).
 const PERIODIC_DEFAULT_TIMEOUT_MS: i64 = 300_000;
 
+/// Max log messages compacted per retention tick, bounding each sweep.
+const TOPIC_MESSAGE_PURGE_LIMIT: i64 = 10_000;
+
 /// A retention window in ms as a compact human duration (`7d`, `12h`, `30m`).
 fn humanize_ms(ms: i64) -> String {
     const S: i64 = 1000;
@@ -234,10 +237,16 @@ impl Scheduler {
             Some(c) => sweep("purge_task_logs", || self.storage.purge_task_logs(c)),
             None => 0,
         };
+        // Log topics compact themselves: drop messages every subscriber has
+        // acked past, plus any expired. Bounded per tick like the other sweeps.
+        let topic_msgs = sweep("purge_topic_messages", || {
+            self.storage
+                .purge_topic_messages(now, TOPIC_MESSAGE_PURGE_LIMIT)
+        });
 
-        if completed + dead + errors + metrics + logs > 0 {
+        if completed + dead + errors + metrics + logs + topic_msgs > 0 {
             info!(
-                "auto-cleanup: purged {completed} completed, {dead} dead, {errors} errors, {metrics} metrics, {logs} logs"
+                "auto-cleanup: purged {completed} completed, {dead} dead, {errors} errors, {metrics} metrics, {logs} logs, {topic_msgs} topic messages"
             );
         }
 
