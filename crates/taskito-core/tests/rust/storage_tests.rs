@@ -1057,6 +1057,7 @@ fn test_topic_subscriptions_crud(s: &impl Storage) {
         priority: None,
         max_retries: None,
         timeout_ms: None,
+        mode: "fanout".to_string(),
     };
 
     // Upsert idempotency: re-registering (topic, name) updates in place.
@@ -1230,6 +1231,7 @@ fn test_topic_backlog_stats(s: &impl Storage) {
         priority: None,
         max_retries: None,
         timeout_ms: None,
+        mode: "fanout".to_string(),
     };
     s.register_subscription(&sub("tbs-email", "tbs_send"))
         .unwrap();
@@ -1287,6 +1289,99 @@ fn test_topic_backlog_stats(s: &impl Storage) {
     );
     // The claimed job belongs to one of our subscriptions.
     assert!(claimed.task_name == "tbs_send" || claimed.task_name == "tbs_track");
+}
+
+/// A log subscription for the given topic/name (mode = "log").
+fn log_sub(topic: &str, name: &str) -> taskito_core::NewSubscription {
+    taskito_core::NewSubscription {
+        topic: topic.to_string(),
+        subscription_name: name.to_string(),
+        task_name: String::new(),
+        queue: "default".to_string(),
+        active: true,
+        durable: true,
+        owner_worker_id: None,
+        created_at: now_millis(),
+        priority: None,
+        max_retries: None,
+        timeout_ms: None,
+        mode: "log".to_string(),
+    }
+}
+
+fn test_topic_log_messages(s: &impl Storage) {
+    let topic = "tlog-msgs";
+    s.register_subscription(&log_sub(topic, "reader")).unwrap();
+
+    // Publish three messages: each is one row, ids are time-ordered.
+    let m0 = s.publish_message(topic, b"m0", None, None, None).unwrap();
+    let m1 = s.publish_message(topic, b"m1", None, None, None).unwrap();
+    let m2 = s.publish_message(topic, b"m2", None, None, None).unwrap();
+    assert!(m0.id < m1.id && m1.id < m2.id, "ids are monotonic");
+
+    // Read from the start: all three, oldest first, payloads intact.
+    let read = s.read_topic_messages(topic, "reader", 10).unwrap();
+    assert_eq!(
+        read.iter().map(|m| m.payload.clone()).collect::<Vec<_>>(),
+        vec![b"m0".to_vec(), b"m1".to_vec(), b"m2".to_vec()]
+    );
+
+    // Ack through m1: a re-read returns only what follows (exclusive cursor).
+    assert!(s.ack_topic_cursor(topic, "reader", &m1.id).unwrap());
+    let after = s.read_topic_messages(topic, "reader", 10).unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].payload, b"m2".to_vec());
+
+    // Ack is monotonic: acking an older cursor is a no-op.
+    assert!(!s.ack_topic_cursor(topic, "reader", &m0.id).unwrap());
+    assert_eq!(s.read_topic_messages(topic, "reader", 10).unwrap().len(), 1);
+
+    // Lag reflects the one un-acked message; unknown subscription reads empty.
+    let stats = s.topic_log_stats().unwrap();
+    let mine = stats
+        .iter()
+        .find(|st| st.topic == topic && st.subscription_name == "reader")
+        .expect("log subscription appears in stats");
+    assert_eq!(mine.lag, 1);
+    assert!(s
+        .read_topic_messages(topic, "ghost", 10)
+        .unwrap()
+        .is_empty());
+
+    // Drop the subscription so the global purge/stats in later tests are not
+    // affected by this topic's leftover cursor.
+    s.unsubscribe(topic, "reader").unwrap();
+}
+
+fn test_topic_log_purge(s: &impl Storage) {
+    let topic = "tlog-purge";
+    s.register_subscription(&log_sub(topic, "a")).unwrap();
+    s.register_subscription(&log_sub(topic, "b")).unwrap();
+
+    let m0 = s.publish_message(topic, b"m0", None, None, None).unwrap();
+    let _m1 = s.publish_message(topic, b"m1", None, None, None).unwrap();
+    let m2 = s.publish_message(topic, b"m2", None, None, None).unwrap();
+
+    // Only "a" has acked (through m2); "b" has read nothing, so no message is
+    // safe to drop yet — the floor is the min cursor across all log subs.
+    assert!(s.ack_topic_cursor(topic, "a", &m2.id).unwrap());
+    assert_eq!(s.purge_topic_messages(now_millis(), 100).unwrap(), 0);
+
+    // Once "b" acks through m0, everything at or before m0 is fully consumed.
+    assert!(s.ack_topic_cursor(topic, "b", &m0.id).unwrap());
+    let removed = s.purge_topic_messages(now_millis(), 100).unwrap();
+    assert_eq!(removed, 1, "only m0 is at/below the min cursor");
+
+    // A fresh reader now sees only the surviving messages (m1, m2).
+    s.register_subscription(&log_sub(topic, "fresh")).unwrap();
+    let survivors = s.read_topic_messages(topic, "fresh", 10).unwrap();
+    assert_eq!(
+        survivors
+            .iter()
+            .map(|m| m.payload.clone())
+            .collect::<Vec<_>>(),
+        vec![b"m1".to_vec(), b"m2".to_vec()]
+    );
 }
 
 fn test_enqueue_unique_batch(s: &impl Storage) {
@@ -1377,6 +1472,8 @@ fn run_storage_tests(s: &impl Storage) {
     test_periodic_crud(s);
     test_topic_subscriptions_crud(s);
     test_topic_backlog_stats(s);
+    test_topic_log_messages(s);
+    test_topic_log_purge(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);

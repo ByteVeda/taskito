@@ -218,6 +218,7 @@ mod tests {
                 priority,
                 max_retries,
                 timeout_ms,
+                mode: crate::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string(),
             })
             .unwrap();
     }

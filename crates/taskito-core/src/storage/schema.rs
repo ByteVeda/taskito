@@ -242,6 +242,20 @@ diesel::table! {
         priority -> Nullable<Integer>,
         max_retries -> Nullable<Integer>,
         timeout_ms -> Nullable<BigInt>,
+        mode -> Text,
+        cursor -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    topic_messages (id) {
+        id -> Text,
+        topic -> Text,
+        payload -> Binary,
+        metadata -> Nullable<Text>,
+        notes -> Nullable<Text>,
+        created_at -> BigInt,
+        expires_at -> Nullable<BigInt>,
     }
 }
 

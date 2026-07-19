@@ -72,6 +72,8 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
             priority: (priority != jint::MIN).then_some(priority),
             max_retries: (max_retries != jint::MIN).then_some(max_retries),
             timeout_ms: (timeout_ms != jlong::MIN).then_some(timeout_ms),
+            // Fan-out by default; the log-mode param is threaded in a later step.
+            mode: taskito_core::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string(),
         };
         queue_handle.storage.register_subscription(&row)?;
         Ok(())

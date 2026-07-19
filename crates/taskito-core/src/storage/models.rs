@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use super::records::{
     CircuitBreakerState, JobError, LockInfo, PeriodicTask, RateLimitState, ReplayEntry,
-    Subscription, TaskLogEntry, TaskMetric, WorkerInfo,
+    Subscription, TaskLogEntry, TaskMetric, TopicMessage, WorkerInfo,
 };
 use super::schema::{
     archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
     execution_claims, job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits,
-    replay_history, task_logs, task_metrics, topic_subscriptions, workers,
+    replay_history, task_logs, task_metrics, topic_messages, topic_subscriptions, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -451,6 +451,10 @@ pub struct SubscriptionRow {
     pub priority: Option<i32>,
     pub max_retries: Option<i32>,
     pub timeout_ms: Option<i64>,
+    /// Delivery mode: `"fanout"` (default) or `"log"`.
+    pub mode: String,
+    /// Log-mode read cursor (last-acked message id); `None` = unread.
+    pub cursor: Option<String>,
 }
 
 /// Insertable/updatable struct for subscription registrations.
@@ -468,6 +472,36 @@ pub struct NewSubscriptionRow<'a> {
     pub priority: Option<i32>,
     pub max_retries: Option<i32>,
     pub timeout_ms: Option<i64>,
+    pub mode: &'a str,
+}
+
+// ── Topic Messages (log topics) ─────────────────────────────────
+
+/// A row in the append-only `topic_messages` log. One per publish to a log
+/// topic (vs one `jobs` row per subscriber in fan-out mode).
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = topic_messages)]
+pub struct TopicMessageRow {
+    pub id: String,
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub metadata: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+}
+
+/// Insertable struct for a published log message.
+#[derive(Insertable, Debug)]
+#[diesel(table_name = topic_messages)]
+pub struct NewTopicMessageRow<'a> {
+    pub id: &'a str,
+    pub topic: &'a str,
+    pub payload: &'a [u8],
+    pub metadata: Option<&'a str>,
+    pub notes: Option<&'a str>,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
 }
 
 // ── Distributed Locks ───────────────────────────────────────────
@@ -666,6 +700,22 @@ impl From<SubscriptionRow> for Subscription {
             priority: r.priority,
             max_retries: r.max_retries,
             timeout_ms: r.timeout_ms,
+            mode: r.mode,
+            cursor: r.cursor,
+        }
+    }
+}
+
+impl From<TopicMessageRow> for TopicMessage {
+    fn from(r: TopicMessageRow) -> Self {
+        TopicMessage {
+            id: r.id,
+            topic: r.topic,
+            payload: r.payload,
+            metadata: r.metadata,
+            notes: r.notes,
+            created_at: r.created_at,
+            expires_at: r.expires_at,
         }
     }
 }

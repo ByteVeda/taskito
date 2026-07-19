@@ -694,6 +694,40 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::storage::SubscriptionBacklogStats>> {
                 self.topic_backlog_stats()
             }
+            fn publish_message(
+                &self,
+                topic: &str,
+                payload: &[u8],
+                metadata: Option<&str>,
+                notes: Option<&str>,
+                expires_at: Option<i64>,
+            ) -> $crate::error::Result<$crate::storage::records::TopicMessage> {
+                self.publish_message(topic, payload, metadata, notes, expires_at)
+            }
+            fn read_topic_messages(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                limit: i64,
+            ) -> $crate::error::Result<Vec<$crate::storage::records::TopicMessage>> {
+                self.read_topic_messages(topic, subscription_name, limit)
+            }
+            fn ack_topic_cursor(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                cursor: &str,
+            ) -> $crate::error::Result<bool> {
+                self.ack_topic_cursor(topic, subscription_name, cursor)
+            }
+            fn topic_log_stats(
+                &self,
+            ) -> $crate::error::Result<Vec<$crate::storage::records::TopicLogStats>> {
+                self.topic_log_stats()
+            }
+            fn purge_topic_messages(&self, now: i64, limit: i64) -> $crate::error::Result<u64> {
+                self.purge_topic_messages(now, limit)
+            }
             fn record_metric(
                 &self,
                 task_name: &str,
@@ -1361,6 +1395,41 @@ impl Storage for StorageBackend {
     }
     fn topic_backlog_stats(&self) -> Result<Vec<SubscriptionBacklogStats>> {
         delegate!(self, topic_backlog_stats)
+    }
+    fn publish_message(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        metadata: Option<&str>,
+        notes: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<records::TopicMessage> {
+        delegate!(
+            self,
+            publish_message,
+            topic,
+            payload,
+            metadata,
+            notes,
+            expires_at
+        )
+    }
+    fn read_topic_messages(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+    ) -> Result<Vec<records::TopicMessage>> {
+        delegate!(self, read_topic_messages, topic, subscription_name, limit)
+    }
+    fn ack_topic_cursor(&self, topic: &str, subscription_name: &str, cursor: &str) -> Result<bool> {
+        delegate!(self, ack_topic_cursor, topic, subscription_name, cursor)
+    }
+    fn topic_log_stats(&self) -> Result<Vec<records::TopicLogStats>> {
+        delegate!(self, topic_log_stats)
+    }
+    fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64> {
+        delegate!(self, purge_topic_messages, now, limit)
     }
     fn record_metric(
         &self,

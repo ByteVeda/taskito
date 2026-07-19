@@ -153,6 +153,218 @@ macro_rules! impl_diesel_pubsub_ops {
                     subs, counts, oldest, dead,
                 ))
             }
+
+            /// Append one message to a log topic (id = UUIDv7, so the id is the
+            /// time-ordered read cursor). O(1), independent of subscriber count.
+            pub fn publish_message(
+                &self,
+                topic: &str,
+                payload: &[u8],
+                metadata: Option<&str>,
+                notes: Option<&str>,
+                expires_at: Option<i64>,
+            ) -> Result<$crate::storage::records::TopicMessage> {
+                let mut conn = self.conn()?;
+                let id = uuid::Uuid::now_v7().to_string();
+                let created_at = $crate::job::now_millis();
+                let row = NewTopicMessageRow {
+                    id: &id,
+                    topic,
+                    payload,
+                    metadata,
+                    notes,
+                    created_at,
+                    expires_at,
+                };
+                diesel::insert_into(topic_messages::table)
+                    .values(&row)
+                    .execute(&mut conn)?;
+                Ok($crate::storage::records::TopicMessage {
+                    id,
+                    topic: topic.to_string(),
+                    payload: payload.to_vec(),
+                    metadata: metadata.map(str::to_string),
+                    notes: notes.map(str::to_string),
+                    created_at,
+                    expires_at,
+                })
+            }
+
+            /// Messages after a log subscription's cursor, oldest first, `<= limit`.
+            /// Cursor resolved server-side; read is exclusive. Unknown subscription
+            /// or non-positive limit → empty.
+            pub fn read_topic_messages(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                limit: i64,
+            ) -> Result<Vec<$crate::storage::records::TopicMessage>> {
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
+                let mut conn = self.conn()?;
+                let cursor: Option<Option<String>> = topic_subscriptions::table
+                    .find((topic, subscription_name))
+                    .select(topic_subscriptions::cursor)
+                    .first(&mut conn)
+                    .optional()?;
+                let Some(cursor) = cursor else {
+                    return Ok(Vec::new());
+                };
+
+                let mut query = topic_messages::table
+                    .filter(topic_messages::topic.eq(topic))
+                    .into_boxed();
+                if let Some(after) = cursor {
+                    query = query.filter(topic_messages::id.gt(after));
+                }
+                let rows = query
+                    .order(topic_messages::id.asc())
+                    .limit(limit)
+                    .select(TopicMessageRow::as_select())
+                    .load::<TopicMessageRow>(&mut conn)?;
+                Ok(rows.into_iter().map(Into::into).collect())
+            }
+
+            /// Advance a log subscription's cursor. Monotonic (never rewinds) and
+            /// idempotent. Returns false when nothing advanced.
+            pub fn ack_topic_cursor(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                cursor: &str,
+            ) -> Result<bool> {
+                let mut conn = self.conn()?;
+                let affected = diesel::update(
+                    topic_subscriptions::table
+                        .filter(topic_subscriptions::topic.eq(topic))
+                        .filter(topic_subscriptions::subscription_name.eq(subscription_name))
+                        .filter(
+                            topic_subscriptions::cursor
+                                .is_null()
+                                .or(topic_subscriptions::cursor.lt(cursor)),
+                        ),
+                )
+                .set(topic_subscriptions::cursor.eq(cursor))
+                .execute(&mut conn)?;
+                Ok(affected > 0)
+            }
+
+            /// Per-log-subscription lag (messages after the cursor) + oldest
+            /// un-acked age. One aggregate per log subscription; fan-out excluded.
+            pub fn topic_log_stats(&self) -> Result<Vec<$crate::storage::records::TopicLogStats>> {
+                let mut conn = self.conn()?;
+                let now = $crate::job::now_millis();
+                let subs: Vec<(String, String, Option<String>)> = topic_subscriptions::table
+                    .filter(
+                        topic_subscriptions::mode
+                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                    )
+                    .select((
+                        topic_subscriptions::topic,
+                        topic_subscriptions::subscription_name,
+                        topic_subscriptions::cursor,
+                    ))
+                    .load(&mut conn)?;
+
+                let mut out = Vec::with_capacity(subs.len());
+                for (topic, subscription_name, cursor) in subs {
+                    let mut query = topic_messages::table
+                        .filter(topic_messages::topic.eq(&topic))
+                        .into_boxed();
+                    if let Some(ref after) = cursor {
+                        query = query.filter(topic_messages::id.gt(after.clone()));
+                    }
+                    let (lag, oldest): (i64, Option<i64>) = query
+                        .select((
+                            diesel::dsl::count_star(),
+                            diesel::dsl::min(topic_messages::created_at),
+                        ))
+                        .first(&mut conn)?;
+                    out.push($crate::storage::records::TopicLogStats {
+                        topic,
+                        subscription_name,
+                        cursor,
+                        lag,
+                        oldest_unacked_age_ms: oldest.map(|c| (now - c).max(0)),
+                    });
+                }
+                Ok(out)
+            }
+
+            /// Drop log messages every subscriber has acked past (id `<=` the min
+            /// cursor across a topic's log subs) plus any past `expires_at`.
+            /// Bounded by `limit`. A topic with an un-consumed (NULL-cursor) sub
+            /// keeps all its messages except expired ones.
+            pub fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64> {
+                use std::collections::HashMap;
+                if limit <= 0 {
+                    return Ok(0);
+                }
+                let mut conn = self.conn()?;
+
+                // Per-topic delete floor: the min cursor across its log subs.
+                // A topic maps to `None` once any of its subs has read nothing
+                // (NULL cursor), which excludes it from cursor-based purging.
+                let subs: Vec<(String, Option<String>)> = topic_subscriptions::table
+                    .filter(
+                        topic_subscriptions::mode
+                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                    )
+                    .select((topic_subscriptions::topic, topic_subscriptions::cursor))
+                    .load(&mut conn)?;
+                let mut floors: HashMap<String, Option<String>> = HashMap::new();
+                for (topic, cursor) in subs {
+                    match floors.entry(topic) {
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(cursor);
+                        }
+                        std::collections::hash_map::Entry::Occupied(mut slot) => {
+                            let merged = match (slot.get().clone(), cursor) {
+                                (Some(current), Some(c)) => Some(current.min(c)),
+                                _ => None,
+                            };
+                            slot.insert(merged);
+                        }
+                    }
+                }
+
+                let mut ids: Vec<String> = Vec::new();
+                // Expired messages first (TTL safety net, ignores cursors).
+                let expired: Vec<String> = topic_messages::table
+                    .filter(topic_messages::expires_at.is_not_null())
+                    .filter(topic_messages::expires_at.le(now))
+                    .select(topic_messages::id)
+                    .limit(limit)
+                    .load(&mut conn)?;
+                ids.extend(expired);
+
+                // Then fully-acked messages per topic, within the remaining budget.
+                for (topic, floor) in floors {
+                    let Some(floor) = floor else { continue };
+                    let remaining = limit - ids.len() as i64;
+                    if remaining <= 0 {
+                        break;
+                    }
+                    let acked: Vec<String> = topic_messages::table
+                        .filter(topic_messages::topic.eq(&topic))
+                        .filter(topic_messages::id.le(&floor))
+                        .select(topic_messages::id)
+                        .limit(remaining)
+                        .load(&mut conn)?;
+                    ids.extend(acked);
+                }
+
+                if ids.is_empty() {
+                    return Ok(0);
+                }
+                ids.sort_unstable();
+                ids.dedup();
+                let removed =
+                    diesel::delete(topic_messages::table.filter(topic_messages::id.eq_any(&ids)))
+                        .execute(&mut conn)?;
+                Ok(removed as u64)
+            }
         }
     };
 }

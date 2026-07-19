@@ -2,7 +2,7 @@ use diesel::prelude::*;
 
 use super::super::models::*;
 use super::super::records::NewSubscription;
-use super::super::schema::topic_subscriptions;
+use super::super::schema::{topic_messages, topic_subscriptions};
 use super::PostgresStorage;
 use crate::error::Result;
 
@@ -30,8 +30,11 @@ impl PostgresStorage {
             priority: sub.priority,
             max_retries: sub.max_retries,
             timeout_ms: sub.timeout_ms,
+            mode: &sub.mode,
         };
 
+        // `cursor` is omitted so a re-registration preserves a log consumer's
+        // read position.
         diesel::insert_into(topic_subscriptions::table)
             .values(&row)
             .on_conflict((
@@ -47,6 +50,7 @@ impl PostgresStorage {
                 topic_subscriptions::priority.eq(row.priority),
                 topic_subscriptions::max_retries.eq(row.max_retries),
                 topic_subscriptions::timeout_ms.eq(row.timeout_ms),
+                topic_subscriptions::mode.eq(row.mode),
             ))
             .execute(&mut conn)?;
 

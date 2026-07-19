@@ -117,6 +117,12 @@ pub struct Subscription {
     pub max_retries: Option<i32>,
     /// Per-delivery timeout in milliseconds. `None` = queue default.
     pub timeout_ms: Option<i64>,
+    /// Delivery mode: `"fanout"` (one job per publish, the default) or `"log"`
+    /// (append one `topic_messages` row per publish; consumer pulls via cursor).
+    pub mode: String,
+    /// Log-mode read cursor: the last-acked message id. `None` = unread (start
+    /// from the beginning). Ignored for fan-out subscriptions.
+    pub cursor: Option<String>,
 }
 
 /// Registration payload for a topic subscription.
@@ -144,6 +150,51 @@ pub struct NewSubscription {
     pub max_retries: Option<i32>,
     /// Per-delivery timeout in milliseconds. `None` = queue default.
     pub timeout_ms: Option<i64>,
+    /// Delivery mode: `"fanout"` (default) or `"log"`. See [`Subscription::mode`].
+    pub mode: String,
+}
+
+/// Delivery mode marker for the `mode` column. `"log"` opts a subscription into
+/// the append-once + cursor model; anything else is treated as fan-out.
+pub const SUBSCRIPTION_MODE_LOG: &str = "log";
+/// Default fan-out delivery mode (one job per publish).
+pub const SUBSCRIPTION_MODE_FANOUT: &str = "fanout";
+
+/// One durable message in a log topic. Unlike fan-out delivery (one `jobs` row
+/// per subscriber), a log publish writes exactly one of these and each log
+/// subscription advances its own cursor over them.
+#[derive(Debug, Clone)]
+pub struct TopicMessage {
+    /// Message id — a time-ordered token that doubles as the read cursor.
+    /// Opaque to callers (UUIDv7 on Diesel backends, a stream id on Redis).
+    pub id: String,
+    /// Topic the message was published to.
+    pub topic: String,
+    /// Opaque payload bytes (same codec as fan-out `publish`).
+    pub payload: Vec<u8>,
+    /// Optional caller metadata (JSON).
+    pub metadata: Option<String>,
+    /// Optional structured notes (JSON).
+    pub notes: Option<String>,
+    /// Unix-millisecond publish time.
+    pub created_at: i64,
+    /// Optional expiry (Unix ms) — a TTL safety net for the retention sweep.
+    pub expires_at: Option<i64>,
+}
+
+/// Backlog snapshot for one log subscription: how far its cursor lags the log.
+#[derive(Debug, Clone)]
+pub struct TopicLogStats {
+    /// Topic the subscription reads.
+    pub topic: String,
+    /// Subscription name.
+    pub subscription_name: String,
+    /// Current read cursor (last-acked id); `None` = nothing acked yet.
+    pub cursor: Option<String>,
+    /// Number of messages after the cursor still to be consumed.
+    pub lag: i64,
+    /// Age (ms) of the oldest un-acked message; `None` when fully caught up.
+    pub oldest_unacked_age_ms: Option<i64>,
 }
 
 /// One execution measurement for a task.
