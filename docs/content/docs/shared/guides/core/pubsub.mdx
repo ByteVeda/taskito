@@ -659,10 +659,10 @@ for (TopicMessage msg : taskito.leaseTopic("orders", "audit-log", 100, Duration.
 </CodeTabs>
 
 Pick one style per subscription — mixing the cursor read and leasing on the
-same subscription lets their positions diverge. On the Diesel backends,
-messages every per-message consumer has acked are compacted like the cursor
-case; on Redis, per-message topics reclaim via `expires` / stream trim (set a
-retention window or per-publish `expires`).
+same subscription lets their positions diverge. On every backend, a message
+every per-message consumer has acked is compacted like the cursor case, and its
+delivery state is dropped with it. A topic that mixes a per-message consumer
+with a plain cursor reader falls back to `expires` / retention-window cleanup.
 
 ### Retention compacts, it doesn't expire
 

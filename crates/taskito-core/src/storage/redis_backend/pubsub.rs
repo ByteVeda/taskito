@@ -710,38 +710,47 @@ impl RedisStorage {
 
     /// Compact each log topic: `XTRIM MINID` to the min cursor across its subs,
     /// then `XDEL` any entry past `expires_at` (the TTL safety net, so a NULL or
-    /// stalled cursor can't block reclamation) — matching the Diesel backend.
-    /// The expiry scan is bounded by `limit` per topic.
+    /// stalled cursor can't block reclamation), then — on a topic consumed purely
+    /// per-message — `XDEL` any entry every per-message subscriber has acked.
+    /// Matches the Diesel backend. The scans are bounded by `limit` per topic.
     pub fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64> {
         use std::collections::HashMap;
-        let subs = self.list_subscriptions()?;
-        let mut floors: HashMap<String, Option<String>> = HashMap::new();
-        for sub in subs.into_iter().filter(|s| s.mode == SUBSCRIPTION_MODE_LOG) {
-            match floors.entry(sub.topic) {
-                std::collections::hash_map::Entry::Vacant(slot) => {
-                    slot.insert(sub.cursor);
-                }
-                std::collections::hash_map::Entry::Occupied(mut slot) => {
-                    let merged = match (slot.get().clone(), sub.cursor) {
-                        (Some(current), Some(cursor)) => Some(
-                            if Self::stream_id_parts(&cursor) < Self::stream_id_parts(&current) {
-                                cursor
-                            } else {
-                                current
-                            },
-                        ),
-                        _ => None,
-                    };
-                    slot.insert(merged);
-                }
-            }
+        // Group each topic's log subs so cursor floor and per-message compaction
+        // both see the full set (a mixed cursor+per-message topic must be spotted).
+        let mut by_topic: HashMap<String, Vec<Subscription>> = HashMap::new();
+        for sub in self
+            .list_subscriptions()?
+            .into_iter()
+            .filter(|s| s.mode == SUBSCRIPTION_MODE_LOG)
+        {
+            by_topic.entry(sub.topic.clone()).or_default().push(sub);
         }
 
         let mut conn = self.conn()?;
         let mut removed = 0u64;
-        for (topic, floor) in floors {
-            let stream_key = self.topic_stream_key(&topic);
-            if let Some(floor) = floor {
+        for (topic, subs) in &by_topic {
+            let stream_key = self.topic_stream_key(topic);
+
+            // Min cursor across the topic's subs; `None` once any read nothing.
+            let mut floor: Option<String> = None;
+            let mut floor_poisoned = false;
+            for sub in subs {
+                match &sub.cursor {
+                    None => {
+                        floor_poisoned = true;
+                        break;
+                    }
+                    Some(cursor) => {
+                        let take = floor.as_ref().is_none_or(|cur| {
+                            Self::stream_id_parts(cursor) < Self::stream_id_parts(cur)
+                        });
+                        if take {
+                            floor = Some(cursor.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(floor) = floor.filter(|_| !floor_poisoned) {
                 let trimmed: u64 = redis::cmd("XTRIM")
                     .arg(&stream_key)
                     .arg("MINID")
@@ -751,8 +760,67 @@ impl RedisStorage {
                 removed += trimmed;
             }
             removed += self.xdel_expired(&mut conn, &stream_key, now, limit)?;
+            removed += self.xdel_per_message_acked(&mut conn, topic, subs, limit)?;
         }
         Ok(removed)
+    }
+
+    /// On a topic consumed purely per-message (every log sub has a delivery hash),
+    /// `XDEL` up to `limit` entries every per-message subscriber has acked, and
+    /// drop their delivery fields so per-message state can't outlive the log. A
+    /// topic mixing in a cursor reader (a log sub with no deliveries) is left to
+    /// the cursor/expiry paths, matching the Diesel backend.
+    fn xdel_per_message_acked(
+        &self,
+        conn: &mut redis::Connection,
+        topic: &str,
+        subs: &[Subscription],
+        limit: i64,
+    ) -> Result<u64> {
+        use std::collections::HashMap;
+        // Delivery state per sub; a sub with an empty hash is a cursor reader.
+        let mut deliveries: Vec<(String, HashMap<String, String>)> = Vec::with_capacity(subs.len());
+        for sub in subs {
+            let key = self.pm_deliveries_key(topic, &sub.subscription_name);
+            let map: HashMap<String, String> = conn.hgetall(&key).map_err(map_err)?;
+            deliveries.push((key, map));
+        }
+        // Purely per-message only: skip if any log sub has no delivery hash.
+        if deliveries.iter().any(|(_, map)| map.is_empty()) {
+            return Ok(0);
+        }
+
+        let reply: StreamRangeReply = redis::cmd("XRANGE")
+            .arg(self.topic_stream_key(topic))
+            .arg("-")
+            .arg("+")
+            .arg("COUNT")
+            .arg(limit)
+            .query(conn)
+            .map_err(map_err)?;
+        let acked: Vec<String> = reply
+            .ids
+            .into_iter()
+            .filter(|entry| {
+                deliveries
+                    .iter()
+                    .all(|(_, map)| map.get(&entry.id).is_some_and(|s| s == "acked"))
+            })
+            .map(|entry| entry.id)
+            .collect();
+        if acked.is_empty() {
+            return Ok(0);
+        }
+
+        let deleted: u64 = redis::cmd("XDEL")
+            .arg(self.topic_stream_key(topic))
+            .arg(&acked)
+            .query(conn)
+            .map_err(map_err)?;
+        for (key, _) in &deliveries {
+            conn.hdel::<_, _, ()>(key, &acked).map_err(map_err)?;
+        }
+        Ok(deleted)
     }
 
     /// `XDEL` up to `limit` entries in `stream_key` whose `expires_at` field is

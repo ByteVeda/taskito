@@ -197,12 +197,13 @@ itself must match it.
   there is no un-acked delivery. An un-acked lease that times out is redelivered.
 - Delivery state lives per `(subscription, message)`: Diesel `topic_deliveries`
   table (migration `m0007`); Redis a `pmdeliv:<topic>:<sub>` hash mirroring it.
-- **Retention**: Diesel additionally compacts messages every per-message
-  subscriber has acked (on topics consumed purely per-message; a topic that mixes
-  in a cursor subscriber falls back to `expires_at`), and drops the delivery rows
-  of purged messages. Redis per-message topics reclaim via `expires_at`/stream
-  trim only — ack-based compaction is a Diesel refinement (a documented backend
-  difference). A shell only marshals the three calls; the core owns the state.
+- **Retention**: on a topic consumed purely per-message (every log sub has
+  acked), a message is compacted once every per-message subscriber has acked it;
+  a topic that mixes in a cursor subscriber falls back to `expires_at`. Its
+  delivery state is dropped with it (Diesel deletes the rows, Redis `HDEL`s the
+  fields). Both backends implement this — Diesel via `topic_deliveries`, Redis by
+  scanning the `pmdeliv:*` hashes during the purge sweep. A shell only marshals
+  the three calls; the core owns the state.
 
 **Test vector** (assert byte-exact in each shell that salts keys itself):
 key `evt-42`, topic `orders`, subscription `email` →
