@@ -43,6 +43,7 @@ import {
 } from "./resources";
 import {
   CodecSerializer,
+  deserializeCall,
   JsonSerializer,
   type PayloadCodec,
   type Serializer,
@@ -76,6 +77,8 @@ import type {
   TaskLog,
   TaskMap,
   TaskOptions,
+  TopicLogStat,
+  TopicMessage,
   WorkerInfo,
   WorkerRunOptions,
 } from "./types";
@@ -571,6 +574,57 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   /** List subscriptions — all of them, or one topic's active ones. */
   listSubscriptions(topic?: string): Promise<Subscription[]> {
     return this.native.listSubscriptions(topic);
+  }
+
+  /**
+   * Register a durable **log** subscription: a named cursor over `topic`. Unlike
+   * `subscriber`, it has no handler — the topic's publishes are stored once each
+   * and this consumer pulls them with `readTopic`, advancing with `ackTopic`.
+   * Writes immediately, so register it before the publishes it should see.
+   */
+  subscribeLog(topic: string, name: string): Promise<void> {
+    return this.native.registerSubscription(
+      topic,
+      name,
+      "",
+      "default",
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "log",
+    );
+  }
+
+  /**
+   * Pull up to `limit` messages after a log subscription's cursor, oldest first
+   * and exclusive of it. Each `args` is the deserialized publish payload. Empty
+   * when caught up. At-least-once: process, then `ackTopic` the last `id`.
+   */
+  async readTopic(topic: string, name: string, limit = 100): Promise<TopicMessage[]> {
+    const messages = await this.native.readTopicMessages(topic, name, limit);
+    return messages.map((msg) => ({
+      id: msg.id,
+      args: deserializeCall(this.serializer, msg.payload),
+      metadata: msg.metadata === undefined ? undefined : JSON.parse(msg.metadata),
+      notes: msg.notes === undefined ? undefined : JSON.parse(msg.notes),
+      createdAt: msg.createdAt,
+    }));
+  }
+
+  /**
+   * Advance a log subscription's cursor to `cursor` (a message id). A high-water
+   * mark — acking an id acks everything up to it. Monotonic; resolves false when
+   * nothing moved.
+   */
+  ackTopic(topic: string, name: string, cursor: string): Promise<boolean> {
+    return this.native.ackTopicCursor(topic, name, cursor);
+  }
+
+  /** Lag snapshot per log subscription. */
+  topicLogStats(): Promise<TopicLogStat[]> {
+    return this.native.topicLogStats();
   }
 
   /**

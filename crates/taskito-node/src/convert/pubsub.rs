@@ -1,7 +1,8 @@
-//! JS-facing shape of a topic subscription.
+//! JS-facing shapes for topic subscriptions and log messages.
 
+use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
-use taskito_core::storage::records::Subscription;
+use taskito_core::storage::records::{Subscription, TopicLogStats, TopicMessage};
 
 /// A topic subscription: routes messages published to `topic` to `taskName`
 /// jobs on `queue`, one delivery per active subscription.
@@ -24,5 +25,48 @@ pub fn subscription_to_js(row: Subscription) -> JsSubscription {
         queue: row.queue,
         active: row.active,
         durable: row.durable,
+    }
+}
+
+/// A message pulled from a log topic. `id` is the cursor token to pass to
+/// `ackTopic`; `payload` is the opaque published bytes.
+#[napi(object)]
+pub struct JsTopicMessage {
+    pub id: String,
+    pub payload: Buffer,
+    pub metadata: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: i64,
+}
+
+/// Convert a core [`TopicMessage`] into its JS-facing shape.
+pub fn topic_message_to_js(msg: TopicMessage) -> JsTopicMessage {
+    JsTopicMessage {
+        id: msg.id,
+        payload: msg.payload.into(),
+        metadata: msg.metadata,
+        notes: msg.notes,
+        created_at: msg.created_at,
+    }
+}
+
+/// Lag snapshot for one log subscription.
+#[napi(object)]
+pub struct JsTopicLogStat {
+    pub topic: String,
+    pub subscription: String,
+    pub cursor: Option<String>,
+    pub lag: i64,
+    pub oldest_unacked_age_ms: Option<i64>,
+}
+
+/// Convert a core [`TopicLogStats`] into its JS-facing shape.
+pub fn topic_log_stat_to_js(stat: TopicLogStats) -> JsTopicLogStat {
+    JsTopicLogStat {
+        topic: stat.topic,
+        subscription: stat.subscription_name,
+        cursor: stat.cursor,
+        lag: stat.lag,
+        oldest_unacked_age_ms: stat.oldest_unacked_age_ms,
     }
 }
