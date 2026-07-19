@@ -913,7 +913,7 @@ impl RedisStorage {
 
     /// Lease up to `limit` available messages to `subscription_name` for
     /// `visibility_ms`. Available = never delivered, or a lease that expired /
-    /// was nacked and never acked. See [`Storage::lease_topic_messages`].
+    /// was nacked and never acked. See the `lease_topic_messages` trait method.
     pub fn lease_topic_messages(
         &self,
         topic: &str,

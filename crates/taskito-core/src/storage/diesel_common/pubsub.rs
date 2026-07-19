@@ -478,7 +478,7 @@ macro_rules! impl_diesel_pubsub_ops {
             }
 
             /// Lease up to `limit` available messages to `subscription_name` for
-            /// `visibility_ms` (see [`Storage::lease_topic_messages`]). One
+            /// `visibility_ms` (see the `lease_topic_messages` trait method). One
             /// bounded anti-join finds the available messages, then a lease row
             /// is upserted per message — all in one transaction so a concurrent
             /// puller can't double-lease.
