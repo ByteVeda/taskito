@@ -232,6 +232,12 @@ class QueueLifecycleMixin:
         # Flush topic subscriptions now that the ephemeral ones have an owner.
         self._declare_worker_subscriptions(worker_id)  # type: ignore[attr-defined]
 
+        # Managed log-topic consumers: daemon threads that pull, invoke, and ack.
+        stop_log_consumers = threading.Event()
+        log_consumer_threads = self._build_log_consumer_threads(stop_log_consumers)  # type: ignore[attr-defined]
+        for consumer in log_consumer_threads:
+            consumer.start()
+
         stop_heartbeat = threading.Event()
         heartbeat_thread = threading.Thread(
             target=self._run_heartbeat,
@@ -294,6 +300,10 @@ class QueueLifecycleMixin:
             )
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=6)
+            # Drain managed log consumers: finish the in-flight batch, then stop.
+            stop_log_consumers.set()
+            for consumer in log_consumer_threads:
+                consumer.join(timeout=6)
             # Tear down resources before stopping async loop
             if health_checker is not None:
                 health_checker.stop()
