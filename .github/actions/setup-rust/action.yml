@@ -15,6 +15,13 @@ inputs:
       lint). Pass 'true' for the cache-writer, leave 'false' elsewhere.
     required: false
     default: "false"
+  shared-key:
+    description: >-
+      Optional rust-cache shared-key. Set it to give a job its own cache
+      namespace instead of the per-job default — e.g. the release maturin build
+      keeps its release-profile target/ separate from the lint job's dev cache.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -32,6 +39,7 @@ runs:
         # that responds as `rustup-init`. Proxies are reinstalled each run by
         # dtolnay/rust-toolchain. https://github.com/Swatinem/rust-cache/issues/16
         save-if: ${{ inputs.save-if }}
+        shared-key: ${{ inputs.shared-key }}
         cache-bin: false
         # Bump to evict any v0-* caches that already contain the corrupted bin dir.
         prefix-key: v1-rust-bin-fix

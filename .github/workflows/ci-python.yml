@@ -76,24 +76,16 @@ jobs:
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
         with:
-          # Only the non-Linux runners save the cache here; the Linux Cargo
-          # cache is written by the Rust lint job.
-          save-if: ${{ matrix.os != 'ubuntu-latest' }}
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+          # Cache the release-profile target/ under its own `release` namespace,
+          # kept apart from the lint job's dev-profile cache. Master is the sole
+          # writer (one consolidated entry per OS); PRs restore read-only so they
+          # never mint per-PR caches. Replaces the old sccache GHA backend, which
+          # wrote one cache entry per compiled object and flooded the 10 GB quota.
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Build native extension with maturin
         uses: PyO3/maturin-action@v1.51.0
-        # Step-scoped on purpose: a job-level RUSTC_WRAPPER poisons the
-        # uv-sync editable build inside setup-python, which runs before the
-        # sccache binary exists on the runner.
-        env:
-          # Share compiled rustc artifacts across the matrix's release builds
-          # via the GitHub Actions cache. The Cargo cache written by the Rust
-          # lint job is dev-profile, so these builds got near-zero reuse.
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
         with:
           command: develop
           args: --release --features extension-module,postgres,redis,native-async,workflows,mesh
