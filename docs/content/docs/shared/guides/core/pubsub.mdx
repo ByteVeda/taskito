@@ -500,10 +500,12 @@ registered — unless the topic is **declared** (below).
 
 ### Declared topics
 
-By default a log message is stored only when a log subscription already
-exists at publish time. **Declaring** a topic lifts that late-join boundary:
-its publishes are retained even with zero subscribers, so a consumer that
-subscribes later still reads the whole backlog. Declaring is idempotent.
+By default a log message is stored only when a durable log subscription
+already exists at publish time. **Declaring** a topic lifts that late-join
+boundary: its publishes are retained even with zero subscribers, so a
+consumer that subscribes later reads the backlog that's still within the
+topic's retention window (anything already expired is gone). Declaring is
+idempotent.
 
 <CodeTabs>
   <Tab sdk="python">
