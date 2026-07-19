@@ -59,20 +59,25 @@ class LogConsumerThread(threading.Thread):
                 self._stop_event.wait(self._poll_interval)
                 continue
 
-            last_acked = self._drain_batch(messages)
+            last_acked, retry_failure = self._drain_batch(messages)
             if last_acked is not None:
                 try:
                     self._queue.ack_topic(self._topic, self._name, last_acked)
                 except Exception:
                     logger.exception("log_consumer %s/%s: ack failed", self._topic, self._name)
+            # A retry-mode failure made no progress past the poison message, so
+            # wait one interval before re-reading rather than hot-looping on it.
+            # Otherwise keep draining the backlog immediately.
+            if retry_failure:
+                self._stop_event.wait(self._poll_interval)
 
-    def _drain_batch(self, messages: list[TopicMessage]) -> str | None:
-        """Invoke the handler per message, returning the id to ack up to.
+    def _drain_batch(self, messages: list[TopicMessage]) -> tuple[str | None, bool]:
+        """Invoke the handler per message; return ``(ack_id, retry_failure)``.
 
         ``retry`` stops at the first failure and acks only the run of successes
-        before it, so the failed message (and the rest of the batch) re-reads
-        next poll. ``skip`` acks past a failure too, moving the cursor forward.
-        Returns ``None`` when nothing should be acked yet.
+        before it (``retry_failure=True``), so the failed message re-reads next
+        poll. ``skip`` acks past a failure too, moving the cursor forward.
+        ``ack_id`` is ``None`` when nothing should be acked yet.
         """
         last_acked: str | None = None
         for message in messages:
@@ -88,6 +93,6 @@ class LogConsumerThread(threading.Thread):
                     message.id,
                 )
                 if self._on_error == "retry":
-                    break
+                    return last_acked, True
             last_acked = message.id
-        return last_acked
+        return last_acked, False

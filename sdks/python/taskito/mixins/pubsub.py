@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -146,6 +147,11 @@ class QueuePubSubMixin:
         be sync or async; a producer-only process that never runs a worker still
         registers the subscription so its publishes are retained.
 
+        The cursor is a single high-water mark, so run a given ``(topic, name)``
+        consumer in **one** worker process; starting the same durable consumer in
+        several workers lets them read the same batch and invoke the handler more
+        than once. Use distinct ``name``\\ s for independent parallel consumers.
+
         Args:
             topic: Log topic to consume.
             name: Stable subscription identity. Defaults to the handler name.
@@ -156,6 +162,14 @@ class QueuePubSubMixin:
         """
         if on_error not in ("retry", "skip"):
             raise ValueError(f"on_error must be 'retry' or 'skip', got {on_error!r}")
+        # A non-finite/non-positive interval spins on empty polls; a non-positive
+        # batch size never makes progress.
+        if not (poll_interval > 0 and math.isfinite(poll_interval)):
+            raise ValueError(
+                f"poll_interval must be a finite positive number, got {poll_interval!r}"
+            )
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size!r}")
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             sub_name = name or fn.__name__
