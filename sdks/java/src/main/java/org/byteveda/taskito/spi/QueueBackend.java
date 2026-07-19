@@ -240,9 +240,9 @@ public interface QueueBackend extends AutoCloseable {
      * {@code "fanout"} (one job per publish) or {@code "log"} (append-once + a
      * per-subscription cursor pulled via {@link #readTopicMessagesJson}).
      *
-     * <p>The default drops {@code mode} and delegates to the fan-out form, so a
-     * backend that predates log topics still registers a fan-out subscription
-     * instead of throwing.
+     * <p>The default preserves fan-out compatibility for backends that predate
+     * log topics — {@code "fanout"} delegates to the mode-less form — but rejects
+     * {@code "log"} rather than silently downgrading it to fan-out.
      */
     default void registerSubscription(
             String topic,
@@ -255,6 +255,9 @@ public interface QueueBackend extends AutoCloseable {
             Integer maxRetries,
             Long timeoutMs,
             String mode) {
+        if (!"fanout".equals(mode)) {
+            throw new UnsupportedOperationException("log topics not supported by this backend");
+        }
         registerSubscription(
                 topic,
                 subscriptionName,
