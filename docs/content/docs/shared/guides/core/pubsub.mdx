@@ -505,7 +505,10 @@ consumer**: the SDK creates the log subscription and, once a worker runs,
 drives a background poll loop that pulls each message, invokes your handler,
 and advances the cursor for you. The handler runs in-SDK (not as a fan-out
 job), so there's no per-message retry/DLQ — the delivery guarantee is the same
-at-least-once cursor contract as the manual loop.
+at-least-once cursor contract as the manual loop. The Python and Node handlers
+may be synchronous or `async` (a returned promise/coroutine is awaited); the
+Java handler is a synchronous `Consumer<T>`. Run a given `(topic, name)`
+consumer in one worker process — its cursor is a single high-water mark.
 
 <CodeTabs>
   <Tab sdk="python">
