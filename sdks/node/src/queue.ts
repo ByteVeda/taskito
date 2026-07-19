@@ -27,6 +27,7 @@ import { Lock, type LockOptions } from "./locks";
 import type { EnqueueContext, Middleware } from "./middleware";
 import {
   JsQueue,
+  type JsTopicMessage,
   type EnqueueOptions as NativeEnqueueOptions,
   type NativeQueue,
   type OpenOptions,
@@ -652,13 +653,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    */
   async readTopic(topic: string, name: string, limit = 100): Promise<TopicMessage[]> {
     const messages = await this.native.readTopicMessages(topic, name, limit);
-    return messages.map((msg) => ({
-      id: msg.id,
-      args: deserializeCall(this.serializer, msg.payload),
-      metadata: msg.metadata === undefined ? undefined : JSON.parse(msg.metadata),
-      notes: msg.notes === undefined ? undefined : JSON.parse(msg.notes),
-      createdAt: msg.createdAt,
-    }));
+    return messages.map((msg) => this.decodeTopicMessage(msg));
   }
 
   /**
@@ -668,6 +663,56 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    */
   ackTopic(topic: string, name: string, cursor: string): Promise<boolean> {
     return this.native.ackTopicCursor(topic, name, cursor);
+  }
+
+  /**
+   * Lease up to `opts.limit` (default 100) messages for **per-message**
+   * consumption. Unlike `readTopic`'s cursor, each message is leased for
+   * `opts.visibility` seconds (default 30) and tracked individually: `ackMessage`
+   * it when done, or `nackMessage` to redeliver it now. A lease that expires
+   * un-acked is redelivered, so one poison message no longer blocks its siblings.
+   * In-flight (leased, un-expired) messages are skipped; oldest first.
+   */
+  async leaseTopic(
+    topic: string,
+    name: string,
+    opts?: { limit?: number; visibility?: number },
+  ): Promise<TopicMessage[]> {
+    const visibilityMs = Math.round((opts?.visibility ?? 30) * 1000);
+    const messages = await this.native.leaseTopicMessages(
+      topic,
+      name,
+      opts?.limit ?? 100,
+      visibilityMs,
+    );
+    return messages.map((msg) => this.decodeTopicMessage(msg));
+  }
+
+  /**
+   * Ack one leased message — the delivery is done and never redelivered. Resolves
+   * false when there was no un-acked delivery to ack.
+   */
+  ackMessage(topic: string, name: string, messageId: string): Promise<boolean> {
+    return this.native.ackMessage(topic, name, messageId);
+  }
+
+  /**
+   * Nack one leased message — make it available for redelivery now (vs waiting out
+   * the visibility timeout). Resolves false when there was no un-acked delivery.
+   */
+  nackMessage(topic: string, name: string, messageId: string): Promise<boolean> {
+    return this.native.nackMessage(topic, name, messageId);
+  }
+
+  /** Decode a native log message into a {@link TopicMessage} (shared by read/lease). */
+  private decodeTopicMessage(msg: JsTopicMessage): TopicMessage {
+    return {
+      id: msg.id,
+      args: deserializeCall(this.serializer, msg.payload),
+      metadata: msg.metadata === undefined ? undefined : JSON.parse(msg.metadata),
+      notes: msg.notes === undefined ? undefined : JSON.parse(msg.notes),
+      createdAt: msg.createdAt,
+    };
   }
 
   /** Lag snapshot per log subscription. */
