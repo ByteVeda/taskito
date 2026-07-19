@@ -859,9 +859,12 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
 
     @Override
     public boolean unsubscribe(String topic, String name) {
-        // Drop the local declaration too, or a later worker start would
-        // re-register the subscription from the shared worker state.
+        // Drop the local declarations too, or a later worker start would
+        // re-register the subscription (or re-spawn a managed consumer polling a
+        // deleted cursor) from the shared worker state.
         subscriptions.removeIf(
+                config -> config.topic().equals(topic) && config.name().equals(name));
+        logConsumers.removeIf(
                 config -> config.topic().equals(topic) && config.name().equals(name));
         return backend.unsubscribe(topic, name);
     }

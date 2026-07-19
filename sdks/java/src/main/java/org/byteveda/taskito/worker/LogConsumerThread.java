@@ -56,17 +56,27 @@ final class LogConsumerThread extends Thread {
                 }
                 continue;
             }
-            ackDrained(drainBatch(messages));
+            DrainResult result = drainBatch(messages);
+            ackDrained(result.lastAcked());
+            // A retry-mode failure made no progress past the poison message, so
+            // wait one interval before re-reading rather than hot-looping on it.
+            if (result.retryFailure() && waitPoll()) {
+                return;
+            }
         }
     }
 
+    /** What a batch drain achieved: the id to ack up to, and whether a retry-mode
+     *  handler failure blocked the cursor (so the caller backs off). */
+    private record DrainResult(String lastAcked, boolean retryFailure) {}
+
     /**
-     * Invoke the handler per message, returning the id to ack up to (null when none
-     * succeeded). {@code retry} stops at the first failure and acks only the run of
-     * successes before it, so the failed message (and the rest of the batch) re-reads
-     * next poll; {@code skip} acks past a failure too and continues.
+     * Invoke the handler per message. {@code retry} stops at the first failure and
+     * acks only the run of successes before it (and reports {@code retryFailure}), so
+     * the failed message re-reads next poll; {@code skip} acks past a failure too and
+     * continues. {@code lastAcked} is null when nothing succeeded.
      */
-    private String drainBatch(List<TopicMessage> messages) {
+    private DrainResult drainBatch(List<TopicMessage> messages) {
         String lastAcked = null;
         for (TopicMessage message : messages) {
             if (stop.getCount() == 0) {
@@ -77,12 +87,12 @@ final class LogConsumerThread extends Thread {
             } catch (RuntimeException e) {
                 LOG.warn(label() + ": handler failed on message " + message.id, e);
                 if ("retry".equals(config.onError())) {
-                    break;
+                    return new DrainResult(lastAcked, true);
                 }
             }
             lastAcked = message.id;
         }
-        return lastAcked;
+        return new DrainResult(lastAcked, false);
     }
 
     /** Advance the cursor to {@code lastAcked}; a null id (nothing handled) is a no-op. */
