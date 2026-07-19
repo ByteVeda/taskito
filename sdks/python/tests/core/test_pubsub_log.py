@@ -85,7 +85,7 @@ class TestMixedTopic:
 
         # One publish: the fan-out subscriber runs its job...
         queue.publish("events", 7)
-        poll_until(lambda: seen == [7], message="fan-out subscriber should run")
+        poll_until(lambda: seen == [7], timeout=30, message="fan-out subscriber should run")
 
         # ...and the same publish stored one log message for the log subscriber.
         assert [m.args for m in queue.read_topic("events", "log")] == [(7,)]
@@ -115,7 +115,7 @@ class TestManagedConsumer:
         try:
             for i in range(3):
                 queue.publish("events", i)
-            poll_until(lambda: sorted(received) == [0, 1, 2], message="handler ran per message")
+            poll_until(lambda: sorted(received) == [0, 1, 2], timeout=30, message="handler ran")
         finally:
             queue.shutdown()
             thread.join(timeout=5)
@@ -136,7 +136,7 @@ class TestManagedConsumer:
         thread = self._worker(queue)
         try:
             queue.publish("events", 42)
-            poll_until(lambda: received == [42], message="async handler awaited")
+            poll_until(lambda: received == [42], timeout=30, message="async handler awaited")
         finally:
             queue.shutdown()
             thread.join(timeout=5)
@@ -164,6 +164,7 @@ class TestManagedConsumer:
                 queue.publish("events", i)
             poll_until(
                 lambda: attempts.count(1) == 2 and 2 in attempts,
+                timeout=30,
                 message="failed message re-read, then batch completes",
             )
         finally:
@@ -187,7 +188,9 @@ class TestManagedConsumer:
         try:
             for i in range(3):
                 queue.publish("events", i)
-            poll_until(lambda: sorted(attempts) == [0, 1, 2], message="skip past poison")
+            poll_until(
+                lambda: sorted(attempts) == [0, 1, 2], timeout=30, message="skip past poison"
+            )
         finally:
             queue.shutdown()
             thread.join(timeout=5)
@@ -208,7 +211,9 @@ class TestManagedConsumer:
         queue.publish("events", 1)
         # Wait until the consumer has actually run before shutting down, so the
         # request can't race an unstarted worker (which would block forever).
-        poll_until(lambda: handled == [1], message="consumer should run before shutdown")
+        poll_until(
+            lambda: handled == [1], timeout=30, message="consumer should run before shutdown"
+        )
         queue.shutdown()
         thread.join(timeout=5)
         assert not thread.is_alive()

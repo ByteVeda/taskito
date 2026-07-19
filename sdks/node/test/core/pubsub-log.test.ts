@@ -12,13 +12,12 @@ let activeQueue: Queue | undefined;
 afterEach(async () => {
   worker?.stop();
   worker = undefined;
-  // Await native worker deregistration so its scheduler threads don't linger
-  // into the next test — accumulated workers slow the whole file into flaky
-  // timeouts. A queue that never ran a worker deregisters instantly.
+  // Await deregistration so scheduler threads don't accumulate into the next
+  // test (a queue that never ran a worker returns instantly).
   if (activeQueue) {
     const q = activeQueue;
     activeQueue = undefined;
-    await waitFor(async () => (await q.listWorkers()).length === 0, 8000);
+    await waitFor(async () => (await q.listWorkers()).length === 0, 30000);
   }
 });
 
@@ -29,14 +28,13 @@ function newQueue(): Queue {
   return activeQueue;
 }
 
-// Worker-startup + poll under a fully parallel suite (dozens of files starving
-// the CPU) can be slow, so the ceiling is generous; the predicate returns as
-// soon as it's true, so this only matters on a rare slow run.
-const WORKER_TEST_TIMEOUT_MS = 30000;
+// Huge ceilings: real-worker startup on a cold, CPU-starved smoke runner can
+// take tens of seconds. The predicate returns the instant it's true.
+const WORKER_TEST_TIMEOUT_MS = 60000;
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  timeoutMs = 20000,
+  timeoutMs = 40000,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
