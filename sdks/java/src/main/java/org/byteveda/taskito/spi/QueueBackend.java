@@ -235,6 +235,41 @@ public interface QueueBackend extends AutoCloseable {
         registerSubscription(topic, subscriptionName, taskName, queue, durable, ownerWorkerIdOrNull);
     }
 
+    /**
+     * Insert or update a subscription with an explicit delivery {@code mode}:
+     * {@code "fanout"} (one job per publish) or {@code "log"} (append-once + a
+     * per-subscription cursor pulled via {@link #readTopicMessagesJson}).
+     *
+     * <p>The default preserves fan-out compatibility for backends that predate
+     * log topics — {@code "fanout"} delegates to the mode-less form — but rejects
+     * {@code "log"} rather than silently downgrading it to fan-out.
+     */
+    default void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull,
+            Integer priority,
+            Integer maxRetries,
+            Long timeoutMs,
+            String mode) {
+        if (!"fanout".equals(mode)) {
+            throw new UnsupportedOperationException("log topics not supported by this backend");
+        }
+        registerSubscription(
+                topic,
+                subscriptionName,
+                taskName,
+                queue,
+                durable,
+                ownerWorkerIdOrNull,
+                priority,
+                maxRetries,
+                timeoutMs);
+    }
+
     /** A JSON array of subscriptions — all of them, or only a topic's active ones. */
     default String listSubscriptionsJson(String topicOrNull) {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
@@ -260,6 +295,25 @@ public interface QueueBackend extends AutoCloseable {
      * the created jobs as a JSON array — empty when nothing is subscribed.
      */
     default String publishJson(String topic, byte[] payload, String optionsJson) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /**
+     * Pull up to {@code limit} messages after a log subscription's cursor (oldest
+     * first, exclusive), as a JSON array of message views. At-least-once: reading
+     * without acking re-delivers.
+     */
+    default String readTopicMessagesJson(String topic, String subscriptionName, long limit) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** Advance a log subscription's cursor to {@code cursor} (monotonic); false if nothing moved. */
+    default boolean ackTopicCursor(String topic, String subscriptionName, String cursor) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** A JSON array of per-log-subscription lag snapshots. */
+    default String topicLogStatsJson() {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
     }
 

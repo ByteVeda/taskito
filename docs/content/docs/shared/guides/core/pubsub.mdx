@@ -390,20 +390,147 @@ deliveries.
   signature.
 </Callout>
 
+## Log topics
+
+Every subscription above is **fan-out**: one job per subscriber, each with
+its own retries and DLQ. A **log** subscription is the other shape — a
+named, durable cursor with no handler, reading a single stored copy of every
+published message at its own pace. Publishing to a topic with log
+subscribers writes **one** message no matter how many are reading it (O(1)
+publish, versus fan-out's one job write per subscriber), and a topic can mix
+both kinds: the same publish stores the log message once *and* fans out jobs
+to any fan-out subscribers on it.
+
+<SdkSwap python={<>Register a log subscription with <code>queue.subscribe_log()</code>, pull with <code>queue.read_topic()</code>, and advance its cursor with <code>queue.ack_topic()</code>.</>} node={<>Register a log subscription with <code>queue.subscribeLog()</code>, pull with <code>queue.readTopic()</code>, and advance its cursor with <code>queue.ackTopic()</code>.</>} java={<>Register a log subscription with <code>taskito.subscribeLog()</code>, pull with <code>taskito.readTopic()</code>, and advance its cursor with <code>taskito.ackTopic()</code>.</>} />
+
+<Mermaid
+  chart={`flowchart LR
+    P["publish('orders', 42)"] --> T{{"Topic: orders"}}
+    T --> L[["One stored message"]]
+    L -. pull .-> C1["Cursor: audit-log"]
+    L -. pull .-> C2["Cursor: warehouse-sync"]`}
+/>
+
+Reach for fan-out when each subscriber has its own independent side effect
+that needs its own retries and DLQ. Reach for a log subscription for a
+replayable stream one consumer works through at its own pace, or to publish
+once to many — or unknown — consumers without multiplying writes by
+subscriber count.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.subscribe_log("orders", "audit-log")
+
+queue.publish("orders", 42)  # -> [] no fan-out jobs; one message stored
+
+for msg in queue.read_topic("orders", "audit-log"):
+    audit_sink.write(msg.args, msg.kwargs)
+    queue.ack_topic("orders", "audit-log", msg.id)
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+await queue.subscribeLog("orders", "audit-log");
+
+await queue.publish("orders", [42]); // -> [] no fan-out jobs; one message stored
+
+for (const msg of await queue.readTopic("orders", "audit-log")) {
+  auditSink.write(msg.args);
+  await queue.ackTopic("orders", "audit-log", msg.id);
+}
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// Keep the Serializer you configure on the builder — readTopic() returns a
+// raw byte[] payload, and Taskito has no getter to recover it later.
+Serializer serializer = new JsonSerializer();
+try (Taskito taskito = Taskito.builder().sqlite("orders.db").serializer(serializer).open()) {
+    taskito.subscribeLog("orders", "audit-log");
+
+    taskito.publish("orders", 42); // -> [] no fan-out jobs; one message stored
+
+    for (TopicMessage msg : taskito.readTopic("orders", "audit-log")) {
+        int orderId = serializer.deserialize(msg.payload, Integer.class);
+        auditSink.write(orderId);
+        taskito.ackTopic("orders", "audit-log", msg.id);
+    }
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+<SdkOnly sdk="java">
+
+`TopicMessage.payload` is raw `byte[]`, not a decoded value — Java is
+statically typed, so there's no target type to infer it into the way
+`readTopic()` infers one for Python/Node. Decode it yourself with the same
+serializer the publisher used. `metadata` and `notes` are still decoded to
+`Map<String, Object>`, same as the fan-out `Job` type.
+
+</SdkOnly>
+
+### The cursor is a high-water mark
+
+`read_topic()` / `readTopic()` returns messages oldest-first, **exclusive**
+of the subscription's cursor — each message's `id` doubles as the cursor
+token you pass back. `ack_topic()` / `ackTopic()` advances the cursor to a
+given id: acking id X acks everything up to and including it, and it's
+monotonic, so acking an id older than what's already acked is a no-op that
+returns `false`.
+
+### At-least-once, same contract as fan-out
+
+A log subscription gets the same
+<SdkLink to="guides/reliability/guarantees">at-least-once delivery</SdkLink>
+guarantee as everything else: read, process, then ack. A consumer that
+crashes (or otherwise fails) between reading and acking re-reads the same
+messages the next time it calls `read_topic()` / `readTopic()` — the cursor
+only moves forward on an explicit ack. A log subscription also shares the
+same late-join boundary as fan-out subscriptions above:
+`subscribe_log()` / `subscribeLog()` only sees messages published after it
+registered.
+
+### Retention compacts, it doesn't expire
+
+A log message is deleted once every log subscriber on its topic has acked
+past it — the retention sweep compacts up to the *minimum* cursor across all
+of a topic's log subscribers, on the same background cadence as job
+retention. A topic with an unread (or never-yet-read) log subscriber keeps
+its entire backlog; nothing is dropped just because it's old.
+
+<Callout type="info" title="Redis note">
+  On the Redis backend, log topics are backed by a Redis Stream — an
+  implementation detail, not a different API. `read_topic()` / `readTopic()`
+  and `ack_topic()` / `ackTopic()` behave identically across SQLite,
+  Postgres, and Redis.
+</Callout>
+
 ## Operational notes
 
-- **A down durable subscriber doesn't lose messages.** Its deliveries just
+- **A down fan-out subscriber doesn't lose messages.** Its deliveries just
   accumulate as ordinary pending jobs in its queue until a worker resumes
   consuming it — the same backlog you'd see from any other stalled queue, and
-  visible the same way (`stats()`, the dashboard).
-- **Retention is normal job retention.** There's no separate pub/sub log or
-  replay buffer — a delivery is purged, replayed, or expired exactly like any
-  other job, via `result_ttl`, `purge_completed()`, and the dead-letter queue.
-- **Publish multiplies writes by subscriber count.** A topic with 20 active
-  subscribers turns every `publish()` call into 20 job rows. For a high-fanout
-  topic, set an aggressive `result_ttl` on the publish (or on the subscriber
-  tasks themselves) so completed deliveries don't pile up in storage between
-  cleanup passes.
+  visible the same way (`stats()`, the dashboard). (A down log subscriber is
+  the same story from the other side: its cursor just stops advancing.)
+- **Fan-out retention is normal job retention.** A fan-out delivery is
+  purged, replayed, or expired exactly like any other job, via `result_ttl`,
+  `purge_completed()`, and the dead-letter queue. Log topics are the
+  exception — see "Retention compacts, it doesn't expire" under Log topics
+  above.
+- **Fan-out publish multiplies writes by subscriber count.** A fan-out topic
+  with 20 active subscribers turns every `publish()` call into 20 job rows. For
+  a high-fanout topic, set an aggressive `result_ttl` on the publish (or on the
+  subscriber tasks themselves) so completed deliveries don't pile up in storage
+  between cleanup passes. (A log topic writes one row per publish regardless of
+  subscriber count — this multiplication is a fan-out property only.)
 
 ## See also
 

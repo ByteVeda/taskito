@@ -1,12 +1,15 @@
 use std::collections::HashSet;
 
+use redis::streams::{StreamId, StreamRangeReply};
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 
 use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
-use crate::storage::records::{NewSubscription, Subscription};
+use crate::storage::records::{
+    NewSubscription, Subscription, TopicLogStats, TopicMessage, SUBSCRIPTION_MODE_LOG,
+};
 use crate::storage::SubscriptionBacklogStats;
 
 /// JSON blob stored at `sub:<topic>:<subscription_name>`. Mirrors
@@ -30,6 +33,15 @@ struct SubEntry {
     max_retries: Option<i32>,
     #[serde(default)]
     timeout_ms: Option<i64>,
+    // S28 log topics. Older blobs default to fan-out with no cursor.
+    #[serde(default = "default_mode")]
+    mode: String,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+fn default_mode() -> String {
+    crate::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string()
 }
 
 impl From<SubEntry> for Subscription {
@@ -46,6 +58,8 @@ impl From<SubEntry> for Subscription {
             priority: e.priority,
             max_retries: e.max_retries,
             timeout_ms: e.timeout_ms,
+            mode: e.mode,
+            cursor: e.cursor,
         }
     }
 }
@@ -123,6 +137,8 @@ impl RedisStorage {
             priority: sub.priority,
             max_retries: sub.max_retries,
             timeout_ms: sub.timeout_ms,
+            mode: sub.mode.clone(),
+            cursor: None,
         };
         let blob_key = self.key(&["sub", &sub.topic, &sub.subscription_name]);
         let by_topic = self.key(&["subs", "by_topic", &sub.topic]);
@@ -139,6 +155,7 @@ impl RedisStorage {
         if let Some(prior) = &prior {
             entry.active = prior.active;
             entry.created_at = prior.created_at;
+            entry.cursor = prior.cursor.clone();
         }
         let json = serde_json::to_string(&entry)?;
 
@@ -477,5 +494,278 @@ impl RedisStorage {
             })
             .collect();
         Ok(out)
+    }
+
+    // ── Log topics (Redis Streams) ──────────────────────────────────
+    //
+    // A log topic is a stream at `topic:<topic>`; a publish is one `XADD` and
+    // the returned stream id is the message id / cursor token. Per-subscription
+    // cursors live in the `SubEntry` blob. This is the Redis fork of the Diesel
+    // `topic_messages` table (see `diesel_common/pubsub.rs`).
+
+    /// Stream key for a topic's log.
+    fn topic_stream_key(&self, topic: &str) -> String {
+        self.key(&["topic", topic])
+    }
+
+    /// Parse a `<ms>-<seq>` stream id into comparable parts (invalid → `(0, 0)`).
+    fn stream_id_parts(id: &str) -> (u64, u64) {
+        let mut parts = id.splitn(2, '-');
+        let ms = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let seq = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        (ms, seq)
+    }
+
+    /// The next stream id after `id`, used as an exclusive `XTRIM MINID` floor.
+    fn next_stream_id(id: &str) -> String {
+        let (ms, seq) = Self::stream_id_parts(id);
+        match seq.checked_add(1) {
+            Some(next) => format!("{ms}-{next}"),
+            None => format!("{}-0", ms + 1),
+        }
+    }
+
+    /// Build a [`TopicMessage`] from a stream entry.
+    fn stream_id_to_message(topic: &str, entry: StreamId) -> TopicMessage {
+        TopicMessage {
+            id: entry.id.clone(),
+            topic: topic.to_string(),
+            payload: entry.get::<Vec<u8>>("payload").unwrap_or_default(),
+            metadata: entry.get::<String>("metadata"),
+            notes: entry.get::<String>("notes"),
+            created_at: entry.get::<i64>("created_at").unwrap_or_default(),
+            expires_at: entry.get::<i64>("expires_at"),
+        }
+    }
+
+    /// Append one message to a log topic (`XADD`); the stream id is the message
+    /// id. O(1), independent of subscriber count.
+    pub fn publish_message(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        metadata: Option<&str>,
+        notes: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<TopicMessage> {
+        let mut conn = self.conn()?;
+        let created_at = crate::job::now_millis();
+        let stream_key = self.topic_stream_key(topic);
+
+        let mut cmd = redis::cmd("XADD");
+        cmd.arg(&stream_key).arg("*");
+        cmd.arg("payload").arg(payload);
+        cmd.arg("created_at").arg(created_at);
+        if let Some(m) = metadata {
+            cmd.arg("metadata").arg(m);
+        }
+        if let Some(n) = notes {
+            cmd.arg("notes").arg(n);
+        }
+        if let Some(e) = expires_at {
+            cmd.arg("expires_at").arg(e);
+        }
+        let id: String = cmd.query(&mut conn).map_err(map_err)?;
+
+        Ok(TopicMessage {
+            id,
+            topic: topic.to_string(),
+            payload: payload.to_vec(),
+            metadata: metadata.map(str::to_string),
+            notes: notes.map(str::to_string),
+            created_at,
+            expires_at,
+        })
+    }
+
+    /// Messages after a log subscription's cursor, oldest first, `<= limit`.
+    /// Cursor resolved from the `SubEntry`; `XRANGE (cursor +` is exclusive.
+    pub fn read_topic_messages(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+    ) -> Result<Vec<TopicMessage>> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let blob_key = self.key(&["sub", topic, subscription_name]);
+        let Some(data): Option<String> = conn.get(&blob_key).map_err(map_err)? else {
+            return Ok(Vec::new());
+        };
+        let entry: SubEntry = serde_json::from_str(&data)?;
+        // A fan-out sub must never read a mixed topic's log.
+        if entry.mode != SUBSCRIPTION_MODE_LOG {
+            return Ok(Vec::new());
+        }
+
+        let start = match &entry.cursor {
+            Some(cursor) => format!("({cursor}"),
+            None => "-".to_string(),
+        };
+        let reply: StreamRangeReply = redis::cmd("XRANGE")
+            .arg(self.topic_stream_key(topic))
+            .arg(&start)
+            .arg("+")
+            .arg("COUNT")
+            .arg(limit)
+            .query(&mut conn)
+            .map_err(map_err)?;
+
+        Ok(reply
+            .ids
+            .into_iter()
+            .map(|entry| Self::stream_id_to_message(topic, entry))
+            .collect())
+    }
+
+    /// Advance a log subscription's cursor. Monotonic (never rewinds by stream-id
+    /// order) and idempotent. Read-modify-write on the `SubEntry` blob — a single
+    /// puller per subscription is assumed, matching the pull-consumer model.
+    pub fn ack_topic_cursor(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        cursor: &str,
+    ) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let blob_key = self.key(&["sub", topic, subscription_name]);
+        let Some(data): Option<String> = conn.get(&blob_key).map_err(map_err)? else {
+            return Ok(false);
+        };
+        let mut entry: SubEntry = serde_json::from_str(&data)?;
+        // Only a log subscription has a cursor to advance.
+        if entry.mode != SUBSCRIPTION_MODE_LOG {
+            return Ok(false);
+        }
+
+        let advance = match &entry.cursor {
+            None => true,
+            Some(current) => Self::stream_id_parts(cursor) > Self::stream_id_parts(current),
+        };
+        if !advance {
+            return Ok(false);
+        }
+        entry.cursor = Some(cursor.to_string());
+        let json = serde_json::to_string(&entry)?;
+        conn.set::<_, _, ()>(&blob_key, json).map_err(map_err)?;
+        Ok(true)
+    }
+
+    /// Per-log-subscription lag + oldest un-acked age. One `XRANGE (cursor +` per
+    /// log subscription (O(unacked)); fan-out subscriptions are excluded.
+    pub fn topic_log_stats(&self) -> Result<Vec<TopicLogStats>> {
+        let subs = self.list_subscriptions()?;
+        let mut conn = self.conn()?;
+        let now = crate::job::now_millis();
+
+        let mut out = Vec::new();
+        for sub in subs.into_iter().filter(|s| s.mode == SUBSCRIPTION_MODE_LOG) {
+            let start = match &sub.cursor {
+                Some(cursor) => format!("({cursor}"),
+                None => "-".to_string(),
+            };
+            let reply: StreamRangeReply = redis::cmd("XRANGE")
+                .arg(self.topic_stream_key(&sub.topic))
+                .arg(&start)
+                .arg("+")
+                .query(&mut conn)
+                .map_err(map_err)?;
+            let oldest = reply
+                .ids
+                .first()
+                .and_then(|entry| entry.get::<i64>("created_at"))
+                .map(|created| (now - created).max(0));
+            out.push(TopicLogStats {
+                topic: sub.topic,
+                subscription_name: sub.subscription_name,
+                cursor: sub.cursor,
+                lag: reply.ids.len() as i64,
+                oldest_unacked_age_ms: oldest,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Compact each log topic: `XTRIM MINID` to the min cursor across its subs,
+    /// then `XDEL` any entry past `expires_at` (the TTL safety net, so a NULL or
+    /// stalled cursor can't block reclamation) — matching the Diesel backend.
+    /// The expiry scan is bounded by `limit` per topic.
+    pub fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64> {
+        use std::collections::HashMap;
+        let subs = self.list_subscriptions()?;
+        let mut floors: HashMap<String, Option<String>> = HashMap::new();
+        for sub in subs.into_iter().filter(|s| s.mode == SUBSCRIPTION_MODE_LOG) {
+            match floors.entry(sub.topic) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(sub.cursor);
+                }
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    let merged = match (slot.get().clone(), sub.cursor) {
+                        (Some(current), Some(cursor)) => Some(
+                            if Self::stream_id_parts(&cursor) < Self::stream_id_parts(&current) {
+                                cursor
+                            } else {
+                                current
+                            },
+                        ),
+                        _ => None,
+                    };
+                    slot.insert(merged);
+                }
+            }
+        }
+
+        let mut conn = self.conn()?;
+        let mut removed = 0u64;
+        for (topic, floor) in floors {
+            let stream_key = self.topic_stream_key(&topic);
+            if let Some(floor) = floor {
+                let trimmed: u64 = redis::cmd("XTRIM")
+                    .arg(&stream_key)
+                    .arg("MINID")
+                    .arg(Self::next_stream_id(&floor))
+                    .query(&mut conn)
+                    .map_err(map_err)?;
+                removed += trimmed;
+            }
+            removed += self.xdel_expired(&mut conn, &stream_key, now, limit)?;
+        }
+        Ok(removed)
+    }
+
+    /// `XDEL` up to `limit` entries in `stream_key` whose `expires_at` field is
+    /// at or before `now`, regardless of any subscription cursor.
+    fn xdel_expired(
+        &self,
+        conn: &mut redis::Connection,
+        stream_key: &str,
+        now: i64,
+        limit: i64,
+    ) -> Result<u64> {
+        let reply: StreamRangeReply = redis::cmd("XRANGE")
+            .arg(stream_key)
+            .arg("-")
+            .arg("+")
+            .arg("COUNT")
+            .arg(limit)
+            .query(conn)
+            .map_err(map_err)?;
+        let expired: Vec<String> = reply
+            .ids
+            .into_iter()
+            .filter(|entry| entry.get::<i64>("expires_at").is_some_and(|at| at <= now))
+            .map(|entry| entry.id)
+            .collect();
+        if expired.is_empty() {
+            return Ok(0);
+        }
+        let deleted: u64 = redis::cmd("XDEL")
+            .arg(stream_key)
+            .arg(&expired)
+            .query(conn)
+            .map_err(map_err)?;
+        Ok(deleted)
     }
 }

@@ -34,6 +34,8 @@ export type {
   JsSubscription,
   JsTaskInvocation,
   JsTaskLog,
+  JsTopicLogStat,
+  JsTopicMessage,
   JsWorkerRow,
   JsWorkflowAdvance,
   JsWorkflowNode,

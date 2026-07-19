@@ -22,9 +22,24 @@ export type {
   JsStats as Stats,
   JsSubscription as Subscription,
   JsTaskLog as TaskLog,
+  JsTopicLogStat as TopicLogStat,
   JsWorkerRow as WorkerInfo,
   MeshWorkerConfig,
 } from "./native";
+
+/** One message pulled from a log topic; `id` is the cursor token for `ackTopic`. */
+export interface TopicMessage {
+  /** Message id — pass to `ackTopic` to advance the cursor past it. */
+  id: string;
+  /** Deserialized positional args from the `publish` call. */
+  args: unknown[];
+  /** Caller metadata, if any. */
+  metadata?: Record<string, unknown>;
+  /** Structured notes, if any. */
+  notes?: Record<string, unknown>;
+  /** Unix-millisecond publish time. */
+  createdAt: number;
+}
 
 /**
  * Per-job enqueue options. Mirrors the native options, but `notes` is a

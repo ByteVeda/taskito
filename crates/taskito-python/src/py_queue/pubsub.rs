@@ -28,6 +28,14 @@ type SubscriptionBacklogTuple = (
     Option<i64>,
 );
 
+/// A log message surfaced to Python:
+/// `(id, payload, metadata, notes, created_at)`.
+type TopicMessageTuple = (String, Vec<u8>, Option<String>, Option<String>, i64);
+
+/// Per-log-subscription lag surfaced to Python:
+/// `(topic, subscription, cursor, lag, oldest_unacked_age_ms)`.
+type TopicLogStatsTuple = (String, String, Option<String>, i64, Option<i64>);
+
 #[pymethods]
 impl PyQueue {
     /// Insert or update a topic subscription (idempotent on topic + name).
@@ -35,7 +43,7 @@ impl PyQueue {
     /// `priority`/`max_retries`/`timeout_ms` (already in milliseconds) persist
     /// the subscriber task's own delivery settings so a producer-only process
     /// can apply them without loading the task.
-    #[pyo3(signature = (topic, subscription_name, task_name, queue="default", durable=true, owner_worker_id=None, priority=None, max_retries=None, timeout_ms=None))]
+    #[pyo3(signature = (topic, subscription_name, task_name, queue="default", durable=true, owner_worker_id=None, priority=None, max_retries=None, timeout_ms=None, mode="fanout"))]
     #[allow(clippy::too_many_arguments)]
     pub fn register_subscription(
         &self,
@@ -48,6 +56,7 @@ impl PyQueue {
         priority: Option<i32>,
         max_retries: Option<i32>,
         timeout_ms: Option<i64>,
+        mode: &str,
     ) -> PyResult<()> {
         // An unowned ephemeral row could never be reaped (cleanup keys off
         // live worker ids), so it would stay active forever.
@@ -68,6 +77,7 @@ impl PyQueue {
             priority,
             max_retries,
             timeout_ms,
+            mode: mode.to_string(),
         };
         self.storage
             .register_subscription(&row)
@@ -140,6 +150,58 @@ impl PyQueue {
                 ))
             })
             .collect()
+    }
+
+    /// Messages after a log subscription's cursor, oldest first, `<= limit`:
+    /// `(id, payload, metadata, notes, created_at)`. Cursor resolved server-side.
+    pub fn read_topic_messages(
+        &self,
+        py: Python<'_>,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+    ) -> PyResult<Vec<TopicMessageTuple>> {
+        let storage = &self.storage;
+        Ok(py
+            .detach(|| storage.read_topic_messages(topic, subscription_name, limit))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            .into_iter()
+            .map(|m| (m.id, m.payload, m.metadata, m.notes, m.created_at))
+            .collect())
+    }
+
+    /// Advance a log subscription's cursor to `cursor` (monotonic). Returns
+    /// false when nothing advanced.
+    pub fn ack_topic_cursor(
+        &self,
+        py: Python<'_>,
+        topic: &str,
+        subscription_name: &str,
+        cursor: &str,
+    ) -> PyResult<bool> {
+        let storage = &self.storage;
+        py.detach(|| storage.ack_topic_cursor(topic, subscription_name, cursor))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Per-log-subscription lag snapshot:
+    /// `(topic, subscription, cursor, lag, oldest_unacked_age_ms)`.
+    pub fn topic_log_stats(&self, py: Python<'_>) -> PyResult<Vec<TopicLogStatsTuple>> {
+        let storage = &self.storage;
+        Ok(py
+            .detach(|| storage.topic_log_stats())
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            .into_iter()
+            .map(|s| {
+                (
+                    s.topic,
+                    s.subscription_name,
+                    s.cursor,
+                    s.lag,
+                    s.oldest_unacked_age_ms,
+                )
+            })
+            .collect())
     }
 
     /// Drop ephemeral subscriptions whose owning worker is gone. Runs on the

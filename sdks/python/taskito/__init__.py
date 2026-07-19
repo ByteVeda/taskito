@@ -45,6 +45,7 @@ from taskito.interception import InterceptionError, InterceptionReport
 from taskito.log_config import configure as configure_logging
 from taskito.mesh import MeshWorker
 from taskito.middleware import TaskMiddleware
+from taskito.mixins.pubsub import TopicMessage
 from taskito.notes import MAX_NOTE_FIELDS
 from taskito.proxies.no_proxy import NoProxy
 from taskito.result import JobResult
@@ -119,6 +120,7 @@ __all__ = [
     "TestMode",
     "TestResult",
     "TestResults",
+    "TopicMessage",
     "chain",
     "chord",
     "chunks",

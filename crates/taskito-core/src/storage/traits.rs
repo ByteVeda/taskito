@@ -2,7 +2,8 @@ use crate::error::Result;
 use crate::job::{Job, NewJob};
 use crate::storage::records::{
     CircuitBreakerState, JobError, LockInfo, NewPeriodicTask, NewSubscription, PeriodicTask,
-    RateLimitState, ReplayEntry, Subscription, TaskLogEntry, TaskMetric, WorkerInfo,
+    RateLimitState, ReplayEntry, Subscription, TaskLogEntry, TaskMetric, TopicLogStats,
+    TopicMessage, WorkerInfo,
 };
 use crate::storage::{DeadJob, DispatchOrder, QueueStats, SubscriptionBacklogStats};
 
@@ -252,6 +253,40 @@ pub trait Storage: Send + Sync + Clone {
     /// Bounded by the pub/sub-tagged rows (partial index), never a full `jobs`
     /// table scan — safe to poll on a dashboard cadence.
     fn topic_backlog_stats(&self) -> Result<Vec<SubscriptionBacklogStats>>;
+
+    // ── Log topics (append-once + cursor) ───────────────────────────
+
+    /// Append one message to a log topic and return it (id generated). O(1) —
+    /// independent of subscriber count, unlike fan-out delivery.
+    fn publish_message(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        metadata: Option<&str>,
+        notes: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<TopicMessage>;
+    /// Messages after a log subscription's cursor, oldest first, up to `limit`.
+    /// The cursor is resolved server-side from the subscription row; the read is
+    /// exclusive of the cursor. An empty result means the consumer is caught up.
+    fn read_topic_messages(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+    ) -> Result<Vec<TopicMessage>>;
+    /// Advance a log subscription's cursor to `cursor` (a message id). Monotonic:
+    /// never rewinds (a lower/equal cursor is a no-op). Returns false if no
+    /// subscription matched.
+    fn ack_topic_cursor(&self, topic: &str, subscription_name: &str, cursor: &str) -> Result<bool>;
+    /// Lag snapshot for every log subscription: messages after the cursor and
+    /// the oldest un-acked age. Fan-out subscriptions are excluded.
+    fn topic_log_stats(&self) -> Result<Vec<TopicLogStats>>;
+    /// Purge fully-consumed log messages: for each topic, drop messages whose id
+    /// is `<=` the minimum cursor across its log subscriptions, plus any past
+    /// `expires_at`. Bounded by `limit`. Returns the count removed. Caller gates
+    /// this on the reaper election.
+    fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64>;
 
     // ── Metrics operations ──────────────────────────────────────────
 

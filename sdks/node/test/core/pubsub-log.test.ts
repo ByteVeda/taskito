@@ -1,0 +1,114 @@
+// Log topics (S28): one stored message per publish, pulled via a cursor.
+
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { Queue, type Worker } from "../../src/index";
+
+let worker: Worker | undefined;
+afterEach(() => {
+  worker?.stop();
+  worker = undefined;
+});
+
+function newQueue(): Queue {
+  return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-pubsub-log-")), "q.db") });
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+
+/** Narrow an array element to non-undefined (strict indexed access). */
+function must<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("expected a value");
+  return value;
+}
+
+it("stores one message per publish, regardless of readers", async () => {
+  const queue = newQueue();
+  await queue.subscribeLog("events", "analytics");
+
+  // No fan-out jobs; one stored message per publish.
+  expect(await queue.publish("events", [1])).toEqual([]);
+  expect(await queue.publish("events", [2])).toEqual([]);
+
+  const msgs = await queue.readTopic("events", "analytics");
+  expect(msgs.map((m) => m.args)).toEqual([[1], [2]]);
+});
+
+it("advances the cursor on ack and is monotonic", async () => {
+  const queue = newQueue();
+  await queue.subscribeLog("events", "c");
+  for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+
+  const msgs = await queue.readTopic("events", "c");
+  expect(msgs.map((m) => m.args[0])).toEqual([0, 1, 2]);
+
+  // Ack through the middle: the next read starts after it.
+  expect(await queue.ackTopic("events", "c", must(msgs[1]).id)).toBe(true);
+  expect((await queue.readTopic("events", "c")).map((m) => m.args[0])).toEqual([2]);
+
+  // Acking an older id never rewinds.
+  expect(await queue.ackTopic("events", "c", must(msgs[0]).id)).toBe(false);
+  expect((await queue.readTopic("events", "c")).map((m) => m.args[0])).toEqual([2]);
+});
+
+it("re-delivers un-acked messages (at-least-once)", async () => {
+  const queue = newQueue();
+  await queue.subscribeLog("events", "c");
+  await queue.publish("events", ["x"]);
+  expect((await queue.readTopic("events", "c")).map((m) => m.args)).toEqual([["x"]]);
+  expect((await queue.readTopic("events", "c")).map((m) => m.args)).toEqual([["x"]]);
+});
+
+it("bounds a read by limit", async () => {
+  const queue = newQueue();
+  await queue.subscribeLog("events", "c");
+  for (let i = 0; i < 5; i++) await queue.publish("events", [i]);
+
+  const first = await queue.readTopic("events", "c", 2);
+  expect(first.map((m) => m.args[0])).toEqual([0, 1]);
+  await queue.ackTopic("events", "c", must(first[first.length - 1]).id);
+  expect((await queue.readTopic("events", "c", 2)).map((m) => m.args[0])).toEqual([2, 3]);
+});
+
+it("reports lag per log subscription", async () => {
+  const queue = newQueue();
+  await queue.subscribeLog("events", "c");
+  for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+
+  let stat = must((await queue.topicLogStats())[0]);
+  expect(stat.subscription).toBe("c");
+  expect(stat.cursor).toBeUndefined();
+  expect(stat.lag).toBe(3);
+
+  const msgs = await queue.readTopic("events", "c");
+  await queue.ackTopic("events", "c", must(msgs[msgs.length - 1]).id);
+  stat = must((await queue.topicLogStats())[0]);
+  expect(stat.lag).toBe(0);
+});
+
+it("lets log and fan-out subscribers coexist on one topic", async () => {
+  const queue = newQueue();
+  const seen: number[] = [];
+  queue.subscriber("events", "worker", (n: number) => {
+    seen.push(n);
+  });
+  await queue.declareSubscriptions();
+  await queue.subscribeLog("events", "log");
+
+  worker = queue.runWorker({ concurrency: 1 });
+  await queue.publish("events", [7]);
+
+  expect(await waitFor(() => seen.length === 1)).toBe(true);
+  expect(seen).toEqual([7]);
+  // The same publish stored one log message.
+  expect((await queue.readTopic("events", "log")).map((m) => m.args)).toEqual([[7]]);
+});

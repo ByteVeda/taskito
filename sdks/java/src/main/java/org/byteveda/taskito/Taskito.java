@@ -35,6 +35,8 @@ import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.TopicLogStat;
+import org.byteveda.taskito.model.TopicMessage;
 import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueGate;
@@ -413,6 +415,37 @@ public interface Taskito extends AutoCloseable {
 
     /** Distinct topics that currently have at least one subscription. */
     List<String> listTopics();
+
+    /**
+     * Register a durable <b>log</b> subscription: a named cursor over {@code topic}.
+     * Unlike {@link #subscribe(String, Task)} it has no handler — the topic's
+     * publishes are stored once each and this consumer pulls them with
+     * {@link #readTopic(String, String)}, advancing with {@link #ackTopic}. Writes
+     * immediately, so register it before the publishes it should see. (On Redis the
+     * log is backed by a Stream, but that is transparent.)
+     */
+    void subscribeLog(String topic, String name);
+
+    /** As {@link #readTopic(String, String, int)} with a default limit of 100. */
+    List<TopicMessage> readTopic(String topic, String name);
+
+    /**
+     * Pull up to {@code limit} messages after a log subscription's cursor, oldest
+     * first and exclusive of it. Empty when caught up. Decode each {@code payload}
+     * with the queue's serializer. At-least-once: process, then {@link #ackTopic}
+     * the last {@code id}.
+     */
+    List<TopicMessage> readTopic(String topic, String name, int limit);
+
+    /**
+     * Advance a log subscription's cursor to {@code cursor} (a message id). A
+     * high-water mark: acking an id acks everything up to it. Monotonic — acking an
+     * older id is a no-op. Returns false when nothing moved.
+     */
+    boolean ackTopic(String topic, String name, String cursor);
+
+    /** Lag snapshot per log subscription (cursor position and un-acked backlog). */
+    List<TopicLogStat> topicLogStats();
 
     // ── Workflows ───────────────────────────────────────────────────
 

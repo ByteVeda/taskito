@@ -258,6 +258,8 @@ fn register_subscriptions(
             priority: spec.priority,
             max_retries: spec.max_retries,
             timeout_ms: spec.timeout_ms,
+            // Fan-out by default; the log-mode param is threaded in a later step.
+            mode: taskito_core::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string(),
         };
         storage.register_subscription(&row)?;
     }

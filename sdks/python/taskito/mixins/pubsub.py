@@ -1,9 +1,10 @@
-"""Topic pub/sub: N independent subscribers, each delivered its own job."""
+"""Topic pub/sub: fan-out subscribers (one job each) or log subscribers (pull)."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from taskito.notes import validate_and_encode_notes
@@ -13,6 +14,22 @@ if TYPE_CHECKING:
     from taskito._taskito import PyQueue
     from taskito.serializers import Serializer
     from taskito.task import TaskWrapper
+
+
+@dataclass(frozen=True)
+class TopicMessage:
+    """One message pulled from a log topic.
+
+    ``id`` is the cursor token to pass to :meth:`ack_topic`. ``args``/``kwargs``
+    are the decoded publish payload; ``metadata``/``notes`` are the caller's.
+    """
+
+    id: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    metadata: dict[str, Any] | None
+    notes: dict[str, Any] | None
+    created_at: int
 
 
 class QueuePubSubMixin:
@@ -88,6 +105,75 @@ class QueuePubSubMixin:
             return wrapper
 
         return decorator
+
+    def subscribe_log(self, topic: str, name: str) -> None:
+        """Register a durable **log** subscription (a named cursor over ``topic``).
+
+        Unlike :meth:`subscriber`, a log subscription has no handler: the topic's
+        publishes are stored once each and this consumer pulls them with
+        :meth:`read_topic`, advancing its cursor with :meth:`ack_topic`. Writes
+        immediately to storage, so a producer must have registered it (or called
+        this) before the publishes it wants to see.
+        """
+        self._inner.register_subscription(
+            topic=topic,
+            subscription_name=name,
+            task_name="",
+            queue="default",
+            durable=True,
+            owner_worker_id=None,
+            mode="log",
+        )
+
+    def read_topic(self, topic: str, name: str, limit: int = 100) -> list[TopicMessage]:
+        """Pull up to ``limit`` messages after a log subscription's cursor.
+
+        Oldest first, exclusive of the cursor. Decodes each payload with the
+        queue serializer. Returns an empty list when the consumer is caught up.
+        Delivery is at-least-once: process, then :meth:`ack_topic` the last id.
+        """
+        messages = []
+        for msg_id, payload, metadata, notes, created_at in self._inner.read_topic_messages(
+            topic, name, limit
+        ):
+            args, kwargs = self._serializer.loads(payload)
+            messages.append(
+                TopicMessage(
+                    id=msg_id,
+                    args=args,
+                    kwargs=kwargs,
+                    metadata=json.loads(metadata) if metadata is not None else None,
+                    notes=json.loads(notes) if notes is not None else None,
+                    created_at=created_at,
+                )
+            )
+        return messages
+
+    def ack_topic(self, topic: str, name: str, cursor: str) -> bool:
+        """Advance a log subscription's cursor to ``cursor`` (a message id).
+
+        A high-water mark: acking an id acks everything up to and including it.
+        Monotonic — acking an older id is a no-op. Returns False if nothing moved.
+        """
+        return self._inner.ack_topic_cursor(topic, name, cursor)
+
+    def topic_log_stats(self) -> list[dict[str, Any]]:
+        """Lag snapshot per log subscription.
+
+        Each entry: ``topic``, ``subscription``, ``cursor`` (``None`` if unread),
+        ``lag`` (un-acked messages), ``oldest_unacked_age_ms`` (``None`` if
+        caught up).
+        """
+        return [
+            {
+                "topic": row[0],
+                "subscription": row[1],
+                "cursor": row[2],
+                "lag": row[3],
+                "oldest_unacked_age_ms": row[4],
+            }
+            for row in self._inner.topic_log_stats()
+        ]
 
     def declare_subscriptions(self) -> None:
         """Write pending durable subscriptions to storage.

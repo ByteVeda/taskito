@@ -1721,6 +1721,7 @@ fn make_sub(
         priority: None,
         max_retries: None,
         timeout_ms: None,
+        mode: "fanout".to_string(),
     }
 }
 

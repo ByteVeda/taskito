@@ -15,6 +15,7 @@ use taskito_core::Storage;
 use crate::backend;
 use crate::convert::{
     build_publish_request, parse_json, to_json, JobView, PublishOptions, SubscriptionView,
+    TopicLogStatsView, TopicMessageView,
 };
 use crate::ffi::{guard, new_string, read_bytes, read_optional_string, read_string};
 
@@ -22,10 +23,11 @@ use super::{borrow_queue, to_jboolean};
 
 /// `void registerSubscription(long handle, String topic, String subscriptionName,
 /// String taskName, String queue, boolean durable, String ownerWorkerIdOrNull,
-/// int priority, int maxRetries, long timeoutMs)` — insert or update a
-/// subscription (idempotent on topic + name). The three delivery-setting
+/// int priority, int maxRetries, long timeoutMs, String mode)` — insert or update
+/// a subscription (idempotent on topic + name). The three delivery-setting
 /// numerics use `i32::MIN` / `i64::MIN` as the "unset → queue default" sentinel,
-/// since JNI carries primitives, not boxed nullables.
+/// since JNI carries primitives, not boxed nullables. `mode` is `"fanout"`
+/// (one job per publish) or `"log"` (append-once + cursor).
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSubscription<
@@ -43,6 +45,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
     priority: jint,
     max_retries: jint,
     timeout_ms: jlong,
+    mode: JString<'local>,
 ) {
     guard(&mut env, (), |env| {
         let queue_handle = unsafe { borrow_queue(handle) };
@@ -51,6 +54,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
         let task_name = read_string(env, &task_name)?;
         let queue = read_string(env, &queue)?;
         let owner_worker_id = read_optional_string(env, &owner_worker_id)?;
+        let mode = read_string(env, &mode)?;
         // An ownerless ephemeral row would never be reaped (the reaper matches
         // on owner) yet keeps receiving deliveries — reject it up front.
         if durable == 0 && owner_worker_id.is_none() {
@@ -72,6 +76,7 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_registerSu
             priority: (priority != jint::MIN).then_some(priority),
             max_retries: (max_retries != jint::MIN).then_some(max_retries),
             timeout_ms: (timeout_ms != jlong::MIN).then_some(timeout_ms),
+            mode,
         };
         queue_handle.storage.register_subscription(&row)?;
         Ok(())
@@ -179,6 +184,73 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_publish<'l
         let request = build_publish_request(topic, payload, options, queue.namespace.as_deref());
         let jobs = publish_to_topic(&queue.storage, &request)?;
         let views: Vec<JobView> = jobs.iter().map(JobView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `String readTopicMessages(long handle, String topic, String subscriptionName,
+/// long limit)` — pull up to `limit` messages after a log subscription's cursor,
+/// oldest first and exclusive of it, as a JSON array of `TopicMessageView`.
+/// At-least-once: reading without acking re-delivers.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_readTopicMessages<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    topic: JString<'local>,
+    subscription_name: JString<'local>,
+    limit: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let topic = read_string(env, &topic)?;
+        let subscription_name = read_string(env, &subscription_name)?;
+        let messages = queue
+            .storage
+            .read_topic_messages(&topic, &subscription_name, limit)?;
+        let views: Vec<TopicMessageView> = messages.iter().map(TopicMessageView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `boolean ackTopicCursor(long handle, String topic, String subscriptionName,
+/// String cursor)` — advance the subscription's cursor to `cursor` (a message
+/// id). A monotonic high-water mark: acking an id acks everything up to it, and
+/// acking an older id is a no-op. Returns false when nothing moved.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_ackTopicCursor<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    topic: JString<'local>,
+    subscription_name: JString<'local>,
+    cursor: JString<'local>,
+) -> jboolean {
+    guard(&mut env, JNI_FALSE, |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let topic = read_string(env, &topic)?;
+        let subscription_name = read_string(env, &subscription_name)?;
+        let cursor = read_string(env, &cursor)?;
+        Ok(to_jboolean(queue.storage.ack_topic_cursor(
+            &topic,
+            &subscription_name,
+            &cursor,
+        )?))
+    })
+}
+
+/// `String topicLogStats(long handle)` — a JSON array of `TopicLogStatsView`, one
+/// lag snapshot per log subscription.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_topicLogStats<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let stats = queue.storage.topic_log_stats()?;
+        let views: Vec<TopicLogStatsView> = stats.iter().map(TopicLogStatsView::from).collect();
         new_string(env, to_json(&views)?)
     })
 }

@@ -82,6 +82,73 @@ no-op.
 Unrecognized keyword arguments are forwarded as part of the task payload's
 `kwargs`, same as `enqueue()`.
 
+## Log subscriptions
+
+See [Log topics](/python/guides/core/pubsub#log-topics) for the cursor,
+at-least-once, and retention semantics.
+
+### `queue.subscribe_log()`
+
+```python
+queue.subscribe_log(topic: str, name: str) -> None
+```
+
+Register a durable log subscription — a named cursor with no handler.
+Writes to storage immediately, so register it before the publishes it
+should see. Unlike `@queue.subscriber()`, there's no separate
+`declare_subscriptions()` step.
+
+### `queue.read_topic()`
+
+```python
+queue.read_topic(topic: str, name: str, limit: int = 100) -> list[TopicMessage]
+```
+
+Pull up to `limit` messages after `name`'s cursor, oldest first and
+exclusive of it. Each message's payload is decoded with the queue
+serializer. Returns an empty list once the subscription is caught up.
+At-least-once — process the batch, then advance the cursor with
+`ack_topic()`.
+
+### `queue.ack_topic()`
+
+```python
+queue.ack_topic(topic: str, name: str, cursor: str) -> bool
+```
+
+Advance a log subscription's cursor to `cursor` (a message `id`). A
+high-water mark — acking an id acks everything up to and including it.
+Monotonic: acking an id older than what's already acked is a no-op and
+returns `False`.
+
+### `queue.topic_log_stats()`
+
+```python
+queue.topic_log_stats() -> list[dict[str, Any]]
+```
+
+Lag snapshot for every log subscription. Each dict contains `topic`,
+`subscription`, `cursor` (`None` if nothing has been acked yet), `lag`
+(un-acked message count), and `oldest_unacked_age_ms` (`None` when caught
+up).
+
+### `TopicMessage`
+
+```python
+from taskito import TopicMessage
+```
+
+One message pulled from a log topic, returned by `read_topic()`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `str` | Cursor token — pass to `ack_topic()`. |
+| `args` | `tuple[Any, ...]` | Decoded positional args from the `publish()` call. |
+| `kwargs` | `dict[str, Any]` | Decoded keyword args from the `publish()` call. |
+| `metadata` | `dict[str, Any] \| None` | Caller metadata, if any. |
+| `notes` | `dict[str, Any] \| None` | Structured notes, if any. |
+| `created_at` | `int` | Unix-millisecond publish time. |
+
 ## Managing subscriptions
 
 ### `queue.unsubscribe()`

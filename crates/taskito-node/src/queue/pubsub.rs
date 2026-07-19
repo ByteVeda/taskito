@@ -12,7 +12,8 @@ use taskito_core::Storage;
 use super::JsQueue;
 use crate::config::PublishOptions;
 use crate::convert::{
-    job_to_js, subscription_to_js, JsJob, JsSubscription, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
+    job_to_js, subscription_to_js, topic_log_stat_to_js, topic_message_to_js, JsJob,
+    JsSubscription, JsTopicLogStat, JsTopicMessage, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
     DEFAULT_TIMEOUT_MS,
 };
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
@@ -35,6 +36,7 @@ impl JsQueue {
         priority: Option<i32>,
         max_retries: Option<i32>,
         timeout_ms: Option<i64>,
+        mode: Option<String>,
     ) -> Result<()> {
         // An owner-less ephemeral row could never be reaped — reject it before
         // it reaches storage.
@@ -43,6 +45,9 @@ impl JsQueue {
                 "an ephemeral subscription (durable=false) requires ownerWorkerId",
             ));
         }
+        let mode = mode.unwrap_or_else(|| {
+            taskito_core::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string()
+        });
         let storage = self.storage.clone();
         spawn_blocking(move || {
             let row = NewSubscription {
@@ -57,8 +62,60 @@ impl JsQueue {
                 priority,
                 max_retries,
                 timeout_ms,
+                mode,
             };
             storage.register_subscription(&row).map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Messages after a log subscription's cursor, oldest first, `<= limit`.
+    /// Cursor resolved server-side; the read is exclusive of it.
+    #[napi]
+    pub async fn read_topic_messages(
+        &self,
+        topic: String,
+        subscription_name: String,
+        limit: i64,
+    ) -> Result<Vec<JsTopicMessage>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let messages = storage
+                .read_topic_messages(&topic, &subscription_name, limit)
+                .map_err(to_napi_err)?;
+            Ok(messages.into_iter().map(topic_message_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Advance a log subscription's cursor (monotonic). Returns false when
+    /// nothing advanced.
+    #[napi]
+    pub async fn ack_topic_cursor(
+        &self,
+        topic: String,
+        subscription_name: String,
+        cursor: String,
+    ) -> Result<bool> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .ack_topic_cursor(&topic, &subscription_name, &cursor)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Lag snapshot per log subscription.
+    #[napi]
+    pub async fn topic_log_stats(&self) -> Result<Vec<JsTopicLogStat>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let stats = storage.topic_log_stats().map_err(to_napi_err)?;
+            Ok(stats.into_iter().map(topic_log_stat_to_js).collect())
         })
         .await
         .map_err(join_to_napi_err)?
