@@ -1,6 +1,7 @@
 package org.byteveda.taskito.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -129,5 +130,7 @@ class LogConsumerTest {
         while (System.nanoTime() < deadline && !condition.getAsBoolean()) {
             Thread.sleep(25);
         }
+        // Fail rather than silently return, so each caller's condition is asserted.
+        assertTrue(condition.getAsBoolean(), "condition not met within " + timeout);
     }
 }

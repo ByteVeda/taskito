@@ -198,12 +198,17 @@ class TestManagedConsumer:
         assert attempts.count(1) == 1
 
     def test_shutdown_stops_consumer_thread(self, queue: Queue, poll_until: PollUntil) -> None:
+        handled: list[int] = []
+
         @queue.log_consumer("events", "c", poll_interval=0.05)
         def handle(n: int) -> None:
-            pass
+            handled.append(n)
 
         thread = self._worker(queue)
         queue.publish("events", 1)
+        # Wait until the consumer has actually run before shutting down, so the
+        # request can't race an unstarted worker (which would block forever).
+        poll_until(lambda: handled == [1], message="consumer should run before shutdown")
         queue.shutdown()
         thread.join(timeout=5)
         assert not thread.is_alive()
