@@ -239,6 +239,87 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_ackTopicCu
     })
 }
 
+/// `String leaseTopicMessages(long handle, String topic, String subscriptionName,
+/// long limit, long visibilityMs)` — lease up to `limit` available messages for
+/// `visibilityMs`, tracking per-message state, as a JSON array of `TopicMessageView`.
+/// A nack or an expired lease redelivers just that message. `now` is taken here so
+/// the SDK never passes a clock.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_leaseTopicMessages<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    topic: JString<'local>,
+    subscription_name: JString<'local>,
+    limit: jlong,
+    visibility_ms: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let topic = read_string(env, &topic)?;
+        let subscription_name = read_string(env, &subscription_name)?;
+        let messages = queue.storage.lease_topic_messages(
+            &topic,
+            &subscription_name,
+            limit,
+            visibility_ms,
+            now_millis(),
+        )?;
+        let views: Vec<TopicMessageView> = messages.iter().map(TopicMessageView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `boolean ackMessage(long handle, String topic, String subscriptionName,
+/// String messageId)` — ack one leased message; it is done and never redelivered.
+/// Returns false when there was no un-acked delivery to ack.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_ackMessage<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    topic: JString<'local>,
+    subscription_name: JString<'local>,
+    message_id: JString<'local>,
+) -> jboolean {
+    guard(&mut env, JNI_FALSE, |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let topic = read_string(env, &topic)?;
+        let subscription_name = read_string(env, &subscription_name)?;
+        let message_id = read_string(env, &message_id)?;
+        Ok(to_jboolean(queue.storage.ack_message(
+            &topic,
+            &subscription_name,
+            &message_id,
+        )?))
+    })
+}
+
+/// `boolean nackMessage(long handle, String topic, String subscriptionName,
+/// String messageId)` — nack one leased message; make it available for redelivery
+/// now. Returns false when there was no un-acked delivery to nack.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_nackMessage<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    topic: JString<'local>,
+    subscription_name: JString<'local>,
+    message_id: JString<'local>,
+) -> jboolean {
+    guard(&mut env, JNI_FALSE, |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let topic = read_string(env, &topic)?;
+        let subscription_name = read_string(env, &subscription_name)?;
+        let message_id = read_string(env, &message_id)?;
+        Ok(to_jboolean(queue.storage.nack_message(
+            &topic,
+            &subscription_name,
+            &message_id,
+        )?))
+    })
+}
+
 /// `String topicLogStats(long handle)` — a JSON array of `TopicLogStatsView`, one
 /// lag snapshot per log subscription.
 #[no_mangle]

@@ -184,6 +184,16 @@ public final class NativeQueue {
     /** Advance a log subscription's cursor (monotonic); false if nothing moved. */
     public static native boolean ackTopicCursor(long handle, String topic, String subscriptionName, String cursor);
 
+    /** Lease up to {@code limit} available messages for {@code visibilityMs}, as a JSON array of message views. */
+    public static native String leaseTopicMessages(
+            long handle, String topic, String subscriptionName, long limit, long visibilityMs);
+
+    /** Ack one leased message; false if there was no un-acked delivery to ack. */
+    public static native boolean ackMessage(long handle, String topic, String subscriptionName, String messageId);
+
+    /** Nack one leased message; false if there was no un-acked delivery to nack. */
+    public static native boolean nackMessage(long handle, String topic, String subscriptionName, String messageId);
+
     /** A JSON array of per-log-subscription lag snapshots. */
     public static native String topicLogStats(long handle);
 

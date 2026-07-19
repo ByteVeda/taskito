@@ -312,6 +312,25 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
     }
 
+    /**
+     * Lease up to {@code limit} available messages for {@code visibilityMs}, tracking
+     * per-message state, as a JSON array of message views. A nack or an expired lease
+     * redelivers just that message without blocking its siblings.
+     */
+    default String leaseTopicMessagesJson(String topic, String subscriptionName, long limit, long visibilityMs) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** Ack one leased message; false if there was no un-acked delivery to ack. */
+    default boolean ackMessage(String topic, String subscriptionName, String messageId) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** Nack one leased message (redeliver now); false if there was no un-acked delivery to nack. */
+    default boolean nackMessage(String topic, String subscriptionName, String messageId) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
     /** A JSON array of per-log-subscription lag snapshots. */
     default String topicLogStatsJson() {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);

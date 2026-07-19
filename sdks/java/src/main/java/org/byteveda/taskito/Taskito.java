@@ -446,6 +446,32 @@ public interface Taskito extends AutoCloseable {
      */
     boolean ackTopic(String topic, String name, String cursor);
 
+    /** As {@link #leaseTopic(String, String, int, Duration)} with a default limit of 100 and a 30s visibility. */
+    List<TopicMessage> leaseTopic(String topic, String name);
+
+    /**
+     * Lease up to {@code limit} messages for <b>per-message</b> consumption. Unlike
+     * {@link #readTopic}'s cursor, each message is leased for {@code visibility} and
+     * tracked individually: {@link #ackMessage} it when done, or {@link #nackMessage}
+     * to redeliver it now. A lease that expires un-acked is redelivered, so one poison
+     * message no longer blocks its siblings. In-flight (leased, un-expired) messages
+     * are skipped; oldest first.
+     */
+    List<TopicMessage> leaseTopic(String topic, String name, int limit, Duration visibility);
+
+    /**
+     * Ack one leased message — the delivery is done and never redelivered. Returns
+     * false when there was no un-acked delivery to ack.
+     */
+    boolean ackMessage(String topic, String name, String messageId);
+
+    /**
+     * Nack one leased message — make it available for redelivery now, rather than
+     * waiting out the visibility timeout. Returns false when there was no un-acked
+     * delivery to nack.
+     */
+    boolean nackMessage(String topic, String name, String messageId);
+
     /** Lag snapshot per log subscription (cursor position and un-acked backlog). */
     List<TopicLogStat> topicLogStats();
 
