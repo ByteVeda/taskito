@@ -115,104 +115,79 @@ it("reports lag per log subscription", async () => {
 });
 
 it(
-  "drives a managed consumer: pull, invoke handler, advance cursor",
+  "managed consumers: sync, async, retry-redeliver, and skip-poison in one worker",
   async () => {
     const queue = newQueue();
-    const received: number[] = [];
+    const sync: number[] = [];
+    const asyncSeen: number[] = [];
+    const retry: number[] = [];
+    const skip: number[] = [];
+    let retryFailed = false;
+
     queue.logConsumer(
-      "events",
+      "t-sync",
       "c",
       (n: number) => {
-        received.push(n);
+        sync.push(n);
       },
       { pollIntervalMs: 20 },
     );
-
-    worker = queue.runWorker({ concurrency: 1 });
-    for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
-
-    expect(await waitFor(() => received.length === 3)).toBe(true);
-    expect([...received].sort()).toEqual([0, 1, 2]);
-    expect(must((await queue.topicLogStats())[0]).lag).toBe(0);
-  },
-  WORKER_TEST_TIMEOUT_MS,
-);
-
-it(
-  "awaits an async managed-consumer handler",
-  async () => {
-    const queue = newQueue();
-    const received: number[] = [];
     queue.logConsumer(
-      "events",
+      "t-async",
       "c",
       async (n: number) => {
         await new Promise((r) => setTimeout(r, 1));
-        received.push(n);
+        asyncSeen.push(n);
       },
       { pollIntervalMs: 20 },
     );
-
-    worker = queue.runWorker({ concurrency: 1 });
-    await queue.publish("events", [42]);
-    expect(await waitFor(() => received.length === 1)).toBe(true);
-    expect(received).toEqual([42]);
-  },
-  WORKER_TEST_TIMEOUT_MS,
-);
-
-it(
-  "retry mode re-delivers a failed message but not acked predecessors",
-  async () => {
-    const queue = newQueue();
-    const attempts: number[] = [];
-    let failed = false;
     queue.logConsumer(
-      "events",
+      "t-retry",
       "c",
       (n: number) => {
-        attempts.push(n);
-        if (n === 1 && !failed) {
-          failed = true;
+        retry.push(n);
+        if (n === 1 && !retryFailed) {
+          retryFailed = true;
           throw new Error("boom");
         }
       },
       { pollIntervalMs: 20, onError: "retry" },
     );
-
-    worker = queue.runWorker({ concurrency: 1 });
-    for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
-
-    expect(
-      await waitFor(() => attempts.filter((n) => n === 1).length === 2 && attempts.includes(2)),
-    ).toBe(true);
-    // 0 was acked before the failure → never redelivered.
-    expect(attempts.filter((n) => n === 0).length).toBe(1);
-  },
-  WORKER_TEST_TIMEOUT_MS,
-);
-
-it(
-  "skip mode acks past a poison message",
-  async () => {
-    const queue = newQueue();
-    const attempts: number[] = [];
     queue.logConsumer(
-      "events",
+      "t-skip",
       "c",
       (n: number) => {
-        attempts.push(n);
+        skip.push(n);
         if (n === 1) throw new Error("always poison");
       },
       { pollIntervalMs: 20, onError: "skip" },
     );
 
+    // One worker hosts all four consumers, so their poll loops share a single
+    // (cold-runner-slow) startup instead of one worker lifecycle per test.
     worker = queue.runWorker({ concurrency: 1 });
-    for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+    for (let i = 0; i < 3; i++) {
+      await queue.publish("t-sync", [i]);
+      await queue.publish("t-retry", [i]);
+      await queue.publish("t-skip", [i]);
+    }
+    await queue.publish("t-async", [42]);
 
-    expect(await waitFor(() => [...attempts].sort().join() === "0,1,2")).toBe(true);
-    expect(must((await queue.topicLogStats())[0]).lag).toBe(0);
-    expect(attempts.filter((n) => n === 1).length).toBe(1);
+    expect(await waitFor(() => [...sync].sort().join() === "0,1,2")).toBe(true);
+    expect(await waitFor(() => asyncSeen.length === 1)).toBe(true);
+    expect(asyncSeen).toEqual([42]);
+    // retry: msg 1 fails once then re-reads; msg 0, acked before the failure, isn't redelivered.
+    expect(
+      await waitFor(() => retry.filter((n) => n === 1).length === 2 && retry.includes(2)),
+    ).toBe(true);
+    expect(retry.filter((n) => n === 0).length).toBe(1);
+    // skip: the poison is attempted once, then acked past.
+    expect(await waitFor(() => [...skip].sort().join() === "0,1,2")).toBe(true);
+    expect(skip.filter((n) => n === 1).length).toBe(1);
+    const skipStat = must(
+      (await queue.topicLogStats()).find((s) => s.topic === "t-skip" && s.subscription === "c"),
+    );
+    expect(skipStat.lag).toBe(0);
   },
   WORKER_TEST_TIMEOUT_MS,
 );
