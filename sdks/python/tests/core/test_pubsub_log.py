@@ -1,6 +1,7 @@
 """Log topics (S28): one stored message per publish, pulled via a cursor."""
 
 import threading
+import time
 from typing import Any
 
 from taskito import Queue, TopicMessage
@@ -228,3 +229,34 @@ class TestTopicRegistry:
         topics = {t["name"]: t for t in queue.list_declared_topics()}
         assert topics["orders"]["retention_ms"] == 2000
         assert len(queue.list_declared_topics()) == 2
+
+
+class TestPerMessageAck:
+    def test_lease_ack_nack(self, queue: Queue) -> None:
+        queue.subscribe_log("events", "w")
+        for i in range(3):
+            queue.publish("events", i)
+
+        # Lease 2 with a long visibility; a second lease sees only msg 2.
+        batch = queue.lease_topic("events", "w", limit=2, visibility=60)
+        assert [m.args[0] for m in batch] == [0, 1]
+        assert [m.args[0] for m in queue.lease_topic("events", "w", visibility=60)] == [2]
+
+        # Ack 0 (done); nack 1 (redeliver now). Acking 0 again is a no-op.
+        assert queue.ack_message("events", "w", batch[0].id) is True
+        assert queue.nack_message("events", "w", batch[1].id) is True
+        assert queue.ack_message("events", "w", batch[0].id) is False
+
+        # Only the nacked msg 1 comes back (0 acked, 2 in-flight).
+        assert [m.args[0] for m in queue.lease_topic("events", "w", visibility=60)] == [1]
+
+    def test_visibility_timeout_redelivers(self, queue: Queue) -> None:
+        queue.subscribe_log("events", "w")
+        queue.publish("events", 1)
+
+        assert [m.args[0] for m in queue.lease_topic("events", "w", visibility=0.1)] == [1]
+        # Within the window it is not re-leased.
+        assert queue.lease_topic("events", "w", visibility=0.1) == []
+        time.sleep(0.15)
+        # Past the timeout, an un-acked message redelivers.
+        assert [m.args[0] for m in queue.lease_topic("events", "w", visibility=0.1)] == [1]

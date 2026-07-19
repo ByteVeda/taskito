@@ -230,10 +230,15 @@ class QueuePubSubMixin:
         queue serializer. Returns an empty list when the consumer is caught up.
         Delivery is at-least-once: process, then :meth:`ack_topic` the last id.
         """
+        return self._decode_topic_messages(self._inner.read_topic_messages(topic, name, limit))
+
+    def _decode_topic_messages(
+        self, rows: list[tuple[str, bytes, str | None, str | None, int]]
+    ) -> list[TopicMessage]:
+        """Decode native ``(id, payload, metadata, notes, created_at)`` rows into
+        :class:`TopicMessage`, unpacking the payload with the queue serializer."""
         messages = []
-        for msg_id, payload, metadata, notes, created_at in self._inner.read_topic_messages(
-            topic, name, limit
-        ):
+        for msg_id, payload, metadata, notes, created_at in rows:
             args, kwargs = self._serializer.loads(payload)
             messages.append(
                 TopicMessage(
@@ -254,6 +259,33 @@ class QueuePubSubMixin:
         Monotonic — acking an older id is a no-op. Returns False if nothing moved.
         """
         return self._inner.ack_topic_cursor(topic, name, cursor)
+
+    def lease_topic(
+        self, topic: str, name: str, limit: int = 100, visibility: float = 30.0
+    ) -> list[TopicMessage]:
+        """Lease up to ``limit`` messages for **per-message** consumption.
+
+        Unlike :meth:`read_topic`'s cursor, each returned message is leased for
+        ``visibility`` seconds and tracked individually: :meth:`ack_message` it
+        when done, or :meth:`nack_message` to redeliver it now. A lease that
+        expires un-acked is redelivered, so one poison message no longer blocks
+        its siblings. Oldest first; in-flight (leased, un-expired) messages are
+        skipped.
+        """
+        return self._decode_topic_messages(
+            self._inner.lease_topic_messages(topic, name, limit, int(visibility * 1000))
+        )
+
+    def ack_message(self, topic: str, name: str, message_id: str) -> bool:
+        """Ack one leased message — the delivery is done and never redelivered.
+        Returns False when there was no un-acked delivery to ack."""
+        return self._inner.ack_message(topic, name, message_id)
+
+    def nack_message(self, topic: str, name: str, message_id: str) -> bool:
+        """Nack one leased message — make it available for redelivery now (vs
+        waiting out the visibility timeout). Returns False when there was no
+        un-acked delivery to nack."""
+        return self._inner.nack_message(topic, name, message_id)
 
     def topic_log_stats(self) -> list[dict[str, Any]]:
         """Lag snapshot per log subscription.
