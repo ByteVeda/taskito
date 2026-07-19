@@ -108,3 +108,34 @@ class TestLogStats:
         (stat,) = queue.topic_log_stats()
         assert stat["lag"] == 0
         assert stat["oldest_unacked_age_ms"] is None
+
+
+class TestTopicRegistry:
+    def test_declared_topic_retains_without_subscribers(self, queue: Queue) -> None:
+        queue.declare_topic("events")
+        # No subscriber yet, but declared → the publish is retained.
+        assert queue.publish("events", 1) == []
+        assert queue.publish("events", 2) == []
+        # A log subscriber that joins later still sees the earlier publishes.
+        queue.subscribe_log("events", "late")
+        assert [m.args for m in queue.read_topic("events", "late")] == [(1,), (2,)]
+
+    def test_undeclared_topic_keeps_late_join_boundary(self, queue: Queue) -> None:
+        queue.publish("events", "early")  # not declared, no sub → dropped
+        queue.subscribe_log("events", "late")
+        queue.publish("events", "seen")
+        assert [m.args for m in queue.read_topic("events", "late")] == [("seen",)]
+
+    def test_list_declared_topics_and_retention_round_trip(self, queue: Queue) -> None:
+        queue.declare_topic("orders", retention=1.5)
+        queue.declare_topic("events")
+        topics = {t["name"]: t for t in queue.list_declared_topics()}
+        assert topics["orders"]["mode"] == "log"
+        assert topics["orders"]["retention_ms"] == 1500
+        assert topics["events"]["retention_ms"] is None
+
+        # Idempotent re-declare updates retention without adding a row.
+        queue.declare_topic("orders", retention=2.0)
+        topics = {t["name"]: t for t in queue.list_declared_topics()}
+        assert topics["orders"]["retention_ms"] == 2000
+        assert len(queue.list_declared_topics()) == 2
