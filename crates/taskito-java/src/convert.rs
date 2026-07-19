@@ -10,7 +10,7 @@ use taskito_core::pubsub::{DeliveryDefaults, PublishRequest};
 use taskito_core::resilience::circuit_breaker::CircuitState;
 use taskito_core::storage::records::{
     CircuitBreakerState, JobError, LockInfo, PeriodicTask, ReplayEntry, Subscription, TaskLogEntry,
-    TaskMetric, TopicLogStats, TopicMessage, WorkerInfo,
+    TaskMetric, Topic, TopicLogStats, TopicMessage, WorkerInfo,
 };
 use taskito_core::storage::{DeadJob, QueueStats};
 
@@ -290,6 +290,28 @@ impl From<&TopicLogStats> for TopicLogStatsView {
             cursor: s.cursor.clone(),
             lag: s.lag,
             oldest_unacked_age_ms: s.oldest_unacked_age_ms,
+        }
+    }
+}
+
+/// Java-facing view of a declared topic. `retention_ms` is null when the backlog
+/// is kept until consumed; `created_at` is Unix milliseconds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicView<'a> {
+    pub name: &'a str,
+    pub mode: &'a str,
+    pub retention_ms: Option<i64>,
+    pub created_at: i64,
+}
+
+impl<'a> From<&'a Topic> for TopicView<'a> {
+    fn from(t: &'a Topic) -> Self {
+        Self {
+            name: &t.name,
+            mode: &t.mode,
+            retention_ms: t.retention_ms,
+            created_at: t.created_at,
         }
     }
 }
