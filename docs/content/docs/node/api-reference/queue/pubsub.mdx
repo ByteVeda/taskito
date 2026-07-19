@@ -17,6 +17,7 @@ semantics, lifecycle, cross-SDK topics).
 | `listTopics()` → `Promise<string[]>` | Distinct topics with at least one subscription. |
 | `reapEphemeralSubscriptions()` → `Promise<number>` | Drop ephemeral subscriptions whose owning worker is gone. Runs automatically on the worker heartbeat cadence; exposed for operational tooling. |
 | `subscribeLog(topic, name)` → `Promise<void>` | Register a durable log subscription — a named cursor with no handler. Writes immediately, so register it before the publishes it should see. |
+| `logConsumer(topic, name, handler, opts?)` → `this` | Register a **managed consumer**: the durable log subscription plus, once a worker runs, a poll loop that pulls messages, calls `handler(...args)` per message (the handler may return a `Promise` — it is awaited), and advances the cursor. `opts`: `pollIntervalMs` (default 1000), `batchSize` (default 100), `onError` (`"retry"` leaves a failed message un-acked to re-read, default; `"skip"` acks past it). |
 | `readTopic(topic, name, limit?)` → `Promise<TopicMessage[]>` | Pull up to `limit` (default 100) messages after `name`'s cursor, oldest first and exclusive of it. Empty once caught up. At-least-once — process, then `ackTopic()`. |
 | `ackTopic(topic, name, cursor)` → `Promise<boolean>` | Advance a log subscription's cursor to `cursor` (a message `id`) — a monotonic high-water mark. `false` if nothing moved. |
 | `topicLogStats()` → `Promise<TopicLogStat[]>` | Lag snapshot for every log subscription: `topic`, `subscription`, `cursor`, `lag`, `oldestUnackedAgeMs`. |

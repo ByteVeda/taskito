@@ -8,6 +8,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 import urllib.parse
 import uuid
 from collections.abc import Sequence
@@ -232,6 +233,12 @@ class QueueLifecycleMixin:
         # Flush topic subscriptions now that the ephemeral ones have an owner.
         self._declare_worker_subscriptions(worker_id)  # type: ignore[attr-defined]
 
+        # Managed log-topic consumers: daemon threads that pull, invoke, and ack.
+        stop_log_consumers = threading.Event()
+        log_consumer_threads = self._build_log_consumer_threads(stop_log_consumers)  # type: ignore[attr-defined]
+        for consumer in log_consumer_threads:
+            consumer.start()
+
         stop_heartbeat = threading.Event()
         heartbeat_thread = threading.Thread(
             target=self._run_heartbeat,
@@ -294,6 +301,13 @@ class QueueLifecycleMixin:
             )
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=6)
+            # Drain managed log consumers before tearing down resources a handler
+            # might still hold: give them a shared deadline (the worker drain
+            # timeout) to finish their in-flight message, not a fixed slice each.
+            stop_log_consumers.set()
+            consumer_deadline = time.monotonic() + self._drain_timeout
+            for consumer in log_consumer_threads:
+                consumer.join(timeout=max(0.0, consumer_deadline - time.monotonic()))
             # Tear down resources before stopping async loop
             if health_checker is not None:
                 health_checker.stop()

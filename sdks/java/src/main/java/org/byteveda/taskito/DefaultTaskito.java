@@ -54,6 +54,8 @@ import org.byteveda.taskito.predicates.EnqueueDecision;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
 import org.byteveda.taskito.predicates.PredicateContext;
+import org.byteveda.taskito.pubsub.LogConsumerConfig;
+import org.byteveda.taskito.pubsub.LogConsumerOptions;
 import org.byteveda.taskito.pubsub.PublishOptions;
 import org.byteveda.taskito.pubsub.SubscriptionConfig;
 import org.byteveda.taskito.pubsub.SubscriptionOptions;
@@ -69,6 +71,7 @@ import org.byteveda.taskito.serialization.Serializer;
 import org.byteveda.taskito.spi.QueueBackend;
 import org.byteveda.taskito.task.EnqueueOptions;
 import org.byteveda.taskito.task.Task;
+import org.byteveda.taskito.worker.LogTopicReader;
 import org.byteveda.taskito.worker.Worker;
 import org.byteveda.taskito.workflows.GateConfig;
 import org.byteveda.taskito.workflows.Step;
@@ -81,7 +84,7 @@ import org.byteveda.taskito.workflows.WorkflowStatus;
  * serializing payloads with the configured {@link Serializer} and decoding
  * native JSON views with a private mapper.
  */
-final class DefaultTaskito implements Taskito {
+final class DefaultTaskito implements Taskito, LogTopicReader {
     private static final ObjectMapper VIEWS = new ObjectMapper();
 
     private static final long DEFAULT_LOCK_TTL_MS = 30_000;
@@ -95,6 +98,8 @@ final class DefaultTaskito implements Taskito {
     private final Map<String, List<EnqueueGate>> gates = new ConcurrentHashMap<>();
     private final List<Interceptor> interceptors = new CopyOnWriteArrayList<>();
     private final List<SubscriptionConfig> subscriptions = new CopyOnWriteArrayList<>();
+    // Managed log consumers registered before start; worker spawns one poll loop each.
+    private final List<LogConsumerConfig> logConsumers = new CopyOnWriteArrayList<>();
     // Opt-in per-queue admission caps (queue -> max pending). Absent = uncapped.
     private final Map<String, Integer> maxPending = new ConcurrentHashMap<>();
     // Opt-in per-queue CoDel config (queue -> [targetMs, intervalMs]).
@@ -854,9 +859,12 @@ final class DefaultTaskito implements Taskito {
 
     @Override
     public boolean unsubscribe(String topic, String name) {
-        // Drop the local declaration too, or a later worker start would
-        // re-register the subscription from the shared worker state.
+        // Drop the local declarations too, or a later worker start would
+        // re-register the subscription (or re-spawn a managed consumer polling a
+        // deleted cursor) from the shared worker state.
         subscriptions.removeIf(
+                config -> config.topic().equals(topic) && config.name().equals(name));
+        logConsumers.removeIf(
                 config -> config.topic().equals(topic) && config.name().equals(name));
         return backend.unsubscribe(topic, name);
     }
@@ -922,6 +930,38 @@ final class DefaultTaskito implements Taskito {
     @Override
     public List<TopicLogStat> topicLogStats() {
         return decodeList(backend.topicLogStatsJson(), TopicLogStat.class);
+    }
+
+    @Override
+    public <T> Taskito logConsumer(String topic, String name, Class<T> payloadType, Consumer<T> handler) {
+        return logConsumer(topic, name, payloadType, handler, LogConsumerOptions.none());
+    }
+
+    @Override
+    public <T> Taskito logConsumer(
+            String topic, String name, Class<T> payloadType, Consumer<T> handler, LogConsumerOptions options) {
+        // Register the durable cursor now (like subscribeLog) so publishes are
+        // retained even before a worker runs; the poll loop starts with the worker.
+        subscribeLog(topic, name);
+        LogConsumerConfig config = new LogConsumerConfig(
+                topic,
+                name,
+                payloadType,
+                castConsumer(handler),
+                options.pollIntervalMs(),
+                options.batchSize(),
+                options.onError());
+        // Re-declaring (topic, name) replaces the previous entry, so a duplicate
+        // registration doesn't spawn a second poll loop for the same subscription.
+        logConsumers.removeIf(
+                existing -> existing.topic().equals(topic) && existing.name().equals(name));
+        logConsumers.add(config);
+        return this;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> Consumer<Object> castConsumer(Consumer<T> handler) {
+        return (Consumer<Object>) handler;
     }
 
     /**
@@ -1186,6 +1226,7 @@ final class DefaultTaskito implements Taskito {
         // start() are registered under the started worker's id.
         return Worker.builder(backend, serializer, middleware, resources.forWorker(), codecs)
                 .subscriptions(subscriptions)
+                .logConsumers(logConsumers, this)
                 .queueConfigs(this::encodeQueueConfigs);
     }
 

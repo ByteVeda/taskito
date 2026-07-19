@@ -498,6 +498,61 @@ same late-join boundary as fan-out subscriptions above:
 `subscribe_log()` / `subscribeLog()` only sees messages published after it
 registered.
 
+### Managed consumer
+
+Instead of writing the read/ack loop yourself, register a **managed
+consumer**: the SDK creates the log subscription and, once a worker runs,
+drives a background poll loop that pulls each message, invokes your handler,
+and advances the cursor for you. The handler runs in-SDK (not as a fan-out
+job), so there's no per-message retry/DLQ — the delivery guarantee is the same
+at-least-once cursor contract as the manual loop. The Python and Node handlers
+may be synchronous or `async` (a returned promise/coroutine is awaited); the
+Java handler is a synchronous `Consumer<T>`. Run a given `(topic, name)`
+consumer in one worker process — its cursor is a single high-water mark.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+@queue.log_consumer("orders", "audit-log")
+def audit(order_id: int) -> None:
+    audit_sink.write(order_id)
+
+queue.run_worker()  # spawns the consumer's poll loop
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+queue.logConsumer("orders", "audit-log", (orderId: number) => {
+  auditSink.write(orderId);
+});
+
+queue.runWorker(); // spawns the consumer's poll loop
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+// The payload type is explicit — Java can't infer it from the lambda.
+taskito.logConsumer("orders", "audit-log", Integer.class, orderId -> {
+    auditSink.write(orderId);
+});
+
+taskito.worker().start(); // spawns the consumer's poll loop
+```
+
+  </Tab>
+</CodeTabs>
+
+Tune the loop with `poll_interval` / `pollIntervalMs` (wait after an empty
+poll), `batch_size` / `batchSize` (messages per poll), and `on_error` /
+`onError`: `"retry"` (default) leaves a failed message un-acked so its batch
+re-reads, while `"skip"` acks past it and moves on. A non-empty batch drains
+immediately; only an empty one waits the poll interval.
+
 ### Retention compacts, it doesn't expire
 
 A log message is deleted once every log subscriber on its topic has acked

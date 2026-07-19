@@ -274,6 +274,7 @@ class Queue(
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._periodic_configs: list[dict[str, Any]] = []
         self._subscription_configs: list[dict[str, Any]] = []
+        self._log_consumer_configs: list[dict[str, Any]] = []
         self._hooks: dict[str, list[Callable]] = {
             "before_task": [],
             "after_task": [],
