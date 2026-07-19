@@ -171,7 +171,10 @@ jobs:
         run: |
           # Fail closed: only an explicit 404 means "no baseline" — a transient
           # registry or network error must not silently skip the semver check.
+          # crates.io rejects requests without a User-Agent with HTTP 403, and
+          # its crawler policy asks for a contact URL in the UA string.
           if ! status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -A "taskito-ci (https://github.com/ByteVeda/taskito)" \
             "https://crates.io/api/v1/crates/taskito-core")"; then
             echo "Failed to query crates.io" >&2
             exit 1
