@@ -3,13 +3,14 @@
 //! Option and filter structs cross as JSON strings (decoded here); opaque job
 //! payloads cross as raw `byte[]` and are never interpreted by the core.
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use taskito_core::job::{now_millis, Job, NewJob};
 use taskito_core::pubsub::{DeliveryDefaults, PublishRequest};
 use taskito_core::resilience::circuit_breaker::CircuitState;
 use taskito_core::storage::records::{
     CircuitBreakerState, JobError, LockInfo, PeriodicTask, ReplayEntry, Subscription, TaskLogEntry,
-    TaskMetric, WorkerInfo,
+    TaskMetric, TopicLogStats, TopicMessage, WorkerInfo,
 };
 use taskito_core::storage::{DeadJob, QueueStats};
 
@@ -238,6 +239,57 @@ impl<'a> From<&'a Subscription> for SubscriptionView<'a> {
             durable: r.durable,
             owner_worker_id: r.owner_worker_id.as_deref(),
             created_at: r.created_at,
+        }
+    }
+}
+
+/// Java-facing view of one log-topic message. The opaque payload crosses as a
+/// base64 string (JSON can't carry raw bytes); `metadata`/`notes` stay JSON
+/// strings the SDK parses back into maps. `created_at` is Unix milliseconds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicMessageView {
+    /// Message id — the cursor token passed to `ackTopicCursor`.
+    pub id: String,
+    /// Opaque payload, base64-encoded.
+    pub payload: String,
+    pub metadata: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: i64,
+}
+
+impl From<&TopicMessage> for TopicMessageView {
+    fn from(m: &TopicMessage) -> Self {
+        Self {
+            id: m.id.clone(),
+            payload: base64::engine::general_purpose::STANDARD.encode(&m.payload),
+            metadata: m.metadata.clone(),
+            notes: m.notes.clone(),
+            created_at: m.created_at,
+        }
+    }
+}
+
+/// Java-facing lag snapshot for one log subscription. `cursor` is null until the
+/// first ack; `oldest_unacked_age_ms` is null once the subscription is caught up.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicLogStatsView {
+    pub topic: String,
+    pub subscription: String,
+    pub cursor: Option<String>,
+    pub lag: i64,
+    pub oldest_unacked_age_ms: Option<i64>,
+}
+
+impl From<&TopicLogStats> for TopicLogStatsView {
+    fn from(s: &TopicLogStats) -> Self {
+        Self {
+            topic: s.topic.clone(),
+            subscription: s.subscription_name.clone(),
+            cursor: s.cursor.clone(),
+            lag: s.lag,
+            oldest_unacked_age_ms: s.oldest_unacked_age_ms,
         }
     }
 }

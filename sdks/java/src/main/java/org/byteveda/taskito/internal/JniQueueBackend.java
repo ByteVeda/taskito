@@ -325,6 +325,32 @@ public final class JniQueueBackend implements QueueBackend {
             Integer priority,
             Integer maxRetries,
             Long timeoutMs) {
+        // Default to fan-out; the mode-carrying overload handles log subscriptions.
+        registerSubscription(
+                topic,
+                subscriptionName,
+                taskName,
+                queue,
+                durable,
+                ownerWorkerIdOrNull,
+                priority,
+                maxRetries,
+                timeoutMs,
+                "fanout");
+    }
+
+    @Override
+    public void registerSubscription(
+            String topic,
+            String subscriptionName,
+            String taskName,
+            String queue,
+            boolean durable,
+            String ownerWorkerIdOrNull,
+            Integer priority,
+            Integer maxRetries,
+            Long timeoutMs,
+            String mode) {
         // JNI carries primitives, not boxed nullables — a null delivery setting
         // crosses as the MIN sentinel the native side reads as "queue default".
         int nativePriority = priority == null ? Integer.MIN_VALUE : priority;
@@ -341,7 +367,8 @@ public final class JniQueueBackend implements QueueBackend {
                     ownerWorkerIdOrNull,
                     nativePriority,
                     nativeMaxRetries,
-                    nativeTimeoutMs);
+                    nativeTimeoutMs,
+                    mode);
             return null;
         });
     }
@@ -369,6 +396,21 @@ public final class JniQueueBackend implements QueueBackend {
     @Override
     public String publishJson(String topic, byte[] payload, String optionsJson) {
         return withOpenHandle(() -> NativeQueue.publish(handle, topic, payload, optionsJson));
+    }
+
+    @Override
+    public String readTopicMessagesJson(String topic, String subscriptionName, long limit) {
+        return withOpenHandle(() -> NativeQueue.readTopicMessages(handle, topic, subscriptionName, limit));
+    }
+
+    @Override
+    public boolean ackTopicCursor(String topic, String subscriptionName, String cursor) {
+        return withOpenHandle(() -> NativeQueue.ackTopicCursor(handle, topic, subscriptionName, cursor));
+    }
+
+    @Override
+    public String topicLogStatsJson() {
+        return withOpenHandle(() -> NativeQueue.topicLogStats(handle));
     }
 
     @Override

@@ -146,7 +146,8 @@ public final class NativeQueue {
      * Insert or update a topic subscription (idempotent on topic + name). The
      * subscriber task's delivery settings persist on the row; {@code priority}/
      * {@code maxRetries} of {@link Integer#MIN_VALUE} and {@code timeoutMs} of
-     * {@link Long#MIN_VALUE} mean "unset — take the queue default".
+     * {@link Long#MIN_VALUE} mean "unset — take the queue default". {@code mode} is
+     * {@code "fanout"} (one job per publish) or {@code "log"} (append-once + cursor).
      */
     public static native void registerSubscription(
             long handle,
@@ -158,7 +159,8 @@ public final class NativeQueue {
             String ownerWorkerIdOrNull,
             int priority,
             int maxRetries,
-            long timeoutMs);
+            long timeoutMs,
+            String mode);
 
     /** A JSON array of subscriptions — all of them, or only a topic's active ones. */
     public static native String listSubscriptions(long handle, String topicOrNull);
@@ -175,6 +177,15 @@ public final class NativeQueue {
 
     /** Publish to a topic; returns the created delivery jobs as a JSON array. */
     public static native String publish(long handle, String topic, byte[] payload, String optionsJson);
+
+    /** Pull messages after a log subscription's cursor, as a JSON array of message views. */
+    public static native String readTopicMessages(long handle, String topic, String subscriptionName, long limit);
+
+    /** Advance a log subscription's cursor (monotonic); false if nothing moved. */
+    public static native boolean ackTopicCursor(long handle, String topic, String subscriptionName, String cursor);
+
+    /** A JSON array of per-log-subscription lag snapshots. */
+    public static native String topicLogStats(long handle);
 
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker; returns its handle. {@code bridge} is a {@code WorkerBridge}. */

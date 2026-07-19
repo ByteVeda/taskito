@@ -1,5 +1,6 @@
 package org.byteveda.taskito;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
@@ -45,6 +46,8 @@ import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.TopicLogStat;
+import org.byteveda.taskito.model.TopicMessage;
 import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueDecision;
@@ -885,6 +888,56 @@ final class DefaultTaskito implements Taskito {
             topics.add(subscription.topic);
         }
         return new ArrayList<>(topics);
+    }
+
+    @Override
+    public void subscribeLog(String topic, String name) {
+        // A log subscription has no handler: durable, no owner, no delivery
+        // settings — just a named cursor over the topic (mode = "log").
+        backend.registerSubscription(topic, name, "", "default", true, null, null, null, null, "log");
+    }
+
+    @Override
+    public List<TopicMessage> readTopic(String topic, String name) {
+        return readTopic(topic, name, 100);
+    }
+
+    @Override
+    public List<TopicMessage> readTopic(String topic, String name, int limit) {
+        List<TopicMessageRow> rows =
+                decodeList(backend.readTopicMessagesJson(topic, name, limit), TopicMessageRow.class);
+        List<TopicMessage> messages = new ArrayList<>(rows.size());
+        for (TopicMessageRow row : rows) {
+            messages.add(new TopicMessage(
+                    row.id(), row.payload(), parseJsonMap(row.metadata()), parseJsonMap(row.notes()), row.createdAt()));
+        }
+        return messages;
+    }
+
+    @Override
+    public boolean ackTopic(String topic, String name, String cursor) {
+        return backend.ackTopicCursor(topic, name, cursor);
+    }
+
+    @Override
+    public List<TopicLogStat> topicLogStats() {
+        return decodeList(backend.topicLogStatsJson(), TopicLogStat.class);
+    }
+
+    /**
+     * Native wire view of a log message: the payload crosses as base64 (Jackson
+     * decodes it into {@code byte[]}); metadata/notes are JSON strings this SDK
+     * parses back into maps.
+     */
+    private record TopicMessageRow(
+            @JsonProperty("id") String id,
+            @JsonProperty("payload") byte[] payload,
+            @JsonProperty("metadata") String metadata,
+            @JsonProperty("notes") String notes,
+            @JsonProperty("createdAt") long createdAt) {}
+
+    private static Map<String, Object> parseJsonMap(String json) {
+        return json == null ? null : decodeMap(json, Object.class);
     }
 
     // ── Workflows ───────────────────────────────────────────────────
