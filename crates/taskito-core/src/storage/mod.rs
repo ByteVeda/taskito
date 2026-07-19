@@ -152,6 +152,28 @@ pub struct QueueStats {
     pub cancelled: i64,
 }
 
+/// Order in which same-priority jobs are dispatched from a queue. Priority
+/// always dominates; this only breaks ties. `Fifo` (oldest-first) is the fair
+/// default; `Lifo` (newest-first) is opt-in for freshness-sensitive workloads
+/// that would rather run recent work than clear a stale backlog in order.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DispatchOrder {
+    /// Oldest-first — the fair default a durable queue is expected to keep.
+    #[default]
+    Fifo,
+    /// Newest-first — opt-in freshness lever for same-priority ties under load.
+    Lifo,
+}
+
+/// Resolve a queue's dispatch order from a queue→order map, defaulting to
+/// `Fifo` for any queue not explicitly set to `Lifo`.
+pub(crate) fn order_for(
+    orders: &std::collections::HashMap<String, DispatchOrder>,
+    queue: &str,
+) -> DispatchOrder {
+    orders.get(queue).copied().unwrap_or_default()
+}
+
 /// Per-subscription backlog/lag snapshot for the pub/sub dashboard. One entry
 /// per *registered* subscription — durable or ephemeral, active or paused —
 /// even at zero backlog, so the dashboard renders the full subscriber list
@@ -376,8 +398,9 @@ macro_rules! impl_storage {
                 queues: &[String],
                 now: i64,
                 namespace: Option<&str>,
+                orders: &std::collections::HashMap<String, $crate::storage::DispatchOrder>,
             ) -> $crate::error::Result<Option<$crate::job::Job>> {
-                self.dequeue_from(queues, now, namespace)
+                self.dequeue_from(queues, now, namespace, orders)
             }
             fn dequeue_batch(
                 &self,
@@ -394,8 +417,9 @@ macro_rules! impl_storage {
                 now: i64,
                 namespace: Option<&str>,
                 max: usize,
+                orders: &std::collections::HashMap<String, $crate::storage::DispatchOrder>,
             ) -> $crate::error::Result<Vec<$crate::job::Job>> {
-                self.dequeue_batch_from(queues, now, namespace, max)
+                self.dequeue_batch_from(queues, now, namespace, max, orders)
             }
             fn complete(
                 &self,
@@ -1099,8 +1123,9 @@ impl Storage for StorageBackend {
         queues: &[String],
         now: i64,
         namespace: Option<&str>,
+        orders: &std::collections::HashMap<String, DispatchOrder>,
     ) -> Result<Option<Job>> {
-        delegate!(self, dequeue_from, queues, now, namespace)
+        delegate!(self, dequeue_from, queues, now, namespace, orders)
     }
     fn dequeue_batch(
         &self,
@@ -1117,8 +1142,17 @@ impl Storage for StorageBackend {
         now: i64,
         namespace: Option<&str>,
         max: usize,
+        orders: &std::collections::HashMap<String, DispatchOrder>,
     ) -> Result<Vec<Job>> {
-        delegate!(self, dequeue_batch_from, queues, now, namespace, max)
+        delegate!(
+            self,
+            dequeue_batch_from,
+            queues,
+            now,
+            namespace,
+            max,
+            orders
+        )
     }
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()> {
         delegate!(self, complete, id, result_bytes)

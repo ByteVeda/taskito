@@ -130,6 +130,12 @@ pub fn start_worker(
         if let Some(codel) = crate::convert::queue_codel(input) {
             scheduler.register_queue_codel(input.name.clone(), codel);
         }
+        if input.dispatch_order.as_deref() == Some("lifo") {
+            scheduler.register_queue_dispatch_order(
+                input.name.clone(),
+                taskito_core::storage::DispatchOrder::Lifo,
+            );
+        }
         scheduler.register_queue_config(input.name.clone(), crate::convert::queue_config(input)?);
     }
     let scheduler = Arc::new(scheduler);

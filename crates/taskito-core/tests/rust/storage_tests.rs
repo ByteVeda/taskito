@@ -1323,10 +1323,35 @@ fn test_enqueue_unique_batch(s: &impl Storage) {
     );
 }
 
+/// A `Lifo` orders map plumbs through `dequeue_batch_from` on every backend and
+/// claims exactly the eligible jobs. Order is asserted per-backend in the
+/// SQLite unit tests; Redis is a documented FIFO fallback, so this shared test
+/// only checks the set of claimed jobs, not their order.
+fn test_dispatch_order_lifo_map(s: &impl Storage) {
+    use std::collections::HashMap;
+    let q = "q-dispatch-order";
+    let mut ids = std::collections::HashSet::new();
+    for _ in 0..4 {
+        ids.insert(s.enqueue(make_job(q, "ord")).unwrap().id);
+    }
+    let mut orders = HashMap::new();
+    orders.insert(q.to_string(), taskito_core::storage::DispatchOrder::Lifo);
+    let claimed = s
+        .dequeue_batch_from(&[q.to_string()], now_millis() + 1000, None, 10, &orders)
+        .unwrap();
+    let claimed_ids: std::collections::HashSet<String> =
+        claimed.into_iter().map(|j| j.id).collect();
+    assert_eq!(
+        claimed_ids, ids,
+        "LIFO map claims exactly the eligible jobs"
+    );
+}
+
 fn run_storage_tests(s: &impl Storage) {
     test_enqueue_and_get(s);
     test_dequeue(s);
     test_dequeue_batch(s);
+    test_dispatch_order_lifo_map(s);
     test_complete(s);
     test_fail(s);
     test_retry(s);

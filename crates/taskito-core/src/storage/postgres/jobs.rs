@@ -45,24 +45,63 @@ impl PostgresStorage {
         now: i64,
         namespace: Option<&str>,
         limit: i64,
+        order: crate::storage::DispatchOrder,
     ) -> diesel::result::QueryResult<Vec<NarrowJobRow>> {
+        use crate::storage::DispatchOrder;
         let base = jobs::table
             .filter(jobs::queue.eq(queue_name))
             .filter(jobs::status.eq(JobStatus::Pending as i32))
             .filter(jobs::scheduled_at.le(now));
 
-        match namespace {
-            Some(ns) => base
+        // `SKIP LOCKED` needs a concrete (un-boxed) statement, so the namespace
+        // filter and the order direction are each branched rather than built
+        // dynamically. Priority always dominates; the (scheduled_at, id)
+        // tie-break flips with the dispatch order (UUIDv7 `id` = deterministic
+        // time-ordered final key).
+        match (namespace, order) {
+            (Some(ns), DispatchOrder::Fifo) => base
                 .filter(jobs::namespace.eq(ns))
-                .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+                .order((
+                    jobs::priority.desc(),
+                    jobs::scheduled_at.asc(),
+                    jobs::id.asc(),
+                ))
                 .limit(limit)
                 .select(NarrowJobRow::as_select())
                 .for_update()
                 .skip_locked()
                 .load(conn),
-            None => base
+            (Some(ns), DispatchOrder::Lifo) => base
+                .filter(jobs::namespace.eq(ns))
+                .order((
+                    jobs::priority.desc(),
+                    jobs::scheduled_at.desc(),
+                    jobs::id.desc(),
+                ))
+                .limit(limit)
+                .select(NarrowJobRow::as_select())
+                .for_update()
+                .skip_locked()
+                .load(conn),
+            (None, DispatchOrder::Fifo) => base
                 .filter(jobs::namespace.is_null())
-                .order((jobs::priority.desc(), jobs::scheduled_at.asc()))
+                .order((
+                    jobs::priority.desc(),
+                    jobs::scheduled_at.asc(),
+                    jobs::id.asc(),
+                ))
+                .limit(limit)
+                .select(NarrowJobRow::as_select())
+                .for_update()
+                .skip_locked()
+                .load(conn),
+            (None, DispatchOrder::Lifo) => base
+                .filter(jobs::namespace.is_null())
+                .order((
+                    jobs::priority.desc(),
+                    jobs::scheduled_at.desc(),
+                    jobs::id.desc(),
+                ))
                 .limit(limit)
                 .select(NarrowJobRow::as_select())
                 .for_update()

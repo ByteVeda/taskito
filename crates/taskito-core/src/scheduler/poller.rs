@@ -101,10 +101,12 @@ impl Scheduler {
             return Ok(false);
         }
 
-        let job = match self
-            .storage
-            .dequeue_from(&active_queues, now, self.namespace.as_deref())?
-        {
+        let job = match self.storage.dequeue_from(
+            &active_queues,
+            now,
+            self.namespace.as_deref(),
+            &self.dispatch_orders,
+        )? {
             Some(j) => j,
             None => return Ok(false),
         };
@@ -163,6 +165,7 @@ impl Scheduler {
             now,
             self.namespace.as_deref(),
             budget,
+            &self.dispatch_orders,
         )?;
         if jobs.is_empty() {
             return Ok(false);

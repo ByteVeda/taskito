@@ -277,9 +277,9 @@ public final class Worker implements AutoCloseable {
         }
 
         /**
-         * Late-bound per-queue scheduler config in wire shape (currently CoDel).
-         * Supplied by the owning {@code Taskito} via {@code Taskito.worker()} and
-         * resolved at {@code start()}, so config set *after* the builder was
+         * Late-bound per-queue scheduler config in wire shape (CoDel + dispatch
+         * order). Supplied by the owning {@code Taskito} via {@code Taskito.worker()}
+         * and resolved at {@code start()}, so config set *after* the builder was
          * obtained (e.g. {@code Taskito.codel(...)}) is still picked up — matching
          * that method's documented timing. A manually built worker leaves it empty.
          */

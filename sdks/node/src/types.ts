@@ -180,6 +180,12 @@ export interface QueueLimits {
    * rather than running them stale. A transient spike is never shed.
    */
   codel?: { targetMs: number; intervalMs: number };
+  /**
+   * Same-priority dispatch order. `"lifo"` runs newest-first under overload (a
+   * freshness lever); `"fifo"` (default) is the fair oldest-first ordering.
+   * Priority always dominates. Honored on SQLite/Postgres; Redis is FIFO-only.
+   */
+  dispatchOrder?: "fifo" | "lifo";
 }
 
 /** A task handler plus its registration options. */

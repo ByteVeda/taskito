@@ -96,6 +96,8 @@ final class DefaultTaskito implements Taskito {
     private final Map<String, Integer> maxPending = new ConcurrentHashMap<>();
     // Opt-in per-queue CoDel config (queue -> [targetMs, intervalMs]).
     private final Map<String, long[]> codelConfigs = new ConcurrentHashMap<>();
+    // Opt-in per-queue dispatch order (queue -> "lifo"). Absent = "fifo".
+    private final Map<String, String> dispatchOrders = new ConcurrentHashMap<>();
 
     DefaultTaskito(QueueBackend backend, Serializer serializer, Map<String, PayloadCodec> codecs) {
         this.backend = backend;
@@ -205,17 +207,38 @@ final class DefaultTaskito implements Taskito {
         return this;
     }
 
-    /** Serialize the per-queue CoDel configs into the worker-options wire shape. */
+    @Override
+    public Taskito dispatchOrder(String queue, String order) {
+        if (!"fifo".equals(order) && !"lifo".equals(order)) {
+            throw new IllegalArgumentException("order must be 'fifo' or 'lifo'");
+        }
+        dispatchOrders.put(queue, order);
+        return this;
+    }
+
+    /**
+     * Serialize the per-queue scheduler config (CoDel + dispatch order) into the
+     * worker-options wire shape, one spec per queue that has either set.
+     */
     private List<Map<String, Object>> encodeQueueConfigs() {
-        List<Map<String, Object>> specs = new ArrayList<>(codelConfigs.size());
+        Map<String, Map<String, Object>> byQueue = new LinkedHashMap<>();
         codelConfigs.forEach((queue, codel) -> {
-            Map<String, Object> spec = new LinkedHashMap<>();
-            spec.put("name", queue);
+            Map<String, Object> spec = byQueue.computeIfAbsent(queue, DefaultTaskito::queueSpec);
             spec.put("codelTargetMs", codel[0]);
             spec.put("codelIntervalMs", codel[1]);
-            specs.add(spec);
         });
-        return specs;
+        dispatchOrders.forEach((queue, order) -> {
+            Map<String, Object> spec = byQueue.computeIfAbsent(queue, DefaultTaskito::queueSpec);
+            spec.put("dispatchOrder", order);
+        });
+        return new ArrayList<>(byQueue.values());
+    }
+
+    /** A fresh wire spec carrying just the queue name; callers add their keys. */
+    private static Map<String, Object> queueSpec(String queue) {
+        Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("name", queue);
+        return spec;
     }
 
     @Override
