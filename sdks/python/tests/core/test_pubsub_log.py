@@ -85,10 +85,138 @@ class TestMixedTopic:
 
         # One publish: the fan-out subscriber runs its job...
         queue.publish("events", 7)
-        poll_until(lambda: seen == [7], message="fan-out subscriber should run")
+        poll_until(lambda: seen == [7], timeout=30, message="fan-out subscriber should run")
 
         # ...and the same publish stored one log message for the log subscriber.
         assert [m.args for m in queue.read_topic("events", "log")] == [(7,)]
+
+
+class TestManagedConsumer:
+    """A ``log_consumer`` daemon thread pulls, invokes the handler, and acks."""
+
+    @staticmethod
+    def _worker(queue: Queue) -> threading.Thread:
+        thread = threading.Thread(target=queue.run_worker, daemon=True)
+        thread.start()
+        return thread
+
+    def test_consumer_invokes_handler_and_advances_cursor(
+        self, queue: Queue, poll_until: PollUntil
+    ) -> None:
+        received: list[int] = []
+        lock = threading.Lock()
+
+        @queue.log_consumer("events", "c", poll_interval=0.05)
+        def handle(n: int) -> None:
+            with lock:
+                received.append(n)
+
+        thread = self._worker(queue)
+        try:
+            for i in range(3):
+                queue.publish("events", i)
+            poll_until(lambda: sorted(received) == [0, 1, 2], timeout=30, message="handler ran")
+        finally:
+            queue.shutdown()
+            thread.join(timeout=5)
+
+        # Every message handled → cursor caught up, nothing left to read.
+        (stat,) = queue.topic_log_stats()
+        assert stat["lag"] == 0
+
+    def test_async_handler_is_awaited(self, queue: Queue, poll_until: PollUntil) -> None:
+        received: list[int] = []
+        lock = threading.Lock()
+
+        @queue.log_consumer("events", "c", poll_interval=0.05)
+        async def handle(n: int) -> None:
+            with lock:
+                received.append(n)
+
+        thread = self._worker(queue)
+        try:
+            queue.publish("events", 42)
+            poll_until(lambda: received == [42], timeout=30, message="async handler awaited")
+        finally:
+            queue.shutdown()
+            thread.join(timeout=5)
+
+    def test_on_error_retry_redelivers_failed_message(
+        self, queue: Queue, poll_until: PollUntil
+    ) -> None:
+        # Value 1 fails on its first attempt, then succeeds; value 0 (acked
+        # before the failure) is never redelivered.
+        attempts: list[int] = []
+        failed_once = threading.Event()
+        lock = threading.Lock()
+
+        @queue.log_consumer("events", "c", poll_interval=0.05, on_error="retry")
+        def handle(n: int) -> None:
+            with lock:
+                attempts.append(n)
+            if n == 1 and not failed_once.is_set():
+                failed_once.set()
+                raise RuntimeError("boom")
+
+        thread = self._worker(queue)
+        try:
+            for i in range(3):
+                queue.publish("events", i)
+            poll_until(
+                lambda: attempts.count(1) == 2 and 2 in attempts,
+                timeout=30,
+                message="failed message re-read, then batch completes",
+            )
+        finally:
+            queue.shutdown()
+            thread.join(timeout=5)
+
+        assert attempts.count(0) == 1  # acked before the failure, never redelivered
+
+    def test_on_error_skip_advances_past_poison(self, queue: Queue, poll_until: PollUntil) -> None:
+        attempts: list[int] = []
+        lock = threading.Lock()
+
+        @queue.log_consumer("events", "c", poll_interval=0.05, on_error="skip")
+        def handle(n: int) -> None:
+            with lock:
+                attempts.append(n)
+            if n == 1:
+                raise RuntimeError("always poison")
+
+        thread = self._worker(queue)
+        try:
+            for i in range(3):
+                queue.publish("events", i)
+            poll_until(
+                lambda: sorted(attempts) == [0, 1, 2], timeout=30, message="skip past poison"
+            )
+        finally:
+            queue.shutdown()
+            thread.join(timeout=5)
+
+        # Poison attempted once then acked past → cursor caught up, no re-read.
+        (stat,) = queue.topic_log_stats()
+        assert stat["lag"] == 0
+        assert attempts.count(1) == 1
+
+    def test_shutdown_stops_consumer_thread(self, queue: Queue, poll_until: PollUntil) -> None:
+        handled: list[int] = []
+
+        @queue.log_consumer("events", "c", poll_interval=0.05)
+        def handle(n: int) -> None:
+            handled.append(n)
+
+        thread = self._worker(queue)
+        queue.publish("events", 1)
+        # Wait until the consumer has actually run before shutting down, so the
+        # request can't race an unstarted worker (which would block forever).
+        poll_until(
+            lambda: handled == [1], timeout=30, message="consumer should run before shutdown"
+        )
+        queue.shutdown()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
 
 
 class TestLogStats:

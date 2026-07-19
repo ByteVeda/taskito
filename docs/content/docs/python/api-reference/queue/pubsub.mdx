@@ -98,6 +98,37 @@ Writes to storage immediately, so register it before the publishes it
 should see. Unlike `@queue.subscriber()`, there's no separate
 `declare_subscriptions()` step.
 
+### `@queue.log_consumer()`
+
+```python
+@queue.log_consumer(
+    topic: str,
+    name: str | None = None,
+    *,
+    poll_interval: float = 1.0,
+    batch_size: int = 100,
+    on_error: str = "retry",
+)
+```
+
+Decorator: register a **managed consumer** of a log topic. It creates the
+durable log subscription (like `subscribe_log()`) and, when `run_worker()`
+starts, spawns a daemon thread that pulls messages, invokes
+`handler(*args, **kwargs)` per message, and advances the cursor — the
+read/ack loop you'd otherwise hand-write. The handler may be sync or async.
+
+- `name` defaults to the handler's name.
+- `poll_interval` — seconds to wait after an empty poll before re-reading.
+- `batch_size` — max messages pulled per poll.
+- `on_error` — `"retry"` (default) leaves a failed message un-acked so the
+  batch re-reads; `"skip"` acks past it and continues.
+
+```python
+@queue.log_consumer("orders", "audit-log")
+def audit(order_id: int) -> None:
+    audit_sink.write(order_id)
+```
+
 ### `queue.declare_topic()`
 
 ```python

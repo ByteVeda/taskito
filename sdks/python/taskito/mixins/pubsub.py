@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from taskito.mixins._log_consumer import LogConsumerThread
 from taskito.notes import validate_and_encode_notes
 from taskito.result import JobResult
 
@@ -48,6 +51,7 @@ class QueuePubSubMixin:
     _inner: PyQueue
     _serializer: Serializer
     _subscription_configs: list[dict[str, Any]]
+    _log_consumer_configs: list[dict[str, Any]]
 
     def subscriber(
         self,
@@ -147,6 +151,76 @@ class QueuePubSubMixin:
         return [
             {"name": row[0], "mode": row[1], "retention_ms": row[2], "created_at": row[3]}
             for row in self._inner.list_declared_topics()
+        ]
+
+    def log_consumer(
+        self,
+        topic: str,
+        name: str | None = None,
+        *,
+        poll_interval: float = 1.0,
+        batch_size: int = 100,
+        on_error: str = "retry",
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Decorator: register ``fn`` as a managed consumer of log ``topic``.
+
+        Registers a durable log subscription (like :meth:`subscribe_log`) and,
+        when :meth:`run_worker` starts, spawns a daemon thread that pulls
+        messages, invokes ``fn(*args, **kwargs)`` per message, and advances the
+        cursor — the read/ack loop callers otherwise hand-write. The handler may
+        be sync or async; a producer-only process that never runs a worker still
+        registers the subscription so its publishes are retained.
+
+        Run a given ``(topic, name)`` consumer in **one** worker process — the
+        cursor is a single high-water mark, so parallel workers would double-read.
+        Use distinct ``name`` values for independent consumers.
+
+        Args:
+            topic: Log topic to consume.
+            name: Stable subscription identity. Defaults to the handler name.
+            poll_interval: Seconds to wait after an empty poll before re-reading.
+            batch_size: Max messages pulled per poll.
+            on_error: ``"retry"`` (default) leaves the failed message un-acked so
+                the batch re-reads; ``"skip"`` acks past it and continues.
+        """
+        if on_error not in ("retry", "skip"):
+            raise ValueError(f"on_error must be 'retry' or 'skip', got {on_error!r}")
+        # A non-finite/non-positive interval spins on empty polls; a non-positive
+        # batch size never makes progress.
+        if not (poll_interval > 0 and math.isfinite(poll_interval)):
+            raise ValueError(
+                f"poll_interval must be a finite positive number, got {poll_interval!r}"
+            )
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size!r}")
+
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+            sub_name = name or fn.__name__
+            self.subscribe_log(topic, sub_name)
+            config = {
+                "topic": topic,
+                "name": sub_name,
+                "handler": fn,
+                "poll_interval": poll_interval,
+                "batch_size": batch_size,
+                "on_error": on_error,
+            }
+            # Replace, don't append: re-decorating the same (topic, name) (module
+            # reloads, test fixtures) must not spawn duplicate consumer threads.
+            identity = (topic, sub_name)
+            self._log_consumer_configs[:] = [
+                c for c in self._log_consumer_configs if (c["topic"], c["name"]) != identity
+            ]
+            self._log_consumer_configs.append(config)
+            return fn
+
+        return decorator
+
+    def _build_log_consumer_threads(self, stop_event: threading.Event) -> list[LogConsumerThread]:
+        """One :class:`LogConsumerThread` per registered consumer, sharing a
+        single stop event so ``run_worker`` can drain them all at once."""
+        return [
+            LogConsumerThread(self, config, stop_event) for config in self._log_consumer_configs
         ]
 
     def read_topic(self, topic: str, name: str, limit: int = 100) -> list[TopicMessage]:

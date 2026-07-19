@@ -17,6 +17,7 @@ semantics, lifecycle, cross-SDK topics).
 | `listTopics()` → `Promise<string[]>` | Distinct topics with at least one subscription. |
 | `reapEphemeralSubscriptions()` → `Promise<number>` | Drop ephemeral subscriptions whose owning worker is gone. Runs automatically on the worker heartbeat cadence; exposed for operational tooling. |
 | `subscribeLog(topic, name)` → `Promise<void>` | Register a durable log subscription — a named cursor with no handler. Writes immediately, so register it before the publishes it should see. |
+| `logConsumer(topic, name, handler, opts?)` → `this` | Register a **managed consumer**: the durable log subscription plus, once a worker runs, a poll loop that pulls messages, calls `handler(...args)` per message (the handler may return a `Promise` — it is awaited), and advances the cursor. `opts`: `pollIntervalMs` (default 1000), `batchSize` (default 100), `onError` (`"retry"` leaves a failed message un-acked to re-read, default; `"skip"` acks past it). |
 | `declareTopic(name, opts?)` → `Promise<void>` | Declare a log topic so its publishes are retained even with no subscriber (removing the late-join boundary). `opts.retention` (seconds) bounds a sub-less backlog. Idempotent. |
 | `listDeclaredTopics()` → `Promise<DeclaredTopic[]>` | List declared topics: `name`, `mode`, `retentionMs`, `createdAt`. |
 | `readTopic(topic, name, limit?)` → `Promise<TopicMessage[]>` | Pull up to `limit` (default 100) messages after `name`'s cursor, oldest first and exclusive of it. Empty once caught up. At-least-once — process, then `ackTopic()`. |

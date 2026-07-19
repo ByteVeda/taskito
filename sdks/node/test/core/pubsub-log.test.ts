@@ -7,19 +7,38 @@ import { afterEach, expect, it } from "vitest";
 import { Queue, type Worker } from "../../src/index";
 
 let worker: Worker | undefined;
-afterEach(() => {
+let activeQueue: Queue | undefined;
+
+afterEach(async () => {
   worker?.stop();
   worker = undefined;
+  // Await deregistration so scheduler threads don't accumulate into the next
+  // test (a queue that never ran a worker returns instantly).
+  if (activeQueue) {
+    const q = activeQueue;
+    activeQueue = undefined;
+    await waitFor(async () => (await q.listWorkers()).length === 0, 30000);
+  }
 });
 
 function newQueue(): Queue {
-  return new Queue({ dbPath: join(mkdtempSync(join(tmpdir(), "taskito-pubsub-log-")), "q.db") });
+  activeQueue = new Queue({
+    dbPath: join(mkdtempSync(join(tmpdir(), "taskito-pubsub-log-")), "q.db"),
+  });
+  return activeQueue;
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
+// Huge ceilings: real-worker startup on a cold, CPU-starved smoke runner can
+// take tens of seconds. The predicate returns the instant it's true.
+const WORKER_TEST_TIMEOUT_MS = 60000;
+
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 40000,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return true;
+    if (await predicate()) return true;
     await new Promise((r) => setTimeout(r, 20));
   }
   return false;
@@ -95,20 +114,127 @@ it("reports lag per log subscription", async () => {
   expect(stat.lag).toBe(0);
 });
 
-it("lets log and fan-out subscribers coexist on one topic", async () => {
-  const queue = newQueue();
-  const seen: number[] = [];
-  queue.subscriber("events", "worker", (n: number) => {
-    seen.push(n);
-  });
-  await queue.declareSubscriptions();
-  await queue.subscribeLog("events", "log");
+it(
+  "drives a managed consumer: pull, invoke handler, advance cursor",
+  async () => {
+    const queue = newQueue();
+    const received: number[] = [];
+    queue.logConsumer(
+      "events",
+      "c",
+      (n: number) => {
+        received.push(n);
+      },
+      { pollIntervalMs: 20 },
+    );
 
-  worker = queue.runWorker({ concurrency: 1 });
-  await queue.publish("events", [7]);
+    worker = queue.runWorker({ concurrency: 1 });
+    for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
 
-  expect(await waitFor(() => seen.length === 1)).toBe(true);
-  expect(seen).toEqual([7]);
-  // The same publish stored one log message.
-  expect((await queue.readTopic("events", "log")).map((m) => m.args)).toEqual([[7]]);
-});
+    expect(await waitFor(() => received.length === 3)).toBe(true);
+    expect([...received].sort()).toEqual([0, 1, 2]);
+    expect(must((await queue.topicLogStats())[0]).lag).toBe(0);
+  },
+  WORKER_TEST_TIMEOUT_MS,
+);
+
+it(
+  "awaits an async managed-consumer handler",
+  async () => {
+    const queue = newQueue();
+    const received: number[] = [];
+    queue.logConsumer(
+      "events",
+      "c",
+      async (n: number) => {
+        await new Promise((r) => setTimeout(r, 1));
+        received.push(n);
+      },
+      { pollIntervalMs: 20 },
+    );
+
+    worker = queue.runWorker({ concurrency: 1 });
+    await queue.publish("events", [42]);
+    expect(await waitFor(() => received.length === 1)).toBe(true);
+    expect(received).toEqual([42]);
+  },
+  WORKER_TEST_TIMEOUT_MS,
+);
+
+it(
+  "retry mode re-delivers a failed message but not acked predecessors",
+  async () => {
+    const queue = newQueue();
+    const attempts: number[] = [];
+    let failed = false;
+    queue.logConsumer(
+      "events",
+      "c",
+      (n: number) => {
+        attempts.push(n);
+        if (n === 1 && !failed) {
+          failed = true;
+          throw new Error("boom");
+        }
+      },
+      { pollIntervalMs: 20, onError: "retry" },
+    );
+
+    worker = queue.runWorker({ concurrency: 1 });
+    for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+
+    expect(
+      await waitFor(() => attempts.filter((n) => n === 1).length === 2 && attempts.includes(2)),
+    ).toBe(true);
+    // 0 was acked before the failure → never redelivered.
+    expect(attempts.filter((n) => n === 0).length).toBe(1);
+  },
+  WORKER_TEST_TIMEOUT_MS,
+);
+
+it(
+  "skip mode acks past a poison message",
+  async () => {
+    const queue = newQueue();
+    const attempts: number[] = [];
+    queue.logConsumer(
+      "events",
+      "c",
+      (n: number) => {
+        attempts.push(n);
+        if (n === 1) throw new Error("always poison");
+      },
+      { pollIntervalMs: 20, onError: "skip" },
+    );
+
+    worker = queue.runWorker({ concurrency: 1 });
+    for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+
+    expect(await waitFor(() => [...attempts].sort().join() === "0,1,2")).toBe(true);
+    expect(must((await queue.topicLogStats())[0]).lag).toBe(0);
+    expect(attempts.filter((n) => n === 1).length).toBe(1);
+  },
+  WORKER_TEST_TIMEOUT_MS,
+);
+
+it(
+  "lets log and fan-out subscribers coexist on one topic",
+  async () => {
+    const queue = newQueue();
+    const seen: number[] = [];
+    queue.subscriber("events", "worker", (n: number) => {
+      seen.push(n);
+    });
+    await queue.declareSubscriptions();
+    await queue.subscribeLog("events", "log");
+
+    worker = queue.runWorker({ concurrency: 1 });
+    await queue.publish("events", [7]);
+
+    expect(await waitFor(() => seen.length === 1)).toBe(true);
+    expect(seen).toEqual([7]);
+    // The same publish stored one log message.
+    expect((await queue.readTopic("events", "log")).map((m) => m.args)).toEqual([[7]]);
+  },
+  WORKER_TEST_TIMEOUT_MS,
+);

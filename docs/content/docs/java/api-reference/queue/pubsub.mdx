@@ -15,6 +15,7 @@ semantics, lifecycle, cross-SDK topics).
 | `listSubscriptions()` / `listSubscriptions(topic)` | Every subscription, or one topic's active ones. |
 | `listTopics()` | Distinct topics with at least one subscription. |
 | `subscribeLog(topic, name)` | Register a durable log subscription — a named cursor with no handler. Writes immediately, so register it before the publishes it should see. |
+| `logConsumer(topic, name, payloadType, handler)` / `logConsumer(topic, name, payloadType, handler, options)` | Register a **managed consumer**: the durable log subscription plus, once a worker runs, a daemon thread that pulls messages, decodes each into `payloadType`, invokes `handler`, and advances the cursor. `LogConsumerOptions` sets `pollIntervalMs` (default 1000), `batchSize` (default 100), and `onError` (`"retry"` leaves a failed message un-acked to re-read, default; `"skip"` acks past it). |
 | `declareTopic(name)` / `declareTopic(name, retention)` | Declare a log topic so its publishes are retained even with no subscriber (removing the late-join boundary). `retention` (a `Duration`) bounds a sub-less backlog. Idempotent. |
 | `listDeclaredTopics()` → `List<Topic>` | List declared topics: `name`, `mode`, `retentionMs`, `createdAt`. |
 | `readTopic(topic, name)` / `readTopic(topic, name, limit)` → `List<TopicMessage>` | Pull up to `limit` (default 100) messages after `name`'s cursor, oldest first and exclusive of it. Empty once caught up. At-least-once — process, then `ackTopic`. |
