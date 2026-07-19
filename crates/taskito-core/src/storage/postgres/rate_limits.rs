@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::job::now_millis;
 
 impl PostgresStorage {
+    /// Token-bucket state for a rate-limit key, if one exists.
     pub fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitState>> {
         let mut conn = self.conn()?;
 
@@ -20,6 +21,7 @@ impl PostgresStorage {
         Ok(row.map(Into::into))
     }
 
+    /// Insert or replace a token-bucket state row.
     pub fn upsert_rate_limit(&self, state: &RateLimitState) -> Result<()> {
         let mut conn = self.conn()?;
 

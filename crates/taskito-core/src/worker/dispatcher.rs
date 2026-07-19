@@ -28,6 +28,8 @@ pub struct NativeDispatcher {
 }
 
 impl NativeDispatcher {
+    /// Build a dispatcher over `registry`, running at most `num_workers`
+    /// handlers concurrently (minimum 1).
     pub fn new(registry: TaskRegistry, num_workers: usize) -> Self {
         Self {
             registry: Arc::new(registry),

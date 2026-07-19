@@ -17,6 +17,8 @@ impl RedisStorage {
         ])
     }
 
+    /// Purge archived completed jobs older than the cutoff. Returns the count
+    /// removed.
     pub fn purge_completed(&self, older_than_ms: i64) -> Result<u64> {
         self.purge_completed_scan(|job| {
             job.completed_at
@@ -234,6 +236,8 @@ impl RedisStorage {
         Ok(count)
     }
 
+    /// Running jobs that exceeded their timeout, for the scheduler to fail or
+    /// retry.
     pub fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>> {
         let mut conn = self.conn()?;
         let status_key = self.key(&["jobs", "status", &(JobStatus::Running as i32).to_string()]);
@@ -299,6 +303,8 @@ impl RedisStorage {
         Ok(orphaned)
     }
 
+    /// Cancel pending jobs whose `expires_at` has passed, archiving them as
+    /// `Cancelled`. Returns the count expired.
     pub fn expire_pending_jobs(&self, now: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let status_key = self.key(&["jobs", "status", &(JobStatus::Pending as i32).to_string()]);
@@ -327,6 +333,7 @@ impl RedisStorage {
         Ok(count)
     }
 
+    /// Cancel every pending job in a queue. Returns the count cancelled.
     pub fn cancel_pending_by_queue(&self, queue: &str) -> Result<u64> {
         let mut conn = self.conn()?;
         let by_queue_key = self.key(&["jobs", "by_queue", queue]);
@@ -354,6 +361,7 @@ impl RedisStorage {
         Ok(count)
     }
 
+    /// Cancel every pending job for a task. Returns the count cancelled.
     pub fn cancel_pending_by_task(&self, task_name: &str) -> Result<u64> {
         let mut conn = self.conn()?;
         let by_task_key = self.key(&["jobs", "by_task", task_name]);

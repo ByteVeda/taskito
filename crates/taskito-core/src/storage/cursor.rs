@@ -52,7 +52,9 @@ pub fn next_cursor<T>(rows: &[T], limit: i64, key: impl Fn(&T) -> (i64, &str)) -
 /// next page (`None` when this page is the last).
 #[derive(Debug, Clone)]
 pub struct Page<T> {
+    /// Rows in this page.
     pub items: Vec<T>,
+    /// Opaque cursor for the next page; `None` when this page is the last.
     pub next_cursor: Option<String>,
 }
 

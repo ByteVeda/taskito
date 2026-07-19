@@ -14,11 +14,20 @@ use crate::storage::{DeadJob, QueueStats, SubscriptionBacklogStats};
 pub trait Storage: Send + Sync + Clone {
     // ── Job operations ──────────────────────────────────────────────
 
+    /// Insert a new job and return it.
     fn enqueue(&self, new_job: NewJob) -> Result<Job>;
+    /// Insert multiple jobs in a single transaction.
     fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>>;
+    /// Enqueue with `unique_key` deduplication: returns the existing active
+    /// job when a duplicate is found instead of inserting.
     fn enqueue_unique(&self, new_job: NewJob) -> Result<Job>;
+    /// Batch variant of [`enqueue_unique`](Self::enqueue_unique), one transaction.
     fn enqueue_unique_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>>;
+    /// Atomically claim the highest-priority ready job from a queue, moving it
+    /// to `Running`. `None` when no job is eligible. `namespace = None`
+    /// matches only namespace-less jobs.
     fn dequeue(&self, queue_name: &str, now: i64, namespace: Option<&str>) -> Result<Option<Job>>;
+    /// [`dequeue`](Self::dequeue) across several queues, checked in order.
     fn dequeue_from(
         &self,
         queues: &[String],
@@ -44,6 +53,8 @@ pub trait Storage: Send + Sync + Clone {
         namespace: Option<&str>,
         max: usize,
     ) -> Result<Vec<Job>>;
+    /// Mark a job completed with its result, moving it from `jobs` into
+    /// `archived_jobs` in one transaction.
     fn complete(&self, id: &str, result_bytes: Option<Vec<u8>>) -> Result<()>;
 
     /// Persist many successful completions at once. Each entry archives the
@@ -52,7 +63,10 @@ pub trait Storage: Send + Sync + Clone {
     ///
     /// [`JobCompletion`]: crate::job::JobCompletion
     fn complete_batch(&self, completions: &[crate::job::JobCompletion]) -> Result<()>;
+    /// Mark a job terminally failed, moving it from `jobs` into `archived_jobs`.
     fn fail(&self, id: &str, error: &str) -> Result<()>;
+    /// Re-schedule a job for retry at `next_scheduled_at`, incrementing its
+    /// `retry_count`.
     fn retry(&self, id: &str, next_scheduled_at: i64) -> Result<()>;
     /// Re-schedule a job back to `Pending` **without** consuming its retry
     /// budget. Used for soft-gate reschedules (rate limit, circuit breaker,
@@ -66,13 +80,24 @@ pub trait Storage: Send + Sync + Clone {
     /// missing or not `Running`. Only for confirmed-dead/hung workers: a
     /// still-alive owner may finish the old attempt, double-executing the job.
     fn requeue_stuck(&self, id: &str, now: i64) -> Result<bool>;
+    /// Cancel a `Pending` job (archived as `Cancelled`) and cascade-cancel its
+    /// dependents. Returns `false` when the job is missing or not pending.
     fn cancel_job(&self, id: &str) -> Result<bool>;
+    /// Set the cancel-requested flag on a `Running` job — the task must poll
+    /// for it. Returns `false` when no running job matched.
     fn request_cancel(&self, id: &str) -> Result<bool>;
+    /// Whether cancellation has been requested for a job.
     fn is_cancel_requested(&self, id: &str) -> Result<bool>;
+    /// Archive a running job as `Cancelled` after it observed a cancel request.
     fn mark_cancelled(&self, id: &str) -> Result<()>;
+    /// Cancel every pending job that depends, directly or transitively, on
+    /// `failed_job_id`.
     fn cascade_cancel(&self, failed_job_id: &str, reason: &str) -> Result<()>;
+    /// Ids of the jobs `job_id` depends on.
     fn get_dependencies(&self, job_id: &str) -> Result<Vec<String>>;
+    /// Ids of the jobs that depend on `job_id`.
     fn get_dependents(&self, job_id: &str) -> Result<Vec<String>>;
+    /// Update a running job's progress (0-100).
     fn update_progress(&self, id: &str, progress: i32) -> Result<()>;
     /// List jobs by filter. Rows are **blob-free** on every backend: the
     /// `payload`/`result` blobs come back empty (Diesel selects a narrow
@@ -110,25 +135,38 @@ pub trait Storage: Send + Sync + Clone {
         after: Option<(i64, &str)>,
         namespace: Option<&str>,
     ) -> Result<Vec<Job>>;
+    /// Fetch a job by id, blobs included — live `jobs` first, then
+    /// `archived_jobs`.
     fn get_job(&self, id: &str) -> Result<Option<Job>>;
+    /// Global queue statistics: live counts from `jobs`, terminal counts from
+    /// `archived_jobs`.
     fn stats(&self) -> Result<QueueStats>;
+    /// Purge archived completed jobs older than the cutoff. Returns the count
+    /// removed.
     fn purge_completed(&self, older_than_ms: i64) -> Result<u64>;
     /// Purge archived jobs by the global/per-entry TTL, covering every terminal
     /// status on all backends.
     fn purge_completed_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64>;
+    /// Running jobs that exceeded their timeout, for the scheduler to fail or
+    /// retry.
     fn reap_stale_jobs(&self, now: i64) -> Result<Vec<Job>>;
     /// Running jobs whose execution-claim owner is not in `live_owner_ids` (the
     /// worker that claimed them has died). Read-only — paired with the dead
     /// owner so the caller can atomically reclaim before requeuing.
     fn reap_orphaned_jobs(&self, live_owner_ids: &[String], now: i64)
         -> Result<Vec<(Job, String)>>;
+    /// Record one failed attempt's error for a job.
     fn record_error(&self, job_id: &str, attempt: i32, error: &str) -> Result<()>;
+    /// All recorded errors for a job, ordered by attempt.
     fn get_job_errors(&self, job_id: &str) -> Result<Vec<JobError>>;
+    /// Purge error records older than the cutoff. Returns the count removed.
     fn purge_job_errors(&self, older_than_ms: i64) -> Result<u64>;
 
     // ── Dead letter operations ──────────────────────────────────────
 
+    /// Move a job to the dead-letter queue and cascade-cancel its dependents.
     fn move_to_dlq(&self, job: &Job, error: &str, metadata: Option<&str>) -> Result<()>;
+    /// Dead-letter entries, newest first, paginated.
     fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
     /// Keyset-paginated `list_dead`, ordered by `(failed_at, id)` descending.
     /// See [`Storage::list_jobs_after`] for the cursor contract.
@@ -137,10 +175,18 @@ pub trait Storage: Send + Sync + Clone {
     fn list_dead_by_task(&self, task_name: &str, limit: i64, offset: i64) -> Result<Vec<DeadJob>>;
     /// Delete every dead-letter entry for a task. Returns the number removed.
     fn purge_dead_by_task(&self, task_name: &str) -> Result<u64>;
+    /// Re-enqueue a dead-letter entry as a fresh job, deleting the entry.
+    /// Returns the new job's id; `JobNotFound` if the entry is absent.
     fn retry_dead(&self, dead_id: &str) -> Result<String>;
+    /// Purge dead-letter entries older than the cutoff. Returns the count
+    /// removed.
     fn purge_dead(&self, older_than_ms: i64) -> Result<u64>;
+    /// Delete one dead-letter entry. Returns `false` when no row matched.
     fn delete_dead(&self, dead_id: &str) -> Result<bool>;
+    /// Purge dead-letter entries by the global/per-entry TTL. Returns the
+    /// count removed.
     fn purge_dead_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64>;
+    /// Dead-letter entries eligible for automatic retry, bounded by `limit`.
     fn list_dead_for_retry(
         &self,
         cutoff_ms: i64,
@@ -152,14 +198,21 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Rate limit operations ───────────────────────────────────────
 
+    /// Token-bucket state for a rate-limit key, if one exists.
     fn get_rate_limit(&self, key: &str) -> Result<Option<RateLimitState>>;
+    /// Insert or replace a token-bucket state row.
     fn upsert_rate_limit(&self, row: &RateLimitState) -> Result<()>;
+    /// Atomically refill and consume one token. Returns `false` when the
+    /// bucket is empty.
     fn try_acquire_token(&self, key: &str, max_tokens: f64, refill_rate: f64) -> Result<bool>;
 
     // ── Periodic task operations ────────────────────────────────────
 
+    /// Register or update a periodic task by name.
     fn register_periodic(&self, task: &NewPeriodicTask) -> Result<()>;
+    /// Enabled periodic tasks whose `next_run` is due at `now`.
     fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTask>>;
+    /// Advance a periodic task's schedule after it fires.
     fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()>;
     /// All registered periodic tasks, enabled or paused.
     fn list_periodic(&self) -> Result<Vec<PeriodicTask>>;
@@ -198,6 +251,7 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Metrics operations ──────────────────────────────────────────
 
+    /// Record one execution measurement for a task.
     fn record_metric(
         &self,
         task_name: &str,
@@ -206,8 +260,13 @@ pub trait Storage: Send + Sync + Clone {
         memory_bytes: i64,
         succeeded: bool,
     ) -> Result<()>;
+    /// Metrics recorded since `since_ms` for one task, or all tasks when
+    /// `name` is `None`.
     fn get_metrics(&self, name: Option<&str>, since_ms: i64) -> Result<Vec<TaskMetric>>;
+    /// Purge metric records older than the cutoff. Returns the count removed.
     fn purge_metrics(&self, older_than_ms: i64) -> Result<u64>;
+    /// Record a replay of a completed job, pairing original and replay
+    /// outcomes.
     fn record_replay(
         &self,
         original_job_id: &str,
@@ -217,10 +276,12 @@ pub trait Storage: Send + Sync + Clone {
         original_error: Option<&str>,
         replay_error: Option<&str>,
     ) -> Result<()>;
+    /// All replays recorded against `original_job_id`.
     fn get_replay_history(&self, original_job_id: &str) -> Result<Vec<ReplayEntry>>;
 
     // ── Log operations ──────────────────────────────────────────────
 
+    /// Write one structured log line for a job. `extra` is pre-encoded JSON.
     fn write_task_log(
         &self,
         job_id: &str,
@@ -229,6 +290,7 @@ pub trait Storage: Send + Sync + Clone {
         message: &str,
         extra: Option<&str>,
     ) -> Result<()>;
+    /// All log lines for a job, in emission order.
     fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogEntry>>;
     /// Logs for a job with id strictly after `after_id` (UUIDv7 ids are
     /// time-ordered, so the id doubles as a stream cursor). `None` = all.
@@ -237,6 +299,8 @@ pub trait Storage: Send + Sync + Clone {
         job_id: &str,
         after_id: Option<&str>,
     ) -> Result<Vec<TaskLogEntry>>;
+    /// Log lines across jobs, filtered by task name and/or level, newest
+    /// since `since_ms`, bounded by `limit`.
     fn query_task_logs(
         &self,
         task_name: Option<&str>,
@@ -244,16 +308,22 @@ pub trait Storage: Send + Sync + Clone {
         since_ms: i64,
         limit: i64,
     ) -> Result<Vec<TaskLogEntry>>;
+    /// Purge log lines older than the cutoff. Returns the count removed.
     fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64>;
 
     // ── Circuit breaker operations ──────────────────────────────────
 
+    /// Persisted circuit-breaker state for a task, if one exists.
     fn get_circuit_breaker(&self, task_name: &str) -> Result<Option<CircuitBreakerState>>;
+    /// Insert or replace a task's circuit-breaker state.
     fn upsert_circuit_breaker(&self, row: &CircuitBreakerState) -> Result<()>;
+    /// Every persisted circuit-breaker state.
     fn list_circuit_breakers(&self) -> Result<Vec<CircuitBreakerState>>;
 
     // ── Worker operations ───────────────────────────────────────────
 
+    /// Register a worker in the cluster registry, or update it if the id
+    /// already exists. `tags`/`resources` are pre-encoded JSON.
     #[allow(clippy::too_many_arguments)]
     fn register_worker(
         &self,
@@ -267,35 +337,54 @@ pub trait Storage: Send + Sync + Clone {
         pid: Option<i32>,
         pool_type: Option<&str>,
     ) -> Result<()>;
+    /// Refresh a worker's heartbeat timestamp, optionally updating its
+    /// resource-health JSON.
     fn heartbeat(&self, worker_id: &str, resource_health: Option<&str>) -> Result<()>;
+    /// Set a worker's status string.
     fn update_worker_status(&self, worker_id: &str, status: &str) -> Result<()>;
+    /// Every registered worker with its heartbeat state.
     fn list_workers(&self) -> Result<Vec<WorkerInfo>>;
     /// Ids of workers whose heartbeat is at or after `cutoff_ms`. A narrow
     /// projection of [`Self::list_workers`] for callers that only need the live
     /// set and must not pay to load every worker's `resource_health` blob.
     fn list_live_worker_ids(&self, cutoff_ms: i64) -> Result<Vec<String>>;
+    /// Remove workers whose heartbeat is stale past the dead-worker threshold.
+    /// Returns the reaped worker ids.
     fn reap_dead_workers(&self) -> Result<Vec<String>>;
+    /// Remove a worker from the registry (called on shutdown).
     fn unregister_worker(&self, worker_id: &str) -> Result<()>;
+    /// Job ids currently execution-claimed by a worker.
     fn list_claims_by_worker(&self, worker_id: &str) -> Result<Vec<String>>;
 
     // ── Queue pause/resume ───────────────────────────────────────
 
+    /// Pause a queue so no new jobs are dispatched from it.
     fn pause_queue(&self, queue_name: &str) -> Result<()>;
+    /// Resume a paused queue.
     fn resume_queue(&self, queue_name: &str) -> Result<()>;
+    /// Names of all currently paused queues.
     fn list_paused_queues(&self) -> Result<Vec<String>>;
 
     // ── Job expiry ───────────────────────────────────────────────
 
+    /// Fail pending jobs whose `expires_at` has passed. Returns the count
+    /// expired.
     fn expire_pending_jobs(&self, now: i64) -> Result<u64>;
 
     // ── Job revocation ───────────────────────────────────────────
 
+    /// Cancel every pending job in a queue. Returns the count cancelled.
     fn cancel_pending_by_queue(&self, queue: &str) -> Result<u64>;
+    /// Cancel every pending job for a task. Returns the count cancelled.
     fn cancel_pending_by_task(&self, task_name: &str) -> Result<u64>;
 
     // ── Job archival ─────────────────────────────────────────────
 
+    /// Move `Complete`/`Dead`/`Cancelled` jobs older than the cutoff from
+    /// `jobs` into `archived_jobs`. Returns the count archived. `Failed`
+    /// jobs are archived immediately by `fail()`, never by this sweep.
     fn archive_old_jobs(&self, cutoff_ms: i64) -> Result<u64>;
+    /// Archived jobs, newest first, paginated. Rows are blob-free.
     fn list_archived(&self, limit: i64, offset: i64) -> Result<Vec<Job>>;
     /// Keyset-paginated `list_archived`, ordered by `(completed_at, id)`
     /// descending. See [`Storage::list_jobs_after`] for the cursor contract.
@@ -303,21 +392,32 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Distributed locking ────────────────────────────────────
 
+    /// Try to take a distributed lock for `ttl_ms`. Returns `false` when
+    /// another owner (or this one) still holds an unexpired lock.
     fn acquire_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool>;
+    /// Release a lock. Returns `true` only if `owner_id` held it.
     fn release_lock(&self, lock_name: &str, owner_id: &str) -> Result<bool>;
+    /// Extend a lock's TTL. Returns `true` only if `owner_id` held it.
     fn extend_lock(&self, lock_name: &str, owner_id: &str, ttl_ms: i64) -> Result<bool>;
+    /// Holder and expiry of a lock, if it exists.
     fn get_lock_info(&self, lock_name: &str) -> Result<Option<LockInfo>>;
+    /// Remove locks that expired before `now`. Returns the count removed.
     fn reap_expired_locks(&self, now: i64) -> Result<u64>;
 
     // ── Execution claims (exactly-once) ────────────────────────
 
+    /// Claim exclusive execution of a job for `worker_id`. Returns `false`
+    /// when a claim already exists.
     fn claim_execution(&self, job_id: &str, worker_id: &str) -> Result<bool>;
     /// Batch variant of [`Storage::claim_execution`]: attempt to claim every
     /// `job_id` for `worker_id` in as few round trips as the backend allows.
     /// Returns one flag per input id, in order — `true` if this worker won the
     /// claim, `false` if a claim already existed.
     fn claim_execution_batch(&self, job_ids: &[&str], worker_id: &str) -> Result<Vec<bool>>;
+    /// Remove the execution claim of a finished job.
     fn complete_execution(&self, job_id: &str) -> Result<()>;
+    /// Purge execution claims older than the cutoff. Returns the count
+    /// removed.
     fn purge_execution_claims(&self, older_than_ms: i64) -> Result<u64>;
     /// Atomically transfer an existing claim from `expected_owner` to
     /// `new_owner`. Returns `true` only if the claim was held by
@@ -332,6 +432,7 @@ pub trait Storage: Send + Sync + Clone {
 
     // ── Per-task concurrency ──────────────────────────────────────
 
+    /// Running-job count for a task — the per-task concurrency-cap primitive.
     fn count_running_by_task(&self, task_name: &str) -> Result<i64>;
 
     // ── Per-queue stats ──────────────────────────────────────────
@@ -340,11 +441,16 @@ pub trait Storage: Send + Sync + Clone {
     /// Single-status, unlike the full-breakdown `stats_by_queue`.
     fn count_pending_by_queue(&self, queue_name: &str) -> Result<i64>;
 
+    /// Statistics for one queue: live counts from `jobs`, terminal counts
+    /// from `archived_jobs`.
     fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats>;
+    /// Statistics broken down per queue name.
     fn stats_all_queues(&self) -> Result<std::collections::HashMap<String, QueueStats>>;
 
     // ── Filtered job listing ─────────────────────────────────────
 
+    /// `list_jobs` with extra filters (metadata/error substring, created-at
+    /// range). Rows are blob-free like every listing.
     #[allow(clippy::too_many_arguments)]
     fn list_jobs_filtered(
         &self,

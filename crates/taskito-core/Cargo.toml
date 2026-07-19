@@ -1,7 +1,14 @@
 [package]
 name = "taskito-core"
-version = "0.20.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Embeddable task queue: SQLite/Postgres/Redis storage, scheduler with retries, rate limits, and workers"
+keywords = ["task-queue", "jobs", "scheduler", "background", "worker"]
+categories = ["asynchronous", "database"]
+readme = "README.md"
 
 [features]
 default = []

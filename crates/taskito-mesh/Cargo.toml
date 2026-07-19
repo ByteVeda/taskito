@@ -1,7 +1,11 @@
 [package]
 name = "taskito-mesh"
-version = "0.20.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Decentralized mesh scheduling overlay for the Taskito task queue"
 
 [dependencies]
 taskito-core = { path = "../taskito-core" }

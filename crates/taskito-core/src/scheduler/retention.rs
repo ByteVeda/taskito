@@ -13,9 +13,13 @@ const DAY_MS: i64 = 86_400_000;
 /// logs churn hardest and are worth least (shortest); the DLQ is the only copy
 /// of a payload a human must act on, so it is deleted last (longest).
 pub const DEFAULT_ARCHIVED_JOBS_TTL_MS: i64 = 7 * DAY_MS;
+/// Default `dead_letter` window: 30 days, in milliseconds.
 pub const DEFAULT_DEAD_LETTER_TTL_MS: i64 = 30 * DAY_MS;
+/// Default `task_logs` window: 3 days, in milliseconds.
 pub const DEFAULT_TASK_LOGS_TTL_MS: i64 = 3 * DAY_MS;
+/// Default `task_metrics` window: 7 days, in milliseconds.
 pub const DEFAULT_TASK_METRICS_TTL_MS: i64 = 7 * DAY_MS;
+/// Default `job_errors` window: 7 days, in milliseconds.
 pub const DEFAULT_JOB_ERRORS_TTL_MS: i64 = 7 * DAY_MS;
 
 /// Retention window per history table, in milliseconds. `None` keeps a table

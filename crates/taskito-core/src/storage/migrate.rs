@@ -31,7 +31,9 @@ use crate::job::now_millis;
 /// The SQL dialect a migration renders for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Backend {
+    /// SQLite dialect.
     Sqlite,
+    /// PostgreSQL dialect.
     Postgres,
 }
 

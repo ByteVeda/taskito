@@ -7,6 +7,7 @@ use crate::error::Result;
 use crate::job::now_millis;
 
 impl PostgresStorage {
+    /// Pause a queue so no new jobs are dispatched from it.
     pub fn pause_queue(&self, queue_name: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
@@ -27,6 +28,7 @@ impl PostgresStorage {
         Ok(())
     }
 
+    /// Resume a paused queue.
     pub fn resume_queue(&self, queue_name: &str) -> Result<()> {
         let mut conn = self.conn()?;
 
@@ -36,6 +38,7 @@ impl PostgresStorage {
         Ok(())
     }
 
+    /// Names of all currently paused queues.
     pub fn list_paused_queues(&self) -> Result<Vec<String>> {
         let mut conn = self.conn()?;
 

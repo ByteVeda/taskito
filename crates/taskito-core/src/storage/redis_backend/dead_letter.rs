@@ -53,6 +53,7 @@ impl From<DeadJobEntry> for DeadJob {
 }
 
 impl RedisStorage {
+    /// Move a job to the dead-letter queue and cascade-cancel its dependents.
     pub fn move_to_dlq(&self, job: &Job, error: &str, metadata: Option<&str>) -> Result<()> {
         let now = now_millis();
         let dlq_id = uuid::Uuid::now_v7().to_string();
@@ -128,6 +129,7 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Dead-letter entries, newest first, paginated.
     pub fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
         let mut conn = self.conn()?;
         let dlq_all = self.key(&["dlq", "all"]);
@@ -180,6 +182,7 @@ impl RedisStorage {
         Ok(results)
     }
 
+    /// Dead-letter entries for one task, newest first, paginated.
     pub fn list_dead_by_task(
         &self,
         task_name: &str,
@@ -223,6 +226,7 @@ impl RedisStorage {
         Ok(matches.into_iter().skip(offset).take(limit).collect())
     }
 
+    /// Delete every dead-letter entry for a task. Returns the number removed.
     pub fn purge_dead_by_task(&self, task_name: &str) -> Result<u64> {
         let mut conn = self.conn()?;
         let dlq_all = self.key(&["dlq", "all"]);
@@ -261,6 +265,8 @@ impl RedisStorage {
         Ok(to_delete.len() as u64)
     }
 
+    /// Re-enqueue a dead-letter entry as a fresh job, deleting the entry.
+    /// Returns the new job's id; `JobNotFound` if the entry is absent.
     pub fn retry_dead(&self, dead_id: &str) -> Result<String> {
         let mut conn = self.conn()?;
         let dlq_key = self.key(&["dlq", dead_id]);
@@ -327,6 +333,8 @@ impl RedisStorage {
         Ok(job.id)
     }
 
+    /// Purge dead-letter entries older than the cutoff. Returns the count
+    /// removed.
     pub fn purge_dead(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let dlq_all = self.key(&["dlq", "all"]);
@@ -374,6 +382,7 @@ impl RedisStorage {
         Ok(total)
     }
 
+    /// Delete one dead-letter entry. Returns `false` when none matched.
     pub fn delete_dead(&self, dead_id: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let dlq_key = self.key(&["dlq", dead_id]);
@@ -395,6 +404,8 @@ impl RedisStorage {
         Ok(true)
     }
 
+    /// Purge dead-letter entries by the global/per-entry TTL. Returns the
+    /// count removed.
     pub fn purge_dead_with_ttl(&self, global_cutoff_ms: Option<i64>) -> Result<u64> {
         let mut conn = self.conn()?;
         let dlq_all = self.key(&["dlq", "all"]);
@@ -457,6 +468,7 @@ impl RedisStorage {
         Ok(total)
     }
 
+    /// Dead-letter entries eligible for automatic retry, bounded by `limit`.
     pub fn list_dead_for_retry(
         &self,
         cutoff_ms: i64,

@@ -37,6 +37,7 @@ impl From<PeriodicEntry> for PeriodicTask {
 }
 
 impl RedisStorage {
+    /// Register or update a periodic task by name.
     pub fn register_periodic(&self, task: &NewPeriodicTask) -> Result<()> {
         let mut conn = self.conn()?;
 
@@ -68,6 +69,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Enabled periodic tasks whose `next_run` is due at `now` (Unix
+    /// milliseconds).
     pub fn get_due_periodic(&self, now: i64) -> Result<Vec<PeriodicTask>> {
         let mut conn = self.conn()?;
         let due_key = self.key(&["periodic", "due"]);
@@ -91,6 +94,7 @@ impl RedisStorage {
         Ok(rows)
     }
 
+    /// Advance a periodic task's schedule after it fires.
     pub fn update_periodic_schedule(&self, name: &str, last_run: i64, next_run: i64) -> Result<()> {
         let mut conn = self.conn()?;
         let pkey = self.key(&["periodic", name]);

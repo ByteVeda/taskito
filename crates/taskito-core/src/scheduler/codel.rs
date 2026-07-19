@@ -16,7 +16,9 @@
 /// shedding begins.
 #[derive(Debug, Clone, Copy)]
 pub struct CodelConfig {
+    /// Acceptable steady-state sojourn in milliseconds.
     pub target_ms: i64,
+    /// Milliseconds the sojourn must stay above target before shedding.
     pub interval_ms: i64,
 }
 

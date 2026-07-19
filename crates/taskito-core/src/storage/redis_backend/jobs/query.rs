@@ -8,6 +8,8 @@ use crate::storage::redis_backend::{map_err, strip_list_blobs, RedisStorage};
 use crate::storage::QueueStats;
 
 impl RedisStorage {
+    /// List jobs by filter. Rows are blob-free — fetch the full job with
+    /// [`get_job`](Self::get_job).
     pub fn list_jobs(
         &self,
         status: Option<i32>,
@@ -152,6 +154,7 @@ impl RedisStorage {
         Ok(jobs)
     }
 
+    /// Fetch a job by id, blobs included — live jobs first, then the archive.
     pub fn get_job(&self, id: &str) -> Result<Option<Job>> {
         let mut conn = self.conn()?;
         match self.load_job(&mut conn, id)? {
@@ -160,6 +163,8 @@ impl RedisStorage {
         }
     }
 
+    /// Global queue statistics: live counts plus terminal counts from the
+    /// archive.
     pub fn stats(&self) -> Result<QueueStats> {
         let mut conn = self.conn()?;
         let mut stats = QueueStats::default();
@@ -261,11 +266,13 @@ impl RedisStorage {
         self.count_in_status(&mut conn, &by_queue_key, JobStatus::Pending)
     }
 
+    /// Statistics for one queue: live counts plus archived terminal counts.
     pub fn stats_by_queue(&self, queue_name: &str) -> Result<QueueStats> {
         let mut conn = self.conn()?;
         self.queue_stats(&mut conn, queue_name)
     }
 
+    /// Statistics broken down per queue name.
     pub fn stats_all_queues(&self) -> Result<std::collections::HashMap<String, QueueStats>> {
         let mut conn = self.conn()?;
 
@@ -312,6 +319,8 @@ impl RedisStorage {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// `list_jobs` with extra filters (metadata/error substring, created-at
+    /// range). Rows are blob-free like every listing.
     pub fn list_jobs_filtered(
         &self,
         status: Option<i32>,

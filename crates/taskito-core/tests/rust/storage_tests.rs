@@ -1563,6 +1563,10 @@ fn test_task_logs_after_cursor(s: &impl Storage) {
     );
     let after_last = s.get_task_logs_after(&job.id, Some(&all[2].id)).unwrap();
     assert!(after_last.is_empty());
+
+    // A zero limit is an empty page, even on the filtered (unindexed) path.
+    let zero = s.query_task_logs(Some("log_task"), None, 0, 0).unwrap();
+    assert!(zero.is_empty());
 }
 
 fn test_rate_limit_token_exhaustion(s: &impl Storage) {

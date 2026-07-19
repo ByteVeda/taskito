@@ -54,6 +54,8 @@ impl RedisStorage {
         Ok(claimed == 1)
     }
 
+    /// Atomically claim the highest-priority ready job, moving it to `Running`.
+    /// Scans the queue's sorted set by score; each candidate is claimed Lua-atomically.
     pub fn dequeue(
         &self,
         queue_name: &str,
@@ -163,6 +165,7 @@ impl RedisStorage {
         Ok(None)
     }
 
+    /// [`dequeue`](Self::dequeue) across several queues, checked in order.
     pub fn dequeue_from(
         &self,
         queues: &[String],

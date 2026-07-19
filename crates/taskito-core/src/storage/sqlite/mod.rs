@@ -98,7 +98,7 @@ impl SqliteStorage {
     }
 
     /// Replace the in-process wake handle so it is shared with the scheduler's
-    /// [`WakeSource`]. Only meaningful under `push-dispatch`.
+    /// `WakeSource`. Only meaningful under `push-dispatch`.
     #[cfg(feature = "push-dispatch")]
     pub fn set_notify_handle(&mut self, notify: std::sync::Arc<tokio::sync::Notify>) {
         self.notify = notify;
@@ -111,6 +111,7 @@ impl SqliteStorage {
         &self.notify
     }
 
+    /// Check a pooled SQLite connection out of the r2d2 pool.
     pub fn conn(
         &self,
     ) -> Result<diesel::r2d2::PooledConnection<ConnectionManager<SqliteConnection>>> {

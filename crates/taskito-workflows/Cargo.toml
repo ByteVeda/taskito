@@ -1,7 +1,13 @@
 [package]
 name = "taskito-workflows"
-version = "0.20.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Workflow DAG engine for the Taskito task queue"
+# Blocked from crates.io by the dagron-core git dependency; flip once it publishes.
+publish = false
 
 [features]
 default = []

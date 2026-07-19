@@ -115,25 +115,43 @@ impl SchedulerConfig {
 
 /// Result of executing a job (sent back from worker threads).
 pub enum JobResult {
+    /// The task ran to completion.
     Success {
+        /// Id of the completed job.
         job_id: String,
+        /// Serialized result to archive.
         result: Option<Vec<u8>>,
+        /// Task that ran.
         task_name: String,
+        /// Wall-clock execution time in nanoseconds.
         wall_time_ns: i64,
     },
+    /// The task raised an error or timed out.
     Failure {
+        /// Id of the failed job.
         job_id: String,
+        /// Error message (canonical JSON `TaskError` when structured).
         error: String,
+        /// Retries already attempted before this failure.
         retry_count: i32,
+        /// The job's retry cap.
         max_retries: i32,
+        /// Task that ran.
         task_name: String,
+        /// Wall-clock execution time in nanoseconds.
         wall_time_ns: i64,
+        /// Whether the failure is retryable (subject to the retry policy).
         should_retry: bool,
+        /// True when the failure was an execution timeout.
         timed_out: bool,
     },
+    /// The task was cancelled while executing.
     Cancelled {
+        /// Id of the cancelled job.
         job_id: String,
+        /// Task that ran.
         task_name: String,
+        /// Wall-clock execution time in nanoseconds.
         wall_time_ns: i64,
     },
 }
@@ -154,28 +172,47 @@ impl JobResult {
 #[derive(Debug, Clone)]
 pub enum ResultOutcome {
     /// Task completed successfully.
-    Success { job_id: String, task_name: String },
+    Success {
+        /// Id of the completed job.
+        job_id: String,
+        /// Task that ran.
+        task_name: String,
+    },
     /// Task failed and will be retried.
     Retry {
+        /// Id of the failed job.
         job_id: String,
+        /// Task that ran.
         task_name: String,
+        /// Queue the job belongs to.
         queue: String,
+        /// Error message of this failure.
         error: String,
+        /// Retry count after this failure (1-based).
         retry_count: i32,
+        /// True when the failure was an execution timeout.
         timed_out: bool,
     },
     /// Task exhausted retries and moved to the dead-letter queue.
     DeadLettered {
+        /// Id of the dead-lettered job.
         job_id: String,
+        /// Task that ran.
         task_name: String,
+        /// Queue the job belonged to.
         queue: String,
+        /// Final error message.
         error: String,
+        /// True when the final failure was an execution timeout.
         timed_out: bool,
     },
     /// Task was cancelled during execution.
     Cancelled {
+        /// Id of the cancelled job.
         job_id: String,
+        /// Task that ran.
         task_name: String,
+        /// Queue the job belonged to.
         queue: String,
     },
 }
@@ -183,14 +220,18 @@ pub enum ResultOutcome {
 /// Per-task configuration for retry, rate limiting, and circuit breaker.
 #[derive(Debug, Clone)]
 pub struct TaskConfig {
+    /// Retry delays and cap applied to failed runs.
     pub retry_policy: RetryPolicy,
+    /// Dispatch rate limit for this task. `None` = unlimited.
     pub rate_limit: Option<crate::resilience::rate_limiter::RateLimitConfig>,
+    /// Circuit-breaker settings for this task. `None` = no breaker.
     pub circuit_breaker: Option<CircuitBreakerConfig>,
     /// Cap on how fast this task may *retry*, across every job of the task.
     /// Nothing else catches sustained retry storms: the circuit breaker trips on
     /// hard failure, not on aggregate retry rate, and per-job `max_retries` is a
     /// per-job budget, not a rate. Exhausting it dead-letters instead of retrying.
     pub retry_budget: Option<crate::resilience::rate_limiter::RateLimitConfig>,
+    /// Cluster-wide cap on concurrently running jobs of this task.
     pub max_concurrent: Option<i32>,
     /// Cap on this task's share of *this worker's* in-flight slots, so one slow
     /// task cannot occupy the whole pool and starve every other task. Complements
@@ -260,7 +301,9 @@ impl InFlight {
 /// Per-queue configuration for rate limiting and concurrency caps.
 #[derive(Debug, Clone)]
 pub struct QueueConfig {
+    /// Dispatch rate limit for the whole queue. `None` = unlimited.
     pub rate_limit: Option<crate::resilience::rate_limiter::RateLimitConfig>,
+    /// Cap on concurrently running jobs across the queue. `None` = uncapped.
     pub max_concurrent: Option<i32>,
 }
 
@@ -323,6 +366,8 @@ struct TickCounters {
 }
 
 impl Scheduler {
+    /// Build a scheduler over `storage`, dispatching from `queues`, optionally
+    /// scoped to a tenant `namespace`.
     pub fn new(
         storage: StorageBackend,
         queues: Vec<String>,
@@ -362,6 +407,7 @@ impl Scheduler {
         }
     }
 
+    /// The storage backend this scheduler runs on.
     pub fn storage(&self) -> &StorageBackend {
         &self.storage
     }
@@ -473,6 +519,7 @@ impl Scheduler {
         }
     }
 
+    /// Handle that stops [`Scheduler::run`] when notified.
     pub fn shutdown_handle(&self) -> Arc<Notify> {
         self.shutdown.clone()
     }
@@ -492,16 +539,18 @@ impl Scheduler {
                 == 0
     }
 
+    /// Set the rate-limit/concurrency policy for a queue.
     pub fn register_queue_config(&mut self, queue_name: String, config: QueueConfig) {
         self.queue_configs.insert(queue_name, config);
     }
 
     /// Enable opt-in CoDel load shedding on a queue. Orthogonal to
-    /// [`register_queue_config`] so the common (no-CoDel) path never pays for it.
+    /// [`Scheduler::register_queue_config`] so the common (no-CoDel) path never pays for it.
     pub fn register_queue_codel(&mut self, queue_name: String, config: codel::CodelConfig) {
         self.codel_configs.insert(queue_name, config);
     }
 
+    /// Set a task's resilience policy and register its circuit breaker, if any.
     pub fn register_task(&mut self, task_name: String, config: TaskConfig) {
         if let Some(ref cb_config) = config.circuit_breaker {
             if let Err(e) = self.circuit_breaker.register(&task_name, cb_config) {
@@ -511,6 +560,7 @@ impl Scheduler {
         self.task_configs.insert(task_name, config);
     }
 
+    /// The circuit-breaker manager shared with this scheduler's storage.
     pub fn circuit_breaker(&self) -> &CircuitBreaker {
         &self.circuit_breaker
     }

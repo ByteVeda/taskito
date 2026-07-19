@@ -23,7 +23,9 @@ pub type TaskFuture = Pin<Box<dyn Future<Output = TaskResult> + Send + 'static>>
 /// straight to the dead-letter queue.
 #[derive(Debug, Clone)]
 pub struct TaskError {
+    /// Human-readable failure message.
     pub message: String,
+    /// Whether the scheduler may retry the job.
     pub retryable: bool,
 }
 
@@ -57,7 +59,9 @@ impl std::error::Error for TaskError {}
 /// (spawned on the worker's tokio runtime).
 #[derive(Clone)]
 pub enum TaskHandler {
+    /// Blocking handler, run on a blocking thread.
     Sync(Arc<dyn Fn(&Job) -> TaskResult + Send + Sync>),
+    /// Async handler, spawned on the worker's tokio runtime.
     Async(Arc<dyn Fn(Job) -> TaskFuture + Send + Sync>),
 }
 
@@ -68,6 +72,7 @@ pub struct TaskRegistry {
 }
 
 impl TaskRegistry {
+    /// An empty registry.
     pub fn new() -> Self {
         Self::default()
     }
@@ -96,6 +101,7 @@ impl TaskRegistry {
         );
     }
 
+    /// The handler registered for `task_name`, if any.
     pub fn get(&self, task_name: &str) -> Option<&TaskHandler> {
         self.handlers.get(task_name)
     }
@@ -105,6 +111,7 @@ impl TaskRegistry {
         self.handlers.keys().map(String::as_str)
     }
 
+    /// True when no handlers are registered.
     pub fn is_empty(&self) -> bool {
         self.handlers.is_empty()
     }

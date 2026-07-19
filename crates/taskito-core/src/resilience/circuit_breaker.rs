@@ -7,12 +7,16 @@ use crate::storage::{Storage, StorageBackend};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum CircuitState {
+    /// Healthy: executions flow normally.
     Closed = 0,
+    /// Tripped: executions are rejected until the cooldown elapses.
     Open = 1,
+    /// Probing: a limited number of executions test recovery.
     HalfOpen = 2,
 }
 
 impl CircuitState {
+    /// Decode the `#[repr(i32)]` discriminant; unknown values map to `Closed`.
     pub fn from_i32(v: i32) -> Self {
         match v {
             1 => Self::Open,
@@ -21,6 +25,7 @@ impl CircuitState {
         }
     }
 
+    /// Lowercase display name (`"closed"`/`"open"`/`"half_open"`).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Closed => "closed",
@@ -33,8 +38,11 @@ impl CircuitState {
 /// Configuration for a task's circuit breaker.
 #[derive(Debug, Clone)]
 pub struct CircuitBreakerConfig {
+    /// Failure count that trips the breaker open.
     pub threshold: i32,
+    /// Failure-counting window in milliseconds.
     pub window_ms: i64,
+    /// Open-state cooldown in milliseconds before probing.
     pub cooldown_ms: i64,
     /// Number of probe requests allowed in HalfOpen state (default: 5).
     pub half_open_max_probes: i32,
@@ -48,6 +56,7 @@ pub struct CircuitBreaker {
 }
 
 impl CircuitBreaker {
+    /// Build a breaker manager over `storage`.
     pub fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }

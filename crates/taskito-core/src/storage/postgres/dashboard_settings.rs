@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::job::now_millis;
 
 impl PostgresStorage {
+    /// Fetch a single setting value by key, or `None` if unset.
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
         let mut conn = self.conn()?;
         let row: Option<DashboardSettingRow> = dashboard_settings::table
@@ -18,6 +19,7 @@ impl PostgresStorage {
         Ok(row.map(|r| r.value))
     }
 
+    /// Insert or update a setting.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         let mut conn = self.conn()?;
         let now = now_millis();
@@ -38,6 +40,7 @@ impl PostgresStorage {
         Ok(())
     }
 
+    /// Delete a setting. Returns `true` if a row was removed.
     pub fn delete_setting(&self, key: &str) -> Result<bool> {
         let mut conn = self.conn()?;
         let deleted =
@@ -46,6 +49,7 @@ impl PostgresStorage {
         Ok(deleted > 0)
     }
 
+    /// All settings as a key-to-value map.
     pub fn list_settings(&self) -> Result<HashMap<String, String>> {
         let mut conn = self.conn()?;
         let rows: Vec<DashboardSettingRow> = dashboard_settings::table

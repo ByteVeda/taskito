@@ -32,6 +32,7 @@ impl From<LogEntry> for TaskLogEntry {
 }
 
 impl RedisStorage {
+    /// Write one structured log line for a job. `extra` is pre-encoded JSON.
     pub fn write_task_log(
         &self,
         job_id: &str,
@@ -69,6 +70,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// All log lines for a job, in chronological (UUIDv7 id) order;
+    /// same-millisecond lines have no guaranteed emission order.
     pub fn get_task_logs(&self, job_id: &str) -> Result<Vec<TaskLogEntry>> {
         let mut conn = self.conn()?;
         let by_job_key = self.key(&["logs", "by_job", job_id]);
@@ -125,6 +128,8 @@ impl RedisStorage {
         Ok(rows)
     }
 
+    /// Log lines across jobs, filtered by task name and/or level, newest since
+    /// `since_ms` (Unix milliseconds), bounded by `limit`.
     pub fn query_task_logs(
         &self,
         task_name: Option<&str>,
@@ -132,6 +137,11 @@ impl RedisStorage {
         since_ms: i64,
         limit: i64,
     ) -> Result<Vec<TaskLogEntry>> {
+        // A zero limit is an empty page; without this the filtered walk below
+        // never hits its `rows.len() == limit` stop and scans the whole range.
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);
 
@@ -209,6 +219,8 @@ impl RedisStorage {
         Ok(rows)
     }
 
+    /// Purge log lines logged at or before the cutoff (inclusive). Returns
+    /// the count removed.
     pub fn purge_task_logs(&self, older_than_ms: i64) -> Result<u64> {
         let mut conn = self.conn()?;
         let all_key = self.key(&["logs", "all"]);

@@ -8,13 +8,17 @@ pub(crate) mod migrations;
 pub(crate) mod models;
 #[cfg(feature = "push-dispatch")]
 pub(crate) mod notify;
+/// PostgreSQL storage backend (feature `postgres`).
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod records;
+/// Redis storage backend (feature `redis`).
 #[cfg(feature = "redis")]
 pub mod redis_backend;
 pub(crate) mod schema;
+/// SQLite storage backend (the default).
 pub mod sqlite;
+/// The [`Storage`] trait every backend implements.
 pub mod traits;
 
 pub use traits::Storage;
@@ -131,13 +135,20 @@ pub fn sweep_ephemeral_subscriptions(
 
 // ── Shared helper types ────────────────────────────────────────────────
 
+/// Per-status job counts for a queue (or the whole cluster).
 #[derive(Debug, Clone, Default)]
 pub struct QueueStats {
+    /// Jobs waiting to run.
     pub pending: i64,
+    /// Jobs currently executing.
     pub running: i64,
+    /// Jobs that finished successfully.
     pub completed: i64,
+    /// Jobs that failed terminally.
     pub failed: i64,
+    /// Jobs moved to the dead-letter queue.
     pub dead: i64,
+    /// Jobs that were cancelled.
     pub cancelled: i64,
 }
 
@@ -148,14 +159,23 @@ pub struct QueueStats {
 /// indexes; they can never drift the way a maintained counter would.
 #[derive(Debug, Clone)]
 pub struct SubscriptionBacklogStats {
+    /// Topic the subscription listens on.
     pub topic: String,
+    /// Subscription name, unique per topic.
     pub subscription_name: String,
+    /// Task enqueued for each published message.
     pub task_name: String,
+    /// Queue deliveries are enqueued into.
     pub queue: String,
+    /// Whether deliveries are currently enabled.
     pub active: bool,
+    /// True for durable subscriptions that outlive their creator.
     pub durable: bool,
+    /// Deliveries waiting to run.
     pub pending: i64,
+    /// Deliveries currently executing.
     pub running: i64,
+    /// Deliveries in the dead-letter queue.
     pub dead: i64,
     /// Milliseconds since the oldest still-pending delivery was created.
     /// `None` when the subscription currently has no pending backlog.
@@ -223,23 +243,41 @@ pub(crate) fn merge_backlog_stats(
     by_key.into_values().collect()
 }
 
+/// A dead-lettered job: a copy of the original with its failure context,
+/// enough to re-enqueue via `retry_dead`.
 #[derive(Debug, Clone)]
 pub struct DeadJob {
+    /// Unique id of the dead-letter entry.
     pub id: String,
+    /// Id of the job that dead-lettered.
     pub original_job_id: String,
+    /// Queue the job ran on.
     pub queue: String,
+    /// Task name of the job.
     pub task_name: String,
+    /// Serialized task arguments.
     pub payload: Vec<u8>,
+    /// Final error message (canonical JSON `TaskError` when structured).
     pub error: Option<String>,
+    /// Retries the job had consumed when it dead-lettered.
     pub retry_count: i32,
+    /// Unix-millisecond time the job dead-lettered.
     pub failed_at: i64,
+    /// Pre-encoded JSON metadata blob, if any.
     pub metadata: Option<String>,
+    /// Pre-encoded JSON structured notes, if any.
     pub notes: Option<String>,
+    /// Job priority (higher runs first).
     pub priority: i32,
+    /// Retry cap the job was enqueued with.
     pub max_retries: i32,
+    /// Execution timeout in milliseconds.
     pub timeout_ms: i64,
+    /// Result retention in milliseconds. `None` = global default.
     pub result_ttl_ms: Option<i64>,
+    /// Namespace of the job, if any.
     pub namespace: Option<String>,
+    /// Times this entry was auto-retried out of the DLQ.
     pub dlq_retry_count: i32,
 }
 
@@ -267,7 +305,7 @@ impl From<models::DeadLetterRow> for DeadJob {
 }
 
 impl DeadJob {
-    /// Build a [`DeadJob`] from a blob-free [`NarrowDeadLetterRow`]. Listing
+    /// Build a [`DeadJob`] from a blob-free `NarrowDeadLetterRow`. Listing
     /// paths use this so paging the DLQ never loads the `payload` blob; it
     /// comes back empty and is only read when a single entry is requeued by id.
     pub fn from_narrow(row: models::NarrowDeadLetterRow) -> Self {
@@ -975,9 +1013,12 @@ pub(crate) use impl_storage;
 /// Storage backend enum that dispatches to either SQLite or PostgreSQL.
 #[derive(Clone)]
 pub enum StorageBackend {
+    /// SQLite backend (the default).
     Sqlite(sqlite::SqliteStorage),
+    /// PostgreSQL backend (feature `postgres`).
     #[cfg(feature = "postgres")]
     Postgres(postgres::PostgresStorage),
+    /// Redis backend (feature `redis`).
     #[cfg(feature = "redis")]
     Redis(redis_backend::RedisStorage),
 }

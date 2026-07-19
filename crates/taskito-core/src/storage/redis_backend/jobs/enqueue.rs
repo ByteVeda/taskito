@@ -43,6 +43,8 @@ impl RedisStorage {
         Ok(())
     }
 
+    /// Insert a new job and return it, writing its JSON plus the status,
+    /// queue, and task index entries.
     pub fn enqueue(&self, new_job: NewJob) -> Result<Job> {
         let depends_on = new_job.depends_on.clone();
         let job = new_job.into_job();
@@ -84,6 +86,7 @@ impl RedisStorage {
         Ok(job)
     }
 
+    /// Batch [`enqueue`](Self::enqueue): insert multiple jobs at once.
     pub fn enqueue_batch(&self, new_jobs: Vec<NewJob>) -> Result<Vec<Job>> {
         // Collect dependency lists before consuming new_jobs
         let dep_lists: Vec<Vec<String>> = new_jobs.iter().map(|nj| nj.depends_on.clone()).collect();
@@ -133,7 +136,7 @@ impl RedisStorage {
         Ok(jobs)
     }
 
-    /// Batch variant of [`enqueue_unique`]. Redis has no database-wide write
+    /// Batch variant of `enqueue_unique`. Redis has no database-wide write
     /// lock (each op is atomic and cheap), so looping the single-delivery path
     /// is correct and avoids a bespoke multi-delivery Lua script — the batch
     /// API's real win is on the Diesel backends. Salted keys are distinct
@@ -145,6 +148,8 @@ impl RedisStorage {
             .collect()
     }
 
+    /// Enqueue with `unique_key` deduplication: a Lua script atomically returns
+    /// the existing active job when a duplicate is found instead of inserting.
     pub fn enqueue_unique(&self, new_job: NewJob) -> Result<Job> {
         let mut conn = self.conn()?;
 

@@ -1,7 +1,12 @@
 [package]
 name = "taskito-python"
-version = "0.20.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Python (PyO3) bindings for the Taskito task-queue core"
+publish = false
 
 [features]
 default = []

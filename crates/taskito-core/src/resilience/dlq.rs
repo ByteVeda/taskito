@@ -8,6 +8,7 @@ pub struct DeadLetterQueue {
 }
 
 impl DeadLetterQueue {
+    /// Build a DLQ manager over `storage`.
     pub fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }
