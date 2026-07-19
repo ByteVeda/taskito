@@ -14,3 +14,22 @@ semantics, lifecycle, cross-SDK topics).
 | `pauseSubscription(topic, name)` / `resumeSubscription(topic, name)` | Stop/resume deliveries without unregistering; `false` if none matched. |
 | `listSubscriptions()` / `listSubscriptions(topic)` | Every subscription, or one topic's active ones. |
 | `listTopics()` | Distinct topics with at least one subscription. |
+| `subscribeLog(topic, name)` | Register a durable log subscription — a named cursor with no handler. Writes immediately, so register it before the publishes it should see. |
+| `readTopic(topic, name)` / `readTopic(topic, name, limit)` → `List<TopicMessage>` | Pull up to `limit` (default 100) messages after `name`'s cursor, oldest first and exclusive of it. Empty once caught up. At-least-once — process, then `ackTopic`. |
+| `ackTopic(topic, name, cursor)` | Advance a log subscription's cursor to `cursor` (a message `id`) — a monotonic high-water mark. `false` if nothing moved. |
+| `topicLogStats()` → `List<TopicLogStat>` | Lag snapshot for every log subscription: `topic`, `subscription`, `cursor`, `lag`, `oldestUnackedAgeMs`. |
+
+See [Log topics](/java/guides/core/pubsub#log-topics) for the cursor,
+at-least-once, and retention semantics.
+
+## `TopicMessage`
+
+One message pulled from a log topic, returned by `readTopic`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` | Cursor token — pass to `ackTopic`. |
+| `payload` | `byte[]` | Opaque publish payload. Unlike Python/Node, this is **not** decoded for you — Java is statically typed and there's no target type to infer it into, so decode it yourself with the same serializer the publisher used. |
+| `metadata` | `Map<String, Object>` | Caller metadata, decoded, or `null` if none was set. |
+| `notes` | `Map<String, Object>` | Structured notes, decoded, or `null` if none were set. |
+| `createdAt` | `long` | Unix-millisecond publish time. |
