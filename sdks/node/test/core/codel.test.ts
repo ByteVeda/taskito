@@ -62,6 +62,12 @@ it("sheds stale jobs to the DLQ under sustained overload", async () => {
     await sleep(100);
   }
 
+  // A job can be shed between the dead-letter read and the stats read that
+  // satisfied the exit condition; once converged nothing moves, so a fresh
+  // dead-letter read gives the settled count.
+  const dead = await queue.deadLetters(100);
+  codelDead = dead.filter((d) => (d.error ?? "").startsWith("codel:")).length;
+
   expect(codelDead).toBeGreaterThanOrEqual(1);
   // Every dead job is a CoDel drop (the task never throws), and nothing is lost.
   expect(stats.dead).toBe(codelDead);

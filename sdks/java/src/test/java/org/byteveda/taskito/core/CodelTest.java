@@ -73,6 +73,13 @@ class CodelTest {
                     Thread.sleep(100);
                 }
 
+                // A job can be shed between the dead-letter read and the stats
+                // read that satisfied the exit condition; once converged nothing
+                // moves, so a fresh dead-letter read gives the settled count.
+                codelDead = queue.listDead(100, 0).stream()
+                        .filter(d -> d.error != null && d.error.startsWith("codel:"))
+                        .count();
+
                 assertTrue(codelDead >= 1, "sustained overload should shed at least one stale job");
                 assertEquals(codelDead, stats.dead, "every dead job is a CoDel drop");
                 assertEquals(total, stats.completed + stats.dead, "no job is lost");
