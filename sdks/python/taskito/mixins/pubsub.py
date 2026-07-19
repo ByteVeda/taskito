@@ -147,10 +147,9 @@ class QueuePubSubMixin:
         be sync or async; a producer-only process that never runs a worker still
         registers the subscription so its publishes are retained.
 
-        The cursor is a single high-water mark, so run a given ``(topic, name)``
-        consumer in **one** worker process; starting the same durable consumer in
-        several workers lets them read the same batch and invoke the handler more
-        than once. Use distinct ``name``\\ s for independent parallel consumers.
+        Run a given ``(topic, name)`` consumer in **one** worker process — the
+        cursor is a single high-water mark, so parallel workers would double-read.
+        Use distinct ``name`` values for independent consumers.
 
         Args:
             topic: Log topic to consume.
