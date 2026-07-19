@@ -29,7 +29,10 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
-          save-if: "true" # the Rust lint job is the sole Cargo cache writer
+          # Sole dev-cache writer, and only on master: a PR-ref cache can't be
+          # read by other PRs anyway, so saving on PRs just mints throwaway
+          # entries against the 10 GB quota. PRs restore master's cache instead.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
