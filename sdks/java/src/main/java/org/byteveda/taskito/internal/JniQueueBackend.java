@@ -414,6 +414,22 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public void declareTopic(String name, Long retentionMs) {
+        // JNI carries a primitive long — a null retention crosses as the MIN
+        // sentinel the native side reads as "unbounded".
+        long nativeRetentionMs = retentionMs == null ? Long.MIN_VALUE : retentionMs;
+        withOpenHandle(() -> {
+            NativeQueue.declareTopic(handle, name, nativeRetentionMs);
+            return null;
+        });
+    }
+
+    @Override
+    public String listDeclaredTopicsJson() {
+        return withOpenHandle(() -> NativeQueue.listDeclaredTopics(handle));
+    }
+
+    @Override
     public String submitWorkflow(
             String name,
             int version,

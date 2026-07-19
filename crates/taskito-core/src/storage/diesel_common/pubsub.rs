@@ -378,6 +378,26 @@ macro_rules! impl_diesel_pubsub_ops {
                         .execute(&mut conn)?;
                 Ok(removed as u64)
             }
+
+            /// Fetch a declared topic by name, or `None` if never declared.
+            pub fn get_topic(&self, name: &str) -> Result<Option<$crate::storage::records::Topic>> {
+                let mut conn = self.conn()?;
+                let row = topics::table
+                    .find(name)
+                    .select(TopicRow::as_select())
+                    .first::<TopicRow>(&mut conn)
+                    .optional()?;
+                Ok(row.map(Into::into))
+            }
+
+            /// Every declared topic in the registry.
+            pub fn list_declared_topics(&self) -> Result<Vec<$crate::storage::records::Topic>> {
+                let mut conn = self.conn()?;
+                let rows = topics::table
+                    .select(TopicRow::as_select())
+                    .load::<TopicRow>(&mut conn)?;
+                Ok(rows.into_iter().map(Into::into).collect())
+            }
         }
     };
 }

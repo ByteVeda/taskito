@@ -12,8 +12,8 @@ use taskito_core::Storage;
 use super::JsQueue;
 use crate::config::PublishOptions;
 use crate::convert::{
-    job_to_js, subscription_to_js, topic_log_stat_to_js, topic_message_to_js, JsJob,
-    JsSubscription, JsTopicLogStat, JsTopicMessage, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
+    job_to_js, subscription_to_js, topic_log_stat_to_js, topic_message_to_js, topic_to_js, JsJob,
+    JsSubscription, JsTopic, JsTopicLogStat, JsTopicMessage, DEFAULT_MAX_RETRIES, DEFAULT_PRIORITY,
     DEFAULT_TIMEOUT_MS,
 };
 use crate::error::{invalid_arg, join_to_napi_err, non_negative, to_napi_err};
@@ -116,6 +116,37 @@ impl JsQueue {
         spawn_blocking(move || {
             let stats = storage.topic_log_stats().map_err(to_napi_err)?;
             Ok(stats.into_iter().map(topic_log_stat_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Declare a topic (idempotent). A declared log topic retains its publishes
+    /// even with no subscriber; `retentionMs` bounds a sub-less backlog.
+    #[napi]
+    pub async fn declare_topic(
+        &self,
+        name: String,
+        mode: String,
+        retention_ms: Option<i64>,
+    ) -> Result<()> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .declare_topic(&name, &mode, retention_ms)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Every declared topic in the registry.
+    #[napi]
+    pub async fn list_declared_topics(&self) -> Result<Vec<JsTopic>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let topics = storage.list_declared_topics().map_err(to_napi_err)?;
+            Ok(topics.into_iter().map(topic_to_js).collect())
         })
         .await
         .map_err(join_to_napi_err)?

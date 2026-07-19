@@ -46,6 +46,7 @@ import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.Topic;
 import org.byteveda.taskito.model.TopicLogStat;
 import org.byteveda.taskito.model.TopicMessage;
 import org.byteveda.taskito.model.WorkerInfo;
@@ -930,6 +931,23 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @Override
     public List<TopicLogStat> topicLogStats() {
         return decodeList(backend.topicLogStatsJson(), TopicLogStat.class);
+    }
+
+    @Override
+    public Taskito declareTopic(String name) {
+        return declareTopic(name, null);
+    }
+
+    @Override
+    public Taskito declareTopic(String name, Duration retention) {
+        Long retentionMs = retention == null ? null : retention.toMillis();
+        backend.declareTopic(name, retentionMs);
+        return this;
+    }
+
+    @Override
+    public List<Topic> listDeclaredTopics() {
+        return decodeList(backend.listDeclaredTopicsJson(), Topic.class);
     }
 
     @Override

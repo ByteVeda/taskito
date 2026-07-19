@@ -2,13 +2,36 @@ use diesel::prelude::*;
 
 use super::super::models::*;
 use super::super::records::NewSubscription;
-use super::super::schema::{topic_messages, topic_subscriptions};
+use super::super::schema::{topic_messages, topic_subscriptions, topics};
 use super::PostgresStorage;
 use crate::error::Result;
 
 crate::storage::diesel_common::impl_diesel_pubsub_ops!(PostgresStorage);
 
 impl PostgresStorage {
+    /// Declare a topic (idempotent upsert on `name`). `created_at` is preserved
+    /// on re-declaration; only `mode`/`retention_ms` are updated.
+    pub fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+        crate::pubsub::validate_topic_declaration(mode, retention_ms)?;
+        let mut conn = self.conn()?;
+        let row = NewTopicRow {
+            name,
+            mode,
+            retention_ms,
+            created_at: crate::job::now_millis(),
+        };
+        diesel::insert_into(topics::table)
+            .values(&row)
+            .on_conflict(topics::name)
+            .do_update()
+            .set((
+                topics::mode.eq(row.mode),
+                topics::retention_ms.eq(row.retention_ms),
+            ))
+            .execute(&mut conn)?;
+        Ok(())
+    }
+
     /// Insert or update a subscription. Idempotent on (topic, subscription_name).
     ///
     /// The `do_update` sets each mutable column explicitly rather than via

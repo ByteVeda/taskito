@@ -23,8 +23,8 @@ pub use ops::{
 pub use outcome::{outcome_to_js, JsOutcome};
 pub use periodic::{periodic_to_js, JsPeriodicTask};
 pub use pubsub::{
-    subscription_to_js, topic_log_stat_to_js, topic_message_to_js, JsSubscription, JsTopicLogStat,
-    JsTopicMessage,
+    subscription_to_js, topic_log_stat_to_js, topic_message_to_js, topic_to_js, JsSubscription,
+    JsTopic, JsTopicLogStat, JsTopicMessage,
 };
 pub use stats::{
     dead_job_to_js, job_error_to_js, metric_to_js, stats_to_js, status_code, worker_to_js,

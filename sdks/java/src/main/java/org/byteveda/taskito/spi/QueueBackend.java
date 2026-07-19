@@ -317,6 +317,20 @@ public interface QueueBackend extends AutoCloseable {
         throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
     }
 
+    /**
+     * Declare a log topic (idempotent) so its publishes are retained even with no
+     * subscriber. {@code retentionMs} bounds a sub-less backlog; {@code null}
+     * keeps messages until consumed.
+     */
+    default void declareTopic(String name, Long retentionMs) {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
+    /** A JSON array of declared topics. */
+    default String listDeclaredTopicsJson() {
+        throw new UnsupportedOperationException(PUBSUB_UNSUPPORTED);
+    }
+
     // ── Workflows ───────────────────────────────────────────────────
     // Optional capability: default to throwing so existing custom backends keep
     // compiling and fail explicitly only when workflows are actually used.

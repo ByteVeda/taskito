@@ -187,6 +187,16 @@ public final class NativeQueue {
     /** A JSON array of per-log-subscription lag snapshots. */
     public static native String topicLogStats(long handle);
 
+    /**
+     * Declare a log topic (idempotent) so its publishes are retained even with no
+     * subscriber. {@code retentionMs} of {@link Long#MIN_VALUE} means "unbounded —
+     * keep until consumed"; mode is always {@code "log"}.
+     */
+    public static native void declareTopic(long handle, String name, long retentionMs);
+
+    /** A JSON array of declared topics. */
+    public static native String listDeclaredTopics(long handle);
+
     // ── Worker ──────────────────────────────────────────────────────
     /** Start a worker; returns its handle. {@code bridge} is a {@code WorkerBridge}. */
     public static native long runWorker(long handle, Object bridge, String optionsJson);

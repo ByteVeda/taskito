@@ -5,10 +5,27 @@
 //! same semantics — in particular the idempotency-key salting, which silently
 //! drops deliveries if a shell gets it wrong.
 
-use crate::error::Result;
-use crate::job::{Job, NewJob};
+use crate::error::{QueueError, Result};
+use crate::job::{now_millis, Job, NewJob};
 use crate::storage::records::{Subscription, SUBSCRIPTION_MODE_LOG};
 use crate::storage::Storage;
+
+/// Validate a topic declaration before a backend persists it: only `"log"`
+/// topics are declarable, and a retention window must be non-negative (a
+/// negative one would expire messages immediately or overflow `now + retention`).
+pub(crate) fn validate_topic_declaration(mode: &str, retention_ms: Option<i64>) -> Result<()> {
+    if mode != SUBSCRIPTION_MODE_LOG {
+        return Err(QueueError::Config(format!(
+            "only \"log\" topics are declarable, got {mode:?}"
+        )));
+    }
+    if retention_ms.is_some_and(|ms| ms < 0) {
+        return Err(QueueError::Config(
+            "topic retention_ms must be non-negative".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// Queue-level fallback delivery settings, used when neither the publish call
 /// nor the subscription row specifies a value.
@@ -68,24 +85,37 @@ pub struct PublishRequest {
 /// on the unique index; unkeyed publishes use one batch insert.
 pub fn publish_to_topic<S: Storage>(storage: &S, request: &PublishRequest) -> Result<Vec<Job>> {
     let subscriptions = storage.list_subscriptions_for_topic(&request.topic)?;
-    if subscriptions.is_empty() {
-        return Ok(Vec::new());
-    }
+    let has_log_sub = subscriptions
+        .iter()
+        .any(|s| s.mode == SUBSCRIPTION_MODE_LOG);
 
     // A log topic stores one durable message that consumers pull via cursor;
-    // fan-out subscribers still get one job each. A topic may mix both modes,
-    // so write the log row once when any log subscriber exists, then fan out
-    // only to the fan-out subscribers.
-    if subscriptions
-        .iter()
-        .any(|s| s.mode == SUBSCRIPTION_MODE_LOG)
-    {
+    // fan-out subscribers still get one job each. A topic may mix both modes.
+    // Decide whether to write the log row:
+    //   - a live log subscriber always gets one (retention via min-cursor);
+    //   - otherwise a *declared* log topic still retains the publish (removing
+    //     the late-join boundary), with `retention_ms` as an expiry TTL so the
+    //     sweep can reclaim it. The registry lookup only runs when there is no
+    //     log subscriber, so the log-subscriber hot path adds no extra query.
+    let log_expires = if has_log_sub {
+        Some(request.expires_at)
+    } else {
+        match storage.get_topic(&request.topic)? {
+            Some(topic) if topic.is_log() => Some(
+                request
+                    .expires_at
+                    .or_else(|| topic.retention_ms.map(|ms| now_millis() + ms)),
+            ),
+            _ => None,
+        }
+    };
+    if let Some(expires_at) = log_expires {
         storage.publish_message(
             &request.topic,
             &request.payload,
             request.metadata.as_deref(),
             request.notes.as_deref(),
-            request.expires_at,
+            expires_at,
         )?;
     }
 
@@ -410,5 +440,88 @@ mod tests {
         assert_eq!(notes["topic"], "orders");
         assert_eq!(notes["subscription"], "email");
         assert_eq!(notes["tenant"], "acme");
+    }
+
+    #[test]
+    fn declared_log_topic_retains_with_zero_subscribers() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        storage
+            .declare_topic("events", SUBSCRIPTION_MODE_LOG, None)
+            .unwrap();
+
+        // No subscriber at publish time, but the topic is declared → retained.
+        assert!(publish_to_topic(&storage, &request("events", None))
+            .unwrap()
+            .is_empty());
+
+        // A log subscriber that joins later still sees the earlier publish.
+        subscribe_log(&storage, "events", "analytics");
+        let msgs = storage
+            .read_topic_messages("events", "analytics", 10)
+            .unwrap();
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn undeclared_topic_with_no_log_sub_stores_nothing() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        // Neither declared nor any log subscriber → no log row (unchanged behavior).
+        publish_to_topic(&storage, &request("events", None)).unwrap();
+        subscribe_log(&storage, "events", "late");
+        assert!(storage
+            .read_topic_messages("events", "late", 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn declared_topic_retention_sets_message_expiry() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        storage
+            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(60_000))
+            .unwrap();
+        publish_to_topic(&storage, &request("events", None)).unwrap();
+
+        subscribe_log(&storage, "events", "c");
+        let msgs = storage.read_topic_messages("events", "c", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].expires_at.is_some());
+    }
+
+    #[test]
+    fn declare_topic_is_idempotent_and_preserves_created_at() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        assert!(storage.get_topic("events").unwrap().is_none());
+
+        storage
+            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(1000))
+            .unwrap();
+        let first = storage.get_topic("events").unwrap().unwrap();
+        assert_eq!(first.name, "events");
+        assert!(first.is_log());
+        assert_eq!(first.retention_ms, Some(1000));
+
+        // Re-declaring updates retention but keeps the original created_at.
+        // Sleep so the re-declare lands in a later millisecond — otherwise a
+        // regression that overwrote created_at could still pass this assertion.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        storage
+            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(2000))
+            .unwrap();
+        let second = storage.get_topic("events").unwrap().unwrap();
+        assert_eq!(second.retention_ms, Some(2000));
+        assert_eq!(second.created_at, first.created_at);
+        assert_eq!(storage.list_declared_topics().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn declare_topic_rejects_bad_mode_and_negative_retention() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        assert!(storage.declare_topic("events", "fanout", None).is_err());
+        assert!(storage
+            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(-1))
+            .is_err());
+        // Nothing was persisted on rejection.
+        assert!(storage.get_topic("events").unwrap().is_none());
     }
 }

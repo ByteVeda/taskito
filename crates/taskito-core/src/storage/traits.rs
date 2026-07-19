@@ -2,7 +2,7 @@ use crate::error::Result;
 use crate::job::{Job, NewJob};
 use crate::storage::records::{
     CircuitBreakerState, JobError, LockInfo, NewPeriodicTask, NewSubscription, PeriodicTask,
-    RateLimitState, ReplayEntry, Subscription, TaskLogEntry, TaskMetric, TopicLogStats,
+    RateLimitState, ReplayEntry, Subscription, TaskLogEntry, TaskMetric, Topic, TopicLogStats,
     TopicMessage, WorkerInfo,
 };
 use crate::storage::{DeadJob, DispatchOrder, QueueStats, SubscriptionBacklogStats};
@@ -287,6 +287,19 @@ pub trait Storage: Send + Sync + Clone {
     /// `expires_at`. Bounded by `limit`. Returns the count removed. Caller gates
     /// this on the reaper election.
     fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64>;
+
+    // ── Topic registry (declared topics) ────────────────────────────
+
+    /// Declare a topic (idempotent upsert on `name`), setting its `mode` and
+    /// optional `retention_ms`. Declaring a log topic makes its publishes
+    /// retained even with no subscriber (removing the late-join boundary).
+    /// `mode` must be `"log"` (the only declarable mode) and `retention_ms`, if
+    /// set, must be non-negative — backends reject anything else.
+    fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()>;
+    /// Fetch a declared topic by name, or `None` if it was never declared.
+    fn get_topic(&self, name: &str) -> Result<Option<Topic>>;
+    /// List every declared topic in the registry.
+    fn list_declared_topics(&self) -> Result<Vec<Topic>>;
 
     // ── Metrics operations ──────────────────────────────────────────
 

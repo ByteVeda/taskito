@@ -2,7 +2,7 @@
 
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
-use taskito_core::storage::records::{Subscription, TopicLogStats, TopicMessage};
+use taskito_core::storage::records::{Subscription, Topic, TopicLogStats, TopicMessage};
 
 /// A topic subscription: routes messages published to `topic` to `taskName`
 /// jobs on `queue`, one delivery per active subscription.
@@ -68,5 +68,26 @@ pub fn topic_log_stat_to_js(stat: TopicLogStats) -> JsTopicLogStat {
         cursor: stat.cursor,
         lag: stat.lag,
         oldest_unacked_age_ms: stat.oldest_unacked_age_ms,
+    }
+}
+
+/// A declared topic in the registry. A declared log topic retains its publishes
+/// even with no subscriber; `retentionMs` bounds a sub-less backlog (absent =
+/// kept until consumed). `createdAt` is Unix milliseconds.
+#[napi(object)]
+pub struct JsTopic {
+    pub name: String,
+    pub mode: String,
+    pub retention_ms: Option<i64>,
+    pub created_at: i64,
+}
+
+/// Convert a core [`Topic`] into its JS-facing shape.
+pub fn topic_to_js(topic: Topic) -> JsTopic {
+    JsTopic {
+        name: topic.name,
+        mode: topic.mode,
+        retention_ms: topic.retention_ms,
+        created_at: topic.created_at,
     }
 }

@@ -36,6 +36,9 @@ type TopicMessageTuple = (String, Vec<u8>, Option<String>, Option<String>, i64);
 /// `(topic, subscription, cursor, lag, oldest_unacked_age_ms)`.
 type TopicLogStatsTuple = (String, String, Option<String>, i64, Option<i64>);
 
+/// A declared topic surfaced to Python: `(name, mode, retention_ms, created_at)`.
+type TopicTuple = (String, String, Option<i64>, i64);
+
 #[pymethods]
 impl PyQueue {
     /// Insert or update a topic subscription (idempotent on topic + name).
@@ -201,6 +204,32 @@ impl PyQueue {
                     s.oldest_unacked_age_ms,
                 )
             })
+            .collect())
+    }
+
+    /// Declare a topic (idempotent). A declared log topic retains its publishes
+    /// even with no subscriber; `retention_ms` bounds a sub-less backlog.
+    #[pyo3(signature = (name, mode, retention_ms=None))]
+    pub fn declare_topic(
+        &self,
+        py: Python<'_>,
+        name: &str,
+        mode: &str,
+        retention_ms: Option<i64>,
+    ) -> PyResult<()> {
+        let storage = &self.storage;
+        py.detach(|| storage.declare_topic(name, mode, retention_ms))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Every declared topic: `(name, mode, retention_ms, created_at)`.
+    pub fn list_declared_topics(&self, py: Python<'_>) -> PyResult<Vec<TopicTuple>> {
+        let storage = &self.storage;
+        Ok(py
+            .detach(|| storage.list_declared_topics())
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            .into_iter()
+            .map(|t| (t.name, t.mode, t.retention_ms, t.created_at))
             .collect())
     }
 

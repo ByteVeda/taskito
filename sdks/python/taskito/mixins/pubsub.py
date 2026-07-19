@@ -129,6 +129,30 @@ class QueuePubSubMixin:
             mode="log",
         )
 
+    def declare_topic(self, name: str, *, retention: float | None = None) -> None:
+        """Declare a **log** topic so its publishes are retained even with no
+        subscriber (removing the late-join boundary).
+
+        Without a declaration, a log message is stored only when a log
+        subscription already exists at publish time. Declaring the topic makes
+        every publish durable; a consumer that subscribes later still sees them.
+
+        ``retention`` (seconds) bounds a sub-less backlog: each stored message
+        expires that long after it was published, so the retention sweep can
+        reclaim it. ``None`` keeps messages until a subscriber consumes them.
+        Idempotent — re-declaring updates ``retention`` and keeps the topic.
+        """
+        retention_ms = None if retention is None else int(retention * 1000)
+        self._inner.declare_topic(name, "log", retention_ms)
+
+    def list_declared_topics(self) -> list[dict[str, Any]]:
+        """List declared topics. Each entry: ``name``, ``mode``, ``retention_ms``
+        (``None`` if unbounded), ``created_at`` (Unix ms)."""
+        return [
+            {"name": row[0], "mode": row[1], "retention_ms": row[2], "created_at": row[3]}
+            for row in self._inner.list_declared_topics()
+        ]
+
     def log_consumer(
         self,
         topic: str,

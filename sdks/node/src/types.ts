@@ -22,6 +22,7 @@ export type {
   JsStats as Stats,
   JsSubscription as Subscription,
   JsTaskLog as TaskLog,
+  JsTopic as DeclaredTopic,
   JsTopicLogStat as TopicLogStat,
   JsWorkerRow as WorkerInfo,
   MeshWorkerConfig,

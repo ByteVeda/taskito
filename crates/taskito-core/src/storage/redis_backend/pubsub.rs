@@ -8,7 +8,7 @@ use super::{map_err, RedisStorage};
 use crate::error::{QueueError, Result};
 use crate::job::{Job, JobStatus};
 use crate::storage::records::{
-    NewSubscription, Subscription, TopicLogStats, TopicMessage, SUBSCRIPTION_MODE_LOG,
+    NewSubscription, Subscription, Topic, TopicLogStats, TopicMessage, SUBSCRIPTION_MODE_LOG,
 };
 use crate::storage::SubscriptionBacklogStats;
 
@@ -42,6 +42,26 @@ struct SubEntry {
 
 fn default_mode() -> String {
     crate::storage::records::SUBSCRIPTION_MODE_FANOUT.to_string()
+}
+
+/// JSON blob stored in the `topics` hash, field = topic name (so the name is
+/// not duplicated in the value). Mirrors the declarable columns of [`Topic`].
+#[derive(Serialize, Deserialize)]
+struct TopicEntry {
+    mode: String,
+    retention_ms: Option<i64>,
+    created_at: i64,
+}
+
+impl TopicEntry {
+    fn into_topic(self, name: String) -> Topic {
+        Topic {
+            name,
+            mode: self.mode,
+            retention_ms: self.retention_ms,
+            created_at: self.created_at,
+        }
+    }
 }
 
 impl From<SubEntry> for Subscription {
@@ -767,5 +787,51 @@ impl RedisStorage {
             .query(conn)
             .map_err(map_err)?;
         Ok(deleted)
+    }
+
+    /// Declare a topic (idempotent). Stored as a field in the `topics` hash;
+    /// re-declaring preserves the original `created_at`.
+    pub fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+        crate::pubsub::validate_topic_declaration(mode, retention_ms)?;
+        let mut conn = self.conn()?;
+        let key = self.key(&["topics"]);
+        let created_at = match conn
+            .hget::<_, _, Option<String>>(&key, name)
+            .map_err(map_err)?
+        {
+            Some(existing) => serde_json::from_str::<TopicEntry>(&existing)
+                .map(|e| e.created_at)
+                .unwrap_or_else(|_| crate::job::now_millis()),
+            None => crate::job::now_millis(),
+        };
+        let entry = TopicEntry {
+            mode: mode.to_string(),
+            retention_ms,
+            created_at,
+        };
+        conn.hset::<_, _, _, ()>(&key, name, serde_json::to_string(&entry)?)
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    /// Fetch a declared topic by name, or `None` if never declared.
+    pub fn get_topic(&self, name: &str) -> Result<Option<Topic>> {
+        let mut conn = self.conn()?;
+        let Some(json): Option<String> = conn.hget(self.key(&["topics"]), name).map_err(map_err)?
+        else {
+            return Ok(None);
+        };
+        let entry: TopicEntry = serde_json::from_str(&json)?;
+        Ok(Some(entry.into_topic(name.to_string())))
+    }
+
+    /// Every declared topic in the registry.
+    pub fn list_declared_topics(&self) -> Result<Vec<Topic>> {
+        let mut conn = self.conn()?;
+        let map: std::collections::HashMap<String, String> =
+            conn.hgetall(self.key(&["topics"])).map_err(map_err)?;
+        map.into_iter()
+            .map(|(name, json)| Ok(serde_json::from_str::<TopicEntry>(&json)?.into_topic(name)))
+            .collect()
     }
 }

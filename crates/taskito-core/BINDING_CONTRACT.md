@@ -168,6 +168,23 @@ itself must match it.
   net (Diesel deletes expired rows; Redis `XDEL`s expired stream entries), so a
   stalled or unread cursor can't block reclamation forever.
 
+**Topic registry (declared topics)** (`declare_topic`/`get_topic`/`list_declared_topics`):
+- By default a log message is stored only when a `log` subscription already exists
+  at publish time (the **late-join boundary**). `declare_topic(name, "log",
+  retention_ms)` records the topic so its publishes are retained **even with zero
+  subscribers** — a consumer that subscribes later still reads them. Declaration is
+  an idempotent upsert on `name`; re-declaring updates `retention_ms` and preserves
+  `created_at`. `mode` is `"log"` (the only declarable mode today).
+- `retention_ms` bounds a **sub-less** backlog: `publish_to_topic` stamps
+  `expires_at = now + retention_ms` on the stored message when the topic has no live
+  log subscriber, so the retention sweep reclaims it. Once a log subscriber exists,
+  min-cursor compaction governs and the registry lookup is skipped (no extra query
+  on the log-subscriber hot path). A shell only marshals `declare_topic`; the core
+  owns the publish-time decision.
+- Storage: the Diesel backends use a `topics` table (migration `m0006`); Redis uses
+  a `topics` hash keyed by name. A shell surfaces `Topic { name, mode, retention_ms,
+  created_at }`.
+
 **Test vector** (assert byte-exact in each shell that salts keys itself):
 key `evt-42`, topic `orders`, subscription `email` →
 `evt-42::6:5:ordersemail`.
@@ -196,7 +213,8 @@ Grouped by concern (enumerated, not exhaustive — read the trait):
 - **Resilience**: `try_acquire_token` (rate limit), `count_running_by_task`, `stats_by_queue`.
 - **Dead-letter**: `move_to_dlq`, `list_dead`, `retry_dead`.
 - **Topic pub/sub**: `register_subscription`, `list_subscriptions_for_topic`, `unsubscribe`,
-  `publish_message`, `read_topic_messages`, `ack_topic_cursor`, `topic_log_stats` (see
+  `publish_message`, `read_topic_messages`, `ack_topic_cursor`, `topic_log_stats`,
+  `declare_topic`, `get_topic`, `list_declared_topics` (see
   [Topic pub/sub](#topic-pubsub-cross-sdk)).
 
 ## Lifecycle the shell drives

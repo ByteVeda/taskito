@@ -9,13 +9,13 @@ use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE};
 use jni::JNIEnv;
 use taskito_core::job::now_millis;
 use taskito_core::pubsub::publish_to_topic;
-use taskito_core::storage::records::NewSubscription;
+use taskito_core::storage::records::{NewSubscription, SUBSCRIPTION_MODE_LOG};
 use taskito_core::Storage;
 
 use crate::backend;
 use crate::convert::{
     build_publish_request, parse_json, to_json, JobView, PublishOptions, SubscriptionView,
-    TopicLogStatsView, TopicMessageView,
+    TopicLogStatsView, TopicMessageView, TopicView,
 };
 use crate::ffi::{guard, new_string, read_bytes, read_optional_string, read_string};
 
@@ -251,6 +251,46 @@ pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_topicLogSt
         let queue = unsafe { borrow_queue(handle) };
         let stats = queue.storage.topic_log_stats()?;
         let views: Vec<TopicLogStatsView> = stats.iter().map(TopicLogStatsView::from).collect();
+        new_string(env, to_json(&views)?)
+    })
+}
+
+/// `void declareTopic(long handle, String name, long retentionMs)` — declare a
+/// log topic (idempotent) so its publishes are retained even with no subscriber.
+/// `retentionMs` bounds a sub-less backlog; `i64::MIN` is the "unbounded → keep
+/// until consumed" sentinel, since JNI carries a primitive `long`, not a boxed
+/// nullable. Mode is always `"log"` — the only declarable mode today.
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_declareTopic<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    name: JString<'local>,
+    retention_ms: jlong,
+) {
+    guard(&mut env, (), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let name = read_string(env, &name)?;
+        let retention = (retention_ms != jlong::MIN).then_some(retention_ms);
+        queue
+            .storage
+            .declare_topic(&name, SUBSCRIPTION_MODE_LOG, retention)?;
+        Ok(())
+    })
+}
+
+/// `String listDeclaredTopics(long handle)` — a JSON array of declared topics
+/// (`TopicView`).
+#[no_mangle]
+pub extern "system" fn Java_org_byteveda_taskito_internal_NativeQueue_listDeclaredTopics<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    guard(&mut env, std::ptr::null_mut(), |env| {
+        let queue = unsafe { borrow_queue(handle) };
+        let topics = queue.storage.list_declared_topics()?;
+        let views: Vec<TopicView> = topics.iter().map(TopicView::from).collect();
         new_string(env, to_json(&views)?)
     })
 }

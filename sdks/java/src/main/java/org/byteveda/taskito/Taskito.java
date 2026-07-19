@@ -35,6 +35,7 @@ import org.byteveda.taskito.model.ReplayEntry;
 import org.byteveda.taskito.model.Subscription;
 import org.byteveda.taskito.model.TaskLog;
 import org.byteveda.taskito.model.TaskMetric;
+import org.byteveda.taskito.model.Topic;
 import org.byteveda.taskito.model.TopicLogStat;
 import org.byteveda.taskito.model.TopicMessage;
 import org.byteveda.taskito.model.WorkerInfo;
@@ -447,6 +448,34 @@ public interface Taskito extends AutoCloseable {
 
     /** Lag snapshot per log subscription (cursor position and un-acked backlog). */
     List<TopicLogStat> topicLogStats();
+
+    /**
+     * Declare a <b>log</b> topic so its publishes are retained even with no
+     * subscriber, removing the late-join boundary: without a declaration a log
+     * message is stored only when a log subscription already exists at publish
+     * time. Idempotent — re-declaring keeps the topic. Equivalent to
+     * {@link #declareTopic(String, Duration)} with no retention bound (messages
+     * kept until consumed).
+     *
+     * @param name the topic name
+     * @return this instance, for chaining
+     */
+    Taskito declareTopic(String name);
+
+    /**
+     * Declare a <b>log</b> topic with a retention bound. Each stored message
+     * expires {@code retention} after it was published, so the retention sweep can
+     * reclaim a sub-less backlog. A {@code null} retention keeps messages until a
+     * subscriber consumes them. Idempotent — re-declaring updates the window.
+     *
+     * @param name the topic name
+     * @param retention how long a sub-less message is retained, or {@code null} for unbounded
+     * @return this instance, for chaining
+     */
+    Taskito declareTopic(String name, Duration retention);
+
+    /** Every declared topic in the registry. */
+    List<Topic> listDeclaredTopics();
 
     /**
      * Register a <b>managed</b> consumer of log {@code topic}: a durable log
