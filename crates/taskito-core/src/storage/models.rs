@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use super::records::{
     CircuitBreakerState, JobError, LockInfo, PeriodicTask, RateLimitState, ReplayEntry,
-    Subscription, TaskLogEntry, TaskMetric, TopicMessage, WorkerInfo,
+    Subscription, TaskLogEntry, TaskMetric, Topic, TopicMessage, WorkerInfo,
 };
 use super::schema::{
     archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
     execution_claims, job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits,
-    replay_history, task_logs, task_metrics, topic_messages, topic_subscriptions, workers,
+    replay_history, task_logs, task_metrics, topic_messages, topic_subscriptions, topics, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -504,6 +504,28 @@ pub struct NewTopicMessageRow<'a> {
     pub expires_at: Option<i64>,
 }
 
+// ── Topics (first-class registry) ───────────────────────────────
+
+/// A row in the `topics` registry: a declared topic and its retention window.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = topics)]
+pub struct TopicRow {
+    pub name: String,
+    pub mode: String,
+    pub retention_ms: Option<i64>,
+    pub created_at: i64,
+}
+
+/// Insertable struct for a declared topic.
+#[derive(Insertable, Debug)]
+#[diesel(table_name = topics)]
+pub struct NewTopicRow<'a> {
+    pub name: &'a str,
+    pub mode: &'a str,
+    pub retention_ms: Option<i64>,
+    pub created_at: i64,
+}
+
 // ── Distributed Locks ───────────────────────────────────────────
 
 #[derive(Queryable, Selectable, QueryableByName, Debug, Clone)]
@@ -716,6 +738,17 @@ impl From<TopicMessageRow> for TopicMessage {
             notes: r.notes,
             created_at: r.created_at,
             expires_at: r.expires_at,
+        }
+    }
+}
+
+impl From<TopicRow> for Topic {
+    fn from(r: TopicRow) -> Self {
+        Topic {
+            name: r.name,
+            mode: r.mode,
+            retention_ms: r.retention_ms,
+            created_at: r.created_at,
         }
     }
 }

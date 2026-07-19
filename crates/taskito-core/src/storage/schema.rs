@@ -259,4 +259,13 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    topics (name) {
+        name -> Text,
+        mode -> Text,
+        retention_ms -> Nullable<BigInt>,
+        created_at -> BigInt,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies);

@@ -1363,6 +1363,39 @@ fn test_topic_log_messages(s: &impl Storage) {
     s.unsubscribe(topic, "reader").unwrap();
 }
 
+fn test_topic_registry(s: &impl Storage) {
+    // An undeclared topic has no registry row.
+    assert!(s.get_topic("treg-a").unwrap().is_none());
+
+    // Declare with a retention window; get_topic round-trips every field.
+    s.declare_topic("treg-a", "log", Some(1500)).unwrap();
+    let a = s.get_topic("treg-a").unwrap().expect("declared topic");
+    assert_eq!(a.name, "treg-a");
+    assert!(a.is_log());
+    assert_eq!(a.retention_ms, Some(1500));
+    let created = a.created_at;
+
+    // Re-declaring is idempotent: retention updates, created_at is preserved.
+    s.declare_topic("treg-a", "log", Some(3000)).unwrap();
+    let a2 = s.get_topic("treg-a").unwrap().unwrap();
+    assert_eq!(a2.retention_ms, Some(3000));
+    assert_eq!(a2.created_at, created);
+
+    // A topic can be declared with no retention (unbounded backlog).
+    s.declare_topic("treg-b", "log", None).unwrap();
+    assert_eq!(s.get_topic("treg-b").unwrap().unwrap().retention_ms, None);
+
+    // Both declarations appear in the registry listing.
+    let names: std::collections::HashSet<String> = s
+        .list_declared_topics()
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(names.contains("treg-a"));
+    assert!(names.contains("treg-b"));
+}
+
 fn test_topic_log_purge(s: &impl Storage) {
     let topic = "tlog-purge";
     s.register_subscription(&log_sub(topic, "a")).unwrap();
@@ -1484,6 +1517,7 @@ fn run_storage_tests(s: &impl Storage) {
     test_topic_backlog_stats(s);
     test_topic_log_messages(s);
     test_topic_log_purge(s);
+    test_topic_registry(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);

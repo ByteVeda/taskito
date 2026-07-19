@@ -182,6 +182,31 @@ pub struct TopicMessage {
     pub expires_at: Option<i64>,
 }
 
+/// A declared topic in the first-class registry. Declaring a log topic makes
+/// its publishes retained even with zero subscribers (removing the late-join
+/// boundary), bounded by an optional `retention_ms` window.
+#[derive(Debug, Clone)]
+pub struct Topic {
+    /// Topic name (primary key).
+    pub name: String,
+    /// Delivery mode: `"log"` (the only declarable mode today) opts publishes
+    /// into the append-once store even without a subscriber.
+    pub mode: String,
+    /// Retention window in milliseconds; `None` = keep until consumed/compacted.
+    /// A published log row gets `expires_at = now + retention_ms` when the topic
+    /// has no live log subscriber, so the retention sweep can reclaim it.
+    pub retention_ms: Option<i64>,
+    /// Unix-millisecond declaration time.
+    pub created_at: i64,
+}
+
+impl Topic {
+    /// Whether this is a log topic (publishes are retained without a subscriber).
+    pub fn is_log(&self) -> bool {
+        self.mode == SUBSCRIPTION_MODE_LOG
+    }
+}
+
 /// Backlog snapshot for one log subscription: how far its cursor lags the log.
 #[derive(Debug, Clone)]
 pub struct TopicLogStats {

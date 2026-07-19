@@ -728,6 +728,25 @@ macro_rules! impl_storage {
             fn purge_topic_messages(&self, now: i64, limit: i64) -> $crate::error::Result<u64> {
                 self.purge_topic_messages(now, limit)
             }
+            fn declare_topic(
+                &self,
+                name: &str,
+                mode: &str,
+                retention_ms: Option<i64>,
+            ) -> $crate::error::Result<()> {
+                self.declare_topic(name, mode, retention_ms)
+            }
+            fn get_topic(
+                &self,
+                name: &str,
+            ) -> $crate::error::Result<Option<$crate::storage::records::Topic>> {
+                self.get_topic(name)
+            }
+            fn list_declared_topics(
+                &self,
+            ) -> $crate::error::Result<Vec<$crate::storage::records::Topic>> {
+                self.list_declared_topics()
+            }
             fn record_metric(
                 &self,
                 task_name: &str,
@@ -1430,6 +1449,15 @@ impl Storage for StorageBackend {
     }
     fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64> {
         delegate!(self, purge_topic_messages, now, limit)
+    }
+    fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+        delegate!(self, declare_topic, name, mode, retention_ms)
+    }
+    fn get_topic(&self, name: &str) -> Result<Option<records::Topic>> {
+        delegate!(self, get_topic, name)
+    }
+    fn list_declared_topics(&self) -> Result<Vec<records::Topic>> {
+        delegate!(self, list_declared_topics)
     }
     fn record_metric(
         &self,
