@@ -41,6 +41,7 @@ import org.byteveda.taskito.model.WorkerInfo;
 import org.byteveda.taskito.model.WorkflowRunInfo;
 import org.byteveda.taskito.predicates.EnqueueGate;
 import org.byteveda.taskito.predicates.Predicate;
+import org.byteveda.taskito.pubsub.LogConsumerOptions;
 import org.byteveda.taskito.pubsub.PublishOptions;
 import org.byteveda.taskito.pubsub.SubscriptionOptions;
 import org.byteveda.taskito.resources.PoolConfig;
@@ -446,6 +447,24 @@ public interface Taskito extends AutoCloseable {
 
     /** Lag snapshot per log subscription (cursor position and un-acked backlog). */
     List<TopicLogStat> topicLogStats();
+
+    /**
+     * Register a <b>managed</b> consumer of log {@code topic}: a durable log
+     * subscription plus, once a worker runs, a daemon thread that pulls each stored
+     * message, decodes it to {@code payloadType}, invokes {@code handler}, and
+     * advances the cursor — the {@link #readTopic(String, String, int)}/
+     * {@link #ackTopic(String, String, String)} loop callers otherwise hand-write.
+     * Registers immediately, so declare it before the publishes it should see;
+     * a producer-only process still retains the topic's publishes. Returns {@code this}.
+     */
+    <T> Taskito logConsumer(String topic, String name, Class<T> payloadType, Consumer<T> handler);
+
+    /**
+     * As {@link #logConsumer(String, String, Class, Consumer)} with explicit
+     * {@link LogConsumerOptions} (poll interval, batch size, error policy).
+     */
+    <T> Taskito logConsumer(
+            String topic, String name, Class<T> payloadType, Consumer<T> handler, LogConsumerOptions options);
 
     // ── Workflows ───────────────────────────────────────────────────
 

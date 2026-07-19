@@ -28,6 +28,7 @@ import org.byteveda.taskito.events.EventName;
 import org.byteveda.taskito.events.OutcomeEvent;
 import org.byteveda.taskito.logging.TaskitoLogger;
 import org.byteveda.taskito.middleware.Middleware;
+import org.byteveda.taskito.pubsub.LogConsumerConfig;
 import org.byteveda.taskito.pubsub.SubscriptionConfig;
 import org.byteveda.taskito.resources.ResourceRuntime;
 import org.byteveda.taskito.serialization.PayloadCodec;
@@ -49,6 +50,7 @@ import org.byteveda.taskito.workflows.WorkflowTracker;
 public final class Worker implements AutoCloseable {
     private static final TaskitoLogger LOG = TaskitoLogger.create("worker");
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
+    private static final long LOG_CONSUMER_JOIN_TIMEOUT_SECONDS = 10;
     private static final ObjectMapper MESH_JSON = new ObjectMapper();
 
     private final WorkerControl control;
@@ -56,6 +58,7 @@ public final class Worker implements AutoCloseable {
     private final WorkflowTracker tracker;
     private final ResourceRuntime resources;
     private final Autoscaler autoscaler;
+    private final List<LogConsumerThread> logConsumers;
     private final CountDownLatch shutdown = new CountDownLatch(1);
     private boolean closed;
 
@@ -64,12 +67,14 @@ public final class Worker implements AutoCloseable {
             ExecutorService executor,
             WorkflowTracker tracker,
             ResourceRuntime resources,
-            Autoscaler autoscaler) {
+            Autoscaler autoscaler,
+            List<LogConsumerThread> logConsumers) {
         this.control = control;
         this.executor = executor;
         this.tracker = tracker;
         this.resources = resources;
         this.autoscaler = autoscaler;
+        this.logConsumers = logConsumers;
     }
 
     public static Builder builder(QueueBackend backend, Serializer serializer, List<Middleware> middleware) {
@@ -146,6 +151,7 @@ public final class Worker implements AutoCloseable {
             autoscaler.close(); // stop resizing before we tear the pool down
         }
         control.stop(); // stop scheduling new work
+        stopLogConsumers(); // drain managed consumers before the backend tears down
         executor.shutdown(); // stop accepting; let running handlers finish
         try {
             if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
@@ -171,6 +177,25 @@ public final class Worker implements AutoCloseable {
         shutdown.countDown();
     }
 
+    /**
+     * Signal each managed log consumer to stop, then join it within a bounded window
+     * so a wedged handler can't block shutdown (the threads are daemons either way).
+     * Signal all first so they drain concurrently rather than one join at a time.
+     */
+    private void stopLogConsumers() {
+        for (LogConsumerThread consumer : logConsumers) {
+            consumer.shutdown();
+        }
+        for (LogConsumerThread consumer : logConsumers) {
+            try {
+                consumer.join(TimeUnit.SECONDS.toMillis(LOG_CONSUMER_JOIN_TIMEOUT_SECONDS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
     /** Registers handlers and worker options, then starts the worker. */
     public static final class Builder {
         private static final ObjectMapper JSON = new ObjectMapper();
@@ -181,6 +206,8 @@ public final class Worker implements AutoCloseable {
         private final ResourceRuntime resources;
         private final Map<String, PayloadCodec> codecs;
         private final Map<String, RegisteredTask> handlers = new HashMap<>();
+        private List<LogConsumerConfig> logConsumers = List.of();
+        private LogTopicReader logTopicReader;
         /**
          * Tasks carrying policy the worker must register, keyed by name. Holding the
          * task itself rather than a map per knob keeps {@link #encodeTaskConfigs}
@@ -273,6 +300,17 @@ public final class Worker implements AutoCloseable {
          */
         public Builder subscriptions(List<SubscriptionConfig> subscriptions) {
             this.subscriptions = subscriptions;
+            return this;
+        }
+
+        /**
+         * Managed log-topic consumers to drive with a poll loop for the worker's life
+         * (wired by {@code Taskito.worker()}). The {@code reader} pulls and acks each
+         * topic's cursor; a manually built worker declares none.
+         */
+        public Builder logConsumers(List<LogConsumerConfig> logConsumers, LogTopicReader reader) {
+            this.logConsumers = logConsumers;
+            this.logTopicReader = reader;
             return this;
         }
 
@@ -395,7 +433,23 @@ public final class Worker implements AutoCloseable {
             if (scaler != null) {
                 scaler.start();
             }
-            return new Worker(control, executor, tracker, resources, scaler);
+            // Managed log-topic consumers: one poll loop each, beside the worker.
+            List<LogConsumerThread> consumerThreads = startLogConsumers();
+            return new Worker(control, executor, tracker, resources, scaler, consumerThreads);
+        }
+
+        /** Spawn one daemon poll loop per declared log consumer; empty when none. */
+        private List<LogConsumerThread> startLogConsumers() {
+            if (logConsumers.isEmpty()) {
+                return List.of();
+            }
+            List<LogConsumerThread> threads = new ArrayList<>(logConsumers.size());
+            for (LogConsumerConfig config : logConsumers) {
+                LogConsumerThread thread = new LogConsumerThread(logTopicReader, serializer, config);
+                thread.start();
+                threads.add(thread);
+            }
+            return threads;
         }
 
         /**
