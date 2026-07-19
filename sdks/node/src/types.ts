@@ -74,6 +74,17 @@ export interface SubscriberOptions extends TaskOptions {
   durable?: boolean;
 }
 
+/** Options for {@link Queue.logConsumer}: a managed pull loop over a log topic. */
+export interface LogConsumerOptions {
+  /** Milliseconds to wait after an empty poll before re-reading (default 1000). */
+  pollIntervalMs?: number;
+  /** Max messages pulled per poll (default 100). */
+  batchSize?: number;
+  /** `"retry"` (default) leaves a failed message un-acked so the batch re-reads;
+   *  `"skip"` acks past it and continues. */
+  onError?: "retry" | "skip";
+}
+
 /** Options for {@link Queue.result}. */
 export interface ResultOptions {
   /** Max time to wait for a terminal state (ms). Default 30000. */

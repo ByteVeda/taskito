@@ -21,7 +21,13 @@ import type {
 import { type ResourceRuntime, runWithResolver } from "./resources";
 import { deserializeCall, type PayloadCodec, type Serializer } from "./serializers";
 import { encodeTaskError } from "./task-error";
-import type { QueueLimits, RegisteredTask, TaskOptions, WorkerRunOptions } from "./types";
+import type {
+  AnyHandler,
+  QueueLimits,
+  RegisteredTask,
+  TaskOptions,
+  WorkerRunOptions,
+} from "./types";
 import { createLogger } from "./utils";
 import type { WorkflowTracker } from "./workflows";
 import { CACHE_TASK } from "./workflows/cache";
@@ -56,7 +62,19 @@ export interface WorkerStartParams {
   workflowTracker?: WorkflowTracker;
   /** Flushes the queue's pending topic subscriptions under this worker's id. */
   declareSubscriptions?: (workerId: string) => Promise<void>;
+  /** Managed log-topic consumers to drive with a poll loop for the worker's life. */
+  logConsumers?: readonly PendingLogConsumer[];
   run?: WorkerRunOptions;
+}
+
+/** A managed log-topic consumer recorded by `Queue.logConsumer`. */
+export interface PendingLogConsumer {
+  topic: string;
+  name: string;
+  handler: AnyHandler;
+  pollIntervalMs: number;
+  batchSize: number;
+  onError: "retry" | "skip";
 }
 
 /** A running worker. Hold it for the worker's lifetime; call {@link Worker.stop}. */
@@ -66,6 +84,7 @@ export class Worker {
     private readonly queue: NativeQueue,
     private readonly resources: ResourceRuntime,
     private readonly heartbeat: ReturnType<typeof setInterval>,
+    private readonly consumerTimers: readonly ReturnType<typeof setInterval>[],
   ) {}
 
   /**
@@ -289,7 +308,10 @@ export class Worker {
     const heartbeat = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();
 
-    return new Worker(native, queue, resources, heartbeat);
+    // Managed log-topic consumers: one poll loop each, beside the heartbeat.
+    const consumerTimers = startLogConsumers(queue, serializer, params.logConsumers ?? []);
+
+    return new Worker(native, queue, resources, heartbeat, consumerTimers);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
@@ -300,6 +322,9 @@ export class Worker {
       log.debug(() => "final ephemeral subscription reap failed", error);
     });
     clearInterval(this.heartbeat);
+    for (const timer of this.consumerTimers) {
+      clearInterval(timer);
+    }
     this.native.stop();
     // Dispose worker-scoped resources after the native worker quiesces (the
     // teardown drains the runtime's health checker before touching caches).
@@ -307,6 +332,70 @@ export class Worker {
     void this.resources.teardownWorker().catch((error) => {
       log.debug(() => "worker-scope resource teardown failed", error);
     });
+  }
+}
+
+/** Start one poll loop per managed consumer; return their timers to clear on stop. */
+function startLogConsumers(
+  queue: NativeQueue,
+  serializer: Serializer,
+  consumers: readonly PendingLogConsumer[],
+): ReturnType<typeof setInterval>[] {
+  const timers: ReturnType<typeof setInterval>[] = [];
+  for (const consumer of consumers) {
+    // Skip a tick that overlaps a still-running batch (slow handler / big backlog).
+    let inFlight = false;
+    const poll = (): void => {
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
+      void drainLogConsumerBatch(queue, serializer, consumer)
+        .catch((error) => {
+          log.error(() => `log consumer ${consumer.topic}/${consumer.name} poll failed`, error);
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const timer = setInterval(poll, consumer.pollIntervalMs);
+    timer.unref();
+    timers.push(timer);
+    poll(); // read immediately rather than waiting a full interval
+  }
+  return timers;
+}
+
+/** One poll: read a batch, invoke the handler per message, then advance the cursor.
+ *  `retry` stops at the first failure and acks only the successes before it (the
+ *  batch re-reads next tick); `skip` acks past a failure too. */
+async function drainLogConsumerBatch(
+  queue: NativeQueue,
+  serializer: Serializer,
+  consumer: PendingLogConsumer,
+): Promise<void> {
+  const messages = await queue.readTopicMessages(consumer.topic, consumer.name, consumer.batchSize);
+  if (messages.length === 0) {
+    return;
+  }
+  let lastAcked: string | undefined;
+  for (const message of messages) {
+    const args = deserializeCall(serializer, message.payload);
+    try {
+      await consumer.handler(...args);
+    } catch (error) {
+      log.error(
+        () => `log consumer ${consumer.topic}/${consumer.name} handler failed on ${message.id}`,
+        error,
+      );
+      if (consumer.onError === "retry") {
+        break;
+      }
+    }
+    lastAcked = message.id;
+  }
+  if (lastAcked !== undefined) {
+    await queue.ackTopicCursor(consumer.topic, consumer.name, lastAcked);
   }
 }
 

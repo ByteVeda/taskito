@@ -95,6 +95,93 @@ it("reports lag per log subscription", async () => {
   expect(stat.lag).toBe(0);
 });
 
+it("drives a managed consumer: pull, invoke handler, advance cursor", async () => {
+  const queue = newQueue();
+  const received: number[] = [];
+  queue.logConsumer(
+    "events",
+    "c",
+    (n: number) => {
+      received.push(n);
+    },
+    { pollIntervalMs: 20 },
+  );
+
+  worker = queue.runWorker({ concurrency: 1 });
+  for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+
+  expect(await waitFor(() => received.length === 3)).toBe(true);
+  expect([...received].sort()).toEqual([0, 1, 2]);
+  expect(must((await queue.topicLogStats())[0]).lag).toBe(0);
+});
+
+it("awaits an async managed-consumer handler", async () => {
+  const queue = newQueue();
+  const received: number[] = [];
+  queue.logConsumer(
+    "events",
+    "c",
+    async (n: number) => {
+      await new Promise((r) => setTimeout(r, 1));
+      received.push(n);
+    },
+    { pollIntervalMs: 20 },
+  );
+
+  worker = queue.runWorker({ concurrency: 1 });
+  await queue.publish("events", [42]);
+  expect(await waitFor(() => received.length === 1)).toBe(true);
+  expect(received).toEqual([42]);
+});
+
+it("retry mode re-delivers a failed message but not acked predecessors", async () => {
+  const queue = newQueue();
+  const attempts: number[] = [];
+  let failed = false;
+  queue.logConsumer(
+    "events",
+    "c",
+    (n: number) => {
+      attempts.push(n);
+      if (n === 1 && !failed) {
+        failed = true;
+        throw new Error("boom");
+      }
+    },
+    { pollIntervalMs: 20, onError: "retry" },
+  );
+
+  worker = queue.runWorker({ concurrency: 1 });
+  for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+
+  expect(
+    await waitFor(() => attempts.filter((n) => n === 1).length === 2 && attempts.includes(2)),
+  ).toBe(true);
+  // 0 was acked before the failure → never redelivered.
+  expect(attempts.filter((n) => n === 0).length).toBe(1);
+});
+
+it("skip mode acks past a poison message", async () => {
+  const queue = newQueue();
+  const attempts: number[] = [];
+  queue.logConsumer(
+    "events",
+    "c",
+    (n: number) => {
+      attempts.push(n);
+      if (n === 1) throw new Error("always poison");
+    },
+    { pollIntervalMs: 20, onError: "skip" },
+  );
+
+  worker = queue.runWorker({ concurrency: 1 });
+  for (let i = 0; i < 3; i++) await queue.publish("events", [i]);
+
+  expect(await waitFor(() => [...attempts].sort().join() === "0,1,2")).toBe(true);
+  expect(must((await queue.topicLogStats())[0]).lag).toBe(0);
+  expect(attempts.filter((n) => n === 1).length).toBe(1);
+});
+
 it("lets log and fan-out subscribers coexist on one topic", async () => {
   const queue = newQueue();
   const seen: number[] = [];

@@ -61,6 +61,7 @@ import type {
   JobDag,
   JobError,
   JobFilter,
+  LogConsumerOptions,
   Metric,
   Page,
   PeriodicOptions,
@@ -83,7 +84,7 @@ import type {
   WorkerRunOptions,
 } from "./types";
 import { WebhookManager } from "./webhooks";
-import { Worker } from "./worker";
+import { type PendingLogConsumer, Worker } from "./worker";
 import { WorkflowManager } from "./workflows";
 import { WorkflowTracker } from "./workflows/tracker";
 
@@ -142,6 +143,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private readonly codecs: ReadonlyMap<string, PayloadCodec>;
   private readonly tasks = new Map<string, RegisteredTask>();
   private readonly pendingSubscriptions: PendingSubscription[] = [];
+  private readonly pendingLogConsumers: PendingLogConsumer[] = [];
   private readonly queueLimits = new Map<string, QueueLimits>();
   private readonly middleware: Middleware[] = [];
   private readonly interceptors: Interceptor[] = [];
@@ -333,6 +335,46 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       this.pendingSubscriptions.push(pending);
     }
     return this.task(name, handler, taskOptions);
+  }
+
+  /**
+   * Register a **managed consumer** of log `topic`: a durable log subscription
+   * plus, once a worker runs, a poll loop that pulls messages, invokes
+   * `handler(...args)` per message, and advances the cursor — the
+   * `readTopic`/`ackTopic` loop callers otherwise write by hand. The handler may
+   * be sync or async. Registration is eager (like {@link Queue.subscribeLog}) so
+   * a producer-only process still retains the topic's publishes.
+   */
+  logConsumer(
+    topic: string,
+    name: string,
+    handler: AnyHandler,
+    options?: LogConsumerOptions,
+  ): this {
+    const consumer: PendingLogConsumer = {
+      topic,
+      name,
+      handler,
+      pollIntervalMs: options?.pollIntervalMs ?? 1000,
+      batchSize: options?.batchSize ?? 100,
+      onError: options?.onError ?? "retry",
+    };
+    // Replace, don't append: re-registering the same (topic, name) must not
+    // spawn a duplicate poll loop.
+    const existing = this.pendingLogConsumers.findIndex(
+      (c) => c.topic === topic && c.name === name,
+    );
+    if (existing >= 0) {
+      this.pendingLogConsumers[existing] = consumer;
+    } else {
+      this.pendingLogConsumers.push(consumer);
+    }
+    // Eagerly register the durable cursor; the worker also re-registers it
+    // (idempotent) so a late/failed flush can't silently drop deliveries.
+    void this.subscribeLog(topic, name).catch(() => {
+      /* best effort: retried at worker start */
+    });
+    return this;
   }
 
   /**
@@ -649,6 +691,11 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
   private async declareWorkerSubscriptions(workerId: string): Promise<void> {
     for (const subscription of this.pendingSubscriptions) {
       await this.registerSubscription(subscription, subscription.durable ? undefined : workerId);
+    }
+    // Re-assert managed consumers' durable log subscriptions (idempotent) in case
+    // the eager registration in logConsumer() lost a race or failed.
+    for (const consumer of this.pendingLogConsumers) {
+      await this.subscribeLog(consumer.topic, consumer.name);
     }
   }
 
@@ -1254,6 +1301,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       resources: this.resources,
       workflowTracker: this.trackerIfSupported(),
       declareSubscriptions: (workerId) => this.declareWorkerSubscriptions(workerId),
+      logConsumers: this.pendingLogConsumers,
       run: options,
     });
   }
