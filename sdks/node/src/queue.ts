@@ -55,6 +55,7 @@ import type {
   CursorDetailedJobFilter,
   CursorJobFilter,
   DeadJob,
+  DeclaredTopic,
   DetailedJobFilter,
   EnqueueOptions,
   Job,
@@ -643,6 +644,31 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
       topics.add(subscription.topic);
     }
     return [...topics];
+  }
+
+  /**
+   * Declare a **log** topic so its publishes are retained even with no
+   * subscriber (removing the late-join boundary). Without a declaration, a log
+   * message is stored only when a log subscription already exists at publish
+   * time; declaring the topic makes every publish durable, so a consumer that
+   * subscribes later still sees them.
+   *
+   * `retention` (seconds) bounds a sub-less backlog: each stored message expires
+   * that long after it was published, so the retention sweep can reclaim it.
+   * Omit it to keep messages until a subscriber consumes them. Idempotent —
+   * re-declaring updates the retention window.
+   */
+  declareTopic(name: string, opts?: { retention?: number }): Promise<void> {
+    return this.native.declareTopic(
+      name,
+      "log",
+      opts?.retention === undefined ? undefined : Math.round(opts.retention * 1000),
+    );
+  }
+
+  /** List declared topics: `name`, `mode`, `retentionMs` (absent = unbounded), `createdAt` (Unix ms). */
+  listDeclaredTopics(): Promise<DeclaredTopic[]> {
+    return this.native.listDeclaredTopics();
   }
 
   /** Flush every pending subscription at worker startup, owning the ephemeral ones. */
