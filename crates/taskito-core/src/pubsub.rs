@@ -5,10 +5,27 @@
 //! same semantics — in particular the idempotency-key salting, which silently
 //! drops deliveries if a shell gets it wrong.
 
-use crate::error::Result;
+use crate::error::{QueueError, Result};
 use crate::job::{now_millis, Job, NewJob};
 use crate::storage::records::{Subscription, SUBSCRIPTION_MODE_LOG};
 use crate::storage::Storage;
+
+/// Validate a topic declaration before a backend persists it: only `"log"`
+/// topics are declarable, and a retention window must be non-negative (a
+/// negative one would expire messages immediately or overflow `now + retention`).
+pub(crate) fn validate_topic_declaration(mode: &str, retention_ms: Option<i64>) -> Result<()> {
+    if mode != SUBSCRIPTION_MODE_LOG {
+        return Err(QueueError::Config(format!(
+            "only \"log\" topics are declarable, got {mode:?}"
+        )));
+    }
+    if retention_ms.is_some_and(|ms| ms < 0) {
+        return Err(QueueError::Config(
+            "topic retention_ms must be non-negative".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// Queue-level fallback delivery settings, used when neither the publish call
 /// nor the subscription row specifies a value.
@@ -485,6 +502,9 @@ mod tests {
         assert_eq!(first.retention_ms, Some(1000));
 
         // Re-declaring updates retention but keeps the original created_at.
+        // Sleep so the re-declare lands in a later millisecond — otherwise a
+        // regression that overwrote created_at could still pass this assertion.
+        std::thread::sleep(std::time::Duration::from_millis(2));
         storage
             .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(2000))
             .unwrap();
@@ -492,5 +512,16 @@ mod tests {
         assert_eq!(second.retention_ms, Some(2000));
         assert_eq!(second.created_at, first.created_at);
         assert_eq!(storage.list_declared_topics().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn declare_topic_rejects_bad_mode_and_negative_retention() {
+        let storage = SqliteStorage::in_memory().unwrap();
+        assert!(storage.declare_topic("events", "fanout", None).is_err());
+        assert!(storage
+            .declare_topic("events", SUBSCRIPTION_MODE_LOG, Some(-1))
+            .is_err());
+        // Nothing was persisted on rejection.
+        assert!(storage.get_topic("events").unwrap().is_none());
     }
 }

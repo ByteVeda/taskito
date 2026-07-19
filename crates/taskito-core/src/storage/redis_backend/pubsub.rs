@@ -792,6 +792,7 @@ impl RedisStorage {
     /// Declare a topic (idempotent). Stored as a field in the `topics` hash;
     /// re-declaring preserves the original `created_at`.
     pub fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+        crate::pubsub::validate_topic_declaration(mode, retention_ms)?;
         let mut conn = self.conn()?;
         let key = self.key(&["topics"]);
         let created_at = match conn

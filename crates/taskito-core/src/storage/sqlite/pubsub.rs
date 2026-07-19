@@ -12,6 +12,7 @@ impl SqliteStorage {
     /// Declare a topic (idempotent upsert on `name`). `created_at` is preserved
     /// on re-declaration; only `mode`/`retention_ms` are updated.
     pub fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()> {
+        crate::pubsub::validate_topic_declaration(mode, retention_ms)?;
         let mut conn = self.conn()?;
         let row = NewTopicRow {
             name,

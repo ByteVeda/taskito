@@ -293,6 +293,8 @@ pub trait Storage: Send + Sync + Clone {
     /// Declare a topic (idempotent upsert on `name`), setting its `mode` and
     /// optional `retention_ms`. Declaring a log topic makes its publishes
     /// retained even with no subscriber (removing the late-join boundary).
+    /// `mode` must be `"log"` (the only declarable mode) and `retention_ms`, if
+    /// set, must be non-negative — backends reject anything else.
     fn declare_topic(&self, name: &str, mode: &str, retention_ms: Option<i64>) -> Result<()>;
     /// Fetch a declared topic by name, or `None` if it was never declared.
     fn get_topic(&self, name: &str) -> Result<Option<Topic>>;
