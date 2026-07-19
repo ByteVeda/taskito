@@ -173,6 +173,32 @@ high-water mark — acking an id acks everything up to and including it.
 Monotonic: acking an id older than what's already acked is a no-op and
 returns `False`.
 
+### `queue.lease_topic()`
+
+```python
+queue.lease_topic(
+    topic: str, name: str, limit: int = 100, visibility: float = 30.0
+) -> list[TopicMessage]
+```
+
+**Per-message** alternative to the cursor read. Leases up to `limit`
+available messages for `visibility` seconds and tracks each individually:
+:meth:`ack_message` when done, :meth:`nack_message` to redeliver now, or let
+the lease expire to redeliver — so one poison message no longer blocks its
+siblings. Oldest first; in-flight (leased, un-expired) messages are skipped.
+Don't mix with `read_topic`/`ack_topic` on the same subscription.
+
+### `queue.ack_message()` / `queue.nack_message()`
+
+```python
+queue.ack_message(topic: str, name: str, message_id: str) -> bool
+queue.nack_message(topic: str, name: str, message_id: str) -> bool
+```
+
+`ack_message` ends a leased delivery (never redelivered); `nack_message`
+makes it available for redelivery immediately. Both return `False` when there
+was no un-acked delivery for `message_id`.
+
 ### `queue.topic_log_stats()`
 
 ```python

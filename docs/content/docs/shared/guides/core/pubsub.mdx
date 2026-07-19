@@ -604,6 +604,66 @@ poll), `batch_size` / `batchSize` (messages per poll), and `on_error` /
 re-reads, while `"skip"` acks past it and moves on. A non-empty batch drains
 immediately; only an empty one waits the poll interval.
 
+### Per-message ack
+
+The cursor is a single high-water mark, so one message a consumer can't
+process blocks everything behind it. **Per-message** consumption is the
+alternative: instead of the cursor read, *lease* messages and ack or nack each
+one individually. A leased message is invisible to other reads until its
+visibility window elapses; ack it when done, nack it to redeliver immediately,
+or let the lease time out to have it redelivered — all without blocking its
+siblings. It's a consumption choice on the same log subscription, not a
+separate registration.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+for msg in queue.lease_topic("orders", "audit-log", visibility=30):
+    try:
+        audit_sink.write(msg.args)
+        queue.ack_message("orders", "audit-log", msg.id)
+    except TransientError:
+        queue.nack_message("orders", "audit-log", msg.id)  # redeliver now
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+for (const msg of await queue.leaseTopic("orders", "audit-log", { visibility: 30 })) {
+  try {
+    auditSink.write(msg.args);
+    await queue.ackMessage("orders", "audit-log", msg.id);
+  } catch {
+    await queue.nackMessage("orders", "audit-log", msg.id); // redeliver now
+  }
+}
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+for (TopicMessage msg : taskito.leaseTopic("orders", "audit-log", 100, Duration.ofSeconds(30))) {
+    try {
+        auditSink.write(serializer.deserialize(msg.payload, Order.class));
+        taskito.ackMessage("orders", "audit-log", msg.id);
+    } catch (TransientException e) {
+        taskito.nackMessage("orders", "audit-log", msg.id); // redeliver now
+    }
+}
+```
+
+  </Tab>
+</CodeTabs>
+
+Pick one style per subscription — mixing the cursor read and leasing on the
+same subscription lets their positions diverge. On the Diesel backends,
+messages every per-message consumer has acked are compacted like the cursor
+case; on Redis, per-message topics reclaim via `expires` / stream trim (set a
+retention window or per-publish `expires`).
+
 ### Retention compacts, it doesn't expire
 
 A log message is deleted once every log subscriber on its topic has acked
