@@ -15,6 +15,8 @@ semantics, lifecycle, cross-SDK topics).
 | `listSubscriptions()` / `listSubscriptions(topic)` | Every subscription, or one topic's active ones. |
 | `listTopics()` | Distinct topics with at least one subscription. |
 | `subscribeLog(topic, name)` | Register a durable log subscription — a named cursor with no handler. Writes immediately, so register it before the publishes it should see. |
+| `declareTopic(name)` / `declareTopic(name, retention)` | Declare a log topic so its publishes are retained even with no subscriber (removing the late-join boundary). `retention` (a `Duration`) bounds a sub-less backlog. Idempotent. |
+| `listDeclaredTopics()` → `List<Topic>` | List declared topics: `name`, `mode`, `retentionMs`, `createdAt`. |
 | `readTopic(topic, name)` / `readTopic(topic, name, limit)` → `List<TopicMessage>` | Pull up to `limit` (default 100) messages after `name`'s cursor, oldest first and exclusive of it. Empty once caught up. At-least-once — process, then `ackTopic`. |
 | `ackTopic(topic, name, cursor)` | Advance a log subscription's cursor to `cursor` (a message `id`) — a monotonic high-water mark. `false` if nothing moved. |
 | `topicLogStats()` → `List<TopicLogStat>` | Lag snapshot for every log subscription: `topic`, `subscription`, `cursor`, `lag`, `oldestUnackedAgeMs`. |

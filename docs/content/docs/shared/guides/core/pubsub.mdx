@@ -496,7 +496,56 @@ messages the next time it calls `read_topic()` / `readTopic()` — the cursor
 only moves forward on an explicit ack. A log subscription also shares the
 same late-join boundary as fan-out subscriptions above:
 `subscribe_log()` / `subscribeLog()` only sees messages published after it
-registered.
+registered — unless the topic is **declared** (below).
+
+### Declared topics
+
+By default a log message is stored only when a log subscription already
+exists at publish time. **Declaring** a topic lifts that late-join boundary:
+its publishes are retained even with zero subscribers, so a consumer that
+subscribes later still reads the whole backlog. Declaring is idempotent.
+
+<CodeTabs>
+  <Tab sdk="python">
+
+```python
+queue.declare_topic("orders", retention=3600)  # keep up to 1 hour
+
+queue.publish("orders", 42)          # retained even with no subscriber yet
+queue.subscribe_log("orders", "audit-log")
+queue.read_topic("orders", "audit-log")  # -> sees the earlier publish
+```
+
+  </Tab>
+  <Tab sdk="node">
+
+```ts
+await queue.declareTopic("orders", { retention: 3600 }); // seconds
+
+await queue.publish("orders", [42]); // retained even with no subscriber yet
+await queue.subscribeLog("orders", "audit-log");
+await queue.readTopic("orders", "audit-log"); // -> sees the earlier publish
+```
+
+  </Tab>
+  <Tab sdk="java">
+
+```java
+taskito.declareTopic("orders", Duration.ofHours(1));
+
+taskito.publish("orders", 42); // retained even with no subscriber yet
+taskito.subscribeLog("orders", "audit-log");
+taskito.readTopic("orders", "audit-log"); // -> sees the earlier publish
+```
+
+  </Tab>
+</CodeTabs>
+
+`retention` bounds a **sub-less** backlog: with no live log subscriber, each
+stored message expires that long after it was published so the retention
+sweep can reclaim it. Once a log subscriber exists, cursor compaction takes
+over (next section). Omit `retention` to keep messages until a subscriber
+consumes them.
 
 ### Retention compacts, it doesn't expire
 

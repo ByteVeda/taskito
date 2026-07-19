@@ -98,6 +98,27 @@ Writes to storage immediately, so register it before the publishes it
 should see. Unlike `@queue.subscriber()`, there's no separate
 `declare_subscriptions()` step.
 
+### `queue.declare_topic()`
+
+```python
+queue.declare_topic(name: str, *, retention: float | None = None) -> None
+```
+
+Declare a log topic so its publishes are retained even with no subscriber
+(removing the late-join boundary). `retention` (seconds) bounds a sub-less
+backlog — each stored message expires that long after publish; `None` keeps
+messages until a subscriber consumes them. Idempotent: re-declaring updates
+`retention`.
+
+### `queue.list_declared_topics()`
+
+```python
+queue.list_declared_topics() -> list[dict[str, Any]]
+```
+
+List declared topics. Each dict has `name`, `mode`, `retention_ms` (`None`
+if unbounded), and `created_at` (Unix ms).
+
 ### `queue.read_topic()`
 
 ```python
