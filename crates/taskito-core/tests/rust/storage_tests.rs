@@ -1348,6 +1348,16 @@ fn test_topic_log_messages(s: &impl Storage) {
         .unwrap()
         .is_empty());
 
+    // A fan-out subscription on the same topic can neither read the log nor
+    // advance a cursor — the log is for log subscriptions only.
+    let mut fan = log_sub(topic, "fan");
+    fan.mode = "fanout".to_string();
+    fan.task_name = "deliver".to_string();
+    s.register_subscription(&fan).unwrap();
+    assert!(s.read_topic_messages(topic, "fan", 10).unwrap().is_empty());
+    assert!(!s.ack_topic_cursor(topic, "fan", &m2.id).unwrap());
+    s.unsubscribe(topic, "fan").unwrap();
+
     // Drop the subscription so the global purge/stats in later tests are not
     // affected by this topic's leftover cursor.
     s.unsubscribe(topic, "reader").unwrap();

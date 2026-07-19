@@ -146,6 +146,10 @@ prefixes make it injective). Done in the core; a shell that builds `NewJob` rows
 itself must match it.
 
 **Log cursor rules** (`read_topic_messages`/`ack_topic_cursor`):
+- Both are **log-subscription only** — a `fanout` subscription (even on a mixed
+  topic) reads nothing and acks nothing (`false`). Enforced by a `mode = "log"`
+  filter on both backends, so a shell can't accidentally leak the log to a
+  fan-out subscriber.
 - The **cursor is an opaque, monotonic token** — a shell stores and passes back
   the message `id`, never parses it. Its format differs by backend (UUIDv7 on the
   Diesel backends, a `<ms>-<seq>` stream id on Redis), like the `get_task_logs_after`
@@ -153,13 +157,16 @@ itself must match it.
 - **Reads are exclusive** of the cursor and ordered oldest-first; the cursor is
   resolved server-side from the subscription row.
 - **Ack is a high-water mark**: acking id `X` acks every message `≤ X`. Monotonic —
-  acking an older/equal id is a no-op (returns `false`).
+  acking an older/equal id is a no-op (returns `false`). Like a Kafka offset commit,
+  the caller is trusted to pass back an id it actually read.
 - Delivery is **at-least-once**: a consumer that reads but dies before acking
   re-reads those messages. There is no per-message ack.
 - **Retention** is min-cursor compaction: a message is dropped once every log
   subscriber on its topic has acked past it (Diesel deletes `id <= min(cursor)`;
   Redis `XTRIM MINID`). A topic with an unread subscriber keeps its backlog.
-  Diesel also honors an optional per-message `expires_at`; Redis does not.
+  Both backends also honor an optional per-message `expires_at` as a TTL safety
+  net (Diesel deletes expired rows; Redis `XDEL`s expired stream entries), so a
+  stalled or unread cursor can't block reclamation forever.
 
 **Test vector** (assert byte-exact in each shell that salts keys itself):
 key `evt-42`, topic `orders`, subscription `email` →

@@ -595,6 +595,10 @@ impl RedisStorage {
             return Ok(Vec::new());
         };
         let entry: SubEntry = serde_json::from_str(&data)?;
+        // A fan-out sub must never read a mixed topic's log.
+        if entry.mode != SUBSCRIPTION_MODE_LOG {
+            return Ok(Vec::new());
+        }
 
         let start = match &entry.cursor {
             Some(cursor) => format!("({cursor}"),
@@ -631,6 +635,10 @@ impl RedisStorage {
             return Ok(false);
         };
         let mut entry: SubEntry = serde_json::from_str(&data)?;
+        // Only a log subscription has a cursor to advance.
+        if entry.mode != SUBSCRIPTION_MODE_LOG {
+            return Ok(false);
+        }
 
         let advance = match &entry.cursor {
             None => true,
@@ -680,10 +688,11 @@ impl RedisStorage {
         Ok(out)
     }
 
-    /// Compact each log topic to the min cursor across its subscriptions via
-    /// `XTRIM MINID`. Unlike the Diesel backend this ignores `now`/`limit`: XTRIM
-    /// is one server-side op with no per-message TTL (min-cursor compaction only).
-    pub fn purge_topic_messages(&self, _now: i64, _limit: i64) -> Result<u64> {
+    /// Compact each log topic: `XTRIM MINID` to the min cursor across its subs,
+    /// then `XDEL` any entry past `expires_at` (the TTL safety net, so a NULL or
+    /// stalled cursor can't block reclamation) — matching the Diesel backend.
+    /// The expiry scan is bounded by `limit` per topic.
+    pub fn purge_topic_messages(&self, now: i64, limit: i64) -> Result<u64> {
         use std::collections::HashMap;
         let subs = self.list_subscriptions()?;
         let mut floors: HashMap<String, Option<String>> = HashMap::new();
@@ -711,15 +720,52 @@ impl RedisStorage {
         let mut conn = self.conn()?;
         let mut removed = 0u64;
         for (topic, floor) in floors {
-            let Some(floor) = floor else { continue };
-            let n: u64 = redis::cmd("XTRIM")
-                .arg(self.topic_stream_key(&topic))
-                .arg("MINID")
-                .arg(Self::next_stream_id(&floor))
-                .query(&mut conn)
-                .map_err(map_err)?;
-            removed += n;
+            let stream_key = self.topic_stream_key(&topic);
+            if let Some(floor) = floor {
+                let trimmed: u64 = redis::cmd("XTRIM")
+                    .arg(&stream_key)
+                    .arg("MINID")
+                    .arg(Self::next_stream_id(&floor))
+                    .query(&mut conn)
+                    .map_err(map_err)?;
+                removed += trimmed;
+            }
+            removed += self.xdel_expired(&mut conn, &stream_key, now, limit)?;
         }
         Ok(removed)
+    }
+
+    /// `XDEL` up to `limit` entries in `stream_key` whose `expires_at` field is
+    /// at or before `now`, regardless of any subscription cursor.
+    fn xdel_expired(
+        &self,
+        conn: &mut redis::Connection,
+        stream_key: &str,
+        now: i64,
+        limit: i64,
+    ) -> Result<u64> {
+        let reply: StreamRangeReply = redis::cmd("XRANGE")
+            .arg(stream_key)
+            .arg("-")
+            .arg("+")
+            .arg("COUNT")
+            .arg(limit)
+            .query(conn)
+            .map_err(map_err)?;
+        let expired: Vec<String> = reply
+            .ids
+            .into_iter()
+            .filter(|entry| entry.get::<i64>("expires_at").is_some_and(|at| at <= now))
+            .map(|entry| entry.id)
+            .collect();
+        if expired.is_empty() {
+            return Ok(0);
+        }
+        let deleted: u64 = redis::cmd("XDEL")
+            .arg(stream_key)
+            .arg(&expired)
+            .query(conn)
+            .map_err(map_err)?;
+        Ok(deleted)
     }
 }

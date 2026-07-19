@@ -203,8 +203,15 @@ macro_rules! impl_diesel_pubsub_ops {
                     return Ok(Vec::new());
                 }
                 let mut conn = self.conn()?;
+                // Require a log subscription: a fan-out sub must never read the
+                // log of a mixed topic.
                 let cursor: Option<Option<String>> = topic_subscriptions::table
-                    .find((topic, subscription_name))
+                    .filter(topic_subscriptions::topic.eq(topic))
+                    .filter(topic_subscriptions::subscription_name.eq(subscription_name))
+                    .filter(
+                        topic_subscriptions::mode
+                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                    )
                     .select(topic_subscriptions::cursor)
                     .first(&mut conn)
                     .optional()?;
@@ -235,10 +242,16 @@ macro_rules! impl_diesel_pubsub_ops {
                 cursor: &str,
             ) -> Result<bool> {
                 let mut conn = self.conn()?;
+                // Only a log subscription has a cursor; the mode filter also stops
+                // an ack on a fan-out subscription from writing one.
                 let affected = diesel::update(
                     topic_subscriptions::table
                         .filter(topic_subscriptions::topic.eq(topic))
                         .filter(topic_subscriptions::subscription_name.eq(subscription_name))
+                        .filter(
+                            topic_subscriptions::mode
+                                .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                        )
                         .filter(
                             topic_subscriptions::cursor
                                 .is_null()
