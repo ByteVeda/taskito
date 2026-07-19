@@ -83,10 +83,13 @@ import type {
   WorkerInfo,
   WorkerRunOptions,
 } from "./types";
+import { createLogger } from "./utils";
 import { WebhookManager } from "./webhooks";
 import { type PendingLogConsumer, Worker } from "./worker";
 import { WorkflowManager } from "./workflows";
 import { WorkflowTracker } from "./workflows/tracker";
+
+const log = createLogger("queue");
 
 /** Construction options for a {@link Queue}. */
 export interface QueueOptions {
@@ -371,8 +374,10 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     }
     // Eagerly register the durable cursor; the worker also re-registers it
     // (idempotent) so a late/failed flush can't silently drop deliveries.
-    void this.subscribeLog(topic, name).catch(() => {
-      /* best effort: retried at worker start */
+    void this.subscribeLog(topic, name).catch((error) => {
+      // Best effort — the worker re-asserts this on start. Log so a persistent
+      // failure (bad topic, storage error) isn't invisible until then.
+      log.error(() => `log consumer ${topic}/${name}: eager subscribe failed`, error);
     });
     return this;
   }

@@ -84,7 +84,7 @@ export class Worker {
     private readonly queue: NativeQueue,
     private readonly resources: ResourceRuntime,
     private readonly heartbeat: ReturnType<typeof setInterval>,
-    private readonly consumerTimers: readonly ReturnType<typeof setInterval>[],
+    private readonly consumerStops: readonly (() => void)[],
   ) {}
 
   /**
@@ -309,9 +309,9 @@ export class Worker {
     heartbeat.unref();
 
     // Managed log-topic consumers: one poll loop each, beside the heartbeat.
-    const consumerTimers = startLogConsumers(queue, serializer, params.logConsumers ?? []);
+    const consumerStops = startLogConsumers(queue, serializer, params.logConsumers ?? []);
 
-    return new Worker(native, queue, resources, heartbeat, consumerTimers);
+    return new Worker(native, queue, resources, heartbeat, consumerStops);
   }
 
   /** Stop the worker; in-flight results drain before background tasks exit. */
@@ -322,8 +322,8 @@ export class Worker {
       log.debug(() => "final ephemeral subscription reap failed", error);
     });
     clearInterval(this.heartbeat);
-    for (const timer of this.consumerTimers) {
-      clearInterval(timer);
+    for (const stop of this.consumerStops) {
+      stop();
     }
     this.native.stop();
     // Dispose worker-scoped resources after the native worker quiesces (the
@@ -340,48 +340,65 @@ function startLogConsumers(
   queue: NativeQueue,
   serializer: Serializer,
   consumers: readonly PendingLogConsumer[],
-): ReturnType<typeof setInterval>[] {
-  const timers: ReturnType<typeof setInterval>[] = [];
+): (() => void)[] {
+  const stops: (() => void)[] = [];
   for (const consumer of consumers) {
-    // Skip a tick that overlaps a still-running batch (slow handler / big backlog).
-    let inFlight = false;
-    const poll = (): void => {
-      if (inFlight) {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (delayMs: number): void => {
+      if (stopped) {
         return;
       }
-      inFlight = true;
+      timer = setTimeout(runOnce, delayMs);
+      timer.unref();
+    };
+    // Self-scheduling loop (not a fixed-cadence setInterval): after a batch that
+    // made progress, re-read immediately to drain a backlog; only wait the poll
+    // interval when caught up (empty) or backing off a retry poison.
+    const runOnce = (): void => {
       void drainLogConsumerBatch(queue, serializer, consumer)
+        .then((outcome) => {
+          schedule(outcome === "drained" ? 0 : consumer.pollIntervalMs);
+        })
         .catch((error) => {
           log.error(() => `log consumer ${consumer.topic}/${consumer.name} poll failed`, error);
-        })
-        .finally(() => {
-          inFlight = false;
+          schedule(consumer.pollIntervalMs);
         });
     };
-    const timer = setInterval(poll, consumer.pollIntervalMs);
-    timer.unref();
-    timers.push(timer);
-    poll(); // read immediately rather than waiting a full interval
+    stops.push(() => {
+      stopped = true;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    });
+    runOnce(); // read immediately rather than waiting a full interval
   }
-  return timers;
+  return stops;
 }
 
+/** `empty` = nothing to read (wait the poll interval); `drained` = made progress,
+ *  re-read immediately; `retry-backoff` = a retry-mode handler failure blocked the
+ *  cursor, so wait one interval before re-reading rather than hot-looping. */
+type DrainOutcome = "empty" | "drained" | "retry-backoff";
+
 /** One poll: read a batch, invoke the handler per message, then advance the cursor.
- *  `retry` stops at the first failure and acks only the successes before it (the
- *  batch re-reads next tick); `skip` acks past a failure too. */
+ *  `retry` stops at the first failure and acks only the successes before it (and
+ *  backs off); `skip` acks past a failure and keeps going. Payload decode runs
+ *  inside the per-message guard so a bad payload obeys the same error policy. */
 async function drainLogConsumerBatch(
   queue: NativeQueue,
   serializer: Serializer,
   consumer: PendingLogConsumer,
-): Promise<void> {
+): Promise<DrainOutcome> {
   const messages = await queue.readTopicMessages(consumer.topic, consumer.name, consumer.batchSize);
   if (messages.length === 0) {
-    return;
+    return "empty";
   }
   let lastAcked: string | undefined;
+  let retryFailure = false;
   for (const message of messages) {
-    const args = deserializeCall(serializer, message.payload);
     try {
+      const args = deserializeCall(serializer, message.payload);
       await consumer.handler(...args);
     } catch (error) {
       log.error(
@@ -389,6 +406,7 @@ async function drainLogConsumerBatch(
         error,
       );
       if (consumer.onError === "retry") {
+        retryFailure = true;
         break;
       }
     }
@@ -397,6 +415,7 @@ async function drainLogConsumerBatch(
   if (lastAcked !== undefined) {
     await queue.ackTopicCursor(consumer.topic, consumer.name, lastAcked);
   }
+  return retryFailure ? "retry-backoff" : "drained";
 }
 
 /** Collect per-task configs that actually set something. */
