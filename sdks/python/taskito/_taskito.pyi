@@ -228,6 +228,7 @@ class PyQueue:
         priority: int | None = None,
         max_retries: int | None = None,
         timeout_ms: int | None = None,
+        mode: str = "fanout",
     ) -> None: ...
     def list_subscriptions(
         self, topic: str | None = None
@@ -240,6 +241,13 @@ class PyQueue:
     def topic_backlog_stats(
         self,
     ) -> list[tuple[str, str, str, str, bool, bool, int, int, int, int | None]]: ...
+    def read_topic_messages(
+        self, topic: str, subscription_name: str, limit: int
+    ) -> list[tuple[str, bytes, str | None, str | None, int]]: ...
+    def ack_topic_cursor(self, topic: str, subscription_name: str, cursor: str) -> bool: ...
+    def topic_log_stats(
+        self,
+    ) -> list[tuple[str, str, str | None, int, int | None]]: ...
     def publish(
         self,
         topic: str,
