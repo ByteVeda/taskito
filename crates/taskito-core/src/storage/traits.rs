@@ -301,6 +301,30 @@ pub trait Storage: Send + Sync + Clone {
     /// List every declared topic in the registry.
     fn list_declared_topics(&self) -> Result<Vec<Topic>>;
 
+    // ── Per-message ack (opt-in, log topics) ────────────────────────
+
+    /// Lease up to `limit` available messages of a log topic to `subscription_name`
+    /// for `visibility_ms`, oldest first. "Available" = never delivered, or a
+    /// prior lease that expired (`lease_expires_at <= now`) and was never acked.
+    /// Each leased message's delivery row is upserted (lease extended, `attempts`
+    /// bumped). Unlike the cursor read this tracks per-message state, so a nacked
+    /// or timed-out message is redelivered without blocking its siblings.
+    fn lease_topic_messages(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+        visibility_ms: i64,
+        now: i64,
+    ) -> Result<Vec<TopicMessage>>;
+    /// Ack one leased message — the delivery is done and never redelivered.
+    /// Returns false if there was no un-acked delivery to ack.
+    fn ack_message(&self, topic: &str, subscription_name: &str, message_id: &str) -> Result<bool>;
+    /// Negative-ack one leased message — makes it immediately available for
+    /// redelivery (vs waiting for the visibility timeout). Returns false if there
+    /// was no un-acked delivery to nack.
+    fn nack_message(&self, topic: &str, subscription_name: &str, message_id: &str) -> Result<bool>;
+
     // ── Metrics operations ──────────────────────────────────────────
 
     /// Record one execution measurement for a task.

@@ -160,7 +160,7 @@ itself must match it.
   acking an older/equal id is a no-op (returns `false`). Like a Kafka offset commit,
   the caller is trusted to pass back an id it actually read.
 - Delivery is **at-least-once**: a consumer that reads but dies before acking
-  re-reads those messages. There is no per-message ack.
+  re-reads those messages. The cursor read has no per-message ack (see below).
 - **Retention** is min-cursor compaction: a message is dropped once every log
   subscriber on its topic has acked past it (Diesel deletes `id <= min(cursor)`;
   Redis `XTRIM MINID`). A topic with an unread subscriber keeps its backlog.
@@ -184,6 +184,25 @@ itself must match it.
 - Storage: the Diesel backends use a `topics` table (migration `m0006`); Redis uses
   a `topics` hash keyed by name. A shell surfaces `Topic { name, mode, retention_ms,
   created_at }`.
+**Per-message ack** (`lease_topic_messages`/`ack_message`/`nack_message`):
+- An opt-in **consumption choice** on a `log` subscription (not a registration
+  flag): instead of the cursor read, a consumer *leases* messages and acks/nacks
+  each individually, so a poison message never blocks its siblings.
+- `lease_topic_messages(topic, sub, limit, visibility_ms, now)` returns up to
+  `limit` **available** messages oldest-first — never delivered, or a prior lease
+  that expired (`now`-relative) or was nacked and never acked — and (re)leases
+  each for `visibility_ms`. In-flight (leased, un-expired) messages are skipped.
+- `ack_message` ends a delivery (never redelivered); `nack_message` makes it
+  available immediately (vs waiting out the timeout). Both return `false` when
+  there is no un-acked delivery. An un-acked lease that times out is redelivered.
+- Delivery state lives per `(subscription, message)`: Diesel `topic_deliveries`
+  table (migration `m0007`); Redis a `pmdeliv:<topic>:<sub>` hash mirroring it.
+- **Retention**: Diesel additionally compacts messages every per-message
+  subscriber has acked (on topics consumed purely per-message; a topic that mixes
+  in a cursor subscriber falls back to `expires_at`), and drops the delivery rows
+  of purged messages. Redis per-message topics reclaim via `expires_at`/stream
+  trim only — ack-based compaction is a Diesel refinement (a documented backend
+  difference). A shell only marshals the three calls; the core owns the state.
 
 **Test vector** (assert byte-exact in each shell that salts keys itself):
 key `evt-42`, topic `orders`, subscription `email` →
@@ -214,7 +233,8 @@ Grouped by concern (enumerated, not exhaustive — read the trait):
 - **Dead-letter**: `move_to_dlq`, `list_dead`, `retry_dead`.
 - **Topic pub/sub**: `register_subscription`, `list_subscriptions_for_topic`, `unsubscribe`,
   `publish_message`, `read_topic_messages`, `ack_topic_cursor`, `topic_log_stats`,
-  `declare_topic`, `get_topic`, `list_declared_topics` (see
+  `declare_topic`, `get_topic`, `list_declared_topics`, `lease_topic_messages`,
+  `ack_message`, `nack_message` (see
   [Topic pub/sub](#topic-pubsub-cross-sdk)).
 
 ## Lifecycle the shell drives

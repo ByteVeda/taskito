@@ -8,7 +8,8 @@ use super::records::{
 use super::schema::{
     archived_jobs, circuit_breakers, dashboard_settings, dead_letter, distributed_locks,
     execution_claims, job_dependencies, job_errors, jobs, periodic_tasks, queue_state, rate_limits,
-    replay_history, task_logs, task_metrics, topic_messages, topic_subscriptions, topics, workers,
+    replay_history, task_logs, task_metrics, topic_deliveries, topic_messages, topic_subscriptions,
+    topics, workers,
 };
 
 /// A row in the `jobs` table (for SELECT queries).
@@ -524,6 +525,23 @@ pub struct NewTopicRow<'a> {
     pub mode: &'a str,
     pub retention_ms: Option<i64>,
     pub created_at: i64,
+}
+
+// ── Topic Deliveries (per-message ack) ──────────────────────────
+
+/// Per-`(subscription, message)` delivery state for a per-message log consumer.
+/// `lease_expires_at` bounds an in-flight lease (0 = available for redelivery);
+/// `acked` ends the delivery; `attempts` counts (re)deliveries.
+#[derive(Insertable, Debug)]
+#[diesel(table_name = topic_deliveries)]
+pub struct NewTopicDeliveryRow<'a> {
+    pub topic: &'a str,
+    pub subscription_name: &'a str,
+    pub message_id: &'a str,
+    pub acked: bool,
+    pub attempts: i32,
+    pub lease_expires_at: i64,
+    pub delivered_at: i64,
 }
 
 // ── Distributed Locks ───────────────────────────────────────────

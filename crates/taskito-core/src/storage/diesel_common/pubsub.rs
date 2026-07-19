@@ -352,7 +352,7 @@ macro_rules! impl_diesel_pubsub_ops {
                     .load(&mut conn)?;
                 ids.extend(expired);
 
-                // Then fully-acked messages per topic, within the remaining budget.
+                // Then cursor-fully-acked messages per topic, within the budget.
                 for (topic, floor) in floors {
                     let Some(floor) = floor else { continue };
                     let remaining = limit - ids.len() as i64;
@@ -368,6 +368,78 @@ macro_rules! impl_diesel_pubsub_ops {
                     ids.extend(acked);
                 }
 
+                // Per-message compaction: on a topic consumed purely per-message
+                // (every log sub has delivery rows — mixing with a cursor sub
+                // falls back to expiry-only cleanup), drop the oldest messages
+                // every per-message subscriber has acked. Inlined so it reuses
+                // `conn` — a second pooled connection would deadlock a size-1 pool.
+                let pm_budget = limit - ids.len() as i64;
+                if pm_budget > 0 {
+                    use diesel::dsl::count_star;
+                    use std::collections::HashSet;
+                    // Per-message subscribers per topic (those with delivery rows).
+                    let pm_pairs: Vec<(String, String)> = topic_deliveries::table
+                        .select((topic_deliveries::topic, topic_deliveries::subscription_name))
+                        .distinct()
+                        .load(&mut conn)?;
+                    let mut pm_subs: HashMap<String, HashSet<String>> = HashMap::new();
+                    for (topic, name) in pm_pairs {
+                        pm_subs.entry(topic).or_default().insert(name);
+                    }
+                    // Log subscribers per topic — skip a topic that mixes in a
+                    // cursor reader (a log sub with no delivery rows).
+                    let mut log_by_topic: HashMap<String, Vec<String>> = HashMap::new();
+                    if !pm_subs.is_empty() {
+                        let log_subs: Vec<(String, String)> = topic_subscriptions::table
+                            .filter(
+                                topic_subscriptions::mode
+                                    .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                            )
+                            .select((
+                                topic_subscriptions::topic,
+                                topic_subscriptions::subscription_name,
+                            ))
+                            .load(&mut conn)?;
+                        for (topic, name) in log_subs {
+                            log_by_topic.entry(topic).or_default().push(name);
+                        }
+                    }
+                    for (topic, names) in &pm_subs {
+                        let remaining = limit - ids.len() as i64;
+                        if remaining <= 0 {
+                            break;
+                        }
+                        if let Some(logs) = log_by_topic.get(topic) {
+                            if logs.iter().any(|n| !names.contains(n)) {
+                                continue;
+                            }
+                        }
+                        let sub_count = names.len() as i64;
+                        let candidates: Vec<String> = topic_messages::table
+                            .filter(topic_messages::topic.eq(topic))
+                            .order(topic_messages::id.asc())
+                            .select(topic_messages::id)
+                            .limit(remaining)
+                            .load(&mut conn)?;
+                        if candidates.is_empty() {
+                            continue;
+                        }
+                        let acked_counts: Vec<(String, i64)> = topic_deliveries::table
+                            .filter(topic_deliveries::topic.eq(topic))
+                            .filter(topic_deliveries::message_id.eq_any(&candidates))
+                            .filter(topic_deliveries::acked.eq(true))
+                            .group_by(topic_deliveries::message_id)
+                            .select((topic_deliveries::message_id, count_star()))
+                            .load(&mut conn)?;
+                        let counts: HashMap<String, i64> = acked_counts.into_iter().collect();
+                        for id in candidates {
+                            if counts.get(&id).copied().unwrap_or(0) == sub_count {
+                                ids.push(id);
+                            }
+                        }
+                    }
+                }
+
                 if ids.is_empty() {
                     return Ok(0);
                 }
@@ -376,6 +448,12 @@ macro_rules! impl_diesel_pubsub_ops {
                 let removed =
                     diesel::delete(topic_messages::table.filter(topic_messages::id.eq_any(&ids)))
                         .execute(&mut conn)?;
+                // Drop the delivery rows of the purged messages so per-message
+                // state can't outlive the log it tracks.
+                diesel::delete(
+                    topic_deliveries::table.filter(topic_deliveries::message_id.eq_any(&ids)),
+                )
+                .execute(&mut conn)?;
                 Ok(removed as u64)
             }
 
@@ -397,6 +475,116 @@ macro_rules! impl_diesel_pubsub_ops {
                     .select(TopicRow::as_select())
                     .load::<TopicRow>(&mut conn)?;
                 Ok(rows.into_iter().map(Into::into).collect())
+            }
+
+            /// Lease up to `limit` available messages to `subscription_name` for
+            /// `visibility_ms` (see [`Storage::lease_topic_messages`]). One
+            /// bounded anti-join finds the available messages, then a lease row
+            /// is upserted per message — all in one transaction so a concurrent
+            /// puller can't double-lease.
+            pub fn lease_topic_messages(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                limit: i64,
+                visibility_ms: i64,
+                now: i64,
+            ) -> Result<Vec<$crate::storage::records::TopicMessage>> {
+                if limit <= 0 {
+                    return Ok(Vec::new());
+                }
+                let mut conn = self.conn()?;
+                conn.transaction(|conn| {
+                    // Available = no delivery row (never delivered), or a prior
+                    // lease that expired and was never acked.
+                    let rows: Vec<TopicMessageRow> = topic_messages::table
+                        .left_join(
+                            topic_deliveries::table.on(topic_deliveries::topic
+                                .eq(topic_messages::topic)
+                                .and(topic_deliveries::subscription_name.eq(subscription_name))
+                                .and(topic_deliveries::message_id.eq(topic_messages::id))),
+                        )
+                        .filter(topic_messages::topic.eq(topic))
+                        .filter(
+                            topic_deliveries::message_id
+                                .is_null()
+                                .or(topic_deliveries::acked
+                                    .eq(false)
+                                    .and(topic_deliveries::lease_expires_at.le(now))),
+                        )
+                        .order(topic_messages::id.asc())
+                        .limit(limit)
+                        .select(TopicMessageRow::as_select())
+                        .load(conn)?;
+
+                    let lease_until = now + visibility_ms;
+                    for row in &rows {
+                        let lease = NewTopicDeliveryRow {
+                            topic,
+                            subscription_name,
+                            message_id: &row.id,
+                            acked: false,
+                            attempts: 1,
+                            lease_expires_at: lease_until,
+                            delivered_at: now,
+                        };
+                        diesel::insert_into(topic_deliveries::table)
+                            .values(&lease)
+                            .on_conflict((
+                                topic_deliveries::topic,
+                                topic_deliveries::subscription_name,
+                                topic_deliveries::message_id,
+                            ))
+                            .do_update()
+                            .set((
+                                topic_deliveries::acked.eq(false),
+                                topic_deliveries::attempts.eq(topic_deliveries::attempts + 1),
+                                topic_deliveries::lease_expires_at.eq(lease_until),
+                                topic_deliveries::delivered_at.eq(now),
+                            ))
+                            .execute(conn)?;
+                    }
+                    Ok(rows.into_iter().map(Into::into).collect())
+                })
+            }
+
+            /// Ack one leased message — the delivery is done. Returns false when
+            /// there was no un-acked delivery row to ack.
+            pub fn ack_message(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                message_id: &str,
+            ) -> Result<bool> {
+                let mut conn = self.conn()?;
+                let affected = diesel::update(
+                    topic_deliveries::table
+                        .find((topic, subscription_name, message_id))
+                        .filter(topic_deliveries::acked.eq(false)),
+                )
+                .set(topic_deliveries::acked.eq(true))
+                .execute(&mut conn)?;
+                Ok(affected > 0)
+            }
+
+            /// Nack one leased message — make it immediately available for
+            /// redelivery (`lease_expires_at = 0`). Returns false when there was
+            /// no un-acked delivery row to nack.
+            pub fn nack_message(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                message_id: &str,
+            ) -> Result<bool> {
+                let mut conn = self.conn()?;
+                let affected = diesel::update(
+                    topic_deliveries::table
+                        .find((topic, subscription_name, message_id))
+                        .filter(topic_deliveries::acked.eq(false)),
+                )
+                .set(topic_deliveries::lease_expires_at.eq(0))
+                .execute(&mut conn)?;
+                Ok(affected > 0)
             }
         }
     };

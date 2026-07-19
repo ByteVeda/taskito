@@ -268,4 +268,17 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    topic_deliveries (topic, subscription_name, message_id) {
+        topic -> Text,
+        subscription_name -> Text,
+        message_id -> Text,
+        acked -> Bool,
+        attempts -> Integer,
+        lease_expires_at -> BigInt,
+        delivered_at -> BigInt,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies);
+diesel::allow_tables_to_appear_in_same_query!(topic_messages, topic_deliveries);

@@ -747,6 +747,32 @@ macro_rules! impl_storage {
             ) -> $crate::error::Result<Vec<$crate::storage::records::Topic>> {
                 self.list_declared_topics()
             }
+            fn lease_topic_messages(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                limit: i64,
+                visibility_ms: i64,
+                now: i64,
+            ) -> $crate::error::Result<Vec<$crate::storage::records::TopicMessage>> {
+                self.lease_topic_messages(topic, subscription_name, limit, visibility_ms, now)
+            }
+            fn ack_message(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                message_id: &str,
+            ) -> $crate::error::Result<bool> {
+                self.ack_message(topic, subscription_name, message_id)
+            }
+            fn nack_message(
+                &self,
+                topic: &str,
+                subscription_name: &str,
+                message_id: &str,
+            ) -> $crate::error::Result<bool> {
+                self.nack_message(topic, subscription_name, message_id)
+            }
             fn record_metric(
                 &self,
                 task_name: &str,
@@ -1458,6 +1484,30 @@ impl Storage for StorageBackend {
     }
     fn list_declared_topics(&self) -> Result<Vec<records::Topic>> {
         delegate!(self, list_declared_topics)
+    }
+    fn lease_topic_messages(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+        visibility_ms: i64,
+        now: i64,
+    ) -> Result<Vec<records::TopicMessage>> {
+        delegate!(
+            self,
+            lease_topic_messages,
+            topic,
+            subscription_name,
+            limit,
+            visibility_ms,
+            now
+        )
+    }
+    fn ack_message(&self, topic: &str, subscription_name: &str, message_id: &str) -> Result<bool> {
+        delegate!(self, ack_message, topic, subscription_name, message_id)
+    }
+    fn nack_message(&self, topic: &str, subscription_name: &str, message_id: &str) -> Result<bool> {
+        delegate!(self, nack_message, topic, subscription_name, message_id)
     }
     fn record_metric(
         &self,

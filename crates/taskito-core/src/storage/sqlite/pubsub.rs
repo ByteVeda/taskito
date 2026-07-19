@@ -2,7 +2,7 @@ use diesel::prelude::*;
 
 use super::super::models::*;
 use super::super::records::NewSubscription;
-use super::super::schema::{topic_messages, topic_subscriptions, topics};
+use super::super::schema::{topic_deliveries, topic_messages, topic_subscriptions, topics};
 use super::SqliteStorage;
 use crate::error::Result;
 

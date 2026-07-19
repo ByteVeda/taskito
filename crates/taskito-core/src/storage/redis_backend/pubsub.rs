@@ -834,4 +834,104 @@ impl RedisStorage {
             .map(|(name, json)| Ok(serde_json::from_str::<TopicEntry>(&json)?.into_topic(name)))
             .collect()
     }
+
+    /// Per-message delivery state for a subscription: a hash at
+    /// `pmdeliv:<topic>:<subscription>`, field = message id, value = `"acked"`
+    /// or the lease's `expires_at` (`0` = available for redelivery, e.g. nacked).
+    /// This mirrors the Diesel `topic_deliveries` table so the semantics match.
+    fn pm_deliveries_key(&self, topic: &str, subscription_name: &str) -> String {
+        self.key(&["pmdeliv", topic, subscription_name])
+    }
+
+    /// Lease up to `limit` available messages to `subscription_name` for
+    /// `visibility_ms`. Available = never delivered, or a lease that expired /
+    /// was nacked and never acked. See [`Storage::lease_topic_messages`].
+    pub fn lease_topic_messages(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+        visibility_ms: i64,
+        now: i64,
+    ) -> Result<Vec<TopicMessage>> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let deliv_key = self.pm_deliveries_key(topic, subscription_name);
+        let deliveries: std::collections::HashMap<String, String> =
+            conn.hgetall(&deliv_key).map_err(map_err)?;
+
+        let reply: StreamRangeReply = redis::cmd("XRANGE")
+            .arg(self.topic_stream_key(topic))
+            .arg("-")
+            .arg("+")
+            .query(&mut conn)
+            .map_err(map_err)?;
+
+        let lease_until = now + visibility_ms;
+        let mut out = Vec::new();
+        for entry in reply.ids {
+            if out.len() as i64 >= limit {
+                break;
+            }
+            let available = match deliveries.get(&entry.id) {
+                None => true,
+                Some(state) if state == "acked" => false,
+                // A leased entry: available once its lease has expired (nack = 0).
+                Some(state) => state.parse::<i64>().map(|exp| exp <= now).unwrap_or(true),
+            };
+            if !available {
+                continue;
+            }
+            conn.hset::<_, _, _, ()>(&deliv_key, &entry.id, lease_until)
+                .map_err(map_err)?;
+            out.push(Self::stream_id_to_message(topic, entry));
+        }
+        Ok(out)
+    }
+
+    /// Ack one leased message (delivery done). Returns false when there was no
+    /// un-acked delivery to ack.
+    pub fn ack_message(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        message_id: &str,
+    ) -> Result<bool> {
+        self.set_delivery_state(topic, subscription_name, message_id, "acked")
+    }
+
+    /// Nack one leased message — make it immediately available (`0`). Returns
+    /// false when there was no un-acked delivery to nack.
+    pub fn nack_message(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        message_id: &str,
+    ) -> Result<bool> {
+        self.set_delivery_state(topic, subscription_name, message_id, "0")
+    }
+
+    /// Set a delivery's state, but only when it exists and is not already acked
+    /// (ack/nack are no-ops on an unknown or already-acked delivery).
+    fn set_delivery_state(
+        &self,
+        topic: &str,
+        subscription_name: &str,
+        message_id: &str,
+        state: &str,
+    ) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let deliv_key = self.pm_deliveries_key(topic, subscription_name);
+        let current: Option<String> = conn.hget(&deliv_key, message_id).map_err(map_err)?;
+        match current {
+            Some(v) if v != "acked" => {
+                conn.hset::<_, _, _, ()>(&deliv_key, message_id, state)
+                    .map_err(map_err)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
 }
