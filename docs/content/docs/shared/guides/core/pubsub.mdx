@@ -515,20 +515,22 @@ its entire backlog; nothing is dropped just because it's old.
 
 ## Operational notes
 
-- **A down durable subscriber doesn't lose messages.** Its deliveries just
+- **A down fan-out subscriber doesn't lose messages.** Its deliveries just
   accumulate as ordinary pending jobs in its queue until a worker resumes
   consuming it — the same backlog you'd see from any other stalled queue, and
-  visible the same way (`stats()`, the dashboard).
+  visible the same way (`stats()`, the dashboard). (A down log subscriber is
+  the same story from the other side: its cursor just stops advancing.)
 - **Fan-out retention is normal job retention.** A fan-out delivery is
   purged, replayed, or expired exactly like any other job, via `result_ttl`,
   `purge_completed()`, and the dead-letter queue. Log topics are the
   exception — see "Retention compacts, it doesn't expire" under Log topics
   above.
-- **Publish multiplies writes by subscriber count.** A topic with 20 active
-  subscribers turns every `publish()` call into 20 job rows. For a high-fanout
-  topic, set an aggressive `result_ttl` on the publish (or on the subscriber
-  tasks themselves) so completed deliveries don't pile up in storage between
-  cleanup passes.
+- **Fan-out publish multiplies writes by subscriber count.** A fan-out topic
+  with 20 active subscribers turns every `publish()` call into 20 job rows. For
+  a high-fanout topic, set an aggressive `result_ttl` on the publish (or on the
+  subscriber tasks themselves) so completed deliveries don't pile up in storage
+  between cleanup passes. (A log topic writes one row per publish regardless of
+  subscriber count — this multiplication is a fan-out property only.)
 
 ## See also
 
