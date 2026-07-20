@@ -8,9 +8,6 @@ plugins {
     id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
-group = "org.byteveda"
-version = "0.20.0"
-
 mavenPublishing {
     publishToMavenCentral()
     signAllPublications()

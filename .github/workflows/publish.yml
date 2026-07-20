@@ -47,15 +47,13 @@ jobs:
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Verify version matches codebase
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          version="${{ steps.resolve.outputs.version }}"
-          pyproject_ver=$(python3 -c "
-          import re, pathlib
-          m = re.search(r'^version\s*=\s*\"(.+?)\"', pathlib.Path('sdks/python/pyproject.toml').read_text(), re.M)
-          print(m.group(1))
-          ")
-          if [ "$pyproject_ver" != "$version" ]; then
-            echo "::error::Input version ${version} != pyproject.toml version ${pyproject_ver}"
+          node scripts/version.mjs --check
+          repo_version="$(node scripts/version.mjs --current)"
+          if [ "$repo_version" != "$VERSION" ]; then
+            echo "::error::Requested ${VERSION} but the repo declares ${repo_version}"
             exit 1
           fi
 

@@ -97,6 +97,17 @@ jobs:
           decide node "$NODE"
           decide java "$JAVA"
 
+  versions:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    # Unfiltered: the version spans every suite, and the check costs seconds.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Every manifest agrees on one version
+        run: node scripts/version.mjs --check
+
   rust:
     name: Rust
     needs: changes
@@ -124,7 +135,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [changes, rust, python, node, java]
+    needs: [changes, versions, rust, python, node, java]
     runs-on: ubuntu-latest
     steps:
       - name: Check that no required job failed

@@ -53,9 +53,10 @@ jobs:
             echo "::error::Invalid version format: ${version}"
             exit 1
           fi
-          gradle_ver=$(grep -oP '^version = "\K[^"]+' sdks/java/build.gradle.kts)
-          if [ "$gradle_ver" != "$version" ]; then
-            echo "::error::Resolved ${version} != sdks/java/build.gradle.kts ${gradle_ver}"
+          node scripts/version.mjs --check
+          repo_version="$(node scripts/version.mjs --current)"
+          if [ "$repo_version" != "$version" ]; then
+            echo "::error::Resolved ${version} but the repo declares ${repo_version}"
             exit 1
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"

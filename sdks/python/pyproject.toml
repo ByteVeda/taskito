@@ -4,7 +4,9 @@ build-backend = "maturin"
 
 [project]
 name = "taskito"
-version = "0.20.0"
+# maturin reads the version off the crate at `tool.maturin.manifest-path`, so
+# the wheel can never drift from the Rust core it wraps.
+dynamic = ["version"]
 description = "Rust-powered task queue for Python. No broker required."
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
