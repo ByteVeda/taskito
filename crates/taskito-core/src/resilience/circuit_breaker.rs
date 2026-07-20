@@ -50,20 +50,22 @@ pub struct CircuitBreakerConfig {
     pub half_open_success_rate: f64,
 }
 
-/// Circuit breaker manager backed by SQLite.
-pub struct CircuitBreaker {
+/// Circuit breaker manager backed by SQLite. In-crate only: consumed solely by
+/// `Scheduler`; the config/state contract is exposed via `CircuitBreakerConfig`
+/// and `CircuitState`.
+pub(crate) struct CircuitBreaker {
     storage: StorageBackend,
 }
 
 impl CircuitBreaker {
     /// Build a breaker manager over `storage`.
-    pub fn new(storage: StorageBackend) -> Self {
+    pub(crate) fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }
 
     /// Check if a task is allowed to execute. Returns true if allowed.
     /// Transitions Open -> HalfOpen after cooldown.
-    pub fn allow(&self, task_name: &str) -> Result<bool> {
+    pub(crate) fn allow(&self, task_name: &str) -> Result<bool> {
         let row = match self.storage.get_circuit_breaker(task_name)? {
             Some(r) => r,
             None => return Ok(true), // No breaker configured = always allow
@@ -125,7 +127,7 @@ impl CircuitBreaker {
 
     /// Record a task success. In HalfOpen, tracks probes and closes when
     /// the success rate threshold is met.
-    pub fn record_success(&self, task_name: &str) -> Result<()> {
+    pub(crate) fn record_success(&self, task_name: &str) -> Result<()> {
         let row = match self.storage.get_circuit_breaker(task_name)? {
             Some(r) => r,
             None => return Ok(()),
@@ -197,7 +199,7 @@ impl CircuitBreaker {
     }
 
     /// Record a task failure. May trip the breaker open.
-    pub fn record_failure(&self, task_name: &str) -> Result<()> {
+    pub(crate) fn record_failure(&self, task_name: &str) -> Result<()> {
         let now = now_millis();
 
         let row = match self.storage.get_circuit_breaker(task_name)? {
@@ -295,7 +297,7 @@ impl CircuitBreaker {
     }
 
     /// Register a circuit breaker for a task (idempotent).
-    pub fn register(&self, task_name: &str, config: &CircuitBreakerConfig) -> Result<()> {
+    pub(crate) fn register(&self, task_name: &str, config: &CircuitBreakerConfig) -> Result<()> {
         if self.storage.get_circuit_breaker(task_name)?.is_some() {
             return Ok(());
         }

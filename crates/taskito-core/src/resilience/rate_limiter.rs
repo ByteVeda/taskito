@@ -1,8 +1,9 @@
 use crate::error::Result;
 use crate::storage::{Storage, StorageBackend};
 
-/// Token bucket rate limiter backed by SQLite for persistence.
-pub struct RateLimiter {
+/// Token bucket rate limiter backed by SQLite for persistence. In-crate only:
+/// consumed solely by `Scheduler`; the config contract is `RateLimitConfig`.
+pub(crate) struct RateLimiter {
     storage: StorageBackend,
 }
 
@@ -40,14 +41,14 @@ impl RateLimitConfig {
 
 impl RateLimiter {
     /// Build a rate limiter over `storage`.
-    pub fn new(storage: StorageBackend) -> Self {
+    pub(crate) fn new(storage: StorageBackend) -> Self {
         Self { storage }
     }
 
     /// Try to acquire a token for the given key.
     /// Returns `true` if the token was acquired, `false` if rate limited.
     /// Uses an atomic transaction to prevent race conditions.
-    pub fn try_acquire(&self, key: &str, config: &RateLimitConfig) -> Result<bool> {
+    pub(crate) fn try_acquire(&self, key: &str, config: &RateLimitConfig) -> Result<bool> {
         self.storage
             .try_acquire_token(key, config.max_tokens, config.refill_rate)
     }
