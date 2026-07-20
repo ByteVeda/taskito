@@ -588,6 +588,11 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
    * worker startup; call it explicitly in a producer-only process (one that
    * registers subscribers but never runs a worker) so `publish()` sees them.
    * Ephemeral subscriptions are skipped — they need an owning worker.
+   *
+   * Managed log consumers are flushed too: `logConsumer()` registers their
+   * cursor eagerly but does not await it, and `publish()` only retains a log
+   * message once the log subscription exists. Awaiting this before the first
+   * publish is what makes that retention deterministic.
    */
   async declareSubscriptions(): Promise<void> {
     for (const subscription of this.pendingSubscriptions) {
@@ -595,6 +600,7 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
         await this.registerSubscription(subscription, undefined);
       }
     }
+    await this.declareLogConsumers();
   }
 
   /** Remove a subscription. Resolves false if none matched. */
@@ -768,8 +774,12 @@ export class Queue<TTasks extends TaskMap = TaskMap> {
     for (const subscription of this.pendingSubscriptions) {
       await this.registerSubscription(subscription, subscription.durable ? undefined : workerId);
     }
-    // Re-assert managed consumers' durable log subscriptions (idempotent) in case
-    // the eager registration in logConsumer() lost a race or failed.
+    await this.declareLogConsumers();
+  }
+
+  /** Re-assert managed consumers' durable log subscriptions (idempotent) in case
+   *  the eager registration in logConsumer() lost a race or failed. */
+  private async declareLogConsumers(): Promise<void> {
     for (const consumer of this.pendingLogConsumers) {
       await this.subscribeLog(consumer.topic, consumer.name);
     }
