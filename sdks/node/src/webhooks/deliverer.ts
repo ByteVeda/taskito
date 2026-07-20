@@ -1,7 +1,9 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { EventName, OutcomeEvent } from "../events";
 import { createLogger } from "../utils";
+import { UnsafeWebhookUrlError } from "./errors";
 import type { Delivery, Webhook } from "./types";
+import { assertSafeWebhookUrl } from "./urlSafety";
 
 const MAX_RECENT = 100;
 const MAX_BACKOFF_MS = 30_000;
@@ -34,19 +36,42 @@ export class Deliverer {
     let responseCode: number | null = null;
     let responseBody: string | null = null;
     let error: string | undefined;
+    // Set when delivery is refused on policy grounds — retrying cannot help.
+    let nonRetryable = false;
     while (attempts <= webhook.maxRetries) {
+      try {
+        // Re-check before every attempt: a host that was safe at registration
+        // may have been rebound to a private address since (or between retries).
+        await assertSafeWebhookUrl(webhook.url);
+      } catch (cause) {
+        if (!(cause instanceof UnsafeWebhookUrlError)) {
+          throw cause;
+        }
+        responseCode = null;
+        responseBody = null;
+        error = cause.message;
+        nonRetryable = true;
+        break;
+      }
       attempts += 1;
       try {
         const response = await fetch(webhook.url, {
           method: "POST",
           headers,
           body,
+          // Following redirects would let a 302 walk past the SSRF guard.
+          redirect: "manual",
           signal: AbortSignal.timeout(webhook.timeoutMs),
         });
         responseCode = response.status;
         responseBody = await readBody(response);
         if (response.ok) {
           error = undefined;
+          break;
+        }
+        if (response.status >= 300 && response.status < 400) {
+          error = `redirect not followed (HTTP ${response.status})`;
+          nonRetryable = true;
           break;
         }
         error = `HTTP ${response.status}`;
@@ -66,8 +91,9 @@ export class Deliverer {
       id: randomUUID(),
       webhookId: webhook.id,
       event,
-      // The retry chain is inline, so a non-delivered outcome is `dead`.
-      status: ok ? "delivered" : "dead",
+      // The retry chain is inline: a refused delivery is `failed` (retrying
+      // cannot help), anything else that never landed is `dead`.
+      status: ok ? "delivered" : nonRetryable ? "failed" : "dead",
       ok,
       attempts,
       payload: payloadRecord,

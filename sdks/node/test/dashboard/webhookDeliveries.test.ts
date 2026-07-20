@@ -10,6 +10,9 @@ import { afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { seedAdminAndSession } from "../../src/dashboard/testing";
 import { Queue, serveDashboard } from "../../src/index";
 
+// These deliveries target a loopback receiver, which the SSRF guard blocks by default.
+process.env.TASKITO_WEBHOOKS_ALLOW_PRIVATE = "1";
+
 const pkgRoot = fileURLToPath(new URL("../..", import.meta.url));
 const staticDir = join(pkgRoot, "static", "dashboard");
 

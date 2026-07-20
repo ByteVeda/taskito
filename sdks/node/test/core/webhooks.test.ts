@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { Queue, WebhookValidationError, type Worker } from "../../src/index";
 
+// These deliveries target a loopback receiver, which the SSRF guard blocks by default.
+process.env.TASKITO_WEBHOOKS_ALLOW_PRIVATE = "1";
+
 let worker: Worker | undefined;
 let target: Server | undefined;
 
@@ -84,9 +87,7 @@ it("creates, lists, and deletes webhooks", () => {
 it("rejects malformed webhook definitions before persisting", () => {
   const queue = newQueue();
   expect(() => queue.webhooks.create({ url: "", events: [] })).toThrow(WebhookValidationError);
-  expect(() => queue.webhooks.create({ url: "not-a-url", events: [] })).toThrow(
-    /invalid webhook url/,
-  );
+  expect(() => queue.webhooks.create({ url: "not-a-url", events: [] })).toThrow(/not a valid URL/);
   expect(() =>
     queue.webhooks.create({ url: "https://x.test", events: [], maxRetries: -1 }),
   ).toThrow(/maxRetries/);
