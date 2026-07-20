@@ -9,6 +9,12 @@ on:
     # Weekly scan so advisories added after merge still catch regressions.
     - cron: "0 6 * * 1"
 
+# Cancel superseded PR scans only; master and scheduled scans must finish so
+# their alerts still reach the security dashboard.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
