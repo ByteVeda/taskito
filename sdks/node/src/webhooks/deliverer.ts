@@ -1,9 +1,12 @@
 import { createHmac, randomUUID } from "node:crypto";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import type { LookupFunction } from "node:net";
 import type { EventName, OutcomeEvent } from "../events";
 import { createLogger } from "../utils";
 import { UnsafeWebhookUrlError } from "./errors";
 import type { Delivery, Webhook } from "./types";
-import { assertSafeWebhookUrl } from "./urlSafety";
+import { assertSafeWebhookUrl, createSafeLookup } from "./urlSafety";
 
 const MAX_RECENT = 100;
 const MAX_BACKOFF_MS = 30_000;
@@ -14,6 +17,7 @@ const log = createLogger("webhooks");
 /** Signs and POSTs webhook payloads with retries; keeps a recent-delivery log. */
 export class Deliverer {
   private readonly recent: Delivery[] = [];
+  private readonly safeLookup = createSafeLookup();
 
   recentFor(webhookId: string): Delivery[] {
     return this.recent.filter((delivery) => delivery.webhookId === webhookId);
@@ -55,20 +59,19 @@ export class Deliverer {
       }
       attempts += 1;
       try {
-        const response = await fetch(webhook.url, {
-          method: "POST",
+        const response = await post(webhook.url, {
           headers,
           body,
-          // Following redirects would let a 302 walk past the SSRF guard.
-          redirect: "manual",
-          signal: AbortSignal.timeout(webhook.timeoutMs),
+          timeoutMs: webhook.timeoutMs,
+          lookup: this.safeLookup,
         });
         responseCode = response.status;
-        responseBody = await readBody(response);
-        if (response.ok) {
+        responseBody = response.body;
+        if (response.status >= 200 && response.status < 300) {
           error = undefined;
           break;
         }
+        // Redirects are never followed — one could point past the SSRF guard.
         if (response.status >= 300 && response.status < 400) {
           error = `redirect not followed (HTTP ${response.status})`;
           nonRetryable = true;
@@ -79,6 +82,12 @@ export class Deliverer {
         responseCode = null;
         responseBody = null;
         error = cause instanceof Error ? cause.message : String(cause);
+        // The address the socket resolved to is blocked; retrying re-resolves
+        // to the same place.
+        if (cause instanceof UnsafeWebhookUrlError) {
+          nonRetryable = true;
+          break;
+        }
       }
       if (attempts <= webhook.maxRetries) {
         await sleep(backoff(attempts));
@@ -120,13 +129,67 @@ export class Deliverer {
   }
 }
 
+interface PostOptions {
+  headers: Record<string, string>;
+  body: string;
+  timeoutMs: number;
+  /** Resolver for the destination; rejects addresses the guard blocks. */
+  lookup: LookupFunction;
+}
+
+interface PostResult {
+  status: number;
+  body: string | null;
+}
+
+/**
+ * POST `body` to `url` over `node:http(s)` rather than `fetch`.
+ *
+ * The core HTTP client takes a `lookup`, which is what lets the SSRF guard
+ * decide the address the socket dials, and it never follows redirects, so a
+ * `3xx` surfaces as itself on every runtime.
+ */
+function post(url: string, options: PostOptions): Promise<PostResult> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const send = target.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = send(
+      target,
+      {
+        method: "POST",
+        headers: {
+          ...options.headers,
+          "content-length": Buffer.byteLength(options.body).toString(),
+        },
+        lookup: options.lookup,
+      },
+      (response) => {
+        readBody(response).then((text) =>
+          resolve({ status: response.statusCode ?? 0, body: text }),
+        );
+      },
+    );
+    request.setTimeout(options.timeoutMs, () => {
+      request.destroy(new Error(`timed out after ${options.timeoutMs}ms`));
+    });
+    request.on("error", reject);
+    request.end(options.body);
+  });
+}
+
 /** Read a response body for the delivery log, truncated; `null` if unreadable. */
-async function readBody(response: Response): Promise<string | null> {
-  try {
-    return (await response.text()).slice(0, MAX_RESPONSE_BODY_CHARS);
-  } catch {
-    return null;
-  }
+function readBody(response: IncomingMessage): Promise<string | null> {
+  return new Promise((resolve) => {
+    let text = "";
+    response.setEncoding("utf8");
+    response.on("data", (chunk: string) => {
+      if (text.length < MAX_RESPONSE_BODY_CHARS) {
+        text += chunk;
+      }
+    });
+    response.on("end", () => resolve(text.slice(0, MAX_RESPONSE_BODY_CHARS)));
+    response.on("error", () => resolve(null));
+  });
 }
 
 /** Strip credentials and query string from a URL before logging it. */

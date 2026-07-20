@@ -1,5 +1,5 @@
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import { UnsafeWebhookUrlError } from "./errors";
 
 /**
@@ -110,6 +110,41 @@ export async function assertSafeWebhookUrl(raw: string, options?: UrlSafetyOptio
   for (const { address } of resolved) {
     assertAddressAllowed(address, hostname);
   }
+}
+
+/**
+ * A `net.LookupFunction` that fails the connection when the host resolves to a
+ * blocked address.
+ *
+ * {@link assertSafeWebhookUrl} validates one DNS answer, but the transport
+ * resolves the name again when it dials, leaving a rebinding window between the
+ * two. Handing this lookup to the request closes it: the address the socket
+ * actually connects to is the address that was checked, and the original
+ * hostname still drives the Host header and TLS SNI.
+ */
+export function createSafeLookup(options?: UrlSafetyOptions): LookupFunction {
+  return (hostname, lookupOptions, callback) => {
+    lookup(hostname, { ...lookupOptions, all: true, verbatim: true })
+      .then((addresses) => {
+        if (!allowPrivate(options)) {
+          for (const { address } of addresses) {
+            assertAddressAllowed(address, hostname);
+          }
+        }
+        if (lookupOptions.all) {
+          callback(null, addresses as never);
+          return;
+        }
+        const first = addresses[0];
+        if (!first) {
+          throw new UnsafeWebhookUrlError(`could not resolve webhook host ${hostname}`);
+        }
+        callback(null, first.address as never, first.family);
+      })
+      .catch((cause: unknown) => {
+        callback(cause instanceof Error ? cause : new Error(String(cause)), "", 0);
+      });
+  };
 }
 
 /** Whether the guard is disabled, from the option or the environment. */

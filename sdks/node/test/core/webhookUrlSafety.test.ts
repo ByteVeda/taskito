@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   assertSafeWebhookUrl,
   assertSafeWebhookUrlSync,
+  createSafeLookup,
   Queue,
   UnsafeWebhookUrlError,
   WebhookValidationError,
@@ -96,6 +97,21 @@ it("checks literal addresses on the async path too", async () => {
   );
   process.env[ALLOW_ENV_VAR] = "1";
   await expect(assertSafeWebhookUrl("http://192.168.1.10/hook")).resolves.toBeUndefined();
+});
+
+it("fails the connect-time lookup for a name that resolves to a blocked address", async () => {
+  const safeLookup = createSafeLookup();
+  const error = await new Promise<Error | null>((resolve) => {
+    // "localhost" resolves through the hosts file, so no network is needed.
+    safeLookup("localhost", { all: true }, (cause) => resolve(cause));
+  });
+  expect(error).toBeInstanceOf(UnsafeWebhookUrlError);
+
+  process.env[ALLOW_ENV_VAR] = "1";
+  const bypassed = await new Promise<Error | null>((resolve) => {
+    createSafeLookup()("localhost", { all: true }, (cause) => resolve(cause));
+  });
+  expect(bypassed).toBeNull();
 });
 
 it("refuses to register a webhook pointed at the metadata service", () => {
