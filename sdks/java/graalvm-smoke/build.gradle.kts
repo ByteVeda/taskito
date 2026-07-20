@@ -8,9 +8,6 @@ plugins {
     id("org.graalvm.buildtools.native") version "0.10.6"
 }
 
-group = "org.byteveda"
-version = "0.20.0"
-
 repositories {
     mavenCentral()
 }
