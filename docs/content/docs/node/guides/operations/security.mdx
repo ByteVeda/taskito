@@ -41,13 +41,23 @@ const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest
 // timing-safe compare against the x-taskito-signature header
 ```
 
-The deliverer fetches the configured URL directly — there is **no built-in SSRF
-(server-side request forgery) guard**. Only register webhook URLs you control.
-Treat any user-provided URL as untrusted: enforce an egress allowlist, reject
-private, loopback, link-local, and cloud-metadata ranges (including their IPv6
-forms), re-resolve and re-validate the address immediately before delivery so
-DNS rebinding and redirects can't swap in an internal target, and apply a strict
-request timeout.
+Delivery targets are checked against an **SSRF (server-side request forgery)
+guard**. A URL must be `http`/`https` with a host, and the host must not be a
+local-only name (`localhost`, `*.internal`, `*.local`, …) or resolve to a
+loopback, unspecified, RFC1918, CGNAT, link-local (including
+`169.254.169.254`), multicast, reserved, or IPv6 unique-local address. The check
+runs when a subscription is registered and again before **every delivery
+attempt**, so a name rebound after registration is caught, and redirects are
+never followed — a `3xx` ends the attempt-chain instead of walking past the
+guard. A blocked delivery is recorded with status `failed` and is not retried.
+
+```bash
+TASKITO_WEBHOOKS_ALLOW_PRIVATE=1   # disable the guard for local development
+```
+
+A residual race remains between the resolve and the socket connect. For
+user-supplied URLs, keep an egress allowlist in front of the worker and a strict
+delivery timeout (`timeoutMs`).
 
 ## Dashboard
 
@@ -70,7 +80,8 @@ can't be framed), and `Referrer-Policy: same-origin`.
 - [ ] Storage reachable only from trusted services, on a private network.
 - [ ] Enqueue behind your own authn/authz — never expose storage to clients.
 - [ ] No secrets in task args; fetch them inside the handler.
-- [ ] Webhook receivers verify the HMAC signature; webhook URLs are trusted.
+- [ ] Webhook receivers verify the HMAC signature, and
+      `TASKITO_WEBHOOKS_ALLOW_PRIVATE` is unset in production.
 - [ ] Dashboard auth enabled (`authEnabled: true` / `--auth`), and the port
       bound to localhost or behind auth.
 - [ ] Logs don't echo sensitive payloads (use `onEnqueue` to
