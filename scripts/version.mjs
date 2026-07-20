@@ -143,13 +143,28 @@ function set(next) {
   console.log(`\nAdd a \`## ${next}\` section to CHANGELOG.md to complete the bump.`);
 }
 
+const USAGE = `Keep one version across the repo, sourced from ${SOURCE.file}.
+
+usage: node scripts/version.mjs <command>
+
+  --check           verify every manifest agrees; exits 1 on drift (CI gate)
+  --current         print the version the repo declares
+  --set <version>   rewrite the source and every mirror
+  --help            show this message
+
+Mirrors rewritten by --set:
+  ${MIRRORS.map((mirror) => `${mirror.file} (${mirror.label})`).join("\n  ")}
+
+${CHANGELOG.file} is checked but never written — add its \`## <version>\` section by hand.`;
+
 const [command, argument] = process.argv.slice(2);
 try {
   if (command === "--check") check();
   else if (command === "--current") console.log(sourceVersion());
   else if (command === "--set" && argument) set(argument);
+  else if (command === "--help" || command === "-h") console.log(USAGE);
   else {
-    console.error("usage: version.mjs --check | --current | --set <version>");
+    console.error(USAGE);
     process.exit(2);
   }
 } catch (error) {

@@ -9,6 +9,17 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(`Regenerate the docs changelog page and version constant from CHANGELOG.md.
+
+usage: node scripts/sync-changelog.mjs
+
+Takes no options. Writes docs/content/docs/resources/changelog.mdx and
+docs/app/lib/version.ts; both are generated — edit CHANGELOG.md instead.
+Runs automatically before \`docs\` dev/build.`);
+  process.exit(0);
+}
+
 const repoRoot = new URL("../", import.meta.url);
 const source = fileURLToPath(new URL("CHANGELOG.md", repoRoot));
 const target = fileURLToPath(
