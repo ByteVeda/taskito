@@ -109,6 +109,70 @@ impl JsQueue {
         .map_err(join_to_napi_err)?
     }
 
+    /// Lease up to `limit` available messages for `visibility_ms`, tracking
+    /// per-message state so a nack or lease timeout redelivers just that message.
+    /// `now` is computed here so the SDK never passes a clock.
+    #[napi]
+    pub async fn lease_topic_messages(
+        &self,
+        topic: String,
+        subscription_name: String,
+        limit: i64,
+        visibility_ms: i64,
+    ) -> Result<Vec<JsTopicMessage>> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            let messages = storage
+                .lease_topic_messages(
+                    &topic,
+                    &subscription_name,
+                    limit,
+                    visibility_ms,
+                    now_millis(),
+                )
+                .map_err(to_napi_err)?;
+            Ok(messages.into_iter().map(topic_message_to_js).collect())
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Ack one leased message — done, never redelivered. False if nothing to ack.
+    #[napi]
+    pub async fn ack_message(
+        &self,
+        topic: String,
+        subscription_name: String,
+        message_id: String,
+    ) -> Result<bool> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .ack_message(&topic, &subscription_name, &message_id)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
+    /// Nack one leased message — redeliver it now. False if nothing to nack.
+    #[napi]
+    pub async fn nack_message(
+        &self,
+        topic: String,
+        subscription_name: String,
+        message_id: String,
+    ) -> Result<bool> {
+        let storage = self.storage.clone();
+        spawn_blocking(move || {
+            storage
+                .nack_message(&topic, &subscription_name, &message_id)
+                .map_err(to_napi_err)
+        })
+        .await
+        .map_err(join_to_napi_err)?
+    }
+
     /// Lag snapshot per log subscription.
     #[napi]
     pub async fn topic_log_stats(&self) -> Result<Vec<JsTopicLogStat>> {

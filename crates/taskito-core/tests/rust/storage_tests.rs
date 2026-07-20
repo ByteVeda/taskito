@@ -1427,6 +1427,84 @@ fn test_topic_log_purge(s: &impl Storage) {
     );
 }
 
+fn payloads(msgs: &[taskito_core::storage::records::TopicMessage]) -> Vec<Vec<u8>> {
+    msgs.iter().map(|m| m.payload.clone()).collect()
+}
+
+fn test_per_message_ack(s: &impl Storage) {
+    let topic = "pm-ack";
+    s.register_subscription(&log_sub(topic, "w")).unwrap();
+    let now = now_millis();
+    let vis = 60_000;
+    let m0 = s.publish_message(topic, b"m0", None, None, None).unwrap();
+    let m1 = s.publish_message(topic, b"m1", None, None, None).unwrap();
+    let _m2 = s.publish_message(topic, b"m2", None, None, None).unwrap();
+
+    // Lease 2 (m0, m1). A second lease within the window returns only m2 — the
+    // in-flight ones are not re-leased.
+    assert_eq!(
+        payloads(&s.lease_topic_messages(topic, "w", 2, vis, now).unwrap()),
+        vec![b"m0".to_vec(), b"m1".to_vec()]
+    );
+    assert_eq!(
+        payloads(&s.lease_topic_messages(topic, "w", 10, vis, now).unwrap()),
+        vec![b"m2".to_vec()]
+    );
+
+    // Ack m0 (done forever); nack m1 (available now). Acking m0 again is a no-op.
+    assert!(s.ack_message(topic, "w", &m0.id).unwrap());
+    assert!(s.nack_message(topic, "w", &m1.id).unwrap());
+    assert!(!s.ack_message(topic, "w", &m0.id).unwrap());
+
+    // Within the window: only the nacked m1 comes back (m0 acked, m2 in-flight).
+    assert_eq!(
+        payloads(&s.lease_topic_messages(topic, "w", 10, vis, now).unwrap()),
+        vec![b"m1".to_vec()]
+    );
+
+    // After the visibility timeout: every un-acked lease (m1, m2) is redelivered
+    // oldest-first; the acked m0 never returns.
+    let later = now + vis + 1;
+    let redelivered = s.lease_topic_messages(topic, "w", 10, vis, later).unwrap();
+    assert_eq!(payloads(&redelivered), vec![b"m1".to_vec(), b"m2".to_vec()]);
+
+    // Drain the topic so its acked deliveries don't get compacted by a later
+    // test's (globally-scanning) purge.
+    for m in &redelivered {
+        assert!(s.ack_message(topic, "w", &m.id).unwrap());
+    }
+    s.purge_topic_messages(later, 100).unwrap();
+    s.unsubscribe(topic, "w").unwrap();
+}
+
+fn test_per_message_purge(s: &impl Storage) {
+    let topic = "pm-purge";
+    s.register_subscription(&log_sub(topic, "w")).unwrap();
+    let now = now_millis();
+    let vis = 60_000;
+    let m0 = s.publish_message(topic, b"m0", None, None, None).unwrap();
+    let m1 = s.publish_message(topic, b"m1", None, None, None).unwrap();
+
+    // Lease both; ack only m0. A purge compacts the message every per-message
+    // subscriber acked (m0); the un-acked m1 survives.
+    s.lease_topic_messages(topic, "w", 10, vis, now).unwrap();
+    assert!(s.ack_message(topic, "w", &m0.id).unwrap());
+    assert_eq!(s.purge_topic_messages(now, 100).unwrap(), 1);
+
+    // m0 is gone (delivery row too); past the timeout only m1 redelivers.
+    let later = now + vis + 1;
+    assert_eq!(
+        payloads(&s.lease_topic_messages(topic, "w", 10, vis, later).unwrap()),
+        vec![b"m1".to_vec()]
+    );
+
+    // Acking m1 lets the next purge drain the topic.
+    assert!(s.ack_message(topic, "w", &m1.id).unwrap());
+    assert_eq!(s.purge_topic_messages(later, 100).unwrap(), 1);
+
+    s.unsubscribe(topic, "w").unwrap();
+}
+
 fn test_enqueue_unique_batch(s: &impl Storage) {
     let q = "q-eub";
     let keyed = |uk: &str| {
@@ -1518,6 +1596,8 @@ fn run_storage_tests(s: &impl Storage) {
     test_topic_log_messages(s);
     test_topic_log_purge(s);
     test_topic_registry(s);
+    test_per_message_ack(s);
+    test_per_message_purge(s);
     test_circuit_breakers(s);
     test_execution_claims_purge(s);
     test_reap_stale_jobs(s);

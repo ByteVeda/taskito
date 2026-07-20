@@ -187,6 +187,60 @@ impl PyQueue {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Lease up to `limit` available messages for `visibility_ms`, tracking
+    /// per-message state so a nack or lease timeout redelivers just that message.
+    /// Returns `(id, payload, metadata, notes, created_at)` tuples.
+    pub fn lease_topic_messages(
+        &self,
+        py: Python<'_>,
+        topic: &str,
+        subscription_name: &str,
+        limit: i64,
+        visibility_ms: i64,
+    ) -> PyResult<Vec<TopicMessageTuple>> {
+        let storage = &self.storage;
+        Ok(py
+            .detach(|| {
+                storage.lease_topic_messages(
+                    topic,
+                    subscription_name,
+                    limit,
+                    visibility_ms,
+                    now_millis(),
+                )
+            })
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            .into_iter()
+            .map(|m| (m.id, m.payload, m.metadata, m.notes, m.created_at))
+            .collect())
+    }
+
+    /// Ack one leased message — done, never redelivered. False if nothing to ack.
+    pub fn ack_message(
+        &self,
+        py: Python<'_>,
+        topic: &str,
+        subscription_name: &str,
+        message_id: &str,
+    ) -> PyResult<bool> {
+        let storage = &self.storage;
+        py.detach(|| storage.ack_message(topic, subscription_name, message_id))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Nack one leased message — redeliver it now. False if nothing to nack.
+    pub fn nack_message(
+        &self,
+        py: Python<'_>,
+        topic: &str,
+        subscription_name: &str,
+        message_id: &str,
+    ) -> PyResult<bool> {
+        let storage = &self.storage;
+        py.detach(|| storage.nack_message(topic, subscription_name, message_id))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Per-log-subscription lag snapshot:
     /// `(topic, subscription, cursor, lag, oldest_unacked_age_ms)`.
     pub fn topic_log_stats(&self, py: Python<'_>) -> PyResult<Vec<TopicLogStatsTuple>> {

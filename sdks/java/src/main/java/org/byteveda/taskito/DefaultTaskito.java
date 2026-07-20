@@ -913,19 +913,32 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
 
     @Override
     public List<TopicMessage> readTopic(String topic, String name, int limit) {
-        List<TopicMessageRow> rows =
-                decodeList(backend.readTopicMessagesJson(topic, name, limit), TopicMessageRow.class);
-        List<TopicMessage> messages = new ArrayList<>(rows.size());
-        for (TopicMessageRow row : rows) {
-            messages.add(new TopicMessage(
-                    row.id(), row.payload(), parseJsonMap(row.metadata()), parseJsonMap(row.notes()), row.createdAt()));
-        }
-        return messages;
+        return decodeTopicMessages(backend.readTopicMessagesJson(topic, name, limit));
     }
 
     @Override
     public boolean ackTopic(String topic, String name, String cursor) {
         return backend.ackTopicCursor(topic, name, cursor);
+    }
+
+    @Override
+    public List<TopicMessage> leaseTopic(String topic, String name) {
+        return leaseTopic(topic, name, 100, Duration.ofSeconds(30));
+    }
+
+    @Override
+    public List<TopicMessage> leaseTopic(String topic, String name, int limit, Duration visibility) {
+        return decodeTopicMessages(backend.leaseTopicMessagesJson(topic, name, limit, visibility.toMillis()));
+    }
+
+    @Override
+    public boolean ackMessage(String topic, String name, String messageId) {
+        return backend.ackMessage(topic, name, messageId);
+    }
+
+    @Override
+    public boolean nackMessage(String topic, String name, String messageId) {
+        return backend.nackMessage(topic, name, messageId);
     }
 
     @Override
@@ -980,6 +993,17 @@ final class DefaultTaskito implements Taskito, LogTopicReader {
     @SuppressWarnings("unchecked")
     private static <T> Consumer<Object> castConsumer(Consumer<T> handler) {
         return (Consumer<Object>) handler;
+    }
+
+    /** Decode a native JSON array of message views into {@link TopicMessage}s (shared by read/lease). */
+    private List<TopicMessage> decodeTopicMessages(String json) {
+        List<TopicMessageRow> rows = decodeList(json, TopicMessageRow.class);
+        List<TopicMessage> messages = new ArrayList<>(rows.size());
+        for (TopicMessageRow row : rows) {
+            messages.add(new TopicMessage(
+                    row.id(), row.payload(), parseJsonMap(row.metadata()), parseJsonMap(row.notes()), row.createdAt()));
+        }
+        return messages;
     }
 
     /**

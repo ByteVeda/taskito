@@ -22,6 +22,8 @@ semantics, lifecycle, cross-SDK topics).
 | `listDeclaredTopics()` → `Promise<DeclaredTopic[]>` | List declared topics: `name`, `mode`, `retentionMs`, `createdAt`. |
 | `readTopic(topic, name, limit?)` → `Promise<TopicMessage[]>` | Pull up to `limit` (default 100) messages after `name`'s cursor, oldest first and exclusive of it. Empty once caught up. At-least-once — process, then `ackTopic()`. |
 | `ackTopic(topic, name, cursor)` → `Promise<boolean>` | Advance a log subscription's cursor to `cursor` (a message `id`) — a monotonic high-water mark. `false` if nothing moved. |
+| `leaseTopic(topic, name, opts?)` → `Promise<TopicMessage[]>` | **Per-message** alternative to the cursor read: lease up to `opts.limit` (default 100) messages for `opts.visibility` seconds (default 30), tracked individually so a nack or lease timeout redelivers just that message. Don't mix with `readTopic`/`ackTopic` on one subscription. |
+| `ackMessage(topic, name, messageId)` / `nackMessage(topic, name, messageId)` → `Promise<boolean>` | Ack (done, never redelivered) or nack (redeliver now) one leased message. `false` if there was no un-acked delivery. |
 | `topicLogStats()` → `Promise<TopicLogStat[]>` | Lag snapshot for every log subscription: `topic`, `subscription`, `cursor`, `lag`, `oldestUnackedAgeMs`. |
 
 See [Log topics](/node/guides/core/pubsub#log-topics) for the cursor,
@@ -29,11 +31,11 @@ at-least-once, and retention semantics.
 
 ## `TopicMessage`
 
-One message pulled from a log topic, returned by `readTopic()`.
+One message pulled from a log topic, returned by `readTopic()` and `leaseTopic()`.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | Cursor token — pass to `ackTopic()`. |
+| `id` | `string` | Message id — pass to `ackTopic()` (cursor read) or to `ackMessage()`/`nackMessage()` (per-message lease). |
 | `args` | `unknown[]` | Deserialized positional args from the `publish()` call. |
 | `metadata` | `Record<string, unknown>` | Caller metadata, if any. |
 | `notes` | `Record<string, unknown>` | Structured notes, if any. |

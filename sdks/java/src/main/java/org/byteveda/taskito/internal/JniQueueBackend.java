@@ -409,6 +409,22 @@ public final class JniQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String leaseTopicMessagesJson(String topic, String subscriptionName, long limit, long visibilityMs) {
+        return withOpenHandle(
+                () -> NativeQueue.leaseTopicMessages(handle, topic, subscriptionName, limit, visibilityMs));
+    }
+
+    @Override
+    public boolean ackMessage(String topic, String subscriptionName, String messageId) {
+        return withOpenHandle(() -> NativeQueue.ackMessage(handle, topic, subscriptionName, messageId));
+    }
+
+    @Override
+    public boolean nackMessage(String topic, String subscriptionName, String messageId) {
+        return withOpenHandle(() -> NativeQueue.nackMessage(handle, topic, subscriptionName, messageId));
+    }
+
+    @Override
     public String topicLogStatsJson() {
         return withOpenHandle(() -> NativeQueue.topicLogStats(handle));
     }
