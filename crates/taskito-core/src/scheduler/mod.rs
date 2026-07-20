@@ -575,11 +575,6 @@ impl Scheduler {
         self.task_configs.insert(task_name, config);
     }
 
-    /// The circuit-breaker manager shared with this scheduler's storage.
-    pub fn circuit_breaker(&self) -> &CircuitBreaker {
-        &self.circuit_breaker
-    }
-
     /// Run the scheduler loop. Polls for ready jobs and dispatches them
     /// to the worker pool via the provided channel.
     ///
