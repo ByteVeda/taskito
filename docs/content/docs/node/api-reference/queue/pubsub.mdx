@@ -31,11 +31,11 @@ at-least-once, and retention semantics.
 
 ## `TopicMessage`
 
-One message pulled from a log topic, returned by `readTopic()`.
+One message pulled from a log topic, returned by `readTopic()` and `leaseTopic()`.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | Cursor token — pass to `ackTopic()`. |
+| `id` | `string` | Message id — pass to `ackTopic()` (cursor read) or to `ackMessage()`/`nackMessage()` (per-message lease). |
 | `args` | `unknown[]` | Deserialized positional args from the `publish()` call. |
 | `metadata` | `Record<string, unknown>` | Caller metadata, if any. |
 | `notes` | `Record<string, unknown>` | Structured notes, if any. |

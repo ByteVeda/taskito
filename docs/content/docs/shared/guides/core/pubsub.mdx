@@ -609,11 +609,14 @@ immediately; only an empty one waits the poll interval.
 The cursor is a single high-water mark, so one message a consumer can't
 process blocks everything behind it. **Per-message** consumption is the
 alternative: instead of the cursor read, *lease* messages and ack or nack each
-one individually. A leased message is invisible to other reads until its
-visibility window elapses; ack it when done, nack it to redeliver immediately,
-or let the lease time out to have it redelivered — all without blocking its
-siblings. It's a consumption choice on the same log subscription, not a
-separate registration.
+one individually. A leased message is skipped by later lease reads *on that
+same subscription* until its visibility window elapses (a separate subscription
+consuming the same topic is unaffected); ack it when done, nack it to redeliver
+immediately, or let the lease time out to have it redelivered — all without
+blocking its siblings. Delivery is **at-least-once**: a timed-out lease
+redelivers, and two concurrent leasers on one subscription can briefly claim the
+same message, so handlers must be idempotent. It's a consumption choice on the
+same log subscription, not a separate registration.
 
 <CodeTabs>
   <Tab sdk="python">

@@ -216,11 +216,11 @@ up).
 from taskito import TopicMessage
 ```
 
-One message pulled from a log topic, returned by `read_topic()`.
+One message pulled from a log topic, returned by `read_topic()` and `lease_topic()`.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `str` | Cursor token — pass to `ack_topic()`. |
+| `id` | `str` | Message id — pass to `ack_topic()` (cursor read) or to `ack_message()`/`nack_message()` (per-message lease). |
 | `args` | `tuple[Any, ...]` | Decoded positional args from the `publish()` call. |
 | `kwargs` | `dict[str, Any]` | Decoded keyword args from the `publish()` call. |
 | `metadata` | `dict[str, Any] \| None` | Caller metadata, if any. |

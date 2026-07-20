@@ -29,11 +29,11 @@ at-least-once, and retention semantics.
 
 ## `TopicMessage`
 
-One message pulled from a log topic, returned by `readTopic`.
+One message pulled from a log topic, returned by `readTopic` and `leaseTopic`.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `String` | Cursor token — pass to `ackTopic`. |
+| `id` | `String` | Message id — pass to `ackTopic` (cursor read) or to `ackMessage`/`nackMessage` (per-message lease). |
 | `payload` | `byte[]` | Opaque publish payload. Unlike Python/Node, this is **not** decoded for you — Java is statically typed and there's no target type to infer it into, so decode it yourself with the same serializer the publisher used. |
 | `metadata` | `Map<String, Object>` | Caller metadata, decoded, or `null` if none was set. |
 | `notes` | `Map<String, Object>` | Structured notes, decoded, or `null` if none were set. |
