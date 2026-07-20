@@ -74,7 +74,11 @@ updates:
           - "@tanstack/*"
 
   - package-ecosystem: github-actions
-    directory: /
+    # `/` covers .github/workflows only; the composites under .github/actions
+    # pin their own actions and drift a major behind without the second entry.
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
       day: monday
