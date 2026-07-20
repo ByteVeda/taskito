@@ -478,10 +478,13 @@ macro_rules! impl_diesel_pubsub_ops {
             }
 
             /// Lease up to `limit` available messages to `subscription_name` for
-            /// `visibility_ms` (see the `lease_topic_messages` trait method). One
-            /// bounded anti-join finds the available messages, then a lease row
-            /// is upserted per message — all in one transaction so a concurrent
-            /// puller can't double-lease.
+            /// `visibility_ms` (see the `lease_topic_messages` trait method).
+            /// Requires a registered `log` subscription (like the cursor read).
+            /// One bounded anti-join finds the available messages, then a lease
+            /// row is upserted per message in one transaction. Delivery is
+            /// **at-least-once**: the availability window isn't row-locked, so two
+            /// concurrent leasers can briefly claim the same message — handlers
+            /// must be idempotent, the same guarantee as a lease timeout redeliver.
             pub fn lease_topic_messages(
                 &self,
                 topic: &str,
@@ -494,6 +497,21 @@ macro_rules! impl_diesel_pubsub_ops {
                     return Ok(Vec::new());
                 }
                 let mut conn = self.conn()?;
+                // Only a registered log subscription may lease — a fan-out or
+                // unknown name must never claim from the log (mirrors read/ack).
+                let is_log_sub = topic_subscriptions::table
+                    .filter(topic_subscriptions::topic.eq(topic))
+                    .filter(topic_subscriptions::subscription_name.eq(subscription_name))
+                    .filter(
+                        topic_subscriptions::mode
+                            .eq($crate::storage::records::SUBSCRIPTION_MODE_LOG),
+                    )
+                    .select(topic_subscriptions::subscription_name)
+                    .first::<String>(&mut conn)
+                    .optional()?;
+                if is_log_sub.is_none() {
+                    return Ok(Vec::new());
+                }
                 conn.transaction(|conn| {
                     // Available = no delivery row (never delivered), or a prior
                     // lease that expired and was never acked.

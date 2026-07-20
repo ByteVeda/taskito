@@ -914,6 +914,12 @@ impl RedisStorage {
     /// Lease up to `limit` available messages to `subscription_name` for
     /// `visibility_ms`. Available = never delivered, or a lease that expired /
     /// was nacked and never acked. See the `lease_topic_messages` trait method.
+    /// Requires a registered `log` subscription (like the cursor read). The
+    /// stream is scanned in `COUNT`-bounded pages (not loaded whole) until
+    /// `limit` are collected or it ends. Delivery is **at-least-once**: the
+    /// `HGETALL` availability snapshot and the per-message `HSET` lease aren't a
+    /// single atomic step, so two concurrent leasers can briefly claim the same
+    /// message — handlers must be idempotent, as with a lease-timeout redeliver.
     pub fn lease_topic_messages(
         &self,
         topic: &str,
@@ -926,35 +932,60 @@ impl RedisStorage {
             return Ok(Vec::new());
         }
         let mut conn = self.conn()?;
+        // Only a registered log subscription may lease — a fan-out or unknown
+        // name must never claim from the log (mirrors read/ack).
+        let blob_key = self.key(&["sub", topic, subscription_name]);
+        let Some(data): Option<String> = conn.get(&blob_key).map_err(map_err)? else {
+            return Ok(Vec::new());
+        };
+        if serde_json::from_str::<SubEntry>(&data)?.mode != SUBSCRIPTION_MODE_LOG {
+            return Ok(Vec::new());
+        }
+
         let deliv_key = self.pm_deliveries_key(topic, subscription_name);
         let deliveries: std::collections::HashMap<String, String> =
             conn.hgetall(&deliv_key).map_err(map_err)?;
-
-        let reply: StreamRangeReply = redis::cmd("XRANGE")
-            .arg(self.topic_stream_key(topic))
-            .arg("-")
-            .arg("+")
-            .query(&mut conn)
-            .map_err(map_err)?;
+        let stream_key = self.topic_stream_key(topic);
 
         let lease_until = now + visibility_ms;
         let mut out = Vec::new();
-        for entry in reply.ids {
-            if out.len() as i64 >= limit {
+        let mut start = "-".to_string();
+        while (out.len() as i64) < limit {
+            let page: StreamRangeReply = redis::cmd("XRANGE")
+                .arg(&stream_key)
+                .arg(&start)
+                .arg("+")
+                .arg("COUNT")
+                .arg(limit)
+                .query(&mut conn)
+                .map_err(map_err)?;
+            if page.ids.is_empty() {
                 break;
             }
-            let available = match deliveries.get(&entry.id) {
-                None => true,
-                Some(state) if state == "acked" => false,
-                // A leased entry: available once its lease has expired (nack = 0).
-                Some(state) => state.parse::<i64>().map(|exp| exp <= now).unwrap_or(true),
-            };
-            if !available {
-                continue;
+            let exhausted = (page.ids.len() as i64) < limit;
+            // Resume the next page exclusively after this page's last id.
+            let next_start = page.ids.last().map(|entry| format!("({}", entry.id));
+            for entry in page.ids {
+                if (out.len() as i64) >= limit {
+                    break;
+                }
+                let available = match deliveries.get(&entry.id) {
+                    None => true,
+                    Some(state) if state == "acked" => false,
+                    // A leased entry: available once its lease expired (nack = 0).
+                    Some(state) => state.parse::<i64>().map(|exp| exp <= now).unwrap_or(true),
+                };
+                if !available {
+                    continue;
+                }
+                conn.hset::<_, _, _, ()>(&deliv_key, &entry.id, lease_until)
+                    .map_err(map_err)?;
+                out.push(Self::stream_id_to_message(topic, entry));
             }
-            conn.hset::<_, _, _, ()>(&deliv_key, &entry.id, lease_until)
-                .map_err(map_err)?;
-            out.push(Self::stream_id_to_message(topic, entry));
+            match next_start {
+                Some(next) if !exhausted => start = next,
+                _ => break,
+            }
         }
         Ok(out)
     }
